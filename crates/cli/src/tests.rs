@@ -75,6 +75,62 @@ fn manifest_fixture(routes: serde_json::Value) -> String {
 
 // ---------------------------------------------------------- parse surface (§19.1)
 
+
+
+#[test]
+fn render_subcommand_parses_route_and_optional_flags() {
+    use clap::Parser;
+    let cli = crate::Cli::try_parse_from([
+        "oxide", "render", "routes/index",
+        "--root", "/some/root",
+        "--url", "/home",
+        "--param", "slug=hello",
+        "--data", r#"{"title":"Hi"}"#,
+    ]).expect("parse");
+    match cli.command {
+        crate::Command::Render { root, route, url, params, data } => {
+            assert_eq!(root, "/some/root");
+            assert_eq!(route, "routes/index");
+            assert_eq!(url.as_deref(), Some("/home"));
+            assert_eq!(params, vec!["slug=hello".to_string()]);
+            assert_eq!(data, r#"{"title":"Hi"}"#);
+        }
+        other => panic!("expected Render, got {:?}", other),
+    }
+}
+
+#[test]
+fn render_subcommand_defaults_root_url_params_data() {
+    use clap::Parser;
+    let cli = crate::Cli::try_parse_from(["oxide", "render", "routes/blog/[slug]"])
+        .expect("parse");
+    match cli.command {
+        crate::Command::Render { root, route, url, params, data } => {
+            assert_eq!(root, ".");
+            assert_eq!(route, "routes/blog/[slug]");
+            assert_eq!(url, None);
+            assert!(params.is_empty());
+            assert_eq!(data, "{}");
+        }
+        other => panic!("expected Render, got {:?}", other),
+    }
+}
+
+#[test]
+fn render_subcommand_accepts_root_flag_after_route() {
+    use clap::Parser;
+    let cli = crate::Cli::try_parse_from([
+        "oxide", "render", "routes/index", "--root", "/proj",
+    ]).expect("parse");
+    match cli.command {
+        crate::Command::Render { root, route, .. } => {
+            assert_eq!(root, "/proj");
+            assert_eq!(route, "routes/index");
+        }
+        other => panic!("expected Render, got {:?}", other),
+    }
+}
+
 #[test]
 fn config_subcommand_parses_root_and_json_flag() {
     use clap::Parser;
