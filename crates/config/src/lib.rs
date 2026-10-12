@@ -11,11 +11,14 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 mod env_file;
+pub mod schema;
 mod extract;
 mod layer;
 mod size;
 
 pub type Result<T> = std::result::Result<T, OxideError>;
+
+pub use schema::{config_schema, config_schema_pretty, CONFIG_SCHEMA_URI};
 
 pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
     OxideError(Diagnostic::error(code, msg))
@@ -38,6 +41,14 @@ pub struct OxideConfig {
     pub budgets: BudgetsConfig,
     pub build: BuildConfig,
     pub adapter: String,
+    /// Content collections (§16.5). Each entry maps to a directory of Markdown
+    /// files with frontmatter. The build emits a search index per collection.
+    #[serde(default)]
+    pub content: ContentConfig,
+    /// Static export settings (§10.5). `fallback` is emitted in place of any
+    /// route that cannot be prerendered.
+    #[serde(rename = "static", default)]
+    pub static_export: StaticConfig,
     #[serde(default)]
     pub plugins: Vec<serde_json::Value>,
     #[serde(default)]
@@ -48,6 +59,23 @@ pub struct OxideConfig {
     pub environments: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub dev: DevConfig,
+}
+
+/// Content collections configuration (§16.5).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ContentConfig {
+    /// One entry per collection.
+    pub collections: Vec<CollectionDef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CollectionDef {
+    pub name: String,
+    pub dir: String,
+    /// Frontmatter fields (besides `title`) to include in the search index.
+    pub indexed_fields: Vec<String>,
 }
 
 impl Default for OxideConfig {
@@ -66,6 +94,8 @@ impl Default for OxideConfig {
             budgets: BudgetsConfig::default(),
             build: BuildConfig::default(),
             adapter: "binary".into(),
+            content: ContentConfig::default(),
+            static_export: StaticConfig::default(),
             plugins: Vec::new(),
             modules: Vec::new(),
             extends: Vec::new(),
@@ -73,6 +103,16 @@ impl Default for OxideConfig {
             dev: DevConfig::default(),
         }
     }
+}
+
+/// Static export settings (§10.5). When `fallback` is set, the static
+/// target emits that HTML file for any dynamic route without a prerendered
+/// output, instead of refusing the build.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StaticConfig {
+    /// Path to a fallback HTML file emitted for dynamic routes.
+    pub fallback: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
