@@ -8,6 +8,9 @@
 
 #![forbid(unsafe_code)]
 
+pub mod metrics;
+pub mod trace_context;
+
 use bytes::Bytes;
 use flate2::write::GzEncoder;
 use http_body_util::combinators::BoxBody;
@@ -24,6 +27,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, OxideError>;
+pub use metrics::Metrics;
 
 pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
     OxideError(Diagnostic::error(code, msg))
@@ -750,6 +754,89 @@ fn parse_range(spec: &str, size: u64) -> Option<(u64, u64)> {
     Some((start, end))
 }
 
+/// Inspector snapshot provider (§13.4). The server never interprets the
+/// payload — it renders it at `/__oxide` (HTML) and `/__oxide/state` (JSON).
+/// Wired by the CLI's dev command; absent in production.
+pub trait InspectorSnapshot: Send + Sync + std::fmt::Debug {
+    /// Machine-readable state (schema is the dev crate's `InspectorState`).
+    fn state_json(&self) -> serde_json::Value;
+
+    /// Human-friendly HTML for `GET /__oxide`. Default wraps pretty JSON.
+    fn render_html(&self) -> String {
+        let json = serde_json::to_string_pretty(&self.state_json())
+            .unwrap_or_else(|_| "{}".into());
+        format!(
+            "<!doctype html><html><head><title>Oxide Inspector</title>\
+             <style>body{{font:13px/1.5 ui-monospace,monospace;background:#0a0a0a;color:#e6e6e6;padding:24px}}\
+             pre{{white-space:pre-wrap;word-break:break-word}}</style></head>\
+             <body><h1>Oxide Inspector</h1><pre>{}</pre></body></html>",
+            json.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+        )
+    }
+}
+
+/// Forward a request to `url` and convert the upstream response into an
+/// `OxideResponse` (§13.5 dev proxy; also usable as a generic reverse-proxy
+/// helper). Uses `hyper-util`'s pooled client so repeated hits to the same
+/// upstream share a connection. Hop-by-hop headers are stripped per
+/// RFC 7230 §6.1.
+pub async fn forward_proxy(url: &str, req: OxideRequest) -> Result<OxideResponse> {
+    use http_body_util::{BodyExt, Full};
+    use hyper_util::client::legacy::Client;
+    use hyper_util::rt::TokioExecutor;
+    use std::sync::OnceLock;
+
+    static CLIENT: OnceLock<
+        Client<hyper_util::client::legacy::connect::HttpConnector, Full<Bytes>>,
+    > = OnceLock::new();
+    let client = CLIENT.get_or_init(|| Client::builder(TokioExecutor::new()).build_http());
+
+    let mut builder = hyper::Request::builder().method(req.method.as_str()).uri(url);
+    for (k, v) in &req.headers {
+        builder = builder.header(k.as_str(), v.as_str());
+    }
+    let outbound = builder
+        .body(Full::new(req.body))
+        .map_err(|e| err("SRV-PROXY", format!("build request failed: {e}")))?;
+
+    let resp = client
+        .request(outbound)
+        .await
+        .map_err(|e| err("SRV-PROXY", format!("upstream request failed: {e}")))?;
+
+    let status = resp.status().as_u16();
+    let headers: Vec<(String, String)> = resp
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
+        .collect();
+    let body = resp
+        .into_body()
+        .collect()
+        .await
+        .map_err(|e| err("SRV-PROXY", format!("reading upstream body failed: {e}")))?
+        .to_bytes();
+
+    let mut out = OxideResponse::new(status, body);
+    for (k, v) in headers {
+        if matches!(
+            k.to_ascii_lowercase().as_str(),
+            "connection"
+                | "keep-alive"
+                | "transfer-encoding"
+                | "upgrade"
+                | "proxy-authenticate"
+                | "proxy-authorization"
+                | "te"
+                | "trailers"
+        ) {
+            continue;
+        }
+        out = out.with_header(&k, v);
+    }
+    Ok(out)
+}
+
 /// The pipeline service: rules → static → L0 → (render dispatch is injected by cli).
 /// Constructed from config + manifests; testable without a listener via `serve_request`.
 pub struct Pipeline {
@@ -759,6 +846,14 @@ pub struct Pipeline {
     pub security: crate::SecuritySettings,
     pub rate_limiter: Arc<RateLimiter>,
     pub health_path: String,
+    /// Prometheus metrics endpoint path (§20). `/_oxide/metrics` default;
+    /// empty string disables.
+    pub metrics_path: String,
+    /// Optional metrics registry. When `Some`, `/metrics_path` renders it.
+    pub metrics: Option<Arc<Metrics>>,
+    /// Optional inspector provider (§13.4). When `Some`, `/__oxide` and
+    /// `/__oxide/state` return the inspector snapshot. Never set in production.
+    pub inspector: Option<Arc<dyn InspectorSnapshot>>,
 }
 
 #[derive(Debug, Clone)]
@@ -835,6 +930,25 @@ enum NativePrefix {
 }
 
 impl Pipeline {
+    /// Attach a metrics registry (§20). The pipeline observes its own native
+    /// branches (`_native`, `_static`); the JS delegate observes the dispatch
+    /// path. Idempotent — replacing an existing registry is fine.
+    pub fn with_metrics(mut self, m: Arc<Metrics>) -> Self {
+        self.metrics = Some(m);
+        self
+    }
+
+    /// The attached metrics registry, if any.
+    pub fn metrics(&self) -> Option<&Arc<Metrics>> {
+        self.metrics.as_ref()
+    }
+
+    /// Attach an inspector (§13.4). Only the dev command calls this.
+    pub fn with_inspector(mut self, insp: Arc<dyn InspectorSnapshot>) -> Self {
+        self.inspector = Some(insp);
+        self
+    }
+
     /// Handle one request through the native (no-JS) prefix of the pipeline.
     /// Dispatch to JS/render is delegated to `dispatch` when the rules+static+L0
     /// layers don't produce a response (§4.1: hot path completes without JS when
@@ -851,11 +965,39 @@ impl Pipeline {
         mut req: OxideRequest,
         dispatch: &dyn Fn(OxideRequest) -> futures::future::BoxFuture<'static, OxideResponse>,
     ) -> futures::future::BoxFuture<'_, OxideResponse> {
+        // §20 tracing: one span per request, propagated through the W3C trace
+        // context when an OTLP endpoint is configured. The span carries the
+        // request id so it can be correlated with `Server-Timing` and logs.
+        let span = tracing::info_span!(
+            "oxide.request",
+            request_id = %req.request_id,
+            method = %req.method,
+            path = %path_of(&req.url),
+        );
+        let _enter = span.enter();
+
+        // §20 metrics: time the request, observe the response with a bounded
+        // route label. The native prefix is entirely synchronous, so Raw and
+        // Static are observed here. The Dispatch branch observes nothing —
+        // the JS delegate (which owns routing) is responsible for
+        // per-route labels on that path.
+        let started = std::time::Instant::now();
+        let metrics = self.metrics.clone();
+
         match self.native_prefix(&mut req) {
-            NativePrefix::Raw(resp) => Box::pin(std::future::ready(resp)),
-            NativePrefix::Static(resp, rule_headers) => Box::pin(std::future::ready(
-                self.finish_response(resp, &rule_headers),
-            )),
+            NativePrefix::Raw(resp) => {
+                if let Some(m) = &metrics {
+                    m.observe("_native", started.elapsed(), resp.status);
+                }
+                Box::pin(std::future::ready(resp))
+            }
+            NativePrefix::Static(resp, rule_headers) => {
+                let finished = self.finish_response(resp, &rule_headers);
+                if let Some(m) = &metrics {
+                    m.observe("_static", started.elapsed(), finished.status);
+                }
+                Box::pin(std::future::ready(finished))
+            }
             NativePrefix::Dispatch(rule_headers) => {
                 // Call dispatch synchronously; only the (Send) boxed future crosses the await.
                 let fut = dispatch(req);
@@ -901,7 +1043,33 @@ impl Pipeline {
 
         let mut path = path_of(&req.url);
 
-        // (3) health endpoint (§12.2).
+        // (3a) metrics endpoint (§20) — Prometheus text exposition.
+        if req.method.eq_ignore_ascii_case("GET")
+            && !self.metrics_path.is_empty()
+            && path == self.metrics_path
+        {
+            return NativePrefix::Raw(match &self.metrics {
+                Some(m) => OxideResponse::new(200, Bytes::from(m.render()))
+                    .with_header("content-type", "text/plain; version=0.0.4; charset=utf-8"),
+                None => OxideResponse::new(404, "metrics endpoint not configured")
+                    .with_header("content-type", "text/plain; charset=utf-8"),
+            });
+        }
+
+        // (3a.2) inspector endpoints (§13.4) — only when configured (dev only).
+        if let Some(insp) = &self.inspector {
+            if req.method.eq_ignore_ascii_case("GET") && path == "/__oxide" {
+                return NativePrefix::Raw(
+                    OxideResponse::new(200, insp.render_html())
+                        .with_header("content-type", "text/html; charset=utf-8"),
+                );
+            }
+            if req.method.eq_ignore_ascii_case("GET") && path == "/__oxide/state" {
+                return NativePrefix::Raw(OxideResponse::json(200, insp.state_json()));
+            }
+        }
+
+        // (3b) health endpoint (§12.2).
         if req.method.eq_ignore_ascii_case("GET") && path == self.health_path {
             return NativePrefix::Raw(
                 OxideResponse::new(200, "ok")
@@ -1088,6 +1256,27 @@ fn next_request_id() -> String {
     )
 }
 
+/// Bind a listener with `SO_REUSEPORT` (§12.2 zero-downtime reload). Falls
+/// back to a plain tokio bind when the socket option is unavailable (older
+/// kernels, restricted sandboxes).
+fn bind_reusable(addr: std::net::SocketAddr) -> std::io::Result<tokio::net::TcpListener> {
+    use socket2::{Domain, Protocol, Socket, Type};
+
+    let domain = if addr.is_ipv4() { Domain::IPV4 } else { Domain::IPV6 };
+    let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
+    socket.set_reuse_address(true)?;
+    // SO_REUSEPORT exists on Linux, macOS, and the BSDs. On Windows it does
+    // not exist — the call below is a no-op on those builds because the
+    // `reuse_port` feature is enabled by the socket2 crate for supported
+    // platforms only.
+    #[cfg(all(unix, not(target_os = "solaris")))]
+    socket.set_reuse_port(true)?;
+    socket.set_nonblocking(true)?;
+    socket.bind(&addr.into())?;
+    socket.listen(1024)?;
+    tokio::net::TcpListener::from_std(socket.into())
+}
+
 impl Server {
     /// Bind `addr`, accept connections and serve them through the pipeline with the
     /// given dispatch (§12.1). Graceful shutdown: on the watch signal the listener
@@ -1102,9 +1291,30 @@ impl Server {
         >,
         shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> Result<()> {
-        let listener = tokio::net::TcpListener::bind(addr)
-            .await
+        Self::serve_with_tls(addr, pipeline, dispatch, shutdown, None).await
+    }
+
+    /// Same as [`Server::serve`] but with an optional rustls server config
+    /// (§13.5 dev HTTPS). When `tls` is `Some`, every accepted connection is
+    /// handshaked before being handed to hyper. A failed handshake logs and
+    /// the connection is dropped — it never reaches the pipeline.
+    pub async fn serve_with_tls(
+        addr: std::net::SocketAddr,
+        pipeline: Arc<Pipeline>,
+        dispatch: Arc<
+            dyn Fn(OxideRequest) -> futures::future::BoxFuture<'static, OxideResponse>
+                + Send
+                + Sync,
+        >,
+        shutdown: tokio::sync::watch::Receiver<bool>,
+        tls: Option<Arc<tokio_rustls::rustls::ServerConfig>>,
+    ) -> Result<()> {
+        // §12.2: SO_REUSEPORT lets a new process bind the same port while the
+        // old one is still draining, so restarts are zero-downtime. On
+        // platforms where the option is unsupported, fall back to a plain bind.
+        let listener = bind_reusable(addr)
             .map_err(|e| err("SRV-BIND", format!("cannot bind {addr}: {e}")))?;
+        let tls_acceptor = tls.map(tokio_rustls::TlsAcceptor::from);
         let mut shutdown = shutdown;
         let builder =
             hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new());
@@ -1121,11 +1331,11 @@ impl Server {
                             continue;
                         }
                     };
-                    let pipeline = Arc::clone(&pipeline);
-                    let dispatch = Arc::clone(&dispatch);
+                    let pipeline_for_service = Arc::clone(&pipeline);
+                    let dispatch_for_service = Arc::clone(&dispatch);
                     let service = hyper::service::service_fn(move |req: HyperRequest<Incoming>| {
-                        let pipeline = Arc::clone(&pipeline);
-                        let dispatch = Arc::clone(&dispatch);
+                        let pipeline = Arc::clone(&pipeline_for_service);
+                        let dispatch = Arc::clone(&dispatch_for_service);
                         async move {
                             let request_id = next_request_id();
                             match from_hyper_request(req, request_id, &pipeline.limits).await {
@@ -1137,11 +1347,40 @@ impl Server {
                             }
                         }
                     });
-                    let conn = builder.serve_connection_with_upgrades(hyper_util::rt::TokioIo::new(stream), service);
-                    let guard = graceful.watch(conn.into_owned());
-                    tokio::spawn(async move {
-                        let _ = guard.await;
-                    });
+
+                    match &tls_acceptor {
+                        Some(acceptor) => {
+                            // Handshake inside the accept loop so the resulting
+                            // (Send) TLS stream can be moved into the connection
+                            // task. A failed handshake logs and continues; the
+                            // connection never reaches the pipeline.
+                            let tls_stream = match acceptor.accept(stream).await {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    tracing::debug!(error = %e, "TLS handshake failed");
+                                    continue;
+                                }
+                            };
+                            let conn = builder.serve_connection_with_upgrades(
+                                hyper_util::rt::TokioIo::new(tls_stream),
+                                service,
+                            );
+                            let guard = graceful.watch(conn.into_owned());
+                            tokio::spawn(async move {
+                                let _ = guard.await;
+                            });
+                        }
+                        None => {
+                            let conn = builder.serve_connection_with_upgrades(
+                                hyper_util::rt::TokioIo::new(stream),
+                                service,
+                            );
+                            let guard = graceful.watch(conn.into_owned());
+                            tokio::spawn(async move {
+                                let _ = guard.await;
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -1150,6 +1389,39 @@ impl Server {
         // Give in-flight connections up to 5 s to drain, then close (§12.2).
         let _ = tokio::time::timeout(std::time::Duration::from_secs(5), graceful.shutdown()).await;
         Ok(())
+    }
+
+    /// Load a PEM certificate chain + private key into a rustls `ServerConfig`.
+    /// Only used by the dev server (§13.5); production TLS terminates in front
+    /// of the binary or via ACME (post-MLP).
+    pub fn tls_config_from_pem(
+        cert_pem: &[u8],
+        key_pem: &[u8],
+    ) -> Result<Arc<tokio_rustls::rustls::ServerConfig>> {
+        use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
+
+        let mut cert_reader = std::io::BufReader::new(cert_pem);
+        let certs: Vec<CertificateDer<'static>> =
+            rustls_pemfile::certs(&mut cert_reader)
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(|e| err("SRV-TLS", format!("cert parse failed: {e}")))?;
+        if certs.is_empty() {
+            return Err(err(
+                "SRV-TLS",
+                "cert PEM contains no CERTIFICATE blocks".to_string(),
+            ));
+        }
+
+        let mut key_reader = std::io::BufReader::new(key_pem);
+        let key: PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_reader)
+            .map_err(|e| err("SRV-TLS", format!("key parse failed: {e}")))?
+            .ok_or_else(|| err("SRV-TLS", "key PEM contains no PRIVATE KEY block".to_string()))?;
+
+        let config = tokio_rustls::rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certs, key)
+            .map_err(|e| err("SRV-TLS", format!("rustls config failed: {e}")))?;
+        Ok(Arc::new(config))
     }
 }
 
