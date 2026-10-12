@@ -22,7 +22,7 @@ async function load(): Promise<SolidWebLike | undefined> {
   if (attempted) return undefined
   attempted = true
   try {
-    const mod = (await import('solid-js/web')) as unknown as SolidWebLike
+    const mod = (await import('@solidjs/web')) as unknown as SolidWebLike
     if (typeof mod.renderToStringAsync !== 'function') return undefined
     cached = mod
     return cached
