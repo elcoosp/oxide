@@ -364,14 +364,16 @@ fn compress_body_zstd_roundtrip_and_level_clamp() {
 }
 
 #[test]
-fn compress_body_br_is_feature_flagged() {
-    let e = compress_body("br", b"x", 5).unwrap_err();
-    assert_eq!(e.0.code, "SRV-NOENC");
-    assert!(
-        e.0.message.contains("brotli"),
-        "message must name the feature flag: {}",
-        e.0.message
-    );
+fn compress_body_br_roundtrips() {
+    let body = b"hello world, hello world, hello world";
+    let out = compress_body("br", body, 5).unwrap();
+    assert!(!out.is_empty());
+    let mut decoded = Vec::new();
+    {
+        let mut r = brotli::Decompressor::new(std::io::Cursor::new(&out[..]), 4096);
+        std::io::copy(&mut r, &mut decoded).unwrap();
+    }
+    assert_eq!(decoded.as_slice(), body.as_slice());
 }
 
 #[test]
