@@ -19,6 +19,7 @@
 mod minify;
 mod resolve;
 mod rolldown_backend;
+mod prebundle;
 
 use blake3::Hasher;
 use oxide_compiler::{is_server_module_path, scan_import_spans};
@@ -28,6 +29,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 pub use rolldown_backend::RolldownBundler;
+pub use prebundle::{prebundle, PrebundleManifest, PrebundleOptions, PrebundledPackage};
 
 pub type Result<T> = std::result::Result<T, OxideError>;
 
@@ -611,11 +613,37 @@ impl ChunkBundler {
             .join(",");
         let build_id = blake3::hash(joined.as_bytes()).to_hex().to_string()[..16].to_string();
 
+        // Emit root-relative paths for the client manifest. Handles the macOS
+        // `/var` → `/private/var` case where the resolver's output prefix
+        // differs from the caller-supplied `root` string despite pointing at
+        // the same file.
+        let canon_root = self.root.canonicalize().ok();
         let rel_to_root = |p: &Path| -> String {
-            p.strip_prefix(&self.root)
-                .unwrap_or(p)
-                .to_string_lossy()
-                .to_string()
+            if let Ok(r) = p.strip_prefix(&self.root) {
+                return r.to_string_lossy().to_string();
+            }
+            if let Some(cr) = &canon_root {
+                if let Ok(r) = p.strip_prefix(cr) {
+                    return r.to_string_lossy().to_string();
+                }
+            }
+            // Symlink-free fallback: try the canonical form of the file too.
+            if let Ok(cp) = p.canonicalize() {
+                if let Some(cr) = &canon_root {
+                    if let Ok(r) = cp.strip_prefix(cr) {
+                        return r.to_string_lossy().to_string();
+                    }
+                }
+                if let Ok(r) = cp.strip_prefix(&self.root) {
+                    return r.to_string_lossy().to_string();
+                }
+            }
+            // Last resort: strip up to the trailing `src/` segment.
+            let s = p.to_string_lossy();
+            if let Some(idx) = s.find("/src/") {
+                return s[idx + 1..].to_string();
+            }
+            s.to_string()
         };
 
         let css_of_name: BTreeMap<String, Vec<String>> = built
