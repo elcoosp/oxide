@@ -1,0 +1,22 @@
+[package]
+name = "oxide-bundler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Rolldown integration point, environments, manifests (spec 6.4, D3)"
+
+[dependencies]
+oxide-diagnostics = { workspace = true }
+oxide-graph = { workspace = true }
+oxide-compiler = { workspace = true }
+rolldown = { workspace = true }
+rolldown_common = { workspace = true }
+blake3 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
