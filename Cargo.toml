@@ -92,7 +92,12 @@ brotli = "8.0.4"
 thiserror = "2.0.21"
 anyhow = "1.0.104"
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+rmcp = { version = "1.8.0", default-features = false, features = ["server", "macros", "transport-io", "schemars"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json", "fmt", "registry"] }
+tracing-opentelemetry = { version = "0.32.1", default-features = false }
+opentelemetry-otlp = { version = "0.31.1", default-features = false, features = ["trace", "grpc-tonic"] }
+opentelemetry_sdk = { version = "0.31.0", default-features = false, features = ["trace", "rt-tokio"] }
+opentelemetry = { version = "0.31.0", default-features = false, features = ["trace"] }
 miette = { version = "7.6.0", features = ["fancy"] }
 
 # Testing
@@ -128,6 +133,12 @@ usvg = { version = "0.48.1" }
 taffy = { version = "0.14.0" }
 parley = { version = "0.11.0" }
 wasmtime = { version = "48.0.1", features = ["component-model"] }
+local-ip-address = "0.5.7"
+qrcode = { version = "0.14.1", default-features = false }
+rcgen = { version = "0.14.10", default-features = false, features = ["ring", "pem"] }
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+icu_locale_core = "2.3.0"
+comrak = "0.42.0"
 wasmtime-wasi = { version = "48.0.1" }
 wit-parser = { version = "0.259.0" }
 base64 = { version = "0.23.1" }
