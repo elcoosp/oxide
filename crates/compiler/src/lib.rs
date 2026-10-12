@@ -25,9 +25,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 pub mod lexer;
+pub mod framework;
+pub mod generate_params;
 mod oxc_backend;
 
 pub use oxc_backend::OxcTransformer;
+pub use framework::{compiler_for, Framework, FrameworkCompiler, FrameworkInput, FrameworkOutput, ReactInline, SolidInline, ToolingDispatcher};
+pub use generate_params::{extract_generate_params, GenerateParamsResult};
 
 pub type Result<T> = std::result::Result<T, OxideError>;
 
