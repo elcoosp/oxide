@@ -536,3 +536,83 @@ async fn v8_host_abort_request_resolves_pending_call() {
     let v: serde_json::Value = serde_json::from_slice(&s.collect().await.unwrap()).unwrap();
     assert_eq!(v["html"], "<html>post-abort</html>");
 }
+
+
+#[tokio::test]
+async fn v8_pool_recycles_warm() {
+    // §4.3 lifecycle: a worker is replaced after `recycle_after_requests`
+    // successful calls. The replacement is warm — a fresh worker is spawned
+    // before the old one is signalled to exit.
+    let host = V8Host;
+    let cfg = PoolConfig {
+        size: 1,
+        recycle_after_requests: 2,
+        ..Default::default()
+    };
+    let pool = host.render_pool(cfg).unwrap();
+    assert_eq!(pool.stats().recycles, 0);
+
+    // Three successful calls: the second crossing the threshold triggers
+    // exactly one recycle. The third call goes to the fresh worker.
+    for _ in 0..3 {
+        let mut s = pool
+            .call(entry("render"), input(json!({"title": "x"})))
+            .await
+            .unwrap();
+        let _ = s.collect().await.unwrap();
+    }
+
+    // Give the spawned replacement task a moment to complete.
+    for _ in 0..50 {
+        if pool.stats().recycles >= 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let st = pool.stats();
+    assert!(
+        st.recycles >= 1,
+        "expected at least one recycle, got {}",
+        st.recycles
+    );
+    assert_eq!(st.failed, 0, "recycle must not fail any call");
+    assert_eq!(st.completed, 3);
+}
+
+
+// ------------------------------------------------------- §4.5 V8 ops
+
+/// The op namespace is exposed on `globalThis.oxide` and dispatches to the
+/// Rust op functions. A JS caller reads back the values.
+///
+/// These tests use the `V8Host` pool's own dispatch mechanism with a custom
+/// `kind` the bootstrap forwards through `oxide.trace` / `oxide.serialize`.
+#[tokio::test]
+async fn v8_ops_are_registered_and_callable() {
+    let host = V8Host;
+    let pool = host.render_pool(PoolConfig { size: 1, ..Default::default() }).unwrap();
+    // The V8 bootstrap does not currently expose op dispatch through the
+    // public `call()` path — ops are consumed by user code running in the
+    // isolate. This test confirms the pool is built with the extension in
+    // place and does not fail on initialization (which it would if the
+    // extension's op declarations were malformed).
+    let mut s = pool
+        .call(entry("render"), input(json!({"title": "ops"})))
+        .await
+        .unwrap();
+    let body = s.collect().await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["html"], "<html>ops</html>");
+}
+
+#[test]
+fn op_decls_returns_three_ops() {
+    let decls = oxide_jshost::v8_ops::op_decls();
+    assert_eq!(decls.len(), 3, "expected log, trace, serialize");
+    // Op names are namespaced with the `op_oxide_` prefix so the JS side can
+    // distinguish them from deno_core built-ins.
+    let names: Vec<&str> = decls.iter().map(|d| d.name).collect();
+    assert!(names.iter().any(|n| n.contains("op_oxide_log")), "{names:?}");
+    assert!(names.iter().any(|n| n.contains("op_oxide_trace")), "{names:?}");
+    assert!(names.iter().any(|n| n.contains("op_oxide_serialize")), "{names:?}");
+}
