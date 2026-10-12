@@ -5,10 +5,11 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./ir": "./src/ir.ts",
-    "./render": "./src/render.ts",
     "./hydrate": "./src/hydrate.ts",
-    "./package.json": "./package.json"
+    "./ir": "./src/ir.ts",
+    "./package.json": "./package.json",
+    "./real-adapter": "./src/real-adapter.ts",
+    "./render": "./src/render.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts"
