@@ -1,0 +1,15 @@
+{
+  "name": "oxide-conformance",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Oxide conformance suite (spec §22, D20): one assertion set (Atlas reference app) run against all four framework adapters. A release is blocked if any adapter regresses. Zero runtime dependencies; runs on Node 24 type stripping.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/conformance.test.ts",
+    "run": "node run.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "license": "MIT"
+}
