@@ -1,12 +1,17 @@
-// oxide-worker.mjs — Oxide Node worker (spec §4.2, §4.6 tier 3).
-// Speaks the same op protocol as the Rust host over stdio: each message is a
-// 4-byte little-endian length prefix + UTF-8 JSON (WorkerMsg, tag "t").
-// Kinds handled: "render" → {html}; "tooling:compile" → {code: uppercase};
-// "boom" → CallErr; "die" → exit(1) without replying (crash drill);
-// "sleep" → reply after payload.ms. payload.chunked === true streams
-// CallChunk* + CallEnd instead of a single CallOk. Pure Node, no deps.
+// oxide-worker.mjs — Oxide Node worker (spec §4.2, §4.6 tier 3, §4.7).
+// Speaks the length-prefixed JSON op protocol. Handles:
+//   render              → {html}
+//   tooling:compile     → uppercase echo (test-only)
+//   tooling:module      → require(call.module)[call.export](...call.args)
+//   boom                → CallErr
+//   die                 → exit(1)
+//   sleep               → delayed reply
+//   payload.chunked     → CallChunk* + CallEnd
+// Pure Node ESM; no external deps.
 import process from "node:process";
+import { createRequire } from "node:module";
 
+const require = createRequire(import.meta.url);
 const b64 = (buf) => buf.toString("base64");
 const out = (obj) => {
   const body = Buffer.from(JSON.stringify(obj), "utf8");
@@ -14,12 +19,48 @@ const out = (obj) => {
   head.writeUInt32LE(body.length, 0);
   process.stdout.write(Buffer.concat([head, body]), (e) => e && process.exit(0));
 };
-
 const diagnostic = (code, message) => ({
   code, severity: "error", message, location: null, code_frame: null, causes: [], fix: null,
 });
-
 const callErr = (id, code, message) => out({ t: "call_err", id, diagnostic: diagnostic(code, message) });
+
+// Cache required modules across calls.
+const modCache = new Map();
+function loadModule(name) {
+  if (!modCache.has(name)) {
+    try {
+      modCache.set(name, { ok: require(name) });
+    } catch (e) {
+      modCache.set(name, { err: e });
+    }
+  }
+  return modCache.get(name);
+}
+
+async function dispatchToolingModule(id, input) {
+  const { module: name, export: fn, args } = input.payload ?? {};
+  const entry = loadModule(name);
+  if (entry.err) {
+    callErr(id, "JSH-TOOLING", `require(${name}) failed: ${entry.err.message}`);
+    return;
+  }
+  const target = entry.ok?.[fn];
+  if (typeof target !== "function") {
+    callErr(id, "JSH-TOOLING", `${name}.${fn} is not a function`);
+    return;
+  }
+  try {
+    let result = await target(...(args ?? []));
+    // Strip non-JSON-encodable values (functions, circular refs); SFC compilers
+    // return compiler output that is usually JSON-safe, but not always.
+    const json = JSON.parse(JSON.stringify(result, (_k, v) =>
+      typeof v === "function" ? undefined : v
+    ));
+    out({ t: "call_ok", id, chunks: [b64(Buffer.from(JSON.stringify(json), "utf8"))], complete: true });
+  } catch (e) {
+    callErr(id, "JSH-TOOLING", `call ${name}.${fn} threw: ${e?.message ?? e}`);
+  }
+}
 
 const handlers = {
   render: (msg) => {
@@ -32,6 +73,10 @@ const handlers = {
 
 async function handleCall(msg) {
   const { id, entry, input } = msg;
+  if (entry.kind === "tooling:module") {
+    await dispatchToolingModule(id, input);
+    return;
+  }
   if (entry.kind === "die") process.exit(1);
   if (entry.kind === "sleep") {
     await new Promise((r) => setTimeout(r, Number(input.payload?.ms ?? 100)));
@@ -72,6 +117,6 @@ process.stdin.on("data", (chunk) => {
     );
   }
 });
-process.stdin.on("end", () => process.exit(0)); // host dropped the pool: exit cleanly
-process.stdout.on("error", () => process.exit(0)); // parent gone: never crash on EPIPE
+process.stdin.on("end", () => process.exit(0));
+process.stdout.on("error", () => process.exit(0));
 process.stdin.resume();
