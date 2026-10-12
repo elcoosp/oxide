@@ -25,13 +25,6 @@ const PLACEHOLDER_WIDTH: u32 = 16;
 
 impl ImageBackend for crate::RustImageBackend {
     fn process(&self, req: ImageRequest) -> Result<ImageResult> {
-        if req.format == ImageFormat::Avif {
-            return Err(err(
-                "AST-AVIF",
-                "AVIF encoding is feature-gated in the pure-Rust backend; configure the libvips ImageBackend (docs/deviations.md)",
-            ));
-        }
-
         let img = image::load_from_memory(&req.source)
             .map_err(|e| err("AST-IMG", format!("failed to decode source image: {e}")))?;
         let (ow, oh) = (img.width(), img.height());
@@ -117,8 +110,30 @@ fn encode(
                 }
             }
         }
-        ImageFormat::Avif => unreachable!("avif is rejected before decode"),
+        ImageFormat::Avif => {
+            let bytes = encode_avif(rgba, quality)?;
+            Ok((bytes, ImageFormat::Avif, Vec::new()))
+        }
     }
+}
+
+/// AVIF encode via `ravif` (spec §16.1: real AVIF output with the pure-Rust stack).
+/// The `image` crate gives us RGBA8; ravif wants `Img<&[RGBA8]>`.
+fn encode_avif(rgba: &image::RgbaImage, quality: u8) -> Result<Vec<u8>> {
+    use ravif::{Encoder, Img, RGBA8};
+    let (w, h) = (rgba.width() as usize, rgba.height() as usize);
+    let pixels: Vec<RGBA8> = rgba
+        .pixels()
+        .map(|p| RGBA8::new(p[0], p[1], p[2], p[3]))
+        .collect();
+    let img = Img::new(pixels.as_slice(), w, h);
+    let q = (quality.clamp(1, 100)) as f32;
+    let encoded = Encoder::new()
+        .with_quality(q)
+        .with_speed(6)
+        .encode_rgba(img)
+        .map_err(|e| err("AST-AVIF", format!("ravif encode failed: {e}")))?;
+    Ok(encoded.avif_file)
 }
 
 fn encode_png_fallback(rgba: &image::RgbaImage) -> Result<Vec<u8>> {
