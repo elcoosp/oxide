@@ -1,0 +1,28 @@
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request:
+jobs:
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]  # §22 platform matrix
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo fmt --all --check
+      - run: cargo test --workspace
+  node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - name: TS package tests (zero-dep, Node type stripping)
+        run: |
+          set -e
+          for d in packages/oxide packages/react packages/vue packages/svelte packages/solid packages/create-oxide conformance; do
+            (cd "$d" && npm test)
+          done
