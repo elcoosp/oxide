@@ -1,0 +1,25 @@
+[package]
+name = "oxide-cache"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "L0/L1/L2 tiers, tags, handlers (spec 11)"
+
+[dependencies]
+async-trait = { workspace = true }
+oxide-diagnostics = { workspace = true }
+oxide-odf = { workspace = true }
+blake3 = { workspace = true }
+redb = { workspace = true }
+zstd = { workspace = true }
+bytes = { workspace = true }
+dashmap = { workspace = true }
+moka = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
