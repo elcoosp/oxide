@@ -1,0 +1,33 @@
+[package]
+name = "oxide-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "clap entry, commands (spec 19)"
+
+[dependencies]
+oxide-diagnostics = { workspace = true }
+oxide-config = { workspace = true }
+oxide-router = { workspace = true }
+oxide-graph = { workspace = true }
+oxide-compiler = { workspace = true }
+oxide-bundler = { workspace = true }
+oxide-jshost = { workspace = true }
+oxide-cache = { workspace = true }
+oxide-render = { workspace = true }
+oxide-server = { workspace = true }
+oxide-assets = { workspace = true }
+oxide-dev = { workspace = true }
+oxide-plugin = { workspace = true }
+oxide-adapters = { workspace = true }
+oxide-odf = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
