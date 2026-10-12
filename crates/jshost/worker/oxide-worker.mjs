@@ -1,15 +1,18 @@
-// oxide-worker.mjs — Oxide Node worker (spec §4.2, §4.6 tier 3, §4.7).
+// oxide-worker.mjs — Oxide Node worker (spec §4.2, §4.6 tier 3, §4.7, §7).
 // Speaks the length-prefixed JSON op protocol. Handles:
-//   render              → {html}
-//   tooling:compile     → uppercase echo (test-only)
-//   tooling:module      → require(call.module)[call.export](...call.args)
-//   boom                → CallErr
-//   die                 → exit(1)
-//   sleep               → delayed reply
-//   payload.chunked     → CallChunk* + CallEnd
+//   render                   → {html}
+//   tooling:compile          → uppercase echo (test-only)
+//   tooling:module           → require(call.module)[call.export](...call.args)
+//   framework:load           → dynamic import of a config path → descriptor
+//   framework:render         → dynamic import → adapter.render(input) → HTML
+//   boom                     → CallErr
+//   die                      → exit(1)
+//   sleep                    → delayed reply
+//   payload.chunked          → CallChunk* + CallEnd
 // Pure Node ESM; no external deps.
 import process from "node:process";
 import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
 const b64 = (buf) => buf.toString("base64");
@@ -23,8 +26,10 @@ const diagnostic = (code, message) => ({
   code, severity: "error", message, location: null, code_frame: null, causes: [], fix: null,
 });
 const callErr = (id, code, message) => out({ t: "call_err", id, diagnostic: diagnostic(code, message) });
+const callOk = (id, value) =>
+  out({ t: "call_ok", id, chunks: [b64(Buffer.from(JSON.stringify(value), "utf8"))], complete: true });
 
-// Cache required modules across calls.
+// Cache required modules across calls (CJS path).
 const modCache = new Map();
 function loadModule(name) {
   if (!modCache.has(name)) {
@@ -56,9 +61,77 @@ async function dispatchToolingModule(id, input) {
     const json = JSON.parse(JSON.stringify(result, (_k, v) =>
       typeof v === "function" ? undefined : v
     ));
-    out({ t: "call_ok", id, chunks: [b64(Buffer.from(JSON.stringify(json), "utf8"))], complete: true });
+    callOk(id, json);
   } catch (e) {
     callErr(id, "JSH-TOOLING", `call ${name}.${fn} threw: ${e?.message ?? e}`);
+  }
+}
+
+// --- Framework adapter ops (spec §7) -------------------------------------
+//
+// Load a user's oxide.config.ts (or .mjs) and route render() calls through
+// the FrameworkAdapter it exports. This is the JS side of the contract
+// documented in packages/oxide/src/server/README.md — the CLI consumes it
+// via `FrameworkHost` (crates/jshost/src/framework_host.rs).
+//
+// Two ops:
+//   framework:load   { path }            → { name, extensions, capabilities }
+//   framework:render { path, input }     → { html }
+//
+// The config module is dynamic-imported fresh on every call so dev edits
+// take effect immediately (HMR-lite). Caching by mtime is a follow-up.
+
+async function dispatchFrameworkLoad(id, input) {
+  const { path } = input.payload ?? {};
+  if (typeof path !== "string" || path.length === 0) {
+    callErr(id, "JSH-FRAMEWORK", "framework:load requires a `path` string");
+    return;
+  }
+  try {
+    const mod = await import(pathToFileURL(path).href);
+    const cfg = mod.default ?? mod;
+    const framework = cfg?.framework;
+    if (!framework || typeof framework !== "object") {
+      callErr(id, "JSH-FRAMEWORK", `config at ${path} has no framework export`);
+      return;
+    }
+    const descriptor = {
+      name: String(framework.name ?? ""),
+      extensions: Array.isArray(framework.extensions) ? framework.extensions.map(String) : [],
+      capabilities: framework.capabilities ?? {},
+    };
+    callOk(id, descriptor);
+  } catch (e) {
+    callErr(id, "JSH-FRAMEWORK", `framework:load failed: ${e?.message ?? e}`);
+  }
+}
+
+async function dispatchFrameworkRender(id, input) {
+  const { path, input: renderInput } = input.payload ?? {};
+  if (typeof path !== "string" || path.length === 0) {
+    callErr(id, "JSH-FRAMEWORK", "framework:render requires a `path` string");
+    return;
+  }
+  try {
+    const mod = await import(pathToFileURL(path).href);
+    const cfg = mod.default ?? mod;
+    const framework = cfg?.framework;
+    if (!framework || typeof framework.render !== "function") {
+      callErr(id, "JSH-FRAMEWORK", `config at ${path} has no framework.render`);
+      return;
+    }
+    const stream = framework.render(renderInput ?? {});
+    // Drain the adapter's ReadableStream<Uint8Array> into one HTML string.
+    // Chunked streaming through the worker is a follow-up: the CLI pipeline
+    // currently collects, then injects headers/compression itself (§12.1).
+    const chunks = [];
+    for await (const chunk of stream) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const html = Buffer.concat(chunks).toString("utf8");
+    callOk(id, { html });
+  } catch (e) {
+    callErr(id, "JSH-FRAMEWORK", `framework:render failed: ${e?.message ?? e}`);
   }
 }
 
@@ -73,10 +146,9 @@ const handlers = {
 
 async function handleCall(msg) {
   const { id, entry, input } = msg;
-  if (entry.kind === "tooling:module") {
-    await dispatchToolingModule(id, input);
-    return;
-  }
+  if (entry.kind === "tooling:module") { await dispatchToolingModule(id, input); return; }
+  if (entry.kind === "framework:load") { await dispatchFrameworkLoad(id, input); return; }
+  if (entry.kind === "framework:render") { await dispatchFrameworkRender(id, input); return; }
   if (entry.kind === "die") process.exit(1);
   if (entry.kind === "sleep") {
     await new Promise((r) => setTimeout(r, Number(input.payload?.ms ?? 100)));
