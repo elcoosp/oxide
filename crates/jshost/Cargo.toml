@@ -8,8 +8,11 @@ description = "JsHost trait, NodeHost, ops, pools (spec 4, D2)"
 
 [dependencies]
 oxide-diagnostics = { workspace = true }
+tracing = { workspace = true }
+oxide-odf = { workspace = true }
 tokio = { workspace = true }
 bytes = { workspace = true }
+blake3 = { workspace = true }
 futures = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
