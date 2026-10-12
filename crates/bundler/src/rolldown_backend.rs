@@ -15,8 +15,8 @@ use crate::{
 };
 use oxide_diagnostics::Diagnostic;
 use rolldown::{
-    Bundler as RolldownCore, BundlerOptions, InputItem, OutputFormat, Platform, RawMinifyOptions,
-    SourceMapType,
+    Bundler as RolldownCore, BundlerOptions, InputItem, IsExternal, OutputFormat, Platform,
+    RawMinifyOptions, SourceMapType, TsConfig,
 };
 use rolldown_common::Output;
 use std::collections::BTreeMap;
@@ -58,6 +58,66 @@ impl RolldownBundler {
             None
         };
 
+        // Externals: `IsExternal: From<Vec<String>>` gives us the string-matching
+        // variant without touching `rolldown_utils::pattern_filter::StringOrRegex`
+        // (which isn't re-exported by rolldown's public API).
+        let external = if options.externals.is_empty() {
+            None
+        } else {
+            Some(IsExternal::from(options.externals.clone()))
+        };
+
+        // Defines: textual substitutions performed before tree-shaking.
+        let define = if options.define.is_empty() {
+            None
+        } else {
+            Some(
+                options
+                    .define
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect(),
+            )
+        };
+
+        // tsconfig_paths: Rolldown only accepts `TsConfig::Manual(PathBuf)` — a path
+        // to an actual tsconfig.json on disk. If the pipeline supplied paths but no
+        // tsconfig file exists, we materialise one in `out_dir` (cleaned up by the
+        // caller if desired). This preserves aliasing semantics end-to-end.
+        let tsconfig = if options.tsconfig_paths.is_empty() {
+            None
+        } else {
+            let candidate = self.root.join("tsconfig.json");
+            if candidate.is_file() {
+                Some(TsConfig::Manual(candidate))
+            } else {
+                // Synthesise a tsconfig.json carrying the `paths` map. It must live
+                // beside the project root so `baseUrl: "."` resolves the alias
+                // patterns against the actual source tree (not `out_dir`).
+                let synthetic = self.root.join(".oxide-tsconfig.json");
+                let compiler_options = serde_json::json!({
+                    "baseUrl": ".",
+                    "paths": options.tsconfig_paths,
+                });
+                let body = serde_json::json!({
+                    "compilerOptions": compiler_options,
+                });
+                if let Some(parent) = synthetic.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if std::fs::write(
+                    &synthetic,
+                    serde_json::to_vec_pretty(&body).unwrap_or_default(),
+                )
+                .is_ok()
+                {
+                    Some(TsConfig::Manual(synthetic))
+                } else {
+                    None
+                }
+            }
+        };
+
         BundlerOptions {
             input: Some(input),
             cwd: Some(self.root.clone()),
@@ -67,6 +127,9 @@ impl RolldownBundler {
             dir: Some(options.out_dir.to_string_lossy().into_owned()),
             sourcemap,
             minify,
+            external,
+            define,
+            tsconfig,
             ..Default::default()
         }
     }
