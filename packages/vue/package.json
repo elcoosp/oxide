@@ -1,0 +1,26 @@
+{
+  "name": "@oxide/vue",
+  "version": "0.1.0",
+  "description": "Vue adapter for Oxide: adapter manifest + render/hydrate over the neutral IR (spec \u00a77). Zero runtime dependencies; runs on Node 24 type stripping. Without @vue/server-renderer installed the adapter renders the neutral element-tree IR itself.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./ir": "./src/ir.ts",
+    "./render": "./src/render.ts",
+    "./hydrate": "./src/hydrate.ts",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "keywords": [
+    "oxide",
+    "vue",
+    "adapter",
+    "ssr"
+  ],
+  "license": "MIT"
+}
