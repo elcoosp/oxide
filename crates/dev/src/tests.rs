@@ -252,3 +252,61 @@ fn overlay_payload_serializes_the_diagnostic() {
     // Overlay rendering consumes the same JSON the JS boundary sees (§19.4).
     assert!(Diagnostic::from_json(&payload).is_ok());
 }
+
+
+// ---------------------------------------------------------------------------
+// §13.4 Inspector tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn route_table_inspector_from_router_table() {
+    let inspector = RouteTableInspector::from_router_table(vec![
+        (
+            "/blog/:slug".to_string(),
+            "isr".to_string(),
+            vec!["revalidate=60".to_string(), "posts".to_string()],
+        ),
+        ("/".to_string(), "static".to_string(), vec![]),
+    ]);
+    let state = inspector.state();
+    assert_eq!(state.routes.len(), 2);
+    assert_eq!(state.routes[0].id, "/blog/:slug");
+    assert_eq!(state.routes[0].mode, "isr");
+    assert_eq!(state.routes[0].cache_policy, "revalidate=60,posts");
+    assert_eq!(state.routes[1].cache_policy, "");
+    // No source for these yet — schema stays honest.
+    assert!(state.module_graph.is_empty());
+    assert!(state.cache.is_empty());
+    assert!(state.waterfalls.is_empty());
+    assert!(state.why.is_empty());
+    assert_eq!(state.pool.workers, 0);
+}
+
+#[test]
+fn render_inspector_html_escapes_and_lists_routes() {
+    let inspector = RouteTableInspector::from_router_table(vec![(
+        "/<script>".to_string(),
+        "static".to_string(),
+        vec![],
+    )]);
+    let html = render_inspector_html(&inspector.state());
+    assert!(html.contains("<title>Oxide Inspector</title>"));
+    assert!(html.contains("Raw JSON"));
+    assert!(html.contains("Routes (1)"));
+    // The malicious pattern is escaped in the table body.
+    assert!(html.contains("&lt;script&gt;"));
+    assert!(!html.contains("<script>"));
+}
+
+#[test]
+fn inspector_state_roundtrips_through_json() {
+    let inspector = RouteTableInspector::from_router_table(vec![(
+        "/api/health".to_string(),
+        "dynamic".to_string(),
+        vec!["no-cache".to_string()],
+    )]);
+    let state = inspector.state();
+    let json = serde_json::to_string(&state).unwrap();
+    let back: InspectorState = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.routes, state.routes);
+}
