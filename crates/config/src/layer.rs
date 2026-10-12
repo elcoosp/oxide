@@ -32,6 +32,8 @@ const KNOWN_KEYS: &[&str] = &[
     "budgets",
     "build",
     "adapter",
+    "content",
+    "static",
     "plugins",
     "modules",
     "extends",
