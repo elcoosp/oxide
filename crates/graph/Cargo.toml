@@ -1,0 +1,23 @@
+[package]
+name = "oxide-graph"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Demand graph, CAS, remote cache trait (spec 5, D6)"
+
+[dependencies]
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+oxide-diagnostics = { workspace = true }
+blake3 = { workspace = true }
+zstd = { workspace = true }
+redb = { workspace = true }
+rayon = { workspace = true }
+dashmap = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+proptest = { workspace = true }
