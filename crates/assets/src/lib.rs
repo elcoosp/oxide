@@ -13,15 +13,26 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 mod content;
+pub mod content_collection;
+pub use content::{
+    parse_content_entry_with_format, parse_mdx_source, ContentFormat, MdxCompileRequest,
+};
+pub use content_collection::{
+    build_search_index, check_references, scan_collection, search_index_to_json,
+    validate_collection, Collection, CollectionConfig, CollectionEntry, FieldType,
+    IndexedEntry, NativeSchema, SchemaKind, SearchIndex,
+};
 mod css;
 mod images;
 mod lightningcss_backend;
 mod font_metrics;
 mod og_backend;
+pub mod i18n;
 
 pub use lightningcss_backend::LightningCssBackend;
 pub use font_metrics::{metric_overrides, read_metrics, FontMetric, MetricOverrides, TIMES_NEW_ROMAN};
 pub use og_backend::SvgOgBackend;
+pub use i18n::{href, locale_prefix, negotiate, parse_accept_language, strip_locale_prefix, Catalog, I18nConfig, LanguageRange};
 
 pub type Result<T> = std::result::Result<T, OxideError>;
 
@@ -107,10 +118,6 @@ pub struct CssOutput {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-/// Default CSS engine: nesting transform, module scoping (content-hash class names),
-/// comment stripping, whitespace minify, autoprefix subset for common properties.
-/// Implementation in `css.rs`.
-pub struct DefaultCss;
 
 /// Tailwind v4 integration point (§6.6): native plugin using the Rust scanner against
 /// graph-known files (no separate glob pass). This scanner extracts candidate utilities;
