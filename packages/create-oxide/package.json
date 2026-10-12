@@ -1,0 +1,10 @@
+{
+  "name": "create-oxide",
+  "version": "0.1.0",
+  "description": "Scaffold Oxide starters: 4 frameworks x minimal/blog/dashboard/storefront (spec §19.2). Zero dependencies.",
+  "type": "module",
+  "main": "./src/cli.ts",
+  "bin": { "create-oxide": "./src/cli.ts" },
+  "scripts": { "test": "node --test test/*.test.ts" },
+  "engines": { "node": ">=24" }
+}
