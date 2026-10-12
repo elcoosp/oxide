@@ -142,7 +142,10 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
     },
     render(input: RenderInput): ReadableStream<Uint8Array> {
       const Component = cfg.opts.componentFor(input.route)
-      if (typeof Component !== 'function') {
+      // Vue and other frameworks allow component OBJECTS (options API,
+      // defineComponent result), not just functions. Only undefined/null
+      // means "the caller has no component for this route".
+      if (Component === undefined || Component === null) {
         if (strategy === 'real') {
           return streamOf(`<!-- oxide: real SSR: no component for route ${input.route} -->`)
         }
