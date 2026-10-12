@@ -117,12 +117,14 @@ oxc_transformer = { version = "0.153.0" }
 oxc_codegen = { version = "0.153.0" }
 rolldown = { version = "1.2.13" }
 rolldown_common = { version = "1.2.13" }
-lightningcss = { version = "1.33.0", features = ["bundler", "sourcemap"] }
+lightningcss = { version = "1.0.0-alpha.72", features = ["bundler", "sourcemap"] }
 ravif = { version = "0.13.0" }
 skrifa = { version = "0.48.0" }
 read-fonts = { version = "0.45.0" }
 write-fonts = { version = "0.52.0" }
 resvg = { version = "0.48.1" }
+tiny-skia = { version = "0.12" }
+usvg = { version = "0.48.1" }
 taffy = { version = "0.14.0" }
 parley = { version = "0.11.0" }
 wasmtime = { version = "48.0.1", features = ["component-model"] }
