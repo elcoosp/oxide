@@ -1,0 +1,23 @@
+{
+  "name": "oxide-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Oxide monorepo: Rust workspace + TS packages (adapters, runtime, conformance).",
+  "type": "module",
+  "scripts": {
+    "test:react": "node --test packages/react/test/*.test.ts",
+    "test:vue": "node --test packages/vue/test/*.test.ts",
+    "test:svelte": "node --test packages/svelte/test/*.test.ts",
+    "test:solid": "node --test packages/solid/test/*.test.ts",
+    "test:oxide": "node --test packages/oxide/test/*.test.ts",
+    "test:create-oxide": "node --test packages/create-oxide/test/*.test.ts",
+    "test:conformance": "node --test conformance/test/*.test.ts",
+    "test:packages": "node --test packages/*/test/*.test.ts conformance/test/*.test.ts",
+    "test:rust": "cargo test --workspace",
+    "check:rust": "cargo check --workspace",
+    "test": "pnpm run test:rust && pnpm run test:packages"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
