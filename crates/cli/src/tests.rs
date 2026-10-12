@@ -77,9 +77,9 @@ fn manifest_fixture(routes: serde_json::Value) -> String {
 
 
 
-#[test]
+#[tokio::test]
 #[ignore]
-fn cli_render_dispatches_real_react_ssr() {
+async fn cli_render_dispatches_real_react_ssr() {
     // CLI-level E2E: run `oxide render` against a real oxide.config.mjs that
     // imports the real @oxide/react adapter. Assert the stdout HTML is the
     // output of react-dom/server, proving the full stack — clap parse →
@@ -122,11 +122,11 @@ export default {
     // run_with_writer drives the CLI in-process (no process spawn) but the
     // FrameworkHost does spawn a real Node worker.
     let root_str = e2e_dir.to_string_lossy().to_string();
-    let (code, out) = futures::executor::block_on(run_ok(&[
+    let (code, out) = run_ok(&[
         "oxide", "render", "routes/index",
         "--root", &root_str,
         "--data", r#"{"name":"CLI"}"#,
-    ]));
+    ]).await;
     assert_eq!(code, 0, "oxide render exit code; output:\n{out}");
     assert!(
         out.starts_with("<!doctype html>"),
