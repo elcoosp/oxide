@@ -1,7 +1,7 @@
 {
   "name": "@oxide/react",
   "version": "0.1.0",
-  "description": "React adapter for Oxide: manifest + render/hydrate per spec §7. Zero runtime dependencies; runs on Node 24 type stripping. Without framework deps installed the adapter renders the neutral element-tree IR itself (the real react-dom/server replaces the renderer when deps exist).",
+  "description": "React adapter for Oxide: manifest + render/hydrate per spec \u00a77. Zero runtime dependencies; runs on Node 24 type stripping. Without framework deps installed the adapter renders the neutral element-tree IR itself (the real react-dom/server replaces the renderer when deps exist).",
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
@@ -22,5 +22,23 @@
     "adapter",
     "ssr"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0"
+  }
 }
