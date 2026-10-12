@@ -4503,6 +4503,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "futures",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
