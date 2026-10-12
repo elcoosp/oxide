@@ -1,5 +1,6 @@
 // @oxide/solid — `createRealAdapter` (spec §7): a FrameworkAdapter whose
-// `render()` dispatches to the REAL `solid-js/web` renderer for any route
+// `render()` dispatches to the REAL `@solidjs/web` renderer (Solid 2.0;
+// falls back to `solid-js/web` for Solid 1.x) for any route
 // the caller resolves a Solid component for. The default adapter
 // (./index.ts) remains the neutral-IR renderer that drives the §22
 // conformance suite; this factory is the production path.
