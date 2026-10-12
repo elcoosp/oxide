@@ -7,6 +7,7 @@ license.workspace = true
 description = "clap entry, commands (spec 19)"
 
 [dependencies]
+futures = { workspace = true, features = ["executor"] }
 oxide-diagnostics = { workspace = true }
 oxide-config = { workspace = true }
 oxide-router = { workspace = true }
