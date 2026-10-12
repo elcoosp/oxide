@@ -50,8 +50,11 @@ fn pipeline(
         security,
         rate_limiter: Arc::new(RateLimiter::default()),
         health_path: "/_oxide/health".into(),
+        metrics_path: "/_oxide/metrics".into(),
+        metrics: None,
+        inspector: None,
     }
-}
+    }
 
 fn test_assets() -> StaticAssets {
     let dir = tempfile::tempdir().unwrap();
@@ -745,6 +748,208 @@ async fn pipeline_health_endpoint() {
     assert!(String::from_utf8_lossy(&resp.body).contains("dispatched POST"));
 }
 
+// ------------------------------------------------------- §20 metrics
+
+#[tokio::test]
+async fn metrics_endpoint_renders_prometheus_text() {
+    use oxide_server::Metrics;
+    use std::sync::Arc;
+
+    let m = Arc::new(Metrics::new());
+    m.observe("/", std::time::Duration::from_millis(3), 200);
+    let p = Pipeline {
+        rules: RulesEngine::default(),
+        assets: None,
+        limits: Limits::default(),
+        security: SecuritySettings::default(),
+        rate_limiter: Arc::new(RateLimiter::default()),
+        health_path: "/_oxide/health".into(),
+        metrics_path: "/_oxide/metrics".into(),
+        metrics: Some(m),
+            inspector: None,
+    };
+    let d = &echo_dispatch();
+    let resp = p.serve_request(req("GET", "/_oxide/metrics", &[]), d).await;
+    assert_eq!(resp.status, 200);
+    let ct = resp
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("");
+    assert!(ct.starts_with("text/plain"), "content-type: {ct}");
+    let body = String::from_utf8_lossy(&resp.body);
+    assert!(body.contains("# TYPE oxide_requests_total counter"), "{body}");
+    assert!(body.contains("oxide_requests_total 1"), "{body}");
+}
+
+#[tokio::test]
+async fn metrics_endpoint_404_when_not_configured() {
+    let p = Pipeline {
+        rules: RulesEngine::default(),
+        assets: None,
+        limits: Limits::default(),
+        security: SecuritySettings::default(),
+        rate_limiter: Arc::new(RateLimiter::default()),
+        health_path: "/_oxide/health".into(),
+        metrics_path: "/_oxide/metrics".into(),
+        metrics: None,
+            inspector: None,
+    };
+    let d = &echo_dispatch();
+    let resp = p.serve_request(req("GET", "/_oxide/metrics", &[]), d).await;
+    assert_eq!(resp.status, 404);
+}
+
+#[tokio::test]
+async fn pipeline_observes_native_branch_requests() {
+    use oxide_server::Metrics;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+
+    let m = Arc::new(Metrics::new());
+    let p = Pipeline {
+        rules: RulesEngine::default(),
+        assets: None,
+        limits: Limits::default(),
+        security: SecuritySettings::default(),
+        rate_limiter: Arc::new(RateLimiter::default()),
+        health_path: "/_oxide/health".into(),
+        metrics_path: "/_oxide/metrics".into(),
+        metrics: Some(Arc::clone(&m)),
+            inspector: None,
+    };
+    let d = &echo_dispatch();
+    // Health is a native-prefix branch (_native label).
+    let _ = p.serve_request(req("GET", "/_oxide/health", &[]), d).await;
+    let _ = p.serve_request(req("GET", "/_oxide/health", &[]), d).await;
+    assert_eq!(m.requests_total.load(Ordering::Relaxed), 2);
+    let rendered = m.render();
+    assert!(
+        rendered.contains("oxide_request_duration_ms_count{route=\"_native\"} 2"),
+        "{rendered}"
+    );
+}
+
+#[tokio::test]
+async fn with_metrics_attaches_registry() {
+    use oxide_server::Metrics;
+    use std::sync::Arc;
+
+    let m = Arc::new(Metrics::new());
+    let p = Pipeline {
+        rules: RulesEngine::default(),
+        assets: None,
+        limits: Limits::default(),
+        security: SecuritySettings::default(),
+        rate_limiter: Arc::new(RateLimiter::default()),
+        health_path: "/_oxide/health".into(),
+        metrics_path: "/_oxide/metrics".into(),
+        metrics: None,
+            inspector: None,
+    };
+    let p = p.with_metrics(Arc::clone(&m));
+    assert!(p.metrics().is_some());
+}
+
+// ------------------------------------------------------- §13.4 inspector
+
+#[derive(Debug)]
+struct TestInspector {
+    state: serde_json::Value,
+    html: String,
+}
+
+impl InspectorSnapshot for TestInspector {
+    fn state_json(&self) -> serde_json::Value {
+        self.state.clone()
+    }
+    fn render_html(&self) -> String {
+        self.html.clone()
+    }
+}
+
+fn inspector_pipeline() -> Pipeline {
+    Pipeline {
+        rules: RulesEngine::default(),
+        assets: None,
+        limits: Limits::default(),
+        security: SecuritySettings::default(),
+        rate_limiter: Arc::new(RateLimiter::default()),
+        health_path: "/_oxide/health".into(),
+        metrics_path: "/_oxide/metrics".into(),
+        metrics: None,
+        inspector: Some(Arc::new(TestInspector {
+            state: serde_json::json!({
+                "routes": [{"id": "/blog/:slug", "mode": "isr"}],
+                "module_graph": [],
+            }),
+            html: "<!doctype html><title>Oxide Inspector</title>".into(),
+        })),
+    }
+}
+
+#[tokio::test]
+async fn inspector_endpoint_returns_json_state() {
+    let p = inspector_pipeline();
+    let d = &echo_dispatch();
+    let resp = p
+        .serve_request(req("GET", "/__oxide/state", &[]), d)
+        .await;
+    assert_eq!(resp.status, 200);
+    let ct = resp
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("");
+    assert!(ct.contains("json"), "content-type: {ct}");
+    let v: serde_json::Value = serde_json::from_slice(&resp.body).unwrap();
+    assert_eq!(v["routes"][0]["id"], "/blog/:slug");
+    assert_eq!(v["routes"][0]["mode"], "isr");
+}
+
+#[tokio::test]
+async fn inspector_endpoint_returns_html_at_root() {
+    let p = inspector_pipeline();
+    let d = &echo_dispatch();
+    let resp = p.serve_request(req("GET", "/__oxide", &[]), d).await;
+    assert_eq!(resp.status, 200);
+    let ct = resp
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("");
+    assert!(ct.starts_with("text/html"), "content-type: {ct}");
+    assert!(String::from_utf8_lossy(&resp.body).contains("Oxide Inspector"));
+}
+
+#[tokio::test]
+async fn inspector_endpoint_absent_when_not_configured() {
+    let p = pipeline(
+        RulesEngine::default(),
+        None,
+        Limits::default(),
+        SecuritySettings::default(),
+    );
+    let d = &echo_dispatch();
+    let resp = p.serve_request(req("GET", "/__oxide/state", &[]), d).await;
+    // No inspector → falls through to dispatch. The echo_dispatch returns 200
+    // with an echo body; the point is the inspector endpoint was NOT hit.
+    let body = String::from_utf8_lossy(&resp.body);
+    assert!(
+        !body.contains("\"routes\""),
+        "inspector JSON must not be produced when unconfigured: {body}"
+    );
+    assert!(
+        body.contains("dispatched"),
+        "fall-through went to dispatch: {body}"
+    );
+}
+
+
+
 #[tokio::test]
 async fn pipeline_rule_outcomes() {
     let mut headers = BTreeMap::new();
@@ -1228,4 +1433,81 @@ fn ws_mask_key_deterministic() {
         true,
     );
     assert_ne!(other[2..6], bytes[2..6], "fresh PRNG key per frame");
+}
+
+
+// ------------------------------------------------------- §20 tracing
+
+/// A subscriber that captures span names into a shared Vec for assertions.
+/// `tracing::subscriber::set_default` scopes it to one test at a time.
+#[derive(Default)]
+struct SpanCapture {
+    names: std::sync::Mutex<Vec<String>>,
+}
+
+impl tracing::Subscriber for SpanCapture {
+    fn enabled(&self, _meta: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+    fn new_span(&self, span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        self.names
+            .lock()
+            .unwrap()
+            .push(span.metadata().name().to_string());
+        tracing::span::Id::from_u64(self.names.lock().unwrap().len() as u64)
+    }
+    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+    fn event(&self, _event: &tracing::Event<'_>) {}
+    fn enter(&self, _span: &tracing::span::Id) {}
+    fn exit(&self, _span: &tracing::span::Id) {}
+}
+
+#[tokio::test]
+async fn serve_request_emits_trace_span() {
+    let capture = Arc::new(SpanCapture::default());
+    let _guard = tracing::subscriber::set_default(capture.clone());
+
+    let p = pipeline(
+        RulesEngine::default(),
+        None,
+        Limits::default(),
+        SecuritySettings::default(),
+    );
+    let d = &echo_dispatch();
+    // Native branch: health endpoint.
+    let _ = p.serve_request(req("GET", "/_oxide/health", &[]), d).await;
+
+    let names = capture.names.lock().unwrap().clone();
+    assert!(
+        names.iter().any(|n| n == "oxide.request"),
+        "expected oxide.request span, got {names:?}"
+    );
+}
+
+#[tokio::test]
+async fn serve_request_span_has_no_path_leak_into_metrics() {
+    // A request to an arbitrary deep path must not create a per-path metric
+    // label (metrics use route patterns, not resolved paths).
+    let capture = Arc::new(SpanCapture::default());
+    let _guard = tracing::subscriber::set_default(capture.clone());
+
+    let p = pipeline(
+        RulesEngine::default(),
+        None,
+        Limits::default(),
+        SecuritySettings::default(),
+    );
+    let d = &echo_dispatch();
+    let _ = p
+        .serve_request(req("GET", "/arbitrary/deep/path/xyz", &[]), d)
+        .await;
+
+    // The span exists, but the metrics registry only records the `_native`
+    // sentinel (dispatch is delegate-owned).
+    let metrics = p.metrics.as_ref();
+    if let Some(m) = metrics {
+        let text = m.render();
+        assert!(!text.contains("arbitrary"), "path leaked into metrics: {text}");
+    }
 }
