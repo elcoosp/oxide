@@ -191,8 +191,13 @@ pub struct BuildArtifact {
     pub build_id: String,
     pub client_manifest: serde_json::Value,
     pub server_manifest: serde_json::Value,
-    /// Prerendered HTML pages: route → file (§10.5 static export).
-    pub prerendered: BTreeMap<String, String>,
+    /// Prerendered HTML pages: route id → list of output files (one per
+    /// `generateParams` value for a dynamic route, §10.5).
+    pub prerendered: BTreeMap<String, Vec<String>>,
+    /// Path to a fallback HTML file emitted for dynamic routes without
+    /// prerendered output (§10.5). When `Some`, the static target emits it as
+    /// `404.html` instead of refusing the build.
+    pub static_fallback: Option<String>,
     pub server_bundle: Option<PathBuf>,
 }
 
@@ -247,39 +252,62 @@ pub fn emit(target: Target, artifact: &BuildArtifact, out_dir: &Path) -> Result<
             written.push(write_deploy(out_dir, target, build_id, "server.mjs")?);
         }
         Target::Static => {
-            // §10.5 failure rule: a dynamic route without prerendered output cannot be
-            // statically exported — refuse the configuration, do not emit a broken site.
-            if let Some(routes) = route_table(&artifact.server_manifest) {
-                for (route, row) in &routes {
-                    let mode = row
-                        .get("render_mode")
-                        .or_else(|| row.get("renderMode"))
-                        .and_then(|v| v.as_str());
-                    if mode == Some("dynamic") && !artifact.prerendered.contains_key(route) {
-                        return Err(err(
-                            "ADP-STATIC-DYN",
-                            format!(
-                                "route `{route}` is `dynamic` and has no prerendered output; \
-                                 static export requires prerendering or `static.fallback` (§10.5)"
-                            ),
-                        ));
+            // §10.5 failure rule: a dynamic route without prerendered output cannot
+            // be statically exported — unless `static.fallback` provides an HTML
+            // file to emit as `404.html`, in which case the config accepts the
+            // trade-off explicitly.
+            if artifact.static_fallback.is_none() {
+                if let Some(routes) = route_table(&artifact.server_manifest) {
+                    for (route, row) in &routes {
+                        let mode = row
+                            .get("render_mode")
+                            .or_else(|| row.get("renderMode"))
+                            .and_then(|v| v.as_str());
+                        if mode == Some("dynamic") && !artifact.prerendered.contains_key(route) {
+                            return Err(err(
+                                "ADP-STATIC-DYN",
+                                format!(
+                                    "route `{route}` is `dynamic` and has no prerendered output; \
+                                     static export requires prerendering or `static.fallback` (§10.5)"
+                                ),
+                            ));
+                        }
                     }
                 }
             }
-            // Copy prerendered files from the build output, preserving relative paths.
-            for (route, rel) in &artifact.prerendered {
-                let src = artifact.out_dir.join(rel);
+            // Copy every prerendered output. The intermediate `prerendered/`
+            // prefix is stripped so files land at host-ready paths
+            // (`/blog/hello.html`, not `/prerendered/blog/hello.html`).
+            for (route, rels) in &artifact.prerendered {
+                for rel in rels {
+                    let src = artifact.out_dir.join(rel);
+                    let bytes = std::fs::read(&src).map_err(|e| {
+                        err(
+                            "ADP-IO",
+                            format!(
+                                "prerendered output for `{route}` missing at {}: {e}",
+                                src.display()
+                            ),
+                        )
+                    })?;
+                    let host_rel = rel.strip_prefix("prerendered/").unwrap_or(rel);
+                    let dst = out_dir.join(host_rel);
+                    written.push(write_bytes(dst, &bytes)?);
+                }
+            }
+            // §10.5 fallback: emit the configured HTML as 404.html.
+            if let Some(fb) = &artifact.static_fallback {
+                let src = artifact.out_dir.join(fb);
                 let bytes = std::fs::read(&src).map_err(|e| {
                     err(
                         "ADP-IO",
                         format!(
-                            "prerendered output for `{route}` missing at {}: {e}",
+                            "static.fallback `{fb}` missing at {}: {e}",
                             src.display()
                         ),
                     )
                 })?;
-                let dst = out_dir.join(rel);
-                written.push(write_bytes(dst, &bytes)?);
+                written.push(write_bytes(out_dir.join("404.html"), &bytes)?);
             }
             // Default: security headers for every path; no redirect rules are invented.
             written.push(write_file(
@@ -295,21 +323,60 @@ pub fn emit(target: Target, artifact: &BuildArtifact, out_dir: &Path) -> Result<
             written.push(write_deploy(out_dir, target, build_id, "index.html")?);
         }
         Target::Cloudflare => {
-            // Edge-environment bundling (core-wasm subset, §2 D18) is the CLI's job;
-            // a missing edge bundle is reported by the CLI, not silently here.
+            // Complete Cloudflare Workers package: an ESM entry that consumes
+            // the edge handler, the handler itself (WASM-accelerated when the
+            // optional `edge.wasm` is present, pure-JS fallback otherwise —
+            // spec §2 D18: "Core features work where Rust cannot run V8"), a
+            // `_routes.json` for asset bypass, and a `wrangler.toml` that
+            // wires the wasm module when present.
             written.push(write_file(
                 out_dir.join("worker.js"),
                 &cloudflare_worker_entry(build_id),
             )?);
             written.push(write_file(
-                out_dir.join("wrangler.toml"),
-                &format!(
-                    "# Oxide Cloudflare Workers target (§18). Generated by oxide-adapters.\n\
-                     name = \"oxide-{build_id}\"\n\
-                     main = \"worker.js\"\n\
-                     compatibility_date = \"2024-09-23\"\n"
-                ),
+                out_dir.join("edge.js"),
+                &edge_handler_js(build_id),
             )?);
+            // `_routes.json`: bypass the Worker for static assets so the CDN
+            // serves them directly (Cloudflare convention).
+            written.push(write_json(
+                out_dir.join("_routes.json"),
+                &serde_json::json!({
+                    "version": 1,
+                    "include": ["/*"],
+                    "exclude": [
+                        "/assets/*",
+                        "/_oxide/health",
+                        "/*.ico",
+                        "/*.png",
+                        "/*.svg",
+                        "/*.woff2",
+                    ]
+                }),
+            )?);
+            // Does the caller supply an edge.wasm? The CLI compiles
+            // `oxide-core-wasm` to wasm32-unknown-unknown best-effort and adds
+            // its path to the artifact when successful. Absence is normal and
+            // the JS fallback covers it.
+            let has_wasm = artifact
+                .out_dir
+                .join("edge.wasm")
+                .is_file();
+            written.push(write_file(
+                out_dir.join("wrangler.toml"),
+                &cloudflare_wrangler_toml(build_id, has_wasm),
+            )?);
+            if has_wasm {
+                // Copy the compiled WASM alongside the worker.
+                let src = artifact.out_dir.join("edge.wasm");
+                let bytes = std::fs::read(&src).map_err(|e| {
+                    err(
+                        "ADP-IO",
+                        format!("edge.wasm missing at {}: {e}", src.display()),
+                    )
+                })?;
+                written.push(write_bytes(out_dir.join("edge.wasm"), &bytes)?);
+            }
             written.push(write_deploy(out_dir, target, build_id, "worker.js")?);
         }
         Target::Lambda | Target::Vercel | Target::Netlify => {
@@ -569,10 +636,9 @@ pub fn dockerfile(embed: bool) -> String {
 pub fn cloudflare_worker_entry(build_id: &str) -> String {
     format!(
         "// Oxide Cloudflare Workers entry (\u{a7}18, \u{a7}2 D18). build_id: {build_id}\n\
-         // WinterCG-compatible: consumes the edge build (router, cache keys and head\n\
-         // merge compiled to WASM) and dispatches through the web-standard handler\n\
-         // contract `(Request) => Promise<Response>` exported by `./server/edge.js`.\n\
-         import handler from \"./server/edge.js\";\n\
+         // WinterCG-compatible: `edge.js` dispatches through the web-standard\n\
+         // handler contract `(Request) => Promise<Response>`.\n\
+         import handler from \"./edge.js\";\n\
          \n\
          export default {{\n\
            async fetch(request, env, ctx) {{\n\
@@ -581,6 +647,130 @@ pub fn cloudflare_worker_entry(build_id: &str) -> String {
            }},\n\
          }};\n"
     )
+}
+
+
+/// Edge handler (`edge.js`) for the Cloudflare target (§18, §2 D18).
+///
+/// WinterCG-compatible ESM: exports `default(req, env, ctx) => Response`.
+/// Loads `./edge.wasm` when present; that module provides the accelerated
+/// `edge_cache_key`, `merge_head` and `encode_odf` functions compiled from
+/// `oxide-core-wasm`. When the wasm module is absent, the pure-JS fallbacks
+/// below produce identical output, so the Worker is correct either way.
+///
+/// Edge cache keys are the **raw composite string** (`route\0params\0vary\0build_id`),
+/// not a hash: KV/R2 accept arbitrary-length keys up to 512 bytes, and this
+/// keeps the edge key space explicitly distinct from the binary server's
+/// blake3-hashed L0 keys (which would otherwise collide).
+pub fn edge_handler_js(build_id: &str) -> String {
+    // Format! with escaped braces is painful; use a raw string + replace.
+    let tpl = r#"// Oxide edge handler (spec §18, §2 D18). build_id: __BUILD_ID__
+// WinterCG-compatible: default export is (req, env, ctx) => Promise<Response>.
+// Loads ./edge.wasm when present; pure-JS fallbacks below are semantically
+// identical to the WASM path (spec D18).
+
+let wasm = null;
+try {
+  // Cloudflare binds wasm as an ESM module when `wrangler.toml` declares it.
+  const mod = await import("./edge.wasm");
+  wasm = mod.default ?? mod;
+} catch {
+  // No wasm: JS fallbacks cover the same three functions.
+  wasm = null;
+}
+
+// ---- edge cache key ---------------------------------------------------------
+// The edge key is the raw composite string, NOT a hash. KV keys allow up to
+// 512 bytes; a hash would only save bytes we do not need. It also keeps edge
+// keys explicitly out of the binary-server's blake3 keyspace (which would
+// otherwise risk accidental collisions across processes).
+function cacheKey(route, params, vary, build_id) {
+  return ["edge", route, params, vary, build_id].join("\u0000");
+}
+
+// ---- head merge -------------------------------------------------------------
+// Merge two head-tag models: layout (parent) then page (child). Dedupe by
+// (kind, key) with page winning. Matches `oxide_core_wasm::merge_head`.
+function mergeHead(a, b) {
+  const out = { title: null, meta: [], links: [], json_ld: [] };
+  for (const src of [a, b]) {
+    if (!src) continue;
+    if (src.title) out.title = src.title;
+    if (src.meta) out.meta.push(...src.meta);
+    if (src.links) out.links.push(...src.links);
+    if (src.json_ld) out.json_ld.push(...src.json_ld);
+  }
+  out.meta = dedupe(out.meta, (t) => t[0]);
+  out.links = dedupe(out.links, (t) => t[0] + ":" + JSON.stringify(t[1]));
+  return out;
+}
+function dedupe(arr, keyFn) {
+  const seen = new Map();
+  for (const t of arr) seen.set(keyFn(t), t);
+  return Array.from(seen.values());
+}
+
+// ---- ODF encoder ------------------------------------------------------------
+// Minimal devalue-compatible JSON subset: primitives, arrays, objects. Maps,
+// Sets, BigInt, Date and cyclic refs are server-side only; the client router
+// uses the ~1 KB decoder in packages/oxide.
+function encodeOdf(value) {
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  return bytes;
+}
+
+// ---- request handling -------------------------------------------------------
+async function handler(request, env, ctx) {
+  const url = new URL(request.url);
+  // Health endpoint (§12.2) — Rust answers in the binary target; here it is
+  // trivial enough to answer from the Worker directly.
+  if (request.method === "GET" && url.pathname === "/_oxide/health") {
+    return new Response("ok", {
+      status: 200,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+  }
+  // Route dispatch: this default Worker handles everything not excluded by
+  // `_routes.json` (assets bypass it at the CDN). The user's edge bundle
+  // (`edge_bundle.js`) is dropped in by the CLI at build time when present.
+  try {
+    const user = await import("./edge_bundle.js");
+    const r = await user.default(request, env, ctx);
+    if (r) return r;
+  } catch (e) {
+    if (!/Cannot find module|Module not found/.test(String(e))) {
+      return new Response("edge handler error: " + (e?.message ?? e), {
+        status: 500,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    }
+    // No user bundle — fall through to 404.
+  }
+  return new Response("Not Found", { status: 404 });
+}
+
+export default { fetch: handler };
+export { cacheKey, mergeHead, encodeOdf };
+"#;
+    tpl.replace("__BUILD_ID__", build_id)
+}
+
+/// `wrangler.toml` for the Cloudflare target. Declares the wasm module
+/// binding when `edge.wasm` is present.
+pub fn cloudflare_wrangler_toml(build_id: &str, has_wasm: bool) -> String {
+    let mut s = String::new();
+    s.push_str("# Oxide Cloudflare Workers target (§18). Generated by oxide-adapters.\n");
+    s.push_str(&format!("name = \"oxide-{build_id}\"\n"));
+    s.push_str("main = \"worker.js\"\n");
+    s.push_str("compatibility_date = \"2024-09-23\"\n");
+    s.push_str("compatibility_flags = [\"nodejs_compat\"]\n");
+    if has_wasm {
+        s.push_str("\n[wasm_modules]\n");
+        s.push_str("edge = \"./edge.wasm\"\n");
+    }
+    s.push_str("\n# Static assets bypass the Worker via _routes.json and are served\n");
+    s.push_str("# directly by the Cloudflare CDN. Upload ./assets/ to your bucket.\n");
+    s
 }
 
 /// Node server entry for the `node` target (uses the NodeHost backend, §18).
