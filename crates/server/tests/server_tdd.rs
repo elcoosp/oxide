@@ -1,0 +1,1229 @@
+//! TDD suite for oxide-server (spec §12, §17, §9.6).
+//!
+//! Written BEFORE the implementation; every pub fn of the crate is exercised.
+
+use bytes::Bytes;
+use futures::future::BoxFuture;
+use oxide_router::{NativeRule, RateLimit, RulesEngine};
+use oxide_server::*;
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+// ------------------------------------------------------------------ helpers
+
+fn req(method: &str, url: &str, headers: &[(&str, &str)]) -> OxideRequest {
+    OxideRequest {
+        method: method.into(),
+        url: url.into(),
+        headers: headers
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        body: Bytes::new(),
+        request_id: "req-test".into(),
+    }
+}
+
+fn rule(source: &str) -> NativeRule {
+    NativeRule {
+        source: source.into(),
+        destination: None,
+        status: None,
+        rule_type: None,
+        headers: None,
+        basic_auth: None,
+        rate_limit: None,
+    }
+}
+
+fn pipeline(
+    rules: RulesEngine,
+    assets: Option<StaticAssets>,
+    limits: Limits,
+    security: SecuritySettings,
+) -> Pipeline {
+    Pipeline {
+        rules,
+        assets,
+        limits,
+        security,
+        rate_limiter: Arc::new(RateLimiter::default()),
+        health_path: "/_oxide/health".into(),
+    }
+}
+
+fn test_assets() -> StaticAssets {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("app.js"), b"console.log(1)").unwrap();
+    std::fs::write(dir.path().join("app.js.zst"), b"ZSTD-APP").unwrap();
+    std::fs::write(dir.path().join("app.js.br"), b"BR-APP").unwrap();
+    std::fs::create_dir_all(dir.path().join("css")).unwrap();
+    std::fs::write(dir.path().join("css/site.css"), b"body{}").unwrap();
+    std::fs::write(dir.path().join("css/site.css.gz"), b"GZ-CSS").unwrap();
+    // keep the tempdir alive for the process lifetime of the test
+    let path = dir.path().to_path_buf();
+    std::mem::forget(dir);
+    StaticAssets::scan(path).unwrap()
+}
+
+fn echo_dispatch() -> impl Fn(OxideRequest) -> BoxFuture<'static, OxideResponse> {
+    |r: OxideRequest| {
+        Box::pin(async move {
+            let body = format!("dispatched {} {}", r.method, r.url);
+            if !r.body.is_empty() {
+                OxideResponse::html(
+                    200,
+                    format!("{body} body={}", String::from_utf8_lossy(&r.body)),
+                )
+            } else {
+                OxideResponse::html(200, body)
+            }
+        })
+    }
+}
+
+// ------------------------------------------------------------------ StaticAssets::scan
+
+#[test]
+fn scan_indexes_files_recursively() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("a/b")).unwrap();
+    std::fs::write(dir.path().join("a/b/page.html"), b"<h1>x</h1>").unwrap();
+    let assets = StaticAssets::scan(dir.path()).unwrap();
+    let e = assets.index.get("/a/b/page.html").unwrap();
+    assert_eq!(e.etag.len(), 16);
+    assert_eq!(
+        blake3::hash(b"<h1>x</h1>").to_hex()[..16].to_string(),
+        e.etag
+    );
+    assert_eq!(e.size, 10);
+    assert!(e.mtime > 1_600_000_000);
+    assert_eq!(e.content_type, "text/html; charset=utf-8");
+    assert_eq!(assets.root, dir.path());
+}
+
+#[test]
+fn scan_content_type_map() {
+    let dir = tempfile::tempdir().unwrap();
+    for name in [
+        "a.js", "b.mjs", "c.json", "d.png", "e.jpg", "f.svg", "g.webp", "h.avif", "i.woff2",
+        "j.txt", "k.wasm", "l.map", "m.bin",
+    ] {
+        std::fs::write(dir.path().join(name), b"x").unwrap();
+    }
+    let assets = StaticAssets::scan(dir.path()).unwrap();
+    let ct = |p: &str| assets.index.get(p).unwrap().content_type;
+    assert_eq!(ct("/a.js"), "text/javascript; charset=utf-8");
+    assert_eq!(ct("/b.mjs"), "text/javascript; charset=utf-8");
+    assert_eq!(ct("/c.json"), "application/json");
+    assert_eq!(ct("/d.png"), "image/png");
+    assert_eq!(ct("/e.jpg"), "image/jpeg");
+    assert_eq!(ct("/f.svg"), "image/svg+xml");
+    assert_eq!(ct("/g.webp"), "image/webp");
+    assert_eq!(ct("/h.avif"), "image/avif");
+    assert_eq!(ct("/i.woff2"), "font/woff2");
+    assert_eq!(ct("/j.txt"), "text/plain; charset=utf-8");
+    assert_eq!(ct("/k.wasm"), "application/wasm");
+    assert_eq!(ct("/l.map"), "application/json");
+    assert_eq!(ct("/m.bin"), "application/octet-stream");
+}
+
+#[test]
+fn scan_skips_hidden_and_maps_precompressed() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join(".secret"), b"nope").unwrap();
+    std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+    std::fs::write(dir.path().join(".git/x"), b"nope").unwrap();
+    std::fs::write(dir.path().join("app.js"), b"1").unwrap();
+    std::fs::write(dir.path().join("app.js.zst"), b"z").unwrap();
+    std::fs::write(dir.path().join("app.js.br"), b"b").unwrap();
+    std::fs::write(dir.path().join("app.js.gz"), b"g").unwrap();
+    let assets = StaticAssets::scan(dir.path()).unwrap();
+    assert!(!assets.index.contains_key("/.secret"));
+    assert!(!assets.index.contains_key("/.git/x"));
+    let pre = &assets.index.get("/app.js").unwrap().precompressed;
+    assert_eq!(pre.get("zstd").unwrap().file_name().unwrap(), "app.js.zst");
+    assert_eq!(pre.get("br").unwrap().file_name().unwrap(), "app.js.br");
+    assert_eq!(pre.get("gzip").unwrap().file_name().unwrap(), "app.js.gz");
+}
+
+#[test]
+fn scan_missing_root_is_error() {
+    let e = StaticAssets::scan("/definitely/not/here/oxide").unwrap_err();
+    assert_eq!(e.0.code, "SRV-ASSET");
+}
+
+// ------------------------------------------------------------------ StaticAssets::serve
+
+#[test]
+fn serve_200_with_headers() {
+    let assets = test_assets();
+    let resp = assets
+        .serve(&req("GET", "/app.js", &[]), "/app.js")
+        .unwrap();
+    assert_eq!(resp.status, 200);
+    assert_eq!(
+        resp.header("content-type"),
+        Some("text/javascript; charset=utf-8")
+    );
+    let expected_etag = blake3::hash(b"console.log(1)").to_hex()[..16].to_string();
+    assert_eq!(
+        resp.header("etag"),
+        Some(format!("\"{expected_etag}\"").as_str())
+    );
+    assert_eq!(
+        resp.header("cache-control"),
+        Some("public, max-age=31536000, immutable")
+    );
+    assert_eq!(resp.header("vary"), Some("Accept-Encoding"));
+    assert_eq!(resp.body.as_ref(), b"console.log(1)");
+}
+
+#[test]
+fn serve_304_on_if_none_match() {
+    let assets = test_assets();
+    let etag = assets.index.get("/app.js").unwrap().etag.clone();
+    let r = req(
+        "GET",
+        "/app.js",
+        &[("if-none-match", &format!("\"{etag}\""))],
+    );
+    let resp = assets.serve(&r, "/app.js").unwrap();
+    assert_eq!(resp.status, 304);
+    assert!(resp.body.is_empty());
+    assert_eq!(resp.header("etag"), Some(format!("\"{etag}\"").as_str()));
+    assert_eq!(
+        resp.header("cache-control"),
+        Some("public, max-age=31536000, immutable")
+    );
+    // weak + list + star forms also match
+    for inm in [
+        format!("W/\"{etag}\""),
+        format!("\"nope\", \"{etag}\""),
+        "*".to_string(),
+    ] {
+        let r = req("GET", "/app.js", &[("if-none-match", &inm)]);
+        assert_eq!(assets.serve(&r, "/app.js").unwrap().status, 304, "{inm}");
+    }
+}
+
+#[test]
+fn serve_negotiates_precompressed() {
+    let assets = test_assets();
+    let r = req("GET", "/app.js", &[("accept-encoding", "zstd")]);
+    let resp = assets.serve(&r, "/app.js").unwrap();
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.header("content-encoding"), Some("zstd"));
+    assert_eq!(resp.body.as_ref(), b"ZSTD-APP");
+    assert_eq!(resp.header("content-length"), Some("8"));
+
+    let r = req("GET", "/css/site.css", &[("accept-encoding", "gzip, br")]);
+    let resp = assets.serve(&r, "/css/site.css").unwrap();
+    assert_eq!(resp.header("content-encoding"), Some("gzip"));
+    assert_eq!(resp.body.as_ref(), b"GZ-CSS");
+}
+
+#[test]
+fn serve_no_compression_without_accept_encoding() {
+    let assets = test_assets();
+    let resp = assets
+        .serve(&req("GET", "/app.js", &[]), "/app.js")
+        .unwrap();
+    assert_eq!(resp.header("content-encoding"), None);
+    assert_eq!(resp.body.as_ref(), b"console.log(1)");
+}
+
+#[test]
+fn serve_range_variants() {
+    let assets = test_assets();
+    let r = req("GET", "/app.js", &[("range", "bytes=0-6")]);
+    let resp = assets.serve(&r, "/app.js").unwrap();
+    assert_eq!(resp.status, 206);
+    assert_eq!(resp.body.as_ref(), b"console");
+    assert_eq!(resp.header("content-range"), Some("bytes 0-6/14"));
+
+    let r = req("GET", "/app.js", &[("range", "bytes=7-")]);
+    let resp = assets.serve(&r, "/app.js").unwrap();
+    assert_eq!(resp.status, 206);
+    assert_eq!(resp.body.as_ref(), b".log(1)");
+    assert_eq!(resp.header("content-range"), Some("bytes 7-13/14"));
+
+    let r = req("GET", "/app.js", &[("range", "bytes=-4")]);
+    let resp = assets.serve(&r, "/app.js").unwrap();
+    assert_eq!(resp.status, 206);
+    assert_eq!(resp.body.as_ref(), b"g(1)");
+    assert_eq!(resp.header("content-range"), Some("bytes 10-13/14"));
+}
+
+#[test]
+fn serve_invalid_range_is_416() {
+    let assets = test_assets();
+    for spec in [
+        "bytes=99-100",
+        "bytes=9-2",
+        "bytes=abc",
+        "bytes=-0",
+        "bytes=0-1,3-4",
+    ] {
+        let r = req("GET", "/app.js", &[("range", spec)]);
+        let resp = assets.serve(&r, "/app.js").unwrap();
+        assert_eq!(resp.status, 416, "{spec}");
+        assert_eq!(resp.header("content-range"), Some("bytes */14"), "{spec}");
+    }
+}
+
+#[test]
+fn serve_range_on_compressed_variant_serves_200_full() {
+    // Documented simplification (§12.1 step 3): no partial decode of compressed
+    // variants — the full negotiated representation is served with 200.
+    let assets = test_assets();
+    let r = req(
+        "GET",
+        "/app.js",
+        &[("accept-encoding", "zstd"), ("range", "bytes=0-2")],
+    );
+    let resp = assets.serve(&r, "/app.js").unwrap();
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.header("content-encoding"), Some("zstd"));
+    assert_eq!(resp.body.as_ref(), b"ZSTD-APP");
+    assert_eq!(resp.header("content-range"), None);
+}
+
+#[test]
+fn serve_head_returns_headers_only() {
+    let assets = test_assets();
+    let resp = assets
+        .serve(&req("HEAD", "/app.js", &[]), "/app.js")
+        .unwrap();
+    assert_eq!(resp.status, 200);
+    assert!(resp.body.is_empty());
+    assert_eq!(resp.header("content-length"), Some("14"));
+    assert_eq!(
+        resp.header("content-type"),
+        Some("text/javascript; charset=utf-8")
+    );
+}
+
+#[test]
+fn serve_miss_returns_none() {
+    let assets = test_assets();
+    assert!(assets
+        .serve(&req("GET", "/nope.js", &[]), "/nope.js")
+        .is_none());
+}
+
+// ------------------------------------------------------------------ negotiate_encoding
+
+#[test]
+fn negotiate_encoding_table() {
+    let all = ["zstd", "br", "gzip"];
+    let cases: &[(&str, &[&str], Option<&str>)] = &[
+        ("", &all, None),
+        ("identity", &all, None),
+        ("gzip", &all, Some("gzip")),
+        ("br;q=0.8, gzip", &["br", "gzip"], Some("br")),
+        ("br;q=0, gzip", &["br", "gzip"], Some("gzip")),
+        ("*", &["gzip", "zstd"], Some("zstd")),
+        ("gzip;q=0, *", &["gzip", "zstd"], Some("zstd")),
+        ("deflate", &all, None),
+        ("ZSTD", &all, Some("zstd")),
+        ("br;q=bad, gzip", &all, Some("gzip")),
+        ("zstd;q=0.001", &all, Some("zstd")),
+        ("*", &[], None),
+        ("gzip", &["zstd"], None),
+        ("gzip;q=0.5, br;q=0.9", &all, Some("br")), // br preferred by client, still lower in server order than zstd but zstd not accepted
+    ];
+    for (i, (accept, avail, expected)) in cases.iter().enumerate() {
+        assert_eq!(
+            negotiate_encoding(accept, avail).as_deref(),
+            *expected,
+            "case {i}: {accept}"
+        );
+    }
+}
+
+// ------------------------------------------------------------------ compress_body
+
+#[test]
+fn compress_body_gzip_roundtrip() {
+    let body = b"hello gzip world hello gzip world".to_vec();
+    let out = compress_body("gzip", &body, 6).unwrap();
+    let mut dec = flate2::read::GzDecoder::new(&out[..]);
+    let mut back = Vec::new();
+    std::io::Read::read_to_end(&mut dec, &mut back).unwrap();
+    assert_eq!(back, body);
+}
+
+#[test]
+fn compress_body_zstd_roundtrip_and_level_clamp() {
+    let body = vec![b'a'; 5000];
+    let out = compress_body("zstd", &body, 99).unwrap(); // clamps to 19
+    let back = zstd::stream::decode_all(&out[..]).unwrap();
+    assert_eq!(back, body);
+}
+
+#[test]
+fn compress_body_br_is_feature_flagged() {
+    let e = compress_body("br", b"x", 5).unwrap_err();
+    assert_eq!(e.0.code, "SRV-NOENC");
+    assert!(
+        e.0.message.contains("brotli"),
+        "message must name the feature flag: {}",
+        e.0.message
+    );
+}
+
+#[test]
+fn compress_body_identity_passthrough() {
+    assert_eq!(
+        compress_body("identity", b"same", 5).unwrap().as_ref(),
+        b"same"
+    );
+    assert_eq!(compress_body("", b"same", 5).unwrap().as_ref(), b"same");
+    assert!(compress_body("quantum", b"x", 5).is_err());
+}
+
+// ------------------------------------------------------------------ security headers / CSP
+
+#[test]
+fn security_headers_defaults_and_tls() {
+    let h = security_headers(false, None);
+    let get = |k: &str| h.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+    assert_eq!(get("X-Content-Type-Options"), Some("nosniff"));
+    assert_eq!(
+        get("Referrer-Policy"),
+        Some("strict-origin-when-cross-origin")
+    );
+    assert_eq!(
+        get("Permissions-Policy"),
+        Some("camera=(), microphone=(), geolocation=()")
+    );
+    assert_eq!(get("Cross-Origin-Opener-Policy"), Some("same-origin"));
+    assert_eq!(get("X-Frame-Options"), Some("DENY"));
+    assert!(get("Strict-Transport-Security").is_none());
+    assert!(get("Content-Security-Policy").is_none());
+
+    let h = security_headers(true, Some("n0nce"));
+    let get = |k: &str| h.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+    assert_eq!(get("Strict-Transport-Security"), Some("max-age=63072000"));
+    assert_eq!(
+        get("Content-Security-Policy"),
+        Some(csp_header("strict", "n0nce").as_str())
+    );
+}
+
+#[test]
+fn csp_header_modes() {
+    let strict = csp_header("strict", "abc");
+    assert!(
+        strict.contains("script-src 'self' 'nonce-abc' 'strict-dynamic'"),
+        "{strict}"
+    );
+    assert!(strict.starts_with("default-src 'self'; "), "{strict}");
+    assert!(strict.contains("style-src 'self' 'unsafe-inline'"));
+    assert!(strict.contains("object-src 'none'"));
+    assert!(strict.contains("base-uri 'self'"));
+    let hash = csp_header("hash", "abc");
+    assert!(hash.contains("script-src 'self';"), "{hash}");
+    assert!(!hash.contains("nonce"), "{hash}");
+    assert_eq!(csp_header("off", "abc"), "");
+    assert_eq!(csp_header("wat", "abc"), "");
+}
+
+// ------------------------------------------------------------------ CSRF
+
+#[test]
+fn csrf_safe_methods_and_off_mode_pass() {
+    for m in ["GET", "HEAD", "OPTIONS"] {
+        assert!(csrf_check(&req(m, "/", &[]), "origin").is_ok(), "{m}");
+    }
+    assert!(csrf_check(&req("POST", "/", &[]), "off").is_ok());
+}
+
+#[test]
+fn csrf_origin_host_comparison() {
+    let ok = req(
+        "POST",
+        "/",
+        &[
+            ("origin", "https://app.example.com"),
+            ("host", "app.example.com"),
+        ],
+    );
+    assert!(csrf_check(&ok, "origin").is_ok());
+    let ok_port = req(
+        "POST",
+        "/",
+        &[
+            ("origin", "https://app.example.com:8443"),
+            ("host", "app.example.com:8443"),
+        ],
+    );
+    assert!(csrf_check(&ok_port, "origin").is_ok());
+    let bad = req(
+        "POST",
+        "/",
+        &[
+            ("origin", "https://evil.example.net"),
+            ("host", "app.example.com"),
+        ],
+    );
+    let e = csrf_check(&bad, "origin").unwrap_err();
+    assert_eq!(e.code, "SRV-CSRF");
+    let missing_host = req("POST", "/", &[("origin", "https://app.example.com")]);
+    assert!(csrf_check(&missing_host, "origin").is_err());
+}
+
+#[test]
+fn csrf_sec_fetch_site_signals() {
+    for site in ["same-origin", "none"] {
+        let r = req(
+            "POST",
+            "/",
+            &[
+                ("sec-fetch-site", site),
+                ("host", "a.com"),
+                ("origin", "https://b.com"),
+            ],
+        );
+        assert!(csrf_check(&r, "origin").is_ok(), "{site}");
+    }
+    let cross = req(
+        "POST",
+        "/",
+        &[("sec-fetch-site", "cross-site"), ("host", "a.com")],
+    );
+    assert!(csrf_check(&cross, "origin").is_err());
+    // missing Origin on a same-origin fetch is allowed (documented fail-open)
+    let no_origin = req("POST", "/", &[("sec-fetch-site", "same-origin")]);
+    assert!(csrf_check(&no_origin, "origin").is_ok());
+    let silent = req("POST", "/", &[]);
+    assert!(csrf_check(&silent, "origin").is_ok());
+    let same_site = req(
+        "POST",
+        "/",
+        &[
+            ("sec-fetch-site", "same-site"),
+            ("origin", "https://b.com"),
+            ("host", "a.com"),
+        ],
+    );
+    assert!(csrf_check(&same_site, "origin").is_err());
+}
+
+#[test]
+fn csrf_token_double_submit() {
+    let r = req(
+        "POST",
+        "/",
+        &[
+            ("origin", "https://evil.net"),
+            ("host", "app.com"),
+            ("cookie", "oxide_csrf=tok123"),
+            ("x-oxide-csrf", "tok123"),
+        ],
+    );
+    assert!(csrf_check(&r, "token").is_ok());
+    let mismatch = req(
+        "POST",
+        "/",
+        &[
+            ("origin", "https://evil.net"),
+            ("host", "app.com"),
+            ("cookie", "oxide_csrf=tok123"),
+            ("x-oxide-csrf", "other"),
+        ],
+    );
+    assert!(csrf_check(&mismatch, "token").is_err());
+    // in origin mode the same request still fails even with matching tokens
+    assert!(csrf_check(&mismatch, "origin").is_err());
+}
+
+// ------------------------------------------------------------------ SSRF / host validation
+
+#[test]
+fn ssrf_allowed_table() {
+    let cases: &[(&str, bool)] = &[
+        ("10.0.0.5", false),
+        ("172.16.0.1", false),
+        ("172.31.255.255", false),
+        ("172.32.0.1", true),
+        ("192.168.1.1", false),
+        ("127.0.0.1", false),
+        ("169.254.169.254", false),
+        ("0.0.0.0", false),
+        ("::1", false),
+        ("fd00::1", false),
+        ("fe80::1", false),
+        ("::ffff:127.0.0.1", false),
+        ("8.8.8.8", true),
+        ("example.com", true),
+        ("localhost", false),
+        ("LOCALHOST", false),
+        ("myhost.local", false),
+        ("metadata.google.internal", false),
+        ("127.0.0.1:8080", false),
+        ("example.com:443", true),
+    ];
+    for (host, expected) in cases {
+        assert_eq!(ssrf_allowed(host, &[]), *expected, "{host}");
+    }
+    assert!(ssrf_allowed("10.0.0.5", &["10.0.0.5".to_string()]));
+    assert!(ssrf_allowed("localhost", &["localhost".to_string()]));
+    assert!(!ssrf_allowed("169.254.169.254", &["10.0.0.5".to_string()]));
+}
+
+#[test]
+fn host_allowed_rules() {
+    let empty: Vec<String> = vec![];
+    assert!(host_allowed("anything.com", &empty));
+    let list = vec!["example.com".to_string(), ".trusted.io".to_string()];
+    assert!(host_allowed("example.com", &list));
+    assert!(host_allowed("EXAMPLE.com", &list));
+    assert!(host_allowed("sub.example.com", &list) == false); // bare entry is exact-only
+    assert!(host_allowed("a.trusted.io", &list)); // leading-dot suffix
+    assert!(host_allowed("trusted.io", &list) == false); // dot entry does not match apex
+    assert!(host_allowed("example.com:8080", &list));
+    assert!(!host_allowed("evil.com", &list));
+}
+
+// ------------------------------------------------------------------ cookies
+
+#[test]
+fn cookie_sign_verify_and_rotation() {
+    let keys: &[&[u8]] = &[b"k1", b"k2"];
+    let signed = sign_cookie("session", "abc", keys);
+    assert_eq!(
+        verify_cookie(&signed, keys),
+        Some(("session".into(), "abc".into()))
+    );
+    // signed with the first key, but still verifiable after rotation to the second
+    let signed2 = sign_cookie("session", "abc", &[b"k2"]);
+    assert_eq!(
+        verify_cookie(&signed2, &[b"k9", b"k2"]),
+        Some(("session".into(), "abc".into()))
+    );
+    assert_eq!(verify_cookie("session.abc.deadbeef", keys), None);
+    assert_eq!(verify_cookie("session.abc", keys), None);
+    // tampered value
+    let mut tampered = signed.clone();
+    tampered.replace_range(8..11, "xyz");
+    assert_eq!(verify_cookie(&tampered, keys), None);
+    // deterministic mac: value.mac tail is blake3(key.name.value)[..24]
+    let mac = blake3::Hasher::new()
+        .update(b"k1")
+        .update(b".")
+        .update(b"session")
+        .update(b".")
+        .update(b"abc")
+        .finalize()
+        .to_hex()[..24]
+        .to_string();
+    assert_eq!(signed, format!("session.abc.{mac}"));
+    // empty keys default to the empty key
+    let unsigned = sign_cookie("n", "v", &[]);
+    assert_eq!(
+        verify_cookie(&unsigned, &[]),
+        Some(("n".into(), "v".into()))
+    );
+}
+
+// ------------------------------------------------------------------ rate limiter
+
+#[test]
+fn rate_limiter_burst_then_refill() {
+    let rl = RateLimiter::default();
+    for _ in 0..5 {
+        assert!(rl.allow("k", 5, 2), "bucket starts full");
+    }
+    assert!(!rl.allow("k", 5, 2), "exhausted burst blocks");
+    // separate keys are independent
+    assert!(rl.allow("other", 5, 2));
+    // simulate the window passing by rewinding the bucket's last-refill instant
+    {
+        let mut map = rl.buckets.lock().unwrap();
+        let e = map.get_mut("k").unwrap();
+        e.1 = Instant::now() - Duration::from_secs(2);
+    }
+    assert!(
+        rl.allow("k", 5, 2),
+        "refill restores tokens after the window"
+    );
+    // tokens are capped at max
+    assert!(rl.allow("k", 5, 2));
+}
+
+// ------------------------------------------------------------------ Pipeline::serve_request
+
+#[tokio::test]
+async fn pipeline_limit_violations_echo_request_id() {
+    let limits = Limits {
+        max_body: 8,
+        max_url_len: 16,
+        max_headers: 2,
+        ..Default::default()
+    };
+    let p = pipeline(
+        RulesEngine::default(),
+        None,
+        limits,
+        SecuritySettings::default(),
+    );
+    let d = &echo_dispatch();
+
+    let mut r = req("POST", "/", &[]);
+    r.body = Bytes::from_static(b"123456789");
+    let resp = p.serve_request(r, d).await;
+    assert_eq!(resp.status, 413);
+    assert_eq!(resp.header("x-oxide-request-id"), Some("req-test"));
+
+    let resp = p
+        .serve_request(
+            req("GET", "/this-url-is-way-too-long-for-the-limit", &[]),
+            d,
+        )
+        .await;
+    assert_eq!(resp.status, 414);
+    assert_eq!(resp.header("x-oxide-request-id"), Some("req-test"));
+
+    let r = req("GET", "/x", &[("a", "1"), ("b", "2"), ("c", "3")]);
+    let resp = p.serve_request(r, d).await;
+    assert_eq!(resp.status, 431);
+    assert_eq!(resp.header("x-oxide-request-id"), Some("req-test"));
+}
+
+#[tokio::test]
+async fn pipeline_host_validation() {
+    let sec = SecuritySettings {
+        host_allow_list: vec!["app.com".into()],
+        ..Default::default()
+    };
+    let p = pipeline(RulesEngine::default(), None, Limits::default(), sec);
+    let d = &echo_dispatch();
+    let resp = p
+        .serve_request(req("GET", "/x", &[("host", "evil.net")]), d)
+        .await;
+    assert_eq!(resp.status, 421);
+    let resp = p
+        .serve_request(req("GET", "/x", &[("host", "app.com")]), d)
+        .await;
+    assert_eq!(resp.status, 200);
+    // no Host header at all → rejected when an allow-list is configured
+    let resp = p.serve_request(req("GET", "/x", &[]), d).await;
+    assert_eq!(resp.status, 421);
+    // empty allow-list disables the check
+    let p = pipeline(
+        RulesEngine::default(),
+        None,
+        Limits::default(),
+        SecuritySettings::default(),
+    );
+    let resp = p
+        .serve_request(req("GET", "/x", &[("host", "anything")]), d)
+        .await;
+    assert_eq!(resp.status, 200);
+}
+
+#[tokio::test]
+async fn pipeline_health_endpoint() {
+    let p = pipeline(
+        RulesEngine::default(),
+        None,
+        Limits::default(),
+        SecuritySettings::default(),
+    );
+    let d = &echo_dispatch();
+    let resp = p.serve_request(req("GET", "/_oxide/health", &[]), d).await;
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.body.as_ref(), b"ok");
+    // not GET → dispatches
+    let resp = p.serve_request(req("POST", "/_oxide/health", &[]), d).await;
+    assert_eq!(resp.status, 200);
+    assert!(String::from_utf8_lossy(&resp.body).contains("dispatched POST"));
+}
+
+#[tokio::test]
+async fn pipeline_rule_outcomes() {
+    let mut headers = BTreeMap::new();
+    headers.insert("x-rule".to_string(), "1".to_string());
+    let rules = RulesEngine {
+        rules: vec![
+            NativeRule {
+                source: "/old/*".into(),
+                destination: Some("/new/:splat".into()),
+                status: Some(307),
+                ..rule("/old/*")
+            },
+            NativeRule {
+                source: "/rw/*".into(),
+                destination: Some("/dest/:splat".into()),
+                rule_type: Some("rewrite".into()),
+                ..rule("/rw/*")
+            },
+            NativeRule {
+                source: "/hdr".into(),
+                headers: Some(headers),
+                ..rule("/hdr")
+            },
+            NativeRule {
+                source: "/admin".into(),
+                basic_auth: Some(("u".into(), "p".into())),
+                ..rule("/admin")
+            },
+            NativeRule {
+                source: "/api".into(),
+                rule_type: Some("ratelimit".into()),
+                rate_limit: Some(RateLimit {
+                    key: "k".into(),
+                    max: 1,
+                    window_secs: 60,
+                }),
+                ..rule("/api")
+            },
+        ],
+    };
+    let p = pipeline(rules, None, Limits::default(), SecuritySettings::default());
+    let d = &echo_dispatch();
+
+    let resp = p.serve_request(req("GET", "/old/abc", &[]), d).await;
+    assert_eq!(resp.status, 307);
+    assert_eq!(resp.header("location"), Some("/new/abc"));
+
+    let resp = p.serve_request(req("GET", "/rw/42", &[]), d).await;
+    assert_eq!(resp.status, 200);
+    assert!(
+        String::from_utf8_lossy(&resp.body).contains("dispatched GET /dest/42"),
+        "{}",
+        String::from_utf8_lossy(&resp.body)
+    );
+
+    let resp = p.serve_request(req("GET", "/hdr", &[]), d).await;
+    assert_eq!(resp.header("x-rule"), Some("1"));
+
+    let resp = p.serve_request(req("GET", "/admin", &[]), d).await;
+    assert_eq!(resp.status, 401);
+    assert_eq!(
+        resp.header("www-authenticate"),
+        Some("Basic realm=\"oxide\"")
+    );
+
+    let resp = p.serve_request(req("GET", "/api", &[]), d).await;
+    assert_eq!(resp.status, 429);
+}
+
+#[tokio::test]
+async fn pipeline_serves_static_with_security_and_rule_headers() {
+    let mut headers = BTreeMap::new();
+    headers.insert("x-rule".to_string(), "y".to_string());
+    let rules = RulesEngine {
+        rules: vec![NativeRule {
+            source: "/*".into(),
+            headers: Some(headers),
+            ..rule("/*")
+        }],
+    };
+    let p = pipeline(
+        rules,
+        Some(test_assets()),
+        Limits::default(),
+        SecuritySettings::default(),
+    );
+    let d = &echo_dispatch();
+    let resp = p
+        .serve_request(req("GET", "/app.js", &[("accept-encoding", "zstd")]), d)
+        .await;
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.body.as_ref(), b"ZSTD-APP");
+    assert_eq!(resp.header("x-content-type-options"), Some("nosniff"));
+    assert_eq!(resp.header("x-rule"), Some("y"));
+    assert_eq!(
+        resp.header("server-timing"),
+        Some(RequestTimings_default_server_timing().as_str())
+    );
+
+    // /_oxide/static prefix serves without an extension
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("_oxide/static")).unwrap();
+    std::fs::write(dir.path().join("_oxide/static/blob"), b"BIN").unwrap();
+    let assets = StaticAssets::scan(dir.path()).unwrap();
+    std::mem::forget(dir);
+    let p = pipeline(
+        RulesEngine::default(),
+        Some(assets),
+        Limits::default(),
+        SecuritySettings::default(),
+    );
+    let resp = p
+        .serve_request(req("GET", "/_oxide/static/blob", &[]), d)
+        .await;
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.body.as_ref(), b"BIN");
+}
+
+#[allow(non_snake_case)]
+fn RequestTimings_default_server_timing() -> String {
+    use oxide_render::RequestTimings;
+    RequestTimings::default().server_timing()
+}
+
+#[tokio::test]
+async fn pipeline_dispatch_appends_security_headers_and_timing_once() {
+    let p = pipeline(
+        RulesEngine::default(),
+        None,
+        Limits::default(),
+        SecuritySettings::default(),
+    );
+    let dispatch = |r: OxideRequest| -> BoxFuture<'static, OxideResponse> {
+        Box::pin(async move {
+            OxideResponse::html(200, format!("dispatched {} {}", r.method, r.url))
+                .with_header("Server-Timing", "render;dur=9.99")
+        })
+    };
+    let resp = p.serve_request(req("GET", "/page", &[]), &dispatch).await;
+    assert_eq!(resp.status, 200);
+    assert!(String::from_utf8_lossy(&resp.body).contains("dispatched GET /page"));
+    assert_eq!(
+        resp.header("server-timing"),
+        Some("render;dur=9.99"),
+        "dispatch-set timing must be kept"
+    );
+    assert_eq!(resp.header("x-frame-options"), Some("DENY"));
+
+    // no dispatch timing → placeholder emitted
+    let resp = p
+        .serve_request(req("GET", "/page", &[]), &echo_dispatch())
+        .await;
+    assert_eq!(
+        resp.header("server-timing"),
+        Some(RequestTimings_default_server_timing().as_str())
+    );
+}
+
+#[tokio::test]
+async fn pipeline_csrf_403_before_dispatch() {
+    let p = pipeline(
+        RulesEngine::default(),
+        None,
+        Limits::default(),
+        SecuritySettings::default(),
+    );
+    let resp = p
+        .serve_request(
+            req(
+                "POST",
+                "/action",
+                &[("origin", "https://evil.net"), ("host", "app.com")],
+            ),
+            &echo_dispatch(),
+        )
+        .await;
+    assert_eq!(resp.status, 403);
+    // same-origin POST passes through
+    let resp = p
+        .serve_request(
+            req(
+                "POST",
+                "/action",
+                &[("origin", "https://app.com"), ("host", "app.com")],
+            ),
+            &echo_dispatch(),
+        )
+        .await;
+    assert_eq!(resp.status, 200);
+}
+
+// ------------------------------------------------------------------ hyper conversions
+
+#[tokio::test]
+async fn to_hyper_response_carries_status_headers_body() {
+    let resp = OxideResponse::html(201, "<i>ok</i>").with_header("X-Custom", "v");
+    let hyper_resp = to_hyper_response(resp);
+    assert_eq!(hyper_resp.status(), 201);
+    assert_eq!(
+        hyper_resp.headers().get("content-type").unwrap(),
+        "text/html; charset=utf-8"
+    );
+    assert_eq!(hyper_resp.headers().get("x-custom").unwrap(), "v");
+    assert_eq!(hyper_resp.headers().get("content-length").unwrap(), "9");
+    let bytes = http_body_util::BodyExt::collect(hyper_resp.into_body())
+        .await
+        .unwrap()
+        .to_bytes();
+    assert_eq!(bytes.as_ref(), b"<i>ok</i>");
+}
+
+// ------------------------------------------------------------------ Server::serve
+
+async fn free_port_addr() -> std::net::SocketAddr {
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    drop(l);
+    addr
+}
+
+async fn raw_http(addr: std::net::SocketAddr, request: &str) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+    s.write_all(request.as_bytes()).await.unwrap();
+    let mut buf = String::new();
+    s.read_to_string(&mut buf).await.unwrap();
+    buf
+}
+
+#[tokio::test]
+async fn server_serves_health_and_dispatch_then_shuts_down() {
+    let addr = free_port_addr().await;
+    let p = Arc::new(pipeline(
+        RulesEngine::default(),
+        None,
+        Limits::default(),
+        SecuritySettings::default(),
+    ));
+    let dispatch: Arc<dyn Fn(OxideRequest) -> BoxFuture<'static, OxideResponse> + Send + Sync> =
+        Arc::new(|r: OxideRequest| {
+            Box::pin(async move { OxideResponse::html(200, format!("echo:{}", r.url)) })
+        });
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let server = tokio::spawn(Server::serve(addr, p, dispatch, rx));
+
+    // wait for the listener (bounded retry loop, no long sleeps)
+    let mut health = String::new();
+    for _ in 0..50 {
+        if let Ok(s) = tokio::net::TcpStream::connect(addr).await {
+            drop(s);
+            health = raw_http(
+                addr,
+                "GET /_oxide/health HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n",
+            )
+            .await;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(health.starts_with("HTTP/1.1 200"), "{health}");
+    assert!(
+        health.contains("\r\n\r\nok") || health.ends_with("ok"),
+        "{health}"
+    );
+
+    let echoed = raw_http(
+        addr,
+        "GET /hello?x=1 HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n",
+    )
+    .await;
+    assert!(echoed.starts_with("HTTP/1.1 200"), "{echoed}");
+    assert!(echoed.contains("echo:/hello?x=1"), "{echoed}");
+
+    // graceful shutdown: signal, then serve() returns Ok
+    tx.send(true).unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(10), server)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn server_from_hyper_request_enforces_body_limit() {
+    // A POST above the limit → 413 from the real serve loop (from_hyper_request path).
+    let addr = free_port_addr().await;
+    let limits = Limits {
+        max_body: 4,
+        ..Default::default()
+    };
+    let p = Arc::new(pipeline(
+        RulesEngine::default(),
+        None,
+        limits,
+        SecuritySettings::default(),
+    ));
+    let dispatch: Arc<dyn Fn(OxideRequest) -> BoxFuture<'static, OxideResponse> + Send + Sync> =
+        Arc::new(|r: OxideRequest| {
+            Box::pin(async move {
+                OxideResponse::html(200, format!("body={}", String::from_utf8_lossy(&r.body)))
+            })
+        });
+    let (_tx, rx) = tokio::sync::watch::channel(false);
+    let server = tokio::spawn(Server::serve(addr, p, dispatch, rx));
+    let mut response = String::new();
+    for _ in 0..50 {
+        if tokio::net::TcpStream::connect(addr).await.is_ok() {
+            let body = "123456789";
+            let http = format!(
+                "POST /up HTTP/1.1\r\nHost: t\r\nContent-Length: 9\r\nConnection: close\r\n\r\n{body}"
+            );
+            response = raw_http(addr, &http).await;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(response.starts_with("HTTP/1.1 413"), "{response}");
+    let _ = server;
+    let _ = _tx;
+}
+
+// ------------------------------------------------------------------ ws codec (§9.6)
+
+use oxide_server::ws::{self, Frame};
+
+#[test]
+fn ws_roundtrip_unmasked_frames() {
+    for f in [
+        Frame::Text("héllo".into()),
+        Frame::Binary(vec![0, 1, 254, 255]),
+        Frame::Ping(b"px".to_vec()),
+        Frame::Pong(b"py".to_vec()),
+        Frame::Close(None),
+        Frame::Close(Some(1001)),
+    ] {
+        let bytes = ws::encode(&f, false);
+        // server→client frames are unmasked; decode is the server-side decoder, so
+        // re-decoding them is a protocol violation — check framing shape only.
+        assert_eq!(bytes[0] & 0x80, 0x80, "FIN set");
+        assert_eq!(bytes[0] & 0x70, 0, "no RSV bits");
+    }
+}
+
+#[test]
+fn ws_encode_opcode_layout_unmasked() {
+    let bytes = ws::encode(&Frame::Text("hi".into()), false);
+    assert_eq!(bytes, vec![0x81, 0x02, b'h', b'i']);
+    let bytes = ws::encode(&Frame::Close(Some(1000)), false);
+    assert_eq!(bytes, vec![0x88, 0x02, 0x03, 0xE8]);
+    let bytes = ws::encode(&Frame::Close(None), false);
+    assert_eq!(bytes, vec![0x88, 0x00]);
+}
+
+#[test]
+fn ws_decode_roundtrip_masked() {
+    let payload = "one".repeat(10);
+    let buf = ws::encode(&Frame::Text(payload.clone()), true)
+        .into_iter()
+        .chain(ws::encode(&Frame::Binary(vec![1, 2, 3]), true))
+        .chain(ws::encode(&Frame::Ping(b"p".to_vec()), true))
+        .chain(ws::encode(&Frame::Close(Some(1000)), true))
+        .collect::<Vec<u8>>();
+    let (frames, consumed) = ws::decode(&buf).unwrap();
+    assert_eq!(consumed, buf.len());
+    assert_eq!(frames[0], Frame::Text(payload));
+    assert_eq!(frames[1], Frame::Binary(vec![1, 2, 3]));
+    assert_eq!(frames[2], Frame::Ping(b"p".to_vec()));
+    assert_eq!(frames[3], Frame::Close(Some(1000)));
+}
+
+#[test]
+fn ws_decode_unmasked_client_frame_is_violation() {
+    let buf = ws::encode(&Frame::Text("hi".into()), false);
+    let e = ws::decode(&buf).unwrap_err();
+    assert_eq!(e.0.code, "SRV-WS");
+}
+
+#[test]
+fn ws_decode_reserved_and_rsv_violations() {
+    // reserved data opcode 3
+    let mut b = ws::encode(&Frame::Text("x".into()), true);
+    b[0] = (b[0] & 0xF0) | 0x03;
+    assert_eq!(ws::decode(&b).unwrap_err().0.code, "SRV-WS");
+    // reserved control opcode 11
+    let mut b = ws::encode(&Frame::Ping(vec![]), true);
+    b[0] = (b[0] & 0xF0) | 0x0B;
+    assert_eq!(ws::decode(&b).unwrap_err().0.code, "SRV-WS");
+    // RSV1 set
+    let mut b = ws::encode(&Frame::Text("x".into()), true);
+    b[0] |= 0x40;
+    assert_eq!(ws::decode(&b).unwrap_err().0.code, "SRV-WS");
+    // continuation opcode (fragmentation unsupported for now)
+    let mut b = ws::encode(&Frame::Text("x".into()), true);
+    b[0] = (b[0] & 0xF0) | 0x00;
+    assert_eq!(ws::decode(&b).unwrap_err().0.code, "SRV-WS");
+}
+
+#[test]
+fn ws_decode_control_frame_constraints() {
+    // control frame with FIN=0
+    let mut b = ws::encode(&Frame::Ping(vec![]), true);
+    b[0] &= !0x80;
+    assert_eq!(ws::decode(&b).unwrap_err().0.code, "SRV-WS");
+    // control frame with 126-byte payload
+    let b = ws::encode(&Frame::Ping(vec![0; 126]), true);
+    assert_eq!(ws::decode(&b).unwrap_err().0.code, "SRV-WS");
+}
+
+#[test]
+fn ws_decode_close_payload_rules() {
+    // declared 1-byte close payload (RFC6455: close length must be 0 or ≥ 2)
+    let mut b = ws::encode(&Frame::Close(Some(1000)), true);
+    b[1] = 0x80 | 1;
+    b.truncate(2 + 4 + 1); // header + mask key + 1 declared payload byte
+    assert_eq!(ws::decode(&b).unwrap_err().0.code, "SRV-WS");
+    // invalid UTF-8 text
+    let mut f = ws::encode(&Frame::Text("ok".into()), true);
+    let n = f.len();
+    f[n - 1] = 0xFF;
+    assert_eq!(ws::decode(&f).unwrap_err().0.code, "SRV-WS");
+}
+
+#[test]
+fn ws_decode_extended_lengths() {
+    // 16-bit length (200 bytes)
+    let big = vec![7u8; 200];
+    let buf = ws::encode(&Frame::Binary(big.clone()), true);
+    let (frames, consumed) = ws::decode(&buf).unwrap();
+    assert_eq!(consumed, buf.len());
+    assert_eq!(frames, vec![Frame::Binary(big)]);
+    // 64-bit length (70_000 bytes)
+    let huge = vec![3u8; 70_000];
+    let buf = ws::encode(&Frame::Binary(huge.clone()), true);
+    let (frames, consumed) = ws::decode(&buf).unwrap();
+    assert_eq!(consumed, buf.len());
+    assert_eq!(frames, vec![Frame::Binary(huge)]);
+}
+
+#[test]
+fn ws_decode_partial_and_multi_frame() {
+    let full = ws::encode(&Frame::Text("hello".into()), true);
+    // truncated header
+    let (frames, consumed) = ws::decode(&full[..2]).unwrap();
+    assert_eq!((frames, consumed), (vec![], 0));
+    // truncated payload
+    let (frames, consumed) = ws::decode(&full[..full.len() - 1]).unwrap();
+    assert_eq!((frames, consumed), (vec![], 0));
+    // two frames plus a partial third
+    let mut buf = full.clone();
+    buf.extend_from_slice(&full);
+    buf.extend_from_slice(&full[..3]);
+    let (frames, consumed) = ws::decode(&buf).unwrap();
+    assert_eq!(frames.len(), 2);
+    assert_eq!(consumed, full.len() * 2);
+}
+
+#[test]
+fn ws_mask_key_deterministic() {
+    let k1 = ws::next_mask_key();
+    let k2 = ws::next_mask_key();
+    assert_ne!(k1, k2, "counter PRNG advances");
+    // encode(mask=true) embeds a fresh PRNG key and masks the payload with it.
+    // (Exact-byte prediction against the shared counter is not asserted: other
+    // tests consume keys concurrently under cargo's parallel test runner.)
+    let payload = b"maskme";
+    let bytes = ws::encode(
+        &Frame::Text(String::from_utf8(payload.to_vec()).unwrap()),
+        true,
+    );
+    assert_eq!(&bytes[..2], &[0x81, 0x80 | 6u8]);
+    let k = &bytes[2..6];
+    let unmasked: Vec<u8> = bytes[6..]
+        .iter()
+        .enumerate()
+        .map(|(i, b)| b ^ k[i % 4])
+        .collect();
+    assert_eq!(unmasked, payload);
+    // each masked frame consumes a fresh key from the monotonic counter
+    let other = ws::encode(
+        &Frame::Text(String::from_utf8(payload.to_vec()).unwrap()),
+        true,
+    );
+    assert_ne!(other[2..6], bytes[2..6], "fresh PRNG key per frame");
+}
