@@ -1,0 +1,21 @@
+[package]
+name = "oxide-compiler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Oxc passes: directives, server-fn stubs, refresh, guards (spec 6.2, 6.3, 9.3, 9.4, D4)"
+
+[dependencies]
+oxide-diagnostics = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+regex = { workspace = true }
+thiserror = { workspace = true }
+# server_fn_id content hashing (§9.4, D6) — workspace-pinned (D6 mandates blake3 everywhere)
+blake3 = { workspace = true }
+oxc = { workspace = true }
+oxc_parser = { workspace = true }
+oxc_ast = { workspace = true }
+oxc_span = { workspace = true }
+oxc_allocator = { workspace = true }
