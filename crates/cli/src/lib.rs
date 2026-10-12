@@ -9,6 +9,8 @@ use oxide_router::RouteTree;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+pub mod mcp;
+
 /// Oxide CLI (spec §19.1).
 #[derive(Debug, Parser)]
 #[command(
@@ -30,6 +32,23 @@ pub enum Command {
         root: String,
         #[arg(long)]
         port: Option<u16>,
+        /// Bind all interfaces + print the LAN URL (§13.5).
+        #[arg(long)]
+        host: bool,
+        /// Serve over HTTPS with a self-signed cert (§13.5).
+        #[arg(long)]
+        https: bool,
+        /// Print the network URL as a QR code (§13.5).
+        #[arg(long)]
+        qr: bool,
+        /// Open the browser on start (§13.5).
+        #[arg(long)]
+        open: bool,
+        /// Reverse-proxy rule, repeatable: `PREFIX=TARGET` (e.g.
+        /// `--proxy /api=http://localhost:4000`). Longest prefix wins (§13.5).
+        /// Add a leading `!` to strip the prefix: `--proxy '!/api=http://x'`.
+        #[arg(long)]
+        proxy: Vec<String>,
         /// Hidden test hook: run exactly one watch poll, print `dev ready` and exit.
         /// Without it the dev loop runs until Ctrl-C (§13, not exercised in tests).
         #[arg(long, hide = true)]
@@ -122,6 +141,15 @@ pub enum Command {
         #[arg(long, default_value = ".")]
         root: String,
     },
+    /// MCP server over stdio (§19.3): exposes routes, cache, graph and
+    /// diagnostics as MCP tools so coding agents see accurate project facts.
+    Mcp {
+        #[arg(long, default_value = ".")]
+        root: String,
+    },
+    /// Print the JSON Schema for `oxide.config.{ts,json}` to stdout (§19.3).
+    /// Editors (VS Code, JetBrains) consume this via a `$schema` field.
+    Schema,
 }
 
 #[derive(Debug, Subcommand)]
@@ -135,13 +163,104 @@ pub enum CacheOp {
 ///
 /// Runs [`run_with_writer`] into a buffer, then flushes it to stdout (so tests can
 /// capture tables via [`run_with_writer`] while the binary keeps its real stdout).
+
+/// Install the tracing subscriber (§20). Console logging is always on;
+/// OpenTelemetry OTLP export is opt-in via `OTEL_EXPORTER_OTLP_ENDPOINT`.
+/// When the env var is unset, no OTLP layer is installed and behaviour is
+/// unchanged from before.
+///
+/// The OTLP exporter uses the SDK's default batch processor (spans are
+/// shipped asynchronously). The provider is stored in a process-wide
+/// `OnceLock` so it lives for the process duration — dropping it would
+/// silently close the exporter.
+fn init_tracing() {
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok();
+
+    // Two independent subscriber shapes must be constructed, because each
+    // layer's type parameter is fixed by the first `.with()` call. Boxing
+    // every layer into `Box<dyn Layer<Registry>>` would also work; building
+    // in each branch keeps the dispatch overhead zero in the common no-OTLP
+    // case.
+    let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = match endpoint {
+        Some(ep) => match build_otel_layer(&ep) {
+            Ok(otel_layer) => {
+                // tracing-opentelemetry's layer impls `Layer<Registry>`; it
+                // goes innermost. Filter and format layers stack on top.
+                Box::new(
+                    tracing_subscriber::registry()
+                        .with(otel_layer)
+                        .with(env_filter())
+                        .with(fmt_layer()),
+                )
+            }
+            Err(e) => {
+                eprintln!(
+                    "oxide: OTLP export disabled ({e}); continuing with console logging only"
+                );
+                Box::new(
+                    tracing_subscriber::registry()
+                        .with(env_filter())
+                        .with(fmt_layer()),
+                )
+            }
+        },
+        None => Box::new(
+            tracing_subscriber::registry()
+                .with(env_filter())
+                .with(fmt_layer()),
+        ),
+    };
+
+    let _ = tracing::subscriber::set_global_default(subscriber);
+}
+
+fn env_filter() -> tracing_subscriber::EnvFilter {
+    tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+}
+
+fn fmt_layer<S>() -> tracing_subscriber::fmt::Layer<S>
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    tracing_subscriber::fmt::layer().with_target(false)
+}
+
+/// Build the `tracing-opentelemetry` layer for the given OTLP endpoint.
+/// The returned layer is backed by a batch span processor whose lifetime is
+/// process-wide via a leaked `TracerProvider` — acceptable for a CLI that
+/// exits with the process.
+fn build_otel_layer(
+    endpoint: &str,
+) -> Result<
+    tracing_opentelemetry::OpenTelemetryLayer<
+        tracing_subscriber::Registry,
+        opentelemetry_sdk::trace::Tracer,
+    >,
+    String,
+> {
+    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry_otlp::WithExportConfig;
+
+    let exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(endpoint)
+        .build()
+        .map_err(|e| format!("OTLP exporter build failed: {e}"))?;
+    let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+        .with_batch_exporter(exporter)
+        .build();
+    // Leak the provider so its batch exporter lives for the process lifetime.
+    let provider: &'static opentelemetry_sdk::trace::SdkTracerProvider =
+        Box::leak(Box::new(provider));
+    let tracer = provider.tracer("oxide");
+    Ok(tracing_opentelemetry::layer().with_tracer(tracer))
+}
+
 pub async fn run(cli: Cli) -> anyhow::Result<i32> {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .try_init();
+    init_tracing();
     let mut buf: Vec<u8> = Vec::new();
     let code = run_with_writer(cli, &mut buf).await?;
     use std::io::Write as _;
@@ -159,9 +278,22 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
     match cli.command {
         Command::Dev {
             root,
-            port: _,
+            port,
+            host,
+            https,
+            qr,
+            open,
+            proxy,
             once,
-        } => cmd_dev(&root, once, w).await,
+        } => {
+            cmd_dev(
+                &root,
+                once,
+                crate::DevFlags { host, https, qr, open, port, proxy },
+                w,
+            )
+            .await
+        }
         Command::Build {
             root,
             r#static,
@@ -180,6 +312,8 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
         Command::Audit { root } => cmd_audit(&root, w).await,
         Command::Migrate { root, source } => cmd_migrate(&root, &source, w).await,
         Command::Test { root } => cmd_test(&root, w).await,
+        Command::Mcp { root } => cmd_mcp(&root, w).await,
+        Command::Schema => cmd_schema(w),
     }
     .map_err(|e| {
         tracing::error!(error = %e, "command failed");
@@ -223,6 +357,20 @@ fn scan_routes(root: &Path, cfg: &OxideConfig) -> anyhow::Result<RouteTree> {
 }
 
 /// URL pattern for display (§19.1 table): `/` for the root, `/a/b` otherwise.
+
+/// Extract a param name from a route segment: `:slug` → `slug`, `*rest` →
+/// `rest`, `*?opt` → `opt`. Returns `None` for static segments.
+fn param_name(segment: &str) -> Option<&str> {
+    let s = segment.trim_start_matches(':');
+    let s = s.trim_start_matches('*').trim_start_matches('?');
+    if s.len() == segment.len() {
+        return None; // no prefix consumed
+    }
+    // Strip regex constraint (`:slug{[a-z]+}` → `slug`).
+    let s = s.split('{').next().unwrap_or(s);
+    Some(s)
+}
+
 fn pattern_of(segments: &[String]) -> String {
     if segments.is_empty() {
         "/".to_string()
@@ -294,7 +442,7 @@ fn bundle_env_options(
 
 /// `oxide dev` (§13). `--once` runs a single watch poll (test hook); otherwise the
 /// 200 ms poll loop runs until Ctrl-C.
-async fn cmd_dev(root: &str, once: bool, w: Writer<'_>) -> anyhow::Result<i32> {
+async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = PathBuf::from(root);
     let cfg = load_config_or_default(&rootp, "development");
     let tree = scan_routes(&rootp, &cfg)?;
@@ -338,6 +486,74 @@ async fn cmd_dev(root: &str, once: bool, w: Writer<'_>) -> anyhow::Result<i32> {
             oxide_dev::prebundle_key(&lock_hash, dep)
         );
     }
+    // §13.5 dev features: HTTPS, LAN host, QR, browser open.
+    // Bind: LAN mode uses 0.0.0.0 so a phone on the same Wi-Fi can reach it;
+    // otherwise loopback only.
+    let bind_ip: std::net::IpAddr = if flags.host {
+        std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+    } else {
+        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+    };
+
+    // Build the TLS config once when HTTPS is on.
+    let tls_config = if flags.https {
+        let cert = oxide_dev::generate_dev_cert()
+            .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+        let cfg = oxide_server::Server::tls_config_from_pem(
+            cert.cert_pem.as_bytes(),
+            cert.key_pem.as_bytes(),
+        )
+        .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+        outln!(w, "dev HTTPS enabled (self-signed; SANs: {})", cert.sans.join(", "));
+        Some(cfg)
+    } else {
+        None
+    };
+
+    // §13.1: start the dev HTTP(S) server with the inspector attached, then
+    // poll the watcher. On `--once` we still start the server so the test
+    // hook can exercise it, report readiness, and shut down.
+    let proxy_rules = flags.proxy_rules();
+    if !proxy_rules.is_empty() {
+        for r in &proxy_rules {
+            outln!(
+                w,
+                "proxy: {} -> {}{}",
+                r.prefix,
+                r.target,
+                if r.strip_prefix { " (strip)" } else { "" }
+            );
+        }
+    }
+    let started = start_dev_server_full(
+        root,
+        flags.port,
+        bind_ip,
+        tls_config,
+        proxy_rules,
+    )
+    .await?;
+    let local = oxide_dev::local_url(started.addr.port(), flags.https);
+    outln!(w, "dev server listening on {local}");
+    outln!(w, "inspector: {local}/__oxide");
+    if let Some(net) = oxide_dev::network_url(started.addr.port(), flags.https) {
+        if flags.host {
+            outln!(w, "network: {net}");
+        }
+        if flags.qr {
+            match oxide_dev::render_qr(&net) {
+                Ok(qr) => {
+                    outln!(w, "{qr}");
+                }
+                Err(e) => outln!(w, "QR render failed: {}", e.0.message),
+            }
+        }
+        if flags.open {
+            let opened = oxide_dev::open_browser(&local);
+            outln!(w, "browser open: {opened}");
+        }
+    }
+
     let watcher = oxide_dev::Watcher::new(vec![rootp.clone()]);
     let mut seen = std::collections::BTreeSet::new();
     if once {
@@ -345,6 +561,7 @@ async fn cmd_dev(root: &str, once: bool, w: Writer<'_>) -> anyhow::Result<i32> {
             .poll(&mut seen)
             .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
         outln!(w, "dev ready — {} change(s) in first poll", events.len());
+        let _ = started.shutdown.send(true);
         return Ok(0);
     }
     // Real dev loop (§13): poll, report, Ctrl-C to stop. Not exercised in tests.
@@ -364,6 +581,116 @@ async fn cmd_dev(root: &str, once: bool, w: Writer<'_>) -> anyhow::Result<i32> {
 /// `oxide build` (§6, §10.5): bundle client + ssr, prerender static routes, emit the
 /// deploy artifact for the configured adapter (§18). `--static` forces a static
 /// export target, which refuses dynamic routes without prerendered output (§10.5).
+
+/// Compile the `oxide-core-wasm` crate to wasm32-unknown-unknown (§2 D18).
+///
+/// Best-effort: returns `Ok(None)` when the target isn't installed (the
+/// Worker's JS fallback handles it), `Err` on a genuine compile failure.
+/// Output goes to `<dist>/edge.wasm`, which is where the Cloudflare emit
+/// branch looks for it.
+fn compile_edge_wasm(root: &Path, dist: &Path) -> anyhow::Result<Option<PathBuf>> {
+    // Check the target is available first — a missing target would otherwise
+    // produce a confusing build error.
+    let installed = std::process::Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output();
+    let has_target = match installed {
+        Ok(o) => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .any(|l| l.trim() == "wasm32-unknown-unknown"),
+        Err(_) => false,
+    };
+    if !has_target {
+        return Ok(None);
+    }
+    std::fs::create_dir_all(dist)?;
+    let out = dist.join("edge.wasm");
+    let status = std::process::Command::new("cargo")
+        .args([
+            "build",
+            "-p",
+            "oxide-core-wasm",
+            "--release",
+            "--target",
+            "wasm32-unknown-unknown",
+        ])
+        .current_dir(root)
+        .status()
+        .map_err(|e| anyhow::anyhow!("cargo build for wasm failed to start: {e}"))?;
+    if !status.success() {
+        return Err(anyhow::anyhow!(
+            "cargo build -p oxide-core-wasm --target wasm32-unknown-unknown failed"
+        ));
+    }
+    // Copy the produced .wasm next to the deploy artifact.
+    let produced = root
+        .join("target/wasm32-unknown-unknown/release/oxide_core_wasm.wasm");
+    if produced.is_file() {
+        std::fs::copy(&produced, &out)?;
+        Ok(Some(out))
+    } else {
+        Ok(None)
+    }
+}
+
+
+/// Emit a search index per configured content collection (§16.5). Writes
+/// `<dist>/content/<name>.index.json` — a deterministic JSON document the
+/// front end fetches lazily.
+///
+/// A collection whose directory is missing is reported and skipped; the build
+/// itself succeeds (content often lives outside the main pipeline's blast
+/// radius).
+fn emit_content_search_indexes(
+    root: &Path,
+    cfg: &oxide_config::OxideConfig,
+    dist: &Path,
+    w: Writer<'_>,
+) -> anyhow::Result<()> {
+    if cfg.content.collections.is_empty() {
+        return Ok(());
+    }
+    let out_dir = dist.join("content");
+    std::fs::create_dir_all(&out_dir)?;
+    for coll in &cfg.content.collections {
+        if coll.name.is_empty() || coll.dir.is_empty() {
+            outln!(w, "content collection skipped: name and dir are required");
+            continue;
+        }
+        let dir = root.join(&coll.dir);
+        let cfg_in = oxide_assets::CollectionConfig {
+            name: coll.name.clone(),
+            dir: dir.clone(),
+            schema: oxide_assets::SchemaKind::Unchecked,
+            indexed_fields: coll.indexed_fields.clone(),
+        };
+        let scanned = match oxide_assets::scan_collection(&cfg_in) {
+            Ok(c) => c,
+            Err(e) => {
+                outln!(
+                    w,
+                    "content collection `{}` skipped: {}",
+                    coll.name,
+                    e.0.message
+                );
+                continue;
+            }
+        };
+        let idx = oxide_assets::build_search_index(&scanned, &coll.indexed_fields);
+        let json = oxide_assets::search_index_to_json(&idx)
+            .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+        std::fs::write(out_dir.join(format!("{}.index.json", coll.name)), json)?;
+        outln!(
+            w,
+            "content index: {} ({} entries) -> dist/content/{}.index.json",
+            coll.name,
+            scanned.entries.len(),
+            coll.name
+        );
+    }
+    Ok(())
+}
+
 async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = PathBuf::from(root);
     let cfg = load_config_strict(&rootp, "production")?;
@@ -409,65 +736,143 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         .unwrap_or("dev")
         .to_string();
 
-    // Prerender static routes (§10.5, honest simplified pass): pages without a server
-    // module and without dynamic needs get a minimal HTML shell via the Injector.
+    // Prerender static routes (§10.5). Two cases:
+    //   1. Page routes with no params and no server module → one HTML shell.
+    //   2. Page routes whose `page.server.ts` exports a **literal**
+    //      `generateParams` array → one HTML per param entry.
+    // Runtime-valued `generateParams` cannot be evaluated at build time without
+    // a JS worker (post-MLP) and is skipped with a printed notice.
     let nonce = oxide_bundler::ChunkBundler::content_hash(&[build_id.as_bytes()]);
-    let mut prerendered: BTreeMap<String, String> = BTreeMap::new();
+    let mut prerendered: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // Routes with literal generateParams are effectively static regardless of
+    // whether they also have a server module.
+    let mut static_override: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
     for e in &tree.entries {
-        let mode_ok = matches!(
-            e.render_mode.as_deref(),
-            None | Some("auto") | Some("static")
-        );
-        let no_params = e
-            .segments
-            .iter()
-            .all(|s| !s.contains(':') && !s.contains('*') && !s.contains('{'));
-        if !matches!(e.kind, oxide_router::RouteKind::Page)
-            || e.has_server_module
-            || !mode_ok
-            || !no_params
-        {
+        if !matches!(e.kind, oxide_router::RouteKind::Page) {
             continue;
         }
-        let pattern = pattern_of(&e.segments);
-        let rel = if e.segments.is_empty() {
-            "prerendered/index.html".to_string()
+
+        // Load the accompanying `page.server.ts` (if any) for generateParams.
+        let server_mod = rootp
+            .join(&cfg.routes.dir)
+            .join(e.file.with_file_name("page.server.ts"));
+        let gen_params = if server_mod.is_file() {
+            let src = std::fs::read_to_string(&server_mod).unwrap_or_default();
+            oxide_compiler::extract_generate_params(&src)
         } else {
-            format!("prerendered/{}.html", e.segments.join("/"))
+            oxide_compiler::GenerateParamsResult::Absent
         };
-        let shell = format!(
-            "<!doctype html><html><head></head><body>\
-             <main data-route=\"{pattern}\">placeholder</main></body></html>"
-        );
-        let injector = oxide_render::Injector::new(
-            oxide_render::HeadTags::default(),
-            nonce.clone(),
-            e.id.0.clone(),
-        );
-        let html = injector
-            .inject_into_html(&shell)
-            .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
-        let dest = dist.join(&rel);
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)?;
+
+        let pattern = pattern_of(&e.segments);
+        let nonce_for = nonce.clone();
+        let route_id = e.id.0.clone();
+        let push_html = |rel: String| -> anyhow::Result<()> {
+            let shell = format!(
+                "<!doctype html><html><head></head><body>\
+                 <main data-route=\"{pattern}\">placeholder</main></body></html>"
+            );
+            let injector = oxide_render::Injector::new(
+                oxide_render::HeadTags::default(),
+                nonce_for.clone(),
+                route_id.clone(),
+            );
+            let html = injector
+                .inject_into_html(&shell)
+                .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+            let dest = dist.join(&rel);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&dest, html)?;
+            Ok(())
+        };
+
+        match gen_params {
+            oxide_compiler::GenerateParamsResult::Literal(params) => {
+                // Prerendered output exists → effective mode `static` for the
+                // manifest, even if the route also has a server module.
+                static_override.insert(route_id.clone());
+                let mut outs: Vec<String> = Vec::new();
+                for params_map in &params {
+                    // Substitute params into the segment list to build a path.
+                    let mut segs: Vec<String> = e.segments.clone();
+                    for s in segs.iter_mut() {
+                        if let Some(name) = param_name(s) {
+                            if let Some(v) = params_map.get(name) {
+                                *s = v.clone();
+                            }
+                        }
+                    }
+                    let rel = if segs.is_empty() {
+                        "prerendered/index.html".to_string()
+                    } else {
+                        format!("prerendered/{}.html", segs.join("/"))
+                    };
+                    push_html(rel.clone())?;
+                    outs.push(rel);
+                }
+                if !outs.is_empty() {
+                    prerendered.insert(e.id.0.clone(), outs);
+                }
+            }
+            oxide_compiler::GenerateParamsResult::Runtime { .. } => {
+                // Honest notice: the CLI does not run user JS during build.
+                outln!(
+                    w,
+                    "skip prerender for `{route_id}`: generateParams requires runtime evaluation (post-MLP)",
+                    route_id = e.id.0
+                );
+            }
+            oxide_compiler::GenerateParamsResult::Absent => {
+                // Fall through to the param-less case below.
+                let mode_ok = matches!(
+                    e.render_mode.as_deref(),
+                    None | Some("auto") | Some("static")
+                );
+                let no_params = e
+                    .segments
+                    .iter()
+                    .all(|s| !s.contains(':') && !s.contains('*') && !s.contains('{'));
+                if e.has_server_module || !mode_ok || !no_params {
+                    continue;
+                }
+                let rel = if e.segments.is_empty() {
+                    "prerendered/index.html".to_string()
+                } else {
+                    format!("prerendered/{}.html", e.segments.join("/"))
+                };
+                push_html(rel.clone())?;
+                prerendered.insert(e.id.0.clone(), vec![rel]);
+            }
         }
-        std::fs::write(&dest, html)?;
-        prerendered.insert(e.id.0.clone(), rel);
     }
 
-    // Enrich the server manifest with route-tree render modes + prerendered files
-    // (the bundler leaves render_mode None; mode inference lives with the router).
+    // Enrich the server manifest with inferred render modes + prerendered
+    // files. The bundler leaves `render_mode` unset; §10.1 mode inference
+    // lives with the route scanner, and the pragmatic rule at build time is:
+    //   - explicit `render_mode` on the route wins
+    //   - otherwise: has_server_module → `dynamic`
+    //   - otherwise: `static`
+    // This is the rule the §10.5 static-export refusal relies on.
     if let Some(routes) = server_manifest
         .get_mut("routes")
         .and_then(|r| r.as_object_mut())
     {
         for (id, row) in routes.iter_mut() {
             if let Some(e) = tree.entries.iter().find(|e| &e.id.0 == id) {
-                if let Some(mode) = &e.render_mode {
-                    row["render_mode"] = serde_json::json!(mode);
-                }
-                if let Some(rel) = prerendered.get(id) {
-                    row["prerendered"] = serde_json::json!(rel);
+                let mode = e.render_mode.clone().unwrap_or_else(|| {
+                    if static_override.contains(id) {
+                        "static".to_string()
+                    } else if e.has_server_module {
+                        "dynamic".to_string()
+                    } else {
+                        "static".to_string()
+                    }
+                });
+                row["render_mode"] = serde_json::json!(mode);
+                if let Some(rels) = prerendered.get(id) {
+                    row["prerendered"] = serde_json::json!(rels);
                 }
             }
         }
@@ -483,16 +888,42 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             )
         })?
     };
+    let static_fallback = cfg.static_export.fallback.clone();
     let artifact = oxide_adapters::BuildArtifact {
         out_dir: dist.clone(),
         build_id: build_id.clone(),
         client_manifest,
         server_manifest,
         prerendered,
+        static_fallback,
         server_bundle: Some(server_out.join("ssr/index.js")),
     };
+    // §18 / §2 D18: for the Cloudflare target, best-effort compile the core
+    // subset to wasm32 and hand it to the adapter. A missing wasm32 target is
+    // not fatal — the Worker's JS fallback covers the same functions.
+    if target == oxide_adapters::Target::Cloudflare {
+        match compile_edge_wasm(&rootp, &dist) {
+            Ok(Some(path)) => {
+                outln!(w, "edge wasm compiled: {}", path.display());
+            }
+            Ok(None) => {
+                outln!(
+                    w,
+                    "edge wasm skipped (wasm32-unknown-unknown target not installed); \
+                     the Worker falls back to JS — run `rustup target add wasm32-unknown-unknown` \
+                     to enable the accelerated path (spec D18)"
+                );
+            }
+            Err(e) => {
+                outln!(w, "edge wasm build failed: {e}; the Worker falls back to JS");
+            }
+        }
+    }
+
     let written = oxide_adapters::emit(target, &artifact, &dist.join("deploy"))
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+    // §16.5: search indexes for every configured content collection.
+    emit_content_search_indexes(&rootp, &cfg, &dist, w)?;
     outln!(
         w,
         "build ok — {} routes, {} prerendered, {} deploy file(s) for `{}` in dist/deploy",
@@ -505,9 +936,42 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
 }
 
 /// A handle over a started server, so tests can shut it down deterministically.
+/// Optional dev-server feature flags (§13.5).
+#[derive(Debug, Clone, Default)]
+pub struct DevFlags {
+    pub host: bool,
+    pub https: bool,
+    pub qr: bool,
+    pub open: bool,
+    pub port: Option<u16>,
+    pub proxy: Vec<String>,
+}
+
+impl DevFlags {
+    /// Parse the `--proxy` strings into `ProxyRule`s. Format:
+    /// `[!]PREFIX=TARGET`, where a leading `!` requests prefix stripping.
+    pub fn proxy_rules(&self) -> Vec<oxide_dev::ProxyRule> {
+        self.proxy
+            .iter()
+            .filter_map(|s| {
+                let (strip, rest) = match s.strip_prefix('!') {
+                    Some(r) => (true, r),
+                    None => (false, s.as_str()),
+                };
+                let (prefix, target) = rest.split_once('=')?;
+                let rule = oxide_dev::ProxyRule::new(prefix, target);
+                Some(if strip { rule.with_strip(true) } else { rule })
+            })
+            .collect()
+    }
+}
+
 pub struct StartedServer {
     pub addr: std::net::SocketAddr,
     pub shutdown: tokio::sync::watch::Sender<bool>,
+    /// Metrics registry (§20) shared with the pipeline and the dispatch
+    /// delegate; exposed so tests and observability tooling can read it.
+    pub metrics: std::sync::Arc<oxide_server::Metrics>,
 }
 
 /// Boxed dispatch future. Structurally identical to `futures::future::BoxFuture<_,
@@ -516,16 +980,93 @@ pub struct StartedServer {
 type BoxedResponse =
     std::pin::Pin<Box<dyn std::future::Future<Output = oxide_server::OxideResponse> + Send>>;
 
+/// Inspector adapter for the dev server: converts the CLI's
+/// `RouteTableInspector` into the `oxide_server::InspectorSnapshot` trait
+/// (§13.4). The trait lives in oxide-server so the pipeline can render it
+/// without depending on oxide-dev.
+#[derive(Debug)]
+struct CliInspector {
+    state: oxide_dev::InspectorState,
+}
+
+impl oxide_server::InspectorSnapshot for CliInspector {
+    fn state_json(&self) -> serde_json::Value {
+        serde_json::to_value(&self.state).unwrap_or(serde_json::Value::Null)
+    }
+    fn render_html(&self) -> String {
+        oxide_dev::render_inspector_html(&self.state)
+    }
+}
+
+
 /// Construct the production pipeline (§12.1) from config and start serving.
 /// The dispatch returns a placeholder page from the router match — the JS host wiring
 /// (NodeHost/isolate render) lives in oxide-jshost and plugs into this dispatch later.
+/// Production server entry (§12.1): no inspector is attached.
 pub async fn start_server(root: &str, port: Option<u16>) -> anyhow::Result<StartedServer> {
+    start_server_inner(root, port, false).await
+}
+
+/// Dev server entry (§13): identical pipeline but with the `/__oxide`
+/// inspector attached, populated with the route table.
+/// Full dev-server starter with optional bind IP + TLS.
+pub async fn start_dev_server_full(
+    root: &str,
+    port: Option<u16>,
+    bind_ip: std::net::IpAddr,
+    tls: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>,
+    proxy_rules: Vec<oxide_dev::ProxyRule>,
+) -> anyhow::Result<StartedServer> {
+    start_server_inner_full(
+        root,
+        Some((bind_ip, port.unwrap_or(0))),
+        true,
+        tls,
+        proxy_rules,
+    )
+    .await
+}
+
+pub async fn start_dev_server(root: &str, port: Option<u16>) -> anyhow::Result<StartedServer> {
+    start_server_inner(root, port, true).await
+}
+
+async fn start_server_inner(
+    root: &str,
+    port: Option<u16>,
+    with_inspector: bool,
+) -> anyhow::Result<StartedServer> {
+    let bind = port.map(|p| (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), p));
+    start_server_inner_full(root, bind, with_inspector, None, Vec::new()).await
+}
+
+async fn start_server_inner_full(
+    root: &str,
+    bind: Option<(std::net::IpAddr, u16)>,
+    with_inspector: bool,
+    tls: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>,
+    proxy_rules: Vec<oxide_dev::ProxyRule>,
+) -> anyhow::Result<StartedServer> {
     let rootp = PathBuf::from(root);
     let cfg = load_config_or_default(&rootp, "production");
     let tree = std::sync::Arc::new(scan_routes(&rootp, &cfg)?);
-    let port = resolve_port(port.unwrap_or(cfg.server.port)).await;
+    let (bind_ip, requested_port) = match bind {
+        // A caller-supplied port is honoured verbatim — including 0, which
+        // means "ephemeral, OS chooses" (the test and CI convention).
+        Some((ip, p)) => (ip, p),
+        None => (
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            cfg.server.port,
+        ),
+    };
+    let port = resolve_port(requested_port).await;
     let rules = oxide_router::RulesEngine::compile(config_rules_to_router(&cfg.rules))
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+    // §20 metrics: ONE registry shared by the pipeline (native branches) and
+    // the dispatch delegate (per-route labels). Cardinality is bounded by the
+    // route pattern (e.g. `/blog/[slug]`), never the resolved URL.
+    let metrics = std::sync::Arc::new(oxide_server::Metrics::new());
+
     let pipeline = std::sync::Arc::new(oxide_server::Pipeline {
         rules,
         assets: None,
@@ -537,13 +1078,59 @@ pub async fn start_server(root: &str, port: Option<u16>) -> anyhow::Result<Start
         },
         rate_limiter: std::sync::Arc::new(oxide_server::RateLimiter::default()),
         health_path: "/_oxide/health".to_string(),
+        metrics_path: "/_oxide/metrics".to_string(),
+        metrics: Some(std::sync::Arc::clone(&metrics)),
+        inspector: if with_inspector {
+            Some(std::sync::Arc::new(CliInspector {
+                state: oxide_dev::RouteTableInspector::from_router_table(tree.table()).state(),
+            }))
+        } else {
+            None
+        },
     });
+    let proxy_rules: Vec<oxide_dev::ProxyRule> = proxy_rules.clone();
     let dispatch: std::sync::Arc<
         dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
     > = {
         let tree = std::sync::Arc::clone(&tree);
+        let metrics = std::sync::Arc::clone(&metrics);
+        let proxy_rules = proxy_rules.clone();
         std::sync::Arc::new(move |req: oxide_server::OxideRequest| {
+            let started = std::time::Instant::now();
             let raw = req.url.split(['?', '#']).next().unwrap_or("/").to_string();
+
+            // §13.5 proxy: if the request matches a rule, forward upstream and
+            // skip routing entirely. Response is passed through unchanged.
+            if !proxy_rules.is_empty() {
+                let query = req.url.split_once('?').map(|(_, q)| q.to_string());
+                if let Some(m) = oxide_dev::apply_proxy(
+                    &proxy_rules,
+                    &raw,
+                    query.as_deref(),
+                ) {
+                    let url = m.url.clone();
+                    let m_rule = m.rule.prefix.clone();
+                    let metrics_proxy = std::sync::Arc::clone(&metrics);
+                    let req_owned = req.clone();
+                    return Box::pin(async move {
+                        match oxide_server::forward_proxy(&url, req_owned).await {
+                            Ok(r) => {
+                                metrics_proxy.observe("_proxy", started.elapsed(), r.status);
+                                r
+                            }
+                            Err(e) => {
+                                tracing::warn!(rule = %m_rule, error = %e, "proxy forward failed");
+                                let r = oxide_server::OxideResponse::new(
+                                    502,
+                                    format!("proxy upstream error: {}", e.0.message),
+                                );
+                                metrics_proxy.observe("_proxy", started.elapsed(), 502);
+                                r
+                            }
+                        }
+                    });
+                }
+            }
             // Route conventions: the root page module is `index`, so `/` maps to
             // the `/index` pattern (spec §8.1); trailing slashes are folded too.
             let normalized = if raw.len() > 1 && raw.ends_with('/') {
@@ -562,7 +1149,8 @@ pub async fn start_server(root: &str, port: Option<u16>) -> anyhow::Result<Start
                     tree.match_path(p)
                         .map(|m| (200u16, pattern_of(&m.route.segments)))
                 })
-                .unwrap_or((404u16, "no route".to_string()));
+                .unwrap_or((404u16, "_unmatched".to_string()));
+            metrics.observe(&label, started.elapsed(), status);
             Box::pin(std::future::ready(oxide_server::OxideResponse::html(
                 status,
                 format!(
@@ -575,11 +1163,14 @@ pub async fn start_server(root: &str, port: Option<u16>) -> anyhow::Result<Start
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (tx, rx) = tokio::sync::watch::channel(false);
     tokio::spawn(async move {
-        if let Err(e) = oxide_server::Server::serve(addr, pipeline, dispatch, rx).await {
+        let bind_addr = std::net::SocketAddr::new(bind_ip, port);
+        if let Err(e) =
+            oxide_server::Server::serve_with_tls(bind_addr, pipeline, dispatch, rx, tls).await
+        {
             tracing::error!(code = %e.0.code, "server stopped with error");
         }
     });
-    Ok(StartedServer { addr, shutdown: tx })
+    Ok(StartedServer { addr, shutdown: tx, metrics })
 }
 
 /// The server binds inside `Server::serve`, so a requested port of `0` is resolved
@@ -1050,6 +1641,30 @@ async fn cmd_migrate(root: &str, source: &str, w: Writer<'_>) -> anyhow::Result<
 
 /// `oxide test` (§16.6): gates on build manifests; the in-process `app.fetch` helper
 /// itself lives in packages/oxide (documented in the output).
+
+/// `oxide mcp` (§19.3): run the MCP server on stdio. The root path is resolved
+/// relative to cwd, same as every other command. The writer is ignored — the
+/// MCP protocol owns stdout; only a startup line is emitted to stderr to keep
+/// the JSON-RPC stream clean.
+
+/// `oxide schema` (§19.3): print the JSON Schema for `oxide.config.{ts,json}`.
+/// Editors pick this up via a `$schema` field in the config or a
+/// `json.schemas` setting.
+fn cmd_schema(w: Writer<'_>) -> anyhow::Result<i32> {
+    let json = oxide_config::config_schema_pretty()
+        .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+    outln!(w, "{json}");
+    Ok(0)
+}
+
+async fn cmd_mcp(root: &str, _w: Writer<'_>) -> anyhow::Result<i32> {
+    let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
+    // Progress/log go to stderr so stdout stays pure JSON-RPC.
+    eprintln!("oxide mcp: serving project at {}", rootp.display());
+    crate::mcp::serve_stdio(rootp).await?;
+    Ok(0)
+}
+
 async fn cmd_test(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = PathBuf::from(root);
     let client = rootp.join("dist/client/client.manifest.json");
