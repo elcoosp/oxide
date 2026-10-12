@@ -10,6 +10,10 @@ description = "Lightning-CSS-shaped pipeline, images, fonts, og, content (spec 1
 oxide-diagnostics = { workspace = true }
 lightningcss = { workspace = true }
 image = { workspace = true }
+syntect = { workspace = true }
+comrak = { workspace = true }
+icu_locale_core = { workspace = true }
+formatjs_icu_messageformat = "0.3.0"
 read-fonts = { workspace = true }
 skrifa = { workspace = true }
 ravif = { workspace = true }
