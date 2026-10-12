@@ -162,6 +162,26 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Render a route through the framework adapter and print the HTML
+    /// (spec §7). Loads oxide.config.{ts,mjs,js}, dispatches a render call
+    /// to the FrameworkAdapter the config exports, and writes the resulting
+    /// HTML to stdout. This is the read-path proof for §6.3 / §7.
+    Render {
+        /// Route id, e.g. `routes/index` or `routes/blog/[slug]`.
+        route: String,
+        /// Project root containing oxide.config.ts (default: cwd).
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// URL the request would have (default: derived from route).
+        #[arg(long)]
+        url: Option<String>,
+        /// URL params as `k=v` pairs (repeatable). Arrays via `k=v1,k=v2`.
+        #[arg(long = "param", value_name = "KEY=VALUE")]
+        params: Vec<String>,
+        /// Loader data as JSON (default: `{}`).
+        #[arg(long, default_value = "{}")]
+        data: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -327,6 +347,7 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
         Command::Mcp { root } => cmd_mcp(&root, w).await,
         Command::Schema => cmd_schema(w),
         Command::Config { root, json } => cmd_config(&root, json, w).await,
+        Command::Render { root, route, url, params, data } => cmd_render(&root, &route, url.as_deref(), &params, &data, w).await,
     }
     .map_err(|e| {
         tracing::error!(error = %e, "command failed");
@@ -1667,6 +1688,83 @@ fn cmd_schema(w: Writer<'_>) -> anyhow::Result<i32> {
     let json = oxide_config::config_schema_pretty()
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
     outln!(w, "{json}");
+    Ok(0)
+}
+
+/// `oxide render` (§7): load the framework adapter and dispatch a page
+/// render through it. Writes the resulting HTML to stdout. This is the
+/// read-path proof: config → adapter → render → HTML.
+async fn cmd_render(
+    root: &str,
+    route: &str,
+    url: Option<&str>,
+    params: &[String],
+    data_json: &str,
+    w: Writer<'_>,
+) -> anyhow::Result<i32> {
+    use oxide_jshost::{FrameworkHost, JsHost, NodeHost, PoolConfig};
+
+    let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
+    let config_path = find_config_file(&rootp)?;
+
+    // Parse params (`k=v` pairs; comma splits produce arrays).
+    let mut params_map: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+    for raw in params {
+        let Some((k, v)) = raw.split_once('=') else {
+            anyhow::bail!("--param expects KEY=VALUE, got `{raw}`");
+        };
+        let entry = params_map
+            .entry(k.to_string())
+            .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+        match entry {
+            serde_json::Value::Array(a) => a.push(serde_json::Value::String(v.to_string())),
+            _ => unreachable!("entry initialized as array"),
+        }
+    }
+    // Single-value params should be scalars, not single-element arrays.
+    let params_json: serde_json::Map<String, serde_json::Value> = params_map
+        .into_iter()
+        .map(|(k, v)| {
+            let scalar = match v {
+                serde_json::Value::Array(ref a) if a.len() == 1 => a[0].clone(),
+                other => other,
+            };
+            (k, scalar)
+        })
+        .collect();
+
+    // Parse data JSON.
+    let data: serde_json::Value = serde_json::from_str(data_json)
+        .map_err(|e| anyhow::anyhow!("--data is not valid JSON: {e}"))?;
+
+    // Derived URL when not supplied: `/{route}` minus the `routes/` prefix.
+    let url_str = url.map(String::from).unwrap_or_else(|| {
+        let stripped = route.strip_prefix("routes/").unwrap_or(route);
+        format!("/{stripped}")
+    });
+
+    // Minimal RenderInput shape (spec §7 RenderInput, packages/oxide types.ts).
+    let input = serde_json::json!({
+        "route": route,
+        "url": url_str,
+        "params": params_json,
+        "data": data,
+        "head": { "meta": [], "link": [], "style": [], "script": [] },
+    });
+
+    let host = NodeHost::new(NodeHost::worker_script_default());
+    let pool = host
+        .tooling_pool(PoolConfig::default())
+        .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+
+    let fw = FrameworkHost::new(pool);
+    let path_str = config_path.to_string_lossy().to_string();
+    let html = fw
+        .render(&path_str, input)
+        .await
+        .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+
+    outln!(w, "{html}");
     Ok(0)
 }
 
