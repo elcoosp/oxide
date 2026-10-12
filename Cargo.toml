@@ -1,0 +1,147 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/cli",
+    "crates/config",
+    "crates/graph",
+    "crates/compiler",
+    "crates/bundler",
+    "crates/jshost",
+    "crates/router",
+    "crates/server",
+    "crates/render",
+    "crates/cache",
+    "crates/odf",
+    "crates/assets",
+    "crates/dev",
+    "crates/plugin",
+    "crates/adapters",
+    "crates/core-wasm",
+    "crates/diagnostics",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT OR Apache-2.0"
+repository = "https://example.com/oxide/oxide"
+description = "Oxide: framework-agnostic, full-stack meta-framework with a Rust core (working name, spec v0.1)"
+
+[workspace.dependencies]
+# Internal crates (spec §23)
+oxide-diagnostics = { path = "crates/diagnostics", version = "0.1.0" }
+oxide-odf = { path = "crates/odf", version = "0.1.0" }
+oxide-router = { path = "crates/router", version = "0.1.0" }
+oxide-graph = { path = "crates/graph", version = "0.1.0" }
+oxide-config = { path = "crates/config", version = "0.1.0" }
+oxide-cache = { path = "crates/cache", version = "0.1.0" }
+oxide-compiler = { path = "crates/compiler", version = "0.1.0" }
+oxide-bundler = { path = "crates/bundler", version = "0.1.0" }
+oxide-jshost = { path = "crates/jshost", version = "0.1.0" }
+oxide-plugin = { path = "crates/plugin", version = "0.1.0" }
+oxide-render = { path = "crates/render", version = "0.1.0" }
+oxide-server = { path = "crates/server", version = "0.1.0" }
+oxide-assets = { path = "crates/assets", version = "0.1.0" }
+oxide-dev = { path = "crates/dev", version = "0.1.0" }
+oxide-adapters = { path = "crates/adapters", version = "0.1.0" }
+oxide-core-wasm = { path = "crates/core-wasm", version = "0.1.0" }
+
+# Async / HTTP / TLS (spec Appendix A: stable, direct use)
+tokio = { version = "1.52.3", features = ["full"] }
+hyper = { version = "1.12.0", features = ["http1", "http2", "server", "client"] }
+hyper-util = { version = "0.1.21", features = ["tokio", "server", "http1", "http2", "client-legacy"] }
+http-body-util = "0.1.5"
+bytes = "1.12.1"
+futures = "0.3.34"
+async-trait = "0.1.92"
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring"] }
+rustls-pemfile = "2.2.0"
+
+# Serialization / storage (spec Appendix A)
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+rkyv = { version = "0.8.18", features = ["unaligned"] }
+redb = "4.3.0"
+blake3 = "1.8.7"
+zstd = "0.14.2"
+memmap2 = "0.9.11"
+
+# CLI / config
+clap = { version = "4.6.7", features = ["derive", "string", "env"] }
+
+# Concurrency
+rayon = "1.12.0"
+dashmap = "6.2.1"
+
+# Transform / render / watch
+regex = "1.13.1"
+lol_html = "3.0.1"
+notify = "8.2.0"
+url = "2.5.0"
+
+# Images / assets
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+
+# Compression (spec §12.1 step 8: zstd preferred, br, gzip)
+flate2 = "1.1.10"
+brotli = "8.0.4"
+
+# Errors / observability (spec Appendix A: direct use)
+thiserror = "2.0.21"
+anyhow = "1.0.104"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+miette = { version = "7.6.0", features = ["fancy"] }
+
+# Testing
+proptest = "1.12.0"
+tempfile = "3.27.0"
+tokio-test = "0.4.6"
+
+# Real upstream dependencies backing every documented stub (docs/deviations.md).
+# Added so the stub-replacement passes in the following scripts can flip each
+# trait's default engine to the spec's exact external choice (spec Appendix A).
+deno_core = { version = "0.412.0" }
+deno_ast = { version = "0.53.3" }
+moka = { version = "0.12.16", features = ["future", "sync"] }
+oxc = { version = "0.153.0", features = ["full"] }
+oxc_resolver = { version = "11.24.3" }
+oxc_allocator = { version = "0.153.0" }
+oxc_parser = { version = "0.153.0" }
+oxc_ast = { version = "0.153.0" }
+oxc_span = { version = "0.153.0" }
+oxc_semantic = { version = "0.153.0" }
+oxc_transformer = { version = "0.153.0" }
+oxc_codegen = { version = "0.153.0" }
+rolldown = { version = "1.2.13" }
+rolldown_common = { version = "1.2.13" }
+lightningcss = { version = "1.33.0", features = ["bundler", "sourcemap"] }
+ravif = { version = "0.13.0" }
+skrifa = { version = "0.48.0" }
+read-fonts = { version = "0.45.0" }
+write-fonts = { version = "0.52.0" }
+resvg = { version = "0.48.1" }
+taffy = { version = "0.14.0" }
+parley = { version = "0.11.0" }
+wasmtime = { version = "48.0.1", features = ["component-model"] }
+wasmtime-wasi = { version = "48.0.1" }
+wit-parser = { version = "0.259.0" }
+base64 = { version = "0.23.1" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+
+[profile.dev]
+opt-level = 0
+debug = 1
+
+[profile.test]
+opt-level = 1
+# Disable debuginfo in test binaries: the per-test .dSYM bundles on macOS
+# routinely run into the multi-GB range and are not needed for `cargo test`.
+debug = false
+strip = "debuginfo"
