@@ -637,7 +637,7 @@ fn topo_order(closure: &BTreeSet<NodeKey>, nodes: &DashMap<NodeKey, NodeOutput>)
     }
     let mut ready: BTreeSet<NodeKey> = indegree
         .iter()
-        .filter(|(_, &d)| d == 0)
+        .filter(|&(_, &d)| d == 0)
         .map(|(k, _)| k.clone())
         .collect();
     let mut order = Vec::with_capacity(closure.len());
