@@ -22,6 +22,7 @@ rustls-pemfile = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 flate2 = { workspace = true }
+brotli = { workspace = true }
 zstd = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
