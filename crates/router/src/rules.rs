@@ -1,0 +1,416 @@
+//! Native rules engine (spec §12.1 step 4, D13, §17.1): redirects, rewrites, headers,
+//! basic auth gates and rate-limit decisions evaluated in Rust before any JS.
+
+use std::collections::BTreeMap;
+
+use crate::segment::split_path;
+use crate::{ferr, NativeRule, Result, RuleOutcome, RulesEngine};
+
+/// Compile-time validation + normalization (see `RulesEngine::compile` docs).
+pub(crate) fn compile_impl(rules: Vec<NativeRule>) -> Result<RulesEngine> {
+    for (i, r) in rules.iter().enumerate() {
+        let n = i + 1;
+        if !r.source.starts_with('/') {
+            return Err(ferr(
+                "RTR-110",
+                format!("rule #{n}: source `{}` must start with `/`", r.source),
+                "write rule sources as absolute paths, e.g. `/old/:slug`",
+            ));
+        }
+        let segs: Vec<&str> = r.source.split('/').filter(|s| !s.is_empty()).collect();
+        if let Some(pos) = segs.iter().position(|s| *s == "*") {
+            if pos != segs.len() - 1 {
+                return Err(ferr(
+                    "RTR-110",
+                    format!("rule #{n}: `*` must be the last segment of the source"),
+                    "move `*` to the end, e.g. `/docs/*`",
+                ));
+            }
+        }
+        if r.rule_type.as_deref() == Some("rewrite") && r.destination.is_none() {
+            return Err(ferr(
+                "RTR-110",
+                format!("rule #{n}: rewrite rules require a `destination`"),
+                "add `destination` to the rewrite rule in oxide.config.ts",
+            ));
+        }
+        if r.rule_type.as_deref() == Some("ratelimit") && r.rate_limit.is_none() {
+            return Err(ferr(
+                "RTR-110",
+                format!("rule #{n}: rate-limit rules require a `rate_limit` token bucket"),
+                "add `rate_limit: {{ key, max, window_secs }}` to the rule",
+            ));
+        }
+    }
+    let mut rules = rules;
+    for r in rules.iter_mut() {
+        if r.rate_limit.is_some() && r.rule_type.is_none() {
+            r.rule_type = Some("ratelimit".to_string());
+        }
+    }
+    Ok(RulesEngine { rules })
+}
+
+pub(crate) fn evaluate_impl(engine: &RulesEngine, path: &str) -> RuleOutcome {
+    let url = split_path(path);
+    let mut merged: BTreeMap<String, String> = BTreeMap::new();
+    let mut any_headers = false;
+    for rule in &engine.rules {
+        let Some(params) = match_source(&rule.source, &url) else {
+            continue;
+        };
+        // Terminal outcomes in priority order: rate limit > auth > rewrite > redirect.
+        if rule.rule_type.as_deref() == Some("ratelimit") {
+            return RuleOutcome::RateLimited;
+        }
+        if rule.basic_auth.is_some() {
+            return RuleOutcome::AuthRequired;
+        }
+        if rule.rule_type.as_deref() == Some("rewrite") {
+            if let Some(dest) = &rule.destination {
+                return RuleOutcome::Rewrite(substitute(dest, &params));
+            }
+        }
+        if let Some(dest) = &rule.destination {
+            return RuleOutcome::Redirect {
+                destination: substitute(dest, &params),
+                status: rule.status.unwrap_or(308),
+            };
+        }
+        if let Some(headers) = &rule.headers {
+            // Header rules are non-terminal: keep scanning, merge at the end.
+            merged.extend(headers.iter().map(|(k, v)| (k.clone(), v.clone())));
+            any_headers = true;
+        }
+    }
+    if any_headers {
+        RuleOutcome::Headers(merged)
+    } else {
+        RuleOutcome::None
+    }
+}
+
+/// Match a rule source (`:param` segments, trailing `*` wildcard, static segments)
+/// against decoded URL segments. Returns captured params, or `None` when no match.
+/// `*` consumes zero or more remaining segments and captures them as `:splat`.
+pub(crate) fn match_source(source: &str, url: &[String]) -> Option<BTreeMap<String, String>> {
+    let src = source.strip_prefix('/').unwrap_or(source);
+    let mut params = BTreeMap::new();
+    if src.is_empty() {
+        return if url.is_empty() { Some(params) } else { None };
+    }
+    let segs: Vec<&str> = src.split('/').filter(|s| !s.is_empty()).collect();
+    let mut i = 0usize;
+    for (n, s) in segs.iter().enumerate() {
+        let last = n + 1 == segs.len();
+        if *s == "*" {
+            params.insert("splat".to_string(), url[i..].join("/"));
+            return Some(params);
+        }
+        if i >= url.len() {
+            return None;
+        }
+        if let Some(name) = s.strip_prefix(':') {
+            if name.is_empty() {
+                return None;
+            }
+            params.insert(name.to_string(), url[i].clone());
+        } else if url[i] != *s {
+            return None;
+        }
+        i += 1;
+        if last && i != url.len() {
+            return None;
+        }
+    }
+    Some(params)
+}
+
+/// Substitute `:name` tokens from captured params into a destination; unknown names
+/// stay literal.
+pub(crate) fn substitute(destination: &str, params: &BTreeMap<String, String>) -> String {
+    let mut out = String::new();
+    let mut rest = destination;
+    while let Some(idx) = rest.find(':') {
+        out.push_str(&rest[..idx]);
+        let after = &rest[idx + 1..];
+        let name_len: usize = after
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .map(char::len_utf8)
+            .sum();
+        if name_len > 0 {
+            let name = &after[..name_len];
+            match params.get(name) {
+                Some(v) => out.push_str(v),
+                None => {
+                    out.push(':');
+                    out.push_str(name);
+                }
+            }
+            rest = &after[name_len..];
+        } else {
+            out.push(':');
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{RateLimit, RulesEngine};
+
+    fn rule(source: &str) -> NativeRule {
+        NativeRule {
+            source: source.to_string(),
+            destination: None,
+            status: None,
+            rule_type: None,
+            headers: None,
+            basic_auth: None,
+            rate_limit: None,
+        }
+    }
+
+    #[test]
+    fn redirect_defaults_to_308_and_honors_status() {
+        let mut r = rule("/old");
+        r.destination = Some("/new".to_string());
+        let e = RulesEngine::compile(vec![r.clone()]).unwrap();
+        assert_eq!(
+            e.evaluate("/old"),
+            RuleOutcome::Redirect {
+                destination: "/new".to_string(),
+                status: 308
+            }
+        );
+        let mut r2 = r.clone();
+        r2.status = Some(302);
+        let e = RulesEngine::compile(vec![r2]).unwrap();
+        assert_eq!(
+            e.evaluate("/old"),
+            RuleOutcome::Redirect {
+                destination: "/new".to_string(),
+                status: 302
+            }
+        );
+        assert_eq!(e.evaluate("/other"), RuleOutcome::None);
+    }
+
+    #[test]
+    fn redirect_substitutes_path_params() {
+        let mut r = rule("/blog/:slug");
+        r.destination = Some("/posts/:slug".to_string());
+        let e = RulesEngine::compile(vec![r]).unwrap();
+        assert_eq!(
+            e.evaluate("/blog/rust-is-nice"),
+            RuleOutcome::Redirect {
+                destination: "/posts/rust-is-nice".to_string(),
+                status: 308
+            }
+        );
+    }
+
+    #[test]
+    fn wildcard_captures_splat_for_destinations() {
+        let mut r = rule("/docs/*");
+        r.destination = Some("https://docs.example.com/:splat".to_string());
+        let e = RulesEngine::compile(vec![r]).unwrap();
+        assert_eq!(
+            e.evaluate("/docs/a/b"),
+            RuleOutcome::Redirect {
+                destination: "https://docs.example.com/a/b".to_string(),
+                status: 308
+            }
+        );
+        // `*` also matches zero remaining segments.
+        assert_eq!(
+            e.evaluate("/docs"),
+            RuleOutcome::Redirect {
+                destination: "https://docs.example.com/".to_string(),
+                status: 308
+            }
+        );
+    }
+
+    #[test]
+    fn rewrites_rewrite() {
+        let mut r = rule("/shop/:item");
+        r.rule_type = Some("rewrite".to_string());
+        r.destination = Some("/products/:item".to_string());
+        let e = RulesEngine::compile(vec![r]).unwrap();
+        assert_eq!(
+            e.evaluate("/shop/42"),
+            RuleOutcome::Rewrite("/products/42".to_string())
+        );
+    }
+
+    #[test]
+    fn headers_merge_across_matching_rules() {
+        let mut a = rule("/legacy/*");
+        a.headers = Some(BTreeMap::from([
+            ("x-a".to_string(), "1".to_string()),
+            ("x-both".to_string(), "a".to_string()),
+        ]));
+        let mut b = rule("/legacy/:page");
+        b.headers = Some(BTreeMap::from([
+            ("x-b".to_string(), "2".to_string()),
+            ("x-both".to_string(), "b".to_string()),
+        ]));
+        let e = RulesEngine::compile(vec![a, b]).unwrap();
+        match e.evaluate("/legacy/home") {
+            RuleOutcome::Headers(h) => {
+                assert_eq!(h.get("x-a").map(String::as_str), Some("1"));
+                assert_eq!(h.get("x-b").map(String::as_str), Some("2"));
+                assert_eq!(
+                    h.get("x-both").map(String::as_str),
+                    Some("b"),
+                    "later rules win per key"
+                );
+            }
+            other => panic!("expected headers, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn header_rules_do_not_mask_later_terminal_rules() {
+        let mut h = rule("/app");
+        h.headers = Some(BTreeMap::from([(
+            "x-frame".to_string(),
+            "deny".to_string(),
+        )]));
+        let mut r = rule("/app");
+        r.destination = Some("/login".to_string());
+        let e = RulesEngine::compile(vec![h, r]).unwrap();
+        assert_eq!(
+            e.evaluate("/app"),
+            RuleOutcome::Redirect {
+                destination: "/login".to_string(),
+                status: 308
+            },
+            "headers are non-terminal; first terminal rule wins"
+        );
+    }
+
+    #[test]
+    fn basic_auth_gates_first() {
+        let mut r = rule("/admin/*");
+        r.basic_auth = Some(("u".to_string(), "p".to_string()));
+        r.destination = Some("/login".to_string());
+        let e = RulesEngine::compile(vec![r]).unwrap();
+        assert_eq!(e.evaluate("/admin/panel"), RuleOutcome::AuthRequired);
+    }
+
+    #[test]
+    fn ratelimit_rules_report_rate_limited() {
+        let mut r = rule("/api/*");
+        r.rule_type = Some("ratelimit".to_string());
+        r.rate_limit = Some(RateLimit {
+            key: "ip".to_string(),
+            max: 100,
+            window_secs: 60,
+        });
+        let e = RulesEngine::compile(vec![r.clone()]).unwrap();
+        assert_eq!(e.evaluate("/api/data"), RuleOutcome::RateLimited);
+        // A rate_limit field without an explicit type is normalized at compile.
+        let mut r2 = rule("/v2/*");
+        r2.rate_limit = r.rate_limit.clone();
+        let e = RulesEngine::compile(vec![r2]).unwrap();
+        assert_eq!(e.rules[0].rule_type.as_deref(), Some("ratelimit"));
+        assert_eq!(e.evaluate("/v2/x"), RuleOutcome::RateLimited);
+        // The token-bucket decision itself lives in the server crate.
+    }
+
+    #[test]
+    fn first_matching_rule_wins_in_declaration_order() {
+        let mut a = rule("/a");
+        a.destination = Some("/x".to_string());
+        let mut b = rule("/a");
+        b.destination = Some("/y".to_string());
+        let e = RulesEngine::compile(vec![a, b]).unwrap();
+        assert_eq!(
+            e.evaluate("/a"),
+            RuleOutcome::Redirect {
+                destination: "/x".to_string(),
+                status: 308
+            }
+        );
+    }
+
+    #[test]
+    fn inert_rules_fall_through_to_later_rules() {
+        // A matching rule with no actionable fields is a no-op.
+        let mut inert = rule("/p/:id");
+        inert.status = Some(200);
+        let mut real = rule("/p/:id");
+        real.destination = Some("/q/:id".to_string());
+        let e = RulesEngine::compile(vec![inert, real]).unwrap();
+        assert_eq!(
+            e.evaluate("/p/7"),
+            RuleOutcome::Redirect {
+                destination: "/q/7".to_string(),
+                status: 308
+            }
+        );
+    }
+
+    #[test]
+    fn trailing_slashes_and_percent_encoding_are_tolerated() {
+        let mut r = rule("/old path/:x");
+        r.destination = Some("/new/:x".to_string());
+        let e = RulesEngine::compile(vec![r]).unwrap();
+        assert_eq!(
+            e.evaluate("/old%20path/hello%20world/"),
+            RuleOutcome::Redirect {
+                destination: "/new/hello world".to_string(),
+                status: 308
+            }
+        );
+    }
+
+    #[test]
+    fn compile_validates_sources_and_outcomes() {
+        // rewrite without destination
+        let mut r = rule("/a");
+        r.rule_type = Some("rewrite".to_string());
+        assert_eq!(RulesEngine::compile(vec![r]).unwrap_err().0.code, "RTR-110");
+        // `*` not last
+        let r = rule("/*/a");
+        assert_eq!(RulesEngine::compile(vec![r]).unwrap_err().0.code, "RTR-110");
+        // source must be absolute
+        let r = rule("relative");
+        assert_eq!(RulesEngine::compile(vec![r]).unwrap_err().0.code, "RTR-110");
+        // ratelimit without bucket config
+        let mut r = rule("/api");
+        r.rule_type = Some("ratelimit".to_string());
+        assert_eq!(RulesEngine::compile(vec![r]).unwrap_err().0.code, "RTR-110");
+        // a valid table compiles
+        let e = RulesEngine::compile(vec![rule("/ok")]).unwrap();
+        assert_eq!(e.rules.len(), 1);
+        assert_eq!(e.evaluate("/ok"), RuleOutcome::None);
+    }
+
+    #[test]
+    fn match_source_and_substitute_unit_semantics() {
+        let url: Vec<String> = vec!["a".into(), "b".into()];
+        assert!(match_source("/a/:x", &url).is_some_and(|p| p["x"] == "b"));
+        assert!(
+            match_source("/a/:x/extra", &url).is_none(),
+            "lengths must match"
+        );
+        assert!(match_source("/", &[]).is_some());
+        assert!(match_source("/", &url).is_none());
+        assert!(match_source("/a/*", &url).is_some_and(|p| p["splat"] == "b"));
+        let params = BTreeMap::from([("id".to_string(), "9".to_string())]);
+        assert_eq!(substitute("/p/:id/edit", &params), "/p/9/edit");
+        assert_eq!(
+            substitute("/p/:unknown", &params),
+            "/p/:unknown",
+            "unknown names stay literal"
+        );
+        assert_eq!(substitute("weird:colon", &params), "weird:colon");
+    }
+}
