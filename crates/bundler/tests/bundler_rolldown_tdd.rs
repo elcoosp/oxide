@@ -189,3 +189,102 @@ fn rolldown_deterministic_across_runs() {
         b.client_manifest.unwrap().build_id
     );
 }
+
+// ---------------- externals + define + tsconfig_paths (B.1) ----------------
+
+#[test]
+fn rolldown_honours_externals() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "src/index.js",
+        "import { x } from 'lodash';\nexport const out = x + 1;\nconsole.log(out);\n",
+    );
+
+    let mut o = opts(
+        dir.path(),
+        BundleEnv::Client,
+        &[("index", "src/index.js")],
+    );
+    o.externals = vec!["lodash".to_string()];
+    let out = RolldownBundler::new(dir.path()).bundle(&o).unwrap();
+
+    // The external specifier must survive as an import in the output.
+    let entry = out.chunks.iter().find(|c| c.kind == ChunkKind::Entry).unwrap();
+    let code = std::fs::read_to_string(dir.path().join("dist").join(&entry.file)).unwrap();
+    assert!(
+        code.contains("lodash"),
+        "external import must be preserved:\n{code}"
+    );
+    // And the module must not be bundled (no separate node_modules chunk).
+    assert!(
+        !out.chunks.iter().any(|c| c.name.contains("lodash")),
+        "external must not be bundled: {:?}",
+        out.chunks.iter().map(|c| &c.name).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn rolldown_applies_define_substitutions() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "src/index.js",
+        "export const env = process.env.NODE_ENV;\nconsole.log(env);\n",
+    );
+
+    let mut o = opts(
+        dir.path(),
+        BundleEnv::Client,
+        &[("index", "src/index.js")],
+    );
+    o.define
+        .insert("process.env.NODE_ENV".to_string(), "\"production\"".to_string());
+    let out = RolldownBundler::new(dir.path()).bundle(&o).unwrap();
+
+    let entry = out.chunks.iter().find(|c| c.kind == ChunkKind::Entry).unwrap();
+    let code = std::fs::read_to_string(dir.path().join("dist").join(&entry.file)).unwrap();
+    assert!(
+        code.contains("\"production\"") || code.contains("'production'"),
+        "define substitution must appear in output:\n{code}"
+    );
+    assert!(
+        !code.contains("process.env.NODE_ENV"),
+        "original expression must be replaced:\n{code}"
+    );
+}
+
+#[test]
+fn rolldown_reads_tsconfig_paths_aliases() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "src/util.ts", "export const util = 42;\n");
+    write(
+        dir.path(),
+        "src/index.ts",
+        "import { util } from '@app/util';\nexport const out = util;\nconsole.log(out);\n",
+    );
+
+    let mut o = opts(
+        dir.path(),
+        BundleEnv::Client,
+        &[("index", "src/index.ts")],
+    );
+    let mut paths = std::collections::BTreeMap::new();
+    paths.insert("@app/*".to_string(), vec!["src/*".to_string()]);
+    o.tsconfig_paths = paths;
+
+    // A real tsconfig on disk is required for `TsConfig::Manual`; the bundler
+    // synthesizes one under `out_dir` when the pipeline only provided paths.
+    // Rolldown reads it and resolves `@app/util` → `src/util.ts`.
+    let out = RolldownBundler::new(dir.path()).bundle(&o).unwrap();
+    let entry = out
+        .chunks
+        .iter()
+        .find(|c| c.kind == ChunkKind::Entry)
+        .unwrap();
+    let code = std::fs::read_to_string(dir.path().join("dist").join(&entry.file)).unwrap();
+    assert!(
+        code.contains("42"),
+        "aliased util must be resolved and inlined:\n{code}"
+    );
+}
