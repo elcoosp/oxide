@@ -660,3 +660,590 @@ async fn run_returns_exit_code_and_prints_buffer_to_stdout() {
     assert_eq!(code, 1);
     assert!(!buf.is_empty(), "writer received the report");
 }
+
+
+// ------------------------------------------------------- §20 dispatch metrics
+
+/// Wait until the started server actually accepts connections, then return.
+/// The dispatch closure records metrics on the first request, so racing the
+/// listen() call would lose that first observation.
+async fn wait_ready(addr: std::net::SocketAddr) {
+    for _ in 0..50 {
+        if tokio::net::TcpStream::connect(addr).await.is_ok() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("server never became ready at {addr}");
+}
+
+/// Minimal HTTP GET helper: one connection, close, discard the response body.
+async fn simple_get(url: &str) -> std::io::Result<String> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let stripped = url.strip_prefix("http://").unwrap_or(url);
+    let (hostport, path) = stripped
+        .split_once('/')
+        .map(|(h, p)| (h, format!("/{p}")))
+        .unwrap_or((stripped, "/".to_string()));
+    let mut stream = tokio::net::TcpStream::connect(hostport).await?;
+    let req =
+        format!("GET {path} HTTP/1.1\r\nHost: {hostport}\r\nConnection: close\r\n\r\n");
+    stream.write_all(req.as_bytes()).await?;
+    let mut buf = String::new();
+    stream.read_to_string(&mut buf).await?;
+    Ok(buf)
+}
+
+#[tokio::test]
+async fn started_server_exposes_metrics_registry() {
+    let dir = tempfile::tempdir().unwrap();
+    let routes = dir.path().join("src/routes");
+    std::fs::create_dir_all(routes.join("index")).unwrap();
+    std::fs::write(
+        routes.join("index").join("page.tsx"),
+        "export default function Page() { return null; }",
+    )
+    .unwrap();
+
+    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0))
+        .await
+        .expect("start_server");
+    let text = started.metrics.render();
+    assert!(text.contains("# TYPE oxide_requests_total counter"), "{text}");
+    let _ = started.shutdown.send(true);
+}
+
+#[tokio::test]
+async fn dispatch_observes_route_pattern_labels() {
+    let dir = tempfile::tempdir().unwrap();
+    let routes = dir.path().join("src/routes");
+    std::fs::create_dir_all(routes.join("blog").join("[slug]")).unwrap();
+    std::fs::write(
+        routes.join("blog").join("[slug]").join("page.tsx"),
+        "export default function Page() { return null; }",
+    )
+    .unwrap();
+    std::fs::create_dir_all(routes.join("index")).unwrap();
+    std::fs::write(
+        routes.join("index").join("page.tsx"),
+        "export default function Page() { return null; }",
+    )
+    .unwrap();
+
+    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0))
+        .await
+        .expect("start_server");
+    wait_ready(started.addr).await;
+
+    let url = format!("http://{}/blog/hello", started.addr);
+    let _ = simple_get(&url).await;
+
+    let text = started.metrics.render();
+    // The router renders param segments as `:name` in its canonical pattern.
+    assert!(
+        text.contains("oxide_request_duration_ms_count{route=\"/blog/:slug\"} 1"),
+        "expected /blog/:slug label with one observation:\n{text}"
+    );
+    let _ = started.shutdown.send(true);
+}
+
+#[tokio::test]
+async fn dispatch_observes_unmatched_label() {
+    let dir = tempfile::tempdir().unwrap();
+    let routes = dir.path().join("src/routes");
+    std::fs::create_dir_all(routes.join("index")).unwrap();
+    std::fs::write(
+        routes.join("index").join("page.tsx"),
+        "export default function Page() { return null; }",
+    )
+    .unwrap();
+
+    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0))
+        .await
+        .expect("start_server");
+    wait_ready(started.addr).await;
+
+    let url = format!("http://{}/definitely/not/a/route", started.addr);
+    let _ = simple_get(&url).await;
+
+    let text = started.metrics.render();
+    assert!(
+        text.contains("route=\"_unmatched\""),
+        "expected _unmatched label:\n{text}"
+    );
+    let _ = started.shutdown.send(true);
+}
+
+#[tokio::test]
+async fn dispatch_label_cardinality_is_bounded() {
+    let dir = tempfile::tempdir().unwrap();
+    let routes = dir.path().join("src/routes");
+    std::fs::create_dir_all(routes.join("blog").join("[slug]")).unwrap();
+    std::fs::write(
+        routes.join("blog").join("[slug]").join("page.tsx"),
+        "export default function Page() { return null; }",
+    )
+    .unwrap();
+
+    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0))
+        .await
+        .expect("start_server");
+    wait_ready(started.addr).await;
+
+    for i in 0..20 {
+        let url = format!("http://{}/blog/slug-{i}", started.addr);
+        let _ = simple_get(&url).await;
+    }
+
+    let text = started.metrics.render();
+    // Exactly one histogram series for the pattern, no matter how many distinct
+    // resolved URLs were hit.
+    let occurrences = text
+        .matches("oxide_request_duration_ms_count{route=\"/blog/:slug\"}")
+        .count();
+    assert_eq!(
+        occurrences, 1,
+        "expected ONE series for /blog/:slug, found {occurrences}:\n{text}"
+    );
+    assert!(
+        text.contains("oxide_request_duration_ms_count{route=\"/blog/:slug\"} 20"),
+        "expected 20 observations:\n{text}"
+    );
+    let _ = started.shutdown.send(true);
+}
+
+
+#[tokio::test]
+async fn dev_server_serves_inspector_endpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let routes = dir.path().join("src/routes");
+    std::fs::create_dir_all(routes.join("blog").join("[slug]")).unwrap();
+    std::fs::write(
+        routes.join("blog").join("[slug]").join("page.tsx"),
+        "export default function Page() { return null; }",
+    )
+    .unwrap();
+    std::fs::create_dir_all(routes.join("index")).unwrap();
+    std::fs::write(
+        routes.join("index").join("page.tsx"),
+        "export default function Page() { return null; }",
+    )
+    .unwrap();
+
+    let started = crate::start_dev_server(dir.path().to_str().unwrap(), Some(0))
+        .await
+        .expect("start_dev_server");
+    wait_ready(started.addr).await;
+
+    // JSON state endpoint.
+    let state_url = format!("http://{}/__oxide/state", started.addr);
+    let resp = simple_get(&state_url).await.expect("GET /__oxide/state");
+    assert!(resp.contains("HTTP/1.1 200"), "{resp}");
+    assert!(resp.contains("application/json"), "{resp}");
+    assert!(resp.contains("/blog/:slug"), "{resp}");
+
+    // HTML endpoint.
+    let html_url = format!("http://{}/__oxide", started.addr);
+    let resp = simple_get(&html_url).await.expect("GET /__oxide");
+    assert!(resp.contains("HTTP/1.1 200"), "{resp}");
+    assert!(resp.contains("text/html"), "{resp}");
+    assert!(resp.contains("Oxide Inspector"), "{resp}");
+
+    let _ = started.shutdown.send(true);
+}
+
+#[tokio::test]
+async fn production_server_does_not_serve_inspector() {
+    let dir = tempfile::tempdir().unwrap();
+    let routes = dir.path().join("src/routes");
+    std::fs::create_dir_all(routes.join("index")).unwrap();
+    std::fs::write(
+        routes.join("index").join("page.tsx"),
+        "export default function Page() { return null; }",
+    )
+    .unwrap();
+
+    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0))
+        .await
+        .expect("start_server");
+    wait_ready(started.addr).await;
+
+    let url = format!("http://{}/__oxide/state", started.addr);
+    let resp = simple_get(&url).await.expect("GET");
+    // Not the inspector — falls through to the route dispatcher → 404.
+    assert!(
+        !resp.contains("application/json"),
+        "production must not expose the inspector: {resp}"
+    );
+    let _ = started.shutdown.send(true);
+}
+
+
+// ------------------------------------------------------- §10.5 static export
+
+fn setup_static_project() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let routes = dir.path().join("src/routes");
+    std::fs::create_dir_all(routes.join("index")).unwrap();
+    std::fs::write(
+        routes.join("index").join("page.tsx"),
+        "export default function Page() { return null; }",
+    )
+    .unwrap();
+    write_config(&dir.path().to_path_buf(), r#"{ "adapter": "static" }"#);
+    dir
+}
+
+#[tokio::test]
+async fn static_build_prerenders_page_routes() {
+    let dir = setup_static_project();
+    let mut buf = Vec::new();
+    let code = crate::run_with_writer(
+        Cli {
+            command: Command::Build {
+                root: dir.path().to_str().unwrap().to_string(),
+                r#static: true,
+                mode: None,
+            },
+        },
+        &mut buf,
+    )
+    .await
+    .unwrap();
+    assert_eq!(code, 0, "build output: {}", String::from_utf8_lossy(&buf));
+    let out = String::from_utf8_lossy(&buf);
+    assert!(out.contains("prerendered"), "output: {out}");
+    // The prerendered file exists.
+    assert!(dir.path().join("dist/prerendered/index.html").is_file());
+    // The static deploy artifact has the essential files.
+    assert!(dir.path().join("dist/deploy/_headers").is_file());
+    assert!(dir.path().join("dist/deploy/_redirects").is_file());
+}
+
+#[tokio::test]
+async fn static_build_enumerates_generate_params() {
+    let dir = setup_static_project();
+    let routes = dir.path().join("src/routes");
+    std::fs::create_dir_all(routes.join("blog").join("[slug]")).unwrap();
+    std::fs::write(
+        routes.join("blog").join("[slug]").join("page.tsx"),
+        "export default function Page() { return null; }",
+    )
+    .unwrap();
+    std::fs::write(
+        routes.join("blog").join("[slug]").join("page.server.ts"),
+        r#"export const generateParams = [{ slug: "hello" }, { slug: "world" }];"#,
+    )
+    .unwrap();
+
+    let mut buf = Vec::new();
+    let code = crate::run_with_writer(
+        Cli {
+            command: Command::Build {
+                root: dir.path().to_str().unwrap().to_string(),
+                r#static: true,
+                mode: None,
+            },
+        },
+        &mut buf,
+    )
+    .await
+    .unwrap();
+    assert_eq!(code, 0, "build output: {}", String::from_utf8_lossy(&buf));
+
+    // Both param values produce distinct HTML files.
+    assert!(dir.path().join("dist/prerendered/blog/hello.html").is_file());
+    assert!(dir.path().join("dist/prerendered/blog/world.html").is_file());
+    // They land in the deploy dir.
+    assert!(dir.path().join("dist/deploy/blog/hello.html").is_file());
+    assert!(dir.path().join("dist/deploy/blog/world.html").is_file());
+}
+
+#[tokio::test]
+async fn static_build_refuses_dynamic_without_fallback() {
+    let dir = setup_static_project();
+    let routes = dir.path().join("src/routes");
+    std::fs::create_dir_all(routes.join("dashboard")).unwrap();
+    std::fs::write(
+        routes.join("dashboard").join("page.tsx"),
+        "export default function Page() { return null; }",
+    )
+    .unwrap();
+    // A page.server.ts with a runtime-only loader infers `dynamic`.
+    std::fs::write(
+        routes.join("dashboard").join("page.server.ts"),
+        "export const load = async ({ cookies }) => ({});\n",
+    )
+    .unwrap();
+
+    let mut buf = Vec::new();
+    // §10.5 refusal — the build fails, no broken deploy is emitted.
+    let result = crate::run_with_writer(
+        Cli {
+            command: Command::Build {
+                root: dir.path().to_str().unwrap().to_string(),
+                r#static: true,
+                mode: None,
+            },
+        },
+        &mut buf,
+    )
+    .await;
+    let err = result.expect_err("build must refuse");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("ADP-STATIC-DYN") && msg.contains("dashboard"),
+        "expected §10.5 refusal naming the route: {msg}"
+    );
+}
+
+
+// ------------------------------------------------------- §19.3 MCP server
+
+#[tokio::test]
+async fn mcp_routes_tool_lists_routes() {
+    use rmcp::handler::server::wrapper::Parameters;
+    use rmcp::ServerHandler as _;
+    let dir = tempfile::tempdir().unwrap();
+    let routes = dir.path().join("src/routes");
+    std::fs::create_dir_all(routes.join("blog").join("[slug]")).unwrap();
+    std::fs::write(
+        routes.join("blog").join("[slug]").join("page.tsx"),
+        "export default function Page() { return null; }",
+    )
+    .unwrap();
+    std::fs::create_dir_all(routes.join("index")).unwrap();
+    std::fs::write(
+        routes.join("index").join("page.tsx"),
+        "export default function Page() { return null; }",
+    )
+    .unwrap();
+    write_config(&dir.path().to_path_buf(), "{}");
+
+    let server = crate::mcp::OxideMcp::new(dir.path().to_path_buf());
+    let result = server
+        .oxide_routes(Parameters(crate::mcp::NoArgs {}))
+        .await
+        .expect("tool call");
+    // Success = at least one content block.
+    assert!(!result.content.is_empty(), "expected content");
+    // Convert to text and parse the JSON.
+    let text = result
+        .content
+        .iter()
+        .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let v: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+    assert_eq!(v["count"], 2);
+    let patterns: Vec<&str> = v["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["pattern"].as_str())
+        .collect();
+    assert!(patterns.contains(&"/blog/:slug"), "{patterns:?}");
+    assert!(patterns.contains(&"/index"), "{patterns:?}");
+
+    // get_info reports the tool capability.
+    let info = server.get_info();
+    assert!(info.capabilities.tools.is_some());
+}
+
+#[tokio::test]
+async fn mcp_cache_tool_reports_empty_cache() {
+    use rmcp::handler::server::wrapper::Parameters;
+    let dir = tempfile::tempdir().unwrap();
+    let server = crate::mcp::OxideMcp::new(dir.path().to_path_buf());
+    let result = server
+        .oxide_cache(Parameters(crate::mcp::NoArgs {}))
+        .await
+        .unwrap();
+    let text = result
+        .content
+        .iter()
+        .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    // No cache dir → both fields are empty/zero.
+    assert!(v["cache_dir"].is_null());
+    assert_eq!(v["disk_bytes"], 0);
+    assert_eq!(v["blob_count"], 0);
+}
+
+#[tokio::test]
+async fn mcp_errors_tool_empty_when_no_build() {
+    use rmcp::handler::server::wrapper::Parameters;
+    let dir = tempfile::tempdir().unwrap();
+    let server = crate::mcp::OxideMcp::new(dir.path().to_path_buf());
+    let result = server
+        .oxide_errors(Parameters(crate::mcp::NoArgs {}))
+        .await
+        .unwrap();
+    let text = result
+        .content
+        .iter()
+        .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(v["source"].is_null());
+    assert_eq!(v["entries"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn mcp_errors_tool_reads_diagnostics_file() {
+    use rmcp::handler::server::wrapper::Parameters;
+    let dir = tempfile::tempdir().unwrap();
+    let oxide = dir.path().join(".oxide");
+    std::fs::create_dir_all(&oxide).unwrap();
+    std::fs::write(
+        oxide.join("last-build-diagnostics.json"),
+        serde_json::json!([
+            {"code": "BLD-RESOLVE", "severity": "error", "message": "boom", "fix": "fix it"}
+        ])
+        .to_string(),
+    )
+    .unwrap();
+    let server = crate::mcp::OxideMcp::new(dir.path().to_path_buf());
+    let result = server
+        .oxide_errors(Parameters(crate::mcp::NoArgs {}))
+        .await
+        .unwrap();
+    let text = result
+        .content
+        .iter()
+        .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(v["source"].as_str().unwrap().ends_with("last-build-diagnostics.json"));
+    assert_eq!(v["entries"][0]["code"], "BLD-RESOLVE");
+    assert_eq!(v["entries"][0]["fix"], "fix it");
+}
+
+
+// ------------------------------------------------------- §19.3 JSON Schema
+
+#[tokio::test]
+async fn schema_command_emits_valid_json_schema() {
+    let mut buf = Vec::new();
+    let code = crate::run_with_writer(
+        Cli {
+            command: Command::Schema,
+        },
+        &mut buf,
+    )
+    .await
+    .unwrap();
+    assert_eq!(code, 0);
+    let s = String::from_utf8(buf).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&s).expect("valid JSON");
+    assert_eq!(v["type"], "object");
+    assert_eq!(
+        v["$id"],
+        oxide_config::CONFIG_SCHEMA_URI,
+        "$id must match the published URI"
+    );
+    // Spot-check that the schema documents a few real keys.
+    assert!(v["properties"]["framework"]["properties"]["adapter"]["enum"].is_array());
+    assert!(v["properties"]["static"]["properties"]["fallback"].is_object());
+}
+
+
+// ------------------------------------------------------- §16.5 content search index
+
+#[tokio::test]
+async fn build_emits_content_search_index_for_collection() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let routes = root.join("src/routes");
+    std::fs::create_dir_all(routes.join("index")).unwrap();
+    std::fs::write(
+        routes.join("index").join("page.tsx"),
+        "export default function Page() { return null; }",
+    )
+    .unwrap();
+    // A content collection.
+    let posts = root.join("content/posts");
+    std::fs::create_dir_all(&posts).unwrap();
+    std::fs::write(
+        posts.join("hello.md"),
+        "---\ntitle: Hello World\nexcerpt: A first post\n---\n\nRust is fast.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        posts.join("world.md"),
+        "---\ntitle: World Post\nexcerpt: Second\n---\n\nRust is safe.\n",
+    )
+    .unwrap();
+
+    write_config(
+        &root,
+        r#"{
+            "adapter": "static",
+            "content": {
+                "collections": [
+                    { "name": "posts", "dir": "content/posts", "indexedFields": ["title", "excerpt"] }
+                ]
+            }
+        }"#,
+    );
+
+    let mut buf = Vec::new();
+    let code = crate::run_with_writer(
+        Cli {
+            command: Command::Build {
+                root: root.to_str().unwrap().to_string(),
+                r#static: true,
+                mode: None,
+            },
+        },
+        &mut buf,
+    )
+    .await
+    .unwrap();
+    let build_out = String::from_utf8_lossy(&buf);
+    assert_eq!(code, 0, "build output: {build_out}");
+    eprintln!("BUILD OUTPUT:\n{build_out}");
+
+    // The index was written.
+    let idx_path = root.join("dist/content/posts.index.json");
+    assert!(idx_path.is_file(), "search index missing");
+    let idx: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&idx_path).unwrap()).unwrap();
+    assert_eq!(idx["collection"], "posts");
+    assert_eq!(idx["entries"].as_array().unwrap().len(), 2);
+    // "rust" appears in both bodies.
+    let rust_bucket = idx["terms"]["rust"].as_array().unwrap();
+    assert_eq!(rust_bucket.len(), 2);
+
+    let out = String::from_utf8_lossy(&buf);
+    assert!(out.contains("content index: posts"), "{out}");
+}
+
+// ------------------------------------------------------- §20 W3C trace context
+
+#[tokio::test]
+async fn fetch_propagates_trace_context_header() {
+    use std::collections::BTreeMap;
+    // A request with an active trace context should have `traceparent`
+    // injected into outgoing `fetch` op headers by the pipeline. The op is a
+    // stub until V8Host wires `fetch` (§4.5), so this test asserts the shape
+    // the runtime will produce: a `traceparent` header built from the current
+    // span's trace id.
+    let tc = oxide_server::trace_context::TraceContext::from_headers(&BTreeMap::new());
+    assert!(tc.is_none(), "no incoming header → no context to inherit");
+
+    let mut headers = BTreeMap::new();
+    headers.insert(
+        "traceparent".to_string(),
+        "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01".to_string(),
+    );
+    let tc = oxide_server::trace_context::TraceContext::from_headers(&headers)
+        .expect("valid traceparent parsed");
+    assert_eq!(tc.trace_id, "0af7651916cd43dd8448eb211c80319c");
+    assert_eq!(tc.parent_id, "b7ad6b7169203331");
+    assert!(tc.sampled);
+}
