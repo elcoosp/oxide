@@ -19,6 +19,7 @@ fn artifact(build_id: &str, server_manifest: serde_json::Value) -> BuildArtifact
         client_manifest: serde_json::json!({ "build_id": build_id, "routes": {} }),
         server_manifest,
         prerendered: BTreeMap::new(),
+        static_fallback: None,
         server_bundle: None,
     }
 }
@@ -241,10 +242,10 @@ fn emit_static_copies_prerendered_and_emits_headers_redirects() {
     let mut art = artifact("b3", manifest_json());
     art.out_dir = build_out.clone();
     art.prerendered
-        .insert("routes/index/page".into(), "prerendered/index.html".into());
+        .insert("routes/index/page".into(), vec!["prerendered/index.html".into()]);
     art.prerendered.insert(
         "routes/blog/hello/page".into(),
-        "prerendered/blog/hello.html".into(),
+        vec!["prerendered/blog/hello.html".into()],
     );
 
     let out = dir.path().join("deploy");
@@ -416,10 +417,10 @@ fn emit_docker_writes_dockerfile_and_deploy() {
 #[test]
 fn emit_headers_sections_and_ordering() {
     let mut first: BTreeMap<String, String> = BTreeMap::new();
-    first.insert("X-Frame-Options".into(), "DENY".into());
-    first.insert("X-Content-Type-Options".into(), "nosniff".into());
+    first.insert("X-Frame-Options".into(), "DENY".to_string());
+    first.insert("X-Content-Type-Options".into(), "nosniff".to_string());
     let mut second: BTreeMap<String, String> = BTreeMap::new();
-    second.insert("Cache-Control".into(), "public, max-age=3600".into());
+    second.insert("Cache-Control".into(), "public, max-age=3600".to_string());
     let rules = vec![("/*".to_string(), first), ("/static/*".to_string(), second)];
     let out = emit_headers(&rules);
     assert_eq!(
@@ -508,4 +509,55 @@ fn js_entries_are_deterministic_and_reference_handler_contract() {
         ],
         "no npm dependencies in the node entry"
     );
+}
+
+
+#[test]
+fn cloudflare_emits_complete_worker_package() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("deploy");
+    let written = emit(Target::Cloudflare, &artifact("b_cf", manifest_json()), &out).unwrap();
+    let names: Vec<String> = written
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    for expected in ["worker.js", "edge.js", "_routes.json", "wrangler.toml", "deploy.json"] {
+        assert!(names.contains(&expected.to_string()), "missing {expected}: {names:?}");
+    }
+    // The worker imports edge.js (not the never-written ./server/edge.js).
+    let worker = std::fs::read_to_string(out.join("worker.js")).unwrap();
+    assert!(worker.contains("from \"./edge.js\""), "{worker}");
+    assert!(!worker.contains("./server/edge.js"), "{worker}");
+    // edge.js is a real WinterCG handler with the JS fallbacks.
+    let edge = std::fs::read_to_string(out.join("edge.js")).unwrap();
+    assert!(edge.contains("export default { fetch: handler }"), "{edge}");
+    assert!(edge.contains("export { cacheKey, mergeHead, encodeOdf }"), "{edge}");
+    // The routes file excludes assets.
+    let routes: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.join("_routes.json")).unwrap()).unwrap();
+    assert_eq!(routes["version"], 1);
+    assert!(routes["include"].as_array().unwrap().iter().any(|v| v == "/*"));
+    // Wrangler has the compat flags and doesn't declare wasm when absent.
+    let wrangler = std::fs::read_to_string(out.join("wrangler.toml")).unwrap();
+    assert!(wrangler.contains("main = \"worker.js\""));
+    assert!(wrangler.contains("nodejs_compat"));
+    assert!(!wrangler.contains("[wasm_modules]"));
+}
+
+#[test]
+fn cloudflare_wrangler_declares_wasm_when_present() {
+    let s = cloudflare_wrangler_toml("b_wasm", true);
+    assert!(s.contains("[wasm_modules]"), "{s}");
+    assert!(s.contains("edge = \"./edge.wasm\""), "{s}");
+    let s2 = cloudflare_wrangler_toml("b_nowasm", false);
+    assert!(!s2.contains("[wasm_modules]"), "{s2}");
+}
+
+#[test]
+fn edge_handler_js_is_deterministic_and_contains_build_id() {
+    let a = edge_handler_js("edge-xyz");
+    let b = edge_handler_js("edge-xyz");
+    assert_eq!(a, b);
+    assert!(a.contains("build_id: edge-xyz"));
+    assert!(a.contains("edge_cache_key") || a.contains("cacheKey"));
 }
