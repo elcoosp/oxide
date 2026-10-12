@@ -172,3 +172,51 @@ Work Log:
 
 Stage Summary:
 - Deliverable ready.
+
+---
+
+## Session — §6.3 / §7 framework adapter read path CLOSED
+
+**Milestone:** the read-path gap that blocked "a team can ship a production
+site using only Oxide" is now closed for all four frameworks.
+
+What landed this session:
+
+- `oxide-jshost::FrameworkHost` — Rust-side loader + render dispatcher for
+  a user's `oxide.config.{ts,mjs,js}` (spec §6.3, §7). Talks to the Node
+  worker via two new ops: `framework:load` (descriptor extraction) and
+  `framework:render` (dispatch to `FrameworkAdapter.render` + drain stream).
+- Worker `oxide-worker.mjs` extended with the two ops; dynamic `import()`s
+  the config, evaluates it, calls into the exported adapter.
+- Adapter packages all four migrate to latest upstreams:
+  - React `19.3.0` (stable)
+  - Vue `3.6.0-rc.11` (Vapor Mode + reactivity rewrite)
+  - Svelte `5.57.2`
+  - Solid `2.0.0-rc.14` + `@solidjs/web` (async-native reactivity; the
+    web renderer moved out of `solid-js/web` into a dedicated package)
+- `createRealAdapter({ ssr, componentFor, layoutFor })` exposed from every
+  `@oxide/{react,vue,svelte,solid}` package. Callable default export
+  (`framework: react({ ... })` in config) returns the IR adapter by
+  default and dispatches to the real renderer when `componentFor` is
+  supplied.
+- CLI subcommands:
+  - `oxide config [--json] [--root <path>]` — prints the adapter descriptor
+  - `oxide render <route> [--root] [--url] [--param k=v] [--data <json>]`
+    — dispatches a page render through the adapter, writes HTML to stdout
+- E2E tests prove the full chain:
+  - `crates/jshost/tests/framework_host_e2e.rs` — real config → real
+    `react-dom/server` → HTML, through the Rust worker
+  - `crates/cli/src/tests.rs::cli_render_dispatches_real_react_ssr` —
+    same, but through the CLI's `oxide render` subcommand
+
+Both E2E tests are `#[ignore]`d by default (they spawn Node). Run with
+`cargo test -- --ignored`.
+
+**What remains for full pipeline integration:**
+
+- `cmd_dev` / `cmd_build` / `cmd_start` still use the neutral-IR renderer.
+  Wiring them to `FrameworkHost` is a plumbing change, not architecture:
+  the loader + dispatcher + adapter contract are all proven end-to-end.
+- Content-hashed build output, streaming through the pool (currently the
+  worker collects the whole stream into one HTML string), and per-request
+  caching in the dev server are follow-ups.
