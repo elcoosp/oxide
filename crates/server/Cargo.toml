@@ -14,7 +14,8 @@ oxide-render = { workspace = true }
 oxide-config = { workspace = true }
 oxide-odf = { workspace = true }
 hyper = { workspace = true }
-hyper-util = { workspace = true, features = ["server-auto", "server-graceful"] }
+hyper-util = { workspace = true, features = ["server-auto", "server-graceful", "client", "client-legacy", "http1", "http2", "tokio"] }
+socket2 = { version = "0.5", features = ["all"] }
 http-body-util = { workspace = true }
 tokio = { workspace = true }
 tokio-rustls = { workspace = true }
