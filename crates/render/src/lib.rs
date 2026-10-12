@@ -18,6 +18,8 @@
 //!   `ox:defer` event listener; the hydration bootstrap (and the client router's deferred
 //!   queue, §8.4) can then replay queued swaps by dispatching `ox:defer` events.
 
+pub mod ppr;
+
 use bytes::Bytes;
 use futures::channel::mpsc;
 use futures::StreamExt;
@@ -699,6 +701,7 @@ pub fn stream_error_recovery(boundary_id: &str, diagnostic: &Diagnostic, nonce: 
     boundary_content_with_id(&id, &html, nonce)
 }
 
+pub use ppr::{assemble, shell_cache_key, split_shell, Shell};
 #[cfg(test)]
 mod tests {
     use super::*;
