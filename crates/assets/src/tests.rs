@@ -3,6 +3,8 @@
 //! Every public function in the crate has at least one test here (CONVENTIONS.md #1).
 
 use super::*;
+#[allow(unused_imports)]
+use crate::font_metrics::{metric_overrides, read_metrics, FontMetric, TIMES_NEW_ROMAN};
 use std::io::Write as _;
 
 // ---------------- parse_asset_query (§6.7) ----------------
@@ -393,15 +395,19 @@ fn image_webp_succeeds_or_falls_back_to_png_with_ast_webp_diagnostic() {
 }
 
 #[test]
-fn image_avif_encoding_is_feature_gated() {
-    let e = RustImageBackend
+fn image_avif_encoding_produces_real_avif_bytes() {
+    let out = RustImageBackend
         .process(req(gradient_png(32, 16), None, ImageFormat::Avif, None))
-        .unwrap_err();
-    assert_eq!(e.0.code, "AST-AVIF");
-    assert!(
-        e.0.message.contains("libvips"),
-        "message points at the libvips backend"
+        .unwrap();
+    assert_eq!(out.format, ImageFormat::Avif);
+    assert!(!out.bytes.is_empty());
+    // AVIF is an ISO-BMFF format: bytes 4..8 are the "ftyp" box type.
+    assert_eq!(
+        &out.bytes[4..8],
+        b"ftyp",
+        "AVIF output must be an ISO-BMFF container"
     );
+    assert_eq!((out.width, out.height), (32, 16));
 }
 
 #[test]
@@ -520,6 +526,8 @@ fn font_bundle_emits_faces_preload_and_size_adjust_fallback() {
     assert!(b.css.contains("font-weight: 400;"));
     assert!(b.css.contains("font-weight: 700;"));
     assert!(b.css.contains("font-family: 'Inter-fallback';"));
+    // The fake `wOF2-fake-bytes` file is not a real OpenType font, so skrifa
+    // rejects it and the fallback face stays neutral.
     assert!(b.css.contains("size-adjust: 100%;"));
 
     assert_eq!(b.preload, vec!["/fonts/inter.woff2".to_string()]);
@@ -756,4 +764,57 @@ fn highlight_escapes_html_before_wrapping() {
     let out = highlight("let h = \"<b>\";", "js");
     assert!(out.contains("&lt;b&gt;"), "{out}");
     assert!(!out.contains("<b>"));
+}
+
+
+// ---------------- font metrics (§16.2, D19) ----------------
+
+#[test]
+fn font_metric_overrides_use_real_metrics_when_a_font_parses() {
+    let candidates = [
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/System/Library/Fonts/Geneva.ttf",
+        "/Library/Fonts/Arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    ];
+    let Some(path) = candidates.iter().map(std::path::Path::new).find(|p| p.exists()) else {
+        eprintln!("skipping: no system TTF available");
+        return;
+    };
+
+    let bytes = std::fs::read(path).unwrap();
+    let m = read_metrics(&bytes).expect("system font parses via skrifa");
+    assert!(m.units_per_em > 0.0);
+    assert!(m.ascent > 0.0);
+
+    let o = metric_overrides(m, TIMES_NEW_ROMAN);
+    assert!(o.size_adjust.is_finite() && o.size_adjust > 10.0 && o.size_adjust < 500.0);
+
+    // End-to-end: the bundle's fallback face carries real overrides now.
+    let spec = FontSpec {
+        family: "RealFont".into(),
+        provider: "local".into(),
+        weights: vec![400],
+        styles: vec!["normal".into()],
+        subset: vec![],
+        local_paths: vec![path.to_path_buf()],
+    };
+    let b = DefaultFontBackend.bundle(&spec).unwrap();
+    assert!(b.css.contains("ascent-override:"));
+    assert!(b.css.contains("descent-override:"));
+    assert!(b.css.contains("line-gap-override:"));
+}
+
+#[test]
+fn font_metric_math_matches_next_font_formula() {
+    // Synthetic: target twice as tall overall as fallback → size-adjust 50%.
+    let tall = FontMetric {
+        ascent: 3650.0,
+        descent: 886.0,
+        line_gap: 174.0,
+        units_per_em: 2048.0,
+    };
+    let o = metric_overrides(tall, TIMES_NEW_ROMAN);
+    assert!((o.size_adjust - 50.0).abs() < 0.05, "got {}", o.size_adjust);
 }
