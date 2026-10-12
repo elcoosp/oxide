@@ -401,10 +401,20 @@ pub fn compress_body(encoding: &str, body: &[u8], level: i32) -> Result<Bytes> {
             let out = zstd::bulk::compress(body, lvl).map_err(|e| err("SRV-COMP", format!("zstd failed: {e}")))?;
             Ok(Bytes::from(out))
         }
-        "br" => Err(err(
-            "SRV-NOENC",
-            "brotli runtime compression unavailable: enable the `brotli` feature flag (precompressed .br assets are still served)",
-        )),
+        "br" => {
+            // brotli's quality range is 0..=11; we clamp to the pragmatic band and
+            // map level 0 → quality 4 (the fastest sane setting for a per-request
+            // dynamic path — the spec's `zstd`-preferred ordering is honoured by
+            // the caller, brotli is the second choice).
+            let q = if level <= 0 { 4 } else { level.clamp(1, 11) as u32 };
+            let mut out = Vec::with_capacity(body.len() / 2);
+            {
+                let mut w = brotli::CompressorWriter::new(&mut out, 4096, q, 22);
+                w.write_all(body)
+                    .map_err(|e| err("SRV-COMP", format!("brotli failed: {e}")))?;
+            }
+            Ok(Bytes::from(out))
+        }
         other => Err(err("SRV-NOENC", format!("unsupported content encoding `{other}`"))),
     }
 }
