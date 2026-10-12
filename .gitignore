@@ -6,3 +6,4 @@ dist
 wr*.sh
 packages/svelte/test/.tmp/
 packages/solid/test/.tmp/
+packages/react/.tmp-e2e/
