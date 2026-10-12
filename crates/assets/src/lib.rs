@@ -15,6 +15,13 @@ use std::path::{Path, PathBuf};
 mod content;
 mod css;
 mod images;
+mod lightningcss_backend;
+mod font_metrics;
+mod og_backend;
+
+pub use lightningcss_backend::LightningCssBackend;
+pub use font_metrics::{metric_overrides, read_metrics, FontMetric, MetricOverrides, TIMES_NEW_ROMAN};
+pub use og_backend::SvgOgBackend;
 
 pub type Result<T> = std::result::Result<T, OxideError>;
 
@@ -241,6 +248,21 @@ pub trait FontBackend: Send + Sync {
 
 pub struct DefaultFontBackend;
 
+
+/// Compute metric overrides from the first font file that parses (skrifa). WOFF2
+/// input (compressed) or any parse failure returns `None`, so the caller falls back
+/// to a neutral 100% face.
+fn metric_overrides_for(spec: &FontSpec) -> Option<font_metrics::MetricOverrides> {
+    for p in &spec.local_paths {
+        if let Ok(bytes) = std::fs::read(p) {
+            if let Ok(m) = font_metrics::read_metrics(&bytes) {
+                return Some(font_metrics::metric_overrides(m, font_metrics::TIMES_NEW_ROMAN));
+            }
+        }
+    }
+    None
+}
+
 impl FontBackend for DefaultFontBackend {
     /// Local pass-through bundling (§16.2): files are copied verbatim (subsetting via
     /// fontations/skrifa slots in), one `@font-face` per weight×style with
@@ -294,11 +316,25 @@ impl FontBackend for DefaultFontBackend {
                 face += 1;
             }
         }
-        // Metric-override fallback face (placeholder math, see doc above).
+        // Metric-override fallback face (§16.2). The overrides are computed from
+        // the target font's real hhea metrics (via skrifa) and Times New Roman's
+        // canonical metrics, so the swap from web font to local fallback has
+        // identical vertical metrics and no layout shift.
         css.push_str("@font-face {\n");
         css.push_str(&format!("  font-family: '{}-fallback';\n", spec.family));
         css.push_str("  src: local('Times New Roman');\n");
-        css.push_str("  size-adjust: 100%;\n");
+        match metric_overrides_for(spec) {
+            Some(o) => {
+                css.push_str(&format!("  size-adjust: {:.2}%;\n", o.size_adjust));
+                css.push_str(&format!("  ascent-override: {:.2}%;\n", o.ascent_override));
+                css.push_str(&format!("  descent-override: {:.2}%;\n", o.descent_override));
+                css.push_str(&format!("  line-gap-override: {:.2}%;\n", o.line_gap_override));
+            }
+            None => {
+                // WOFF2 (compressed) or unparseable input: keep the neutral fallback.
+                css.push_str("  size-adjust: 100%;\n");
+            }
+        }
         css.push_str("  font-display: swap;\n");
         css.push_str("}\n");
 
