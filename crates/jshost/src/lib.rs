@@ -27,6 +27,13 @@ use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
+pub mod tooling;
+pub mod v8_ops;
+pub mod snapshot;
+pub use snapshot::{lint_top_level_side_effects, loader_options, snapshot_build, AppSnapshot, SideEffect, SNAPSHOT_FORMAT};
+pub mod tooling_pool;
+pub use tooling_pool::{ModuleCall, ToolingModules};
+
 pub type Result<T> = std::result::Result<T, OxideError>;
 
 pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
@@ -520,6 +527,12 @@ use deno_core::{JsRuntime, RuntimeOptions};
 /// dispatch: `render` → `{html}`, `tooling:compile` → `{code: uppercase}`.
 /// `boom`/`die` are handled Rust-side before dispatch; unknown kinds throw.
 const V8_BOOTSTRAP: &str = r#"
+// §4.5 op namespace. deno_core exposes ops as `Deno.core.ops.op_oxide_*`.
+globalThis.oxide = {
+  log: (msg) => Deno.core.ops.op_oxide_log(String(msg)),
+  trace: (name) => Deno.core.ops.op_oxide_trace(String(name)),
+  serialize: (value) => Deno.core.ops.op_oxide_serialize(JSON.stringify(value)),
+};
 globalThis.__oxideDispatch = function(kind, mod, exp, payload) {
   if (kind === 'render') {
     const title = (payload && payload.title) || (mod + ':' + exp);
@@ -540,6 +553,9 @@ enum V8Msg {
         entry: EntryRef,
         input: CallInput,
     },
+    /// Sent by the pool during warm replacement (§4.3). The worker exits its
+    /// recv loop after handling any already-dequeued call.
+    Shutdown,
 }
 
 /// Handle to a V8 worker thread running a pinned `JsRuntime` (§4.2 default).
@@ -550,6 +566,9 @@ struct V8WorkerHandle {
     /// Shared with `abort_request` so pending calls can be resolved without
     /// re-entering the worker thread.
     pending: Mutex<HashMap<u64, Pending>>,
+    /// Set while this worker is being replaced (§4.3). Dispatch skips retiring
+    /// workers so the fresh one takes over immediately.
+    retiring: AtomicBool,
 }
 
 fn spawn_v8_worker() -> Result<Arc<V8WorkerHandle>> {
@@ -560,6 +579,7 @@ fn spawn_v8_worker() -> Result<Arc<V8WorkerHandle>> {
         in_flight: AtomicU64::new(0),
         served: AtomicU64::new(0),
         pending: Mutex::new(HashMap::new()),
+        retiring: AtomicBool::new(false),
     });
     let handle_for_thread = Arc::clone(&handle);
 
@@ -578,8 +598,34 @@ fn spawn_v8_worker() -> Result<Arc<V8WorkerHandle>> {
             };
             let local = tokio::task::LocalSet::new();
             local.block_on(&rt, async move {
+                // Build the ops extension. `op_decls()` returns the §4.5
+                // stateless ops; request-scoped ops land here once the JS
+                // render path exists.
+                use deno_core::Extension;
+                let ext = Extension {
+                    name: "oxide_ops",
+                    deps: &[],
+                    js_files: std::borrow::Cow::Borrowed(&[]),
+                    esm_files: std::borrow::Cow::Borrowed(&[]),
+                    lazy_loaded_esm_files: std::borrow::Cow::Borrowed(&[]),
+                    lazy_loaded_js_files: std::borrow::Cow::Borrowed(&[]),
+                    synthetic_esm_modules: std::borrow::Cow::Borrowed(&[]),
+                    esm_entry_point: None,
+                    ops: std::borrow::Cow::Owned(crate::v8_ops::op_decls()),
+                    objects: std::borrow::Cow::Borrowed(&[]),
+                    external_references: std::borrow::Cow::Borrowed(&[]),
+                    global_template_middleware: None,
+                    global_object_middleware: None,
+                    op_state_fn: None,
+                    needs_lazy_init: false,
+                    middleware_fn: None,
+                    enabled: true,
+                };
                 let mut js = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    JsRuntime::new(RuntimeOptions::default())
+                    JsRuntime::new(RuntimeOptions {
+                        extensions: vec![ext],
+                        ..Default::default()
+                    })
                 })) {
                     Ok(r) => r,
                     Err(_) => {
@@ -602,6 +648,12 @@ fn spawn_v8_worker() -> Result<Arc<V8WorkerHandle>> {
                             if let Some(p) = pending {
                                 let _ = p.tx.send(res);
                             }
+                        }
+                        V8Msg::Shutdown => {
+                            // §4.3: the pool has already routed new work to a
+                            // fresh worker; this thread drains and exits, which
+                            // drops the JsRuntime and its OS thread.
+                            break;
                         }
                     }
                 }
@@ -673,7 +725,7 @@ impl V8Host {
         }
         Ok(Arc::new(V8Pool {
             cfg,
-            workers,
+            workers: Arc::new(std::sync::RwLock::new(workers)),
             next_id: AtomicU64::new(0),
             counters: Arc::new(PoolCounters::default()),
             queue_waits: Mutex::new(VecDeque::new()),
@@ -695,9 +747,12 @@ impl JsHost for V8Host {
 }
 
 /// Pool of V8 worker threads (§4.2 default backend).
+///
+/// `workers` is `Arc<RwLock<...>>` so the warm-replacement background task
+/// (§4.3) can hold a handle without borrowing the pool.
 pub struct V8Pool {
     cfg: PoolConfig,
-    workers: Vec<Arc<V8WorkerHandle>>,
+    workers: Arc<std::sync::RwLock<Vec<Arc<V8WorkerHandle>>>>,
     next_id: AtomicU64,
     counters: Arc<PoolCounters>,
     queue_waits: Mutex<VecDeque<f64>>,
@@ -707,9 +762,62 @@ pub struct V8Pool {
 impl V8Pool {
     fn total_in_flight(&self) -> u64 {
         self.workers
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
             .iter()
             .map(|w| w.in_flight.load(Ordering::Relaxed))
             .sum()
+    }
+
+    /// Warm replacement (§4.3): spawn a fresh worker *before* the old one
+    /// drains, swap it into the worker set, then signal the old worker to
+    /// exit. Idempotent — the caller must win the `retiring` CAS first.
+    ///
+    /// Associated function (not a method) so it can be called from a detached
+    /// tokio task without holding `&self`. The task holds a clone of the
+    /// `workers` Arc and the worker handle.
+    async fn spawn_replacement(
+        workers: Arc<std::sync::RwLock<Vec<Arc<V8WorkerHandle>>>>,
+        counters: Arc<PoolCounters>,
+        idx: usize,
+    ) {
+        let old = {
+            let guard = workers.read().unwrap_or_else(|p| p.into_inner());
+            match guard.get(idx) {
+                Some(w) => Arc::clone(w),
+                None => return,
+            }
+        };
+
+        // Wait for the old worker to finish any in-flight call. The worker is
+        // synchronous, so this completes in a couple of ms in the common case.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while old.in_flight.load(Ordering::Relaxed) > 0 && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+
+        // Spawn fresh worker BEFORE signalling the old one (§4.3).
+        let fresh = match spawn_v8_worker() {
+            Ok(w) => w,
+            Err(_) => {
+                // Could not replace — clear the retire flag so the pool can
+                // dispatch to the old worker again. Not fatal.
+                old.retiring.store(false, Ordering::Release);
+                return;
+            }
+        };
+
+        // Swap it in.
+        {
+            let mut guard = workers.write().unwrap_or_else(|p| p.into_inner());
+            if idx < guard.len() {
+                guard[idx] = fresh;
+            }
+        }
+        counters.recycles.fetch_add(1, Ordering::Relaxed);
+
+        // Signal the old worker to exit.
+        let _ = old.tx.send(V8Msg::Shutdown).await;
     }
 }
 
@@ -722,14 +830,30 @@ impl Pool for V8Pool {
                 "pool is draining; no new calls are accepted (§12.2)",
             ));
         }
-        let _ = &self.cfg; // silence "never read" on some rustc builds
         let start = Instant::now();
-        let loads: Vec<u64> = self
-            .workers
-            .iter()
-            .map(|w| w.in_flight.load(Ordering::Relaxed))
-            .collect();
-        let worker = Arc::clone(&self.workers[choose_worker(&loads, None)]);
+
+        // Snapshot the current worker set. Retiring workers report `u64::MAX`
+        // load so `choose_worker` skips them in favour of the fresh replacement
+        // (§4.3 warm replacement).
+        let (loads, worker, worker_idx) = {
+            let guard = self.workers.read().unwrap_or_else(|p| p.into_inner());
+            if guard.is_empty() {
+                return Err(err("JSH-POOL", "V8 pool has no workers"));
+            }
+            let loads: Vec<u64> = guard
+                .iter()
+                .map(|w| {
+                    if w.retiring.load(Ordering::Acquire) {
+                        u64::MAX
+                    } else {
+                        w.in_flight.load(Ordering::Relaxed)
+                    }
+                })
+                .collect();
+            let idx = choose_worker(&loads, None);
+            (loads, Arc::clone(&guard[idx]), idx)
+        };
+        let _ = &loads;
 
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
@@ -786,6 +910,20 @@ impl Pool for V8Pool {
             Ok(Ok(Ok(stream))) => {
                 self.counters.completed.fetch_add(1, Ordering::Relaxed);
                 record_wait(&self.queue_waits, start.elapsed());
+                // §4.3 lifecycle: after a successful call, if this worker has
+                // reached its recycle threshold, spawn a fresh one and retire
+                // it. CAS so concurrent callers trigger it at most once.
+                let served = worker.served.load(Ordering::Relaxed);
+                if self.cfg.recycle_after_requests > 0
+                    && served >= self.cfg.recycle_after_requests
+                    && !worker.retiring.swap(true, Ordering::AcqRel)
+                {
+                    let workers = Arc::clone(&self.workers);
+                    let counters = Arc::clone(&self.counters);
+                    tokio::spawn(async move {
+                        V8Pool::spawn_replacement(workers, counters, worker_idx).await
+                    });
+                }
                 Ok(stream)
             }
         }
@@ -794,7 +932,7 @@ impl Pool for V8Pool {
     fn stats(&self) -> PoolStats {
         let waits = sorted_copy(&self.queue_waits);
         PoolStats {
-            workers: self.workers.len(),
+            workers: self.workers.read().unwrap_or_else(|p| p.into_inner()).len(),
             in_flight: self.total_in_flight(),
             completed: self.counters.completed.load(Ordering::Relaxed),
             failed: self.counters.failed.load(Ordering::Relaxed),
@@ -806,7 +944,8 @@ impl Pool for V8Pool {
     }
 
     fn abort_request(&self, request_id: &str) {
-        for w in &self.workers {
+        let guard = self.workers.read().unwrap_or_else(|p| p.into_inner());
+        for w in guard.iter() {
             let mut pending = w.pending.lock().unwrap();
             let ids: Vec<u64> = pending
                 .iter()
