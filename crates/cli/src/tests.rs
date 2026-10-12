@@ -1246,4 +1246,32 @@ async fn fetch_propagates_trace_context_header() {
     assert_eq!(tc.trace_id, "0af7651916cd43dd8448eb211c80319c");
     assert_eq!(tc.parent_id, "b7ad6b7169203331");
     assert!(tc.sampled);
+
+#[test]
+fn config_subcommand_parses_root_and_json_flag() {
+    use clap::Parser;
+    let cli = crate::Cli::try_parse_from([
+        "oxide", "config", "--json", "/some/root",
+    ]).expect("parse");
+    match cli.command {
+        crate::Command::Config { root, json } => {
+            assert_eq!(root, "/some/root");
+            assert!(json);
+        }
+        other => panic!("expected Config, got {:?}", other),
+    }
+}
+
+#[test]
+fn config_subcommand_defaults_root_to_dot_and_json_false() {
+    use clap::Parser;
+    let cli = crate::Cli::try_parse_from(["oxide", "config"]).expect("parse");
+    match cli.command {
+        crate::Command::Config { root, json } => {
+            assert_eq!(root, ".");
+            assert!(!json);
+        }
+        other => panic!("expected Config, got {:?}", other),
+    }
+}
 }
