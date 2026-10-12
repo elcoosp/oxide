@@ -466,3 +466,236 @@ fn transformer_client_page_dev_injects_refresh() {
     assert!(out.code.contains("__oxide_refresh(mod);"));
     assert!(out.code.starts_with("import { Button }"));
 }
+
+// ---------------- OxcTransformer AST-driven passes (D4) ----------------
+
+use oxide_compiler::{OxcTransformer, TransformOutput};
+
+fn oxc_transform(input: TransformInput) -> TransformOutput {
+    OxcTransformer.transform(&input).unwrap()
+}
+
+#[test]
+fn oxc_transformer_parses_valid_syntax_without_diagnostics() {
+    let input = TransformInput {
+        path: "routes/page.tsx".into(),
+        code: "export default function Page() { return null; }\n".into(),
+        env: Env::Client,
+        lang: "tsx",
+        build_secret: "s".into(),
+        dev: false,
+    };
+    let out = oxc_transform(input);
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+}
+
+#[test]
+fn oxc_transformer_surfaces_cmp_parse_on_syntax_error() {
+    let input = TransformInput {
+        path: "bad.ts".into(),
+        code: "export const = 1;".into(),
+        env: Env::Client,
+        lang: "ts",
+        build_secret: "s".into(),
+        dev: false,
+    };
+    let out = oxc_transform(input);
+    assert!(
+        out.diagnostics.iter().any(|d| d.code == "CMP-PARSE"),
+        "expected CMP-PARSE diagnostic, got: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn oxc_transformer_scan_uses_ast_spans() {
+    let code = "import './a';\nimport x from './b';\nexport { y } from './c';\nexport * from './d';\n";
+    let input = TransformInput {
+        path: "mod.ts".into(),
+        code: code.into(),
+        env: Env::Client,
+        lang: "ts",
+        build_secret: "s".into(),
+        dev: false,
+    };
+    let out = oxc_transform(input);
+    for spec in ["./a", "./b", "./c", "./d"] {
+        assert!(
+            out.scan.imports.iter().any(|s| s == spec),
+            "missing {spec} in {:?}",
+            out.scan.imports
+        );
+    }
+}
+
+#[test]
+fn oxc_transformer_use_cache_directive_via_ast() {
+    let code = "export async function getPosts() {\n  'use cache';\n  return 1;\n}\n";
+    let input = TransformInput {
+        path: "routes/page.server.ts".into(),
+        code: code.into(),
+        env: Env::Ssr,
+        lang: "ts",
+        build_secret: "s".into(),
+        dev: false,
+    };
+    let out = oxc_transform(input);
+    assert_eq!(out.directives.len(), 1, "directives: {:?}", out.directives);
+    assert_eq!(out.directives[0].name.as_deref(), Some("getPosts"));
+    assert!(out.code.contains("__oxide_cache("));
+    assert!(out.code.contains("return 1;"));
+}
+
+#[test]
+fn oxc_transformer_use_cache_arrow_binding_via_ast() {
+    let code = "export const loader = async () => {\n  'use cache';\n  return 2;\n};\n";
+    let input = TransformInput {
+        path: "routes/page.server.ts".into(),
+        code: code.into(),
+        env: Env::Ssr,
+        lang: "ts",
+        build_secret: "s".into(),
+        dev: false,
+    };
+    let out = oxc_transform(input);
+    assert_eq!(out.directives.len(), 1);
+    assert_eq!(out.directives[0].name.as_deref(), Some("loader"));
+    assert!(out.code.contains("__oxide_cache("));
+    assert!(out.code.contains("return 2;"));
+}
+
+#[test]
+fn oxc_transformer_server_fn_client_stub_via_ast() {
+    let code = "export const addToCart = serverFn(async (id: string) => {\n  return db.add(id);\n});\n";
+    let input = TransformInput {
+        path: "cart.server.ts".into(),
+        code: code.into(),
+        env: Env::Client,
+        lang: "ts",
+        build_secret: "sec".into(),
+        dev: false,
+    };
+    let out = oxc_transform(input);
+    assert_eq!(out.server_fns.len(), 1);
+    assert_eq!(out.server_fns[0].export_name, "addToCart");
+    assert_eq!(
+        out.server_fns[0].id,
+        server_fn_id("cart.server.ts", "addToCart", "sec")
+    );
+    assert!(out.code.contains("fetch(\"/_oxide/fn/"));
+    assert!(!out.code.contains("serverFn("));
+}
+
+#[test]
+fn oxc_transformer_server_fn_ssr_keeps_body_via_ast() {
+    let code = "export const checkout = serverFn(async () => {\n  return db.checkout();\n});\n";
+    let input = TransformInput {
+        path: "cart.server.ts".into(),
+        code: code.into(),
+        env: Env::Ssr,
+        lang: "ts",
+        build_secret: "sec".into(),
+        dev: false,
+    };
+    let out = oxc_transform(input);
+    assert_eq!(out.server_fns.len(), 1);
+    assert!(out.code.contains("return db.checkout();"));
+    assert!(out.code.contains("__oxide_register_fn("));
+    assert!(out.code.contains("__oxide_fn_ids"));
+}
+
+#[test]
+fn oxc_transformer_use_cache_hoists_tags_and_life_via_ast() {
+    let code = r#"export async function getPosts() {
+  'use cache';
+  cacheTag('posts');
+  cacheLife({ revalidate: 60, swr: 30 });
+  return db.getPosts();
+}
+"#;
+    let input = TransformInput {
+        path: "routes/page.server.ts".into(),
+        code: code.into(),
+        env: Env::Ssr,
+        lang: "ts",
+        build_secret: "s".into(),
+        dev: false,
+    };
+    let out = oxc_transform(input);
+    assert_eq!(out.directives.len(), 1);
+    assert_eq!(out.directives[0].name.as_deref(), Some("getPosts"));
+    assert!(
+        out.code.contains("__oxide_cache("),
+        "output:\n{}",
+        out.code
+    );
+    assert!(
+        out.code.contains("tags: ['posts']"),
+        "tags must appear in options:\n{}",
+        out.code
+    );
+    assert!(
+        out.code.contains("life: { revalidate: 60, swr: 30 }"),
+        "life must appear in options:\n{}",
+        out.code
+    );
+    // The original calls are blanked from the rewritten body.
+    assert!(
+        !out.code.contains("cacheTag('posts')"),
+        "cacheTag call must be removed:\n{}",
+        out.code
+    );
+    assert!(
+        !out.code.contains("cacheLife({"),
+        "cacheLife call must be removed:\n{}",
+        out.code
+    );
+    assert!(out.code.contains("return db.getPosts();"));
+}
+
+#[test]
+fn oxc_transformer_use_cache_multiple_tags_via_ast() {
+    let code = r#"async function multi() {
+  'use cache';
+  cacheTag('a');
+  cacheTag("b");
+  cacheTag('c');
+  return 1;
+}
+"#;
+    let input = TransformInput {
+        path: "m.server.ts".into(),
+        code: code.into(),
+        env: Env::Ssr,
+        lang: "ts",
+        build_secret: "s".into(),
+        dev: false,
+    };
+    let out = oxc_transform(input);
+    assert!(
+        out.code.contains("tags: ['a', \"b\", 'c']"),
+        "all three tags must be preserved with original quotes:\n{}",
+        out.code
+    );
+}
+
+#[test]
+fn oxc_transformer_use_cache_arrow_with_tags_via_ast() {
+    let code = r#"export const loader = async () => {
+  'use cache';
+  cacheTag('home');
+  return 42;
+};
+"#;
+    let input = TransformInput {
+        path: "p.server.ts".into(),
+        code: code.into(),
+        env: Env::Ssr,
+        lang: "ts",
+        build_secret: "s".into(),
+        dev: false,
+    };
+    let out = oxc_transform(input);
+    assert!(out.code.contains("tags: ['home']"), "output:\n{}", out.code);
+    assert!(out.code.contains("return 42;"));
+}
