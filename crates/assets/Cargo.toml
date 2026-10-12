@@ -8,7 +8,14 @@ description = "Lightning-CSS-shaped pipeline, images, fonts, og, content (spec 1
 
 [dependencies]
 oxide-diagnostics = { workspace = true }
+lightningcss = { workspace = true }
 image = { workspace = true }
+read-fonts = { workspace = true }
+skrifa = { workspace = true }
+ravif = { workspace = true }
+usvg = { workspace = true }
+tiny-skia = { workspace = true }
+resvg = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 blake3 = { workspace = true }
