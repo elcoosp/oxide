@@ -22,5 +22,16 @@
     "adapter",
     "ssr"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "peerDependencies": {
+    "svelte": "^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "svelte": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "svelte": "^5.0.0"
+  }
 }
