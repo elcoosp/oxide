@@ -156,5 +156,12 @@ debug = 1
 opt-level = 1
 # Disable debuginfo in test binaries: the per-test .dSYM bundles on macOS
 # routinely run into the multi-GB range and are not needed for `cargo test`.
+#
+# NOTE: the `strip = "debuginfo"` step was removed because on a disk-constrained
+# machine the strip operation itself peaks at ~2× the binary size (it writes a
+# temp copy then atomically renames) and the link step then fails with
+# "LLVM ERROR: IO failure on output stream: No space left on device". Without
+# strip, the binaries are larger on disk but the suite runs. Restore the strip
+# line on machines with ample free space, or set CARGO_PROFILE_TEST_STRIP=none
+# in the environment instead of touching this file.
 debug = false
-strip = "debuginfo"
