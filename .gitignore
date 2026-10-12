@@ -4,3 +4,5 @@ node_modules
 dist
 *.tsbuildinfo
 wr*.sh
+packages/svelte/test/.tmp/
+packages/solid/test/.tmp/
