@@ -1,6 +1,7 @@
-// @oxide/svelte adapter factory tests (spec §14 config surface). Proves the
-// callable default export dispatches to real SSR when componentFor is
-// supplied, and returns the IR adapter otherwise.
+// Adapter factory tests (spec §14 config surface). Proves the callable
+// default export dispatches to real SSR when componentFor is supplied, and
+// returns the IR adapter otherwise. The named `adapter` export stays
+// unchanged, so the §22 conformance suite keeps testing the IR path.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -33,7 +34,7 @@ test('factory: createAdapter() with no componentFor returns the IR adapter behav
   const a = createAdapter()
   const html = await drain(a.render(input()))
   const irHtml = await drain(adapter.render(input()))
-  assert.equal(html, irHtml, 'identical to the named  export')
+  assert.equal(html, irHtml, 'identical to the named `adapter` export')
 })
 
 test('factory: createAdapter({ ssr: "real", componentFor: () => undefined }) emits placeholder', async () => {
@@ -45,10 +46,7 @@ test('factory: createAdapter({ ssr: "real", componentFor: () => undefined }) emi
   assert.ok(html.includes('no component for route routes/missing'), html)
 })
 
-test('factory: componentFor + ssr="auto" with missing deps falls back to IR', async () => {
-  // In 'auto' mode, a component resolver that returns a value but has no
-  // upstream framework available (which is not the case here, but the
-  // behavior is the same at the API level) still emits usable HTML.
+test('factory: componentFor + ssr="auto" with missing component falls back to IR', async () => {
   const a = createAdapter({
     ssr: 'auto',
     componentFor: () => undefined,
@@ -58,7 +56,7 @@ test('factory: componentFor + ssr="auto" with missing deps falls back to IR', as
 })
 
 test('factory: AdapterOptions accepts a compiler flag without breaking dispatch', () => {
-  // The smoke-app config passes ; the factory must accept
+  // The smoke-app config passes `{ compiler: true }`; the factory must accept
   // it (typed as informational) and still return a valid adapter.
   const a = defaultFactory({ compiler: true })
   assert.equal(a.contract, 1)
