@@ -1,0 +1,254 @@
+//! TDD test suite for oxide-dev (spec §13, §5.5).
+
+use super::*;
+use oxide_diagnostics::Location;
+use std::fs;
+use tempfile::tempdir;
+
+// ---------------- Watcher (§5.5) ----------------
+
+#[test]
+fn poll_reports_created_then_noop_on_unchanged_content() {
+    let dir = tempdir().unwrap();
+    let w = Watcher::new(vec![dir.path().to_path_buf()]);
+    let mut seen = BTreeSet::new();
+
+    fs::write(dir.path().join("a.txt"), "one").unwrap();
+    let events = w.poll(&mut seen).unwrap();
+    assert_eq!(events, vec![FileEvent::Created(dir.path().join("a.txt"))]);
+
+    // Second poll with no changes at all: zero events.
+    let events = w.poll(&mut seen).unwrap();
+    assert!(events.is_empty());
+
+    // touch-without-change (same bytes rewritten, only mtime moves): still zero
+    // events — the §5.5 content-hash confirmation requirement.
+    fs::write(dir.path().join("a.txt"), "one").unwrap();
+    let events = w.poll(&mut seen).unwrap();
+    assert!(events.is_empty(), "touch-without-change must be ignored");
+}
+
+#[test]
+fn poll_reports_modified_only_when_content_hash_changes() {
+    let dir = tempdir().unwrap();
+    let a = dir.path().join("a.txt");
+    fs::write(&a, "v1").unwrap();
+    let w = Watcher::new(vec![dir.path().to_path_buf()]);
+    let mut seen = BTreeSet::new();
+    w.poll(&mut seen).unwrap();
+
+    fs::write(&a, "v2").unwrap();
+    let events = w.poll(&mut seen).unwrap();
+    assert_eq!(events, vec![FileEvent::Modified(a.clone())]);
+
+    // Rewriting the identical content again must not re-report.
+    fs::write(&a, "v2").unwrap();
+    assert!(w.poll(&mut seen).unwrap().is_empty());
+}
+
+#[test]
+fn poll_lists_removed_before_other_events_and_sorts_by_path() {
+    let dir = tempdir().unwrap();
+    let a = dir.path().join("a.txt");
+    let b = dir.path().join("b.txt");
+    let c = dir.path().join("c.txt");
+    fs::write(&a, "a").unwrap();
+    fs::write(&b, "b").unwrap();
+    let w = Watcher::new(vec![dir.path().to_path_buf()]);
+    let mut seen = BTreeSet::new();
+    w.poll(&mut seen).unwrap();
+
+    fs::remove_file(&a).unwrap();
+    fs::write(&b, "b2").unwrap();
+    fs::write(&c, "c").unwrap();
+    let events = w.poll(&mut seen).unwrap();
+    assert_eq!(
+        events,
+        vec![
+            FileEvent::Removed(a.clone()),  // removals first
+            FileEvent::Modified(b.clone()), // then others, sorted by path
+            FileEvent::Created(c.clone()),
+        ]
+    );
+
+    // seen now reflects the current state: nothing left.
+    assert!(w.poll(&mut seen).unwrap().is_empty());
+}
+
+#[test]
+fn poll_skips_git_node_modules_oxide_and_target_dirs() {
+    let dir = tempdir().unwrap();
+    for d in [".git", "node_modules", ".oxide", "target"] {
+        let p = dir.path().join(d);
+        fs::create_dir_all(&p).unwrap();
+        fs::write(p.join("ignored.bin"), "x").unwrap();
+    }
+    fs::write(dir.path().join("src.txt"), "kept").unwrap();
+    let w = Watcher::new(vec![dir.path().to_path_buf()]);
+    let mut seen = BTreeSet::new();
+    let events = w.poll(&mut seen).unwrap();
+    assert_eq!(events, vec![FileEvent::Created(dir.path().join("src.txt"))]);
+}
+
+// ---------------- HMR behavior table (§13.3) ----------------
+
+#[test]
+fn hmr_behavior_matches_spec_strategy_table() {
+    assert_eq!(hmr_behavior(ChangeKind::Component), HmrBehavior::AdapterHmr);
+    assert_eq!(hmr_behavior(ChangeKind::Css), HmrBehavior::StyleSwap);
+    assert_eq!(
+        hmr_behavior(ChangeKind::ServerLoader),
+        HmrBehavior::ReloadData
+    );
+    assert_eq!(
+        hmr_behavior(ChangeKind::ServerModule),
+        HmrBehavior::ServerSwap
+    );
+    assert_eq!(
+        hmr_behavior(ChangeKind::ConfigOrRoutes),
+        HmrBehavior::RestartSubsystems
+    );
+}
+
+// ---------------- update boundary (§13.3) ----------------
+
+#[test]
+fn boundary_is_the_file_itself_when_it_is_a_boundary() {
+    // CSS files and *.server.ts files are boundaries regardless of importers.
+    assert_eq!(
+        update_boundary("app.css", &BTreeSet::from(["page.tsx".to_string()])),
+        "app.css"
+    );
+    assert_eq!(
+        update_boundary("data.server.ts", &BTreeSet::from(["page.tsx".to_string()])),
+        "data.server.ts"
+    );
+}
+
+#[test]
+fn boundary_walks_up_single_importer_chain() {
+    // util.ts ← page.server.ts: the single importer is a boundary → stop there.
+    let importers = BTreeSet::from(["page.server.ts".to_string()]);
+    assert_eq!(update_boundary("util.ts", &importers), "page.server.ts");
+
+    // Single non-boundary importer becomes the boundary itself (walk ends: the set
+    // gives no further candidates beyond the importer).
+    let importers = BTreeSet::from(["helper.ts".to_string()]);
+    assert_eq!(update_boundary("util.ts", &importers), "helper.ts");
+}
+
+#[test]
+fn boundary_multi_importer_and_empty_fall_back_to_the_file() {
+    // Documented simplification: with multiple importers the changed file is its own
+    // boundary (each importer subtree refreshes against it); a real graph walk-up
+    // belongs to the graph engine.
+    let importers = BTreeSet::from(["a.tsx".to_string(), "b.tsx".to_string()]);
+    assert_eq!(update_boundary("util.ts", &importers), "util.ts");
+    assert_eq!(update_boundary("util.ts", &BTreeSet::new()), "util.ts");
+}
+
+// ---------------- HMR messages (§13.3) ----------------
+
+#[test]
+fn hmr_messages_roundtrip_through_json_all_variants() {
+    let diag = Diagnostic::error("DEV-001", "boom")
+        .at(Location::file("app.tsx", 3, 5))
+        .with_fix("fix it");
+    let msgs = vec![
+        HmrMessage::ModuleUpdate {
+            path: "app.tsx".into(),
+            boundary: "app.tsx".into(),
+            code: "export {} // +hmr".into(),
+        },
+        HmrMessage::CssUpdate {
+            path: "a.css".into(),
+            code: ".a{color:red}".into(),
+        },
+        HmrMessage::RouteDataUpdate {
+            route: "/".into(),
+            odf_b64: "aGk=".into(),
+        },
+        HmrMessage::ServerModuleSwap {
+            path: "db.server.ts".into(),
+        },
+        HmrMessage::FullReload {
+            reason: "config changed".into(),
+        },
+        HmrMessage::Error { diagnostic: diag },
+        HmrMessage::Connected {
+            build_id: "b123".into(),
+        },
+    ];
+    for m in &msgs {
+        let json = m.to_json();
+        assert!(!json.is_empty());
+        assert_eq!(
+            &HmrMessage::from_json(&json).unwrap(),
+            m,
+            "roundtrip for {json}"
+        );
+    }
+    // Wire tags are kebab-case per the serde attr (client protocol stability).
+    let json = msgs[0].to_json();
+    assert!(json.contains("\"type\":\"module-update\""), "{json}");
+    assert!(msgs[4].to_json().contains("\"type\":\"full-reload\""));
+    assert!(HmrMessage::from_json("not json").is_none());
+}
+
+#[test]
+fn prebundle_key_is_lockfile_scoped() {
+    assert_eq!(prebundle_key("abc123", "react"), "prebundle:abc123:react");
+    assert_ne!(
+        prebundle_key("abc123", "react"),
+        prebundle_key("def456", "react")
+    );
+}
+
+// ---------------- HMR hub ----------------
+
+#[tokio::test]
+async fn hmr_hub_broadcasts_to_two_subscribers() {
+    let hub = HmrHub::new();
+    let mut s1 = hub.subscribe();
+    let mut s2 = hub.subscribe();
+    assert_eq!(hub.subscriber_count(), 2);
+
+    hub.publish(HmrMessage::FullReload {
+        reason: "routes changed".into(),
+    });
+    hub.publish(HmrMessage::Connected {
+        build_id: "b1".into(),
+    });
+
+    let want = HmrMessage::FullReload {
+        reason: "routes changed".into(),
+    }
+    .to_json();
+    assert_eq!(s1.recv().await.unwrap(), want);
+    assert_eq!(s2.recv().await.unwrap(), want);
+    let want2 = HmrMessage::Connected {
+        build_id: "b1".into(),
+    }
+    .to_json();
+    assert_eq!(s1.recv().await.unwrap(), want2);
+    assert_eq!(s2.recv().await.unwrap(), want2);
+
+    // Publishing with no subscribers must not panic.
+    let solo = HmrHub::default();
+    solo.publish(HmrMessage::CssUpdate {
+        path: "x.css".into(),
+        code: String::new(),
+    });
+}
+
+// ---------------- overlay (§13.4) ----------------
+
+#[test]
+fn overlay_payload_serializes_the_diagnostic() {
+    let d = Diagnostic::error("RT-404", "route not found").at(Location::file("routes.ts", 2, 1));
+    let payload = overlay_payload(&d);
+    assert!(payload.contains("\"code\":\"RT-404\""), "{payload}");
+    assert!(payload.contains("\"message\":\"route not found\""));
+    // Overlay rendering consumes the same JSON the JS boundary sees (§19.4).
+    assert!(Diagnostic::from_json(&payload).is_ok());
+}
