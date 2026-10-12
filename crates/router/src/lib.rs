@@ -6,11 +6,18 @@
 //!
 //! This file is the crate contract: public types and their signatures live here; the
 //! implementations live in the private submodules (`scan`, `matcher`, `archive`,
-//! `typegen`, `rules`, `segment`).
+//! `typegen`, `rules`, `segment`, `slot`).
 //!
 //! Segment encoding (path-to-regexp-lite, see `segment`): static names as-is,
 //! `[param]` → `:param`, `[param]{regex}` / `[param=regex]` → `:param{regex}`
 //! (the brace form is canonical), `[...rest]` → `*rest`, `[[...optional]]` → `*?optional`.
+
+pub mod slot;
+pub use slot::{
+    parse_intercept_marker, parse_slot_name, resolve_slots, InterceptLevel, InterceptSpec,
+    SlotMatch, SlotSpec,
+};
+
 
 use oxide_diagnostics::{Diagnostic, OxideError};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
