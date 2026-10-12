@@ -150,6 +150,18 @@ pub enum Command {
     /// Print the JSON Schema for `oxide.config.{ts,json}` to stdout (§19.3).
     /// Editors (VS Code, JetBrains) consume this via a `$schema` field.
     Schema,
+    /// Load oxide.config.{ts,mjs,js}, evaluate it in a Node worker, and print
+    /// the framework adapter descriptor (spec §7). This is the load path the
+    /// build/dev pipeline uses; today it proves end-to-end wiring of the
+    /// §6.3 / §7 FrameworkHost.
+    Config {
+        /// Project root that contains oxide.config.ts (default: cwd).
+        #[arg(default_value = ".")]
+        root: String,
+        /// Emit the descriptor as JSON (machine-readable for CI / tooling).
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -314,6 +326,7 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
         Command::Test { root } => cmd_test(&root, w).await,
         Command::Mcp { root } => cmd_mcp(&root, w).await,
         Command::Schema => cmd_schema(w),
+        Command::Config { root, json } => cmd_config(&root, json, w).await,
     }
     .map_err(|e| {
         tracing::error!(error = %e, "command failed");
@@ -1655,6 +1668,63 @@ fn cmd_schema(w: Writer<'_>) -> anyhow::Result<i32> {
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
     outln!(w, "{json}");
     Ok(0)
+}
+
+/// `oxide config` (§7, §14): load oxide.config.{ts,mjs,js} through the
+/// framework-adapter host and print the descriptor. This exercises the
+/// exact load path the build/dev pipeline uses: a Node worker evaluates
+/// the config, extracts the `framework` adapter, and returns its shape.
+async fn cmd_config(root: &str, json: bool, w: Writer<'_>) -> anyhow::Result<i32> {
+    use oxide_jshost::{FrameworkHost, JsHost, NodeHost, PoolConfig};
+
+    let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
+    let config_path = find_config_file(&rootp)?;
+
+    // One Node worker per CLI invocation; dropped when we return.
+    let host = NodeHost::new(NodeHost::worker_script_default());
+    let pool = host
+        .tooling_pool(PoolConfig::default())
+        .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+
+    let fw = FrameworkHost::new(pool);
+    let path_str = config_path.to_string_lossy().to_string();
+    let desc = fw
+        .load_config(&path_str)
+        .await
+        .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+
+    if json {
+        let v = serde_json::json!({
+            "config": path_str,
+            "name": desc.name,
+            "extensions": desc.extensions,
+            "capabilities": desc.capabilities,
+        });
+        outln!(w, "{}", serde_json::to_string_pretty(&v)?);
+    } else {
+        outln!(w, "config:       {path_str}");
+        outln!(w, "framework:    {}", desc.name);
+        outln!(w, "extensions:   {}", desc.extensions.join(", "));
+        let caps = serde_json::to_string(&desc.capabilities).unwrap_or_default();
+        outln!(w, "capabilities: {caps}");
+    }
+    Ok(0)
+}
+
+/// Locate the project's config file. Precedence: .ts > .mjs > .js. The .ts
+/// case relies on Node 22.18+ native type stripping; on older Node the
+/// worker's dynamic import fails and the error surfaces to the caller.
+fn find_config_file(root: &Path) -> anyhow::Result<PathBuf> {
+    for name in ["oxide.config.ts", "oxide.config.mjs", "oxide.config.js"] {
+        let p = root.join(name);
+        if p.is_file() {
+            return Ok(p);
+        }
+    }
+    anyhow::bail!(
+        "no oxide.config.{{ts,mjs,js}} found under {} (spec §14.1)",
+        root.display()
+    )
 }
 
 async fn cmd_mcp(root: &str, _w: Writer<'_>) -> anyhow::Result<i32> {
