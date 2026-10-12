@@ -1,0 +1,18 @@
+[package]
+name = "oxide-assets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Lightning-CSS-shaped pipeline, images, fonts, og, content (spec 16, D5, D19)"
+
+[dependencies]
+oxide-diagnostics = { workspace = true }
+image = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+blake3 = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
