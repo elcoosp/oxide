@@ -78,6 +78,73 @@ fn manifest_fixture(routes: serde_json::Value) -> String {
 
 
 #[test]
+#[ignore]
+fn cli_render_dispatches_real_react_ssr() {
+    // CLI-level E2E: run `oxide render` against a real oxide.config.mjs that
+    // imports the real @oxide/react adapter. Assert the stdout HTML is the
+    // output of react-dom/server, proving the full stack — clap parse →
+    // FrameworkHost → Node worker → adapter.render → react-dom/server →
+    // back through the worker → CLI stdout.
+    //
+    // Requires Node 24 (or 22.18+) for native TS stripping, and pnpm-installed
+    // workspace node_modules. Marked #[ignore] because it spawns a Node worker.
+
+    use std::fs;
+    use std::path::PathBuf;
+
+    // Locate workspace root via CARGO_MANIFEST_DIR = crates/cli.
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest.parent().unwrap().parent().unwrap();
+    let e2e_dir = workspace.join("packages/react/.tmp-e2e");
+    fs::create_dir_all(&e2e_dir).expect("mkdir .tmp-e2e");
+    let config_path = e2e_dir.join("oxide.config.mjs");
+
+    // Write the config. `../src/real-adapter.ts` resolves to
+    // packages/react/src/real-adapter.ts because the config is a direct
+    // child of .tmp-e2e/.
+    let config_src = r#"import { createRealAdapter } from '../src/real-adapter.ts'
+import { createElement } from 'react'
+
+const Home = (props) =>
+  createElement('h1', { className: 'greeting' },
+    'CLI-E2E: ' + String((props && props.data && props.data.name) || 'unknown'))
+
+export default {
+  framework: createRealAdapter({
+    ssr: 'real',
+    componentFor: (route) => (route === 'routes/index' ? Home : undefined),
+  }),
+}
+"#;
+    fs::write(&config_path, config_src).expect("write config");
+
+    // Invoke `oxide render routes/index --root <e2e_dir>`.
+    // run_with_writer drives the CLI in-process (no process spawn) but the
+    // FrameworkHost does spawn a real Node worker.
+    let root_str = e2e_dir.to_string_lossy().to_string();
+    let (code, out) = futures::executor::block_on(run_ok(&[
+        "oxide", "render", "routes/index",
+        "--root", &root_str,
+        "--data", r#"{"name":"CLI"}"#,
+    ]));
+    assert_eq!(code, 0, "oxide render exit code; output:\n{out}");
+    assert!(
+        out.starts_with("<!doctype html>"),
+        "html should start with doctype:\n{out}"
+    );
+    assert!(
+        out.contains("CLI-E2E: CLI"),
+        "react component output should be present:\n{out}"
+    );
+    assert!(
+        out.contains("data-reactroot"),
+        "react root marker should be present:\n{out}"
+    );
+
+    let _ = fs::remove_file(&config_path);
+}
+
+#[test]
 fn render_subcommand_parses_route_and_optional_flags() {
     use clap::Parser;
     let cli = crate::Cli::try_parse_from([
