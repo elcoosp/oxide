@@ -27,7 +27,7 @@ const available = await isSolidAvailable()
 const skip = !available
 
 async function getWeb(): Promise<Record<string, unknown>> {
-  return (await import('solid-js/web')) as unknown as Record<string, unknown>
+  return (await import('@solidjs/web')) as unknown as Record<string, unknown>
 }
 
 test('real SSR: solid-js/web is resolvable', { skip }, async () => {
