@@ -1,19 +1,19 @@
-//! Module resolution (spec §6.2 step 1): relative specifiers with extension
-//! probing, tsconfig `paths` (longest prefix wins), and node_modules package
-//! `exports` with per-environment conditions, falling back to `module`/`main`.
+//! Module resolution (spec §6.2 step 1). `oxc_resolver` drives the resolution —
+//! extensions, tsconfig `paths`, package `exports`, `browser` field, and the
+//! per-environment conditions all flow through its `ResolveOptions`. This
+//! module is the thin adapter between Oxide's `BundleEnv`/`BundleOptions`
+//! surface and the resolver's option struct.
 
 use super::BundleEnv;
 use oxide_diagnostics::{Diagnostic, OxideError};
-use serde_json::Value;
+use oxc_resolver::{Alias, AliasValue, ResolveOptions, Resolver};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 type Res<T> = std::result::Result<T, OxideError>;
 
-/// Candidate extensions for extensionless specifiers (§6.2 step 1).
-const EXTS: [&str; 5] = ["ts", "tsx", "js", "jsx", "mjs"];
-
-/// Resolve `specifier` as seen from `from` (an absolute module path) under `root`.
+/// Resolve `specifier` as seen from `from` (an absolute module path) under
+/// `root`. `paths` are tsconfig-style alias patterns (`@app/*` → `src/*`).
 pub fn resolve(
     root: &Path,
     specifier: &str,
@@ -21,57 +21,32 @@ pub fn resolve(
     env: BundleEnv,
     paths: &BTreeMap<String, Vec<String>>,
 ) -> Res<PathBuf> {
-    // Asset queries (`./hero.png?w=640`) resolve to the path before the `?` (§6.7).
+    // Asset queries (`./hero.png?w=640`) resolve the path before the `?` (§6.7).
     let spec = specifier.split('?').next().unwrap_or(specifier).trim();
     if spec.is_empty() {
         return Err(unresolved(root, specifier, from));
     }
-    // 1. relative
-    if spec.starts_with("./") || spec.starts_with("../") {
-        let base = from.parent().unwrap_or(Path::new(".")).join(spec);
-        return try_file(&base).ok_or_else(|| unresolved(root, specifier, from));
-    }
-    // 2. tsconfig paths — longest prefix first, ties by pattern for determinism
-    let mut pats: Vec<(&String, &Vec<String>)> = paths.iter().collect();
-    pats.sort_by(|a, b| {
-        prefix_len(b.0)
-            .cmp(&prefix_len(a.0))
-            .then_with(|| a.0.cmp(b.0))
-    });
-    for (pat, targets) in pats {
-        if let Some(sub) = match_pattern(pat, spec) {
-            for t in targets {
-                let cand = root.join(t.replace('*', &sub));
-                if let Some(p) = try_file(&cand) {
-                    return Ok(p);
-                }
-            }
-        }
-    }
-    // 3. node_modules (bare specifiers)
-    if let Some(p) = resolve_package(root, spec, env) {
+
+    // Non-JS asset extensions (`./card.css`, `./hero.png`) are filesystem
+    // resolution, not module resolution — oxc_resolver only knows the module
+    // extensions. Route them through a direct probe.
+    if let Some(p) = try_asset_path(root, spec, from) {
         return Ok(p);
     }
-    Err(unresolved(root, specifier, from))
-}
 
-fn prefix_len(pat: &str) -> usize {
-    pat.find('*').unwrap_or(pat.len())
-}
+    let options = build_options(root, env, paths);
+    let resolver = Resolver::new(options);
+    let from_dir = from.parent().unwrap_or(root);
 
-/// Match `spec` against a tsconfig pattern (`@app/*`); returns the `*` substitution.
-fn match_pattern(pat: &str, spec: &str) -> Option<String> {
-    match pat.find('*') {
-        Some(star) => {
-            let (pre, suf) = (&pat[..star], &pat[star + 1..]);
-            if spec.starts_with(pre) && spec.ends_with(suf) && spec.len() >= pre.len() + suf.len() {
-                Some(spec[pre.len()..spec.len() - suf.len()].to_string())
-            } else {
-                None
-            }
-        }
-        None => (pat == spec).then(|| String::new()),
-    }
+    // oxc_resolver follows filesystem symlinks, which on macOS turns the
+    // `tempfile` crate's `/var/folders/...` into `/private/var/folders/...`.
+    // Callers compare against the un-canonicalized `root`, so strip the
+    // resolver's `/private` prefix back to the caller's when the prefix
+    // otherwise matches.
+    resolver
+        .resolve(from_dir, spec)
+        .map(|r| reconcile_prefix(&r.full_path(), root))
+        .map_err(|_| unresolved(root, specifier, from))
 }
 
 /// Lexically normalize `.` and `..` components without touching the filesystem.
@@ -85,7 +60,7 @@ pub fn normalize(p: &Path) -> PathBuf {
             std::path::Component::CurDir => {}
             std::path::Component::ParentDir => {
                 if !out.pop() {
-                    out.push(".."); // climbing past a relative base keeps the `..`
+                    out.push("..");
                 }
             }
             other => out.push(other.as_os_str()),
@@ -94,129 +69,115 @@ pub fn normalize(p: &Path) -> PathBuf {
     out
 }
 
-/// Probe `base`, then `base.<ext>`, then `base/index.<ext>`.
-pub fn try_file(base: &Path) -> Option<PathBuf> {
-    let base = &normalize(base);
-    if base.is_file() {
-        return Some(base.to_path_buf());
+/// Direct filesystem probe for non-JS asset extensions. Recognised suffixes:
+/// `.css`, `.png`, `.jpg`, `.jpeg`, `.svg`, `.gif`, `.webp`, `.avif`, `.woff`,
+/// `.woff2`, `.ttf`, `.otf`, `.txt`, `.json`, `.wasm`, `.html`.
+/// Reconcile a path returned by oxc_resolver with the caller-supplied `root`.
+/// The resolver may have canonicalized macOS's `/var` → `/private/var` symlink;
+/// callers compare against the un-canonicalized root, so unwrap the same
+/// transformation when it's the only difference.
+fn reconcile_prefix(p: &Path, root: &Path) -> PathBuf {
+    let p = normalize(p);
+    if p.starts_with(root) {
+        return p;
     }
-    let bs = base.to_string_lossy().to_string();
-    for e in EXTS {
-        let p = PathBuf::from(format!("{bs}.{e}"));
-        if p.is_file() {
-            return Some(p);
+    // Try stripping a leading `/private` segment and re-checking.
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix("/private") {
+        let alt = PathBuf::from(rest);
+        if alt.starts_with(root) {
+            return alt;
         }
     }
-    for e in EXTS {
-        let p = PathBuf::from(format!("{bs}/index.{e}"));
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    None
+    p
 }
 
-/// Split a bare specifier into (package, subpath) — scoped packages take 2 segments.
-fn split_pkg(spec: &str) -> (String, String) {
-    if let Some(rest) = spec.strip_prefix('@') {
-        if let Some(slash) = rest.find('/') {
-            if let Some(end) = rest[slash + 1..].find('/') {
-                let e = slash + 1 + end;
-                return (
-                    format!("@{}/{}", &rest[..slash], &rest[slash + 1..e]),
-                    spec[e + 1..].to_string(),
-                );
-            }
-            return (spec.to_string(), ".".to_string());
-        }
-        return (spec.to_string(), ".".to_string());
+fn try_asset_path(root: &Path, spec: &str, from: &Path) -> Option<PathBuf> {
+    const ASSET_EXTS: &[&str] = &[
+        ".css", ".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp", ".avif", ".woff", ".woff2",
+        ".ttf", ".otf", ".txt", ".json", ".wasm", ".html",
+    ];
+    let has_asset_ext = ASSET_EXTS.iter().any(|e| spec.ends_with(e));
+    if !has_asset_ext {
+        return None;
     }
-    match spec.find('/') {
-        Some(i) => (spec[..i].to_string(), spec[i + 1..].to_string()),
-        None => (spec.to_string(), ".".to_string()),
-    }
-}
-
-fn resolve_package(root: &Path, spec: &str, env: BundleEnv) -> Option<PathBuf> {
-    let (pkg, sub) = split_pkg(spec);
-    let pkg_dir = root.join("node_modules").join(&pkg);
-    let pkg_json = pkg_dir.join("package.json");
-    if !pkg_json.is_file() {
-        // no manifest: allow direct path-style resolution under node_modules
-        return try_file(&root.join("node_modules").join(spec));
-    }
-    let v: Value = serde_json::from_str(&std::fs::read_to_string(&pkg_json).ok()?).ok()?;
-    let conds: &[&str] = match env {
-        BundleEnv::Client => &["import", "browser", "default"],
-        _ => &["import", "node", "default"],
+    let candidate = if spec.starts_with("./") || spec.starts_with("../") {
+        normalize(&from.parent().unwrap_or(root).join(spec))
+    } else if spec.starts_with('/') {
+        normalize(&root.join(spec.trim_start_matches('/')))
+    } else {
+        // Bare specifier with an asset extension — look under node_modules.
+        normalize(&root.join("node_modules").join(spec))
     };
-    if let Some(exports) = v.get("exports") {
-        let key = if sub == "." {
-            ".".to_string()
-        } else {
-            format!("./{sub}")
-        };
-        if let Some(target) = exports_resolve(exports, conds, &key) {
-            let t = target.trim_start_matches("./");
-            if let Some(p) = try_file(&pkg_dir.join(t)) {
-                return Some(p);
-            }
-        }
-        // tolerant: fall through to main fields when `exports` does not match
-    }
-    for key in ["module", "main"] {
-        if let Some(t) = v.get(key).and_then(|x| x.as_str()) {
-            if let Some(p) = try_file(&pkg_dir.join(t.trim_start_matches("./"))) {
-                return Some(p);
-            }
-        }
-    }
-    try_file(&pkg_dir.join("index.js"))
+    candidate.is_file().then_some(candidate)
 }
 
-/// Node-style `exports` resolution: strings, fallback arrays, subpath maps
-/// (exact + `*` patterns) and condition objects walked in `conds` priority order.
-fn exports_resolve(v: &Value, conds: &[&str], key: &str) -> Option<String> {
-    match v {
-        Value::String(s) => Some(s.clone()),
-        Value::Array(a) => a.iter().find_map(|x| exports_resolve(x, conds, key)),
-        Value::Object(o) => {
-            let is_submap = o.keys().any(|k| k.starts_with('.'));
-            if is_submap {
-                if let Some(t) = o.get(key) {
-                    return exports_resolve(t, conds, key);
-                }
-                for (k, t) in o {
-                    let Some(star) = k.find('*') else { continue };
-                    let (pre, suf) = (&k[..star], &k[star + 1..]);
-                    if !pre.starts_with('.') {
-                        continue;
-                    }
-                    if key.starts_with(pre)
-                        && key.ends_with(suf)
-                        && key.len() >= pre.len() + suf.len()
-                    {
-                        let mid = &key[pre.len()..key.len() - suf.len()];
-                        let target = t.as_str()?.replace('*', mid);
-                        return Some(target);
-                    }
-                }
-                None
-            } else {
-                for c in conds {
-                    if let Some(t) = o.get(*c) {
-                        return exports_resolve(t, conds, key);
-                    }
-                }
-                None
-            }
-        }
-        _ => None,
+fn build_options(
+    root: &Path,
+    env: BundleEnv,
+    paths: &BTreeMap<String, Vec<String>>,
+) -> ResolveOptions {
+    let conditions = match env {
+        BundleEnv::Client | BundleEnv::Edge => vec![
+            "browser".to_string(),
+            "import".to_string(),
+            "module".to_string(),
+            "default".to_string(),
+        ],
+        BundleEnv::Ssr => vec![
+            "node".to_string(),
+            "import".to_string(),
+            "module".to_string(),
+            "default".to_string(),
+        ],
+    };
+
+    let extensions = vec![
+        ".ts".to_string(),
+        ".tsx".to_string(),
+        ".js".to_string(),
+        ".jsx".to_string(),
+        ".mjs".to_string(),
+    ];
+
+    // tsconfig `paths` become oxc_resolver aliases. `Alias` is itself a Vec of
+    // (pattern, values) pairs; a single call to `Resolver::new` therefore takes
+    // the flattened form.
+    let alias: Alias = paths
+        .iter()
+        .map(|(pattern, targets)| {
+            let values: Vec<AliasValue> = targets
+                .iter()
+                .map(|t| target_to_alias_value(root, t))
+                .collect();
+            (pattern.clone(), values)
+        })
+        .collect();
+
+    ResolveOptions {
+        condition_names: conditions,
+        extensions,
+        alias,
+        // `browser`-field resolution stays available for client builds; SSR
+        // conditions already disambiguate server paths.
+        alias_fields: Vec::new(),
+        ..ResolveOptions::default()
+    }
+}
+
+fn target_to_alias_value(root: &Path, target: &str) -> AliasValue {
+    // A target with `*` is a substitution template; without, a direct path.
+    // oxc_resolver expects `$1` for the wildcard capture, so translate.
+    if target.contains('*') {
+        AliasValue::from(target.replace('*', "$1"))
+    } else {
+        AliasValue::Path(root.join(target).to_string_lossy().into_owned())
     }
 }
 
 fn unresolved(root: &Path, specifier: &str, from: &Path) -> OxideError {
-    let (pkg, _) = split_pkg(specifier.split('?').next().unwrap_or(specifier));
+    let spec = specifier.split('?').next().unwrap_or(specifier);
+    let pkg = spec.split('/').next().unwrap_or(spec);
     OxideError(
         Diagnostic::error(
             "BLD-RESOLVE",
