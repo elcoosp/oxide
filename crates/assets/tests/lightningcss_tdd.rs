@@ -1,7 +1,6 @@
 //! TDD suite for the real Lightning CSS backend (spec D5).
 //!
-//! Exercises the `LightningCssBackend` against the same `CssBackend` trait the
-//! in-house `DefaultCss` engine implements: parse, minify, module scoping, nesting,
+//! Exercises `LightningCssBackend`: parse, minify, module scoping, nesting,
 //! `@media` handling, prefixing driven by browser targets.
 
 use oxide_assets::{CssBackend, CssInput, CssKind, LightningCssBackend};
