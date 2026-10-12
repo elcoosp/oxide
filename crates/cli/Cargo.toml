@@ -17,6 +17,7 @@ oxide-jshost = { workspace = true }
 oxide-cache = { workspace = true }
 oxide-render = { workspace = true }
 oxide-server = { workspace = true }
+tokio-rustls = { workspace = true }
 oxide-assets = { workspace = true }
 oxide-dev = { workspace = true }
 oxide-plugin = { workspace = true }
@@ -24,10 +25,17 @@ oxide-adapters = { workspace = true }
 oxide-odf = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
+rmcp = { workspace = true }
 anyhow = { workspace = true }
+serde = { workspace = true }
+schemars = "1"
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+opentelemetry-otlp = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
