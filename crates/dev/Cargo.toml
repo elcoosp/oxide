@@ -1,0 +1,21 @@
+[package]
+name = "oxide-dev"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Watcher, HMR, overlay, inspector (spec 13)"
+
+[dependencies]
+oxide-diagnostics = { workspace = true }
+oxide-graph = { workspace = true }
+notify = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+# Content-hash confirmation for the watcher (§5.5, D6) — workspace-pinned, no new dep.
+blake3 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
