@@ -16,6 +16,10 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 # Content-hash confirmation for the watcher (§5.5, D6) — workspace-pinned, no new dep.
 blake3 = { workspace = true }
+rustls = { workspace = true }
+local-ip-address = { workspace = true }
+qrcode = { workspace = true }
+rcgen = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
