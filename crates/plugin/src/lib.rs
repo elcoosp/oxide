@@ -11,6 +11,9 @@ use oxide_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+mod wasm;
+pub use wasm::{hook_export_name, WasmPlugin};
+
 pub type Result<T> = std::result::Result<T, OxideError>;
 
 pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
