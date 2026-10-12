@@ -285,7 +285,7 @@ pub fn overlay_payload(diag: &Diagnostic) -> String {
 /// `/__oxide` inspector data model (§13.4): module graph, `oxide why` explanations,
 /// route table with inferred modes, cache entries + tags, per-request waterfalls,
 /// isolate pool state.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct InspectorState {
     pub module_graph: Vec<(String, Vec<String>)>,
     pub why: BTreeMap<String, WhyReport>,
@@ -295,14 +295,14 @@ pub struct InspectorState {
     pub pool: PoolRow,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WhyReport {
     pub module: String,
     pub importers: Vec<String>,
     pub chunks: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RouteRow {
     pub id: String,
     pub mode: String,
@@ -310,7 +310,7 @@ pub struct RouteRow {
     pub cache_policy: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CacheRow {
     pub key: String,
     pub layer: String,
@@ -318,13 +318,13 @@ pub struct CacheRow {
     pub age_ms: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RequestTimingsRow {
     pub request_id: String,
     pub waterfall_ms: Vec<(String, f64)>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PoolRow {
     pub workers: usize,
     pub in_flight: u64,
@@ -346,6 +346,96 @@ pub struct DevOptions {
 pub fn prebundle_key(lockfile_hash: &str, dep: &str) -> String {
     format!("prebundle:{lockfile_hash}:{dep}")
 }
+
+
+// ---------------------------------------------------------------------------
+// §13.4 Inspector — route-table provider
+// ---------------------------------------------------------------------------
+
+/// A snapshot source that supplies the route table. Other inspector fields
+/// (module graph, cache, pool, waterfalls) stay empty until those subsystems
+/// are wired into the dev server — the schema makes that explicit rather than
+/// synthesizing placeholder data.
+#[derive(Debug, Clone, Default)]
+pub struct RouteTableInspector {
+    pub routes: Vec<RouteRow>,
+}
+
+impl RouteTableInspector {
+    /// Build from a router `table()` result:
+    /// `Vec<(pattern, mode, tags)>` (§8.3 typegen output).
+    pub fn from_router_table(table: Vec<(String, String, Vec<String>)>) -> Self {
+        let routes = table
+            .into_iter()
+            .map(|(pattern, mode, tags)| RouteRow {
+                id: pattern,
+                mode,
+                dynamic_reason: None,
+                cache_policy: if tags.is_empty() {
+                    String::new()
+                } else {
+                    tags.join(",")
+                },
+            })
+            .collect();
+        Self { routes }
+    }
+
+    /// Produce the inspector state. Fields without a source stay empty.
+    pub fn state(&self) -> InspectorState {
+        InspectorState {
+            routes: self.routes.clone(),
+            ..Default::default()
+        }
+    }
+}
+
+/// HTML rendering for `/__oxide` (self-contained, no external assets). A
+/// route-table view over the state's route list; the raw JSON is available at
+/// `/__oxide/state`.
+pub fn render_inspector_html(state: &InspectorState) -> String {
+    let mut rows = String::new();
+    for r in &state.routes {
+        rows.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            html_escape(&r.id),
+            html_escape(&r.mode),
+            html_escape(r.dynamic_reason.as_deref().unwrap_or("")),
+            html_escape(&r.cache_policy),
+        ));
+    }
+    format!(
+        "<!doctype html><html><head><title>Oxide Inspector</title>\
+         <style>\
+         body{{font:13px/1.5 system-ui,sans-serif;background:#0a0a0a;color:#e6e6e6;margin:0;padding:24px}}\
+         h1{{font-size:18px;margin:0 0 16px}}\
+         h2{{font-size:14px;text-transform:uppercase;letter-spacing:.1em;color:#888;margin:24px 0 8px}}\
+         table{{width:100%;border-collapse:collapse}}\
+         th,td{{text-align:left;padding:6px 10px;border-bottom:1px solid #222}}\
+         th{{color:#888;font-weight:500}}\
+         code{{background:#151515;padding:2px 6px;border-radius:4px}}\
+         a{{color:#7cb7ff}}\
+         </style></head>\
+         <body>\
+         <h1>Oxide Inspector</h1>\
+         <p>Raw JSON: <a href=\"/__oxide/state\">/__oxide/state</a></p>\
+         <h2>Routes ({})</h2>\
+         <table><thead><tr><th>pattern</th><th>mode</th><th>dynamic reason</th><th>cache policy</th></tr></thead><tbody>{}</tbody></table>\
+         </body></html>",
+        state.routes.len(),
+        rows
+    )
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+pub mod dev_server;
+pub use dev_server::{apply_proxy, generate_dev_cert, local_url, network_url, open_browser, render_qr, DevCert, DevServerConfig, ProxyMatch, ProxyRule};
 
 #[cfg(test)]
 mod tests;
