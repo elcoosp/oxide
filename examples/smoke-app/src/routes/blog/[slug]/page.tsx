@@ -1,13 +1,18 @@
-// The blog page renders the URL slug from props — proves the router's
-// match, the pipeline's PageRenderInput, and the adapter all thread the
-// parameter through. The props shape matches the adapter contract:
-//   { route, url, params, data }
+// The blog page reads its content from the loader's data (props.data).
+// `oxide render` and `oxide dev` both run the loader first, so the title
+// below comes from `page.server.ts` — not from URL params directly.
 interface Props {
   params?: { slug?: string }
-  data?: unknown
+  data?: { title?: string; body?: string }
 }
 
 export default function Post(props: Props) {
-  const slug = props.params?.slug ?? 'unknown'
-  return <h1>Post: {slug}</h1>
+  const title = props.data?.title ?? 'Untitled'
+  const body = props.data?.body ?? ''
+  return (
+    <article>
+      <h1>{title}</h1>
+      <p>{body}</p>
+    </article>
+  )
 }

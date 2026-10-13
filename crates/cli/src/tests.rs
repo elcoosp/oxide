@@ -660,9 +660,13 @@ async fn smoke_app_renders_through_real_config() {
     ])
     .await;
     assert_eq!(code, 0, "render blog exit; output:\n{out}");
+    // The blog route's `page.server.ts` returns `title: 'Hello ' + slug`.
+    // The component renders `props.data.title`. If the loader did not run,
+    // the title falls back to 'Untitled' — so this assertion is a real
+    // test of the loader → renderer chain, not a tautology.
     assert!(
-        out.contains("hello-smoke"),
-        "URL param must reach the component: {out}"
+        out.contains("Hello hello-smoke"),
+        "loader-derived title from page.server.ts: {out}"
     );
     assert!(
         out.contains("data-reactroot"),

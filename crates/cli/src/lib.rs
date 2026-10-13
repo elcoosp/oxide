@@ -2104,10 +2104,13 @@ async fn cmd_render(
     data_json: &str,
     w: Writer<'_>,
 ) -> anyhow::Result<i32> {
-    use oxide_jshost::{FrameworkHost, JsHost, NodeHost, PoolConfig};
+    use oxide_jshost::{FrameworkHost, JsHost, LoaderHost, NodeHost, PoolConfig};
 
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
     let config_path = find_config_file(&rootp)?;
+    // Load the config early so we know `routes.dir` for the loader lookup.
+    // A config-load failure is fatal here; the CLI cannot render without it.
+    let cfg = load_config_strict(&rootp, "production")?;
 
     // Parse params (`k=v` pairs; comma splits produce arrays).
     let mut params_map: BTreeMap<String, serde_json::Value> = BTreeMap::new();
@@ -2123,7 +2126,6 @@ async fn cmd_render(
             _ => unreachable!("entry initialized as array"),
         }
     }
-    // Single-value params should be scalars, not single-element arrays.
     let params_json: serde_json::Map<String, serde_json::Value> = params_map
         .into_iter()
         .map(|(k, v)| {
@@ -2135,29 +2137,73 @@ async fn cmd_render(
         })
         .collect();
 
-    // Parse data JSON.
     let data: serde_json::Value = serde_json::from_str(data_json)
         .map_err(|e| anyhow::anyhow!("--data is not valid JSON: {e}"))?;
 
-    // Derived URL when not supplied: `/{route}` minus the `routes/` prefix.
     let url_str = url.map(String::from).unwrap_or_else(|| {
         let stripped = route.strip_prefix("routes/").unwrap_or(route);
         format!("/{stripped}")
     });
 
-    // Minimal RenderInput shape (spec §7 RenderInput, packages/oxide types.ts).
-    let input = serde_json::json!({
-        "route": route,
-        "url": url_str,
-        "params": params_json,
-        "data": data,
-        "head": { "meta": [], "link": [], "style": [], "script": [] },
-    });
-
+    // One worker pool backs both the loader and the renderer.
     let host = NodeHost::new(NodeHost::worker_script_default());
     let pool = host
         .tooling_pool(PoolConfig::default())
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+
+    // §9.1: run the route's `page.server.ts` loader (if present) so the
+    // CLI one-shot renders the same output as dev/serve. `--data` is the
+    // fallback; a loader that returns non-200 short-circuits with a
+    // diagnostic.
+    let mut effective_data = data.clone();
+    let route_dir = route.strip_prefix("routes/").unwrap_or(route);
+    let page_server_path = rootp
+        .join(&cfg.routes.dir)
+        .join(route_dir)
+        .join("page.server.ts");
+    if page_server_path.is_file() {
+        let loader_host = LoaderHost::new(std::sync::Arc::clone(&pool));
+        let params_for_loader: serde_json::Value =
+            serde_json::Value::Object(params_json.clone());
+        match loader_host
+            .run(
+                &page_server_path.to_string_lossy(),
+                serde_json::json!({
+                    "route": route,
+                    "params": params_for_loader,
+                    "url": url_str,
+                    "method": "GET",
+                    "headers": [],
+                }),
+            )
+            .await
+        {
+            Ok(out) => {
+                let status = out.get("status").and_then(|v| v.as_u64()).unwrap_or(200) as u16;
+                if status != 200 {
+                    let loc = out.get("location").and_then(|v| v.as_str()).unwrap_or("");
+                    anyhow::bail!(
+                        "loader short-circuited with status {status}{}",
+                        if loc.is_empty() { String::new() } else { format!(" -> {loc}") }
+                    );
+                }
+                if let Some(d) = out.get("data") {
+                    effective_data = d.clone();
+                }
+            }
+            Err(e) => {
+                anyhow::bail!("loader failed: {} {}", e.0.code, e.0.message);
+            }
+        }
+    }
+
+    let input = serde_json::json!({
+        "route": route,
+        "url": url_str,
+        "params": params_json,
+        "data": effective_data,
+        "head": { "meta": [], "link": [], "style": [], "script": [] },
+    });
 
     let fw = FrameworkHost::new(pool);
     let path_str = config_path.to_string_lossy().to_string();
