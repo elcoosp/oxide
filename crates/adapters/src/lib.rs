@@ -27,6 +27,7 @@ pub enum Target {
     Static,
     Docker,
     Cloudflare,
+    CloudflarePages,
     Lambda,
     Vercel,
     Netlify,
@@ -42,6 +43,7 @@ impl Target {
             "static" => Target::Static,
             "docker" => Target::Docker,
             "cloudflare" => Target::Cloudflare,
+            "cloudflare-pages" | "cfpages" => Target::CloudflarePages,
             "lambda" => Target::Lambda,
             "vercel" => Target::Vercel,
             "netlify" => Target::Netlify,
@@ -57,6 +59,7 @@ impl Target {
             Target::Static => "static",
             Target::Docker => "docker",
             Target::Cloudflare => "cloudflare",
+            Target::CloudflarePages => "cloudflare-pages",
             Target::Lambda => "lambda",
             Target::Vercel => "vercel",
             Target::Netlify => "netlify",
@@ -118,7 +121,7 @@ pub fn capability_matrix(target: Target) -> BTreeMap<Capability, FeatureSupport>
             (Tls, Unsupported),
         ]),
         // Workers: WinterCG edge subset; KV/R2 for cache, no sockets, no images.
-        Target::Cloudflare => row([
+        Target::Cloudflare | Target::CloudflarePages => row([
             (L0Cache, Degraded),
             (Isr, Degraded),
             (Sockets, Unsupported),
@@ -156,8 +159,12 @@ pub fn degradation(target: Target, cap: Capability) -> Option<&'static str> {
         (Target::Static, NativeRules) => {
             "subset: redirects/headers via _redirects/_headers only (no rewrites/auth)"
         }
-        (Target::Cloudflare, L0Cache) => "KV/R2-backed cache with eventually-consistent fill",
-        (Target::Cloudflare, Isr) => "ISR via stale-while-revalidate at the edge",
+        (Target::Cloudflare | Target::CloudflarePages, L0Cache) => {
+            "KV/R2-backed cache with eventually-consistent fill"
+        }
+        (Target::Cloudflare | Target::CloudflarePages, Isr) => {
+            "ISR via stale-while-revalidate at the edge"
+        }
         (Target::Lambda | Target::Vercel | Target::Netlify, L0Cache) => {
             "remote cache handler; L0 is cold per instance"
         }
@@ -379,6 +386,53 @@ pub fn emit(target: Target, artifact: &BuildArtifact, out_dir: &Path) -> Result<
             }
             written.push(write_deploy(out_dir, target, build_id, "worker.js")?);
         }
+        Target::CloudflarePages => {
+            // Cloudflare Pages layout (§18). Pages picks up a `_worker.js`
+            // at the root of the upload directory (advanced mode), a
+            // `_routes.json` for asset bypass, and (optionally) a
+            // `wrangler.toml` with `pages_build_output_dir`. Deploy with
+            //   wrangler pages deploy <out_dir>
+            // or point a Pages Git integration at the build output.
+            written.push(write_file(
+                out_dir.join("_worker.js"),
+                &cloudflare_worker_entry(build_id),
+            )?);
+            written.push(write_file(
+                out_dir.join("edge.js"),
+                &edge_handler_js(build_id),
+            )?);
+            written.push(write_json(
+                out_dir.join("_routes.json"),
+                &serde_json::json!({
+                    "version": 1,
+                    "include": ["/*"],
+                    "exclude": [
+                        "/assets/*",
+                        "/_oxide/health",
+                        "/*.ico",
+                        "/*.png",
+                        "/*.svg",
+                        "/*.woff2",
+                    ]
+                }),
+            )?);
+            let has_wasm = artifact.out_dir.join("edge.wasm").is_file();
+            written.push(write_file(
+                out_dir.join("wrangler.toml"),
+                &cloudflare_pages_wrangler_toml(build_id, has_wasm),
+            )?);
+            if has_wasm {
+                let src = artifact.out_dir.join("edge.wasm");
+                let bytes = std::fs::read(&src).map_err(|e| {
+                    err(
+                        "ADP-IO",
+                        format!("edge.wasm missing at {}: {e}", src.display()),
+                    )
+                })?;
+                written.push(write_bytes(out_dir.join("edge.wasm"), &bytes)?);
+            }
+            written.push(write_deploy(out_dir, target, build_id, "_worker.js")?);
+        }
         Target::Lambda | Target::Vercel | Target::Netlify => {
             // Shared: copy the SSR bundle directory to <deploy>/server/ so
             // the handler's relative import resolves at deploy time. The
@@ -465,6 +519,16 @@ Resources:
                 out_dir.join("server.ts"),
                 &runtime_server_ts(target, build_id),
             )?);
+            if target == Target::Deno {
+                // Deno Deploy picks up `deno.json`'s `deploy.entrypoint` when
+                // the directory is pushed via `deployctl` or linked to a Git
+                // repo. Its presence turns the artifact from a loose script
+                // into a deployable Deno Deploy project (§18).
+                written.push(write_file(
+                    out_dir.join("deno.json"),
+                    &deno_deploy_config(build_id),
+                )?);
+            }
             written.push(write_deploy(out_dir, target, build_id, "server.ts")?);
         }
     }
@@ -904,6 +968,36 @@ export default { fetch: handler };
 export { cacheKey, mergeHead, encodeOdf };
 "#;
     tpl.replace("__BUILD_ID__", build_id)
+}
+
+/// `deno.json` for the Deno Deploy target (§18). Declares the deploy
+/// entrypoint so `deployctl deploy` / Git-linked projects pick up the
+/// server bundle without a manual `--entrypoint` flag.
+pub fn deno_deploy_config(build_id: &str) -> String {
+    format!(
+        "{{\n  \"name\": \"oxide-{build_id}\",\n  \"version\": \"0.1.0\",\n  \
+         \"deploy\": {{\n    \"entrypoint\": \"server.ts\"\n  }}\n}}\n"
+    )
+}
+
+/// `wrangler.toml` for the Cloudflare **Pages** target. Uses the Pages
+/// convention (`pages_build_output_dir`) instead of `main =`, so
+/// `wrangler pages deploy <dir>` and Git-integrated Pages projects both
+/// pick up the emitted `_worker.js` automatically.
+pub fn cloudflare_pages_wrangler_toml(build_id: &str, has_wasm: bool) -> String {
+    let mut s = String::new();
+    s.push_str("# Oxide Cloudflare Pages target (§18). Generated by oxide-adapters.\n");
+    s.push_str(&format!("name = \"oxide-{build_id}\"\n"));
+    s.push_str("pages_build_output_dir = \".\"\n");
+    s.push_str("compatibility_date = \"2024-09-23\"\n");
+    s.push_str("compatibility_flags = [\"nodejs_compat\"]\n");
+    if has_wasm {
+        s.push_str("\n[wasm_modules]\n");
+        s.push_str("edge = \"./edge.wasm\"\n");
+    }
+    s.push_str("\n# Static assets in this directory are served by the Pages CDN\n");
+    s.push_str("# and bypass the Worker via _routes.json.\n");
+    s
 }
 
 /// `wrangler.toml` for the Cloudflare target. Declares the wasm module
