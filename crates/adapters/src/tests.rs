@@ -393,9 +393,17 @@ fn emit_serverless_targets_write_handler_and_configs() {
             target
         );
         assert!(handler.contains("Request"), "web-standard wrapper");
+        // The handler file sits at a different depth per platform; the
+        // import path back to server/ssr/index.js matches that depth.
+        let expected_import = match target {
+            Target::Lambda => "./server/ssr/index.js",
+            Target::Vercel => "../server/ssr/index.js",
+            Target::Netlify => "../../server/ssr/index.js",
+            _ => unreachable!(),
+        };
         assert!(
-            handler.contains("./server/index.js"),
-            "calls the server bundle export"
+            handler.contains(expected_import),
+            "{target:?}: handler must import {expected_import:?}; got:\n{handler}"
         );
         let deploy: serde_json::Value = serde_json::from_str(&get("deploy.json").1).unwrap();
         assert_eq!(deploy["target"], target.as_str());
