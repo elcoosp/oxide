@@ -547,3 +547,111 @@ The machine ran between 1.5 GB and 12 GB free across the session, with
 frequent spikes to 100% during cargo link steps. Each heavy slice
 required manual cleanup of `target/` artifacts. If work continues, the
 host needs ~30 GB free before the next multi-crate change.
+
+---
+
+## Session 6 — framework adapter read path, streaming, and runtime generateParams
+
+**Milestone:** every HTML-producing command (`config`, `render`, `build`,
+`dev`, `serve`) now goes through the framework adapter end to end with
+loaders, TSX, HMR, streaming, and runtime `generateParams`. All E2Es
+green against the `examples/smoke-app` fixture.
+
+### What landed this session (L14–L21b)
+
+**Streaming trait chain** (spec §7, §4.2)
+- `FrameworkRenderer::render_streaming` (jshost) with default collect
+- `FrameworkHostRenderer::render_streaming` overrides to forward each
+  worker `CallStream` chunk (no buffer)
+- `PageRenderer::render_streaming` (server) with the same default
+- `AdapterPageRenderer` (cli shim) forwards through
+- `OxideResponse::stream(status, BodyStream)` — new body variant
+- `to_hyper_response` handles both branches: streaming uses chunked
+  transfer, collected sets content-length
+- Body item error type moved from `Infallible` to `io::Error` so a
+  worker that crashes mid-response aborts the connection
+
+**Wire-level progress** (spec §4.2)
+- Worker emits each adapter chunk as its own `call_chunk` frame (no
+  concatenate + reslice)
+- Raw HTML on the wire, not a JSON envelope
+- `oxide render --stream` exercises it at the CLI
+
+**Pipeline integration**
+- `build_dispatch` calls `renderer.render_streaming()` when a renderer
+  is attached; bridges the `Send`-only RenderStream to the `Send + Sync`
+  BodyStream via a small mpsc pump helper
+- `oxide dev` and `oxide serve` stream over HTTP; the E2E asserts
+  `Transfer-Encoding: chunked` and the absence of `Content-Length`
+
+**Runtime `generateParams`** (spec §10.5)
+- Worker `generate-params:run` op imports the module, calls the export
+  (function or value), normalizes to a flat string map
+- `LoaderHost::generate_params` returns the enumerated entries
+- `cmd_build`'s Runtime arm evaluates through the worker instead of
+  printing "requires runtime evaluation (post-MLP)"
+
+**TSX compilation** (spec §6.3)
+- Worker registers `register-hooks.mjs` (calls `module.register()`) via
+  `--import` — warning-free replacement for `--experimental-loader`
+- `tsx-loader.mjs` transforms `.tsx`/`.jsx` via sucrase
+
+**Path and route-id fixes**
+- `cmd_dev`/`cmd_serve`/`cmd_build` canonicalize `root` at entry to
+  prevent path doubling through the bundler and route scanner
+- `build_dispatch` and `write_prerender` normalize the router's
+  file-role id (`routes/index/page`) to the adapter's directory key
+  (`routes/index`) via `strip_suffix("/page")`
+- `cmd_render` uses `load_config_or_default` so a config the Rust
+  extractor can't fully parse still renders (the worker re-loads it)
+
+### Test coverage
+
+| Suite | Tests |
+|-------|-------|
+| `smoke_app_renders_through_real_config` | 1 |
+| `smoke_app_builds_its_own_pages` (with runtime generateParams) | 1 |
+| `dev_server_serves_smoke_app_over_http` (chunked assert) | 1 |
+| `start_serves_smoke_app_over_http` (production) | 1 |
+| `cli_render_dispatches_real_react_ssr` | 1 |
+| `framework_host_e2e` | 3 (incl. worker chunk preservation) |
+| `loader_host_e2e` | 5 |
+| `hmr_e2e` | 2 |
+| Server streaming unit tests | 3 |
+| CLI lib tests | 67 |
+| jshost lib tests | 39 |
+| server integration tests | 57 |
+
+`cargo test --workspace` and the full TS suite green.
+
+### What the smoke-app produces
+
+`oxide build examples/smoke-app` now yields:
+
+```
+dist/prerendered/index.html            → <h1>Home</h1>
+dist/prerendered/blog/hello-prod.html  → <h1>Hello hello-prod</h1>
+dist/prerendered/blog/second-post.html → <h1>Hello second-post</h1>
+```
+
+Both routes classified `static` in the manifest. The blog route's
+`generateParams` is a runtime-built array (`.map`), so its enumeration
+was evaluated through the worker — the mechanism that used to print
+"requires runtime evaluation (post-MLP)" is now live.
+
+### What remains
+
+1. **V8Host migration for `render_pool`** — post-MLP, gated on
+   `deno_node` integration for npm resolution. One-line swap in
+   `build_framework_stack`. The `JsHost` / `Pool` abstraction already
+   supports it.
+2. **Deployment adapters** (Lambda / Vercel / Netlify full artifacts) —
+   orthogonal to the adapter path.
+3. **Conformance suite integration** — the §22 suite could include the
+   smoke-app fixture as an additional cross-check for the in-process
+   assertions.
+4. **Docs** — README could describe `examples/smoke-app` as the
+   reference project for a new contributor.
+
+None of these are blockers. The meta-framework the spec describes can
+now build and ship a working production site.
