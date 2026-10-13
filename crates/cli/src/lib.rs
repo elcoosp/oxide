@@ -565,6 +565,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         bind_ip,
         tls_config,
         proxy_rules,
+        None, // §7 page_renderer: wired from oxide.config when the CLI loads it.
     )
     .await?;
     let local = oxide_dev::local_url(started.addr.port(), flags.https);
@@ -1044,93 +1045,20 @@ pub async fn start_server(root: &str, port: Option<u16>) -> anyhow::Result<Start
 /// Dev server entry (§13): identical pipeline but with the `/__oxide`
 /// inspector attached, populated with the route table.
 /// Full dev-server starter with optional bind IP + TLS.
-pub async fn start_dev_server_full(
-    root: &str,
-    port: Option<u16>,
-    bind_ip: std::net::IpAddr,
-    tls: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>,
+/// Dispatch delegate: routing, proxy (§13.5), and — when a `page_renderer` is
+/// attached (§7) — framework SSR. Extracted from `start_dev_server_full` so
+/// tests can drive it with a fake renderer, and so the framework-adapter
+/// wiring has one integration point instead of nesting inside the server
+/// startup function.
+fn build_dispatch(
+    tree: std::sync::Arc<oxide_router::RouteTree>,
+    metrics: std::sync::Arc<oxide_server::Metrics>,
     proxy_rules: Vec<oxide_dev::ProxyRule>,
-) -> anyhow::Result<StartedServer> {
-    start_server_inner_full(
-        root,
-        Some((bind_ip, port.unwrap_or(0))),
-        true,
-        tls,
-        proxy_rules,
-    )
-    .await
-}
-
-pub async fn start_dev_server(root: &str, port: Option<u16>) -> anyhow::Result<StartedServer> {
-    start_server_inner(root, port, true).await
-}
-
-async fn start_server_inner(
-    root: &str,
-    port: Option<u16>,
-    with_inspector: bool,
-) -> anyhow::Result<StartedServer> {
-    let bind = port.map(|p| (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), p));
-    start_server_inner_full(root, bind, with_inspector, None, Vec::new()).await
-}
-
-async fn start_server_inner_full(
-    root: &str,
-    bind: Option<(std::net::IpAddr, u16)>,
-    with_inspector: bool,
-    tls: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>,
-    proxy_rules: Vec<oxide_dev::ProxyRule>,
-) -> anyhow::Result<StartedServer> {
-    let rootp = PathBuf::from(root);
-    let cfg = load_config_or_default(&rootp, "production");
-    let tree = std::sync::Arc::new(scan_routes(&rootp, &cfg)?);
-    let (bind_ip, requested_port) = match bind {
-        // A caller-supplied port is honoured verbatim — including 0, which
-        // means "ephemeral, OS chooses" (the test and CI convention).
-        Some((ip, p)) => (ip, p),
-        None => (
-            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-            cfg.server.port,
-        ),
-    };
-    let port = resolve_port(requested_port).await;
-    let rules = oxide_router::RulesEngine::compile(config_rules_to_router(&cfg.rules))
-        .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
-    // §20 metrics: ONE registry shared by the pipeline (native branches) and
-    // the dispatch delegate (per-route labels). Cardinality is bounded by the
-    // route pattern (e.g. `/blog/[slug]`), never the resolved URL.
-    let metrics = std::sync::Arc::new(oxide_server::Metrics::new());
-
-    let pipeline = std::sync::Arc::new(oxide_server::Pipeline {
-        rules,
-        assets: None,
-        limits: oxide_server::Limits::default(),
-        security: oxide_server::SecuritySettings {
-            csp: cfg.security.csp.clone(),
-            csrf: cfg.security.csrf.clone(),
-            ..Default::default()
-        },
-        rate_limiter: std::sync::Arc::new(oxide_server::RateLimiter::default()),
-        health_path: "/_oxide/health".to_string(),
-        metrics_path: "/_oxide/metrics".to_string(),
-        metrics: Some(std::sync::Arc::clone(&metrics)),
-        inspector: if with_inspector {
-            Some(std::sync::Arc::new(CliInspector {
-                state: oxide_dev::RouteTableInspector::from_router_table(tree.table()).state(),
-            }))
-        } else {
-            None
-        },
-        page_renderer: None,
-    });
-    let proxy_rules: Vec<oxide_dev::ProxyRule> = proxy_rules.clone();
-    let dispatch: std::sync::Arc<
-        dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
-    > = {
-        let tree = std::sync::Arc::clone(&tree);
-        let metrics = std::sync::Arc::clone(&metrics);
-        let proxy_rules = proxy_rules.clone();
-        std::sync::Arc::new(move |req: oxide_server::OxideRequest| {
+    page_renderer: Option<std::sync::Arc<dyn oxide_server::PageRenderer>>,
+) -> std::sync::Arc<
+    dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
+> {
+    std::sync::Arc::new(move |req: oxide_server::OxideRequest| {
             let started = std::time::Instant::now();
             let raw = req.url.split(['?', '#']).next().unwrap_or("/").to_string();
 
@@ -1185,6 +1113,38 @@ async fn start_server_inner_full(
                         .map(|m| (200u16, pattern_of(&m.route.segments)))
                 })
                 .unwrap_or((404u16, "_unmatched".to_string()));
+            // §7: when a framework adapter renderer is attached, dispatch the
+            // render through it. Otherwise the neutral placeholder page.
+            if let Some(renderer) = page_renderer.as_ref() {
+                let renderer = std::sync::Arc::clone(renderer);
+                let metrics_async = std::sync::Arc::clone(&metrics);
+                let label_async = label.clone();
+                let url_async = req.url.clone();
+                return Box::pin(async move {
+                    let input =
+                        oxide_server::PageRenderInput::new(label_async.clone(), url_async);
+                    match renderer.render(input).await {
+                        Ok(html) => {
+                            metrics_async.observe(&label_async, started.elapsed(), 200);
+                            oxide_server::OxideResponse::html(200, html)
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                code = %e.0.code,
+                                error = %e.0.message,
+                                route = %label_async,
+                                "framework render failed",
+                            );
+                            metrics_async.observe(&label_async, started.elapsed(), 500);
+                            oxide_server::OxideResponse::html(
+                                500,
+                                format!("render error: {}", e.0.message),
+                            )
+                        }
+                    }
+                });
+            }
+
             metrics.observe(&label, started.elapsed(), status);
             Box::pin(std::future::ready(oxide_server::OxideResponse::html(
                 status,
@@ -1193,8 +1153,98 @@ async fn start_server_inner_full(
                      <body><main>Oxide serving {label}</main></body></html>"
                 ),
             )))
-        })
+            })
+}
+
+pub async fn start_dev_server_full(
+    root: &str,
+    port: Option<u16>,
+    bind_ip: std::net::IpAddr,
+    tls: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>,
+    proxy_rules: Vec<oxide_dev::ProxyRule>,
+    page_renderer: Option<std::sync::Arc<dyn oxide_server::PageRenderer>>,
+) -> anyhow::Result<StartedServer> {
+    start_server_inner_full(
+        root,
+        Some((bind_ip, port.unwrap_or(0))),
+        true,
+        tls,
+        proxy_rules,
+        page_renderer,
+    )
+    .await
+}
+
+pub async fn start_dev_server(root: &str, port: Option<u16>) -> anyhow::Result<StartedServer> {
+    start_server_inner(root, port, true).await
+}
+
+async fn start_server_inner(
+    root: &str,
+    port: Option<u16>,
+    with_inspector: bool,
+) -> anyhow::Result<StartedServer> {
+    let bind = port.map(|p| (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), p));
+    start_server_inner_full(root, bind, with_inspector, None, Vec::new(), None).await
+}
+
+async fn start_server_inner_full(
+    root: &str,
+    bind: Option<(std::net::IpAddr, u16)>,
+    with_inspector: bool,
+    tls: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>,
+    proxy_rules: Vec<oxide_dev::ProxyRule>,
+    page_renderer: Option<std::sync::Arc<dyn oxide_server::PageRenderer>>,
+) -> anyhow::Result<StartedServer> {
+    let rootp = PathBuf::from(root);
+    let cfg = load_config_or_default(&rootp, "production");
+    let tree = std::sync::Arc::new(scan_routes(&rootp, &cfg)?);
+    let (bind_ip, requested_port) = match bind {
+        // A caller-supplied port is honoured verbatim — including 0, which
+        // means "ephemeral, OS chooses" (the test and CI convention).
+        Some((ip, p)) => (ip, p),
+        None => (
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            cfg.server.port,
+        ),
     };
+    let port = resolve_port(requested_port).await;
+    let rules = oxide_router::RulesEngine::compile(config_rules_to_router(&cfg.rules))
+        .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+    // §20 metrics: ONE registry shared by the pipeline (native branches) and
+    // the dispatch delegate (per-route labels). Cardinality is bounded by the
+    // route pattern (e.g. `/blog/[slug]`), never the resolved URL.
+    let metrics = std::sync::Arc::new(oxide_server::Metrics::new());
+
+    let pipeline = std::sync::Arc::new(oxide_server::Pipeline {
+        rules,
+        assets: None,
+        limits: oxide_server::Limits::default(),
+        security: oxide_server::SecuritySettings {
+            csp: cfg.security.csp.clone(),
+            csrf: cfg.security.csrf.clone(),
+            ..Default::default()
+        },
+        rate_limiter: std::sync::Arc::new(oxide_server::RateLimiter::default()),
+        health_path: "/_oxide/health".to_string(),
+        metrics_path: "/_oxide/metrics".to_string(),
+        metrics: Some(std::sync::Arc::clone(&metrics)),
+        inspector: if with_inspector {
+            Some(std::sync::Arc::new(CliInspector {
+                state: oxide_dev::RouteTableInspector::from_router_table(tree.table()).state(),
+            }))
+        } else {
+            None
+        },
+        page_renderer: None,
+    });
+    let proxy_rules: Vec<oxide_dev::ProxyRule> = proxy_rules.clone();
+    let dispatch = build_dispatch(
+        std::sync::Arc::clone(&tree),
+        std::sync::Arc::clone(&metrics),
+        proxy_rules.clone(),
+        page_renderer.clone(),
+    );
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (tx, rx) = tokio::sync::watch::channel(false);
     tokio::spawn(async move {
