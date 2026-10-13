@@ -680,13 +680,23 @@ async fn http_get(
 ) -> String {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
-    let mut stream = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        TcpStream::connect(addr),
-    )
-    .await
-    .expect("connect timed out")
-    .expect("connect failed");
+    // Retry the connect: `start_dev_server_full` spawns the accept loop in
+    // a tokio task, so there is a brief window where the returned addr is
+    // known but the listener hasn't started accepting yet. Every other
+    // server-starting test in this codebase uses the same retry pattern
+    // (see `wait_for_port` at the top of the file).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let mut stream = loop {
+        match TcpStream::connect(addr).await {
+            Ok(s) => break s,
+            Err(e) => {
+                if std::time::Instant::now() >= deadline {
+                    panic!("connect to {addr} never succeeded after 3s: {e}");
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        }
+    };
 
     let req = format!(
         "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
