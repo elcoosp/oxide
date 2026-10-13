@@ -19,6 +19,9 @@ use bytes::Bytes;
 use flate2::write::GzEncoder;
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full, Limited};
+use futures::Stream;
+use std::pin::Pin;
+
 use hyper::body::Incoming;
 use hyper::{Request as HyperRequest, Response as HyperResponse};
 use oxide_diagnostics::{Diagnostic, OxideError};
@@ -56,11 +59,54 @@ impl OxideRequest {
     }
 }
 
-#[derive(Debug, Clone)]
+/// A chunked response body stream. Each item is either a chunk of bytes
+/// or an I/O error that aborts the response (hyper closes the
+/// connection — a truncated 200 is never silently delivered).
+pub type BodyStream = Pin<
+    Box<
+        dyn Stream<Item = std::result::Result<Bytes, std::io::Error>>
+            + Send
+            + Sync
+            + 'static,
+    >,
+>;
+
+/// HTTP response produced by the pipeline. `body` is the collected form
+/// (used by tests, by `json()` / `html()` constructors, and by any
+/// response that isn't streamed). `stream`, when `Some`, is the
+/// streaming form: `to_hyper_response` drives the response from it,
+/// ignoring `body` and using chunked transfer encoding.
 pub struct OxideResponse {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: Bytes,
+    pub stream: Option<BodyStream>,
+}
+
+impl Clone for OxideResponse {
+    fn clone(&self) -> Self {
+        // Streams cannot be cloned. Cloning a streaming response yields a
+        // clone without the stream — the original still owns it. Documented
+        // limitation: tests and callers that want a fresh copy use `.body`
+        // or re-render.
+        Self {
+            status: self.status,
+            headers: self.headers.clone(),
+            body: self.body.clone(),
+            stream: None,
+        }
+    }
+}
+
+impl std::fmt::Debug for OxideResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OxideResponse")
+            .field("status", &self.status)
+            .field("headers", &self.headers)
+            .field("body_len", &self.body.len())
+            .field("has_stream", &self.stream.is_some())
+            .finish()
+    }
 }
 
 impl OxideResponse {
@@ -69,8 +115,21 @@ impl OxideResponse {
             status,
             headers: Vec::new(),
             body: body.into(),
+            stream: None,
         }
     }
+    /// Construct a streaming response. `to_hyper_response` drives the body
+    /// from `stream` and does NOT set `content-length` (the transport uses
+    /// chunked transfer encoding). Errors from `stream` abort the response.
+    pub fn stream(status: u16, stream: BodyStream) -> Self {
+        Self {
+            status,
+            headers: Vec::new(),
+            body: Bytes::new(),
+            stream: Some(stream),
+        }
+    }
+
     pub fn with_header(mut self, k: &str, v: impl Into<String>) -> Self {
         self.headers.push((k.to_string(), v.into()));
         self
@@ -1211,14 +1270,32 @@ impl Pipeline {
 /// Convert between hyper and Oxide request/response (streaming bodies preserved via BoxBody).
 pub fn to_hyper_response(
     resp: OxideResponse,
-) -> HyperResponse<BoxBody<Bytes, std::convert::Infallible>> {
+) -> HyperResponse<BoxBody<Bytes, std::io::Error>> {
     let has_len = resp
         .headers
         .iter()
         .any(|(k, _)| k.eq_ignore_ascii_case("content-length"));
     let body_len = resp.body.len();
-    let mut out: HyperResponse<BoxBody<Bytes, std::convert::Infallible>> =
-        HyperResponse::new(BoxBody::new(Full::new(resp.body)));
+    let is_streaming = resp.stream.is_some();
+
+    // Build the boxed body. Two branches:
+    //   * streaming: `StreamBody` over the `BodyStream`, each chunk in a
+    //     `Frame::data`. Item error type is `io::Error`.
+    //   * collected: `Full<Bytes>` (single frame) with the item error type
+    //     lifted from `Infallible` to `io::Error` via `map_err(|n| match n {})`.
+    let boxed: BoxBody<Bytes, std::io::Error> = if let Some(stream) = resp.stream {
+        use futures::StreamExt as _;
+        let framed = stream.map(|r| r.map(hyper::body::Frame::data));
+        // `.boxed()` is ambiguous between BodyExt and StreamExt; call
+        // BodyExt's explicitly. The resulting type is
+        // `BoxBody<Bytes, io::Error>` which matches the alias above.
+        BodyExt::boxed(http_body_util::StreamBody::new(framed))
+    } else {
+        BodyExt::boxed(Full::new(resp.body).map_err(|never| match never {}))
+    };
+
+    let mut out: HyperResponse<BoxBody<Bytes, std::io::Error>> =
+        HyperResponse::new(boxed);
     *out.status_mut() = hyper::StatusCode::from_u16(resp.status)
         .unwrap_or(hyper::StatusCode::INTERNAL_SERVER_ERROR);
     for (k, v) in resp.headers {
@@ -1235,7 +1312,9 @@ pub fn to_hyper_response(
         out.status(),
         hyper::StatusCode::NO_CONTENT | hyper::StatusCode::NOT_MODIFIED
     );
-    if !has_len && !no_len_status {
+    // Set content-length only for the collected branch. For streams we
+    // don't know the length; hyper uses chunked transfer encoding.
+    if !has_len && !no_len_status && !is_streaming {
         if let Ok(val) = hyper::header::HeaderValue::from_str(&body_len.to_string()) {
             out.headers_mut().insert(hyper::header::CONTENT_LENGTH, val);
         }
@@ -1384,7 +1463,7 @@ impl Server {
                             match from_hyper_request(req, request_id, &pipeline.limits).await {
                                 Ok(oreq) => {
                                     let resp = pipeline.serve_request(oreq, dispatch.as_ref()).await;
-                                    Ok::<_, std::convert::Infallible>(to_hyper_response(resp))
+                                    Ok::<_, std::io::Error>(to_hyper_response(resp))
                                 }
                                 Err(e) => Ok(to_hyper_response(OxideResponse::new(413, e.0.message))),
                             }
