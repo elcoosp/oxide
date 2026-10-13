@@ -127,6 +127,7 @@ fn opts(root: &Path, env: BundleEnv, entries: &[(&str, &str)]) -> BundleOptions 
         externals: Vec::new(),
         define: BTreeMap::new(),
         tsconfig_paths: BTreeMap::new(),
+        build_secret: "test-secret".to_string(),
     }
 }
 

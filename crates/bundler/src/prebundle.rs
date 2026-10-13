@@ -86,6 +86,7 @@ pub fn prebundle(opts: &PrebundleOptions) -> Result<PrebundleManifest> {
 
     let mut options = crate::BundleOptions {
         env: BundleEnv::Client,
+        build_secret: String::new(),
         entries: BTreeMap::new(),
         out_dir: opts.out_dir.clone(),
         minify: false,

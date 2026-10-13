@@ -15,6 +15,7 @@ oxide-router = { workspace = true }
 oxide-graph = { workspace = true }
 oxide-compiler = { workspace = true }
 oxide-bundler = { workspace = true }
+blake3 = { workspace = true }
 oxide-jshost = { workspace = true }
 oxide-cache = { workspace = true }
 oxide-render = { workspace = true }

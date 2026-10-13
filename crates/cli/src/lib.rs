@@ -475,6 +475,24 @@ fn bundle_env_options(
     entries: BTreeMap<String, PathBuf>,
     out_dir: PathBuf,
 ) -> oxide_bundler::BundleOptions {
+    // §9.4 per-build secret: fresh on each invocation so the unguessable
+    // server-fn URL prefix rotates between deployments.
+    let build_secret = {
+        let mut h = blake3::Hasher::new();
+        h.update(
+            &std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos().to_le_bytes())
+                .unwrap_or([0u8; 16]),
+        );
+        h.update(
+            &std::fs::read("/dev/urandom")
+                .ok()
+                .map(|mut v| { v.truncate(16); v })
+                .unwrap_or_default(),
+        );
+        h.finalize().to_hex().to_string()[..32].to_string()
+    };
     oxide_bundler::BundleOptions {
         env,
         entries,
@@ -485,6 +503,7 @@ fn bundle_env_options(
         externals: Vec::new(),
         define: BTreeMap::new(),
         tsconfig_paths: BTreeMap::new(),
+        build_secret,
     }
 }
 

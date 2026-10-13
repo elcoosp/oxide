@@ -82,6 +82,12 @@ pub struct BundleOptions {
     pub define: BTreeMap<String, String>,
     /// tsconfig `paths` mapping for the resolver.
     pub tsconfig_paths: BTreeMap<String, Vec<String>>,
+    /// Per-build secret for server-fn ids (§9.4). Rotates on every build so
+    /// the unguessable URL prefix for a server function differs between
+    /// deployments. Left empty by callers that don't care (tests); the
+    /// bundler derives a deterministic fallback from the entry set when
+    /// empty so tests remain reproducible.
+    pub build_secret: String,
 }
 
 /// A resolved module in the graph.
@@ -221,6 +227,21 @@ impl ChunkBundler {
 
     fn bundle_impl(&self, options: &BundleOptions) -> Result<BundleOutput> {
         let mut diagnostics: Vec<Diagnostic> = Vec::new();
+        // §9.4 per-build secret. Empty from a test or an old caller → derive a
+        // deterministic one from the entry set so successive runs in the same
+        // process stay reproducible.
+        let build_secret: String = if options.build_secret.is_empty() {
+            let mut h = blake3::Hasher::new();
+            for (route, path) in &options.entries {
+                h.update(route.as_bytes());
+                h.update(&[0u8]);
+                h.update(path.to_string_lossy().as_bytes());
+                h.update(&[0u8]);
+            }
+            h.finalize().to_hex().to_string()[..32].to_string()
+        } else {
+            options.build_secret.clone()
+        };
         let mut modules: Vec<Module> = Vec::new();
         let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
         // resolved module path → resolved dependency paths (env-filtered)
@@ -534,8 +555,13 @@ impl ChunkBundler {
                 let m = &by_path[p];
                 let rewritten =
                     rewrite_imports(&m.source, &b.name, m, options, &chunk_of, &file_of, self);
-                let lowered =
-                    lower_module_to_js(&rewritten, &m.resolved, options.env, &mut diagnostics);
+                let lowered = lower_module_to_js(
+                    &rewritten,
+                    &m.resolved,
+                    options.env,
+                    &build_secret,
+                    &mut diagnostics,
+                );
                 body.push_str(&lowered);
                 if !body.ends_with('\n') {
                     body.push('\n');
@@ -798,10 +824,6 @@ fn dfs_chunks(
 /// Rewrite import statements of `m` for chunk assembly: imports resolved to the
 /// same chunk are removed (co-located top-level declarations provide the bindings),
 /// imports resolved to other chunks are rewritten to that chunk's file.
-/// Stable build secret used by the compiler's server-fn stub pass. Follow-up:
-/// thread a per-build secret through `BundleOptions` once the CLI emits one.
-const BUNDLER_BUILD_SECRET: &str = "oxide-bundler-build-secret-v0";
-
 fn lang_of(path: &Path) -> &'static str {
     match path.extension().and_then(|e| e.to_str()) {
         Some("ts") => "ts",
@@ -829,6 +851,7 @@ fn lower_module_to_js(
     code: &str,
     resolved: &Path,
     env: BundleEnv,
+    build_secret: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> String {
     let input = TransformInput {
@@ -836,7 +859,7 @@ fn lower_module_to_js(
         code: code.to_string(),
         env: compiler_env(env),
         lang: lang_of(resolved),
-        build_secret: BUNDLER_BUILD_SECRET.to_string(),
+        build_secret: build_secret.to_string(),
         dev: false,
     };
     match OxcTransformer.transform(&input) {
