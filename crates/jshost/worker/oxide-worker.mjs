@@ -4,7 +4,7 @@
 //   tooling:compile          → uppercase echo (test-only)
 //   tooling:module           → require(call.module)[call.export](...call.args)
 //   framework:load           → dynamic import of a config path → descriptor
-//   framework:render         → dynamic import → adapter.render(input) → HTML
+//   framework:render         → dynamic import → adapter.render(input) → JSON chunked
 //   loader:run               → dynamic import → load(event) → {ok, status, location, data}
 //   boom                     → CallErr
 //   die                      → exit(1)
@@ -122,15 +122,28 @@ async function dispatchFrameworkRender(id, input) {
       return;
     }
     const stream = framework.render(renderInput ?? {});
-    // Drain the adapter's ReadableStream<Uint8Array> into one HTML string.
-    // Chunked streaming through the worker is a follow-up: the CLI pipeline
-    // currently collects, then injects headers/compression itself (§12.1).
+    // Collect the adapter's ReadableStream<Uint8Array> into one JSON blob
+    // `{"html":"..."}` — but emit it as CHUNKED frames so the wire format is
+    // future-proof for streaming-capable adapters (React's
+    // renderToPipeableStream, Solid's resources). When the adapter streams,
+    // the first chunk arrives before the last frame is produced, so a future
+    // pipeline step can flush early.
+    //
+    // Chunk size: 8 KB. Small enough for reasonable TTFB once we wire a
+    // streaming adapter, large enough that per-frame base64 + JSON framing
+    // overhead (~33%) stays negligible.
     const chunks = [];
     for await (const chunk of stream) {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     }
     const html = Buffer.concat(chunks).toString("utf8");
-    callOk(id, { html });
+    const jsonBytes = Buffer.from(JSON.stringify({ html }), "utf8");
+    const CHUNK = 8192;
+    for (let i = 0; i < jsonBytes.length; i += CHUNK) {
+      const slice = jsonBytes.subarray(i, Math.min(i + CHUNK, jsonBytes.length));
+      out({ t: "call_chunk", id, data_b64: b64(slice) });
+    }
+    out({ t: "call_end", id });
   } catch (e) {
     callErr(id, "JSH-FRAMEWORK", `framework:render failed: ${e?.message ?? e}`);
   }
