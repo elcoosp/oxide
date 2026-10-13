@@ -1371,10 +1371,24 @@ fn ws_decode_close_payload_rules() {
     b[1] = 0x80 | 1;
     b.truncate(2 + 4 + 1); // header + mask key + 1 declared payload byte
     assert_eq!(ws::decode(&b).unwrap_err().0.code, "SRV-WS");
-    // invalid UTF-8 text
-    let mut f = ws::encode(&Frame::Text("ok".into()), true);
-    let n = f.len();
-    f[n - 1] = 0xFF;
+
+    // invalid UTF-8 text — hand-built frame with a zero mask key.
+    //
+    // The previous form (`ws::encode` then overwrite the last byte) was
+    // flaky: the last byte is the last *masked* payload byte, and the
+    // decoder unmasks by XOR-ing with the mask key. The unmasked result
+    // depends on what key `encode` happens to use, so the mutation only
+    // produced invalid UTF-8 when `mask_key[last] < 0x80` — roughly half
+    // the time for a random key.
+    //
+    // Hand-building the frame with mask key `[0,0,0,0]` means the masked
+    // payload equals the raw payload, so the payload byte below (`0xFF`)
+    // is unambiguously invalid UTF-8. Deterministic across processes.
+    //   byte 0: FIN | opcode(Text=0x1)  = 0x81
+    //   byte 1: MASK | len(1)            = 0x81
+    //   bytes 2..6: mask key [0,0,0,0]
+    //   byte 6: masked payload [0xFF]
+    let f: Vec<u8> = vec![0x81, 0x81, 0x00, 0x00, 0x00, 0x00, 0xFF];
     assert_eq!(ws::decode(&f).unwrap_err().0.code, "SRV-WS");
 }
 
