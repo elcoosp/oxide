@@ -5,6 +5,7 @@
 //   tooling:module           → require(call.module)[call.export](...call.args)
 //   framework:load           → dynamic import of a config path → descriptor
 //   framework:render         → dynamic import → adapter.render(input) → HTML
+//   loader:run               → dynamic import → load(event) → {ok, status, location, data}
 //   boom                     → CallErr
 //   die                      → exit(1)
 //   sleep                    → delayed reply
@@ -135,6 +136,75 @@ async function dispatchFrameworkRender(id, input) {
   }
 }
 
+// --- Loader ops (spec §9.1) ----------------------------------------------
+//
+//   loader:run   { module_path, route, params, url, method, headers }
+//              → { ok, status, location, data }
+//
+// Imports the user's `page.server.ts` (or any `.server.ts` with a `load`
+// export), calls its `load(event)`, and returns the (JSON) result. `error()`
+// and `redirect()` sentinels thrown by the load become {status, location}
+// in the response rather than worker errors — the pipeline maps those to
+// HTTP responses.
+async function dispatchLoaderRun(id, input) {
+  const { module_path, route, params, url, method, headers } = input.payload ?? {};
+  if (typeof module_path !== "string" || module_path.length === 0) {
+    callErr(id, "JSH-LOADER", "loader:run requires a `module_path` string");
+    return;
+  }
+  try {
+    const mod = await import(pathToFileURL(module_path).href);
+    const load = mod.load;
+    if (typeof load !== "function") {
+      callErr(id, "JSH-LOADER", `module at ${module_path} has no \`load\` export`);
+      return;
+    }
+    // Build a minimal LoadEvent. `defineLoad`'s wrapper uses
+    // `event.defer` and `event.__oxideDeferredRegistry` to assign deferred
+    // ids; provide both so the wrapper's defer conversion works.
+    const registry = new Map();
+    let nextId = 1;
+    const defer = (promise) => {
+      const nid = nextId++;
+      registry.set(nid, promise);
+      return { __deferred: nid };
+    };
+    const event = {
+      route: route ?? "",
+      params: params ?? {},
+      url: url ?? "/",
+      request: {
+        method: method ?? "GET",
+        url: url ?? "/",
+        headers: Array.isArray(headers) ? headers : [],
+      },
+      locals: {},
+      defer,
+      __oxideDeferredRegistry: registry,
+    };
+    let result;
+    try {
+      result = await load(event);
+    } catch (err) {
+      // OxideHttpError: has `status` (number). OxideRedirect: has
+      // `status` AND `location`. Both become {status, location?} responses.
+      if (err && typeof err.status === "number") {
+        callOk(id, {
+          ok: true,
+          status: err.status,
+          location: err.location ?? null,
+          data: { message: err.message ?? "" },
+        });
+        return;
+      }
+      throw err;
+    }
+    callOk(id, { ok: true, status: 200, location: null, data: result ?? {} });
+  } catch (e) {
+    callErr(id, "JSH-LOADER", `loader:run failed: ${e?.message ?? e}`);
+  }
+}
+
 const handlers = {
   render: (msg) => {
     const title = msg.input.payload?.title ?? `${msg.entry.module}:${msg.entry.export}`;
@@ -149,6 +219,7 @@ async function handleCall(msg) {
   if (entry.kind === "tooling:module") { await dispatchToolingModule(id, input); return; }
   if (entry.kind === "framework:load") { await dispatchFrameworkLoad(id, input); return; }
   if (entry.kind === "framework:render") { await dispatchFrameworkRender(id, input); return; }
+  if (entry.kind === "loader:run") { await dispatchLoaderRun(id, input); return; }
   if (entry.kind === "die") process.exit(1);
   if (entry.kind === "sleep") {
     await new Promise((r) => setTimeout(r, Number(input.payload?.ms ?? 100)));
