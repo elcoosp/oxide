@@ -1278,6 +1278,46 @@ pub async fn start_server(
 /// tests can drive it with a fake renderer, and so the framework-adapter
 /// wiring has one integration point instead of nesting inside the server
 /// startup function.
+/// Bridge an `oxide_server::RenderStream` (a `BoxStream` that promises
+/// only `Send`) into an `oxide_server::BodyStream` (which promises
+/// `Send + Sync` because `BodyExt::boxed` demands it).
+///
+/// The bridge is an mpsc channel: a spawned task pumps each source chunk
+/// into the channel; the channel's `Receiver` is `Sync` (its `recv` takes
+/// `&self`), so the resulting body stream satisfies the hyper transport's
+/// bound. The alternative — an `UnsyncBoxBody` — would ripple through
+/// every serve signature in `server`, `dev`, and `cli`.
+///
+/// Error conversion: `OxideError` → `std::io::Error`. The code and message
+/// are preserved in the io error's text so a hyper-layer log line names
+/// the framework error. The kind is `Other` — there is no precise
+/// `ErrorKind` for "the worker crashed mid-render".
+fn render_stream_to_body_stream(
+    src: oxide_server::RenderStream,
+) -> oxide_server::BodyStream {
+    let (tx, mut rx) =
+        tokio::sync::mpsc::channel::<std::result::Result<bytes::Bytes, std::io::Error>>(8);
+    tokio::spawn(async move {
+        use futures::StreamExt as _;
+        let mut src = src;
+        while let Some(item) = src.next().await {
+            let mapped = item.map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("{}: {}", e.0.code, e.0.message),
+                )
+            });
+            if tx.send(mapped).await.is_err() {
+                // Receiver dropped — client disconnected. Stop pumping;
+                // dropping `src` will notify the upstream worker.
+                return;
+            }
+        }
+        // `tx` drops here, closing the stream cleanly.
+    });
+    Box::pin(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)))
+}
+
 fn build_dispatch(
     tree: std::sync::Arc<oxide_router::RouteTree>,
     metrics: std::sync::Arc<oxide_server::Metrics>,

@@ -1744,3 +1744,69 @@ pub mod ws {
         }
     }
 }
+
+#[cfg(test)]
+mod streaming_response_tests {
+    use super::*;
+    use bytes::Bytes;
+    use futures::stream;
+
+    #[tokio::test]
+    async fn streaming_body_sends_chunks() {
+        // Build a body stream of three chunks; verify they survive
+        // `to_hyper_response` in order.
+        let items: Vec<std::result::Result<Bytes, std::io::Error>> = vec![
+            Ok(Bytes::from_static(b"AAA")),
+            Ok(Bytes::from_static(b"BBB")),
+            Ok(Bytes::from_static(b"CCC")),
+        ];
+        let stream: BodyStream = Box::pin(stream::iter(items));
+        let resp = OxideResponse::stream(200, stream)
+            .with_header("content-type", "text/html; charset=utf-8");
+
+        let hyper_resp = to_hyper_response(resp);
+        assert_eq!(hyper_resp.status(), hyper::StatusCode::OK);
+        // Streaming responses skip content-length; hyper uses chunked
+        // transfer encoding.
+        assert!(
+            hyper_resp.headers().get(hyper::header::CONTENT_LENGTH).is_none(),
+            "streaming response must not set content-length"
+        );
+
+        use http_body_util::BodyExt as _;
+        let body = hyper_resp.into_body();
+        let collected = body.collect().await.expect("collect body").to_bytes();
+        assert_eq!(collected.as_ref(), b"AAABBBCCC");
+    }
+
+    #[tokio::test]
+    async fn streaming_body_error_aborts() {
+        // A body stream that errors mid-way must surface the error to
+        // hyper (which closes the connection) rather than truncating
+        // silently.
+        let items: Vec<std::result::Result<Bytes, std::io::Error>> = vec![
+            Ok(Bytes::from_static(b"partial")),
+            Err(std::io::Error::new(std::io::ErrorKind::Other, "worker crashed")),
+        ];
+        let stream: BodyStream = Box::pin(stream::iter(items));
+        let resp = OxideResponse::stream(200, stream);
+        let hyper_resp = to_hyper_response(resp);
+
+        use http_body_util::BodyExt as _;
+        let body = hyper_resp.into_body();
+        let result = body.collect().await;
+        assert!(result.is_err(), "streaming error must abort the body");
+    }
+
+    #[test]
+    fn streaming_response_clone_drops_stream() {
+        let items: Vec<std::result::Result<Bytes, std::io::Error>> =
+            vec![Ok(Bytes::from_static(b"x"))];
+        let stream: BodyStream = Box::pin(stream::iter(items));
+        let resp = OxideResponse::stream(200, stream);
+        let cloned = resp.clone();
+        assert!(cloned.stream.is_none(), "clone drops the stream");
+        // Original still owns it.
+        assert!(resp.stream.is_some());
+    }
+}
