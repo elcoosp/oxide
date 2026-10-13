@@ -25,12 +25,22 @@ fn e2e_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/.tmp-e2e")
 }
 
+/// A monotonic counter combined with pid + nanos. Prevents the (real)
+/// race where parallel tests call SystemTime::now() within the same
+/// microsecond and produce an identical nonce — on macOS the clock has
+/// ~1µs resolution, and two parallel `#[tokio::test]`s hitting it at the
+/// same instant would then share a filename, one dropping the file the
+/// other is about to import.
+static NONCE_COUNTER: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 fn unique_nonce() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    format!("{pid}-{nanos}", pid = std::process::id())
+    let seq = NONCE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    format!("{pid}-{nanos}-{seq}", pid = std::process::id())
 }
 
 /// A unique `.mjs` file under `.tmp-e2e/`; removed on drop.
