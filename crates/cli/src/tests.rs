@@ -929,6 +929,28 @@ async fn smoke_app_builds_its_own_pages() {
     );
 
     // The manifest should classify `routes/index` as static.
+    // §10.5 runtime generateParams: the blog route's generateParams is
+    // a runtime-built array (`.map`), so the build had to evaluate it
+    // through the worker. Each enumerated path must have a prerendered
+    // HTML file with the loader's data.
+    let blog_a = dist.join("prerendered/blog/hello-prod.html");
+    let blog_b = dist.join("prerendered/blog/second-post.html");
+    assert!(
+        blog_a.is_file(),
+        "prerendered blog/hello-prod.html produced via runtime generateParams at {}",
+        blog_a.display()
+    );
+    assert!(
+        blog_b.is_file(),
+        "prerendered blog/second-post.html produced via runtime generateParams at {}",
+        blog_b.display()
+    );
+    let html_a = std::fs::read_to_string(&blog_a).expect("read blog a");
+    assert!(
+        html_a.contains("Hello hello-prod"),
+        "blog a content from the loader: {html_a}"
+    );
+
     let server_manifest = dist.join("server/server.manifest.json");
     assert!(server_manifest.is_file(), "server manifest produced");
     let manifest_json: serde_json::Value =

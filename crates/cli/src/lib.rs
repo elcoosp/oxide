@@ -1049,12 +1049,94 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 }
             }
             oxide_compiler::GenerateParamsResult::Runtime { .. } => {
-                // Honest notice: the CLI does not run user JS during build.
-                outln!(
-                    w,
-                    "skip prerender for `{route_id}`: generateParams requires runtime evaluation (post-MLP)",
-                    route_id = e.id.0
-                );
+                // Runtime evaluate `generateParams` via the worker (spec
+                // §10.5). The route's `page.server.ts` module is imported by
+                // the same worker pool that backs the loader and renderer;
+                // `LoaderHost::generate_params` calls the export and returns
+                // the enumerated entries.
+                //
+                // When the pool isn't available (no Node), fall back to the
+                // previous honest notice — the route is skipped, not failed.
+                let params_via_worker: Option<
+                    Vec<std::collections::BTreeMap<String, String>>,
+                > = match (stack.pool.as_ref(), module_path.as_deref()) {
+                    (Some(pool), Some(mp)) => {
+                        let host = oxide_jshost::LoaderHost::new(
+                            std::sync::Arc::clone(pool),
+                        );
+                        match host.generate_params(&mp.to_string_lossy()).await {
+                            Ok(list) => Some(list),
+                            Err(e) => {
+                                outln!(
+                                    w,
+                                    "skip prerender for `{route_id}`: generateParams runtime evaluation failed: {} {}",
+                                    e.0.code,
+                                    e.0.message
+                                );
+                                None
+                            }
+                        }
+                    }
+                    _ => None,
+                };
+
+                match params_via_worker {
+                    Some(params) if !params.is_empty() => {
+                        // Same shape as the Literal arm: enumerate, write
+                        // each, mark the route static in the manifest.
+                        static_override.insert(route_id.clone());
+                        let mut outs: Vec<String> = Vec::new();
+                        for params_map in &params {
+                            let mut segs: Vec<String> = e.segments.clone();
+                            for s in segs.iter_mut() {
+                                if let Some(name) = param_name(s) {
+                                    if let Some(v) = params_map.get(name) {
+                                        *s = v.clone();
+                                    }
+                                }
+                            }
+                            let rel = if segs.is_empty() {
+                                "prerendered/index.html".to_string()
+                            } else {
+                                format!("prerendered/{}.html", segs.join("/"))
+                            };
+                            write_prerender(
+                                &dist,
+                                &rel,
+                                &route_id,
+                                &pattern,
+                                &url_path_from_rel(&rel),
+                                params_map,
+                                &nonce_for,
+                                stack.page_renderer.as_ref(),
+                                stack.loader_runner.as_ref(),
+                                module_path.as_deref(),
+                            )
+                            .await?;
+                            outs.push(rel);
+                        }
+                        if !outs.is_empty() {
+                            prerendered.insert(e.id.0.clone(), outs);
+                        }
+                    }
+                    Some(_) => {
+                        // Empty array: generateParams ran but produced no
+                        // paths. Not an error; the route stays unprerendered.
+                        outln!(
+                            w,
+                            "route `{route_id}`: generateParams returned no entries; skipping prerender",
+                            route_id = e.id.0
+                        );
+                    }
+                    None => {
+                        // No worker, or module path unresolved.
+                        outln!(
+                            w,
+                            "skip prerender for `{route_id}`: generateParams requires runtime evaluation and no worker is available",
+                            route_id = e.id.0
+                        );
+                    }
+                }
             }
             oxide_compiler::GenerateParamsResult::Absent => {
                 // Fall through to the param-less case below.
