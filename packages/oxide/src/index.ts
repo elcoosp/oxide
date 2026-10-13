@@ -3,6 +3,7 @@
 // helper. Framework adapters live in @oxide/react|vue|svelte|solid.
 
 export * from './types.ts'
+export { defineConfig, type OxideUserConfig } from './config.ts'
 export { createTestApp, type TestApp, type TestAppRequest, type TestHandler } from './test.ts'
 export { decodeOdf, decodeOdfToJson, OdfError } from './client/odf-decode.ts'
 export { createRouter, type Router } from './client/router.ts'
