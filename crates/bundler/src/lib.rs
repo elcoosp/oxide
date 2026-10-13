@@ -275,6 +275,30 @@ impl ChunkBundler {
                 ));
                 continue;
             };
+            // §6.3: Vue/Svelte SFCs must be lowered by their upstream compilers
+            // (`@vue/compiler-sfc`, `svelte/compiler`) via the tooling pool
+            // (§4.7) before the bundler can treat them as plain JS. The
+            // bundler is synchronous and has no access to the worker, so it
+            // refuses loudly instead of emitting the raw source and letting
+            // the deploy artifact fail on first `import`.
+            if let Some(fw) = unsupported_framework_ext(&rp) {
+                diagnostics.push(
+                    Diagnostic::error(
+                        "BLD-FRAMEWORK",
+                        format!(
+                            "`{}` is a {fw} single-file component; the bundler needs it \
+                             precompiled to JS by the tooling pool before it can be bundled",
+                            rp.display()
+                        ),
+                    )
+                    .with_fix(
+                        "run the build through the CLI (`oxide build`), which routes \
+                         .vue/.svelte files through the tooling pool, or emit a \
+                         precompiled .js file and import that instead",
+                    ),
+                );
+                continue;
+            }
             let hash = blake3::hash(source.as_bytes()).to_hex().to_string();
             let is_css = rp.extension().is_some_and(|e| e == "css");
             let is_asset = spec.contains('?') || is_css;
@@ -824,6 +848,18 @@ fn dfs_chunks(
 /// Rewrite import statements of `m` for chunk assembly: imports resolved to the
 /// same chunk are removed (co-located top-level declarations provide the bindings),
 /// imports resolved to other chunks are rewritten to that chunk's file.
+/// Returns the framework name if `path` is a single-file component that the
+/// bundler cannot consume as-is (§6.3: Vue SFCs, Svelte components). The
+/// tooling pool precompiles these; the bundler refuses them loudly so a
+/// misconfigured build fails at the source, not at deploy time.
+fn unsupported_framework_ext(path: &Path) -> Option<&'static str> {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("vue") => Some("vue"),
+        Some("svelte") => Some("svelte"),
+        _ => None,
+    }
+}
+
 fn lang_of(path: &Path) -> &'static str {
     match path.extension().and_then(|e| e.to_str()) {
         Some("ts") => "ts",
