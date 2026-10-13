@@ -14,7 +14,7 @@
 
 use async_trait::async_trait;
 use oxide_jshost::{FrameworkRenderInput, FrameworkRenderer};
-use oxide_server::{PageRenderInput, PageRenderer};
+use oxide_server::{LoaderRunner, PageRenderInput, PageRenderer};
 use std::sync::Arc;
 
 /// Wraps any `FrameworkRenderer` as an `oxide_server::PageRenderer`.
@@ -68,6 +68,98 @@ impl PageRenderer for AdapterPageRenderer {
 
         self.inner.render(fw_input).await
     }
+}
+
+/// Bundles the framework renderer and loader runner that a CLI command
+/// attaches to its server/dispatch. Both are `Option` because they can fail
+/// independently: a project without a config has no renderer but still
+/// benefits from a loader; a Node worker that fails to start has neither.
+///
+/// Construct via [`build_framework_stack`]; the empty default is used by
+/// tests and by the legacy `start_server_inner` path.
+#[derive(Default)]
+pub struct FrameworkStack {
+    pub page_renderer: Option<Arc<dyn PageRenderer>>,
+    pub loader_runner: Option<Arc<dyn LoaderRunner>>,
+}
+
+impl FrameworkStack {
+    /// No renderer, no loader. Every render falls back to the IR placeholder.
+    pub fn empty() -> Self {
+        Self { page_renderer: None, loader_runner: None }
+    }
+    /// The attached renderer's name, if any (for the `framework renderer:`
+    /// log line).
+    pub fn renderer_name(&self) -> Option<&str> {
+        self.page_renderer.as_ref().map(|r| r.name())
+    }
+    /// True when a renderer is attached.
+    pub fn has_renderer(&self) -> bool {
+        self.page_renderer.is_some()
+    }
+}
+
+impl std::fmt::Debug for FrameworkStack {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FrameworkStack")
+            .field("has_renderer", &self.page_renderer.is_some())
+            .field("has_loader", &self.loader_runner.is_some())
+            .finish()
+    }
+}
+
+/// Build the framework stack for a project. `config_path` is the resolved
+/// `oxide.config.{ts,mjs,js}` (or `None` for projects without one).
+///
+/// A single Node worker pool backs both the renderer and the loader, so
+/// they share module caches and stay warm across requests. Any failure
+/// (worker can't spawn, config can't load) degrades gracefully: the
+/// affected piece is `None`, the caller falls back to the IR path.
+pub async fn build_framework_stack(
+    config_path: Option<&std::path::Path>,
+) -> FrameworkStack {
+    use oxide_jshost::{FrameworkHostRenderer, JsHost, NodeHost, PoolConfig};
+
+    let host = NodeHost::new(NodeHost::worker_script_default());
+    let pool = match host.tooling_pool(PoolConfig::default()) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!(
+                "warn: framework stack unavailable (node worker): {} {}",
+                e.0.code, e.0.message
+            );
+            return FrameworkStack::empty();
+        }
+    };
+
+    // The loader runner needs only the pool — it resolves modules per request.
+    let loader_runner: Arc<dyn LoaderRunner> = crate::loader_shim::build_loader_runner(
+        Arc::clone(&pool),
+    );
+
+    // The page renderer needs a config file. Its absence is normal.
+    let page_renderer: Option<Arc<dyn PageRenderer>> = match config_path {
+        Some(path) => {
+            match FrameworkHostRenderer::new(
+                pool,
+                path.to_string_lossy().to_string(),
+            )
+            .await
+            {
+                Ok(hr) => Some(Arc::new(AdapterPageRenderer::new(Arc::new(hr)))),
+                Err(e) => {
+                    eprintln!(
+                        "warn: framework renderer not wired: {} {}",
+                        e.0.code, e.0.message
+                    );
+                    None
+                }
+            }
+        }
+        None => None,
+    };
+
+    FrameworkStack { page_renderer, loader_runner: Some(loader_runner) }
 }
 
 /// Build a `PageRenderer` for a project's `oxide.config.{ts,mjs,js}`.
