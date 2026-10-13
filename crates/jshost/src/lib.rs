@@ -34,8 +34,10 @@ pub use snapshot::{lint_top_level_side_effects, loader_options, snapshot_build, 
 pub mod tooling_pool;
 pub mod framework_host;
 pub mod framework_renderer;
+pub mod loader_host;
 pub use framework_host::{FrameworkDescriptor, FrameworkHost};
 pub use framework_renderer::{FrameworkHostRenderer, FrameworkRenderInput, FrameworkRenderer};
+pub use loader_host::LoaderHost;
 pub use tooling_pool::{ModuleCall, ToolingModules};
 
 pub type Result<T> = std::result::Result<T, OxideError>;
