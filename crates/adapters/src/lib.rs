@@ -621,7 +621,7 @@ pub fn dockerfile(embed: bool) -> String {
          RUN strip target/release/server 2>/dev/null || true\n\n\
          FROM gcr.io/distroless/cc-debian12\n\
          WORKDIR /app\n\
-         COPY --from=build /src/target/release/server /app/server\
+         COPY --from=build /src/target/release/server /app/server\n\
          {embed_block}\
          USER nonroot:nonroot\n\
          ENV PORT=3000\n\

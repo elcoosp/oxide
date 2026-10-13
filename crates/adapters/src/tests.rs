@@ -51,6 +51,44 @@ fn all_files(dir: &std::path::Path, written: &[PathBuf]) -> Vec<(PathBuf, String
 // ------------------------------------------------------- capability matrix (§18)
 
 #[test]
+fn dockerfile_user_is_on_its_own_line() {
+    // Regression: the emit helper built the Dockerfile with a Rust
+    // line-continuation that swallowed the newline before `USER`, so the
+    // emitted file was `.../app/serverUSER nonroot:nonroot`. The
+    // `USER` instruction therefore never ran — the container defaulted to
+    // root. Assert the emitted bytes have `USER` at line start.
+    let df = dockerfile(false);
+    let user_lines: Vec<&str> = df
+        .lines()
+        .filter(|l| l.trim_start().starts_with("USER "))
+        .collect();
+    assert_eq!(user_lines.len(), 1, "expected exactly one USER directive:\n{df}");
+    assert_eq!(user_lines[0].trim(), "USER nonroot:nonroot");
+    // The preceding COPY must end at `/app/server`, not `/app/serverUSER`.
+    assert!(df.contains("/app/server\nUSER") || df.lines().any(|l| l.trim_end().ends_with("/app/server")),
+        "COPY destination must terminate at /app/server:\n{df}");
+}
+
+#[test]
+fn dockerfile_every_instruction_starts_its_own_line() {
+    let df = dockerfile(false);
+    const KNOWN: &[&str] = &[
+        "FROM ", "WORKDIR ", "COPY ", "RUN ", "USER ", "ENV ",
+        "EXPOSE ", "HEALTHCHECK ", "ENTRYPOINT ", "CMD ", "ARG ",
+    ];
+    for line in df.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        assert!(
+            KNOWN.iter().any(|p| t.starts_with(p)),
+            "line looks malformed (glued directives?): {t:?}"
+        );
+    }
+}
+
+#[test]
 fn capability_matrix_binary_is_all_full() {
     let m = caps(Target::Binary);
     assert_eq!(m.len(), 7, "all seven §18 capabilities reported");
