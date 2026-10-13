@@ -271,6 +271,240 @@ async fn dispatch_propagates_renderer_error_as_500() {
 }
 
 
+// ------------------------------------------- loader dispatch (spec §9.1)
+
+/// A PageRenderer that records both call count and the LAST data value
+/// it was handed. Used to prove the loader's output reached the renderer.
+struct DataCapturingRenderer {
+    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    last_data: std::sync::Arc<std::sync::Mutex<serde_json::Value>>,
+}
+
+impl DataCapturingRenderer {
+    fn new() -> Self {
+        Self {
+            calls: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            last_data: std::sync::Arc::new(std::sync::Mutex::new(serde_json::Value::Null)),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl oxide_server::PageRenderer for DataCapturingRenderer {
+    fn name(&self) -> &str { "data-capture" }
+    async fn render(
+        &self,
+        input: oxide_server::PageRenderInput,
+    ) -> oxide_server::Result<String> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        *self.last_data.lock().unwrap() = input.data.clone();
+        Ok(format!(
+            "<!doctype html><html><body><pre>{}</pre></body></html>",
+            input.data
+        ))
+    }
+}
+
+/// A LoaderRunner that returns a preprogrammed `LoaderOutput` and records
+/// how many times it was called.
+struct ScriptedLoader {
+    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    output: std::sync::Mutex<Option<oxide_server::LoaderOutput>>,
+}
+
+impl ScriptedLoader {
+    fn ok(data: serde_json::Value) -> Self {
+        Self {
+            calls: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            output: std::sync::Mutex::new(Some(oxide_server::LoaderOutput::ok(data))),
+        }
+    }
+    fn http_error(status: u16, message: &str) -> Self {
+        Self {
+            calls: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            output: std::sync::Mutex::new(Some(oxide_server::LoaderOutput {
+                status,
+                location: None,
+                data: serde_json::json!({ "message": message }),
+            })),
+        }
+    }
+    fn redirect(location: &str, status: u16) -> Self {
+        Self {
+            calls: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            output: std::sync::Mutex::new(Some(oxide_server::LoaderOutput {
+                status,
+                location: Some(location.to_string()),
+                data: serde_json::json!({}),
+            })),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl oxide_server::LoaderRunner for ScriptedLoader {
+    fn name(&self) -> &str { "scripted" }
+    async fn run(
+        &self,
+        _input: oxide_server::LoaderRunInput,
+    ) -> oxide_server::Result<oxide_server::LoaderOutput> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let out = self
+            .output
+            .lock()
+            .unwrap()
+            .take()
+            .expect("ScriptedLoader called more than once");
+        Ok(out)
+    }
+}
+
+/// Build a one-entry RouteTree whose only route is `/index` with
+/// `has_server_module = true`. Test-only helper.
+fn tree_with_server_route() -> std::sync::Arc<oxide_router::RouteTree> {
+    let mut tree = oxide_router::RouteTree::new();
+    tree.insert(oxide_router::RouteEntry {
+        id: oxide_router::RouteId("routes/index".into()),
+        kind: oxide_router::RouteKind::Page,
+        segments: vec![],
+        file: std::path::PathBuf::from("index/page.tsx"),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: true,
+        slot: None,
+    });
+    std::sync::Arc::new(tree)
+}
+
+fn routes_root() -> std::path::PathBuf {
+    std::path::PathBuf::from("/tmp/oxide-test-routes")
+}
+
+#[tokio::test]
+async fn loader_feeds_data_to_renderer() {
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+
+    let tree = tree_with_server_route();
+    let metrics = Arc::new(oxide_server::Metrics::new());
+
+    let renderer = Arc::new(DataCapturingRenderer::new());
+    let renderer_calls = Arc::clone(&renderer.calls);
+    let renderer_data = Arc::clone(&renderer.last_data);
+    let page_renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(renderer);
+
+    let loader = Arc::new(ScriptedLoader::ok(serde_json::json!({ "title": "Hi" })));
+    let loader_calls = Arc::clone(&loader.calls);
+    let loader_runner: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(loader);
+
+    let dispatch = build_dispatch(
+        tree, metrics, Vec::new(), page_renderer, loader_runner, routes_root(),
+    );
+    let resp = dispatch(test_request("GET", "/")).await;
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(loader_calls.load(Ordering::SeqCst), 1, "loader ran once");
+    assert_eq!(renderer_calls.load(Ordering::SeqCst), 1, "renderer ran once");
+    let data = renderer_data.lock().unwrap().clone();
+    assert_eq!(data["title"], "Hi", "loader data reached the renderer");
+}
+
+#[tokio::test]
+async fn loader_404_short_circuits_render() {
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+
+    let tree = tree_with_server_route();
+    let metrics = Arc::new(oxide_server::Metrics::new());
+
+    let renderer = Arc::new(DataCapturingRenderer::new());
+    let renderer_calls = Arc::clone(&renderer.calls);
+    let page_renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(renderer);
+
+    let loader = Arc::new(ScriptedLoader::http_error(404, "not found"));
+    let loader_calls = Arc::clone(&loader.calls);
+    let loader_runner: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(loader);
+
+    let dispatch = build_dispatch(
+        tree, metrics, Vec::new(), page_renderer, loader_runner, routes_root(),
+    );
+    let resp = dispatch(test_request("GET", "/")).await;
+
+    assert_eq!(resp.status, 404);
+    assert_eq!(loader_calls.load(Ordering::SeqCst), 1, "loader ran once");
+    assert_eq!(renderer_calls.load(Ordering::SeqCst), 0, "renderer must NOT run");
+    let body = std::str::from_utf8(resp.body.as_ref()).unwrap();
+    assert!(body.contains("not found"), "error message in body: {body}");
+}
+
+#[tokio::test]
+async fn loader_redirect_short_circuits_with_location() {
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+
+    let tree = tree_with_server_route();
+    let metrics = Arc::new(oxide_server::Metrics::new());
+
+    let renderer = Arc::new(DataCapturingRenderer::new());
+    let renderer_calls = Arc::clone(&renderer.calls);
+    let page_renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(renderer);
+
+    let loader = Arc::new(ScriptedLoader::redirect("/login", 303));
+    let loader_calls = Arc::clone(&loader.calls);
+    let loader_runner: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(loader);
+
+    let dispatch = build_dispatch(
+        tree, metrics, Vec::new(), page_renderer, loader_runner, routes_root(),
+    );
+    let resp = dispatch(test_request("GET", "/")).await;
+
+    assert_eq!(resp.status, 303);
+    assert_eq!(resp.header("location"), Some("/login"));
+    assert_eq!(loader_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(renderer_calls.load(Ordering::SeqCst), 0, "renderer must NOT run");
+}
+
+#[tokio::test]
+async fn no_server_module_skips_loader() {
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+
+    // Tree with `has_server_module: false`.
+    let mut tree = oxide_router::RouteTree::new();
+    tree.insert(oxide_router::RouteEntry {
+        id: oxide_router::RouteId("routes/index".into()),
+        kind: oxide_router::RouteKind::Page,
+        segments: vec![],
+        file: std::path::PathBuf::from("index/page.tsx"),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: false,
+        slot: None,
+    });
+    let tree = Arc::new(tree);
+    let metrics = Arc::new(oxide_server::Metrics::new());
+
+    let renderer = Arc::new(DataCapturingRenderer::new());
+    let renderer_calls = Arc::clone(&renderer.calls);
+    let renderer_data = Arc::clone(&renderer.last_data);
+    let page_renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(renderer);
+
+    let loader = Arc::new(ScriptedLoader::ok(serde_json::json!({ "never": true })));
+    let loader_calls = Arc::clone(&loader.calls);
+    let loader_runner: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(loader);
+
+    let dispatch = build_dispatch(
+        tree, metrics, Vec::new(), page_renderer, loader_runner, routes_root(),
+    );
+    let resp = dispatch(test_request("GET", "/")).await;
+
+    assert_eq!(resp.status, 200);
+    assert_eq!(loader_calls.load(Ordering::SeqCst), 0, "loader must NOT run");
+    assert_eq!(renderer_calls.load(Ordering::SeqCst), 1, "renderer runs with empty data");
+    let data = renderer_data.lock().unwrap().clone();
+    assert_eq!(data, serde_json::json!({}), "empty data when no server module");
+}
+
 #[test]
 fn render_subcommand_parses_route_and_optional_flags() {
     use clap::Parser;
