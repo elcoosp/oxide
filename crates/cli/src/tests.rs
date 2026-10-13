@@ -667,6 +667,139 @@ async fn smoke_app_renders_through_real_config() {
     );
 }
 
+// ----------------------------------------- oxide dev E2E (HTTP round-trip)
+
+/// Minimal HTTP/1.1 GET over a fresh TCP connection. Returns the raw
+/// response as a UTF-8 string (headers + body). Enough for tests that
+/// only need to check a status line and substring the body; no chunked
+/// decoding, no keep-alive. `Connection: close` makes the server close
+/// the stream after the response, so `read_to_end` completes.
+async fn http_get(
+    addr: std::net::SocketAddr,
+    path: &str,
+) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+    let mut stream = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        TcpStream::connect(addr),
+    )
+    .await
+    .expect("connect timed out")
+    .expect("connect failed");
+
+    let req = format!(
+        "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    );
+    stream.write_all(req.as_bytes()).await.expect("write request");
+    stream.flush().await.expect("flush");
+
+    let mut buf = Vec::with_capacity(8 * 1024);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        stream.read_to_end(&mut buf),
+    )
+    .await
+    .expect("read timed out")
+    .expect("read failed");
+
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// Start the real dev server against `examples/smoke-app` and issue HTTP
+/// requests. This closes the loop between the CLI subcommands (already
+/// E2E-tested in `smoke_app_renders_through_real_config`) and the
+/// long-running server path: config load → stack build → dispatch →
+/// page renderer → HTTP response.
+///
+/// `#[ignore]` because it spawns Node, binds a port, and requires the
+/// workspace `node_modules` (from `pnpm install`). Run with:
+///     cargo test -p oxide-cli -- --ignored dev_server_serves_smoke
+#[tokio::test]
+#[ignore]
+async fn dev_server_serves_smoke_app_over_http() {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root");
+    let smoke = workspace.join("examples/smoke-app");
+    let config_path = smoke.join("oxide.config.ts");
+    assert!(
+        config_path.is_file(),
+        "smoke-app fixture missing at {}; run `pnpm install` if the workspace link is stale",
+        smoke.display()
+    );
+    let smoke_str = smoke.to_str().expect("smoke path utf-8");
+
+    // Build the same framework stack cmd_dev builds.
+    let stack = crate::framework_shim::build_framework_stack(Some(&config_path)).await;
+    assert!(
+        stack.has_renderer(),
+        "framework renderer must attach for the smoke-app's oxide.config.ts"
+    );
+
+    // Start the dev server on an ephemeral port.
+    let started = crate::start_dev_server_full(
+        smoke_str,
+        Some(0),
+        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        None,
+        Vec::new(),
+        stack,
+    )
+    .await
+    .expect("start_dev_server_full");
+    let addr = started.addr;
+    eprintln!("dev server listening at {addr}");
+
+    // ---- Request 1: home route ----
+    let resp_home = http_get(addr, "/").await;
+    assert!(
+        resp_home.starts_with("HTTP/1.1 200"),
+        "home status line: {}",
+        resp_home.lines().next().unwrap_or("")
+    );
+    assert!(
+        resp_home.contains("Hello Atlas"),
+        "home body should contain the route content:\n{}",
+        resp_home
+    );
+    assert!(
+        resp_home.contains("data-reactroot"),
+        "home body should carry the framework root marker:\n{}",
+        resp_home
+    );
+    // Health probe: the pipeline's built-in health path answers before
+    // dispatch (spec §12.1). Cheap second request confirms the server
+    // is broadly functional, not just rendering.
+    let resp_health = http_get(addr, "/_oxide/health").await;
+    assert!(
+        resp_health.starts_with("HTTP/1.1 200"),
+        "health status line: {}",
+        resp_health.lines().next().unwrap_or("")
+    );
+
+    // ---- Request 2: dynamic route with a param ----
+    let resp_blog = http_get(addr, "/blog/hello-smoke").await;
+    assert!(
+        resp_blog.starts_with("HTTP/1.1 200"),
+        "blog status line: {}",
+        resp_blog.lines().next().unwrap_or("")
+    );
+    // The IR renderer's BlogPage emits `By Anonymous · <slug>`, so the
+    // slug from the URL must appear in the body — proves the router's
+    // match extracted the param and the renderer saw it.
+    assert!(
+        resp_blog.contains("hello-smoke"),
+        "blog body should carry the URL param slug:\n{}",
+        resp_blog
+    );
+
+    // Clean shutdown; the accept loop notices and the listener drops.
+    let _ = started.shutdown.send(true);
+}
+
 #[test]
 fn render_subcommand_parses_route_and_optional_flags() {
     use clap::Parser;
