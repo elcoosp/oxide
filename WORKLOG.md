@@ -444,3 +444,106 @@ directory is ~30 GB; the host has ~3 GB free after cleanup. Any cargo
 link step will fail until the host is freed (Time Machine local
 snapshots, Xcode DerivedData, Docker, brew cleanup). This is a
 host-level constraint, not a code problem.
+
+---
+
+## Session 5 — framework adapter read path: complete
+
+**Milestone:** `oxide dev`, `oxide serve`, `oxide build` all dispatch
+page renders through the project's `oxide.config.{ts,mjs,js}` framework
+adapter, end-to-end and warning-free, against a real project fixture.
+
+### What landed this session (L1–L13)
+
+**Loader phase (spec §9.1)**
+- `oxide_server::LoaderRunner` trait + `LoaderRunInput` / `LoaderOutput`
+- `oxide_jshost::LoaderHost` (worker `loader:run` op)
+- `oxide_cli::loader_shim::AdapterLoader` bridging the two
+- Loader phase runs inside `build_dispatch`, threads `data` to the
+  renderer, short-circuits on `error(...)` / `redirect(...)`
+- Real-loader E2E (`loader_host_e2e.rs`, 5 tests) exercises a real
+  `.mjs` module through the worker
+
+**Framework stack (spec §7)**
+- `FrameworkStack` bundles `page_renderer` + `loader_runner` + `pool`;
+  built once per CLI command via `build_framework_stack`
+- All three HTML-producing commands (`dev` / `serve` / `build`)
+  construct it from the config
+
+**Wire protocol (spec §4.2)**
+- Worker emits `framework:render` as chunked `call_chunk` frames
+- `FrameworkHost::render_streaming` returns the raw `CallStream`
+  without collecting (ready for a streaming HTTP body)
+
+**HMR (spec §13.3)**
+- Worker `moduleGeneration` counter + `versioned()` import tagger
+- `framework:invalidate` op + `FrameworkHost::invalidate()`
+- `cmd_dev` watcher invalidates on file change
+- HMR E2E: load module v1, rewrite to v2, reimport still v1 (cached),
+  invalidate, reimport sees v2
+
+**TSX compilation**
+- `crates/jshost/worker/tsx-loader.mjs` — sucrase-based Node ESM hook
+- `crates/jshost/worker/register-hooks.mjs` — registers the loader via
+  the Node 22 `--import register()` API (no `--experimental-loader`
+  deprecation warning on worker startup)
+- `NodePool::spawn_child` passes `--import <register-hooks.mjs>`
+- The smoke-app's `oxide.config.ts` now imports its own `page.tsx`
+  files; the adapter's `componentFor` resolves to real React components
+
+**Path + route-id fixes**
+- `cmd_dev` / `cmd_serve` / `cmd_build` canonicalize their root argument
+  once at entry — eliminates a doubled-path class of bug in the bundler
+  and route scanner
+- `build_dispatch` and `write_prerender` normalize the router's file-role
+  id (`routes/index/page`) to the adapter's directory key
+  (`routes/index`) via `strip_suffix("/page")`
+- The enriched `server.manifest.json` is now written back to disk; the
+  adapters emit to `dist/deploy/`, so the in-memory enrichment was lost
+  before
+
+**Fixture**
+- `examples/smoke-app` is a workspace member: real `.ts` config, real
+  `.tsx` pages, real `page.server.ts` for the dynamic route
+- `oxide render routes/index` → `<h1>Home</h1>`
+- `oxide render routes/blog/[slug] --param slug=X` → `<h1>Post: X</h1>`
+- `oxide dev` serves both over HTTP with real React SSR
+- `oxide build` prerenders `/index` to `dist/prerendered/index.html`
+
+### E2E coverage
+
+| Suite | Command | Tests |
+|-------|---------|-------|
+| `smoke_app_renders_through_real_config` | CLI subcommands | 1 |
+| `smoke_app_builds_its_own_pages` | oxide build | 1 |
+| `dev_server_serves_smoke_app_over_http` | HTTP round-trip | 1 |
+| `cli_render_dispatches_real_react_ssr` | oxide render | 1 |
+| `framework_host_e2e` | real config → react-dom/server | 2 |
+| `loader_host_e2e` | real loader via worker | 5 |
+| `hmr_e2e` | invalidate → module reload | 2 |
+
+### What remains
+
+1. **Streaming consumers in the pipeline** — `FrameworkHost::render_streaming`
+   returns the raw `CallStream`, but `PageRenderer::render` still returns
+   `String` and the pipeline collects. True streaming needs a trait
+   change on `PageRenderer` (chunks, not a whole HTML) plus a hyper body
+   writer that consumes them. Wire format is already ready; this is a
+   perf improvement (TTFB), not a capability gap.
+
+2. **`V8Host` for `render_pool`** — the in-process V8 migration gated on
+   `deno_node` integration for npm resolution. The `JsHost` / `Pool`
+   abstractions are already in place; the swap is one line in
+   `build_framework_stack` once the integration lands. Post-MLP per the
+   spec's roadmap.
+
+3. **`cmd_build` writes an error HTML file on loader non-200** — currently
+   logs to the artifact rather than failing the build. A `--strict-build`
+   flag could make this a hard failure at CI time.
+
+### Disk note
+
+The machine ran between 1.5 GB and 12 GB free across the session, with
+frequent spikes to 100% during cargo link steps. Each heavy slice
+required manual cleanup of `target/` artifacts. If work continues, the
+host needs ~30 GB free before the next multi-crate change.
