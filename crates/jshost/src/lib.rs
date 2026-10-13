@@ -1021,6 +1021,21 @@ struct Worker {
 /// creation always happens there (§4.2 pools are built from async host code).
 fn spawn_child(node_bin: &str, worker_script: &Path) -> Result<(Child, ChildStdin, ChildStdout)> {
     let mut cmd = tokio::process::Command::new(node_bin);
+        // Register the TSX loader hook so `import './page.tsx'` resolves
+        // via sucrase (JSX lowering). Node's built-in type stripper handles
+        // .ts but not .tsx; the loader bridges the gap.
+        //
+        // We use `--import <register-hooks.mjs>` (which calls `register()`)
+        // rather than `--experimental-loader`, because the latter is
+        // deprecated as of Node 22 and emits a warning on every worker
+        // spawn. The shim and the loader are siblings of the worker script,
+        // so all three ship together with the jshost crate.
+        let register_hooks = worker_script
+            .parent()
+            .map(|p| p.join("register-hooks.mjs"))
+            .unwrap_or_else(|| std::path::PathBuf::from("register-hooks.mjs"));
+        cmd.arg("--import").arg(&register_hooks);
+
     cmd.arg(worker_script)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

@@ -638,9 +638,12 @@ async fn smoke_app_renders_through_real_config() {
         out.starts_with("<!doctype html>"),
         "doctype first: {out}"
     );
+    // The smoke-app's `page.tsx` is `return <h1>Home</h1>`; the loader
+    // hook compiles it via sucrase, so we assert the user's own content
+    // (not the IR fallback's Atlas mock).
     assert!(
-        out.contains("Hello Atlas"),
-        "home route content present: {out}"
+        out.contains(">Home</h1>"),
+        "home route renders the user's page.tsx: {out}"
     );
     assert!(
         out.contains("data-reactroot"),
@@ -830,7 +833,7 @@ async fn dev_server_serves_smoke_app_over_http() {
     );
     assert!(
         resp_blog.contains("hello-smoke"),
-        "blog body should carry the URL param slug:\n{}",
+        "blog body should carry the URL param slug (rendered by the smoke-app's own page.tsx):\n{}",
         resp_blog
     );
 
