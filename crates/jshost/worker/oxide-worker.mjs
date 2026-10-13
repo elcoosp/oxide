@@ -153,20 +153,17 @@ async function dispatchFrameworkRender(id, input) {
     // Chunk size: 8 KB. Small enough for reasonable TTFB once we wire a
     // truly streaming adapter (React 19, Solid resources), large enough
     // that per-frame base64 + JSON framing overhead stays negligible.
-    const CHUNK = 8192;
-    // Adapters may yield one Buffer, many small chunks, or a mix. Concatenate
-    // for the current single-shot path; the true-streaming future will push
-    // each adapter chunk through as its own call_chunk frame. This keeps
-    // wire-level behaviour identical for the collect path while the bytes
-    // carried are now raw HTML.
-    const parts = [];
+    // Send each adapter chunk as its own `call_chunk` frame. The adapter's
+    // `ReadableStream<Uint8Array>` is already progressive — a React
+    // `renderToPipeableStream` yields the shell before boundaries, our IR
+    // adapter yields head, body, then one frame per deferred resolution.
+    // Preserving those boundaries on the wire means a caller that consumes
+    // `render_streaming` sees the head before the boundary resolutions —
+    // the TTFB property streaming exists for. A caller that collects
+    // (FrameworkHost::render) still gets identical bytes after concatenation.
     for await (const chunk of stream) {
-      parts.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-    const htmlBytes = Buffer.concat(parts);
-    for (let i = 0; i < htmlBytes.length; i += CHUNK) {
-      const slice = htmlBytes.subarray(i, Math.min(i + CHUNK, htmlBytes.length));
-      out({ t: "call_chunk", id, data_b64: b64(slice) });
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      out({ t: "call_chunk", id, data_b64: b64(buf) });
     }
     out({ t: "call_end", id });
   } catch (e) {

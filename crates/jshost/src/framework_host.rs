@@ -260,24 +260,8 @@ mod tests {
         // The wire carries raw HTML bytes now (no JSON envelope). The mock
         // returns a `CallStream::Complete` with those bytes; `render` decodes
         // them as a UTF-8 string.
-        let pool = host_with(|kind, payload| {
-            assert_eq!(kind, "framework:render");
-            assert_eq!(payload["path"], "/abs/oxide.config.ts");
-            assert_eq!(payload["input"]["route"], "routes/index");
-            // Return raw HTML bytes as a base64-wrapped call_ok payload —
-            // host_with wraps our Value in `call_ok`'s JSON envelope for the
-            // wire, but the *content* we want returned must decode to raw HTML
-            // when `Stream::collect` runs. Since host_with serializes the
-            // whole Value to JSON, we cheat by making the Value a String,
-            // which serializes to a JSON string, then serde_json's string
-            // bytes become the collected payload. Actually simpler: the
-            // helper produces `CallStream::Complete(Bytes::from(serde_json
-            // ::to_vec(&v)))` — which for a bare string v becomes
-            // `"<!doctype ...>"` INCLUDING quotes. To emit raw HTML, change
-            // the mock to build its own CallStream; do that here directly.
-            json!(null) // unreachable; replaced below
-        });
-        // Rebuild the pool with a raw-HTML response so we test the new wire.
+        // The wire carries raw HTML bytes now. Use a ScriptedHost whose
+        // handler returns a `CallStream::Complete` with those bytes.
         let host = ScriptedHost::with_handler(Arc::new(|_entry, _input| {
             Ok(CallStream::Complete(Bytes::from_static(
                 b"<!doctype html><html><body>Hello</body></html>",

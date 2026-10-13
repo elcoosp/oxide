@@ -22,10 +22,11 @@
 //! filename (not a unique subdir). Tests that only exercise missing-config
 //! paths never write anything.
 
-use oxide_jshost::{FrameworkHost, JsHost, NodeHost, PoolConfig};
+use oxide_jshost::{CallStream, FrameworkHost, JsHost, NodeHost, PoolConfig};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use serde_json::json;
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -163,3 +164,90 @@ async fn end_to_end_missing_config_surfaces_clear_error() {
         "message: {msg}"
     );
 }
+
+#[tokio::test]
+#[ignore]
+async fn worker_preserves_adapter_chunk_boundaries() {
+    // A custom framework adapter whose `render` returns a ReadableStream
+    // with three distinct chunks. The worker must forward them as three
+    // `call_chunk` frames — not concatenate and re-slice. This is what
+    // makes the wire genuinely progressive: a React streaming renderer's
+    // shell arrives before its boundaries.
+    use std::fs;
+    use std::path::PathBuf;
+
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/.tmp-e2e");
+    fs::create_dir_all(&dir).expect("mkdir .tmp-e2e");
+    let config_path = dir.join(format!("chunk-e2e-{}.mjs", unique_nonce()));
+    let config_src = r#"
+export default {
+  framework: {
+    name: 'chunktest',
+    extensions: ['.foo'],
+    capabilities: {},
+    render(_input) {
+      return new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode('AAA'));
+          c.enqueue(new TextEncoder().encode('BBB'));
+          c.enqueue(new TextEncoder().encode('CCC'));
+          c.close();
+        }
+      });
+    },
+  },
+}
+"#;
+    fs::write(&config_path, config_src).expect("write chunk test config");
+    let config_str = config_path.to_string_lossy().to_string();
+
+    struct Cleanup(PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+    let _cleanup = Cleanup(config_path.clone());
+
+    // Path 1: streaming. Expect three chunks in the order the adapter
+    // produced them.
+    let host = NodeHost::new(NodeHost::worker_script_default());
+    let pool = host
+        .tooling_pool(PoolConfig::default())
+        .expect("spawn worker");
+    let fw = FrameworkHost::new(pool);
+    let mut s = fw
+        .render_streaming(&config_str, json!({}))
+        .await
+        .expect("render_streaming");
+    let mut chunks: Vec<Vec<u8>> = Vec::new();
+    match &mut s {
+        CallStream::Chunked(rx) => {
+            while let Some(item) = rx.recv().await {
+                chunks.push(item.expect("chunk").to_vec());
+            }
+        }
+        CallStream::Complete(b) => chunks.push(b.to_vec()),
+    }
+    assert_eq!(
+        chunks.len(),
+        3,
+        "three adapter chunks preserved on the wire; got {:?}",
+        chunks
+    );
+    assert_eq!(chunks[0].as_slice(), b"AAA");
+    assert_eq!(chunks[1].as_slice(), b"BBB");
+    assert_eq!(chunks[2].as_slice(), b"CCC");
+
+    // Path 2: collected. Concatenation must equal what `render` returns,
+    // so a consumer that doesn't care about chunk boundaries sees the
+    // same HTML either way.
+    let host = NodeHost::new(NodeHost::worker_script_default());
+    let pool = host
+        .tooling_pool(PoolConfig::default())
+        .expect("spawn worker");
+    let fw = FrameworkHost::new(pool);
+    let collected = fw.render(&config_str, json!({})).await.expect("render");
+    assert_eq!(collected, "AAABBBCCC");
+}
+

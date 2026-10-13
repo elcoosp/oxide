@@ -2115,9 +2115,12 @@ async fn cmd_render(
 
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
     let config_path = find_config_file(&rootp)?;
-    // Load the config early so we know `routes.dir` for the loader lookup.
-    // A config-load failure is fatal here; the CLI cannot render without it.
-    let cfg = load_config_strict(&rootp, "production")?;
+    // Load the config to find `routes.dir` for the loader lookup. Non-strict:
+    // a config that the Rust extractor cannot fully parse (e.g. a
+    // `createRealAdapter(...)` factory call with a callback arg) still
+    // renders fine because the worker re-loads the file fresh. Falling back
+    // to defaults here just means the loader path is `<root>/src/routes`.
+    let cfg = load_config_or_default(&rootp, "production");
 
     // Parse params (`k=v` pairs; comma splits produce arrays).
     let mut params_map: BTreeMap<String, serde_json::Value> = BTreeMap::new();
