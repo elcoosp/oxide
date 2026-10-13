@@ -978,6 +978,117 @@ async fn collect_response_body(
     }
 }
 
+// ------------------------------------- oxide start E2E (production server)
+
+/// `oxide start` — the production server entry. Same `build_dispatch`
+/// pipeline as dev, but with `with_inspector: false` and no watcher. This
+/// E2E closes the last untested HTML-producing command: it starts the
+/// server against the smoke-app fixture, issues HTTP requests, and asserts
+/// the streaming branch actually reaches the wire as chunked transfer.
+///
+/// `#[ignore]` — spawns a Node worker, binds a port, requires workspace
+/// node_modules. Run with:
+///     cargo test -p oxide-cli -- --ignored start_serves_smoke
+#[tokio::test]
+#[ignore]
+async fn start_serves_smoke_app_over_http() {
+    // Same fixture lookup as the other smoke-app E2Es.
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root");
+    let smoke = workspace.join("examples/smoke-app");
+    let config_path = smoke.join("oxide.config.ts");
+    assert!(
+        config_path.is_file(),
+        "smoke-app fixture missing at {}; run `pnpm install` if the link is stale",
+        smoke.display()
+    );
+    let smoke_str = smoke.to_str().expect("smoke path utf-8");
+
+    // Build the same framework stack `cmd_serve` builds.
+    let stack = crate::framework_shim::build_framework_stack(Some(&config_path)).await;
+    assert!(
+        stack.has_renderer(),
+        "framework renderer must attach for the smoke-app's oxide.config.ts"
+    );
+
+    // Ephemeral port so parallel test runs don't collide.
+    let started = crate::start_server(smoke_str, Some(0), stack)
+        .await
+        .expect("start_server");
+    let addr = started.addr;
+    eprintln!("production server listening at {addr}");
+
+    // ---- Request 1: home route (framework renderer → streaming) ----
+    let resp_home = http_get(addr, "/").await;
+    assert!(
+        resp_home.starts_with("HTTP/1.1 200"),
+        "home status line: {}",
+        resp_home.lines().next().unwrap_or("")
+    );
+    assert!(
+        resp_home.contains(">Home</h1>"),
+        "home body carries the user's page content:\n{}",
+        resp_home
+    );
+    // The renderer branch streams; `to_hyper_response` skips
+    // content-length and hyper uses chunked transfer encoding.
+    assert!(
+        !resp_home.to_lowercase().contains("content-length:"),
+        "streaming response must NOT set content-length; got:\n{}",
+        resp_home
+    );
+    assert!(
+        resp_home.to_lowercase().contains("transfer-encoding: chunked"),
+        "streaming response must use chunked encoding; got:\n{}",
+        resp_home
+    );
+
+    // ---- Request 2: health (native prefix → collected) ----
+    let resp_health = http_get(addr, "/_oxide/health").await;
+    assert!(
+        resp_health.starts_with("HTTP/1.1 200"),
+        "health status line: {}",
+        resp_health.lines().next().unwrap_or("")
+    );
+    assert!(
+        resp_health.to_lowercase().contains("content-length:"),
+        "collected response must set content-length; got:\n{}",
+        resp_health
+    );
+    assert!(
+        !resp_health.to_lowercase().contains("transfer-encoding: chunked"),
+        "collected response must NOT use chunked encoding; got:\n{}",
+        resp_health
+    );
+
+    // ---- Request 3: dynamic blog route (loader + streaming) ----
+    let resp_blog = http_get(addr, "/blog/hello-prod").await;
+    assert!(
+        resp_blog.starts_with("HTTP/1.1 200"),
+        "blog status line: {}",
+        resp_blog.lines().next().unwrap_or("")
+    );
+    // The blog loader returns `title: 'Hello ' + slug`. If the loader
+    // didn't run in the production path, the page falls back to
+    // 'Untitled'.
+    assert!(
+        resp_blog.contains("Hello hello-prod"),
+        "loader-derived title in production:\n{}",
+        resp_blog
+    );
+    assert!(
+        !resp_blog.contains("data-ox-not-found"),
+        "blog route must not hit the not-found boundary:\n{}",
+        resp_blog
+    );
+
+    // Clean shutdown; the accept loop notices and the listener drops.
+    let _ = started.shutdown.send(true);
+}
+
 #[test]
 fn render_subcommand_parses_route_and_optional_flags() {
     use clap::Parser;
