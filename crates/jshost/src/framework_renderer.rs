@@ -277,14 +277,20 @@ mod tests {
 
     #[tokio::test]
     async fn render_errors_bubble_up_with_jsh_framework_code() {
+        // Adapter errors travel as CallErr frames; the pool surfaces them
+        // as Err. load_config still needs to succeed for FrameworkHostRenderer
+        // to be constructed, so the handler branches on entry.kind.
         let host = ScriptedHost::with_handler(Arc::new(|entry, _i| {
-            let v = if entry.kind == "framework:load" {
-                json!({"name": "react", "extensions": [".tsx"], "capabilities": {}})
+            if entry.kind == "framework:load" {
+                Ok(CallStream::Complete(Bytes::from_static(
+                    br#"{"name":"react","extensions":[".tsx"],"capabilities":{}}"#,
+                )))
             } else {
-                json!({ "__oxide_error": "framework:render failed: Boom" })
-            };
-            let bytes = serde_json::to_vec(&v).unwrap();
-            Ok(CallStream::Complete(Bytes::from(bytes)))
+                Err(crate::err(
+                    "JSH-FRAMEWORK",
+                    "framework:render failed: Boom",
+                ))
+            }
         }));
         let pool = host.tooling_pool(PoolConfig::default()).unwrap();
         let r = FrameworkHostRenderer::new(pool, "/x").await.unwrap();

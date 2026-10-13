@@ -929,7 +929,7 @@ fn render_subcommand_parses_route_and_optional_flags() {
         "--data", r#"{"title":"Hi"}"#,
     ]).expect("parse");
     match cli.command {
-        crate::Command::Render { root, route, url, params, data } => {
+        crate::Command::Render { root, route, url, params, data, stream: _ } => {
             assert_eq!(root, "/some/root");
             assert_eq!(route, "routes/index");
             assert_eq!(url.as_deref(), Some("/home"));
@@ -946,7 +946,7 @@ fn render_subcommand_defaults_root_url_params_data() {
     let cli = crate::Cli::try_parse_from(["oxide", "render", "routes/blog/[slug]"])
         .expect("parse");
     match cli.command {
-        crate::Command::Render { root, route, url, params, data } => {
+        crate::Command::Render { root, route, url, params, data, stream: _ } => {
             assert_eq!(root, ".");
             assert_eq!(route, "routes/blog/[slug]");
             assert_eq!(url, None);

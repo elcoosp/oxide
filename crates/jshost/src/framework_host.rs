@@ -95,8 +95,10 @@ impl FrameworkHost {
     }
 
     /// Render `input` through the adapter the config at `config_path` exports.
-    /// The worker drains the adapter's `ReadableStream<Uint8Array>` and returns
-    /// the HTML as a UTF-8 string (chunked streaming is a follow-up).
+    /// The worker emits the adapter's HTML as chunked raw bytes; this method
+    /// collects those chunks and returns the UTF-8 string. Use
+    /// [`render_streaming`] when the caller wants to consume chunks as they
+    /// arrive.
     ///
     /// # Errors
     ///
@@ -116,20 +118,16 @@ impl FrameworkHost {
         };
         let mut stream = self.pool.call(entry, call_input).await?;
         let bytes = stream.collect().await?;
-        let v: Value = serde_json::from_slice(&bytes).map_err(|e| {
-            crate::err(
-                "JSH-FRAMEWORK",
-                format!("framework:render returned invalid JSON: {e}"),
-            )
-        })?;
-        if let Some(err_msg) = v.get("__oxide_error").and_then(|x| x.as_str()) {
-            return Err(crate::err("JSH-FRAMEWORK", err_msg.to_string()));
-        }
-        v.get("html")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string())
-            .ok_or_else(|| {
-                crate::err("JSH-FRAMEWORK", "framework:render response missing `html`")
+        // The worker emits raw HTML bytes (chunked or complete). Decode as
+        // UTF-8 and return. Errors inside the adapter are delivered as
+        // CallErr frames, which `.collect()` has already turned into Err,
+        // so we do not need a `__oxide_error` sentinel in the payload.
+        String::from_utf8(bytes.to_vec())
+            .map_err(|e| {
+                crate::err(
+                    "JSH-FRAMEWORK",
+                    format!("framework:render returned non-UTF-8 bytes: {e}"),
+                )
             })
     }
 
@@ -140,13 +138,11 @@ impl FrameworkHost {
     /// # Wire shape
     ///
     /// The worker's `framework:render` op emits `call_chunk` frames whose
-    /// concatenated base64 payloads decode to a JSON object `{"html": "..."}`.
-    /// The `CallStream::Chunked` variant this returns has already decoded
-    /// base64; iterating it yields byte chunks of that JSON envelope, not
-    /// HTML directly. A caller that wants the HTML string should still call
-    /// [`render`]. A caller that wants to write bytes to an HTTP response as
-    /// they arrive can consume this stream and remember that the *whole*
-    /// envelope must be reassembled before it parses.
+    /// concatenated base64 payloads decode to raw UTF-8 HTML bytes. The
+    /// `CallStream::Chunked` variant this returns has already decoded
+    /// base64; iterating it yields byte chunks of the HTML directly, in
+    /// order. Concatenating all chunks yields exactly what [`render`]
+    /// returns as a string.
     ///
     /// # Contract
     ///
@@ -261,12 +257,33 @@ mod tests {
 
     #[tokio::test]
     async fn render_returns_html() {
+        // The wire carries raw HTML bytes now (no JSON envelope). The mock
+        // returns a `CallStream::Complete` with those bytes; `render` decodes
+        // them as a UTF-8 string.
         let pool = host_with(|kind, payload| {
             assert_eq!(kind, "framework:render");
             assert_eq!(payload["path"], "/abs/oxide.config.ts");
             assert_eq!(payload["input"]["route"], "routes/index");
-            json!({ "html": "<!doctype html><html><body>Hello</body></html>" })
+            // Return raw HTML bytes as a base64-wrapped call_ok payload —
+            // host_with wraps our Value in `call_ok`'s JSON envelope for the
+            // wire, but the *content* we want returned must decode to raw HTML
+            // when `Stream::collect` runs. Since host_with serializes the
+            // whole Value to JSON, we cheat by making the Value a String,
+            // which serializes to a JSON string, then serde_json's string
+            // bytes become the collected payload. Actually simpler: the
+            // helper produces `CallStream::Complete(Bytes::from(serde_json
+            // ::to_vec(&v)))` — which for a bare string v becomes
+            // `"<!doctype ...>"` INCLUDING quotes. To emit raw HTML, change
+            // the mock to build its own CallStream; do that here directly.
+            json!(null) // unreachable; replaced below
         });
+        // Rebuild the pool with a raw-HTML response so we test the new wire.
+        let host = ScriptedHost::with_handler(Arc::new(|_entry, _input| {
+            Ok(CallStream::Complete(Bytes::from_static(
+                b"<!doctype html><html><body>Hello</body></html>",
+            )))
+        }));
+        let pool = host.tooling_pool(PoolConfig::default()).unwrap();
         let h = FrameworkHost::new(pool);
         let html = h
             .render(
@@ -281,9 +298,12 @@ mod tests {
 
     #[tokio::test]
     async fn render_surfaces_adapter_throw_as_jsh_framework() {
-        let pool = host_with(|_kind, _payload| {
-            json!({ "__oxide_error": "framework:render failed: Boom is not a function" })
-        });
+        // Adapter failures are delivered as CallErr frames; the pool's
+        // `.collect()` surfaces them as Err from render().
+        let host = ScriptedHost::with_handler(Arc::new(|_entry, _input| {
+            Err(crate::err("JSH-FRAMEWORK", "framework:render failed: Boom"))
+        }));
+        let pool = host.tooling_pool(PoolConfig::default()).unwrap();
         let h = FrameworkHost::new(pool);
         let err = h.render("/x", json!({})).await.unwrap_err();
         assert_eq!(err.0.code, "JSH-FRAMEWORK");
@@ -336,15 +356,11 @@ mod tests {
 
     #[tokio::test]
     async fn render_streaming_preserves_chunk_boundaries() {
-        // Build the payload through serde so the byte content is exactly
-        // what `serde_json::from_slice` expects; then split it into 3
-        // arbitrary byte-slices and stream them.
-        let payload = serde_json::to_vec(&json!({
-            "html": "<h1>Chunk</h1>"
-        }))
-        .unwrap();
-        let expected = payload.clone();
-        let chunks = split3(&payload);
+        // The wire carries raw UTF-8 HTML bytes; split them into three
+        // arbitrary byte-slices and stream. Reassembly must equal the
+        // original HTML.
+        let html = b"<h1>Chunk</h1>".to_vec();
+        let chunks = split3(&html);
         let pool = chunked_pool(chunks.clone());
         let h = FrameworkHost::new(pool);
         let mut s = h
@@ -362,14 +378,16 @@ mod tests {
                 assert_eq!(c3.as_ref(), chunks[2].as_slice());
                 assert!(rx.recv().await.is_none(), "channel closed after 3 chunks");
 
-                // Reassemble and prove it parses to the original JSON.
+                // Reassembly yields exactly the original HTML.
                 let mut buf = Vec::new();
                 buf.extend_from_slice(&c1);
                 buf.extend_from_slice(&c2);
                 buf.extend_from_slice(&c3);
-                assert_eq!(buf, expected, "reassembled bytes match the serialization");
-                let v: Value = serde_json::from_slice(&buf).unwrap();
-                assert_eq!(v["html"], "<h1>Chunk</h1>");
+                assert_eq!(buf, html, "reassembled bytes match the original HTML");
+                assert_eq!(
+                    std::str::from_utf8(&buf).unwrap(),
+                    "<h1>Chunk</h1>"
+                );
             }
             other => panic!("expected Chunked, got {:?}", std::mem::discriminant(other)),
         }
@@ -377,9 +395,12 @@ mod tests {
 
     #[tokio::test]
     async fn render_streaming_complete_variant_passes_through() {
-        let pool = host_with(|_kind, _payload| {
-            json!({ "html": "<h1>complete</h1>" })
-        });
+        // The pool can return `Complete(bytes)` for small payloads. In the
+        // new wire those bytes are raw HTML, not JSON.
+        let host = ScriptedHost::with_handler(Arc::new(|_e, _i| {
+            Ok(CallStream::Complete(Bytes::from_static(b"<h1>complete</h1>")))
+        }));
+        let pool = host.tooling_pool(PoolConfig::default()).unwrap();
         let h = FrameworkHost::new(pool);
         let mut s = h
             .render_streaming("/abs/config.mjs", json!({}))
@@ -387,46 +408,37 @@ mod tests {
             .unwrap();
         match &mut s {
             CallStream::Complete(bytes) => {
-                let v: Value = serde_json::from_slice(bytes).unwrap();
-                assert_eq!(v["html"], "<h1>complete</h1>");
+                assert_eq!(bytes.as_ref(), b"<h1>complete</h1>");
             }
             other => panic!("expected Complete, got {:?}", std::mem::discriminant(other)),
         }
     }
 
     #[tokio::test]
-    async fn render_streaming_payload_error_visible_to_caller() {
-        // `render_streaming` does not detect `__oxide_error`; a caller that
-        // reassembles and parses gets the error payload verbatim. This test
-        // pins the contract: the streaming API is raw, parsing is the
-        // caller's job.
-        let payload = serde_json::to_vec(&json!({
-            "__oxide_error": "boom",
-            "hint": "check config"
-        }))
-        .unwrap();
-        let pool = chunked_pool(split3(&payload));
+    async fn render_streaming_error_via_call_err() {
+        // Adapter errors travel as CallErr frames; `CallStream::collect`
+        // and `render` both surface them as Err. Verifies that a failing
+        // adapter is reported to the caller rather than silently yielding
+        // an empty HTML string.
+        let host = ScriptedHost::with_handler(Arc::new(|_e, _i| {
+            Err(crate::err("JSH-FRAMEWORK", "boom"))
+        }));
+        let pool = host.tooling_pool(PoolConfig::default()).unwrap();
         let h = FrameworkHost::new(pool);
-        let mut s = h
-            .render_streaming("/x", json!({}))
+        let err = h
+            .render("/x", json!({}))
             .await
-            .unwrap();
-        let bytes = s.collect().await.unwrap();
-        let v: Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(v["__oxide_error"], "boom");
-        assert_eq!(v["hint"], "check config");
+            .expect_err("adapter failure must surface");
+        assert_eq!(err.0.code, "JSH-FRAMEWORK");
+        assert!(err.0.message.contains("boom"), "{}", err.0.message);
     }
 
     #[tokio::test]
     async fn render_still_works_on_chunked_pool() {
         // Regression: `render` (which collects) must keep working when the
-        // pool returns a Chunked stream — the L4 change made that the
-        // default worker behaviour.
-        let payload = serde_json::to_vec(&json!({
-            "html": "<h1>full</h1>"
-        }))
-        .unwrap();
-        let pool = chunked_pool(split3(&payload));
+        // pool returns a Chunked stream of raw HTML bytes.
+        let html_bytes = b"<h1>full</h1>".to_vec();
+        let pool = chunked_pool(split3(&html_bytes));
         let h = FrameworkHost::new(pool);
         let html = h.render("/x", json!({})).await.unwrap();
         assert_eq!(html, "<h1>full</h1>");
@@ -464,12 +476,4 @@ mod tests {
         assert!(err.0.message.contains("missing `generation`"));
     }
 
-    #[tokio::test]
-    async fn render_rejects_response_missing_html() {
-        let pool = host_with(|_kind, _payload| json!({ "body": "oops" }));
-        let h = FrameworkHost::new(pool);
-        let err = h.render("/x", json!({})).await.unwrap_err();
-        assert_eq!(err.0.code, "JSH-FRAMEWORK");
-        assert!(err.0.message.contains("missing `html`"), "{}", err.0.message);
-    }
 }

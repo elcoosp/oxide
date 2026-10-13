@@ -183,6 +183,12 @@ pub enum Command {
         /// Loader data as JSON (default: `{}`).
         #[arg(long, default_value = "{}")]
         data: String,
+        /// Stream the render to stdout as chunks arrive, instead of
+        /// collecting first. Useful for large pages and for verifying that
+        /// a framework adapter's streaming path works. Output bytes are
+        /// identical to the non-streaming mode.
+        #[arg(long)]
+        stream: bool,
     },
 }
 
@@ -349,7 +355,7 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
         Command::Mcp { root } => cmd_mcp(&root, w).await,
         Command::Schema => cmd_schema(w),
         Command::Config { root, json } => cmd_config(&root, json, w).await,
-        Command::Render { root, route, url, params, data } => cmd_render(&root, &route, url.as_deref(), &params, &data, w).await,
+        Command::Render { root, route, url, params, data, stream } => cmd_render(&root, &route, url.as_deref(), &params, &data, stream, w).await,
     }
     .map_err(|e| {
         tracing::error!(error = %e, "command failed");
@@ -2102,6 +2108,7 @@ async fn cmd_render(
     url: Option<&str>,
     params: &[String],
     data_json: &str,
+    stream: bool,
     w: Writer<'_>,
 ) -> anyhow::Result<i32> {
     use oxide_jshost::{FrameworkHost, JsHost, LoaderHost, NodeHost, PoolConfig};
@@ -2207,12 +2214,50 @@ async fn cmd_render(
 
     let fw = FrameworkHost::new(pool);
     let path_str = config_path.to_string_lossy().to_string();
-    let html = fw
-        .render(&path_str, input)
-        .await
-        .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
 
-    outln!(w, "{html}");
+    if stream {
+        // Exercise the streaming trait: pull chunks as they arrive and
+        // write each one to the writer immediately. Output bytes are
+        // identical to the non-streaming path; the difference is that a
+        // slow upstream would start producing output before the whole
+        // payload is ready.
+        //
+        // FrameworkHost::render_streaming returns a CallStream — an enum
+        // over either one Bytes (Complete) or an mpsc Receiver<Result<Bytes>>
+        // (Chunked). Iterate the two variants directly rather than wrapping
+        // it as a Stream.
+        let mut s = fw
+            .render_streaming(&path_str, input)
+            .await
+            .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+        match &mut s {
+            oxide_jshost::CallStream::Complete(bytes) => {
+                w.write_all(bytes)
+                    .map_err(|e| anyhow::anyhow!("write stdout: {e}"))?;
+                w.flush().map_err(|e| anyhow::anyhow!("flush stdout: {e}"))?;
+            }
+            oxide_jshost::CallStream::Chunked(rx) => {
+                while let Some(item) = rx.recv().await {
+                    let bytes =
+                        item.map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+                    w.write_all(&bytes)
+                        .map_err(|e| anyhow::anyhow!("write stdout: {e}"))?;
+                    w.flush().map_err(|e| anyhow::anyhow!("flush stdout: {e}"))?;
+                }
+            }
+        }
+        // Match the non-streaming path's trailing newline. `outln!` appends
+        // `\n`; the stream path writes bytes directly, so add it here.
+        w.write_all(b"\n")
+            .map_err(|e| anyhow::anyhow!("write stdout: {e}"))?;
+        w.flush().map_err(|e| anyhow::anyhow!("flush stdout: {e}"))?;
+    } else {
+        let html = fw
+            .render(&path_str, input)
+            .await
+            .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+        outln!(w, "{html}");
+    }
     Ok(0)
 }
 

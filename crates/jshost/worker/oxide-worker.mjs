@@ -145,25 +145,27 @@ async function dispatchFrameworkRender(id, input) {
       return;
     }
     const stream = framework.render(renderInput ?? {});
-    // Collect the adapter's ReadableStream<Uint8Array> into one JSON blob
-    // `{"html":"..."}` — but emit it as CHUNKED frames so the wire format is
-    // future-proof for streaming-capable adapters (React's
-    // renderToPipeableStream, Solid's resources). When the adapter streams,
-    // the first chunk arrives before the last frame is produced, so a future
-    // pipeline step can flush early.
+    // Emit the adapter's ReadableStream<Uint8Array> as chunked frames of
+    // RAW HTML bytes — no JSON envelope. Rust consumers (render for the
+    // collected shape, render_streaming for the incremental shape) both
+    // get the same HTML; the difference is only whether they buffer.
     //
     // Chunk size: 8 KB. Small enough for reasonable TTFB once we wire a
-    // streaming adapter, large enough that per-frame base64 + JSON framing
-    // overhead (~33%) stays negligible.
-    const chunks = [];
-    for await (const chunk of stream) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-    const html = Buffer.concat(chunks).toString("utf8");
-    const jsonBytes = Buffer.from(JSON.stringify({ html }), "utf8");
+    // truly streaming adapter (React 19, Solid resources), large enough
+    // that per-frame base64 + JSON framing overhead stays negligible.
     const CHUNK = 8192;
-    for (let i = 0; i < jsonBytes.length; i += CHUNK) {
-      const slice = jsonBytes.subarray(i, Math.min(i + CHUNK, jsonBytes.length));
+    // Adapters may yield one Buffer, many small chunks, or a mix. Concatenate
+    // for the current single-shot path; the true-streaming future will push
+    // each adapter chunk through as its own call_chunk frame. This keeps
+    // wire-level behaviour identical for the collect path while the bytes
+    // carried are now raw HTML.
+    const parts = [];
+    for await (const chunk of stream) {
+      parts.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const htmlBytes = Buffer.concat(parts);
+    for (let i = 0; i < htmlBytes.length; i += CHUNK) {
+      const slice = htmlBytes.subarray(i, Math.min(i + CHUNK, htmlBytes.length));
       out({ t: "call_chunk", id, data_b64: b64(slice) });
     }
     out({ t: "call_end", id });
