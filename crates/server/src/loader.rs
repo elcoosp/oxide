@@ -1,0 +1,179 @@
+//! Framework-agnostic loader runner hook (spec §9.1).
+//!
+//! The HTTP pipeline uses a `LoaderRunner` to evaluate a route's
+//! `page.server.ts` `load(event)` function before dispatching a render. The
+//! trait lives here — in the server crate — so that the pipeline never
+//! depends on `oxide-jshost` (which would couple the HTTP layer to Node).
+//! The concrete `LoaderRunner` is provided by the CLI shim, which wraps
+//! `oxide_jshost::LoaderHost`.
+//!
+//! Layering mirrors `PageRenderer`:
+//!
+//! ```text
+//!   crates/server         →  trait LoaderRunner, LoaderRunInput, LoaderOutput (this file)
+//!        ↑ impl
+//!   crates/cli             →  AdapterLoader(Arc<LoaderHost>)
+//!        ↑ uses
+//!   build_dispatch(...)     →  Option<Arc<dyn LoaderRunner>> per request
+//! ```
+//!
+//! Errors and redirects: a `load` that throws `error(404)` or
+//! `redirect('/login')` returns `LoaderOutput` with a non-200 status and
+//! (for redirects) a `location`. The pipeline short-circuits on non-200
+//! and writes the corresponding response.
+
+use crate::Result;
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::BTreeMap;
+
+/// Per-request input to a loader (spec §9.1 LoadEvent subset).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LoaderRunInput {
+    /// Absolute filesystem path to the module exporting `load`.
+    pub module_path: String,
+    /// Matched route id (e.g. `routes/blog/[slug]`).
+    pub route: String,
+    /// Request URL (path + query).
+    pub url: String,
+    /// HTTP method.
+    pub method: String,
+    /// URL params (path segments).
+    pub params: BTreeMap<String, String>,
+    /// Request headers (ordered; case-insensitive lookup by consumers).
+    pub headers: Vec<(String, String)>,
+}
+
+impl LoaderRunInput {
+    /// A minimal input for the given module + route + url. Method is GET,
+    /// params empty, headers empty.
+    pub fn new(
+        module_path: impl Into<String>,
+        route: impl Into<String>,
+        url: impl Into<String>,
+    ) -> Self {
+        Self {
+            module_path: module_path.into(),
+            route: route.into(),
+            url: url.into(),
+            method: "GET".into(),
+            params: BTreeMap::new(),
+            headers: Vec::new(),
+        }
+    }
+}
+
+/// Result of running a loader. `status` is 200 on success, 3xx on redirect,
+/// 4xx/5xx on `error(...)`. `location` is set only for redirects. `data`
+/// is the (JSON) loader return value; on error/redirect it carries at most
+/// a `message` for diagnostics.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LoaderOutput {
+    pub status: u16,
+    pub location: Option<String>,
+    pub data: Value,
+}
+
+impl LoaderOutput {
+    /// Success with the given data.
+    pub fn ok(data: Value) -> Self {
+        Self { status: 200, location: None, data }
+    }
+    /// Whether this output should short-circuit the render (non-200).
+    pub fn short_circuits(&self) -> bool {
+        self.status < 200 || self.status >= 300
+    }
+}
+
+/// Object-safe trait the pipeline holds behind `Arc<dyn LoaderRunner>`.
+#[async_trait]
+pub trait LoaderRunner: Send + Sync {
+    /// Backend name (`node` for the worker-backed runner; `fake` in tests).
+    fn name(&self) -> &str;
+    /// Run the loader for one request. `Ok(LoaderOutput)` even for
+    /// loader-thrown `error()` / `redirect()` — those are captured in the
+    /// output's status/location, not surfaced as `Err`. `Err` means the
+    /// runner itself failed (module not found, syntax error, worker crash).
+    async fn run(&self, input: LoaderRunInput) -> Result<LoaderOutput>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    struct OkLoader;
+    #[async_trait]
+    impl LoaderRunner for OkLoader {
+        fn name(&self) -> &str { "ok" }
+        async fn run(&self, input: LoaderRunInput) -> Result<LoaderOutput> {
+            Ok(LoaderOutput::ok(serde_json::json!({
+                "route": input.route,
+                "slug": input.params.get("slug").cloned().unwrap_or_default(),
+            })))
+        }
+    }
+
+    struct HttpErrLoader;
+    #[async_trait]
+    impl LoaderRunner for HttpErrLoader {
+        fn name(&self) -> &str { "http-err" }
+        async fn run(&self, _input: LoaderRunInput) -> Result<LoaderOutput> {
+            Ok(LoaderOutput { status: 404, location: None, data: serde_json::json!({"message":"not found"}) })
+        }
+    }
+
+    #[test]
+    fn input_new_defaults_shape() {
+        let i = LoaderRunInput::new("/abs/page.server.ts", "routes/index", "/");
+        assert_eq!(i.module_path, "/abs/page.server.ts");
+        assert_eq!(i.route, "routes/index");
+        assert_eq!(i.url, "/");
+        assert_eq!(i.method, "GET");
+        assert!(i.params.is_empty());
+        assert!(i.headers.is_empty());
+    }
+
+    #[test]
+    fn ok_short_circuits_is_false() {
+        assert!(!LoaderOutput::ok(serde_json::json!({})).short_circuits());
+    }
+
+    #[test]
+    fn non_200_short_circuits() {
+        assert!(LoaderOutput { status: 404, location: None, data: serde_json::json!({}) }.short_circuits());
+        assert!(LoaderOutput { status: 303, location: Some("/".into()), data: serde_json::json!({}) }.short_circuits());
+        assert!(LoaderOutput { status: 500, location: None, data: serde_json::json!({}) }.short_circuits());
+    }
+
+    #[tokio::test]
+    async fn trait_is_object_safe() {
+        let r: Arc<dyn LoaderRunner> = Arc::new(OkLoader);
+        assert_eq!(r.name(), "ok");
+        let mut input = LoaderRunInput::new("/m.ts", "routes/blog/[slug]", "/blog/hi");
+        input.params.insert("slug".into(), "hi".into());
+        let out = r.run(input).await.unwrap();
+        assert_eq!(out.status, 200);
+        assert_eq!(out.data["route"], "routes/blog/[slug]");
+        assert_eq!(out.data["slug"], "hi");
+    }
+
+    #[tokio::test]
+    async fn error_and_redirect_are_ok_not_err() {
+        let r: Arc<dyn LoaderRunner> = Arc::new(HttpErrLoader);
+        let out = r.run(LoaderRunInput::new("/m.ts", "routes/x", "/x")).await.unwrap();
+        assert_eq!(out.status, 404);
+        assert!(out.short_circuits());
+    }
+
+    #[test]
+    fn input_round_trips_through_serde() {
+        let mut i = LoaderRunInput::new("/abs.ts", "routes/blog/[slug]", "/blog/hi");
+        i.params.insert("slug".into(), "hi".into());
+        i.headers.push(("cookie".into(), "a=b".into()));
+        let s = serde_json::to_string(&i).unwrap();
+        let back: LoaderRunInput = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, i);
+    }
+}
