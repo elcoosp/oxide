@@ -672,11 +672,22 @@ fn oxc_transformer_use_cache_multiple_tags_via_ast() {
         dev: false,
     };
     let out = oxc_transform(input);
+    // NOTE: output now runs through `oxc_codegen` (lowering pass), which
+    // normalises quote style and re-flows arrays. Assert on semantics: all
+    // three tags must survive the transform, with the `tags:` option present.
     assert!(
-        out.code.contains("tags: ['a', \"b\", 'c']"),
-        "all three tags must be preserved with original quotes:\n{}",
+        out.code.contains("tags:"),
+        "tags option must be present in lowered output:\n{}",
         out.code
     );
+    for tag in ["a", "b", "c"] {
+        assert!(
+            out.code.contains(&format!("\"{tag}\"")),
+            "tag `{tag}` missing from lowered output:\n{}",
+            out.code
+        );
+    }
+    assert!(out.code.contains("return 1;"));
 }
 
 #[test]
@@ -696,6 +707,13 @@ fn oxc_transformer_use_cache_arrow_with_tags_via_ast() {
         dev: false,
     };
     let out = oxc_transform(input);
-    assert!(out.code.contains("tags: ['home']"), "output:\n{}", out.code);
+    // NOTE: output now runs through `oxc_codegen` (lowering pass), which
+    // normalises quote style. Assert on semantics, not byte layout.
+    assert!(out.code.contains("tags:"), "output:\n{}", out.code);
+    assert!(
+        out.code.contains("\"home\""),
+        "home tag missing from output:\n{}",
+        out.code
+    );
     assert!(out.code.contains("return 42;"));
 }

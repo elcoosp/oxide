@@ -22,7 +22,10 @@ mod rolldown_backend;
 mod prebundle;
 
 use blake3::Hasher;
-use oxide_compiler::{is_server_module_path, scan_import_spans};
+use oxide_compiler::{
+    is_server_module_path, scan_import_spans, Env as CompilerEnv, OxcTransformer,
+    TransformInput, Transformer as _,
+};
 use oxide_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -529,9 +532,11 @@ impl ChunkBundler {
                     continue;
                 }
                 let m = &by_path[p];
-                let src =
+                let rewritten =
                     rewrite_imports(&m.source, &b.name, m, options, &chunk_of, &file_of, self);
-                body.push_str(&src);
+                let lowered =
+                    lower_module_to_js(&rewritten, &m.resolved, options.env, &mut diagnostics);
+                body.push_str(&lowered);
                 if !body.ends_with('\n') {
                     body.push('\n');
                 }
@@ -793,6 +798,59 @@ fn dfs_chunks(
 /// Rewrite import statements of `m` for chunk assembly: imports resolved to the
 /// same chunk are removed (co-located top-level declarations provide the bindings),
 /// imports resolved to other chunks are rewritten to that chunk's file.
+/// Stable build secret used by the compiler's server-fn stub pass. Follow-up:
+/// thread a per-build secret through `BundleOptions` once the CLI emits one.
+const BUNDLER_BUILD_SECRET: &str = "oxide-bundler-build-secret-v0";
+
+fn lang_of(path: &Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("ts") => "ts",
+        Some("tsx") => "tsx",
+        Some("jsx") => "jsx",
+        Some("mjs") | Some("js") => "mjs",
+        _ => "mjs",
+    }
+}
+
+fn compiler_env(env: BundleEnv) -> CompilerEnv {
+    match env {
+        BundleEnv::Client => CompilerEnv::Client,
+        BundleEnv::Ssr => CompilerEnv::Ssr,
+        BundleEnv::Edge => CompilerEnv::Edge,
+    }
+}
+
+/// Lower a rewritten TS/JSX module to plain JavaScript via the Oxc-backed
+/// compiler transform. Diagnostics (parse errors, stub rewrites) are pushed
+/// into the bundle's diagnostic vector; on failure the original source is
+/// returned unchanged so the pipeline continues (and the diagnostic records
+/// why the emitted chunk may be invalid).
+fn lower_module_to_js(
+    code: &str,
+    resolved: &Path,
+    env: BundleEnv,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> String {
+    let input = TransformInput {
+        path: resolved.to_string_lossy().to_string(),
+        code: code.to_string(),
+        env: compiler_env(env),
+        lang: lang_of(resolved),
+        build_secret: BUNDLER_BUILD_SECRET.to_string(),
+        dev: false,
+    };
+    match OxcTransformer.transform(&input) {
+        Ok(out) => {
+            diagnostics.extend(out.diagnostics);
+            out.code
+        }
+        Err(e) => {
+            diagnostics.push(e.0);
+            code.to_string()
+        }
+    }
+}
+
 fn rewrite_imports(
     code: &str,
     own_chunk: &str,

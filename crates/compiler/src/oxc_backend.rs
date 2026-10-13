@@ -33,7 +33,7 @@ impl Transformer for OxcTransformer {
         let source_type = source_type_for(input.lang);
         let parsed = Parser::new(&allocator, &input.code, source_type).parse();
 
-        let diagnostics: Vec<Diagnostic> = parsed
+        let mut diagnostics: Vec<Diagnostic> = parsed
             .diagnostics
             .iter()
             .map(|e| {
@@ -92,14 +92,52 @@ impl Transformer for OxcTransformer {
             code = inject_hmr_boundary(&code, &input.path, input.lang)?;
         }
 
+        let lowered = match lower_to_js(&code, input.lang, &input.path) {
+            Ok(s) => s,
+            Err(e) => {
+                diagnostics.push(e.0);
+                code
+            }
+        };
         Ok(TransformOutput {
-            code,
+            code: lowered,
             scan,
             directives,
             server_fns,
             diagnostics,
         })
     }
+}
+
+fn lower_to_js(code: &str, lang: &'static str, path: &str) -> Result<String> {
+    let allocator = Allocator::default();
+    let source_type = source_type_for(lang);
+    let parsed = Parser::new(&allocator, code, source_type).parse();
+    if !parsed.diagnostics.is_empty() {
+        return Err(crate::err(
+            "CMP-PARSE",
+            format!(
+                "cannot lower `{path}` to JavaScript: {} parse error(s)",
+                parsed.diagnostics.len()
+            ),
+        ));
+    }
+    let mut program = parsed.program;
+
+    let semantic_ret = oxc_semantic::SemanticBuilder::new().build(&program);
+    let scoping = semantic_ret.semantic.into_scoping();
+
+    let options = oxc_transformer::TransformOptions {
+        typescript: oxc_transformer::TypeScriptOptions::default(),
+        jsx: oxc_transformer::JsxOptions::enable(),
+        ..Default::default()
+    };
+    let transformer =
+        oxc_transformer::Transformer::new(&allocator, std::path::Path::new(path), &options);
+    let _ = transformer.build_with_scoping(scoping, &mut program);
+
+    let ret = oxc_codegen::Codegen::new().build(&program);
+    Ok(ret.code)
 }
 
 fn source_type_for(lang: &str) -> SourceType {
