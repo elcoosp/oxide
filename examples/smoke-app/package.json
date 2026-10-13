@@ -1,0 +1,13 @@
+{
+  "name": "smoke-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Hand-rolled end-to-end fixture: a minimal app using the local workspace packages. Equivalent to what `pnpm create oxide` scaffolds.",
+  "dependencies": {
+    "@oxide/react": "workspace:*",
+    "oxide": "workspace:*",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  }
+}
