@@ -856,6 +856,31 @@ pub struct Pipeline {
     /// Optional inspector provider (§13.4). When `Some`, `/__oxide` and
     /// `/__oxide/state` return the inspector snapshot. Never set in production.
     pub inspector: Option<Arc<dyn InspectorSnapshot>>,
+    /// Optional page renderer (§7). When `Some`, `serve_request` dispatches
+    /// page renders to it instead of the neutral-IR path. Attached via
+    /// `Pipeline::with_page_renderer` (see the CLI wiring). `None` preserves
+    /// the legacy behavior for builds without a framework adapter.
+    pub page_renderer: Option<Arc<dyn crate::PageRenderer>>,
+}
+
+impl Default for Pipeline {
+    /// A no-op pipeline: no rules, no assets, no metrics, no renderer.
+    /// Used as a starting point before chaining `with_*` builders and in
+    /// tests that only care about a specific layer of the pipeline.
+    fn default() -> Self {
+        Self {
+            rules: Default::default(),
+            assets: None,
+            limits: Default::default(),
+            security: Default::default(),
+            rate_limiter: std::sync::Arc::new(Default::default()),
+            health_path: String::new(),
+            metrics_path: String::new(),
+            metrics: None,
+            inspector: None,
+            page_renderer: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -949,6 +974,20 @@ impl Pipeline {
     pub fn with_inspector(mut self, insp: Arc<dyn InspectorSnapshot>) -> Self {
         self.inspector = Some(insp);
         self
+    }
+
+    /// Attach a page renderer (§7). When set, `serve_request` dispatches page
+    /// renders to it. When `None` (default), the pipeline preserves the
+    /// legacy neutral-IR behavior. Chainable.
+    pub fn with_page_renderer(mut self, r: Arc<dyn crate::PageRenderer>) -> Self {
+        self.page_renderer = Some(r);
+        self
+    }
+
+    /// The attached page renderer, if any. Used by the inspector and by
+    /// `serve_request` to decide the render path.
+    pub fn page_renderer(&self) -> Option<&Arc<dyn crate::PageRenderer>> {
+        self.page_renderer.as_ref()
     }
 
     /// Handle one request through the native (no-JS) prefix of the pipeline.
