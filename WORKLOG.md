@@ -220,3 +220,61 @@ Both E2E tests are `#[ignore]`d by default (they spawn Node). Run with
 - Content-hashed build output, streaming through the pool (currently the
   worker collects the whole stream into one HTML string), and per-request
   caching in the dev server are follow-ups.
+
+---
+
+## Session 2 — framework adapter pipeline wired end-to-end
+
+**Milestone:** the §6.3 / §7 read path is now fully wired from `oxide dev`
+through to the real framework renderer. When a project has an
+`oxide.config.{ts,mjs,js}`, the dev server dispatches page renders through
+the config's `FrameworkAdapter` (real `react-dom/server`,
+`@vue/server-renderer`, `svelte/server`, or `@solidjs/web`).
+
+What landed:
+
+- **`oxide-server::PageRenderer`** — framework-agnostic trait the pipeline
+  dispatches to. `PageRenderInput` mirrors `packages/oxide/src/types.ts`
+  `RenderInput` minus the ODS blob. `Pipeline::with_page_renderer` chains;
+  `Pipeline::default()` no-ops.
+- **`oxide-jshost::FrameworkHost`** — Rust-side loader + render dispatcher
+  over the Node worker. Two ops: `framework:load` (descriptor extraction)
+  and `framework:render` (dispatch + stream drain). Five unit tests, one
+  end-to-end test against a real `.mjs` config (`framework_host_e2e.rs`).
+- **`oxide-jshost::FrameworkHostRenderer`** — eager-load wrapper: loads the
+  descriptor once at construction, then dispatches per request. Six unit
+  tests + the two E2E tests above.
+- **`oxide-cli::framework_shim::AdapterPageRenderer`** — bridges jshost's
+  `FrameworkRenderer` to `oxide_server::PageRenderer`, converting the typed
+  params map to JSON. Five unit tests with a fake inner renderer.
+- **`oxide-cli::build_dispatch`** — extracted the inline dispatch closure
+  from `start_dev_server_full` into a top-level fn that takes
+  `Option<Arc<dyn PageRenderer>>` and branches: renderer present → dispatch
+  via it; else IR placeholder.
+- **`cmd_dev`** — now computes `page_renderer` from `oxide.config` before
+  starting the server. Config present + loads → attached (banner line);
+  fails → warning + IR fallback; absent → IR path.
+- **Upstream migrations** (this session, earlier slices):
+  - React `19.0.0 → 19.3.0` (stable)
+  - Vue `3.5.x → 3.6.0-rc.11` (Vapor Mode + reactivity rewrite)
+  - Svelte `5.x → 5.57.2`
+  - Solid `1.9 → 2.0.0-rc.14` + `@solidjs/web` (async-native reactivity)
+
+`oxide dev` now prints `framework renderer: react (/path/to/oxide.config.mjs)`
+when the adapter is live, and `warn: framework renderer not wired: <reason>`
+when it fails to load.
+
+What remains for full coverage:
+
+- **`cmd_build` / `cmd_start`** still pass `None` for `page_renderer`.
+  Same pattern as `cmd_dev`, needs the same wiring plus a decision about
+  caching the descriptor across requests.
+- **The Node worker collects** the adapter's `ReadableStream<Uint8Array>`
+  into one HTML string. Chunked streaming through the pool (so SSR flushes
+  as it's produced) is a follow-up.
+- **HMR refresh** doesn't yet notify the renderer; the dev server's watch
+  loop restarts the pipeline, but the adapter stays loaded in the Node
+  worker's module cache.
+- **The `oxide render` subcommand** uses `FrameworkHost::render` directly;
+  it could be refactored to route through the shim + `AdapterPageRenderer`
+  for a single code path.
