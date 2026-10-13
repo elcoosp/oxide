@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 pub mod mcp;
 
+pub mod framework_shim;
 /// Oxide CLI (spec §19.1).
 #[derive(Debug, Parser)]
 #[command(
@@ -559,13 +560,36 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             );
         }
     }
+    // §7: try to attach a framework adapter renderer. The config file's
+    // presence signals intent; if it exists but Node or the adapter load
+    // fails, warn and fall back to the IR path so dev stays usable.
+    let page_renderer: Option<std::sync::Arc<dyn oxide_server::PageRenderer>> =
+        match find_config_file(&rootp) {
+            Ok(config_path) => match framework_shim::build_adapter_renderer(&config_path).await {
+                Ok(r) => {
+                    outln!(
+                        w,
+                        "framework renderer: {} ({})",
+                        r.name(),
+                        config_path.display()
+                    );
+                    Some(r)
+                }
+                Err(e) => {
+                    outln!(w, "warn: framework renderer not wired: {e}");
+                    None
+                }
+            },
+            Err(_) => None,
+        };
+
     let started = start_dev_server_full(
         root,
         flags.port,
         bind_ip,
         tls_config,
         proxy_rules,
-        None, // §7 page_renderer: wired from oxide.config when the CLI loads it.
+        page_renderer,
     )
     .await?;
     let local = oxide_dev::local_url(started.addr.port(), flags.https);
