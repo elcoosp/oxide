@@ -387,8 +387,16 @@ fn load_config_strict(root: &Path, mode: &str) -> anyhow::Result<OxideConfig> {
 }
 
 fn scan_routes(root: &Path, cfg: &OxideConfig) -> anyhow::Result<RouteTree> {
-    let dir = root.join(&cfg.routes.dir);
-    RouteTree::scan_with_config(root, Some(&dir))
+    // Canonicalize `root` first so `dir` is absolute. `RouteTree::scan_with_config`
+    // joins the override onto `dir`; if the override is already root-relative
+    // (which it is when `root` itself is relative), the join produces
+    // `root/root/src/routes`. An absolute override short-circuits that:
+    // `PathBuf::join` returns the RHS unchanged when it's absolute.
+    let root_abs = root
+        .canonicalize()
+        .unwrap_or_else(|_| root.to_path_buf());
+    let dir = root_abs.join(&cfg.routes.dir);
+    RouteTree::scan_with_config(&root_abs, Some(&dir))
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))
 }
 
@@ -479,7 +487,7 @@ fn bundle_env_options(
 /// `oxide dev` (§13). `--once` runs a single watch poll (test hook); otherwise the
 /// 200 ms poll loop runs until Ctrl-C.
 async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyhow::Result<i32> {
-    let rootp = PathBuf::from(root);
+    let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
     let cfg = load_config_or_default(&rootp, "development");
     let tree = scan_routes(&rootp, &cfg)?;
     // Prebundle decision (§6.5): key by lockfile hash.
@@ -803,9 +811,15 @@ async fn write_prerender(
     // into PageRenderInput.data; they now run the real `load()`.
     let mut data = serde_json::Value::Object(Default::default());
     if let (Some(loader), Some(mp)) = (loader_runner, module_path) {
+        // Match the route-id normalization the renderer will do so user
+        // loaders see the same string in `event.route`.
+        let route_for_loader = route_id
+            .strip_suffix("/page")
+            .unwrap_or(route_id)
+            .to_string();
         let mut input = oxide_server::LoaderRunInput::new(
             mp.to_string_lossy().to_string(),
-            route_id,
+            route_for_loader,
             url_path,
         );
         input.params = params.clone();
@@ -849,7 +863,15 @@ async fn write_prerender(
     }
 
     let shell = if let Some(renderer) = page_renderer {
-        let mut input = oxide_server::PageRenderInput::new(route_id, url_path);
+        // §7: the adapter's `componentFor` is keyed on the route directory
+        // (`routes/index`), not the router's file-role id (`routes/index/page`).
+        // Strip the trailing `/page` so the lookup matches — the same
+        // normalization build_dispatch performs for the request path.
+        let route_for_render = route_id
+            .strip_suffix("/page")
+            .unwrap_or(route_id)
+            .to_string();
+        let mut input = oxide_server::PageRenderInput::new(route_for_render, url_path);
         for (k, v) in params {
             input.params.insert(k.clone(), v.clone());
         }
@@ -881,7 +903,11 @@ async fn write_prerender(
 }
 
 async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<i32> {
-    let rootp = PathBuf::from(root);
+    // Canonicalize once at entry. Downstream joins (routes scan, bundler,
+    // write_prerender) all expect absolute paths so a nested `root.join`
+    // cannot double the prefix — `PathBuf::join` returns the RHS unchanged
+    // when it is absolute.
+    let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
     let cfg = load_config_strict(&rootp, "production")?;
     let tree = scan_routes(&rootp, &cfg)?;
     let dist = rootp.join("dist");
@@ -1090,6 +1116,19 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             }
         }
     }
+
+    // Persist the enriched manifest. `server_manifest` was loaded from
+    // disk, modified above (render_mode + prerendered inference), and
+    // handed to `emit()` — but the adapters write to `dist/deploy/`, not
+    // `dist/server/`, so without this write the enriched version lives
+    // only in memory. Downstream consumers (the conformance suite, the
+    // E2E tests, custom tooling) read `dist/server/server.manifest.json`
+    // and need to see the same enriched data.
+    std::fs::write(
+        server_out.join("server.manifest.json"),
+        serde_json::to_string_pretty(&server_manifest)
+            .map_err(|e| anyhow::anyhow!("serialize enriched manifest: {e}"))?,
+    )?;
 
     let target = if r#static {
         oxide_adapters::Target::Static
@@ -1584,7 +1623,7 @@ async fn cmd_serve(
     w: Writer<'_>,
 ) -> anyhow::Result<i32> {    // §7 / §9.1: build the framework stack (renderer + loader) for the
     // production server. Same wiring as `cmd_dev`.
-    let rootp = std::path::PathBuf::from(root);
+    let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| std::path::PathBuf::from(root));
     let config_path_opt = find_config_file(&rootp).ok();
     let stack = framework_shim::build_framework_stack(config_path_opt.as_deref()).await;
     if let Some(name) = stack.renderer_name() {

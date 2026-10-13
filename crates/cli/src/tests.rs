@@ -841,6 +841,79 @@ async fn dev_server_serves_smoke_app_over_http() {
     let _ = started.shutdown.send(true);
 }
 
+// ------------------------------------ oxide build against smoke-app
+
+/// The third HTML-producing command. Exercises `oxide build` on the smoke-app
+/// fixture end-to-end: bundlers run, prerender dispatches the static `/index`
+/// route through the framework adapter, the TSX loader compiles `page.tsx`,
+/// and the artifact lands at `dist/prerendered/index.html` with the user's
+/// own content.
+///
+/// `#[ignore]` — spawns a Node worker, needs workspace node_modules, and
+/// writes `dist/` under the fixture.
+#[tokio::test]
+#[ignore]
+async fn smoke_app_builds_its_own_pages() {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root");
+    let smoke = workspace.join("examples/smoke-app");
+    assert!(
+        smoke.join("oxide.config.ts").is_file(),
+        "smoke-app fixture missing at {}",
+        smoke.display()
+    );
+    let smoke_str = smoke.to_str().expect("smoke path utf-8");
+
+    let dist = smoke.join("dist");
+    let _ = std::fs::remove_dir_all(&dist);
+
+    let (code, out) = run_ok(&["oxide", "build", "--root", smoke_str]).await;
+    assert_eq!(code, 0, "build exit code; output:\n{out}");
+    assert!(out.contains("build ok"), "build summary: {out}");
+
+    // `/index` has no server module → prerendered.
+    let index_html = dist.join("prerendered/index.html");
+    assert!(
+        index_html.is_file(),
+        "prerendered/index.html must exist at {}",
+        index_html.display()
+    );
+    let html = std::fs::read_to_string(&index_html).expect("read index.html");
+    assert!(
+        html.contains(">Home</h1>"),
+        "prerendered index must contain the user's own Home page: {html}"
+    );
+    assert!(
+        html.contains("data-reactroot"),
+        "prerendered index carries the framework root marker: {html}"
+    );
+
+    // The manifest should classify `routes/index` as static.
+    let server_manifest = dist.join("server/server.manifest.json");
+    assert!(server_manifest.is_file(), "server manifest produced");
+    let manifest_json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&server_manifest).unwrap())
+            .expect("manifest parses as json");
+    let routes = manifest_json
+        .get("routes")
+        .and_then(|r| r.as_object())
+        .expect("manifest has routes object");
+    let index_entry = routes
+        .get("routes/index/page")
+        .or_else(|| routes.get("routes/index"))
+        .expect("manifest has an index route entry");
+    assert_eq!(
+        index_entry.get("render_mode").and_then(|v| v.as_str()),
+        Some("static"),
+        "index route classified static: {index_entry}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dist);
+}
+
 #[test]
 fn render_subcommand_parses_route_and_optional_flags() {
     use clap::Parser;
