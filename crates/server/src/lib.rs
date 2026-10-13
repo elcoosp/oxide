@@ -10,7 +10,9 @@
 
 pub mod metrics;
 pub mod page_renderer;
+pub mod loader;
 pub use page_renderer::{PageRenderInput, PageRenderer};
+pub use loader::{LoaderOutput, LoaderRunInput, LoaderRunner};
 pub mod trace_context;
 
 use bytes::Bytes;
