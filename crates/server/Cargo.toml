@@ -7,6 +7,7 @@ license.workspace = true
 description = "Hyper pipeline, static assets, compression, TLS, rules (spec 12, 17, D7, D13)"
 
 [dependencies]
+async-trait = { workspace = true }
 oxide-diagnostics = { workspace = true }
 oxide-cache = { workspace = true }
 oxide-router = { workspace = true }
