@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 
 pub mod mcp;
 
-pub mod framework_shim;
+pub mod precompile;
+mod framework_shim;
 pub mod loader_shim;
 /// Oxide CLI (spec §19.1).
 #[derive(Debug, Parser)]
@@ -474,6 +475,7 @@ fn bundle_env_options(
     env: oxide_bundler::BundleEnv,
     entries: BTreeMap<String, PathBuf>,
     out_dir: PathBuf,
+    precompiled: BTreeMap<PathBuf, String>,
 ) -> oxide_bundler::BundleOptions {
     // §9.4 per-build secret: fresh on each invocation so the unguessable
     // server-fn URL prefix rotates between deployments.
@@ -504,6 +506,7 @@ fn bundle_env_options(
         define: BTreeMap::new(),
         tsconfig_paths: BTreeMap::new(),
         build_secret,
+        precompiled,
     }
 }
 
@@ -961,11 +964,29 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     use oxide_bundler::Bundler as _;
     let client_out = dist.join("client");
     let server_out = dist.join("server");
+
+    // §6.3 precompile pass: run Vue / Svelte SFCs through the tooling pool
+    // once per env, then hand the emitted JS to the bundler via
+    // `BundleOptions::precompiled`. When the pool is unavailable (no Node,
+    // or a project with no SFCs) the map is empty and the bundler falls back
+    // to its own Oxc lowering for TS/TSX.
+    let client_precompiled =
+        precompile::precompile_entries(stack.pool.as_ref(), &entries, "dom").await;
+    let server_precompiled =
+        precompile::precompile_entries(stack.pool.as_ref(), &entries, "ssr").await;
+    if !client_precompiled.is_empty() {
+        outln!(w, "precompiled {} SFC(s) for client", client_precompiled.len());
+    }
+    if !server_precompiled.is_empty() {
+        outln!(w, "precompiled {} SFC(s) for server", server_precompiled.len());
+    }
+
     let _client = bundler
         .bundle(&bundle_env_options(
             oxide_bundler::BundleEnv::Client,
             entries.clone(),
             client_out.clone(),
+            client_precompiled,
         ))
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
     let _server = bundler
@@ -973,6 +994,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             oxide_bundler::BundleEnv::Ssr,
             entries.clone(),
             server_out.clone(),
+            server_precompiled,
         ))
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
     // The bundler writes client.manifest.json / server.manifest.json into the out dirs.

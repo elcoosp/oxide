@@ -88,6 +88,12 @@ pub struct BundleOptions {
     /// bundler derives a deterministic fallback from the entry set when
     /// empty so tests remain reproducible.
     pub build_secret: String,
+    /// §6.3 precompiled sources: canonical absolute path → plain JS/TS
+    /// produced by the tooling pool (`@vue/compiler-sfc`, `svelte/compiler`,
+    /// `babel-preset-solid`). The CLI populates this once per env before
+    /// calling `bundle`. When a module's path appears here, the bundler
+    /// uses the provided source and skips the disk read + the SFC refusal.
+    pub precompiled: BTreeMap<PathBuf, String>,
 }
 
 /// A resolved module in the graph.
@@ -268,37 +274,48 @@ impl ChunkBundler {
             if !seen.insert(rp.clone()) {
                 continue;
             }
-            let Ok(source) = std::fs::read_to_string(&rp) else {
-                diagnostics.push(Diagnostic::error(
-                    "BLD-RESOLVE",
-                    format!("cannot read module `{}`", rp.display()),
-                ));
-                continue;
+            // §6.3: Vue/Svelte/Solid files must be lowered by their upstream
+            // compilers (`@vue/compiler-sfc`, `svelte/compiler`,
+            // `babel-preset-solid`) through the tooling pool (§4.7) before
+            // the bundler can consume them. The CLI runs that pass and hands
+            // the results in via `options.precompiled`. When a `.vue` /
+            // `.svelte` file arrives here without a precompiled entry, the
+            // caller skipped that pass — record a diagnostic naming the
+            // reason rather than silently emitting the raw source.
+            let source = if let Some(s) = options.precompiled.get(&rp) {
+                s.clone()
+            } else {
+                match std::fs::read_to_string(&rp) {
+                    Ok(s) => {
+                        if let Some(fw) = unsupported_framework_ext(&rp) {
+                            diagnostics.push(
+                                Diagnostic::error(
+                                    "BLD-FRAMEWORK",
+                                    format!(
+                                        "`{}` is a {fw} single-file component and was not \
+                                         precompiled — the caller must run the tooling-pool \
+                                         pass before invoking the bundler",
+                                        rp.display()
+                                    ),
+                                )
+                                .with_fix(
+                                    "call oxide_bundler's precompile step or route the \
+                                     build through `oxide build`, which does so automatically",
+                                ),
+                            );
+                            continue;
+                        }
+                        s
+                    }
+                    Err(_) => {
+                        diagnostics.push(Diagnostic::error(
+                            "BLD-RESOLVE",
+                            format!("cannot read module `{}`", rp.display()),
+                        ));
+                        continue;
+                    }
+                }
             };
-            // §6.3: Vue/Svelte SFCs must be lowered by their upstream compilers
-            // (`@vue/compiler-sfc`, `svelte/compiler`) via the tooling pool
-            // (§4.7) before the bundler can treat them as plain JS. The
-            // bundler is synchronous and has no access to the worker, so it
-            // refuses loudly instead of emitting the raw source and letting
-            // the deploy artifact fail on first `import`.
-            if let Some(fw) = unsupported_framework_ext(&rp) {
-                diagnostics.push(
-                    Diagnostic::error(
-                        "BLD-FRAMEWORK",
-                        format!(
-                            "`{}` is a {fw} single-file component; the bundler needs it \
-                             precompiled to JS by the tooling pool before it can be bundled",
-                            rp.display()
-                        ),
-                    )
-                    .with_fix(
-                        "run the build through the CLI (`oxide build`), which routes \
-                         .vue/.svelte files through the tooling pool, or emit a \
-                         precompiled .js file and import that instead",
-                    ),
-                );
-                continue;
-            }
             let hash = blake3::hash(source.as_bytes()).to_hex().to_string();
             let is_css = rp.extension().is_some_and(|e| e == "css");
             let is_asset = spec.contains('?') || is_css;

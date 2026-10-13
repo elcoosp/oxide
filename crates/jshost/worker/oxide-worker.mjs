@@ -67,6 +67,72 @@ function loadModule(name) {
   return modCache.get(name);
 }
 
+// ---------------------------------------------------------------------------
+// §6.3 SFC compilation ops.
+//
+// These are custom ops rather than `tooling:module` calls because the SFC
+// compiler APIs are stateful multi-step (parse → compileScript /
+// compileTemplate) and their intermediate results are not cleanly
+// JSON-serializable. Running the whole pipeline in-process avoids the
+// round-trip and keeps the tooling-pool protocol generic.
+// ---------------------------------------------------------------------------
+
+async function dispatchVueCompile(id, input) {
+  const { source, filename } = input.payload ?? {};
+  if (typeof source !== "string" || typeof filename !== "string") {
+    callErr(id, "JSH-VUE", "vue-compile requires {source, filename}");
+    return;
+  }
+  let vue;
+  try { vue = require("@vue/compiler-sfc"); }
+  catch (e) { callErr(id, "JSH-VUE", `require(@vue/compiler-sfc): ${e.message}`); return; }
+  const parsed = vue.parse(source, { filename });
+  if (parsed.errors && parsed.errors.length > 0) {
+    callErr(id, "JSH-VUE", `vue parse: ${parsed.errors[0].message ?? parsed.errors[0]}`);
+    return;
+  }
+  const shortId = Buffer.from(filename).toString("base64").replace(/[^A-Za-z0-9]/g, "").slice(0, 8);
+  let script;
+  try {
+    // `inlineTemplate: true` produces one render-function-bearing JS blob
+    // we can hand straight to the bundler. The template is compiled by
+    // `@vue/compiler-dom` internally.
+    script = vue.compileScript(parsed.descriptor, {
+      id: shortId,
+      inlineTemplate: true,
+      templateOptions: { ssr: false },
+    });
+  } catch (e) {
+    callErr(id, "JSH-VUE", `vue compileScript: ${e.message ?? e}`);
+    return;
+  }
+  callOk(id, { js: script.content });
+}
+
+async function dispatchSvelteCompile(id, input) {
+  const { source, filename, generate } = input.payload ?? {};
+  if (typeof source !== "string" || typeof filename !== "string") {
+    callErr(id, "JSH-SVELTE", "svelte-compile requires {source, filename}");
+    return;
+  }
+  let svelte;
+  try { svelte = require("svelte/compiler"); }
+  catch (e) { callErr(id, "JSH-SVELTE", `require(svelte/compiler): ${e.message}`); return; }
+  let compiled;
+  try {
+    compiled = svelte.compile(source, {
+      filename,
+      generate: generate === "ssr" ? "ssr" : "dom",
+      css: "injected",
+    });
+  } catch (e) {
+    callErr(id, "JSH-SVELTE", `svelte compile: ${e.message ?? e}`);
+    return;
+  }
+  const js = compiled?.js?.code ?? "";
+  callOk(id, { js });
+}
+
 async function dispatchToolingModule(id, input) {
   const { module: name, export: fn, args } = input.payload ?? {};
   const entry = loadModule(name);
@@ -325,6 +391,8 @@ const handlers = {
 async function handleCall(msg) {
   const { id, entry, input } = msg;
   if (entry.kind === "tooling:module") { await dispatchToolingModule(id, input); return; }
+  if (entry.kind === "tooling:vue-compile") { await dispatchVueCompile(id, input); return; }
+  if (entry.kind === "tooling:svelte-compile") { await dispatchSvelteCompile(id, input); return; }
   if (entry.kind === "framework:load") { await dispatchFrameworkLoad(id, input); return; }
   if (entry.kind === "framework:render") { await dispatchFrameworkRender(id, input); return; }
   if (entry.kind === "loader:run") { await dispatchLoaderRun(id, input); return; }
