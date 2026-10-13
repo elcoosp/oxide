@@ -790,6 +790,23 @@ async fn dev_server_serves_smoke_app_over_http() {
         "home status line: {}",
         resp_home.lines().next().unwrap_or("")
     );
+    // The home route goes through the framework renderer branch of
+    // `build_dispatch`, which streams. `to_hyper_response` skips
+    // content-length for streaming responses, so the transport falls
+    // back to chunked transfer encoding. That's the observable proof
+    // that chunk-level delivery reached the wire, not just the trait.
+    assert!(
+        !resp_home.to_lowercase().contains("content-length:"),
+        "streaming response must NOT set content-length; got:\n{}",
+        resp_home
+    );
+    // Chunked responses announce themselves; hyper uses this encoding
+    // automatically when the body has unknown length.
+    assert!(
+        resp_home.to_lowercase().contains("transfer-encoding: chunked"),
+        "streaming response must use chunked transfer encoding; got:\n{}",
+        resp_home
+    );
     // The smoke-app's config is `react({ compiler: true })` — no
     // `componentFor`, so `createRealAdapter` runs in 'auto' mode and the
     // render falls through to the adapter's IR fallback (the Atlas
@@ -816,6 +833,21 @@ async fn dev_server_serves_smoke_app_over_http() {
         resp_health.starts_with("HTTP/1.1 200"),
         "health status line: {}",
         resp_health.lines().next().unwrap_or("")
+    );
+    // The health endpoint is handled by the native prefix in
+    // `Pipeline::serve_request` and returns a collected response. Its
+    // transport uses content-length (not chunked) — the branch in
+    // `to_hyper_response` is what decides, keyed on whether
+    // `OxideResponse::stream` was set.
+    assert!(
+        resp_health.to_lowercase().contains("content-length:"),
+        "collected response must set content-length; got:\n{}",
+        resp_health
+    );
+    assert!(
+        !resp_health.to_lowercase().contains("transfer-encoding: chunked"),
+        "collected response must NOT use chunked encoding; got:\n{}",
+        resp_health
     );
 
     // ---- Request 2: dynamic route with a param ----
