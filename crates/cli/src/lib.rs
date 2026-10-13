@@ -1062,8 +1062,13 @@ impl oxide_server::InspectorSnapshot for CliInspector {
 /// The dispatch returns a placeholder page from the router match — the JS host wiring
 /// (NodeHost/isolate render) lives in oxide-jshost and plugs into this dispatch later.
 /// Production server entry (§12.1): no inspector is attached.
-pub async fn start_server(root: &str, port: Option<u16>) -> anyhow::Result<StartedServer> {
-    start_server_inner(root, port, false).await
+pub async fn start_server(
+    root: &str,
+    port: Option<u16>,
+    page_renderer: Option<std::sync::Arc<dyn oxide_server::PageRenderer>>,
+) -> anyhow::Result<StartedServer> {
+    let bind = port.map(|p| (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), p));
+    start_server_inner_full(root, bind, false, None, Vec::new(), page_renderer).await
 }
 
 /// Dev server entry (§13): identical pipeline but with the `/__oxide`
@@ -1303,7 +1308,31 @@ async fn cmd_serve(
     label: &str,
     w: Writer<'_>,
 ) -> anyhow::Result<i32> {
-    let started = start_server(root, port).await?;
+        // §7: attach a framework adapter renderer when the project has an
+        // oxide.config.{ts,mjs,js}. Same wiring as `cmd_dev`; failures fall back
+        // to the IR path with a warning.
+        let rootp = std::path::PathBuf::from(root);
+        let page_renderer: Option<std::sync::Arc<dyn oxide_server::PageRenderer>> =
+            match find_config_file(&rootp) {
+                Ok(config_path) => match framework_shim::build_adapter_renderer(&config_path).await {
+                    Ok(r) => {
+                        outln!(w, "framework renderer: {} ({})", r.name(), config_path.display());
+                        Some(r)
+                    }
+                    Err(e) => {
+                        outln!(w, "warn: framework renderer not wired: {e}");
+                        None
+                    }
+                },
+                Err(_) => None,
+            };
+
+        
+    let started = start_server(
+        root,
+        port,
+        page_renderer,
+    ).await?;
     outln!(
         w,
         "{label} — listening on http://{} (health: /_oxide/health, Ctrl-C to stop)",
