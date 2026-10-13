@@ -54,9 +54,9 @@ const MATRIX: &[(Target, &[&str])] = &[
     (Target::Node,       &["deploy.json", "server.mjs", "package.json"]),
     (Target::Docker,     &["deploy.json", "Dockerfile"]),
     (Target::Cloudflare, &["deploy.json", "worker.js", "wrangler.toml", "_routes.json", "edge.js"]),
-    (Target::Vercel,     &["deploy.json", "vercel.json", "handler.mjs"]),
-    (Target::Netlify,    &["deploy.json", "netlify.toml", "handler.mjs"]),
-    (Target::Lambda,     &["deploy.json", "handler.mjs"]),
+    (Target::Vercel,     &["deploy.json", "vercel.json", "api/handler.mjs"]),
+    (Target::Netlify,    &["deploy.json", "netlify.toml", "netlify/functions/handler.mjs"]),
+    (Target::Lambda,     &["deploy.json", "handler.mjs", "template.yaml"]),
     (Target::Deno,       &["deploy.json", "server.ts"]),
     (Target::Bun,        &["deploy.json", "server.ts"]),
     (Target::Static,     &["deploy.json", "index.html"]),
@@ -107,7 +107,7 @@ fn each_target_emits_its_characteristic_files() {
 }
 
 #[test]
-fn vercel_json_references_a_handler() {
+fn vercel_json_uses_rewrites_and_handler_is_under_api() {
     let tmp = TempDir::new().unwrap();
     let out = tmp.path().join("deploy");
     fs::create_dir_all(&out).unwrap();
@@ -115,20 +115,31 @@ fn vercel_json_references_a_handler() {
 
     let cfg = fs::read_to_string(out.join("vercel.json")).expect("vercel.json");
     let v: serde_json::Value = serde_json::from_str(&cfg).expect("vercel.json parses");
-    // Vercel's functions/rewrites shape — the exact key depends on the
-    // emit strategy. Assert *some* handler route is present so a
-    // placeholder `{}` would fail the check.
-    let s = cfg.to_lowercase();
+    let rewrites = v
+        .get("rewrites")
+        .and_then(|r| r.as_array())
+        .expect("vercel.json must declare a `rewrites` array");
     assert!(
-        s.contains("handler") || s.contains("functions") || s.contains("rewrites"),
-        "vercel.json should reference a handler route; got:\n{cfg}"
+        rewrites.iter().any(|r| {
+            r.get("destination")
+                .and_then(|d| d.as_str())
+                .map(|d| d.contains("/api/handler"))
+                .unwrap_or(false)
+        }),
+        "rewrites must route to /api/handler; got:\n{cfg}"
     );
-    // Must be parseable JSON (a stronger property than substring).
-    assert!(v.is_object() || v.is_array());
+    assert!(
+        !cfg.contains("entrypoint"),
+        "the old invalid `entrypoint` field must not appear; got:\n{cfg}"
+    );
+    assert!(
+        out.join("api/handler.mjs").is_file(),
+        "handler must be at api/handler.mjs for Vercel"
+    );
 }
 
 #[test]
-fn netlify_toml_redirects_root_to_the_function() {
+fn netlify_toml_has_functions_dir_and_consistent_redirect_indent() {
     let tmp = TempDir::new().unwrap();
     let out = tmp.path().join("deploy");
     fs::create_dir_all(&out).unwrap();
@@ -136,12 +147,37 @@ fn netlify_toml_redirects_root_to_the_function() {
 
     let cfg = fs::read_to_string(out.join("netlify.toml")).expect("netlify.toml");
     assert!(
-        cfg.contains(".netlify/functions/handler"),
-        "netlify.toml must redirect to the function; got:\n{cfg}"
+        cfg.contains("functions = \"netlify/functions\""),
+        "netlify.toml must declare the functions directory; got:\n{cfg}"
     );
     assert!(
-        cfg.contains("[[redirects]]") || cfg.contains("[build]"),
-        "netlify.toml should have a redirects or build stanza; got:\n{cfg}"
+        cfg.contains("/.netlify/functions/handler"),
+        "netlify.toml redirect must target the function; got:\n{cfg}"
+    );
+    assert!(
+        cfg.contains("[[redirects]]"),
+        "netlify.toml must declare the redirect stanza; got:\n{cfg}"
+    );
+    // Redirect keys must all be indented by exactly two spaces.
+    let mut in_redirect = false;
+    for l in cfg.lines() {
+        let t = l.trim();
+        if t == "[[redirects]]" {
+            in_redirect = true;
+            continue;
+        }
+        if in_redirect
+            && (t.starts_with("from ") || t.starts_with("to ") || t.starts_with("status "))
+        {
+            assert!(
+                l.starts_with("  ") && !l.starts_with("   "),
+                "redirect keys must be indented exactly two spaces; got {l:?}"
+            );
+        }
+    }
+    assert!(
+        out.join("netlify/functions/handler.mjs").is_file(),
+        "handler must be at netlify/functions/handler.mjs for Netlify"
     );
 }
 
@@ -199,4 +235,33 @@ fn dockerfile_healthcheck_uses_the_oxide_path() {
             "line looks malformed (glued directives?): {trimmed:?}"
         );
     }
+}
+
+#[test]
+fn lambda_template_references_the_handler() {
+    let tmp = TempDir::new().unwrap();
+    let out = tmp.path().join("deploy");
+    fs::create_dir_all(&out).unwrap();
+    emit(Target::Lambda, &minimal_artifact(tmp.path(), false), &out).expect("emit");
+
+    let tpl = fs::read_to_string(out.join("template.yaml")).expect("template.yaml");
+    assert!(
+        tpl.contains("Handler: handler.handlerWrapper"),
+        "SAM template must reference handler.handlerWrapper; got:\n{tpl}"
+    );
+    assert!(
+        tpl.contains("Runtime: nodejs20.x"),
+        "SAM runtime must be nodejs20.x; got:\n{tpl}"
+    );
+    assert!(
+        tpl.contains("HttpApi"),
+        "SAM template must declare an HttpApi event; got:\n{tpl}"
+    );
+
+    let handler = fs::read_to_string(out.join("handler.mjs")).expect("handler.mjs");
+    assert!(
+        handler.contains("export { handlerWrapper }"),
+        "handler must expose `export {{ handlerWrapper }}` so the SAM \
+         reference resolves; got:\n{handler}"
+    );
 }
