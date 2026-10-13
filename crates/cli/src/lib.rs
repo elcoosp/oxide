@@ -750,11 +750,93 @@ fn emit_content_search_indexes(
     Ok(())
 }
 
+/// Derive the request URL from a prerender output path. `prerendered/index.html`
+/// → `/`; `prerendered/blog/hello.html` → `/blog/hello`; `prerendered/foo.html`
+/// → `/foo`. Used to give the framework renderer a plausible URL for a static
+/// route (it may use it for canonical links, caching keys, etc.).
+fn url_path_from_rel(rel: &str) -> String {
+    let stripped = rel.strip_prefix("prerendered/").unwrap_or(rel);
+    let stripped = stripped.strip_suffix(".html").unwrap_or(stripped);
+    if stripped == "index" || stripped.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{stripped}")
+    }
+}
+
+/// Write one prerendered HTML file. When `page_renderer` is attached (§7),
+/// the shell comes from the framework adapter; otherwise the neutral-IR
+/// placeholder. Either way, `oxide_render::Injector` wraps the shell with
+/// the CSP nonce + hydration bootstrap (§10.2 step 4).
+async fn write_prerender(
+    dist: &Path,
+    rel: &str,
+    route_id: &str,
+    pattern: &str,
+    url_path: &str,
+    params: &BTreeMap<String, String>,
+    nonce: &str,
+    page_renderer: Option<&std::sync::Arc<dyn oxide_server::PageRenderer>>,
+) -> anyhow::Result<()> {
+    let shell = if let Some(renderer) = page_renderer {
+        let mut input = oxide_server::PageRenderInput::new(route_id, url_path);
+        for (k, v) in params {
+            input.params.insert(k.clone(), v.clone());
+        }
+        renderer
+            .render(input)
+            .await
+            .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?
+    } else {
+        format!(
+            "<!doctype html><html><head></head><body>\
+             <main data-route=\"{pattern}\">placeholder</main></body></html>"
+        )
+    };
+    let injector = oxide_render::Injector::new(
+        oxide_render::HeadTags::default(),
+        nonce.to_string(),
+        route_id.to_string(),
+    );
+    let html = injector
+        .inject_into_html(&shell)
+        .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+    let dest = dist.join(rel);
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&dest, html)?;
+    Ok(())
+}
+
 async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = PathBuf::from(root);
     let cfg = load_config_strict(&rootp, "production")?;
     let tree = scan_routes(&rootp, &cfg)?;
     let dist = rootp.join("dist");
+
+    // §7: attach a framework adapter renderer when the project has an
+    // oxide.config.{ts,mjs,js}. Same wiring as cmd_dev/cmd_serve; failures
+    // fall back to the IR placeholder with a warning so the build stays usable.
+    let page_renderer: Option<std::sync::Arc<dyn oxide_server::PageRenderer>> =
+        match find_config_file(&rootp) {
+            Ok(config_path) => match framework_shim::build_adapter_renderer(&config_path).await {
+                Ok(r) => {
+                    outln!(
+                        w,
+                        "framework renderer: {} ({})",
+                        r.name(),
+                        config_path.display()
+                    );
+                    Some(r)
+                }
+                Err(e) => {
+                    outln!(w, "warn: framework renderer not wired for build: {e}");
+                    None
+                }
+            },
+            Err(_) => None,
+        };
 
     // Entries: pages + endpoints (client and ssr share the entry set, §6.1).
     let mut entries: BTreeMap<String, PathBuf> = BTreeMap::new();
@@ -826,26 +908,6 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         let pattern = pattern_of(&e.segments);
         let nonce_for = nonce.clone();
         let route_id = e.id.0.clone();
-        let push_html = |rel: String| -> anyhow::Result<()> {
-            let shell = format!(
-                "<!doctype html><html><head></head><body>\
-                 <main data-route=\"{pattern}\">placeholder</main></body></html>"
-            );
-            let injector = oxide_render::Injector::new(
-                oxide_render::HeadTags::default(),
-                nonce_for.clone(),
-                route_id.clone(),
-            );
-            let html = injector
-                .inject_into_html(&shell)
-                .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
-            let dest = dist.join(&rel);
-            if let Some(parent) = dest.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(&dest, html)?;
-            Ok(())
-        };
 
         match gen_params {
             oxide_compiler::GenerateParamsResult::Literal(params) => {
@@ -868,7 +930,17 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     } else {
                         format!("prerendered/{}.html", segs.join("/"))
                     };
-                    push_html(rel.clone())?;
+                    write_prerender(
+                        &dist,
+                        &rel,
+                        &route_id,
+                        &pattern,
+                        &url_path_from_rel(&rel),
+                        params_map,
+                        &nonce_for,
+                        page_renderer.as_ref(),
+                    )
+                    .await?;
                     outs.push(rel);
                 }
                 if !outs.is_empty() {
@@ -901,7 +973,18 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 } else {
                     format!("prerendered/{}.html", e.segments.join("/"))
                 };
-                push_html(rel.clone())?;
+                let empty_params: BTreeMap<String, String> = BTreeMap::new();
+                write_prerender(
+                    &dist,
+                    &rel,
+                    &route_id,
+                    &pattern,
+                    &url_path_from_rel(&rel),
+                    &empty_params,
+                    &nonce_for,
+                    page_renderer.as_ref(),
+                )
+                .await?;
                 prerendered.insert(e.id.0.clone(), vec![rel]);
             }
         }
