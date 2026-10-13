@@ -1315,11 +1315,25 @@ fn build_dispatch(
                 None => (None, None, std::collections::BTreeMap::new(), false),
             };
             // The URL pattern (`pattern_of(segments)`) is for metrics labels;
-            // the ROUTE ID (`m.route.id.0`) is what the framework adapter's
-            // `componentFor(route)` expects. Passing the pattern as the route
-            // key silently produces "component not found" → the adapter's
-            // IR fallback → the not-found boundary. Keep them distinct.
-            let route_id_for_render: Option<String> = route_id.clone();
+            // the ROUTE ID is what the framework adapter's `componentFor`
+            // expects. Two conventions to reconcile here:
+            //
+            //   • Router ids include the file role: `routes/index/page`,
+            //     `routes/blog/[slug]/page`. That's the shape the scanner
+            //     produces (see crates/router/src/scan.rs) and what
+            //     `RouteEntry.id.0` carries.
+            //   • Adapter keys (`PAGES` in the IR renderer, `componentFor`
+            //     in a user's config) are keyed on the route directory:
+            //     `routes/index`, `routes/blog/[slug]`. Trailing role
+            //     suffix (`/page`, `/layout`) is not part of the key.
+            //
+            // Normalize by stripping a trailing `/page` (and only `/page`)
+            // before handing the id to the renderer. Layout-only ids, slot
+            // ids (`routes/@modal/page`), and group-prefixed ids all pass
+            // through untouched.
+            let route_id_for_render: Option<String> = route_id
+                .as_deref()
+                .map(|s| s.strip_suffix("/page").unwrap_or(s).to_string());
 
             let page_renderer = page_renderer.clone();
             let loader_runner = loader_runner.clone();
@@ -1337,9 +1351,16 @@ fn build_dispatch(
                     if let (Some(runner), Some(module_path), Some(route_id)) =
                         (loader_runner.as_ref(), module_path, route_id)
                     {
+                        // Pass the normalized id (no `/page` suffix) so user
+                        // `load(event)` implementations see the route
+                        // directory they expect.
+                        let route_for_loader = route_id
+                            .strip_suffix("/page")
+                            .unwrap_or(&route_id)
+                            .to_string();
                         let mut input = oxide_server::LoaderRunInput::new(
                             module_path.to_string_lossy().to_string(),
-                            route_id,
+                            route_for_loader,
                             req_owned.url.clone(),
                         );
                         input.method = req_owned.method.clone();
