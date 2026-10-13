@@ -585,6 +585,88 @@ async fn write_prerender_without_loader_uses_empty_data() {
     assert_eq!(data, serde_json::json!({}), "empty data when no loader");
 }
 
+// --------------------------------------- smoke-app E2E (real user path)
+
+/// The `examples/smoke-app` fixture is a working project that exercises the
+/// whole stack: a real `.ts` config importing `@oxide/react` via the
+/// workspace, a `page.tsx` + `page.server.ts` per route, and the CLI's
+/// config-loading path. This test runs the three CLI commands against it
+/// and asserts on the actual output.
+///
+/// `#[ignore]` because it spawns a Node worker and requires the workspace's
+/// `node_modules` (from `pnpm install`). Run with:
+///     cargo test -p oxide-cli -- --ignored smoke_app
+#[tokio::test]
+#[ignore]
+async fn smoke_app_renders_through_real_config() {
+    // Locate the smoke-app relative to the workspace root (this crate is
+    // crates/cli, so workspace = ../../).
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root");
+    let smoke = workspace.join("examples/smoke-app");
+    assert!(
+        smoke.join("oxide.config.ts").is_file(),
+        "smoke-app fixture missing at {}; is examples/* a workspace member?",
+        smoke.display()
+    );
+    let smoke_str = smoke.to_str().expect("smoke-app path is utf-8");
+
+    // 1. `oxide config <smoke> --json` loads the .ts and emits the descriptor.
+    let (code, out) = run_ok(&["oxide", "config", smoke_str, "--json"]).await;
+    assert_eq!(code, 0, "config exit code; output:\n{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|e| {
+        panic!("config output not JSON ({e}): {out}")
+    });
+    assert_eq!(
+        v["name"], "react",
+        "descriptor.name from oxide.config.ts: {out}"
+    );
+    assert_eq!(v["extensions"][0], ".tsx");
+
+    // 2. `oxide render routes/index` produces the home page markup.
+    let (code, out) = run_ok(&[
+        "oxide", "render", "routes/index",
+        "--root", smoke_str,
+        "--data", "{}",
+    ])
+    .await;
+    assert_eq!(code, 0, "render routes/index exit; output:\n{out}");
+    assert!(
+        out.starts_with("<!doctype html>"),
+        "doctype first: {out}"
+    );
+    assert!(
+        out.contains("Hello Atlas"),
+        "home route content present: {out}"
+    );
+    assert!(
+        out.contains("data-reactroot"),
+        "root marker present: {out}"
+    );
+
+    // 3. `oxide render routes/blog/[slug]` threads the URL param through.
+    let (code, out) = run_ok(&[
+        "oxide", "render", "routes/blog/[slug]",
+        "--root", smoke_str,
+        "--url", "/blog/hello-smoke",
+        "--param", "slug=hello-smoke",
+        "--data", "{}",
+    ])
+    .await;
+    assert_eq!(code, 0, "render blog exit; output:\n{out}");
+    assert!(
+        out.contains("hello-smoke"),
+        "URL param must reach the component: {out}"
+    );
+    assert!(
+        out.contains("data-reactroot"),
+        "root marker on the blog page: {out}"
+    );
+}
+
 #[test]
 fn render_subcommand_parses_route_and_optional_flags() {
     use clap::Parser;
