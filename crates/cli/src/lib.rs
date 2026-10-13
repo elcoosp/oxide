@@ -794,12 +794,66 @@ async fn write_prerender(
     params: &BTreeMap<String, String>,
     nonce: &str,
     page_renderer: Option<&std::sync::Arc<dyn oxide_server::PageRenderer>>,
+    loader_runner: Option<&std::sync::Arc<dyn oxide_server::LoaderRunner>>,
+    module_path: Option<&Path>,
 ) -> anyhow::Result<()> {
+    // §9.1: run the loader for this route (if the module exists and a
+    // loader runner is attached) to obtain the data the render phase
+    // receives. Prerendered static pages previously always wrote `{}`
+    // into PageRenderInput.data; they now run the real `load()`.
+    let mut data = serde_json::Value::Object(Default::default());
+    if let (Some(loader), Some(mp)) = (loader_runner, module_path) {
+        let mut input = oxide_server::LoaderRunInput::new(
+            mp.to_string_lossy().to_string(),
+            route_id,
+            url_path,
+        );
+        input.params = params.clone();
+        match loader.run(input).await {
+            Ok(out) if out.status == 200 => {
+                data = out.data;
+            }
+            Ok(out) => {
+                // Non-200 during build: emit an explicit diagnostic HTML
+                // file rather than a silently-empty page. The dev/serve
+                // path short-circuits with a real HTTP response; at build
+                // time the closest equivalent is a file with the error body.
+                let body = format!(
+                    "<!doctype html><html><body>\
+                     <h1>loader short-circuit: {}</h1><pre>{}</pre>\
+                     </body></html>",
+                    out.status, out.data
+                );
+                let dest = dist.join(rel);
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&dest, body)?;
+                return Ok(());
+            }
+            Err(e) => {
+                let body = format!(
+                    "<!doctype html><html><body>\
+                     <h1>loader error</h1><pre>{}: {}</pre>\
+                     </body></html>",
+                    e.0.code, e.0.message
+                );
+                let dest = dist.join(rel);
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&dest, body)?;
+                return Ok(());
+            }
+        }
+    }
+
     let shell = if let Some(renderer) = page_renderer {
         let mut input = oxide_server::PageRenderInput::new(route_id, url_path);
         for (k, v) in params {
             input.params.insert(k.clone(), v.clone());
         }
+        input.data = data;
         renderer
             .render(input)
             .await
@@ -831,6 +885,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     let cfg = load_config_strict(&rootp, "production")?;
     let tree = scan_routes(&rootp, &cfg)?;
     let dist = rootp.join("dist");
+    let routes_root = rootp.join(&cfg.routes.dir);
 
     // §7 / §9.1: build the framework stack (renderer + loader). Renderer
     // is used for prerendering static routes; loader is present but not
@@ -911,6 +966,15 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         let pattern = pattern_of(&e.segments);
         let nonce_for = nonce.clone();
         let route_id = e.id.0.clone();
+        // §9.1: if the route declares a server module, resolve its path so
+        // the loader can run during prerender. Uses the same
+        // `page.server.ts` sibling convention as build_dispatch.
+        let module_path: Option<std::path::PathBuf> = if e.has_server_module {
+            let p = routes_root.join(e.file.with_file_name("page.server.ts"));
+            if p.is_file() { Some(p) } else { None }
+        } else {
+            None
+        };
 
         match gen_params {
             oxide_compiler::GenerateParamsResult::Literal(params) => {
@@ -942,6 +1006,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                         params_map,
                         &nonce_for,
                         stack.page_renderer.as_ref(),
+                        stack.loader_runner.as_ref(),
+                        module_path.as_deref(),
                     )
                     .await?;
                     outs.push(rel);
@@ -986,6 +1052,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     &empty_params,
                     &nonce_for,
                     stack.page_renderer.as_ref(),
+                    stack.loader_runner.as_ref(),
+                    module_path.as_deref(),
                 )
                 .await?;
                 prerendered.insert(e.id.0.clone(), vec![rel]);

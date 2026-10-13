@@ -505,6 +505,86 @@ async fn no_server_module_skips_loader() {
     assert_eq!(data, serde_json::json!({}), "empty data when no server module");
 }
 
+// ---------------------------------- prerender loader (spec §9.1 at build)
+
+#[tokio::test]
+async fn write_prerender_threads_loader_data_into_renderer() {
+    use std::sync::Arc;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dist = tmp.path().to_path_buf();
+
+    let renderer = Arc::new(DataCapturingRenderer::new());
+    let renderer_data = Arc::clone(&renderer.last_data);
+    let page_renderer: Arc<dyn oxide_server::PageRenderer> = renderer;
+
+    let loader = Arc::new(ScriptedLoader::ok(
+        serde_json::json!({ "title": "Prerender Hi" }),
+    ));
+    let loader_runner: Arc<dyn oxide_server::LoaderRunner> = loader;
+
+    let params: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    write_prerender(
+        &dist,
+        "prerendered/index.html",
+        "routes/index",
+        "/",
+        "/",
+        &params,
+        "test-nonce",
+        Some(&page_renderer),
+        Some(&loader_runner),
+        Some(std::path::Path::new("/fake/page.server.ts")),
+    )
+    .await
+    .expect("write_prerender ok");
+
+    let html = std::fs::read_to_string(dist.join("prerendered/index.html"))
+        .expect("read output file");
+    assert!(
+        html.contains("Prerender Hi"),
+        "loader data should appear in the output html: {html}"
+    );
+    let data = renderer_data.lock().unwrap().clone();
+    assert_eq!(
+        data["title"], "Prerender Hi",
+        "renderer saw the loader's data"
+    );
+}
+
+#[tokio::test]
+async fn write_prerender_without_loader_uses_empty_data() {
+    use std::sync::Arc;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dist = tmp.path().to_path_buf();
+
+    let renderer = Arc::new(DataCapturingRenderer::new());
+    let renderer_data = Arc::clone(&renderer.last_data);
+    let page_renderer: Arc<dyn oxide_server::PageRenderer> = renderer;
+
+    let params: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    write_prerender(
+        &dist,
+        "prerendered/index.html",
+        "routes/index",
+        "/",
+        "/",
+        &params,
+        "test-nonce",
+        Some(&page_renderer),
+        None,
+        None,
+    )
+    .await
+    .expect("write_prerender ok");
+
+    let data = renderer_data.lock().unwrap().clone();
+    assert_eq!(data, serde_json::json!({}), "empty data when no loader");
+}
+
 #[test]
 fn render_subcommand_parses_route_and_optional_flags() {
     use clap::Parser;
