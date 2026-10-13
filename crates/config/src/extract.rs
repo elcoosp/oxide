@@ -56,26 +56,96 @@ pub(crate) fn extract(source: &str) -> Option<Value> {
 /// `{ "framework": { "name": X, "adapter": X } }`. Returns `None` if the
 /// pattern is not found.
 fn extract_minimal_framework(source: &str) -> Option<Value> {
+    // If the full parser bailed on a dynamic config (componentFor callback,
+    // process.env in a factory argument, etc.), pick up just enough of the
+    // top-level structure for the CLI's build/render paths to behave.
+    //
+    // Without this, `adapter: 'vercel'` in the same config is invisible and
+    // the build falls back to `OxideConfig::default()` — which is `binary`.
+    // Same for `routes.dir`, which the CLI uses to locate `page.server.ts`.
     const FACTORIES: [&str; 4] = ["react", "vue", "svelte", "solid"];
-    // Walk every occurrence of the literal word `framework`; for each,
-    // skip whitespace, expect `:`, skip whitespace, expect one of the
-    // factory names, then `(`.
+    let mut obj = serde_json::Map::new();
+
+    // 1. framework: <react|vue|svelte|solid>( ... )
+    'outer: for name in FACTORIES {
+        let mut from = 0usize;
+        while let Some(rel) = source[from..].find("framework") {
+            let abs = from + rel;
+            from = abs + "framework".len();
+            let tail = &source[from..];
+            let after_ws = tail.trim_start();
+            let Some(after_colon) = after_ws.strip_prefix(':') else { continue };
+            let after_colon_ws = after_colon.trim_start();
+            if let Some(rest) = after_colon_ws.strip_prefix(name) {
+                if rest.trim_start().starts_with('(') {
+                    obj.insert(
+                        "framework".into(),
+                        serde_json::json!({ "name": name, "adapter": name }),
+                    );
+                    break 'outer;
+                }
+            }
+        }
+    }
+
+    // 2. top-level `adapter: 'X'` — a plain string literal, first match
+    //    at the start of a line (the smoke-app / create-oxide shape).
+    if let Some(adapter) = scan_top_level_string(source, "adapter") {
+        obj.insert("adapter".into(), Value::String(adapter));
+    }
+
+    // 3. `routes: { dir: 'X' }` — scan for a `dir:` string literal.
+    if let Some(dir) = scan_top_level_string(source, "dir") {
+        obj.insert(
+            "routes".into(),
+            serde_json::json!({ "dir": dir }),
+        );
+    }
+
+    if obj.is_empty() {
+        None
+    } else {
+        Some(Value::Object(obj))
+    }
+}
+
+/// Find the first `<key>: '<string>'` or `<key>: "<string>"` in the source.
+/// Key must appear as a word (not inside another identifier) followed by
+/// optional whitespace, `:`, optional whitespace, then a quote.
+fn scan_top_level_string(source: &str, key: &str) -> Option<String> {
+    let bytes = source.as_bytes();
     let mut from = 0usize;
-    while let Some(rel) = source[from..].find("framework") {
+    while let Some(rel) = source[from..].find(key) {
         let abs = from + rel;
-        from = abs + "framework".len();
-        let tail = &source[from..];
+        from = abs + key.len();
+        // Word-boundary check on both sides.
+        if abs > 0 {
+            let prev = bytes[abs - 1];
+            if prev.is_ascii_alphanumeric() || prev == b'_' || prev == b'$' {
+                continue;
+            }
+        }
+        let next = bytes.get(abs + key.len()).copied();
+        if let Some(n) = next {
+            if n.is_ascii_alphanumeric() || n == b'_' || n == b'$' {
+                continue;
+            }
+        }
+        let tail = &source[abs + key.len()..];
         let after_ws = tail.trim_start();
         let Some(after_colon) = after_ws.strip_prefix(':') else { continue };
         let after_colon_ws = after_colon.trim_start();
-        for name in FACTORIES {
-            if let Some(rest) = after_colon_ws.strip_prefix(name) {
-                if rest.trim_start().starts_with('(') {
-                    return Some(serde_json::json!({
-                        "framework": { "name": name, "adapter": name }
-                    }));
-                }
-            }
+        let mut chars = after_colon_ws.chars();
+        let quote = match chars.next() {
+            Some('"') => '"',
+            Some('\'') => '\'',
+            _ => continue,
+        };
+        // Read until the matching close quote (no escape handling — config
+        // values in our shapes are simple strings).
+        let rest = chars.as_str();
+        if let Some(end) = rest.find(quote) {
+            return Some(rest[..end].to_string());
         }
     }
     None
@@ -469,14 +539,13 @@ export default defineConfig({
     }
 
     #[test]
-    fn minimal_fallback_returns_none_without_framework() {
-        // Force the full parser to bail (dynamic expression), then confirm
-        // the fallback scan (which is what actually runs) does not find a
-        // `framework: <factory>(` and returns None.
+    fn minimal_fallback_returns_none_for_truly_dynamic_config() {
+        // Force the full parser to bail (dynamic expression) with no
+        // framework, adapter, or dir keyword in the source. The fallback
+        // has nothing to pick up and returns None.
         let src = r#"
 const x = computeDynamicValue()
 export default defineConfig({
-  adapter: 'binary',
   dynamicField: x,
 })
 "#;
@@ -486,9 +555,29 @@ export default defineConfig({
         );
         assert!(
             extract_minimal_framework(src).is_none(),
-            "no framework keyword → fallback is None"
+            "no framework / adapter / dir keyword → fallback is None"
         );
         assert!(extract(src).is_none(), "wrapper: None when both fail");
+    }
+
+    #[test]
+    fn minimal_fallback_picks_up_adapter_without_framework() {
+        // A dynamic config that doesn't declare a framework factory but
+        // does declare adapter + dir: the fallback returns those scalars
+        // even without a framework keyword. This is what the CLI's build
+        // path needs — the deploy target must not silently fall back to
+        // the default just because the config was dynamically shaped.
+        let src = r#"
+const x = computeDynamicValue()
+export default defineConfig({
+  adapter: 'vercel',
+  routes: { dir: 'src/routes' },
+  dynamicField: x,
+})
+"#;
+        let v = extract(src).expect("fallback must return the scalars");
+        assert_eq!(v["adapter"], "vercel");
+        assert_eq!(v["routes"]["dir"], "src/routes");
     }
 
     #[test]
