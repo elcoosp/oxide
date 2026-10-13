@@ -1121,6 +1121,7 @@ async fn start_server_inner_full(
         } else {
             None
         },
+        page_renderer: None,
     });
     let proxy_rules: Vec<oxide_dev::ProxyRule> = proxy_rules.clone();
     let dispatch: std::sync::Arc<
