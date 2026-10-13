@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 pub mod mcp;
 
 pub mod framework_shim;
+pub mod loader_shim;
 /// Oxide CLI (spec §19.1).
 #[derive(Debug, Parser)]
 #[command(
