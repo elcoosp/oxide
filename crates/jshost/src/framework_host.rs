@@ -132,6 +132,46 @@ impl FrameworkHost {
                 crate::err("JSH-FRAMEWORK", "framework:render response missing `html`")
             })
     }
+
+    /// Bump the worker's module-generation counter (spec §13.3). Every
+    /// subsequent `import()` in the worker is tagged with `?v=<gen>`, so Node
+    /// re-evaluates cached modules. The dev server calls this when a watched
+    /// source file changes; the next render or loader call sees the new code.
+    ///
+    /// Returns the new generation. Idempotent from the caller's perspective
+    /// (each call bumps once); cost is one round-trip to the worker.
+    pub async fn invalidate(&self) -> Result<u64> {
+        let input = CallInput {
+            payload: serde_json::json!({}),
+            headers: Default::default(),
+            has_body: false,
+            request_id: "framework:invalidate".to_string(),
+        };
+        let entry = EntryRef {
+            kind: "framework:invalidate".into(),
+            module: String::new(),
+            export: String::new(),
+        };
+        let mut stream = self.pool.call(entry, input).await?;
+        let bytes = stream.collect().await?;
+        let v: Value = serde_json::from_slice(&bytes).map_err(|e| {
+            crate::err(
+                "JSH-FRAMEWORK",
+                format!("framework:invalidate returned invalid JSON: {e}"),
+            )
+        })?;
+        if let Some(err_msg) = v.get("__oxide_error").and_then(|x| x.as_str()) {
+            return Err(crate::err("JSH-FRAMEWORK", err_msg.to_string()));
+        }
+        v.get("generation")
+            .and_then(|x| x.as_u64())
+            .ok_or_else(|| {
+                crate::err(
+                    "JSH-FRAMEWORK",
+                    "framework:invalidate response missing `generation`",
+                )
+            })
+    }
 }
 
 #[cfg(test)]
@@ -210,6 +250,38 @@ mod tests {
         let err = h.render("/x", json!({})).await.unwrap_err();
         assert_eq!(err.0.code, "JSH-FRAMEWORK");
         assert!(err.0.message.contains("Boom"), "{}", err.0.message);
+    }
+
+    #[tokio::test]
+    async fn invalidate_bumps_generation() {
+        let pool = host_with(|kind, payload| {
+            assert_eq!(kind, "framework:invalidate");
+            assert!(payload.is_object(), "payload: {payload}");
+            json!({ "generation": 1 })
+        });
+        let h = FrameworkHost::new(pool);
+        let generation = h.invalidate().await.unwrap();
+        assert_eq!(generation, 1);
+    }
+
+    #[tokio::test]
+    async fn invalidate_surfaces_worker_error() {
+        let pool = host_with(|_kind, _payload| {
+            json!({ "__oxide_error": "invalidate not supported" })
+        });
+        let h = FrameworkHost::new(pool);
+        let err = h.invalidate().await.unwrap_err();
+        assert_eq!(err.0.code, "JSH-FRAMEWORK");
+        assert!(err.0.message.contains("not supported"), "{}", err.0.message);
+    }
+
+    #[tokio::test]
+    async fn invalidate_rejects_missing_generation() {
+        let pool = host_with(|_kind, _payload| json!({}));
+        let h = FrameworkHost::new(pool);
+        let err = h.invalidate().await.unwrap_err();
+        assert_eq!(err.0.code, "JSH-FRAMEWORK");
+        assert!(err.0.message.contains("missing `generation`"));
     }
 
     #[tokio::test]
