@@ -24,7 +24,7 @@
 //! framework dep, invalid JSON in the response) becomes a `JSH-FRAMEWORK`
 //! error the caller can render as an error boundary (§10.2 step 5).
 
-use crate::{CallInput, EntryRef, Pool, Result};
+use crate::{CallInput, CallStream, EntryRef, Pool, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
@@ -131,6 +131,44 @@ impl FrameworkHost {
             .ok_or_else(|| {
                 crate::err("JSH-FRAMEWORK", "framework:render response missing `html`")
             })
+    }
+
+    /// Streaming variant of [`render`]: hands back the raw [`CallStream`]
+    /// from the pool without collecting it. This is the low-level primitive
+    /// a hyper-body writer wants — pull a chunk, write it, pull the next.
+    ///
+    /// # Wire shape
+    ///
+    /// The worker's `framework:render` op emits `call_chunk` frames whose
+    /// concatenated base64 payloads decode to a JSON object `{"html": "..."}`.
+    /// The `CallStream::Chunked` variant this returns has already decoded
+    /// base64; iterating it yields byte chunks of that JSON envelope, not
+    /// HTML directly. A caller that wants the HTML string should still call
+    /// [`render`]. A caller that wants to write bytes to an HTTP response as
+    /// they arrive can consume this stream and remember that the *whole*
+    /// envelope must be reassembled before it parses.
+    ///
+    /// # Contract
+    ///
+    /// Callers **must** drain the stream to EOF. Leaving it un-drained keeps
+    /// the channel alive, holding a worker slot in the pool.
+    pub async fn render_streaming(
+        &self,
+        config_path: &str,
+        input: Value,
+    ) -> Result<CallStream> {
+        let call_input = CallInput {
+            payload: serde_json::json!({ "path": config_path, "input": input }),
+            headers: Default::default(),
+            has_body: false,
+            request_id: format!("framework:render:{config_path}"),
+        };
+        let entry = EntryRef {
+            kind: "framework:render".into(),
+            module: String::new(),
+            export: String::new(),
+        };
+        self.pool.call(entry, call_input).await
     }
 
     /// Bump the worker's module-generation counter (spec §13.3). Every
@@ -250,6 +288,148 @@ mod tests {
         let err = h.render("/x", json!({})).await.unwrap_err();
         assert_eq!(err.0.code, "JSH-FRAMEWORK");
         assert!(err.0.message.contains("Boom"), "{}", err.0.message);
+    }
+
+    /// Build a pool whose `framework:render` returns a `CallStream::Chunked`
+    /// over the given byte chunks.
+    ///
+    /// The chunk `Vec<Vec<u8>>` is captured by move; each call to the
+    /// scripted handler re-sends the same chunk sequence over a fresh
+    /// channel. `try_send` with a buffer of 16 is enough for the small
+    /// fixtures these tests use (3-4 chunks), so the sync handler completes
+    /// without needing an async context.
+    ///
+    /// Note: previous drafts of this helper took `Vec<&'static [u8]>` and
+    /// constructed the chunks from raw string literals — that's a footgun
+    /// because `br#"..."#`'s closing delimiter is `"#`, so any literal that
+    /// ends in `"` loses that character. Tests build the chunk bytes via
+    /// `serde_json::to_vec` instead, which sidesteps the issue entirely.
+    fn chunked_pool(chunks: Vec<Vec<u8>>) -> Arc<dyn Pool> {
+        let host = ScriptedHost::with_handler(Arc::new(move |_entry, _input| {
+            let (tx, rx) = tokio::sync::mpsc::channel::<crate::Result<Bytes>>(16);
+            for c in &chunks {
+                tx.try_send(Ok(Bytes::copy_from_slice(c)))
+                    .expect("chunk fits in buffer");
+            }
+            drop(tx); // closes the channel; rx yields all buffered items then None
+            Ok(CallStream::Chunked(rx))
+        }));
+        host.tooling_pool(PoolConfig::default()).unwrap()
+    }
+
+    /// Split a JSON `Value` into three chunks by byte length, use the pool,
+    /// and return the chunks so tests can also assert on the exact split.
+    /// Split points are chosen to fall mid-token (arbitrary), which is the
+    /// interesting case for a stream chunker.
+    fn split3(bytes: &[u8]) -> Vec<Vec<u8>> {
+        // Split at ~1/3 and ~2/3 of the byte length; if the input is too
+        // short, still return three chunks (the middle may be empty).
+        let n = bytes.len();
+        let a = n / 3;
+        let b = (2 * n) / 3;
+        vec![
+            bytes[..a].to_vec(),
+            bytes[a..b].to_vec(),
+            bytes[b..].to_vec(),
+        ]
+    }
+
+    #[tokio::test]
+    async fn render_streaming_preserves_chunk_boundaries() {
+        // Build the payload through serde so the byte content is exactly
+        // what `serde_json::from_slice` expects; then split it into 3
+        // arbitrary byte-slices and stream them.
+        let payload = serde_json::to_vec(&json!({
+            "html": "<h1>Chunk</h1>"
+        }))
+        .unwrap();
+        let expected = payload.clone();
+        let chunks = split3(&payload);
+        let pool = chunked_pool(chunks.clone());
+        let h = FrameworkHost::new(pool);
+        let mut s = h
+            .render_streaming("/abs/config.mjs", json!({}))
+            .await
+            .unwrap();
+
+        match &mut s {
+            CallStream::Chunked(rx) => {
+                let c1 = rx.recv().await.unwrap().unwrap();
+                let c2 = rx.recv().await.unwrap().unwrap();
+                let c3 = rx.recv().await.unwrap().unwrap();
+                assert_eq!(c1.as_ref(), chunks[0].as_slice());
+                assert_eq!(c2.as_ref(), chunks[1].as_slice());
+                assert_eq!(c3.as_ref(), chunks[2].as_slice());
+                assert!(rx.recv().await.is_none(), "channel closed after 3 chunks");
+
+                // Reassemble and prove it parses to the original JSON.
+                let mut buf = Vec::new();
+                buf.extend_from_slice(&c1);
+                buf.extend_from_slice(&c2);
+                buf.extend_from_slice(&c3);
+                assert_eq!(buf, expected, "reassembled bytes match the serialization");
+                let v: Value = serde_json::from_slice(&buf).unwrap();
+                assert_eq!(v["html"], "<h1>Chunk</h1>");
+            }
+            other => panic!("expected Chunked, got {:?}", std::mem::discriminant(other)),
+        }
+    }
+
+    #[tokio::test]
+    async fn render_streaming_complete_variant_passes_through() {
+        let pool = host_with(|_kind, _payload| {
+            json!({ "html": "<h1>complete</h1>" })
+        });
+        let h = FrameworkHost::new(pool);
+        let mut s = h
+            .render_streaming("/abs/config.mjs", json!({}))
+            .await
+            .unwrap();
+        match &mut s {
+            CallStream::Complete(bytes) => {
+                let v: Value = serde_json::from_slice(bytes).unwrap();
+                assert_eq!(v["html"], "<h1>complete</h1>");
+            }
+            other => panic!("expected Complete, got {:?}", std::mem::discriminant(other)),
+        }
+    }
+
+    #[tokio::test]
+    async fn render_streaming_payload_error_visible_to_caller() {
+        // `render_streaming` does not detect `__oxide_error`; a caller that
+        // reassembles and parses gets the error payload verbatim. This test
+        // pins the contract: the streaming API is raw, parsing is the
+        // caller's job.
+        let payload = serde_json::to_vec(&json!({
+            "__oxide_error": "boom",
+            "hint": "check config"
+        }))
+        .unwrap();
+        let pool = chunked_pool(split3(&payload));
+        let h = FrameworkHost::new(pool);
+        let mut s = h
+            .render_streaming("/x", json!({}))
+            .await
+            .unwrap();
+        let bytes = s.collect().await.unwrap();
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(v["__oxide_error"], "boom");
+        assert_eq!(v["hint"], "check config");
+    }
+
+    #[tokio::test]
+    async fn render_still_works_on_chunked_pool() {
+        // Regression: `render` (which collects) must keep working when the
+        // pool returns a Chunked stream — the L4 change made that the
+        // default worker behaviour.
+        let payload = serde_json::to_vec(&json!({
+            "html": "<h1>full</h1>"
+        }))
+        .unwrap();
+        let pool = chunked_pool(split3(&payload));
+        let h = FrameworkHost::new(pool);
+        let html = h.render("/x", json!({})).await.unwrap();
+        assert_eq!(html, "<h1>full</h1>");
     }
 
     #[tokio::test]
