@@ -1314,6 +1314,12 @@ fn build_dispatch(
                 ),
                 None => (None, None, std::collections::BTreeMap::new(), false),
             };
+            // The URL pattern (`pattern_of(segments)`) is for metrics labels;
+            // the ROUTE ID (`m.route.id.0`) is what the framework adapter's
+            // `componentFor(route)` expects. Passing the pattern as the route
+            // key silently produces "component not found" → the adapter's
+            // IR fallback → the not-found boundary. Keep them distinct.
+            let route_id_for_render: Option<String> = route_id.clone();
 
             let page_renderer = page_renderer.clone();
             let loader_runner = loader_runner.clone();
@@ -1378,8 +1384,13 @@ fn build_dispatch(
 
                 // §7: render phase. Attached renderer wins; otherwise IR placeholder.
                 if let Some(renderer) = page_renderer.as_ref() {
+                    // Route ID — the framework adapter's `componentFor`
+                    // receives this, not the URL pattern.
+                    let route_for_render = route_id_for_render
+                        .clone()
+                        .unwrap_or_else(|| "_unmatched".to_string());
                     let mut input = oxide_server::PageRenderInput::new(
-                        label.clone(),
+                        route_for_render,
                         req_owned.url.clone(),
                     );
                     input.params = params;
