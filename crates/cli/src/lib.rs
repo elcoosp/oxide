@@ -1140,8 +1140,8 @@ fn build_dispatch(
     metrics: std::sync::Arc<oxide_server::Metrics>,
     proxy_rules: Vec<oxide_dev::ProxyRule>,
     page_renderer: Option<std::sync::Arc<dyn oxide_server::PageRenderer>>,
-    _loader_runner: Option<std::sync::Arc<dyn oxide_server::LoaderRunner>>,
-    _routes_root: std::path::PathBuf,
+    loader_runner: Option<std::sync::Arc<dyn oxide_server::LoaderRunner>>,
+    routes_root: std::path::PathBuf,
 ) -> std::sync::Arc<
     dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
 > {
@@ -1193,54 +1193,130 @@ fn build_dispatch(
             } else {
                 vec![normalized]
             };
-            let (status, label) = candidates
-                .iter()
-                .find_map(|p| {
-                    tree.match_path(p)
-                        .map(|m| (200u16, pattern_of(&m.route.segments)))
-                })
-                .unwrap_or((404u16, "_unmatched".to_string()));
-            // §7: when a framework adapter renderer is attached, dispatch the
-            // render through it. Otherwise the neutral placeholder page.
-            if let Some(renderer) = page_renderer.as_ref() {
-                let renderer = std::sync::Arc::clone(renderer);
-                let metrics_async = std::sync::Arc::clone(&metrics);
-                let label_async = label.clone();
-                let url_async = req.url.clone();
-                return Box::pin(async move {
-                    let input =
-                        oxide_server::PageRenderInput::new(label_async.clone(), url_async);
+            let matched: Option<oxide_router::MatchResult> =
+                candidates.iter().find_map(|p| tree.match_path(p));
+            let (status, label) = match &matched {
+                Some(m) => (200u16, pattern_of(&m.route.segments)),
+                None => (404u16, "_unmatched".to_string()),
+            };
+
+            // Pre-compute the loader inputs synchronously so the async block
+            // owns plain data (no borrow of `matched`).
+            let (module_path, route_id, params, has_server_module): (
+                Option<std::path::PathBuf>,
+                Option<String>,
+                std::collections::BTreeMap<String, String>,
+                bool,
+            ) = match &matched {
+                Some(m) => (
+                    Some(routes_root.join(m.route.file.with_file_name("page.server.ts"))),
+                    Some(m.route.id.0.clone()),
+                    m.params.clone(),
+                    m.route.has_server_module,
+                ),
+                None => (None, None, std::collections::BTreeMap::new(), false),
+            };
+
+            let page_renderer = page_renderer.clone();
+            let loader_runner = loader_runner.clone();
+            let metrics = std::sync::Arc::clone(&metrics);
+            let req_owned = req.clone();
+
+            Box::pin(async move {
+                // §9.1: loader phase. When the matched route declares a server
+                // module and a LoaderRunner is attached, run it. A non-200
+                // output (error(...) or redirect(...)) short-circuits the
+                // response; a 200 output threads `data` into the render phase.
+                let mut data = serde_json::Value::Object(Default::default());
+
+                if has_server_module {
+                    if let (Some(runner), Some(module_path), Some(route_id)) =
+                        (loader_runner.as_ref(), module_path, route_id)
+                    {
+                        let mut input = oxide_server::LoaderRunInput::new(
+                            module_path.to_string_lossy().to_string(),
+                            route_id,
+                            req_owned.url.clone(),
+                        );
+                        input.method = req_owned.method.clone();
+                        input.headers = req_owned.headers.clone();
+                        input.params = params.clone();
+
+                        match runner.run(input).await {
+                            Ok(out) if out.short_circuits() => {
+                                let body = out
+                                    .data
+                                    .get("message")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let mut resp =
+                                    oxide_server::OxideResponse::new(out.status, body);
+                                if let Some(loc) = out.location {
+                                    resp = resp.with_header("location", loc);
+                                }
+                                metrics.observe(&label, started.elapsed(), out.status);
+                                return resp;
+                            }
+                            Ok(out) => {
+                                data = out.data;
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    code = %e.0.code,
+                                    error = %e.0.message,
+                                    route = %label,
+                                    "loader failed",
+                                );
+                                metrics.observe(&label, started.elapsed(), 500);
+                                return oxide_server::OxideResponse::html(
+                                    500,
+                                    format!("loader error: {}", e.0.message),
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // §7: render phase. Attached renderer wins; otherwise IR placeholder.
+                if let Some(renderer) = page_renderer.as_ref() {
+                    let mut input = oxide_server::PageRenderInput::new(
+                        label.clone(),
+                        req_owned.url.clone(),
+                    );
+                    input.params = params;
+                    input.data = data;
                     match renderer.render(input).await {
                         Ok(html) => {
-                            metrics_async.observe(&label_async, started.elapsed(), 200);
+                            metrics.observe(&label, started.elapsed(), 200);
                             oxide_server::OxideResponse::html(200, html)
                         }
                         Err(e) => {
                             tracing::error!(
                                 code = %e.0.code,
                                 error = %e.0.message,
-                                route = %label_async,
+                                route = %label,
                                 "framework render failed",
                             );
-                            metrics_async.observe(&label_async, started.elapsed(), 500);
+                            metrics.observe(&label, started.elapsed(), 500);
                             oxide_server::OxideResponse::html(
                                 500,
                                 format!("render error: {}", e.0.message),
                             )
                         }
                     }
-                });
-            }
-
-            metrics.observe(&label, started.elapsed(), status);
-            Box::pin(std::future::ready(oxide_server::OxideResponse::html(
-                status,
-                format!(
-                    "<!doctype html><html><head><title>Oxide</title></head>\
-                     <body><main>Oxide serving {label}</main></body></html>"
-                ),
-            )))
+                } else {
+                    metrics.observe(&label, started.elapsed(), status);
+                    oxide_server::OxideResponse::html(
+                        status,
+                        format!(
+                            "<!doctype html><html><head><title>Oxide</title></head>\
+                             <body><main>Oxide serving {label}</main></body></html>"
+                        ),
+                    )
+                }
             })
+        })
 }
 
 pub async fn start_dev_server_full(
