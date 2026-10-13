@@ -4696,6 +4696,7 @@ dependencies = [
 name = "oxide-server"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "blake3",
  "brotli",
  "bytes",
