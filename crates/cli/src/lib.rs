@@ -1501,10 +1501,16 @@ fn build_dispatch(
                     );
                     input.params = params;
                     input.data = data;
-                    match renderer.render(input).await {
-                        Ok(html) => {
+                    match renderer.render_streaming(input).await {
+                        Ok(render_stream) => {
                             metrics.observe(&label, started.elapsed(), 200);
-                            oxide_server::OxideResponse::html(200, html)
+                            // Bridge the renderer's Send-only stream to the
+                            // transport's Send + Sync body stream, then hand
+                            // it to hyper un-collected so each chunk flushes
+                            // as it arrives.
+                            let body = render_stream_to_body_stream(render_stream);
+                            oxide_server::OxideResponse::stream(200, body)
+                                .with_header("content-type", "text/html; charset=utf-8")
                         }
                         Err(e) => {
                             tracing::error!(

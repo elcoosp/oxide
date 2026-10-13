@@ -216,7 +216,8 @@ async fn dispatch_routes_through_page_renderer_when_attached() {
     let resp = dispatch(test_request("GET", "/")).await;
 
     assert_eq!(resp.status, 200, "renderer branch returns 200");
-    let body = std::str::from_utf8(resp.body.as_ref()).expect("utf8 body");
+    let collected = collect_response_body(resp).await;
+    let body = std::str::from_utf8(&collected).expect("utf8 body");
     assert!(
         body.contains("RENDERER:"),
         "response body should come from the attached renderer: {body}"
@@ -916,6 +917,33 @@ async fn smoke_app_builds_its_own_pages() {
     );
 
     let _ = std::fs::remove_dir_all(&dist);
+}
+
+/// Collect the full response body, whether it came back collected
+/// (`resp.body`) or streamed (`resp.stream`). Streaming responses leave
+/// `.body` empty by design; the content is in `.stream`. Most tests want
+/// the logical body regardless of which transport shape the dispatch
+/// chose, so they call this instead of reading `.body` directly.
+async fn collect_response_body(
+    mut resp: oxide_server::OxideResponse,
+) -> Vec<u8> {
+    // Streaming responses leave `.body` empty; the content is in `.stream`.
+    // Read the stream directly (no HTTP framing needed) so the helper
+    // works without depending on hyper/http_body_util in the cli crate.
+    use futures::StreamExt as _;
+    if let Some(stream) = resp.stream.take() {
+        let mut stream = stream;
+        let mut out = Vec::new();
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(chunk) => out.extend_from_slice(&chunk),
+                Err(e) => panic!("stream chunk error: {e}"),
+            }
+        }
+        out
+    } else {
+        resp.body.to_vec()
+    }
 }
 
 #[test]
