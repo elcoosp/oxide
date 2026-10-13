@@ -561,28 +561,14 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             );
         }
     }
-    // §7: try to attach a framework adapter renderer. The config file's
-    // presence signals intent; if it exists but Node or the adapter load
-    // fails, warn and fall back to the IR path so dev stays usable.
-    let page_renderer: Option<std::sync::Arc<dyn oxide_server::PageRenderer>> =
-        match find_config_file(&rootp) {
-            Ok(config_path) => match framework_shim::build_adapter_renderer(&config_path).await {
-                Ok(r) => {
-                    outln!(
-                        w,
-                        "framework renderer: {} ({})",
-                        r.name(),
-                        config_path.display()
-                    );
-                    Some(r)
-                }
-                Err(e) => {
-                    outln!(w, "warn: framework renderer not wired: {e}");
-                    None
-                }
-            },
-            Err(_) => None,
-        };
+    // §7 / §9.1: build the framework stack (renderer + loader) from the
+    // project's oxide.config.{ts,mjs,js}. Both fall back gracefully when the
+    // config is absent or the worker can't start.
+    let config_path_opt = find_config_file(&rootp).ok();
+    let stack = framework_shim::build_framework_stack(config_path_opt.as_deref()).await;
+    if let Some(name) = stack.renderer_name() {
+        outln!(w, "framework renderer: {}", name);
+    }
 
     let started = start_dev_server_full(
         root,
@@ -590,7 +576,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         bind_ip,
         tls_config,
         proxy_rules,
-        page_renderer,
+        stack,
     )
     .await?;
     let local = oxide_dev::local_url(started.addr.port(), flags.https);
@@ -816,28 +802,14 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     let tree = scan_routes(&rootp, &cfg)?;
     let dist = rootp.join("dist");
 
-    // §7: attach a framework adapter renderer when the project has an
-    // oxide.config.{ts,mjs,js}. Same wiring as cmd_dev/cmd_serve; failures
-    // fall back to the IR placeholder with a warning so the build stays usable.
-    let page_renderer: Option<std::sync::Arc<dyn oxide_server::PageRenderer>> =
-        match find_config_file(&rootp) {
-            Ok(config_path) => match framework_shim::build_adapter_renderer(&config_path).await {
-                Ok(r) => {
-                    outln!(
-                        w,
-                        "framework renderer: {} ({})",
-                        r.name(),
-                        config_path.display()
-                    );
-                    Some(r)
-                }
-                Err(e) => {
-                    outln!(w, "warn: framework renderer not wired for build: {e}");
-                    None
-                }
-            },
-            Err(_) => None,
-        };
+    // §7 / §9.1: build the framework stack (renderer + loader). Renderer
+    // is used for prerendering static routes; loader is present but not
+    // consumed during build (build-time loader evaluation is a follow-up).
+    let config_path_opt = find_config_file(&rootp).ok();
+    let stack = framework_shim::build_framework_stack(config_path_opt.as_deref()).await;
+    if let Some(name) = stack.renderer_name() {
+        outln!(w, "framework renderer: {}", name);
+    }
 
     // Entries: pages + endpoints (client and ssr share the entry set, §6.1).
     let mut entries: BTreeMap<String, PathBuf> = BTreeMap::new();
@@ -939,7 +911,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                         &url_path_from_rel(&rel),
                         params_map,
                         &nonce_for,
-                        page_renderer.as_ref(),
+                        stack.page_renderer.as_ref(),
                     )
                     .await?;
                     outs.push(rel);
@@ -983,7 +955,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     &url_path_from_rel(&rel),
                     &empty_params,
                     &nonce_for,
-                    page_renderer.as_ref(),
+                    stack.page_renderer.as_ref(),
                 )
                 .await?;
                 prerendered.insert(e.id.0.clone(), vec![rel]);
@@ -1149,10 +1121,10 @@ impl oxide_server::InspectorSnapshot for CliInspector {
 pub async fn start_server(
     root: &str,
     port: Option<u16>,
-    page_renderer: Option<std::sync::Arc<dyn oxide_server::PageRenderer>>,
+    stack: crate::framework_shim::FrameworkStack,
 ) -> anyhow::Result<StartedServer> {
     let bind = port.map(|p| (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), p));
-    start_server_inner_full(root, bind, false, None, Vec::new(), page_renderer).await
+    start_server_inner_full(root, bind, false, None, Vec::new(), stack).await
 }
 
 /// Dev server entry (§13): identical pipeline but with the `/__oxide`
@@ -1168,6 +1140,8 @@ fn build_dispatch(
     metrics: std::sync::Arc<oxide_server::Metrics>,
     proxy_rules: Vec<oxide_dev::ProxyRule>,
     page_renderer: Option<std::sync::Arc<dyn oxide_server::PageRenderer>>,
+    _loader_runner: Option<std::sync::Arc<dyn oxide_server::LoaderRunner>>,
+    _routes_root: std::path::PathBuf,
 ) -> std::sync::Arc<
     dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
 > {
@@ -1275,7 +1249,7 @@ pub async fn start_dev_server_full(
     bind_ip: std::net::IpAddr,
     tls: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>,
     proxy_rules: Vec<oxide_dev::ProxyRule>,
-    page_renderer: Option<std::sync::Arc<dyn oxide_server::PageRenderer>>,
+    stack: crate::framework_shim::FrameworkStack,
 ) -> anyhow::Result<StartedServer> {
     start_server_inner_full(
         root,
@@ -1283,7 +1257,7 @@ pub async fn start_dev_server_full(
         true,
         tls,
         proxy_rules,
-        page_renderer,
+        stack,
     )
     .await
 }
@@ -1298,7 +1272,15 @@ async fn start_server_inner(
     with_inspector: bool,
 ) -> anyhow::Result<StartedServer> {
     let bind = port.map(|p| (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), p));
-    start_server_inner_full(root, bind, with_inspector, None, Vec::new(), None).await
+    start_server_inner_full(
+        root,
+        bind,
+        with_inspector,
+        None,
+        Vec::new(),
+        crate::framework_shim::FrameworkStack::default(),
+    )
+    .await
 }
 
 async fn start_server_inner_full(
@@ -1307,7 +1289,7 @@ async fn start_server_inner_full(
     with_inspector: bool,
     tls: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>,
     proxy_rules: Vec<oxide_dev::ProxyRule>,
-    page_renderer: Option<std::sync::Arc<dyn oxide_server::PageRenderer>>,
+    stack: crate::framework_shim::FrameworkStack,
 ) -> anyhow::Result<StartedServer> {
     let rootp = PathBuf::from(root);
     let cfg = load_config_or_default(&rootp, "production");
@@ -1352,11 +1334,14 @@ async fn start_server_inner_full(
         page_renderer: None,
     });
     let proxy_rules: Vec<oxide_dev::ProxyRule> = proxy_rules.clone();
+    let routes_root = rootp.join(&cfg.routes.dir);
     let dispatch = build_dispatch(
         std::sync::Arc::clone(&tree),
         std::sync::Arc::clone(&metrics),
         proxy_rules.clone(),
-        page_renderer.clone(),
+        stack.page_renderer,
+        stack.loader_runner,
+        routes_root,
     );
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (tx, rx) = tokio::sync::watch::channel(false);
@@ -1391,32 +1376,16 @@ async fn cmd_serve(
     port: Option<u16>,
     label: &str,
     w: Writer<'_>,
-) -> anyhow::Result<i32> {
-        // §7: attach a framework adapter renderer when the project has an
-        // oxide.config.{ts,mjs,js}. Same wiring as `cmd_dev`; failures fall back
-        // to the IR path with a warning.
-        let rootp = std::path::PathBuf::from(root);
-        let page_renderer: Option<std::sync::Arc<dyn oxide_server::PageRenderer>> =
-            match find_config_file(&rootp) {
-                Ok(config_path) => match framework_shim::build_adapter_renderer(&config_path).await {
-                    Ok(r) => {
-                        outln!(w, "framework renderer: {} ({})", r.name(), config_path.display());
-                        Some(r)
-                    }
-                    Err(e) => {
-                        outln!(w, "warn: framework renderer not wired: {e}");
-                        None
-                    }
-                },
-                Err(_) => None,
-            };
+) -> anyhow::Result<i32> {    // §7 / §9.1: build the framework stack (renderer + loader) for the
+    // production server. Same wiring as `cmd_dev`.
+    let rootp = std::path::PathBuf::from(root);
+    let config_path_opt = find_config_file(&rootp).ok();
+    let stack = framework_shim::build_framework_stack(config_path_opt.as_deref()).await;
+    if let Some(name) = stack.renderer_name() {
+        outln!(w, "framework renderer: {}", name);
+    }
 
-        
-    let started = start_server(
-        root,
-        port,
-        page_renderer,
-    ).await?;
+    let started = start_server(root, port, stack).await?;
     outln!(
         w,
         "{label} — listening on http://{} (health: /_oxide/health, Ctrl-C to stop)",
