@@ -56,6 +56,66 @@ impl LoaderHost {
         }
         Ok(v)
     }
+
+    /// Run a route's `generateParams` export and return the enumerated
+    /// static params (spec §10.5). When the module has no `generateParams`
+    /// export, returns an empty vector (not an error) — the build falls
+    /// back to the route's static/dynamic classification.
+    ///
+    /// Each entry is a flat `String -> String` map; scalar values are
+    /// coerced to strings on the JS side, nested structures are skipped
+    /// (params substitute into URL path segments, so only scalars make
+    /// sense).
+    pub async fn generate_params(
+        &self,
+        module_path: &str,
+    ) -> Result<Vec<std::collections::BTreeMap<String, String>>> {
+        let call_input = CallInput {
+            payload: serde_json::json!({ "module_path": module_path }),
+            headers: Default::default(),
+            has_body: false,
+            request_id: format!("generate-params:run:{module_path}"),
+        };
+        let entry = EntryRef {
+            kind: "generate-params:run".into(),
+            module: module_path.to_string(),
+            export: "generateParams".into(),
+        };
+        let mut stream = self.pool.call(entry, call_input).await?;
+        let bytes = stream.collect().await?;
+        let v: Value = serde_json::from_slice(&bytes).map_err(|e| {
+            crate::err(
+                "JSH-PARAMS",
+                format!("generate-params:run returned invalid JSON: {e}"),
+            )
+        })?;
+        if let Some(err_msg) = v.get("__oxide_error").and_then(|x| x.as_str()) {
+            return Err(crate::err("JSH-PARAMS", err_msg.to_string()));
+        }
+        let arr = v
+            .get("params")
+            .and_then(|x| x.as_array())
+            .ok_or_else(|| {
+                crate::err(
+                    "JSH-PARAMS",
+                    "generate-params:run response missing `params` array",
+                )
+            })?;
+        let mut out = Vec::with_capacity(arr.len());
+        for item in arr {
+            let obj = item.as_object().ok_or_else(|| {
+                crate::err("JSH-PARAMS", "params entry not an object")
+            })?;
+            let mut map = std::collections::BTreeMap::new();
+            for (k, val) in obj {
+                if let Some(s) = val.as_str() {
+                    map.insert(k.clone(), s.to_string());
+                }
+            }
+            out.push(map);
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -128,5 +188,51 @@ mod tests {
         let err = h.run("/m.ts", json!({})).await.unwrap_err();
         assert_eq!(err.0.code, "JSH-LOADER");
         assert!(err.0.message.contains("invalid JSON"));
+    }
+
+    #[tokio::test]
+    async fn generate_params_success() {
+        let pool = mock_pool(json!({
+            "params": [
+                { "slug": "hello" },
+                { "slug": "world" }
+            ]
+        }));
+        let h = LoaderHost::new(pool);
+        let out = h
+            .generate_params("/abs/page.server.ts")
+            .await
+            .unwrap();
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].get("slug"), Some(&"hello".to_string()));
+        assert_eq!(out[1].get("slug"), Some(&"world".to_string()));
+    }
+
+    #[tokio::test]
+    async fn generate_params_empty_is_ok() {
+        let pool = mock_pool(json!({ "params": [] }));
+        let h = LoaderHost::new(pool);
+        let out = h.generate_params("/m.ts").await.unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[tokio::test]
+    async fn generate_params_worker_error() {
+        let pool = mock_pool(json!({
+            "__oxide_error": "generate-params:run failed: no such module"
+        }));
+        let h = LoaderHost::new(pool);
+        let err = h.generate_params("/missing.ts").await.unwrap_err();
+        assert_eq!(err.0.code, "JSH-PARAMS");
+        assert!(err.0.message.contains("no such module"), "{}", err.0.message);
+    }
+
+    #[tokio::test]
+    async fn generate_params_missing_array() {
+        let pool = mock_pool(json!({}));
+        let h = LoaderHost::new(pool);
+        let err = h.generate_params("/m.ts").await.unwrap_err();
+        assert_eq!(err.0.code, "JSH-PARAMS");
+        assert!(err.0.message.contains("missing `params` array"));
     }
 }

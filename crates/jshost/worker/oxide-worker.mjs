@@ -7,6 +7,7 @@
 //   framework:render         → dynamic import → adapter.render(input) → JSON chunked
 //   loader:run               → dynamic import → load(event) → {ok, status, location, data}
 //   framework:invalidate     → bump moduleGeneration → {generation: N}
+//   generate-params:run      → import module, call generateParams → {params: [...]}
 //   boom                     → CallErr
 //   die                      → exit(1)
 //   sleep                    → delayed reply
@@ -252,6 +253,66 @@ async function dispatchFrameworkInvalidate(id, _input) {
   callOk(id, { generation: moduleGeneration });
 }
 
+// --- Generate-params ops (spec §10.5) -----------------------------------
+//
+//   generate-params:run   { module_path }
+//                       → { params: [ {...}, ... ] }
+//
+// Imports a `page.server.ts` module, invokes its `generateParams` export
+// (either a function or a value), and returns the array of param objects
+// as strings. Used by `oxide build` to enumerate static paths for a route
+// whose generateParams cannot be evaluated statically (e.g. it reads
+// `process.env` or builds an array programmatically).
+async function dispatchGenerateParamsRun(id, input) {
+  const { module_path } = input.payload ?? {};
+  if (typeof module_path !== "string" || module_path.length === 0) {
+    callErr(id, "JSH-PARAMS", "generate-params:run requires a `module_path` string");
+    return;
+  }
+  try {
+    const mod = await import(versioned(pathToFileURL(module_path).href));
+    const gp = mod.generateParams;
+    if (gp === undefined) {
+      // Absent export is not an error — the caller falls back to the
+      // "no generateParams" path.
+      callOk(id, { params: [] });
+      return;
+    }
+    let value;
+    if (typeof gp === "function") {
+      value = await gp();
+    } else {
+      value = gp;
+    }
+    if (!Array.isArray(value)) {
+      callErr(
+        id,
+        "JSH-PARAMS",
+        `generateParams must return an array; got ${value === null ? "null" : typeof value}`,
+      );
+      return;
+    }
+    // Normalize each entry to a flat string map. Non-string scalars are
+    // coerced via String(); nested objects/arrays are skipped (params must
+    // be scalar — they get substituted into URL segments).
+    const params = value.map((item) => {
+      if (item === null || typeof item !== "object" || Array.isArray(item)) {
+        return {};
+      }
+      const out = {};
+      for (const [k, v] of Object.entries(item)) {
+        if (v === null || v === undefined) continue;
+        if (typeof v === "object") continue;
+        out[k] = typeof v === "string" ? v : String(v);
+      }
+      return out;
+    });
+    callOk(id, { params });
+  } catch (e) {
+    callErr(id, "JSH-PARAMS", `generate-params:run failed: ${e?.message ?? e}`);
+  }
+}
+
 const handlers = {
   render: (msg) => {
     const title = msg.input.payload?.title ?? `${msg.entry.module}:${msg.entry.export}`;
@@ -268,6 +329,7 @@ async function handleCall(msg) {
   if (entry.kind === "framework:render") { await dispatchFrameworkRender(id, input); return; }
   if (entry.kind === "loader:run") { await dispatchLoaderRun(id, input); return; }
   if (entry.kind === "framework:invalidate") { await dispatchFrameworkInvalidate(id, input); return; }
+  if (entry.kind === "generate-params:run") { await dispatchGenerateParamsRun(id, input); return; }
   if (entry.kind === "die") process.exit(1);
   if (entry.kind === "sleep") {
     await new Promise((r) => setTimeout(r, Number(input.payload?.ms ?? 100)));
