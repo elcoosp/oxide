@@ -841,7 +841,7 @@ async fn build_static_refuses_dynamic_route() {
 #[tokio::test]
 async fn start_serves_health_endpoint_then_shuts_down() {
     let (_d, root) = fixture_project();
-    let started = start_server(root.to_str().unwrap(), Some(0)).await.unwrap();
+    let started = start_server(root.to_str().unwrap(), Some(0), None).await.unwrap();
     // Poll until the listener accepts (no sleeps > 50 ms, bounded).
     let mut stream = None;
     for _ in 0..50 {
@@ -983,7 +983,7 @@ async fn started_server_exposes_metrics_registry() {
     )
     .unwrap();
 
-    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0))
+    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0), None)
         .await
         .expect("start_server");
     let text = started.metrics.render();
@@ -1008,7 +1008,7 @@ async fn dispatch_observes_route_pattern_labels() {
     )
     .unwrap();
 
-    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0))
+    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0), None)
         .await
         .expect("start_server");
     wait_ready(started.addr).await;
@@ -1036,7 +1036,7 @@ async fn dispatch_observes_unmatched_label() {
     )
     .unwrap();
 
-    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0))
+    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0), None)
         .await
         .expect("start_server");
     wait_ready(started.addr).await;
@@ -1063,7 +1063,7 @@ async fn dispatch_label_cardinality_is_bounded() {
     )
     .unwrap();
 
-    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0))
+    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0), None)
         .await
         .expect("start_server");
     wait_ready(started.addr).await;
@@ -1141,7 +1141,7 @@ async fn production_server_does_not_serve_inspector() {
     )
     .unwrap();
 
-    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0))
+    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0), None)
         .await
         .expect("start_server");
     wait_ready(started.addr).await;
