@@ -142,4 +142,19 @@ mod tests {
         assert!(v.get("data").is_some());
         assert!(v.get("head").is_some());
     }
+
+    #[test]
+    fn pipeline_accepts_page_renderer_builder() {
+        use crate::Pipeline;
+        let pipeline = Pipeline::default().with_page_renderer(Arc::new(EchoRenderer));
+        let r = pipeline.page_renderer().expect("renderer attached");
+        assert_eq!(r.name(), "echo");
+    }
+
+    #[test]
+    fn pipeline_defaults_to_no_page_renderer() {
+        use crate::Pipeline;
+        let pipeline = Pipeline::default();
+        assert!(pipeline.page_renderer().is_none(), "default pipeline has no renderer");
+    }
 }
