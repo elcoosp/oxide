@@ -57,3 +57,26 @@ Work Log:
 Stage Summary:
 - <results, decisions, deviations>
 ```
+
+## Path canonicalization at command entry
+
+Every CLI command that takes a `--root` argument must canonicalize it
+once at the top of the function:
+
+    let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
+
+Downstream joins (`root.join("dist")`, `routes_root.join(e.file)`,
+bundler entry resolution) all expect absolute paths. When `root` is
+relative and a downstream layer joins it to a path that already carries
+the root prefix, the result is `examples/smoke-app/examples/smoke-app/...`
+— a silently doubled path that produces "file not found" errors far
+from the actual bug.
+
+`PathBuf::join` returns the right-hand side unchanged when it is
+absolute, so canonicalizing once at entry short-circuits the doubling
+in every downstream join. The `unwrap_or_else` fallback preserves prior
+behavior for paths that don't exist yet (tempdirs in tests).
+
+This bug has bitten three times in the same session — cmd_build's
+route scan, its bundler invocation, and cmd_serve's config lookup. If
+a new command takes a root, canonicalize before it does anything else.
