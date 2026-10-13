@@ -81,12 +81,18 @@ impl PageRenderer for AdapterPageRenderer {
 pub struct FrameworkStack {
     pub page_renderer: Option<Arc<dyn PageRenderer>>,
     pub loader_runner: Option<Arc<dyn LoaderRunner>>,
+    /// The shared Node worker pool backing both the renderer and the loader.
+    /// Kept here (as a second Arc reference) so callers that need to send
+    /// out-of-band ops to the worker — `cmd_dev`'s watcher calling
+    /// `FrameworkHost::invalidate()` on file change (§13.3) — still have a
+    /// handle after the renderer/loader have been moved into the pipeline.
+    pub pool: Option<Arc<dyn oxide_jshost::Pool>>,
 }
 
 impl FrameworkStack {
     /// No renderer, no loader. Every render falls back to the IR placeholder.
     pub fn empty() -> Self {
-        Self { page_renderer: None, loader_runner: None }
+        Self { page_renderer: None, loader_runner: None, pool: None }
     }
     /// The attached renderer's name, if any (for the `framework renderer:`
     /// log line).
@@ -97,6 +103,12 @@ impl FrameworkStack {
     pub fn has_renderer(&self) -> bool {
         self.page_renderer.is_some()
     }
+    /// True when the shared worker pool is available (i.e. the Node worker
+    /// started successfully). Used by `cmd_dev`'s watcher to decide whether
+    /// an `invalidate` call is possible.
+    pub fn has_pool(&self) -> bool {
+        self.pool.is_some()
+    }
 }
 
 impl std::fmt::Debug for FrameworkStack {
@@ -104,6 +116,7 @@ impl std::fmt::Debug for FrameworkStack {
         f.debug_struct("FrameworkStack")
             .field("has_renderer", &self.page_renderer.is_some())
             .field("has_loader", &self.loader_runner.is_some())
+            .field("has_pool", &self.pool.is_some())
             .finish()
     }
 }
@@ -137,6 +150,11 @@ pub async fn build_framework_stack(
         Arc::clone(&pool),
     );
 
+    // Keep a second Arc reference to the pool so callers (notably cmd_dev's
+    // watcher) can send out-of-band ops after the renderer/loader have been
+    // moved into the pipeline.
+    let pool_for_stack: Arc<dyn oxide_jshost::Pool> = Arc::clone(&pool);
+
     // The page renderer needs a config file. Its absence is normal.
     let page_renderer: Option<Arc<dyn PageRenderer>> = match config_path {
         Some(path) => {
@@ -159,7 +177,11 @@ pub async fn build_framework_stack(
         None => None,
     };
 
-    FrameworkStack { page_renderer, loader_runner: Some(loader_runner) }
+    FrameworkStack {
+        page_renderer,
+        loader_runner: Some(loader_runner),
+        pool: Some(pool_for_stack),
+    }
 }
 
 /// Build a `PageRenderer` for a project's `oxide.config.{ts,mjs,js}`.
