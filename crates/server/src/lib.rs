@@ -9,6 +9,8 @@
 #![forbid(unsafe_code)]
 
 pub mod metrics;
+pub mod page_renderer;
+pub use page_renderer::{PageRenderInput, PageRenderer};
 pub mod trace_context;
 
 use bytes::Bytes;
