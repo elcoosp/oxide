@@ -6,6 +6,7 @@
 //   framework:load           → dynamic import of a config path → descriptor
 //   framework:render         → dynamic import → adapter.render(input) → JSON chunked
 //   loader:run               → dynamic import → load(event) → {ok, status, location, data}
+//   framework:invalidate     → bump moduleGeneration → {generation: N}
 //   boom                     → CallErr
 //   die                      → exit(1)
 //   sleep                    → delayed reply
@@ -17,6 +18,28 @@ import { pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
 const b64 = (buf) => buf.toString("base64");
+
+// ---------------------------------------------------------------------------
+// HMR cache invalidation (spec §13.3)
+// ---------------------------------------------------------------------------
+//
+// Node caches ES modules by URL. To force re-evaluation after a file change,
+// we tag every dynamic import with `?v=<generation>`. The generation is bumped
+// by the `framework:invalidate` op, which the dev server's file watcher calls
+// when a source file it cares about changes. Outside of dev, the generation
+// stays at 0 and no invalidation happens — imports and caching behave
+// normally.
+let moduleGeneration = 0;
+
+/**
+ * Append the current generation to a URL. `file:///x.mjs` becomes
+ * `file:///x.mjs?v=0` and every subsequent bump produces a fresh URL, so
+ * Node treats each generation as a distinct module.
+ */
+function versioned(url) {
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}v=${moduleGeneration}`;
+}
 const out = (obj) => {
   const body = Buffer.from(JSON.stringify(obj), "utf8");
   const head = Buffer.alloc(4);
@@ -89,7 +112,7 @@ async function dispatchFrameworkLoad(id, input) {
     return;
   }
   try {
-    const mod = await import(pathToFileURL(path).href);
+    const mod = await import(versioned(pathToFileURL(path).href));
     const cfg = mod.default ?? mod;
     const framework = cfg?.framework;
     if (!framework || typeof framework !== "object") {
@@ -114,7 +137,7 @@ async function dispatchFrameworkRender(id, input) {
     return;
   }
   try {
-    const mod = await import(pathToFileURL(path).href);
+    const mod = await import(versioned(pathToFileURL(path).href));
     const cfg = mod.default ?? mod;
     const framework = cfg?.framework;
     if (!framework || typeof framework.render !== "function") {
@@ -166,7 +189,7 @@ async function dispatchLoaderRun(id, input) {
     return;
   }
   try {
-    const mod = await import(pathToFileURL(module_path).href);
+    const mod = await import(versioned(pathToFileURL(module_path).href));
     const load = mod.load;
     if (typeof load !== "function") {
       callErr(id, "JSH-LOADER", `module at ${module_path} has no \`load\` export`);
@@ -218,6 +241,18 @@ async function dispatchLoaderRun(id, input) {
   }
 }
 
+// --- HMR op (spec §13.3) --------------------------------------------------
+//
+//   framework:invalidate   {}   → { generation: N }
+//
+// Bumps the module-generation counter. Every subsequent `import()` inside
+// this worker uses `?v=<N>`, so Node re-evaluates cached modules on next
+// access. Idempotent; cheap. Called by the dev server's file watcher.
+async function dispatchFrameworkInvalidate(id, _input) {
+  moduleGeneration += 1;
+  callOk(id, { generation: moduleGeneration });
+}
+
 const handlers = {
   render: (msg) => {
     const title = msg.input.payload?.title ?? `${msg.entry.module}:${msg.entry.export}`;
@@ -233,6 +268,7 @@ async function handleCall(msg) {
   if (entry.kind === "framework:load") { await dispatchFrameworkLoad(id, input); return; }
   if (entry.kind === "framework:render") { await dispatchFrameworkRender(id, input); return; }
   if (entry.kind === "loader:run") { await dispatchLoaderRun(id, input); return; }
+  if (entry.kind === "framework:invalidate") { await dispatchFrameworkInvalidate(id, input); return; }
   if (entry.kind === "die") process.exit(1);
   if (entry.kind === "sleep") {
     await new Promise((r) => setTimeout(r, Number(input.payload?.ms ?? 100)));
