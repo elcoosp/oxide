@@ -15,6 +15,8 @@
 //! so SSR HTML flushes as it's produced) is a follow-up.
 
 use crate::framework_host::{FrameworkDescriptor, FrameworkHost};
+use bytes::Bytes;
+use futures::stream::BoxStream;
 use crate::{Pool, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -71,6 +73,11 @@ impl FrameworkRenderInput {
 /// A typed renderer the pipeline depends on. Object-safe; the pipeline
 /// holds an `Arc<dyn FrameworkRenderer>` behind an `Option` so builds with
 /// no framework adapter configured keep the IR path.
+/// Type alias for a chunked render stream: byte chunks in order, each
+/// `Ok(chunk)` or a terminal `Err`. The stream is `Send + 'static` so it
+/// can move across task boundaries (worker pool → HTTP response task).
+pub type RenderStream = BoxStream<'static, crate::Result<Bytes>>;
+
 #[async_trait]
 pub trait FrameworkRenderer: Send + Sync {
     /// Adapter name (`react` / `vue` / `svelte` / `solid`); surfaced for
@@ -78,6 +85,23 @@ pub trait FrameworkRenderer: Send + Sync {
     fn name(&self) -> &str;
     /// Render one route to HTML.
     async fn render(&self, input: FrameworkRenderInput) -> Result<String>;
+
+    /// Streaming variant. Yields HTML bytes as chunks arrive from the
+    /// upstream renderer. The default collects `render` into a single
+    /// chunk, so implementations that cannot stream still work — and
+    /// callers that only support the collected shape see no change.
+    ///
+    /// **Contract:** the concatenated chunks equal what `render` would
+    /// return, modulo chunk boundaries. Callers must drain to `None` to
+    /// release the underlying resource (worker slot).
+    async fn render_streaming(
+        &self,
+        input: FrameworkRenderInput,
+    ) -> Result<RenderStream> {
+        let html = self.render(input).await?;
+        let stream = futures::stream::once(async move { Ok(Bytes::from(html)) });
+        Ok(Box::pin(stream))
+    }
 }
 
 /// `FrameworkHostRenderer` wraps a `FrameworkHost` + a cached config path and
@@ -129,6 +153,43 @@ impl FrameworkRenderer for FrameworkHostRenderer {
 
     async fn render(&self, input: FrameworkRenderInput) -> Result<String> {
         self.host.render(&self.config_path, input.to_payload()).await
+    }
+
+    /// Override: use the raw worker CallStream and forward each chunk as
+    /// it arrives, instead of collecting the whole payload first. This is
+    /// the version a hyper body writer wants — TTFB is the first chunk's
+    /// arrival, not the whole response's.
+    async fn render_streaming(
+        &self,
+        input: FrameworkRenderInput,
+    ) -> Result<RenderStream> {
+        let stream = self
+            .host
+            .render_streaming(&self.config_path, input.to_payload())
+            .await?;
+        // Adapt the CallStream into a `Stream<Item = Result<Bytes>>`.
+        // CallStream::Chunked is an mpsc receiver; we turn it into a
+        // Stream with `ReceiverStream`. CallStream::Complete yields one
+        // Bytes item and closes.
+        let out = async_stream_via_channel(stream);
+        Ok(out)
+    }
+}
+
+/// Convert a `CallStream` into a boxed `Stream<Item = Result<Bytes>>`.
+/// Yields each chunk as it arrives, closes when the channel ends.
+fn async_stream_via_channel(stream: crate::CallStream) -> RenderStream {
+    match stream {
+        crate::CallStream::Complete(b) => {
+            let s = futures::stream::once(async move { Ok(b) });
+            Box::pin(s)
+        }
+        crate::CallStream::Chunked(mut rx) => {
+            let s = futures::stream::poll_fn(move |cx| {
+                rx.poll_recv(cx)
+            });
+            Box::pin(s)
+        }
     }
 }
 
@@ -247,6 +308,32 @@ mod tests {
             .await
             .unwrap();
         assert!(html.contains("route=routes/index"));
+    }
+
+    #[tokio::test]
+    async fn render_streaming_default_collects() {
+        // A renderer that only implements `render`. The default
+        // `render_streaming` should collect it into one chunk.
+        struct StaticRenderer;
+        #[async_trait]
+        impl FrameworkRenderer for StaticRenderer {
+            fn name(&self) -> &str { "static" }
+            async fn render(&self, _input: FrameworkRenderInput) -> Result<String> {
+                Ok("<h1>default</h1>".to_string())
+            }
+        }
+        let r = StaticRenderer;
+        let mut stream = r
+            .render_streaming(FrameworkRenderInput::new("routes/index", "/"))
+            .await
+            .unwrap();
+        let mut chunks: Vec<Bytes> = Vec::new();
+        use futures::StreamExt;
+        while let Some(item) = stream.next().await {
+            chunks.push(item.unwrap());
+        }
+        assert_eq!(chunks.len(), 1, "default yields one chunk");
+        assert_eq!(chunks[0].as_ref(), b"<h1>default</h1>");
     }
 
     #[test]

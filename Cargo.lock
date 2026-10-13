@@ -4505,6 +4505,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "clap",
+ "futures",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",

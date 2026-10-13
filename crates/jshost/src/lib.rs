@@ -36,7 +36,7 @@ pub mod framework_host;
 pub mod framework_renderer;
 pub mod loader_host;
 pub use framework_host::{FrameworkDescriptor, FrameworkHost};
-pub use framework_renderer::{FrameworkHostRenderer, FrameworkRenderInput, FrameworkRenderer};
+pub use framework_renderer::{FrameworkHostRenderer, FrameworkRenderInput, FrameworkRenderer, RenderStream};
 pub use loader_host::LoaderHost;
 pub use tooling_pool::{ModuleCall, ToolingModules};
 

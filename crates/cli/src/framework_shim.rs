@@ -41,6 +41,22 @@ impl AdapterPageRenderer {
     }
 }
 
+fn to_fw_input(input: PageRenderInput) -> FrameworkRenderInput {
+    // `BTreeMap<String, String>` → `serde_json::Value::Object`. The
+    // serialization can't fail for this input shape (string keys and
+    // values always map to JSON), but we degrade to `{}` on the
+    // impossible path rather than panicking.
+    let params = serde_json::to_value(&input.params)
+        .unwrap_or_else(|_| serde_json::json!({}));
+    FrameworkRenderInput {
+        route: input.route,
+        url: input.url,
+        params,
+        data: input.data,
+        head: input.head,
+    }
+}
+
 #[async_trait]
 impl PageRenderer for AdapterPageRenderer {
     fn name(&self) -> &str {
@@ -51,22 +67,18 @@ impl PageRenderer for AdapterPageRenderer {
         &self,
         input: PageRenderInput,
     ) -> oxide_server::Result<String> {
-        // `BTreeMap<String, String>` → `serde_json::Value::Object`. The
-        // serialization can't fail for this input shape (string keys and
-        // values always map to JSON), but we degrade to `{}` on the
-        // impossible path rather than panicking.
-        let params = serde_json::to_value(&input.params)
-            .unwrap_or_else(|_| serde_json::json!({}));
+        self.inner.render(to_fw_input(input)).await
+    }
 
-        let fw_input = FrameworkRenderInput {
-            route: input.route,
-            url: input.url,
-            params,
-            data: input.data,
-            head: input.head,
-        };
-
-        self.inner.render(fw_input).await
+    /// Forward to the inner renderer's streaming path. The default
+    /// `PageRenderer::render_streaming` would call `render` and collect;
+    /// overriding here means the chunked wire from the worker is
+    /// preserved end-to-end.
+    async fn render_streaming(
+        &self,
+        input: PageRenderInput,
+    ) -> oxide_server::Result<oxide_server::RenderStream> {
+        self.inner.render_streaming(to_fw_input(input)).await
     }
 }
 
@@ -306,5 +318,51 @@ mod tests {
             .await
             .unwrap();
         assert!(html.contains("route=routes/index"));
+    }
+
+    /// A FrameworkRenderer that yields three fixed chunks. Used to prove
+    /// the streaming override preserves chunk boundaries end-to-end.
+    struct ChunkedRenderer;
+
+    #[async_trait]
+    impl oxide_jshost::FrameworkRenderer for ChunkedRenderer {
+        fn name(&self) -> &str { "chunked" }
+        async fn render(
+            &self,
+            _input: oxide_jshost::FrameworkRenderInput,
+        ) -> oxide_jshost::Result<String> {
+            Ok("<h1>collected</h1>".to_string())
+        }
+        async fn render_streaming(
+            &self,
+            _input: oxide_jshost::FrameworkRenderInput,
+        ) -> oxide_jshost::Result<oxide_jshost::RenderStream> {
+            use bytes::Bytes;
+            let items: Vec<oxide_jshost::Result<Bytes>> = vec![
+                Ok(Bytes::from_static(b"<h1>")),
+                Ok(Bytes::from_static(b"chunked")),
+                Ok(Bytes::from_static(b"</h1>")),
+            ];
+            let s = futures::stream::iter(items);
+            Ok(Box::pin(s))
+        }
+    }
+
+    #[tokio::test]
+    async fn render_streaming_preserves_chunks_through_adapter() {
+        use futures::StreamExt;
+        let r = AdapterPageRenderer::new(Arc::new(ChunkedRenderer));
+        let mut stream = r
+            .render_streaming(PageRenderInput::new("routes/x", "/x"))
+            .await
+            .unwrap();
+        let mut chunks: Vec<Vec<u8>> = Vec::new();
+        while let Some(item) = stream.next().await {
+            chunks.push(item.unwrap().to_vec());
+        }
+        assert_eq!(chunks.len(), 3, "three chunks survive the adapter");
+        assert_eq!(chunks[0], b"<h1>");
+        assert_eq!(chunks[1], b"chunked");
+        assert_eq!(chunks[2], b"</h1>");
     }
 }

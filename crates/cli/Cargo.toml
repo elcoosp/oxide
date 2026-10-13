@@ -40,4 +40,5 @@ opentelemetry_sdk = { workspace = true }
 opentelemetry = { workspace = true }
 
 [dev-dependencies]
+futures = { workspace = true }
 tempfile = { workspace = true }

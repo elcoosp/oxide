@@ -24,6 +24,8 @@
 
 use crate::Result;
 use async_trait::async_trait;
+use bytes::Bytes;
+use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -63,6 +65,9 @@ impl PageRenderInput {
     }
 }
 
+/// A chunked render stream: bytes as they arrive from the renderer.
+pub type RenderStream = BoxStream<'static, Result<Bytes>>;
+
 /// Object-safe trait the pipeline holds behind `Arc<dyn PageRenderer>`.
 ///
 /// Implementations live where the framework dependency is available
@@ -80,6 +85,22 @@ pub trait PageRenderer: Send + Sync {
     /// Errors surface as `OxideError` with a code the pipeline maps to a
     /// status (§10.2 step 5).
     async fn render(&self, input: PageRenderInput) -> Result<String>;
+
+    /// Streaming variant. Yields HTML bytes as chunks arrive. The default
+    /// collects `render` into a single chunk, so implementations that
+    /// cannot stream still work.
+    ///
+    /// **Contract:** concatenated chunks equal what `render` returns,
+    /// modulo chunk boundaries. Callers must drain to `None` to release
+    /// any underlying resource (worker slot, cache entry).
+    async fn render_streaming(
+        &self,
+        input: PageRenderInput,
+    ) -> Result<RenderStream> {
+        let html = self.render(input).await?;
+        let stream = futures::stream::once(async move { Ok(Bytes::from(html)) });
+        Ok(Box::pin(stream))
+    }
 }
 
 #[cfg(test)]
@@ -102,6 +123,39 @@ mod tests {
             ))
         }
     }
+
+    #[tokio::test]
+
+    async fn render_streaming_default_collects() {
+
+        let r: Arc<dyn PageRenderer> = Arc::new(EchoRenderer);
+
+        let mut stream = r
+
+            .render_streaming(PageRenderInput::new("routes/a", "/a"))
+
+            .await
+
+            .unwrap();
+
+        use futures::StreamExt;
+
+        let mut chunks: Vec<bytes::Bytes> = Vec::new();
+
+        while let Some(item) = stream.next().await {
+
+            chunks.push(item.unwrap());
+
+        }
+
+        assert_eq!(chunks.len(), 1, "default yields one chunk");
+
+        let joined = String::from_utf8_lossy(&chunks[0]);
+
+        assert!(joined.contains("route=routes/a"), "{joined}");
+
+    }
+
 
     #[tokio::test]
     async fn input_new_defaults_shape() {
