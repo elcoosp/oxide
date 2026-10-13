@@ -144,6 +144,133 @@ export default {
     let _ = fs::remove_file(&config_path);
 }
 
+// ---------------------------------------------------- build_dispatch + page_renderer
+
+/// A `PageRenderer` that records how many times it was called and returns
+/// a signature body so the test can prove the renderer branch fired.
+struct CountingRenderer {
+    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl oxide_server::PageRenderer for CountingRenderer {
+    fn name(&self) -> &str {
+        "counting"
+    }
+    async fn render(
+        &self,
+        input: oxide_server::PageRenderInput,
+    ) -> oxide_server::Result<String> {
+        self.calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(format!(
+            "<!doctype html><html><body><h1>RENDERER:{}</h1></body></html>",
+            input.route
+        ))
+    }
+}
+
+/// A `PageRenderer` that always fails; verifies the 500 + error body path.
+struct FailingRenderer;
+
+#[async_trait::async_trait]
+impl oxide_server::PageRenderer for FailingRenderer {
+    fn name(&self) -> &str {
+        "failing"
+    }
+    async fn render(
+        &self,
+        _input: oxide_server::PageRenderInput,
+    ) -> oxide_server::Result<String> {
+        Err(oxide_server::err("FAKE-RENDER", "simulated render failure"))
+    }
+}
+
+fn test_request(method: &str, url: &str) -> oxide_server::OxideRequest {
+    oxide_server::OxideRequest {
+        method: method.into(),
+        url: url.into(),
+        headers: Vec::new(),
+        body: bytes::Bytes::new(),
+        request_id: "dispatch-test".into(),
+    }
+}
+
+fn empty_tree() -> std::sync::Arc<oxide_router::RouteTree> {
+    std::sync::Arc::new(oxide_router::RouteTree::new())
+}
+
+#[tokio::test]
+async fn dispatch_routes_through_page_renderer_when_attached() {
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let tree = empty_tree();
+    let metrics = Arc::new(oxide_server::Metrics::new());
+    let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(CountingRenderer {
+        calls: calls.clone(),
+    }));
+
+    let dispatch = build_dispatch(tree, metrics, Vec::new(), renderer);
+    let resp = dispatch(test_request("GET", "/")).await;
+
+    assert_eq!(resp.status, 200, "renderer branch returns 200");
+    let body = std::str::from_utf8(resp.body.as_ref()).expect("utf8 body");
+    assert!(
+        body.contains("RENDERER:"),
+        "response body should come from the attached renderer: {body}"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "renderer called exactly once");
+}
+
+#[tokio::test]
+async fn dispatch_uses_ir_placeholder_when_no_renderer() {
+    use std::sync::Arc;
+
+    let tree = empty_tree();
+    let metrics = Arc::new(oxide_server::Metrics::new());
+    let dispatch = build_dispatch(tree, metrics, Vec::new(), None);
+
+    let resp = dispatch(test_request("GET", "/some/page")).await;
+
+    // Empty tree → `_unmatched` → 404, IR placeholder body.
+    assert_eq!(resp.status, 404, "no renderer → placeholder status from tree match");
+    let body = std::str::from_utf8(resp.body.as_ref()).expect("utf8 body");
+    assert!(
+        body.contains("Oxide serving"),
+        "IR placeholder body: {body}"
+    );
+    assert!(
+        !body.contains("RENDERER:"),
+        "no renderer → no renderer-produced body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_propagates_renderer_error_as_500() {
+    use std::sync::Arc;
+
+    let tree = empty_tree();
+    let metrics = Arc::new(oxide_server::Metrics::new());
+    let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(FailingRenderer));
+
+    let dispatch = build_dispatch(tree, metrics, Vec::new(), renderer);
+    let resp = dispatch(test_request("GET", "/")).await;
+
+    assert_eq!(resp.status, 500, "renderer error → 500");
+    let body = std::str::from_utf8(resp.body.as_ref()).expect("utf8 body");
+    assert!(
+        body.contains("render error"),
+        "error response body: {body}"
+    );
+    assert!(
+        body.contains("simulated render failure"),
+        "error message surfaced: {body}"
+    );
+}
+
+
 #[test]
 fn render_subcommand_parses_route_and_optional_flags() {
     use clap::Parser;
