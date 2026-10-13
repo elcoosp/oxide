@@ -569,6 +569,10 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     if let Some(name) = stack.renderer_name() {
         outln!(w, "framework renderer: {}", name);
     }
+    // §13.3: keep a pool handle for the watcher. On file change it bumps the
+    // worker's module generation, so the next render/load re-evaluates the
+    // edited module instead of serving the cached one.
+    let hmr_pool: Option<std::sync::Arc<dyn oxide_jshost::Pool>> = stack.pool.clone();
 
     let started = start_dev_server_full(
         root,
@@ -602,10 +606,33 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
 
     let watcher = oxide_dev::Watcher::new(vec![rootp.clone()]);
     let mut seen = std::collections::BTreeSet::new();
+
+    // §13.3: on any file-change event, bump the worker's module generation
+    // so the next render/load sees fresh code. Best-effort: log a warning
+    // if the worker is unavailable; never fails the dev loop.
+    async fn invalidate_framework_modules(pool: &Option<std::sync::Arc<dyn oxide_jshost::Pool>>) {
+        if let Some(pool) = pool.as_ref() {
+            let host = oxide_jshost::FrameworkHost::new(std::sync::Arc::clone(pool));
+            match host.invalidate().await {
+                Ok(generation) => {
+                    tracing::debug!(generation, "framework modules invalidated")
+                }
+                Err(e) => tracing::warn!(
+                    code = %e.0.code,
+                    error = %e.0.message,
+                    "framework invalidate failed",
+                ),
+            }
+        }
+    }
+
     if once {
         let events = watcher
             .poll(&mut seen)
             .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+        if !events.is_empty() {
+            invalidate_framework_modules(&hmr_pool).await;
+        }
         outln!(w, "dev ready — {} change(s) in first poll", events.len());
         let _ = started.shutdown.send(true);
         return Ok(0);
@@ -617,6 +644,9 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         let events = watcher
             .poll(&mut seen)
             .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+        if !events.is_empty() {
+            invalidate_framework_modules(&hmr_pool).await;
+        }
         for ev in events {
             tracing::info!(?ev, "file change");
             outln!(w, "change: {ev:?}");
