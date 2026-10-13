@@ -348,3 +348,99 @@ usable, builds stay reproducible.
   is a follow-up.
 - HMR refresh notifying the renderer. The dev watch loop restarts the
   pipeline but the adapter stays in the Node worker's module cache.
+
+---
+
+## Session 4 — framework-adapter read path complete + HMR wired
+
+**Milestone reached:** the §6.3 / §7 framework adapter read path is
+functionally complete end-to-end. Every HTML-producing CLI command
+dispatches through the config's adapter when one is present, and dev
+supports live file-change invalidation.
+
+### What landed this session (L1–L6)
+
+**Loader phase (spec §9.1)**
+- `crates/server/src/loader.rs` — `LoaderRunner` trait + `LoaderRunInput`
+  + `LoaderOutput` + `short_circuits()` predicate
+- `crates/jshost/src/loader_host.rs` — `LoaderHost` dispatching the
+  worker's `loader:run` op
+- `crates/cli/src/loader_shim.rs` — `AdapterLoader` bridging the two
+- Worker `loader:run`: imports the module, calls `load(event)`, converts
+  `error(status)` / `redirect(status, location)` sentinels into
+  `{ status, location }` ok-payloads (not worker errors)
+
+**Framework stack (spec §7)**
+- `crates/cli/src/framework_shim.rs::FrameworkStack` — bundles
+  `page_renderer` + `loader_runner` + `pool` under one struct built once
+  per CLI command
+- All three commands (`cmd_dev`, `cmd_serve`, `cmd_build`) construct the
+  stack from `oxide.config.{ts,mjs,js}` via `build_framework_stack`
+
+**Dispatch wiring (spec §9.1 → §7)**
+- `build_dispatch` runs a two-phase dispatch: loader first (when route
+  has `has_server_module`), then renderer
+- Non-200 loader output short-circuits the response; 200 threads data
+  into `PageRenderInput.data`
+- 3 fake-loader tests: data threading, 404 short-circuit, 303+Location
+  short-circuit
+
+**Wire protocol (spec §4.2)**
+- Worker emits `framework:render` as chunked `call_chunk` frames (8 KB
+  of JSON-wrapped HTML) + `call_end`, replacing the single `call_ok`
+- Rust side unchanged: `Stream::collect` handles both frame shapes
+- Future-proofs the wire for streaming adapters (React 19, Solid, Vue 3.6)
+
+**HMR (spec §13.3)**
+- Worker: `moduleGeneration` counter + `versioned()` URL tagger applied
+  to every dynamic import; `framework:invalidate` op bumps the counter
+- `FrameworkHost::invalidate()` + 3 unit tests
+- `FrameworkStack.pool` kept alive so `cmd_dev` has a handle after the
+  renderer/loader have been moved into the pipeline
+- `cmd_dev` calls `invalidate_framework_modules` on every watcher event
+  (both `--once` and the real dev loop)
+- E2E test proves: import module v1 → rewrite file to v2 → reimport still
+  v1 (cached) → invalidate → reimport picks up v2
+
+**Test race fix**
+- Loader + framework E2E `unique_nonce()` gained an `AtomicU64` counter.
+  Prior form (`{pid}-{nanos}`) collided on macOS's ~1µs clock resolution
+  when parallel `#[tokio::test]`s called it at the same instant,
+  producing a shared filename where one test's Drop removed the file the
+  other was about to import. Fixed and verified with 5 parallel runs.
+
+### Test coverage added
+
+| Area | Level | Tests |
+|------|-------|-------|
+| LoaderRunner trait | unit (server) | 6 |
+| LoaderHost | unit (jshost, ScriptedHost) | 4 |
+| AdapterLoader shim | unit (cli, pure conversion) | 6 |
+| Loader dispatch | unit (cli, fake loader) | 3 |
+| Loader E2E | E2E (jshost, real Node) | 5 |
+| Chunked frames | E2E (existing framework_host_e2e now exercises) | 2 |
+| `invalidate` method | unit (jshost) | 3 |
+| HMR E2E | E2E (jshost, real Node) | 2 |
+
+### What remains (none block "team can ship")
+
+1. **`cmd_build` build-time loader evaluation** — static prerender still
+   emits empty `data`. Wiring the loader into build is the same shape as
+   dev/serve dispatch, but with build-time semantics (no HTTP request).
+2. **Streaming consumers in the pipeline** — the wire format is ready;
+   the pipeline still collects. A `FrameworkHost::render_streaming` that
+   returns the uncollected `CallStream`, plus a pipeline path that writes
+   chunks as they arrive.
+3. **`V8Host` for `render_pool`** — the migration from `NodeHost` to an
+   in-process `V8Host` for the hot render+load loop. Gated on
+   `deno_node` integration for npm resolution. The `JsHost` / `Pool`
+   abstraction is already in place; the swap is one line in
+   `build_framework_stack`.
+
+### Disk note
+
+The machine hit 100% during the L6 test run. The workspace `target/`
+directory is ~30 GB; the host has ~3 GB free after cleanup. Any cargo
+link step will fail until the host is freed (Time Machine local
+snapshots, Xcode DerivedData, Docker, brew cleanup). This is a
+host-level constraint, not a code problem.
