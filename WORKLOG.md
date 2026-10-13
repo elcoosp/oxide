@@ -655,3 +655,139 @@ was evaluated through the worker — the mechanism that used to print
 
 None of these are blockers. The meta-framework the spec describes can
 now build and ship a working production site.
+
+## Session 7 — bundler transform gap CLOSED (handoff §3)
+
+**Date:** 2026-10-13 (continuation)
+**Slice:** `oxide build` serverless targets now emit valid JavaScript.
+
+### The bug (confirmed by handoff §3)
+
+`crates/bundler/src/lib.rs`'s `bundle_impl` read each module's source,
+hashed it, scanned imports, resolved dependencies, then wrote the **raw
+source** straight into the chunk body. It never invoked
+`oxide_compiler::OxcTransformer`. Every serverless target (Lambda /
+Vercel / Netlify) emitted a deploy artifact whose SSR chunks carried
+`interface Props {` and raw `<div>` JSX, which `node --check` rejects:
+
+```
+$ node --check dist/server/routes-index-page-*.js
+SyntaxError: Unexpected token '<'
+```
+
+`oxide dev` / `render` / `serve` were unaffected because they compile
+through the worker's sucrase hook (`tsx-loader.mjs`) at module-load
+time, against source on disk, not against emitted chunks.
+
+### What landed this session
+
+**Compiler (`crates/compiler`)** — a real lowering stage:
+
+- `oxc_backend.rs` gains `lower_to_js`, called at the end of
+  `OxcTransformer::transform`. Sequence: `oxc_parser::Parser` on the
+  post-pass source → `oxc_semantic::SemanticBuilder::new().build()`
+  for scoping → `oxc_transformer::Transformer::new` with
+  `TypeScriptOptions::default()` + `JsxOptions::enable()` (automatic
+  runtime → `react/jsx-runtime`) → `oxc_codegen::Codegen::new().build()`.
+- Diagnostics from `lower_to_js` are pushed onto the existing
+  `TransformOutput::diagnostics` vector; parse failure falls back to
+  the unlowered code so the pipeline continues (with a diagnostic
+  recording why).
+- `Cargo.toml` gains `oxc_semantic`, `oxc_transformer`, `oxc_codegen`
+  (all workspace-pinned to 0.153.0).
+- Two `compiler_tdd` assertions on byte-exact quote style
+  (`tags: ['a', "b", 'c']`) become semantic checks — codegen
+  normalises `'` to `"` and re-flows arrays across multiple lines. The
+  rewritten assertions verify the `tags:` option is present and each
+  tag string is in the output.
+
+**Bundler (`crates/bundler`)** — the wiring:
+
+- `lib.rs` imports `Env as CompilerEnv`, `OxcTransformer`,
+  `TransformInput`, `Transformer as _`.
+- New `lower_module_to_js(code, resolved, env, diagnostics)` helper
+  builds a `TransformInput`, runs the transformer, extends the
+  bundle's diagnostic vector with anything the compiler emitted.
+- New `lang_of(path)` maps `ts` / `tsx` / `jsx` / `mjs` from the
+  extension; `compiler_env(env)` maps `BundleEnv` → `CompilerEnv`.
+- `bundle_impl`'s chunk-emission loop now calls
+  `rewrite_imports` then `lower_module_to_js`, pushing the lowered
+  text into `body` instead of the raw source.
+- `BUNDLER_BUILD_SECRET` is a fixed placeholder for the compiler's
+  server-fn stub pass; threading a per-build secret through
+  `BundleOptions` is a follow-up (registered below).
+
+**Tests (`crates/bundler/tests/bundler_jsx_lowering_tdd.rs`)**:
+
+Three tests that shell out to `node --check` on every emitted `.js`
+chunk under `dist/`:
+
+| Test | What it covers |
+| --- | --- |
+| `ssr_chunk_emits_plain_js_for_tsx_page` | TSX page with `interface Props` + JSX return, SSR env |
+| `ssr_chunk_emits_plain_js_for_ts_loader` | TS loader with `export interface` + `Promise<LoaderData>` return type, SSR env |
+| `client_chunk_emits_plain_js_for_tsx_page` | TSX page with JSX and `className`, client env |
+
+Each walks `dist/` and asserts `node --check` succeeds on every `.js`
+file it finds, guarding the exact failure from the handoff.
+
+### Test coverage added
+
+| Suite | Result |
+| --- | --- |
+| `bundler_jsx_lowering_tdd` | 3 tests, new |
+| `bundler_tdd` (existing) | 20 tests, still green after wiring |
+| `bundler_rolldown_tdd` (existing) | 8 tests, still green |
+| `compiler_tdd` | 39 tests, 2 assertions updated to codegen-stable form |
+| `cargo test --workspace` | green |
+| `pnpm run test:packages` | 214 / 214 |
+| `pnpm test:framework-adapter` | green |
+| `pnpm test:smoke` | 5 / 5 |
+| `cargo test -p oxide-adapters` | 25 + 5 |
+
+### Verified end-to-end
+
+`cd examples/smoke-app && cargo run -p oxide-cli -- build` emits
+server chunks whose first line is:
+
+```js
+import { jsx as _jsx } from "react/jsx-runtime";
+```
+
+The dynamic-route chunk is equally clean:
+
+```js
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+export default function Post(props) {
+	const title = props.data?.title ?? "Untitled";
+	const body = props.data?.body ?? "";
+	return /* @__PURE__ */ _jsxs("article", { children: [...] });
+}
+```
+
+Every emitted `.js` under `dist/server/` and `dist/client/` passes
+`node --check`.
+
+### What remains (documented, not blocking)
+
+1. **Vue / Svelte / Solid server compilation in the bundler.** The
+   Oxc lowering covers TS + JSX only. Vue SFCs, Svelte components, and
+   Solid's `babel-preset-solid` transforms need their respective
+   compilers wired through the tooling pool. The React path (which
+   covers the smoke-app) is complete.
+2. **Per-build secret for server-fn stubs.** `BUNDLER_BUILD_SECRET`
+   in `crates/bundler/src/lib.rs` is a fixed placeholder. Add a
+   `build_secret` field to `BundleOptions`, generate it once per
+   `cmd_build`, and thread it through `lower_module_to_js`.
+3. **V8Host migration for `render_pool`** — post-MLP, gated on
+   `deno_node` integration for npm resolution.
+4. **Playwright E2E for islands hydration.**
+5. **Conformance §22: CLI-level E2Es** against the smoke-app.
+6. **Deployment adapters** for Deno Deploy, Cloudflare Pages, and
+   Vercel's `functions` layout.
+
+### Disk note
+
+`cargo test --workspace` on this machine continues to hold at ~2-4
+min with a warm target. The dSYM cleanup scripts in git history remain
+the escape hatch if free space gets tight again.

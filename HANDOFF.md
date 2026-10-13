@@ -135,7 +135,18 @@ is unambiguously `0xFF`.
 
 ---
 
-## 3. The open gap — next slice
+## 3. Bundler transform gap — CLOSED on 2026-10-13
+
+> **Resolved.** `bundle_impl` now runs every non-asset module through
+> `oxide_compiler::OxcTransformer` (Oxc parse + TypeScript + JSX +
+> codegen) before it lands in a chunk file. Regression coverage lives
+> in `crates/bundler/tests/bundler_jsx_lowering_tdd.rs`, which shells
+> out to `node --check` on every emitted `.js` chunk for TSX pages
+> (SSR + client) and a TS loader (SSR). See `WORKLOG.md` session 7
+> for the full slice. Remaining follow-ups (Vue / Svelte / Solid
+> compilation, per-build server-fn secret) are tracked in §7.
+
+
 
 ### The bug (confirmed by diagnostic)
 
