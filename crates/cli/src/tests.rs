@@ -212,7 +212,7 @@ async fn dispatch_routes_through_page_renderer_when_attached() {
         calls: calls.clone(),
     }));
 
-    let dispatch = build_dispatch(tree, metrics, Vec::new(), renderer);
+    let dispatch = build_dispatch(tree, metrics, Vec::new(), renderer, None, std::path::PathBuf::new());
     let resp = dispatch(test_request("GET", "/")).await;
 
     assert_eq!(resp.status, 200, "renderer branch returns 200");
@@ -230,7 +230,7 @@ async fn dispatch_uses_ir_placeholder_when_no_renderer() {
 
     let tree = empty_tree();
     let metrics = Arc::new(oxide_server::Metrics::new());
-    let dispatch = build_dispatch(tree, metrics, Vec::new(), None);
+    let dispatch = build_dispatch(tree, metrics, Vec::new(), None, None, std::path::PathBuf::new());
 
     let resp = dispatch(test_request("GET", "/some/page")).await;
 
@@ -255,7 +255,7 @@ async fn dispatch_propagates_renderer_error_as_500() {
     let metrics = Arc::new(oxide_server::Metrics::new());
     let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(FailingRenderer));
 
-    let dispatch = build_dispatch(tree, metrics, Vec::new(), renderer);
+    let dispatch = build_dispatch(tree, metrics, Vec::new(), renderer, None, std::path::PathBuf::new());
     let resp = dispatch(test_request("GET", "/")).await;
 
     assert_eq!(resp.status, 500, "renderer error → 500");
@@ -841,7 +841,7 @@ async fn build_static_refuses_dynamic_route() {
 #[tokio::test]
 async fn start_serves_health_endpoint_then_shuts_down() {
     let (_d, root) = fixture_project();
-    let started = start_server(root.to_str().unwrap(), Some(0), None).await.unwrap();
+    let started = start_server(root.to_str().unwrap(), Some(0), crate::framework_shim::FrameworkStack::default()).await.unwrap();
     // Poll until the listener accepts (no sleeps > 50 ms, bounded).
     let mut stream = None;
     for _ in 0..50 {
@@ -983,7 +983,7 @@ async fn started_server_exposes_metrics_registry() {
     )
     .unwrap();
 
-    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0), None)
+    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0), crate::framework_shim::FrameworkStack::default())
         .await
         .expect("start_server");
     let text = started.metrics.render();
@@ -1008,7 +1008,7 @@ async fn dispatch_observes_route_pattern_labels() {
     )
     .unwrap();
 
-    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0), None)
+    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0), crate::framework_shim::FrameworkStack::default())
         .await
         .expect("start_server");
     wait_ready(started.addr).await;
@@ -1036,7 +1036,7 @@ async fn dispatch_observes_unmatched_label() {
     )
     .unwrap();
 
-    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0), None)
+    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0), crate::framework_shim::FrameworkStack::default())
         .await
         .expect("start_server");
     wait_ready(started.addr).await;
@@ -1063,7 +1063,7 @@ async fn dispatch_label_cardinality_is_bounded() {
     )
     .unwrap();
 
-    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0), None)
+    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0), crate::framework_shim::FrameworkStack::default())
         .await
         .expect("start_server");
     wait_ready(started.addr).await;
@@ -1141,7 +1141,7 @@ async fn production_server_does_not_serve_inspector() {
     )
     .unwrap();
 
-    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0), None)
+    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0), crate::framework_shim::FrameworkStack::default())
         .await
         .expect("start_server");
     wait_ready(started.addr).await;
