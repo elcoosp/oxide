@@ -278,3 +278,73 @@ What remains for full coverage:
 - **The `oxide render` subcommand** uses `FrameworkHost::render` directly;
   it could be refactored to route through the shim + `AdapterPageRenderer`
   for a single code path.
+
+---
+
+## Session 3 — all three HTML-producing CLI commands wired (§7 close)
+
+**Milestone:** the framework-adapter read path now dispatches real
+`react-dom/server` / `@vue/server-renderer` / `svelte/server` /
+`@solidjs/web` HTML from **every CLI command that produces HTML**:
+
+| Command        | Purpose                     | Renderer wiring     |
+|----------------|-----------------------------|---------------------|
+| `oxide dev`    | dev server SSR              | ✅ (session 2)      |
+| `oxide serve`  | `oxide start`/`preview` SSR | ✅ (this session)   |
+| `oxide build`  | build-time prerender        | ✅ (this session)   |
+
+Every command follows the same pattern:
+
+    find_config_file(root) → framework_shim::build_adapter_renderer
+    → Option<Arc<dyn PageRenderer>>
+    → dispatch (dev/serve) or write_prerender (build)
+
+When the project has no `oxide.config.{ts,mjs,js}`, every command falls
+back to the neutral-IR placeholder with a printed warning — dev stays
+usable, builds stay reproducible.
+
+**Code landed this session:**
+
+- **`crates/server/src/page_renderer.rs`** — `PageRenderer` trait +
+  `PageRenderInput`. Framework-agnostic; the pipeline holds it as
+  `Option<Arc<dyn PageRenderer>>`.
+- **`Pipeline::with_page_renderer`** builder + `page_renderer()` accessor.
+  `Pipeline::default()` added (struct literals updated at 6 test sites +
+  1 CLI site).
+- **`crates/cli/src/framework_shim.rs`** — `AdapterPageRenderer` bridges
+  `oxide_jshost::FrameworkRenderer` to `oxide_server::PageRenderer`,
+  converting the params `BTreeMap<String, String>` to JSON. Five unit
+  tests against a fake inner renderer.
+- **`crates/cli/src/lib.rs::build_dispatch`** — extracted from the inline
+  closure in `start_dev_server_full`; takes
+  `Option<Arc<dyn PageRenderer>>` and branches: renderer present →
+  dispatch via it with status 200 / 500 on error; else IR placeholder.
+- **`cmd_dev` / `cmd_serve` / `cmd_build`** — each constructs the
+  renderer via `framework_shim::build_adapter_renderer` and threads it
+  through. `cmd_build` gained helper fns `url_path_from_rel` +
+  `write_prerender` (async, replaces the previous sync `push_html`
+  closure).
+
+**Tests:**
+
+- 3 dispatch tests (`dispatch_routes_through_page_renderer_when_attached`,
+  `dispatch_uses_ir_placeholder_when_no_renderer`,
+  `dispatch_propagates_renderer_error_as_500`) prove the branch logic
+  without Node.
+- 5 shim tests prove input conversion + error propagation.
+- Existing jshost E2E (`framework_host_e2e.rs`, `#[ignore]`d) and CLI
+  E2E (`cli_render_dispatches_real_react_ssr`, `#[ignore]`d) prove the
+  full chain against real Node + real React.
+
+**What remains for full data-layer integration:**
+
+- Loader output reaching the renderer. Today `PageRenderInput::new`
+  passes empty `data`; the pipeline needs to invoke the route's
+  `page.server.ts` load function and thread the ODF-decoded result
+  into `PageRenderInput.data`. This is the next milestone — the
+  adapter contract has the slot, the pipeline just doesn't fill it yet.
+- Streaming through the pool. The Node worker collects the adapter's
+  `ReadableStream<Uint8Array>` into one HTML string. Chunked streaming
+  is a follow-up.
+- HMR refresh notifying the renderer. The dev watch loop restarts the
+  pipeline but the adapter stays in the Node worker's module cache.
