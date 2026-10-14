@@ -17,7 +17,9 @@
     "test:smoke": "cargo test -p oxide-cli --lib -- --ignored smoke_app_renders smoke_app_builds dev_server_serves_smoke start_serves_smoke cli_render_dispatches_real_react_ssr",
     "test:solid": "node --test packages/solid/test/*.test.ts",
     "test:svelte": "node --test packages/svelte/test/*.test.ts",
-    "test:vue": "node --test packages/vue/test/*.test.ts"
+    "test:vue": "node --test packages/vue/test/*.test.ts",
+    "test:playwright": "pnpm --filter @oxide/playwright test",
+    "test:playwright:install": "pnpm --filter @oxide/playwright install-browsers"
   },
   "engines": {
     "node": ">=24"

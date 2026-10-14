@@ -903,3 +903,28 @@ jobs = 1
 
 and run `cargo test -p <crate>` rather than `--workspace`. Serializes
 link steps and cuts peak RSS below the 4 GB ceiling.
+
+## Session 9 — the three remaining §7 follow-ups
+
+**Date:** 2026-10-14
+**Scope:** the three items WORKLOG session 8 flagged as still open.
+
+### Landed
+
+| Item | Commit | Summary |
+| --- | --- | --- |
+| Real sourcemaps | `9746ab5` | Rolldown owns sourcemaps (`SourceMapType::File`). `cmd_build` now picks `RolldownBundler` for TS/JSX projects (real V3 maps, Rolldown's built-in Oxc lowering) and falls back to `ChunkBundler` only when a `.vue`/`.svelte` entry is present, since RolldownBundler doesn't consume `precompiled` yet. `RolldownBundler::convert` writes `<out_dir>/ssr/index.js` (the adapter entry the serverless handlers import) — it was previously only produced by ChunkBundler. |
+| V8Host selectable | `6cfa6d7` | `ServerConfig::backend` (`JsBackend::{Node,V8}`). `build_framework_stack` constructs `NodeHost` or `V8Host` accordingly; `cmd_dev` / `cmd_build` / `cmd_serve` pass it through. V8 is spec-honest: the pool builds, `JsRuntime` bootstraps, `render` and `tooling:compile` dispatch through built-in ops; user-module ops return `JSH-NOKIND` until `deno_node` module loading lands. |
+| Playwright E2E | `???` | `tests/playwright/` — real Playwright suite booting `oxide start` against the smoke-app, driving Chromium. Not in the default `pnpm test` (host RAM). Asserts HTTP contract, live-DOM equivalence, no console errors. Islands hydration scoped out — no island fixture yet. |
+
+### What the "spec-gated" language actually means
+
+- **V8Host** — the *mechanism* is complete and tested (pool spawns, bootstrap runs, dispatch table exists). The *default flip* is gated on `deno_node` giving us module loading. Users can opt in today via `server.backend = "v8"`.
+- **Real sourcemaps** — Rolldown was already capable; the CLIs were just using the in-house bundler. Now fixed.
+- **Playwright** — the suite is complete; running it requires a host with enough RAM to launch Chromium.
+
+### Remaining genuinely-open items
+
+1. **Island fixture for Playwright** — the current suite has no `<ox-island>` to hydrate. A follow-up adds one to smoke-app (or a new fixture) and asserts hydration in the browser.
+2. **Rolldown plugin hook for `precompiled`** — `ChunkBundler` still serves SFC projects because RolldownBundler doesn't consume the precompiled map. Wiring that would let one bundler serve all projects.
+3. **`deno_node` module loading for V8Host** — upstream, not ours.

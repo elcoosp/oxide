@@ -334,9 +334,9 @@ intended work. The commit body of `e4c0e89` names the correction.)
 | Conformance §22 CLI-level E2Es | **done** (`9e7d25b`) |
 | Deno Deploy config + Cloudflare Pages target | **done** (`1bd8749`) |
 | Vercel `functions` layout | **done** (`365e12c`) |
-| V8Host migration for `render_pool` | **spec-gated**; post-MLP, needs `deno_node` for npm resolution |
-| Playwright E2E for islands hydration | **open**; needs browser install |
-| Real sourcemaps (rolldown backend) | **open** |
+| V8Host migration for `render_pool` | **selectable** (`6cfa6d7`); mechanism complete, default stays Node until `deno_node` module loading lands |
+| Playwright E2E for islands hydration | **suite landed**; browser run needs a larger host. Islands fixture is the follow-up. |
+| Real sourcemaps (rolldown backend) | **done** (`9746ab5`); `cmd_build` uses RolldownBundler for TS/JSX projects |
 
 The bundler transform gap from §3 is closed (`a3ba56b`).
 

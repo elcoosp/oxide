@@ -1,0 +1,17 @@
+{
+  "name": "@oxide/playwright",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Playwright E2E for oxide start against examples/smoke-app. Not run by default — requires `pnpm exec playwright install chromium` and a host with enough RAM to launch a browser.",
+  "scripts": {
+    "test": "playwright test",
+    "install-browsers": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
