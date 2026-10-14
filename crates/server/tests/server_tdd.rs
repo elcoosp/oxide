@@ -1213,9 +1213,10 @@ async fn server_serves_health_and_dispatch_then_shuts_down() {
     let (tx, rx) = tokio::sync::watch::channel(false);
     let server = tokio::spawn(Server::serve(addr, p, dispatch, rx));
 
-    // wait for the listener (bounded retry loop, no long sleeps)
+    // wait for the listener (generous budget for parallel load; success
+    // returns on the first accepted connection)
     let mut health = String::new();
-    for _ in 0..50 {
+    for _ in 0..200 {
         if let Ok(s) = tokio::net::TcpStream::connect(addr).await {
             drop(s);
             health = raw_http(
@@ -1225,7 +1226,7 @@ async fn server_serves_health_and_dispatch_then_shuts_down() {
             .await;
             break;
         }
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert!(health.starts_with("HTTP/1.1 200"), "{health}");
     assert!(
@@ -1273,7 +1274,7 @@ async fn server_from_hyper_request_enforces_body_limit() {
     let (_tx, rx) = tokio::sync::watch::channel(false);
     let server = tokio::spawn(Server::serve(addr, p, dispatch, rx));
     let mut response = String::new();
-    for _ in 0..50 {
+    for _ in 0..200 {
         if tokio::net::TcpStream::connect(addr).await.is_ok() {
             let body = "123456789";
             let http = format!(
@@ -1282,7 +1283,7 @@ async fn server_from_hyper_request_enforces_body_limit() {
             response = raw_http(addr, &http).await;
             break;
         }
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert!(response.starts_with("HTTP/1.1 413"), "{response}");
     let _ = server;
