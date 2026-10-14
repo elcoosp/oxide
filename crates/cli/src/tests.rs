@@ -1684,15 +1684,17 @@ async fn build_static_refuses_dynamic_route() {
 async fn start_serves_health_endpoint_then_shuts_down() {
     let (_d, root) = fixture_project();
     let started = start_server(root.to_str().unwrap(), Some(0), crate::framework_shim::FrameworkStack::default()).await.unwrap();
-    // Poll until the listener accepts (no sleeps > 50 ms, bounded).
+    // Poll until the listener accepts. The budget is generous (10 s) because
+    // under full-workspace parallel load the listener can take a moment to
+    // sched­ule; success still returns on the first accepted connection.
     let mut stream = None;
-    for _ in 0..50 {
+    for _ in 0..200 {
         match tokio::net::TcpStream::connect(started.addr).await {
             Ok(s) => {
                 stream = Some(s);
                 break;
             }
-            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(20)).await,
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(50)).await,
         }
     }
     let mut stream = stream.expect("server accepts connections");
@@ -1788,11 +1790,13 @@ async fn run_returns_exit_code_and_prints_buffer_to_stdout() {
 /// The dispatch closure records metrics on the first request, so racing the
 /// listen() call would lose that first observation.
 async fn wait_ready(addr: std::net::SocketAddr) {
-    for _ in 0..50 {
+    // Generous budget (10 s) for full-workspace parallel load; success
+    // returns on the first accepted connection.
+    for _ in 0..200 {
         if tokio::net::TcpStream::connect(addr).await.is_ok() {
             return;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     panic!("server never became ready at {addr}");
 }
