@@ -55,6 +55,109 @@ pub(crate) fn extract(source: &str) -> Option<Value> {
 /// Scan for `framework: <known_factory>(` and return
 /// `{ "framework": { "name": X, "adapter": X } }`. Returns `None` if the
 /// pattern is not found.
+/// §10.3: find the `islands: { name: 'path', ... }` map inside a
+/// `framework({ ... })` call. Returns `None` when the config has no islands
+/// block (the normal case for projects without islands).
+fn extract_islands_map(source: &str) -> Option<Value> {
+    // Find `islands` used as an *object key* — i.e. the token `islands`
+    // immediately followed by `:`. A naive `source.find("islands")` matches
+    // comments and path segments (the smoke-app config mentions
+    // `src/islands/counter.tsx` inside a comment), then walks to the next
+    // `{` and picks up an unrelated object. Require the colon; strip line
+    // comments first so `// islands: {...}` cannot be picked up either.
+    let stripped = strip_line_comments(source);
+    let needle = "islands";
+    let mut from = 0usize;
+    let key_at = loop {
+        let Some(rel) = stripped[from..].find(needle) else { return None };
+        let at = from + rel;
+        from = at + needle.len();
+        // Word-boundary check before `islands` (skip `some_islands`).
+        if at > 0 {
+            let b = stripped.as_bytes()[at - 1] as char;
+            if b.is_ascii_alphanumeric() || b == '_' || b == '$' {
+                continue;
+            }
+        }
+        // Skip whitespace after `islands`; require `:`.
+        let after = &stripped[at + needle.len()..];
+        let after_ws = after.trim_start();
+        if !after_ws.starts_with(':') {
+            continue;
+        }
+        break at;
+    };
+
+    // Balance braces after the key, ignoring braces inside '...' / "..." so
+    // a path string like 'a{b' cannot throw off the depth count.
+    let rest = &stripped[key_at..];
+    let open_rel = rest.find('{')?;
+    let mut depth: i32 = 0;
+    let mut close: Option<usize> = None;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut prev_escape = false;
+    for (i, ch) in rest[open_rel..].char_indices() {
+        if prev_escape {
+            prev_escape = false;
+            continue;
+        }
+        match ch {
+            '\\' if in_single || in_double => prev_escape = true,
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
+            '{' if !in_single && !in_double => depth += 1,
+            '}' if !in_single && !in_double => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(open_rel + i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = close?;
+    let body = &rest[open_rel + 1..close];
+
+    // Parse `Name: 'path'` pairs; tolerant of trailing commas and whitespace.
+    let mut map = serde_json::Map::new();
+    for raw in body.split(',') {
+        let line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Some(colon) = line.find(':') else { continue };
+        let key = line[..colon].trim().trim_matches(|c| c == '\'' || c == '"');
+        if key.is_empty() {
+            continue;
+        }
+        let value = line[colon + 1..]
+            .trim()
+            .trim_matches(|c| c == '\'' || c == '"');
+        if value.is_empty() {
+            continue;
+        }
+        map.insert(key.to_string(), Value::String(value.to_string()));
+    }
+    if map.is_empty() {
+        None
+    } else {
+        Some(Value::Object(map))
+    }
+}
+
+/// Strip `//`-prefixed line comments. Leaves strings alone; the configs we
+/// parse never contain `//` inside a string literal in a way that matters.
+fn strip_line_comments(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    for line in source.lines() {
+        let cut = line.find("//").unwrap_or(line.len());
+        out.push_str(&line[..cut]);
+        out.push('\n');
+    }
+    out
+}
 fn extract_minimal_framework(source: &str) -> Option<Value> {
     // If the full parser bailed on a dynamic config (componentFor callback,
     // process.env in a factory argument, etc.), pick up just enough of the
@@ -100,6 +203,17 @@ fn extract_minimal_framework(source: &str) -> Option<Value> {
             "routes".into(),
             serde_json::json!({ "dir": dir }),
         );
+    }
+
+    // 4. §10.3: `framework({ ..., islands: { Name: 'path', ... } })` — merge
+    //    into the framework object if any islands were declared.
+    if let Some(islands) = extract_islands_map(source) {
+        let fw = obj
+            .entry("framework")
+            .or_insert_with(|| serde_json::json!({}));
+        if let Value::Object(m) = fw {
+            m.insert("islands".into(), islands);
+        }
     }
 
     if obj.is_empty() {

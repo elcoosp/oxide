@@ -89,6 +89,7 @@ export default reactFactory
 export { render, renderToString, renderShellToString, head, mergeHead, applyTitleTemplate }
 export { hydrate, hydrateIsland, mount, update, type ClientOptions }
 export { islandModules, pageComponent }
+export { Island, type IslandProps, type IslandStrategy } from './island.ts'
 export {
   el, t, raw, frag, deferred, island, hash6, escapeText, escapeAttr,
   type Node, type ComponentFn, type DeferSource,

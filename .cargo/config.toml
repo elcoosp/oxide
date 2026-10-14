@@ -1,0 +1,13 @@
+
+# The v8 crate ships prebuilt static objects (`operations.o` etc.) that
+# reference C++ template-weak symbols the linker cannot resolve from the
+# final binary. They are not actually missing — `nm` finds them in the
+# rlib, and the resulting binary links and runs cleanly — but `ld64`
+# prints ~30 "could not find symbol" lines for every link step, burying
+# real warnings. Pass `-w` to the system linker on macOS to suppress
+# them; everything else in the toolchain stays verbose.
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-Wl,-w"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-Wl,-w"]

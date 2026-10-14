@@ -122,6 +122,13 @@ pub struct FrameworkConfig {
     /// `react | vue | svelte | solid`
     pub adapter: Option<String>,
     pub compiler: Option<bool>,
+    /// §10.3 islands registry: component name → source path (relative to
+    /// the project root). The build emits a synthetic `__boot__` client
+    /// chunk that statically imports every island here and registers them
+    /// with the framework adapter's `hydrateIsland`. A page writes
+    /// `<Island component="Counter" chunk="Counter">` — the `chunk` prop is
+    /// an *island id* (a key into this map), not a runtime URL.
+    pub islands: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
