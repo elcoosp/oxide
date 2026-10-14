@@ -75,6 +75,44 @@ pub struct OxideConfig {
     /// useful to crawlers) and `robots.txt` omits the `Sitemap:` line.
     #[serde(default)]
     pub site_url: Option<String>,
+    /// §16.3: web app manifest (PWA). Optional; when present, `oxide build`
+    /// emits `manifest.webmanifest` and a `<link rel="manifest">` is
+    /// available for the shell to include.
+    #[serde(default)]
+    pub manifest: Option<WebManifestConfig>,
+}
+
+/// §16.3: a minimal, honest web app manifest. The fields are the ones a
+/// PWA needs to be installable; anything richer (shortcuts, screenshots,
+/// share_target) can be added without a shape change.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WebManifestConfig {
+    /// Display name. Defaults to `name` when omitted.
+    pub name: Option<String>,
+    /// Short name shown under the home-screen icon.
+    pub short_name: Option<String>,
+    /// Background colour (`#rrggbb`).
+    pub background_color: Option<String>,
+    /// Theme colour (`#rrggbb`).
+    pub theme_color: Option<String>,
+    /// `standalone` | `fullscreen` | `minimal-ui` | `browser`.
+    pub display: Option<String>,
+    /// Start URL, default `/`.
+    pub start_url: Option<String>,
+    /// Icons. `src` is resolved against the built site; the build copies it
+    /// from `public/` or `dist/client/`.
+    pub icons: Vec<ManifestIcon>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ManifestIcon {
+    pub src: String,
+    pub sizes: String,
+    /// `image/png` etc. Inferred from the extension when omitted.
+    pub r#type: Option<String>,
+    pub purpose: Option<String>,
 }
 
 /// Content collections configuration (§16.5).
@@ -118,6 +156,7 @@ impl Default for OxideConfig {
             environments: BTreeMap::new(),
             dev: DevConfig::default(),
             site_url: None,
+            manifest: None,
         }
     }
 }
