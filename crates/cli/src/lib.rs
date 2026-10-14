@@ -1046,6 +1046,81 @@ fn emit_sitemap_and_robots(
     Ok(())
 }
 
+/// §16.3: write `manifest.webmanifest` when the config declares a
+/// `manifest` block. The emitted JSON is the standard web app manifest
+/// shape — the fields a PWA needs to be installable.
+///
+/// `start_url` defaults to `/`. `name` defaults to `shortName` (and vice
+/// versa), because a manifest with neither is rejected by some browsers.
+/// An icon `type` is inferred from the extension when omitted.
+fn emit_web_manifest(
+    cfg: &oxide_config::OxideConfig,
+    dist: &Path,
+    w: Writer<'_>,
+) -> anyhow::Result<()> {
+    let Some(m) = &cfg.manifest else {
+        return Ok(());
+    };
+    let mut json = serde_json::Map::new();
+
+    // A browser needs at least one of name / short_name.
+    let name = m.name.clone().or_else(|| m.short_name.clone());
+    let short = m.short_name.clone().or_else(|| m.name.clone());
+    if let Some(n) = name {
+        json.insert("name".into(), serde_json::Value::String(n));
+    }
+    if let Some(s) = short {
+        json.insert("short_name".into(), serde_json::Value::String(s));
+    }
+    json.insert(
+        "start_url".into(),
+        serde_json::Value::String(m.start_url.clone().unwrap_or_else(|| "/".into())),
+    );
+    if let Some(d) = &m.display {
+        json.insert("display".into(), serde_json::Value::String(d.clone()));
+    }
+    if let Some(c) = &m.background_color {
+        json.insert(
+            "background_color".into(),
+            serde_json::Value::String(c.clone()),
+        );
+    }
+    if let Some(c) = &m.theme_color {
+        json.insert("theme_color".into(), serde_json::Value::String(c.clone()));
+    }
+    let icons: Vec<serde_json::Value> = m
+        .icons
+        .iter()
+        .map(|i| {
+            let mut obj = serde_json::Map::new();
+            obj.insert("src".into(), serde_json::Value::String(i.src.clone()));
+            obj.insert("sizes".into(), serde_json::Value::String(i.sizes.clone()));
+            let ty = i.r#type.clone().or_else(|| {
+                i.src
+                    .rsplit_once('.')
+                    .map(|(_, ext)| format!("image/{ext}"))
+            });
+            if let Some(t) = ty {
+                obj.insert("type".into(), serde_json::Value::String(t));
+            }
+            if let Some(p) = &i.purpose {
+                obj.insert("purpose".into(), serde_json::Value::String(p.clone()));
+            }
+            serde_json::Value::Object(obj)
+        })
+        .collect();
+    if !icons.is_empty() {
+        json.insert("icons".into(), serde_json::Value::Array(icons));
+    }
+
+    let body = serde_json::to_string_pretty(&serde_json::Value::Object(json))
+        .map_err(|e| anyhow::anyhow!("serialize manifest: {e}"))?;
+    std::fs::write(dist.join("manifest.webmanifest"), format!("{body}\n"))
+        .map_err(|e| anyhow::anyhow!("write manifest.webmanifest: {e}"))?;
+    outln!(w, "manifest: manifest.webmanifest emitted");
+    Ok(())
+}
+
 fn url_path_from_rel(rel: &str) -> String {
     let stripped = rel.strip_prefix("prerendered/").unwrap_or(rel);
     let stripped = stripped.strip_suffix(".html").unwrap_or(stripped);
@@ -1703,6 +1778,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     emit_content_search_indexes(&rootp, &cfg, &dist, w)?;
     // §16.3: sitemap.xml + robots.txt from the route table.
     emit_sitemap_and_robots(&cfg, &tree, &dist, w)?;
+    // §16.3: manifest.webmanifest, when a `manifest` block is configured.
+    emit_web_manifest(&cfg, &dist, w)?;
     outln!(
         w,
         "build ok — {} routes, {} prerendered, {} deploy file(s) for `{}` in dist/deploy",
