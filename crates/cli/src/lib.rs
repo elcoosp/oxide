@@ -408,6 +408,36 @@ fn load_config_strict(root: &Path, mode: &str) -> anyhow::Result<OxideConfig> {
 /// `static` / `dynamic` for the inferred case, and any other value for an
 /// explicit one). If the module does not parse, the AST pass returns
 /// `dynamic` — which the scanner's answer already is in that case.
+/// `true` when `page.server.ts` declares an explicit `config.render`
+/// (same literal-shape regex the route scanner uses in
+/// `oxide-router`'s `read_page_config`). Keeps the AST refinement from
+/// clobbering an explicit `render: 'dynamic'` with an inferred `static`.
+fn has_explicit_render_config(source: &str) -> bool {
+    let mut start = 0;
+    while let Some(i) = source[start..].find("render") {
+        let abs = start + i;
+        // `render`, `renderMode` and `render_mode` all declare the mode.
+        let rest = &source[abs + "render".len()..];
+        let rest = if rest.starts_with("Mode") {
+            &rest["Mode".len()..]
+        } else if rest.starts_with("_mode") {
+            &rest["_mode".len()..]
+        } else {
+            rest
+        };
+        // Skip whitespace; require `:` then a quote (a literal value).
+        let t = rest.trim_start();
+        if let Some(after) = t.strip_prefix(':') {
+            let after = after.trim_start();
+            if after.starts_with('"') || after.starts_with('\'') {
+                return true;
+            }
+        }
+        start = abs + "render".len();
+    }
+    false
+}
+
 fn refine_render_modes_from_ast(
     root: &Path,
     cfg: &OxideConfig,
@@ -420,6 +450,15 @@ fn refine_render_modes_from_ast(
         }
         let server = routes_root.join(e.file.with_file_name("page.server.ts"));
         let Ok(source) = std::fs::read_to_string(&server) else { continue };
+        // An explicit `config.render` always wins (§10.1): the scanner wrote
+        // the literal value into `render_mode`, and it is indistinguishable
+        // from an inferred `static`/`dynamic` after the fact — so re-check
+        // the source. When the module declares `render` explicitly, the
+        // scanner's value stands and the AST inference must not overwrite it
+        // (e.g. `render: 'dynamic'` with no request reads stays dynamic).
+        if has_explicit_render_config(&source) {
+            continue;
+        }
         // Only overwrite an *inferred* mode: the scanner's value is `static`
         // or `dynamic` when it inferred, and the literal string from an
         // explicit `config.render` otherwise. An explicit `isr` / `spa` /
@@ -2462,9 +2501,11 @@ fn build_server_fn_dispatcher(
 /// The config's `plugins` array is `Vec<serde_json::Value>` (its shape is
 /// the plugin manifest plus a path). A WASM entry looks like:
 ///
+/// ```text
 ///     { "kind": "wasm", "path": "./plugins/my-plugin.wasm",
 ///       "name": "my-plugin", "witWorld": "oxide:plugin/hooks",
 ///       "capabilities": [], "hooks": ["transform"] }
+/// ```
 ///
 /// Returns `None` when no WASM plugin is configured, when the path does not
 /// exist, or when the component fails to load — a broken plugin is reported
