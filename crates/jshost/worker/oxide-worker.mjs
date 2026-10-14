@@ -81,25 +81,29 @@ function oxideOpRequest(op, args) {
   return new Promise((resolve, reject) => {
     const id = nextOpId++;
     pendingOps.set(id, { resolve, reject });
-    out({ t: "op_request", id, op: opNumber(op), args: args ?? {} });
+    // `Op` is a serde externally-tagged enum: the wire is the variant
+    // name, not its `#[repr(u16)]` value.
+    out({ t: "op_request", id, op: opName(op), args: args ?? {} });
   });
 }
 
-// The wire op is a number (`Op` is `#[repr(u16)]` on the Rust side).
-function opNumber(name) {
+// The wire is the `Op` variant name — serde's externally-tagged enum
+// serializes a unit variant as its name string, not its numeric repr.
+function opName(name) {
   switch (name) {
-    case "stream_write": return 1;
-    case "response_head": return 2;
-    case "request_body_read": return 3;
-    case "serialize": return 4;
-    case "cache_get": return 5;
-    case "cache_set": return 6;
-    case "cache_tag": return 7;
-    case "fetch": return 8;
-    case "ws_send": return 9;
-    case "log": return 10;
-    case "trace": return 11;
-    default: return 0;
+    case "stream_write": return "StreamWrite";
+    case "response_head": return "ResponseHead";
+    case "request_body_read": return "RequestBodyRead";
+    case "serialize": return "Serialize";
+    case "cache_get": return "CacheGet";
+    case "cache_set": return "CacheSet";
+    case "cache_tag": return "CacheTag";
+    case "fetch": return "Fetch";
+    case "ws_send": return "WsSend";
+    case "log": return "Log";
+    case "trace": return "Trace";
+    case "compile_module": return "CompileModule";
+    default: return name;
   }
 }
 
@@ -400,6 +404,152 @@ async function dispatchFrameworkRender(id, input) {
 // and `redirect()` sentinels thrown by the load become {status, location}
 // in the response rather than worker errors — the pipeline maps those to
 // HTTP responses.
+// ---------------------------------------------------------------------------
+// §9.3 / §6.2: server-module compilation for the loader path.
+//
+// `dispatchLoaderRun` imports a `.server.ts` file directly, bypassing the
+// bundler — so the compiler's `'use cache'` and server-fn passes never run
+// on it. The fix walks the module's whole import graph: every relative
+// `.ts`/`.tsx` import reachable from the entry is compiled through the
+// `compile_module` op, written as a hidden `.oxide.mjs` temp file beside
+// its source, and every relative import specifier inside a compiled file is
+// rewritten to point at the compiled temp file of its target.
+const serverModuleCache = new Map();
+
+function scanRelativeSpecifiers(source) {
+  const out = [];
+  const patterns = [
+    /from\s*["'](\.\.?\/[^"']+)["']/g,
+    /import\s*\(\s*["'](\.\.?\/[^"']+)["']\s*\)/g,
+    /import\s+["'](\.\.?\/[^"']+)["']/g,
+  ];
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(source)) !== null) {
+      out.push({ spec: m[1] });
+    }
+  }
+  return out;
+}
+
+async function resolveRelative(fromPath, spec, pathMod) {
+  const fs = await import("node:fs/promises");
+  const base = pathMod.resolve(pathMod.dirname(fromPath), spec);
+  const candidates = [
+    base,
+    base + ".ts",
+    base + ".tsx",
+    base + ".js",
+    base + ".mjs",
+    pathMod.join(base, "index.ts"),
+    pathMod.join(base, "index.tsx"),
+  ];
+  for (const cand of candidates) {
+    try {
+      const st = await fs.stat(cand);
+      if (st.isFile()) return cand;
+    } catch { /* next */ }
+  }
+  return null;
+}
+
+async function compileServerModule(entryPath) {
+  const fs = await import("node:fs/promises");
+  const crypto = await import("node:crypto");
+  const pathMod = await import("node:path");
+
+  if (typeof globalThis.__oxide_op_request !== "function") {
+    return { url: pathToFileURL(entryPath).href, isTemp: false };
+  }
+
+  const modules = new Map();
+  const order = [];
+  const queue = [entryPath];
+  while (queue.length > 0) {
+    const path = queue.shift();
+    if (modules.has(path)) continue;
+    const source = await fs.readFile(path, "utf8");
+    const deps = [];
+    for (const { spec } of scanRelativeSpecifiers(source)) {
+      if (spec.includes("?")) continue;
+      const dep = await resolveRelative(path, spec, pathMod);
+      if (dep === null) continue;
+      if (dep.includes(`${pathMod.sep}node_modules${pathMod.sep}`)) continue;
+      deps.push({ spec, path: dep });
+      queue.push(dep);
+    }
+    modules.set(path, { source, deps });
+    order.push(path);
+  }
+
+  const tempOf = new Map();
+  for (const path of order) {
+    const { source } = modules.get(path);
+    const hash = crypto
+      .createHash("sha256")
+      .update(source)
+      .update("\u0000")
+      .update(path)
+      .digest("hex")
+      .slice(0, 16);
+    let compiled;
+    try {
+      const result = await globalThis.__oxide_op_request("compile_module", {
+        code: source,
+        path,
+        lang: path.endsWith(".tsx") ? "tsx" : "ts",
+      });
+      compiled = result?.code;
+    } catch (e) {
+      throw new Error(`compile_module failed for ${path}: ${e?.message ?? e}`);
+    }
+    if (typeof compiled !== "string") {
+      throw new Error(`compile_module returned no code for ${path}`);
+    }
+    const dir = pathMod.dirname(path);
+    const base = pathMod.basename(path);
+    // `.ts` (not `.mjs`): `transform_passes_only` runs the AST passes but
+    // not the TypeScript strip, so the emitted module still carries type
+    // annotations. Node's native type-stripper handles a `.ts` file on
+    // import; a `.mjs` file would be parsed as-is and fail.
+    const tmpPath = pathMod.join(dir, `.${base}.${hash}.oxide.ts`);
+    tempOf.set(path, { tmpPath, tmpUrl: pathToFileURL(tmpPath).href, content: compiled, hash });
+  }
+
+  for (const path of order) {
+    const info = tempOf.get(path);
+    const { deps } = modules.get(path);
+    let content = info.content;
+    for (const { spec, path: depPath } of deps) {
+      const dep = tempOf.get(depPath);
+      if (!dep) continue;
+      const rel = pathMod
+        .relative(pathMod.dirname(info.tmpPath), dep.tmpPath)
+        .split(pathMod.sep)
+        .join("/");
+      const relSpec = rel.startsWith(".") ? rel : `./${rel}`;
+      content = content.split(`"${spec}"`).join(`"${relSpec}"`);
+      content = content.split(`'${spec}'`).join(`'${relSpec}'`);
+    }
+    info.content = content;
+  }
+
+  const entryInfo = tempOf.get(entryPath);
+  const cached = serverModuleCache.get(entryPath);
+  for (const path of order) {
+    await fs.writeFile(tempOf.get(path).tmpPath, tempOf.get(path).content, "utf8");
+  }
+  if (cached?.tmpPath && cached.tmpPath !== entryInfo.tmpPath) {
+    await fs.rm(cached.tmpPath, { force: true }).catch(() => {});
+  }
+  serverModuleCache.set(entryPath, {
+    hash: entryInfo.hash,
+    tmpPath: entryInfo.tmpPath,
+    tmpUrl: entryInfo.tmpUrl,
+  });
+  return { url: entryInfo.tmpUrl, isTemp: true };
+}
+
 async function dispatchLoaderRun(id, input) {
   const { module_path, route, params, url, method, headers } = input.payload ?? {};
   if (typeof module_path !== "string" || module_path.length === 0) {
@@ -407,7 +557,10 @@ async function dispatchLoaderRun(id, input) {
     return;
   }
   try {
-    const mod = await import(versioned(pathToFileURL(module_path).href));
+    // §9.3: run the compiler passes before the module is evaluated, so a
+    // `'use cache'` function is wrapped and reaches the Rust tier.
+    const compiled = await compileServerModule(module_path);
+    const mod = await import(versioned(compiled.url));
     const load = mod.load;
     if (typeof load !== "function") {
       callErr(id, "JSH-LOADER", `module at ${module_path} has no \`load\` export`);
