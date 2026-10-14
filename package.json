@@ -9,7 +9,7 @@
     "test": "pnpm run test:rust && pnpm run test:packages",
     "test:conformance": "node --test conformance/test/*.test.ts",
     "test:create-oxide": "node --test packages/create-oxide/test/*.test.ts",
-    "test:framework-adapter": "cargo test -p oxide-jshost --test framework_host_e2e -- --ignored && cargo test -p oxide-jshost --test loader_host_e2e -- --ignored && cargo test -p oxide-jshost --test hmr_e2e -- --ignored && pnpm run test:smoke",
+    "test:framework-adapter": "cargo test -p oxide-jshost --test framework_host_e2e -- --ignored && cargo test -p oxide-jshost --test loader_host_e2e -- --ignored && cargo test -p oxide-jshost --test hmr_e2e -- --ignored && pnpm run test:smoke && pnpm run test:fixtures",
     "test:oxide": "node --test packages/oxide/test/*.test.ts",
     "test:packages": "node --test packages/*/test/*.test.ts conformance/test/*.test.ts",
     "test:react": "node --test packages/react/test/*.test.ts",
@@ -19,7 +19,8 @@
     "test:svelte": "node --test packages/svelte/test/*.test.ts",
     "test:vue": "node --test packages/vue/test/*.test.ts",
     "test:playwright": "pnpm --filter @oxide/playwright test",
-    "test:playwright:install": "pnpm --filter @oxide/playwright install-browsers"
+    "test:playwright:install": "pnpm --filter @oxide/playwright install-browsers",
+    "test:fixtures": "./tests/fixtures/check.sh"
   },
   "engines": {
     "node": ">=24"
