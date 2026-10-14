@@ -155,7 +155,15 @@ opt-level = 0
 debug = 1
 
 [profile.test]
-opt-level = 1
+# opt-level matches [profile.dev] (0) so `cargo test -p <crate>` reuses the
+# dev-profile rlibs of its dependencies. With `opt-level = 1` the test
+# profile builds its own rlib set, and the first `cargo test` after a
+# `cargo check` recompiles the whole dependency tree — for oxide-assets
+# that is ravif, resvg, tiny-skia, skrifa, read-fonts, lightningcss,
+# comrak and syntect, minutes of `rustc` with no visible progress on a
+# non-TTY. The test binaries are marginally slower at opt-level 0; none
+# of the suites here are throughput-bound.
+opt-level = 0
 # Disable debuginfo in test binaries: the per-test .dSYM bundles on macOS
 # routinely run into the multi-GB range and are not needed for `cargo test`.
 #

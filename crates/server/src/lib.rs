@@ -922,6 +922,60 @@ pub struct Pipeline {
     /// `Pipeline::with_page_renderer` (see the CLI wiring). `None` preserves
     /// the legacy behavior for builds without a framework adapter.
     pub page_renderer: Option<Arc<dyn crate::PageRenderer>>,
+    /// Optional image endpoint (§16.1). When `Some`, `/_oxide/image`
+    /// requests are served natively — parse, validate, transform, respond.
+    /// The transform never enters JS. `None` disables the endpoint (a
+    /// 404), which is what a project with images turned off wants.
+    pub image_endpoint: Option<Arc<crate::ImageEndpoint>>,
+}
+
+/// §16.1 image endpoint, host-side. Owns the backend choice, the source
+/// resolution policy (a local path under the site root, or a URL matched
+/// against `ImagesConfig.remotePatterns`), and the signing secret.
+///
+/// The transform itself is `oxide_assets::ImageBackend`, but the server
+/// crate must not depend on `oxide-assets` — that crate pulls ravif,
+/// resvg, skrifa and lightningcss, and `oxide-server` is meant to build
+/// lean. `oxide-server` names only the trait seams below; the CLI builds
+/// the concrete endpoint from config and hands it in through
+/// `Pipeline::image_endpoint`.
+pub struct ImageEndpoint {
+    /// The pure-Rust backend (or a future libvips one).
+    pub backend: Arc<dyn ImageEndpointBackend>,
+    /// Root under which a `/`-prefixed source path is resolved.
+    pub asset_root: std::path::PathBuf,
+    /// Signing secret. `None` means the endpoint is open (dev only); `Some`
+    /// requires a valid `?s=` on every request.
+    pub signing_secret: Option<String>,
+}
+
+/// The backend seam. `oxide_assets::ImageBackend` is adapted to this in the
+/// CLI, so the server has no compile-time tie to the asset crate.
+pub trait ImageEndpointBackend: Send + Sync {
+    /// Transform the source bytes per the request. The error string is
+    /// surfaced as an `AST-*`-coded diagnostic in the HTTP response.
+    fn process(
+        &self,
+        req: ImageEndpointRequest,
+    ) -> std::result::Result<ImageEndpointResult, String>;
+}
+
+/// The subset of `oxide_assets::ImageRequest` the endpoint passes through.
+#[derive(Debug, Clone)]
+pub struct ImageEndpointRequest {
+    pub source: Vec<u8>,
+    pub format: Option<&'static str>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub quality: Option<u8>,
+}
+
+/// Bytes plus the chosen content type and a cache key.
+#[derive(Debug, Clone)]
+pub struct ImageEndpointResult {
+    pub bytes: Vec<u8>,
+    pub content_type: &'static str,
+    pub cache_key: String,
 }
 
 impl Default for Pipeline {
@@ -940,6 +994,7 @@ impl Default for Pipeline {
             metrics: None,
             inspector: None,
             page_renderer: None,
+            image_endpoint: None,
         }
     }
 }
@@ -1008,6 +1063,229 @@ fn path_has_extension(path: &str) -> bool {
 /// tag without the nonce is blocked by `strict-dynamic` (§17.1).
 pub fn nonce_for(request_id: &str) -> String {
     blake3::hash(request_id.as_bytes()).to_hex()[..32].to_string()
+}
+
+/// §16.1: handle an `/_oxide/image?url=…&w=…&format=…` request.
+///
+/// The signature check runs first when a secret is configured, so a
+/// tampered or unsigned request never reaches the backend. Errors carry a
+/// stable message so a client can tell "no signing secret configured" from
+/// "signature mismatch" from "unknown format".
+fn serve_image_endpoint(
+    endpoint: Option<&ImageEndpoint>,
+    raw_url: &str,
+) -> OxideResponse {
+    let Some(endpoint) = endpoint else {
+        return OxideResponse::new(404, "image endpoint not configured")
+            .with_header("content-type", "text/plain; charset=utf-8");
+    };
+
+    // Parse `url=`, `w=`, `h=`, `format=`, `q=`, `s=`. Everything after
+    // the `?` in the request URL is the query string; a missing `?` is an
+    // empty query.
+    let query = raw_url.split_once('?').map(|(_, q)| q).unwrap_or("");
+
+    // The signing check needs the `s=` value and the *rest* of the query
+    // in the exact form the signer hashed. `sign_image_url` signs
+    // `path?query` where query excludes `s=`, so re-derive that here.
+    let (path, params_no_sig) = split_sig(raw_url);
+
+    let parsed = match crate::parse_image_query(&params_no_sig) {
+        Ok(p) => p,
+        Err(msg) => {
+            return OxideResponse::new(400, format!("bad image request: {msg}"))
+                .with_header("content-type", "text/plain; charset=utf-8")
+        }
+    };
+
+    if let Some(secret) = endpoint.signing_secret.as_deref() {
+        let Some(sig) = parsed.signature.as_deref() else {
+            return OxideResponse::new(403, "image request not signed")
+                .with_header("content-type", "text/plain; charset=utf-8");
+        };
+        // Recompute exactly what the signer hashed: `path?params` with the
+        // `s=` param stripped. `sign_image_url` takes the URL *before* the
+        // signature is appended, so the reconstruction must match that.
+        let signed_form = if params_no_sig.is_empty() {
+            path.to_string()
+        } else {
+            format!("{path}?{params_no_sig}")
+        };
+        if !crate::verify_image_sig(&signed_form, secret, sig) {
+            return OxideResponse::new(403, "image signature mismatch")
+                .with_header("content-type", "text/plain; charset=utf-8");
+        }
+    }
+
+    // Resolve the source. A `/`-prefixed path is loaded from the asset
+    // root; an `http(s)://` URL is out of scope for this slice (the SSRF
+    // allow-list and the fetch op land with §17.1's image endpoint policy).
+    let path_only = parsed.url.split(['?', '#']).next().unwrap_or("");
+    if !path_only.starts_with('/') {
+        return OxideResponse::new(400, "only site-relative image sources are supported")
+            .with_header("content-type", "text/plain; charset=utf-8");
+    }
+    let rel = path_only.trim_start_matches('/');
+    let abs = endpoint.asset_root.join(rel);
+    // Reject path traversal: the resolved path must stay under the root.
+    let canon_root = match endpoint.asset_root.canonicalize() {
+        Ok(p) => p,
+        Err(_) => {
+            return OxideResponse::new(500, "image asset root missing")
+                .with_header("content-type", "text/plain; charset=utf-8")
+        }
+    };
+    let canon_abs = match abs.canonicalize() {
+        Ok(p) => p,
+        Err(_) => {
+            return OxideResponse::new(404, "image source not found")
+                .with_header("content-type", "text/plain; charset=utf-8")
+        }
+    };
+    if !canon_abs.starts_with(&canon_root) {
+        return OxideResponse::new(403, "image source escapes the asset root")
+            .with_header("content-type", "text/plain; charset=utf-8");
+    }
+
+    let source = match std::fs::read(&canon_abs) {
+        Ok(b) => b,
+        Err(_) => {
+            return OxideResponse::new(404, "image source not readable")
+                .with_header("content-type", "text/plain; charset=utf-8")
+        }
+    };
+
+    let format_static = parsed.format;
+    let req = ImageEndpointRequest {
+        source,
+        format: format_static,
+        width: parsed.width,
+        height: parsed.height,
+        quality: parsed.quality,
+    };
+
+    match endpoint.backend.process(req) {
+        Ok(result) => OxideResponse::new(200, Bytes::from(result.bytes))
+            .with_header("content-type", result.content_type)
+            // §16.1: transformed images are content-addressed by the
+            // backend's cache key, so they are safe to cache immutably.
+            .with_header("Cache-Control", "public, max-age=31536000, immutable")
+            .with_header("ETag", format!("\"{}\"", &result.cache_key[..16.min(result.cache_key.len())]))
+            .with_header("Vary", "Accept"),
+        Err(msg) => OxideResponse::new(400, format!("image transform failed: {msg}"))
+            .with_header("content-type", "text/plain; charset=utf-8"),
+    }
+}
+
+/// Split a request URL into `(path, params-before-s=)`. The signer signs
+/// `path?params` with `s=` appended last, so removing the `s=` pair (in any
+/// position) reconstructs the signed form.
+/// Parsed `/_oxide/image` query. Mirrors `oxide_assets`'s type but lives
+/// here so the server has no dependency on the asset crate.
+struct ImageQuery {
+    url: String,
+    width: Option<u32>,
+    height: Option<u32>,
+    format: Option<&'static str>,
+    quality: Option<u8>,
+    signature: Option<String>,
+}
+
+fn parse_image_query(query: &str) -> std::result::Result<ImageQuery, String> {
+    let mut url: Option<String> = None;
+    let mut width = None;
+    let mut height = None;
+    let mut format: Option<&'static str> = None;
+    let mut quality = None;
+    let mut signature = None;
+    for pair in query.split('&').filter(|p| !p.is_empty()) {
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        match k {
+            "url" => {
+                if v.is_empty() {
+                    return Err("`url` is empty".into());
+                }
+                url = Some(percent_decode(v));
+            }
+            "w" => width = Some(v.parse::<u32>().map_err(|_| format!("`w` not an integer: {v:?}"))?),
+            "h" => height = Some(v.parse::<u32>().map_err(|_| format!("`h` not an integer: {v:?}"))?),
+            "format" => {
+                format = Some(match v.to_ascii_lowercase().as_str() {
+                    "avif" => "image/avif",
+                    "webp" => "image/webp",
+                    "jpeg" | "jpg" => "image/jpeg",
+                    "png" => "image/png",
+                    other => return Err(format!("unknown `format`: {other:?}")),
+                });
+            }
+            "q" | "quality" => {
+                let q = v.parse::<u32>().map_err(|_| format!("`q` not an integer: {v:?}"))?;
+                if q == 0 || q > 100 {
+                    return Err(format!("`q` out of range: {q}"));
+                }
+                quality = Some(q as u8);
+            }
+            "s" => signature = Some(v.to_string()),
+            _ => {}
+        }
+    }
+    Ok(ImageQuery {
+        url: url.ok_or("`url` is required")?,
+        width,
+        height,
+        format,
+        quality,
+        signature,
+    })
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (hex_nib(bytes[i + 1]), hex_nib(bytes[i + 2])) {
+                out.push((h << 4) | l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_nib(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Recompute the signature `oxide_assets::sign_image_url` would have
+/// produced for `signed_form`, and compare it to `sig`.
+pub fn verify_image_sig(signed_form: &str, secret: &str, sig: &str) -> bool {
+    let mut h = blake3::Hasher::new();
+    h.update(signed_form.as_bytes());
+    h.update(secret.as_bytes());
+    let expected = &h.finalize().to_hex().to_string()[..16];
+    sig.len() == expected.len() && sig.as_bytes() == expected.as_bytes()
+}
+
+fn split_sig(raw_url: &str) -> (&str, String) {
+    let (path, query) = match raw_url.split_once('?') {
+        Some((p, q)) => (p, q),
+        None => (raw_url, ""),
+    };
+    let filtered: Vec<&str> = query
+        .split('&')
+        .filter(|p| !p.is_empty() && !p.starts_with("s="))
+        .collect();
+    (path, filtered.join("&"))
 }
 
 /// Result of the native (no-JS) prefix of the pipeline ([`Pipeline::native_prefix`]).
@@ -1186,6 +1464,18 @@ impl Pipeline {
                 OxideResponse::new(200, "ok")
                     .with_header("content-type", "text/plain; charset=utf-8"),
             );
+        }
+
+        // (3c) image endpoint (§16.1). GET/HEAD only. The transform runs
+        // in Rust, never entering JS; a missing endpoint or an invalid
+        // request yields a coded 4xx that names the reason.
+        if req.method.eq_ignore_ascii_case("GET")
+            && path == "/_oxide/image"
+        {
+            return NativePrefix::Raw(serve_image_endpoint(
+                self.image_endpoint.as_deref(),
+                &req.url,
+            ));
         }
 
         // (4) native rules (§12.1 step 4).

@@ -226,6 +226,161 @@ pub fn sign_image_url(url: &str, secret: &str) -> String {
     }
 }
 
+/// §16.1: verify the signature `sign_image_url` produced. Constant-time-ish
+/// comparison is not required here — the signature is a fixed-length hex
+/// prefix of a blake3 hash, and timing leaks on a public image proxy do not
+/// reveal the secret (it never appears in a response). A byte-wise compare
+/// is enough.
+pub fn verify_image_signature(url: &str, secret: &str, sig: &str) -> bool {
+    let mut h = Hasher::new();
+    h.update(url.as_bytes());
+    h.update(secret.as_bytes());
+    let expected = &h.finalize().to_hex().to_string()[..16];
+    sig.len() == expected.len() && sig.as_bytes() == expected.as_bytes()
+}
+
+/// §16.1: an `/_oxide/image` request parsed from its query string. Every
+/// field is optional except `url`; the endpoint validates and defaults the
+/// rest. Errors carry a stable code so a response can name the reason.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageEndpointRequest {
+    /// Source path or URL. A path starting with `/` resolves under the
+    /// site's public asset root; an `http(s)://` URL is checked against
+    /// `ImagesConfig.remotePatterns`.
+    pub url: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    /// Output format from `?format=`. `None` means "negotiate from the
+    /// request's `Accept` header" — the endpoint picks WebP/AVIF when the
+    /// client supports it and falls back to the source format otherwise.
+    pub format: Option<ImageFormat>,
+    /// Quality 1-100; the backend clamps. `None` uses the backend default.
+    pub quality: Option<u8>,
+    pub placeholder: Option<PlaceholderKind>,
+    /// Request signature (`?s=`). Present only when the deployment
+    /// configures a signing secret.
+    pub signature: Option<String>,
+}
+
+/// Parse the query string of an `/_oxide/image` request. Tolerates missing
+/// `?`, duplicate keys (last wins), and percent-encoded values in `url`.
+pub fn parse_image_request(query: &str) -> Result<ImageEndpointRequest> {
+    let mut url: Option<String> = None;
+    let mut width = None;
+    let mut height = None;
+    let mut format = None;
+    let mut quality = None;
+    let mut placeholder = None;
+    let mut signature = None;
+    for pair in query.split('&').filter(|p| !p.is_empty()) {
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        match k {
+            "url" => {
+                if v.is_empty() {
+                    return Err(err("AST-IMG-REQ", "`url` query parameter is empty"));
+                }
+                url = Some(percent_decode(v)?);
+            }
+            "w" => {
+                width = Some(
+                    v.parse::<u32>()
+                        .map_err(|_| err("AST-IMG-REQ", format!("`w` is not an integer: {v:?}")))?,
+                );
+            }
+            "h" => {
+                height = Some(
+                    v.parse::<u32>()
+                        .map_err(|_| err("AST-IMG-REQ", format!("`h` is not an integer: {v:?}")))?,
+                );
+            }
+            "format" => {
+                format = Some(match v.to_ascii_lowercase().as_str() {
+                    "avif" => ImageFormat::Avif,
+                    "webp" => ImageFormat::Webp,
+                    "jpeg" | "jpg" => ImageFormat::Jpeg,
+                    "png" => ImageFormat::Png,
+                    other => {
+                        return Err(err(
+                            "AST-IMG-REQ",
+                            format!("unknown `format`: {other:?}"),
+                        ))
+                    }
+                });
+            }
+            "q" | "quality" => {
+                let q = v
+                    .parse::<u32>()
+                    .map_err(|_| err("AST-IMG-REQ", format!("`q` is not an integer: {v:?}")))?;
+                if q == 0 || q > 100 {
+                    return Err(err("AST-IMG-REQ", format!("`q` out of range: {q}")));
+                }
+                quality = Some(q as u8);
+            }
+            "placeholder" => {
+                placeholder = Some(match v {
+                    "lqip" => PlaceholderKind::Lqip,
+                    "blur" => PlaceholderKind::Blur,
+                    other => {
+                        return Err(err(
+                            "AST-IMG-REQ",
+                            format!("unknown `placeholder`: {other:?}"),
+                        ))
+                    }
+                });
+            }
+            "s" => signature = Some(v.to_string()),
+            _ => {
+                // Unknown query parameters are ignored, matching the asset
+                // query convention in §6.7 (`?w=&format=` are the ones that
+                // matter; anything else rides along harmlessly).
+            }
+        }
+    }
+    let url = url.ok_or_else(|| err("AST-IMG-REQ", "`url` query parameter is required"))?;
+    Ok(ImageEndpointRequest {
+        url,
+        width,
+        height,
+        format,
+        quality,
+        placeholder,
+        signature,
+    })
+}
+
+/// Percent-decode a query value. `+` is treated as a literal plus (a URL in
+/// the `url=` parameter carries its own encoding); only `%XX` sequences are
+/// decoded. Invalid escapes are left untouched rather than erroring, which
+/// keeps a hostile input from 500-ing the endpoint.
+fn percent_decode(s: &str) -> Result<String> {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = hex_val(bytes[i + 1]);
+            let lo = hex_val(bytes[i + 2]);
+            if let (Some(h), Some(l)) = (hi, lo) {
+                out.push((h << 4) | l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).map_err(|_| err("AST-IMG-REQ", "`url` is not valid UTF-8"))
+}
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
 // ---------------- Fonts (§16.2) ----------------
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

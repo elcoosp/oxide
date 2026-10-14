@@ -1990,6 +1990,102 @@ async fn start_server_inner(
 /// `/client/counter-abc.js` when the root itself is `dist/`. Since our
 /// directory is `dist/client` and the URL prefix is `/client`, we scan
 /// `dist/` — then the boot chunk's `/client/...` URL matches the file path.
+/// §16.1: adapt `oxide_assets::ImageBackend` to the `oxide-server` seam.
+///
+/// The two crates do not know about each other — `oxide-server` names only
+/// the trait, `oxide-assets` names only its own request/result types — so
+/// the CLI is where the two shapes are joined. The transform itself is
+/// unchanged; only the field names differ.
+struct AssetsImageBackend;
+
+impl oxide_server::ImageEndpointBackend for AssetsImageBackend {
+    fn process(
+        &self,
+        req: oxide_server::ImageEndpointRequest,
+    ) -> std::result::Result<oxide_server::ImageEndpointResult, String> {
+        use oxide_assets::{ImageBackend as _, ImageFormat, ImageRequest, RustImageBackend};
+
+        // Detect the source format from the bytes. The `image` crate's
+        // guess is what the backend already relies on for decode; this is
+        // a header sniff so the request carries a format the backend can
+        // assert against.
+        let source_format = if req.source.starts_with(b"\x89PNG") {
+            ImageFormat::Png
+        } else if req.source.starts_with(b"\xFF\xD8") {
+            ImageFormat::Jpeg
+        } else if req.source.starts_with(b"RIFF") {
+            ImageFormat::Webp
+        } else {
+            // Default to PNG; the backend re-sniffs on decode anyway.
+            ImageFormat::Png
+        };
+
+        let format = match req.format {
+            Some("image/avif") => ImageFormat::Avif,
+            Some("image/webp") => ImageFormat::Webp,
+            Some("image/jpeg") => ImageFormat::Jpeg,
+            Some("image/png") => ImageFormat::Png,
+            _ => source_format,
+        };
+
+        let ireq = ImageRequest {
+            source: req.source,
+            source_format,
+            width: req.width,
+            height: req.height,
+            format,
+            quality: req.quality.unwrap_or(75),
+            placeholder: None,
+        };
+
+        RustImageBackend
+            .process(ireq)
+            .map(|r| oxide_server::ImageEndpointResult {
+                bytes: r.bytes,
+                content_type: r.format.mime(),
+                cache_key: r.cache_key,
+            })
+            .map_err(|e| format!("{}: {}", e.0.code, e.0.message))
+    }
+}
+
+/// §16.1: construct the endpoint from config. Returns `None` when the
+/// project declares no remote image patterns AND has no `public/` or
+/// `dist/client/` directory to serve from — a project with images off
+/// wants a 404, not an endpoint that always errors.
+fn build_image_endpoint(
+    rootp: &Path,
+    cfg: &oxide_config::OxideConfig,
+) -> Option<std::sync::Arc<oxide_server::ImageEndpoint>> {
+    // Asset root: the same `dist/` the static-asset store scans, so an
+    // image imported at build time is reachable at the URL the bundler
+    // emitted it under.
+    let dist = rootp.join("dist");
+    let public = rootp.join("public");
+    let asset_root = if dist.is_dir() {
+        dist
+    } else if public.is_dir() {
+        public
+    } else {
+        // No asset directory means no local sources to transform; the
+        // endpoint would 404 every request. Leave it unset.
+        return None;
+    };
+
+    // Signing: opt-in. A `OXIDE_IMAGE_SECRET` environment variable turns
+    // the check on; without it the endpoint is open, which is the right
+    // default for a dev server and for a project that serves its own
+    // images. Production deployments that proxy third-party URLs set it.
+    let signing_secret = std::env::var("OXIDE_IMAGE_SECRET").ok().filter(|s| !s.is_empty());
+    let _ = &cfg.images; // reserved: remotePatterns gating lands with the fetch path
+
+    Some(std::sync::Arc::new(oxide_server::ImageEndpoint {
+        backend: std::sync::Arc::new(AssetsImageBackend),
+        asset_root,
+        signing_secret,
+    }))
+}
+
 fn load_client_assets(rootp: &Path) -> Option<oxide_server::StaticAssets> {
     let dist = rootp.join("dist");
     if !dist.is_dir() {
@@ -2027,9 +2123,11 @@ async fn start_server_inner_full(
     let metrics = std::sync::Arc::new(oxide_server::Metrics::new());
 
     let assets = load_client_assets(&rootp);
+    let image_endpoint = build_image_endpoint(&rootp, &cfg);
     let pipeline = std::sync::Arc::new(oxide_server::Pipeline {
         rules,
         assets,
+        image_endpoint,
         limits: oxide_server::Limits::default(),
         security: oxide_server::SecuritySettings {
             csp: cfg.security.csp.clone(),

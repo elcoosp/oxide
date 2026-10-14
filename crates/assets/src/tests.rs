@@ -433,3 +433,80 @@ fn mdx_compile_request_round_trips_through_serde() {
     assert_eq!(back.export, r.export);
     assert_eq!(back.source, r.source);
 }
+
+
+// ---------------------------------------------------------------------------
+// §16.1 image endpoint helpers: sign / verify / parse.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn image_request_parses_all_fields() {
+    let req = crate::parse_image_request(
+        "url=%2Fhero.png&w=640&h=360&format=webp&q=80&placeholder=blur&s=abcd1234",
+    )
+    .expect("parse");
+    assert_eq!(req.url, "/hero.png");
+    assert_eq!(req.width, Some(640));
+    assert_eq!(req.height, Some(360));
+    assert_eq!(req.format, Some(crate::ImageFormat::Webp));
+    assert_eq!(req.quality, Some(80));
+    assert_eq!(req.placeholder, Some(crate::PlaceholderKind::Blur));
+    assert_eq!(req.signature.as_deref(), Some("abcd1234"));
+}
+
+#[test]
+fn image_request_requires_url() {
+    let e = crate::parse_image_request("w=640").unwrap_err();
+    assert!(e.0.message.contains("url"), "{}", e.0.message);
+}
+
+#[test]
+fn image_request_rejects_bad_format_and_quality() {
+    let e = crate::parse_image_request("url=/a.png&format=jxl").unwrap_err();
+    assert!(e.0.message.contains("unknown `format`"), "{}", e.0.message);
+    let e = crate::parse_image_request("url=/a.png&q=200").unwrap_err();
+    assert!(e.0.message.contains("out of range"), "{}", e.0.message);
+}
+
+#[test]
+fn image_request_ignores_unknown_params() {
+    let req = crate::parse_image_request("url=/a.png&w=100&something=else").expect("parse");
+    assert_eq!(req.url, "/a.png");
+    assert_eq!(req.width, Some(100));
+    assert!(req.height.is_none());
+}
+
+#[test]
+fn image_request_percent_decodes_the_url() {
+    let req = crate::parse_image_request("url=%2Fimages%2Fcaf%C3%A9.png").expect("parse");
+    assert_eq!(req.url, "/images/café.png");
+}
+
+#[test]
+fn image_request_plus_is_literal_not_space() {
+    // The `url=` parameter carries a URL, so `+` must not become a space
+    // (that would corrupt a legitimate plus in a path).
+    let req = crate::parse_image_request("url=/a+b.png").expect("parse");
+    assert_eq!(req.url, "/a+b.png");
+}
+
+#[test]
+fn image_signature_round_trip() {
+    let secret = "test-secret";
+    let signed = crate::sign_image_url("/hero.png?w=640", secret);
+    // Extract the `s=` value the signer produced.
+    let sig = signed
+        .split('&')
+        .find_map(|p| p.strip_prefix("s="))
+        .expect("s= present");
+    assert!(crate::verify_image_signature("/hero.png?w=640", secret, sig));
+    assert!(!crate::verify_image_signature("/hero.png?w=641", secret, sig));
+    assert!(!crate::verify_image_signature("/hero.png?w=640", "other", sig));
+}
+
+#[test]
+fn image_signature_appends_with_question_or_ampersand() {
+    let secret = "s";
+    assert!(crate::sign_image_url("/a.png", secret).starts_with("/a.png?s="));
+    assert!(crate::sign_image_url("/a.png?w=1", secret).starts_with("/a.png?w=1&s="));
+}
