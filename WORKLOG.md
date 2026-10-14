@@ -1219,3 +1219,144 @@ Ordered by leverage:
    apps exist (the four fixtures), the harness does not.
 6. **§4.4 app snapshots**, **§12 HTTP/3**, **§19 editor tooling**,
    **§22 full assertion set** — larger, spec-named, not started.
+
+## Session 11 — §9.3 tags, §15 WASM plugins, §16.1 remote images, §10.1 AST inference
+
+**Date:** 2026-10-14
+**Scope:** the three features the session-10 entry named as "the natural next
+slices" (tags + L1 cache, WASM plugin host, remote image fetch), plus §10.1
+inference as a real compiler pass.
+
+### 1. §9.3 `'use cache'` — the tag thunk
+
+Commits `b2ad76e`, `686aa83`, `fb3e736`, `75d16f1`.
+
+The directive was installed but dropped any `cacheTag(…)` argument the static
+extractor could not evaluate. `cacheTag('posts:' + slug)` was omitted; the
+entry carried no tag.
+
+- **Compiler** — `collect_cache_options` now records each `cacheTag`
+  argument as raw source and, when any argument is non-literal, emits a
+  thunk over the wrapped function's own parameter list:
+  `tags: (slug) => ["posts:" + slug]`. A literal tag stays a plain array,
+  so the common case carries no per-call closure.
+- **Runtime** — `CacheOptions.tags` accepts `string[] | ((...args) =>
+  string[])`; `cache()` resolves the thunk per call, includes the resolved
+  tags in the cache key, and stores them on the entry.
+
+Verified in a real build: the emitted wrapper is
+`__oxide_cache(async e => …, "<path>", "getPost", { tags: e => [`posts:` + e], life: { ttl: 60, swr: 300 } })`.
+
+### 2. §9.3 — the L1 cache on the request path: **not done**
+
+The runtime `cache()` is an in-process `Map`. Cross-request caching needs the
+worker to read the Rust L1 tier while executing user code, and the worker
+protocol has no path for that:
+
+- it is one-directional (Rust sends `call`, worker replies
+  `call_ok`/`call_err`/`call_chunk`/`call_end`),
+- the pool reads frames only when awaiting a reply, so a frame the worker
+  sends mid-call has no dispatcher,
+- `cache()` would need an async op that sends a `cache_request` frame and
+  awaits the reply.
+
+The change is: a new frame type, the pool's read loop becomes a dispatcher
+backed by a `CacheHandler`, and the runtime op becomes async. Real work, and
+the right next slice. Recorded here so it is not mistaken for a wiring fix.
+
+### 3. §15 WASM plugin host — wired
+
+Commits `b253039`, `f318aa9`, `827e301`, `ecea7cc`, `550d6c0`, `9b856c2`,
+`508abb6`, `3a826a5`.
+
+The `oxide-plugin` WASM host worked (real component-model components execute
+their `transform` export), but nothing called it, and adding `oxide-plugin`
+to the bundler would pull `wasmtime` into every build for a feature most
+builds do not enable.
+
+- **`oxide-bundler`** — `BundleOptions.transform_hook: Option<TransformHook>`.
+  `TransformHook` wraps `Arc<dyn Fn(&str, &str) -> Result<String>>`, so the
+  bundler's only knowledge of a plugin is "call this function". The newtype
+  exists because `BundleOptions` derives `Debug` and an `Arc<dyn Fn…>` does
+  not.
+- **`OxidePassesPlugin`** runs the hook *before* the compiler passes — a
+  plugin sees the source as its author wrote it. A hook error is reported
+  and skipped.
+- **`oxide-cli`** — `build_transform_hook` reads `config.plugins` for
+  `{ kind: "wasm", path, … }`, loads the component, wraps its `transform`.
+  A plugin that fails to load or exports no `transform` is skipped with a
+  warning.
+
+Two bugs in `should_transform` surfaced while wiring: Rolldown's virtual
+modules carry a leading NUL (`\0rolldown/runtime.js`), and a resolved module
+can be reported under `/private/var/…` while the root was built with
+`/var/…` — macOS symlinks one to the other, so `starts_with(root)` fails on
+a valid module. Both sides are canonicalized now.
+
+**A deadlock, diagnosed by sampling.** The first transform-hook test used
+`assert!` inside the closure. A panic in a plugin hook on Rolldown's
+current-thread runtime has no other thread to unwind to, so the executor
+parked — the test ran for 28 minutes before `sample` showed every thread in
+`__workq_kernreturn`. The hook now records ids and rewrites only when its
+marker is present: the shape a real plugin follows, and one that cannot
+deadlock the pipeline.
+
+### 4. §16.1 remote image fetch — the other half
+
+Commits `35ecb3c`, `f3dd85e`, `d8a33a6`.
+
+`b9ff957` landed `remote_pattern_allows` and the SSRF check; the endpoint
+answered every remote source with 501 because `serve_request`'s native
+prefix was synchronous.
+
+- `NativePrefix::RemoteImage { endpoint, request, format, rule_headers }`.
+  The sync prefix still does *all* validation; the async arm fetches.
+- `fetch_remote_image` uses the same pooled `hyper-util` client
+  `forward_proxy` uses, streams the body, and stops at `remote_max_bytes`
+  — a source that streams unbounded is refused, not buffered.
+- `plan_remote_image` returns the validated request or the rejection;
+  `serve_image_endpoint` returns `NativePrefix` now (a remote source needs
+  the async variant, a local one `Raw`).
+
+Five tests cover the validation: unlisted host → 403, empty pattern list →
+403, loopback / `localhost` → 403 even when matched, non-http scheme → 400,
+allowed `https://` accepted.
+
+### 5. §10.1 inference as a compiler pass
+
+Commits `9b540ac`, `0af5c2f`, `7172b09`, `028f6b6`.
+
+The scanner's inference was a line scan: a loader whose file contained the
+substring `cookies` read as dynamic, even in a comment or a string literal.
+
+- `oxide_compiler::infer_render_mode(source, path) -> InferredMode` parses
+  with Oxc and walks the AST. A read counts only as a member access on
+  `cookies`, `locals`, `request.headers`, or `searchParams`. The result
+  carries the trigger's span and name.
+- `cmd_build` and `cmd_routes` both call it, so the build and the table
+  agree by construction.
+- `oxide-router` does not grow an `oxide-compiler` dependency for this —
+  the CLI already depends on both.
+
+Verified: a loader whose string literal is `'We use cookies to improve your
+experience'` read **dynamic** before and **static** after.
+
+### Test state
+
+| suite | result |
+| --- | --- |
+| `oxide-compiler` | 49 |
+| `oxide-server` | 106 across four binaries |
+| `oxide-bundler` | 44 across four binaries |
+| `packages/oxide` | 69 |
+| conformance | 4/4 |
+| Playwright | 7/7 |
+| four-fixture CLI gate | PASS |
+
+### Still open
+
+1. **§9.3 L1 cache** — the protocol change above.
+2. **§21 benchmark harness** — the four fixtures are the reference apps;
+   `benchmarks/` is a README.
+3. **§4.4 app snapshots, §12 HTTP/3, §19 editor tooling, §22 full assertion
+   set** — larger, spec-named, not started.
