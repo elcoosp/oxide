@@ -393,6 +393,46 @@ fn load_config_strict(root: &Path, mode: &str) -> anyhow::Result<OxideConfig> {
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))
 }
 
+/// §10.1: refine each route's render mode with the AST-based inference.
+///
+/// The scanner sets `render_mode` from a line-oriented regex (fast, and
+/// good enough for `oxide routes` without parsing every loader). The CLI
+/// has `oxide-compiler`, so before the build consumes the mode it re-runs
+/// the inference over each route's `page.server.ts` with the real AST —
+/// which does not misfire on a comment mentioning `cookies` or on a local
+/// variable named `locals`.
+///
+/// An explicit `config.render` from the module still wins: the inference
+/// only replaces a mode the scanner produced on its own (the scanner writes
+/// `static` / `dynamic` for the inferred case, and any other value for an
+/// explicit one). If the module does not parse, the AST pass returns
+/// `dynamic` — which the scanner's answer already is in that case.
+fn refine_render_modes_from_ast(
+    root: &Path,
+    cfg: &OxideConfig,
+    mut tree: RouteTree,
+) -> RouteTree {
+    let routes_root = root.join(&cfg.routes.dir);
+    for e in &mut tree.entries {
+        if !matches!(e.kind, oxide_router::RouteKind::Page) {
+            continue;
+        }
+        let server = routes_root.join(e.file.with_file_name("page.server.ts"));
+        let Ok(source) = std::fs::read_to_string(&server) else { continue };
+        // Only overwrite an *inferred* mode: the scanner's value is `static`
+        // or `dynamic` when it inferred, and the literal string from an
+        // explicit `config.render` otherwise. An explicit `isr` / `spa` /
+        // `islands` / `auto` is left as-is.
+        let inferred_by_scanner = matches!(e.render_mode.as_deref(), Some("static") | Some("dynamic") | None);
+        if !inferred_by_scanner {
+            continue;
+        }
+        let m = oxide_compiler::infer_render_mode(&source, &server.to_string_lossy());
+        e.render_mode = Some(m.mode.to_string());
+    }
+    tree
+}
+
 fn scan_routes(root: &Path, cfg: &OxideConfig) -> anyhow::Result<RouteTree> {
     // Canonicalize `root` first so `dir` is absolute. `RouteTree::scan_with_config`
     // joins the override onto `dir`; if the override is already root-relative
@@ -1170,7 +1210,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // when it is absolute.
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
     let cfg = load_config_strict(&rootp, "production")?;
-    let tree = scan_routes(&rootp, &cfg)?;
+    let tree = refine_render_modes_from_ast(&rootp, &cfg, scan_routes(&rootp, &cfg)?);
     let dist = rootp.join("dist");
     let routes_root = rootp.join(&cfg.routes.dir);
 
