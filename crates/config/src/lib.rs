@@ -13,6 +13,15 @@ use std::path::{Path, PathBuf};
 mod env_file;
 pub mod schema;
 mod extract;
+
+/// Test-only wrapper around the minimal-config extractor. Production code
+/// reaches the same result through `OxideConfig::load`; this exposes the
+/// extractor's raw output so tests can assert on it directly.
+#[doc(hidden)]
+pub fn extract_for_test(source: &str) -> Option<serde_json::Value> {
+    extract::extract_public(source)
+}
+
 mod layer;
 mod size;
 

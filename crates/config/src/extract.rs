@@ -158,6 +158,11 @@ fn strip_line_comments(source: &str) -> String {
     }
     out
 }
+/// Public entry to the minimal extractor for tests and the CLI fallback.
+pub fn extract_public(source: &str) -> Option<Value> {
+    extract_minimal_framework(source)
+}
+
 fn extract_minimal_framework(source: &str) -> Option<Value> {
     // If the full parser bailed on a dynamic config (componentFor callback,
     // process.env in a factory argument, etc.), pick up just enough of the

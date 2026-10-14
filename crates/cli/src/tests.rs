@@ -537,6 +537,7 @@ async fn write_prerender_threads_loader_data_into_renderer() {
         Some(&page_renderer),
         Some(&loader_runner),
         Some(std::path::Path::new("/fake/page.server.ts")),
+        None, // no island boot script in this test
     )
     .await
     .expect("write_prerender ok");
@@ -578,6 +579,7 @@ async fn write_prerender_without_loader_uses_empty_data() {
         Some(&page_renderer),
         None,
         None,
+        None, // no island boot script
     )
     .await
     .expect("write_prerender ok");
@@ -2495,4 +2497,97 @@ async fn smoke_app_emits_valid_js_in_every_chunk() {
             "deploy/{name} missing (binary target characteristic file)"
         );
     }
+}
+
+
+// ---------------------------------------------------------------------------
+// §10.3 islands end-to-end at the CLI level.
+//
+// The smoke-app declares `islands: { Counter: 'src/islands/counter.tsx' }`
+// and its home page uses `<Island component="Counter" chunk="Counter">`.
+// The build must:
+//   * emit a `<ox-island data-ox-island="Counter" …>` wrapper with the
+//     exact attributes the client boot script scans for;
+//   * serialize the island props as base64 JSON in `data-ox-props`;
+//   * SSR the island's React children with the initial value from props;
+//   * inject `<script type="module" src="/client/__boot__.js">` into the
+//     page so the boot module runs in the browser;
+//   * write the boot chunk to `dist/client/`.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[ignore]
+async fn smoke_app_emits_island_markup_and_boot_script() {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root");
+    let smoke = workspace.join("examples/smoke-app");
+    assert!(
+        smoke.join("oxide.config.ts").is_file(),
+        "smoke-app fixture missing at {}",
+        smoke.display()
+    );
+
+    let dist = smoke.join("dist");
+    let _ = std::fs::remove_dir_all(&dist);
+
+    let (code, out) = run_ok(&["oxide", "build", "--root", smoke.to_str().unwrap()]).await;
+    assert_eq!(code, 0, "build exit code; output:\n{out}");
+    assert!(out.contains("build ok"), "build summary: {out}");
+    assert!(
+        out.contains("islands: 1 registered") || out.contains("__boot__"),
+        "build should announce island registration: {out}"
+    );
+
+    // 1. Prerendered HTML carries the island markup.
+    let index_html = std::fs::read_to_string(dist.join("prerendered/index.html"))
+        .expect("prerendered/index.html");
+    assert!(
+        index_html.contains(r#"data-ox-island="Counter""#),
+        "island name attribute missing:\n{index_html}"
+    );
+    assert!(
+        index_html.contains(r#"data-ox-chunk="Counter""#),
+        "island chunk attribute missing:\n{index_html}"
+    );
+    assert!(
+        index_html.contains(r#"data-ox-strategy="load""#),
+        "island strategy attribute missing:\n{index_html}"
+    );
+    // base64(JSON.stringify({initial:3}))
+    assert!(
+        index_html.contains(r#"data-ox-props="eyJpbml0aWFsIjozfQ==""#),
+        "island props attribute not the expected base64 payload:\n{index_html}"
+    );
+
+    // 2. The island's SSR children render inside <ox-island>: the Counter
+    //    shows `3`, which comes from `props.initial` in the fixture.
+    let open = index_html.find("<ox-island").expect("opening tag");
+    let close = index_html[open..].find("</ox-island>").expect("closing tag") + open;
+    let island_body = &index_html[open..close];
+    assert!(
+        island_body.contains("<span>3</span>"),
+        "expected SSR counter value 3 in island body:\n{island_body}"
+    );
+
+    // 3. Boot script tag is injected before </body>.
+    let boot_prefix = "<script type=\"module\" src=\"/client/";
+    assert!(
+        index_html.contains(boot_prefix),
+        "boot module script tag missing:\n{index_html}"
+    );
+    assert!(
+        index_html.rfind(boot_prefix).unwrap() < index_html.rfind("</body>").unwrap(),
+        "boot script must appear before </body>"
+    );
+
+    // 4. The boot chunk landed in dist/client/.
+    let client_dir = dist.join("client");
+    let has_boot = std::fs::read_dir(&client_dir)
+        .expect("dist/client")
+        .flatten()
+        .any(|e| e.file_name().to_string_lossy().contains("__boot__"));
+    assert!(has_boot, "no __boot__ chunk in dist/client/");
 }

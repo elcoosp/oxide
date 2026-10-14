@@ -728,3 +728,100 @@ fn typed_config_serializes_camel_case_and_roundtrips() {
     let back: OxideConfig = serde_json::from_value(json).unwrap();
     assert_eq!(back, cfg);
 }
+
+
+// ---------------------------------------------------------------------------
+// extract_islands_map — §10.3 regression tests.
+//
+// The earlier implementation used `source.find("islands")` and walked to the
+// next `{`. That matched the smoke-app config's own comment ("see
+// src/islands/counter.tsx") and then grabbed the `components = {...}` map.
+// These tests pin the fixed behavior.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn islands_extractor_reads_a_simple_map() {
+    let src = r#"
+import react from '@oxide/react'
+export default {
+  framework: react({
+    islands: {
+      Counter: 'src/islands/counter.tsx',
+      Widget: 'src/islands/widget.tsx',
+    },
+  }),
+}
+"#;
+    let v = oxide_config::extract_for_test(src).expect("should extract something");
+    let islands = v
+        .get("framework")
+        .and_then(|f| f.get("islands"))
+        .and_then(|i| i.as_object())
+        .expect("islands map");
+    assert_eq!(islands.len(), 2);
+    assert_eq!(islands["Counter"], "src/islands/counter.tsx");
+    assert_eq!(islands["Widget"], "src/islands/widget.tsx");
+}
+
+#[test]
+fn islands_extractor_ignores_the_word_in_comments() {
+    // The failing case at handoff: the smoke-app config mentions
+    // `src/islands/counter.tsx` inside a comment, and has a separate
+    // `components = { ... }` map. A naive `find("islands")` picked up
+    // that comment, walked to the next `{`, and grabbed `components`.
+    let src = r#"
+// The home page renders a `<ox-island>` for the Counter component
+// (see src/islands/counter.tsx). The Playwright suite in tests/playwright/
+// asserts the SSR'd island markup end-to-end.
+
+const components = {
+  'routes/index': Home,
+  'routes/blog/[slug]': Post,
+}
+
+export default {
+  framework: react({
+    islands: { Counter: 'src/islands/counter.tsx' },
+  }),
+}
+"#;
+    let v = oxide_config::extract_for_test(src).expect("should extract something");
+    let islands = v
+        .get("framework")
+        .and_then(|f| f.get("islands"))
+        .and_then(|i| i.as_object())
+        .expect("islands map");
+    assert_eq!(islands.len(), 1, "only the real islands block counts: {islands:?}");
+    assert_eq!(islands["Counter"], "src/islands/counter.tsx");
+    assert!(!islands.contains_key("routes/index"), "must not grab the components map");
+}
+
+#[test]
+fn islands_extractor_no_block_yields_none() {
+    let src = "export default { framework: react({}) }
+";
+    let v = oxide_config::extract_for_test(src);
+    assert!(
+        v.and_then(|x| x.get("framework").and_then(|f| f.get("islands")).cloned()).is_none(),
+        "no islands block must not surface a map"
+    );
+}
+
+#[test]
+fn islands_extractor_handles_path_with_brace() {
+    // A string containing `{` must not throw off brace counting.
+    let src = r#"
+export default {
+  framework: react({
+    islands: { Weird: 'src/a{b/c.tsx' },
+  }),
+}
+"#;
+    let v = oxide_config::extract_for_test(src).expect("should extract something");
+    let islands = v
+        .get("framework")
+        .and_then(|f| f.get("islands"))
+        .and_then(|i| i.as_object())
+        .expect("islands map");
+    assert_eq!(islands["Weird"], "src/a{b/c.tsx");
+}
