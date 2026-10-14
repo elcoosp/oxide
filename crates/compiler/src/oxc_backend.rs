@@ -19,7 +19,7 @@ use oxide_diagnostics::Diagnostic;
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{Program, Statement};
 use oxc_parser::Parser;
-use oxc_span::SourceType;
+use oxc_span::{GetSpan, SourceType};
 use std::path::PathBuf;
 use std::collections::BTreeSet;
 
@@ -455,17 +455,19 @@ fn walk_var_decl_for_use_cache(
             _ => continue, // destructuring not supported for 'use cache'
         };
         let Some(init) = declarator.init.as_ref() else { continue };
-        let (func_body, fn_span_start, fn_span_end) = match init {
+        let (func_body, fn_span_start, fn_span_end, params_src) = match init {
             Expression::ArrowFunctionExpression(arrow) => {
                 let body = match &arrow.body {
                     oxc_ast::ast::ArrowFunctionBody::FunctionBody(b) => b,
                     _ => continue, // expression-body arrows cannot carry a directive
                 };
-                (body, arrow.span.start, arrow.span.end)
+                let ps = &code[arrow.params.span.start as usize..arrow.params.span.end as usize];
+                (body, arrow.span.start, arrow.span.end, ps.to_string())
             }
             Expression::FunctionExpression(func) => {
                 let Some(body) = func.body.as_ref() else { continue };
-                (body, func.span.start, func.span.end)
+                let ps = &code[func.params.span.start as usize..func.params.span.end as usize];
+                (body, func.span.start, func.span.end, ps.to_string())
             }
             _ => continue,
         };
@@ -485,7 +487,7 @@ fn walk_var_decl_for_use_cache(
         }
 
         // Collect cacheTag/cacheLife options from the AST body.
-        let (opts, blank_spans) = collect_cache_options(func_body, code);
+        let (opts, blank_spans) = collect_cache_options(func_body, code, &params_src);
         // Blank the collected statement spans inside fn_text (relative coordinates).
         for (bs, be) in &blank_spans {
             let rel_s = (*bs as usize).saturating_sub(fn_span_start as usize);
@@ -537,7 +539,8 @@ fn emit_use_cache_edit(
         fn_text.replace_range(rel_s..rel_e, &blanked);
     }
 
-    let (opts, blank_spans) = collect_cache_options(body, code);
+    let params_src = &code[func.params.span.start as usize..func.params.span.end as usize];
+    let (opts, blank_spans) = collect_cache_options(body, code, params_src);
     for (bs, be) in &blank_spans {
         let rel_s = (*bs as usize).saturating_sub(span_start as usize);
         let rel_e = (*be as usize).saturating_sub(span_start as usize);
@@ -704,10 +707,17 @@ fn apply_str_edits(code: &str, mut edits: Vec<(u32, u32, String)>) -> String {
 fn collect_cache_options(
     body: &oxc_ast::ast::FunctionBody<'_>,
     code: &str,
+    params_src: &str,
 ) -> (String, Vec<(u32, u32)>) {
     use oxc_ast::ast::{Argument, Expression, Statement};
 
-    let mut tags: Vec<String> = Vec::new();
+    // Each entry is the raw *source* of a `cacheTag` argument. For a
+    // string literal that is a literal (a constant); for anything else it
+    // is an expression that may reference the wrapped function's
+    // parameters — `cacheTag('posts:' + slug)` slices to `'posts:' + slug`,
+    // which is only meaningful inside a scope where `slug` exists.
+    let mut tag_exprs: Vec<String> = Vec::new();
+    let mut has_non_literal_tag = false;
     let mut lifes: Vec<String> = Vec::new();
     let mut spans: Vec<(u32, u32)> = Vec::new();
 
@@ -719,12 +729,24 @@ fn collect_cache_options(
 
         match callee {
             "cacheTag" => {
-                if let Some(Argument::StringLiteral(s)) = call.arguments.first() {
-                    // Use the raw source slice so the quote style is preserved.
-                    let raw = &code[s.span.start as usize..s.span.end as usize];
-                    tags.push(raw.to_string());
-                    spans.push((es.span.start, es.span.end));
+                let Some(arg) = call.arguments.first() else { continue };
+                // Any argument form is accepted now — a literal, a
+                // template, a concatenation, an identifier. The raw source
+                // slice is what goes into the emitted thunk, so the quote
+                // style and the operator precedence both survive.
+                let span = arg.span();
+                if (span.end as usize) > code.len() {
+                    continue;
                 }
+                let raw = &code[span.start as usize..span.end as usize];
+                if !matches!(arg, Argument::StringLiteral(_)) {
+                    has_non_literal_tag = true;
+                }
+                tag_exprs.push(raw.to_string());
+                // Blank the whole statement out of the fn body: the tag is
+                // now collected by the wrapper, so the call must not run
+                // again inside the cached function.
+                spans.push((es.span.start, es.span.end));
             }
             "cacheLife" => {
                 if let Some(Argument::ObjectExpression(obj)) = call.arguments.first() {
@@ -745,8 +767,20 @@ fn collect_cache_options(
     }
 
     let mut parts: Vec<String> = Vec::new();
-    if !tags.is_empty() {
-        parts.push(format!("tags: [{}]", tags.join(", ")));
+    if !tag_exprs.is_empty() {
+        if has_non_literal_tag {
+            // A thunk. It takes the wrapped function's own parameter list,
+            // so an expression like `'posts:' + slug` sees `slug`. Arrow
+            // functions capture the same lexical scope the wrapped function
+            // does, so any module-level or outer binding a tag expression
+            // references is captured identically.
+            // `params_src` is the raw span of the parameter list, which
+            // already includes its parens (`(slug)`, `()`, `(a, b)`).
+            // Wrapping it again would emit `((slug))`.
+            parts.push(format!("tags: {params_src} => [{}]", tag_exprs.join(", ")));
+        } else {
+            parts.push(format!("tags: [{}]", tag_exprs.join(", ")));
+        }
     }
     if !lifes.is_empty() {
         parts.push(format!("life: {{ {} }}", lifes.join(", ")));
