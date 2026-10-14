@@ -198,12 +198,24 @@ export interface CacheOptions {
   ttl?: number
   /** Stale-while-revalidate window in seconds (served stale + refreshed). */
   swr?: number
-  /** Tags for grouped invalidation (§11.3). */
-  tags?: string[]
+  /**
+   * Tags for grouped invalidation (§11.3).
+   *
+   * A plain array is a fixed set of tags. A function receives the wrapped
+   * call's arguments and returns the tags for that call — the `'use cache'`
+   * compiler pass emits this form when a `cacheTag(…)` argument is not a
+   * literal (e.g. `cacheTag('posts:' + slug)`), so the tag reflects the
+   * argument rather than being dropped.
+   */
+  tags?: string[] | ((...args: unknown[]) => string[])
 }
 
 /** Deterministic cache key: JSON of args + normalized opts (tags sorted). */
-export function cacheKey(args: unknown[], opts?: CacheOptions): string {
+/** Deterministic cache key: JSON of args + normalized opts (tags sorted). */
+export function cacheKey(
+  args: unknown[],
+  opts?: { ttl?: number; swr?: number; tags?: string[] },
+): string {
   const normalized = {
     ttl: opts?.ttl ?? null,
     swr: opts?.swr ?? null,
@@ -247,23 +259,35 @@ export function cache<A extends unknown[], R>(
 ): ((...args: A) => Promise<R>) & { $$oxideCache: true; opts: CacheOptions } {
   const ttlMs = (opts.ttl ?? 0) * 1000
   const swrMs = (opts.swr ?? 0) * 1000
+  // Resolve `tags` for one call: a plain array is constant, a function is
+  // invoked with the call's arguments. The compiler emits the function form
+  // for a non-literal `cacheTag(…)` so the tag can depend on an argument.
+  const tagsFor = (args: A): string[] => {
+    const t = opts.tags
+    const raw = typeof t === 'function' ? (t as (...a: unknown[]) => unknown)(...args) : t
+    return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : []
+  }
+
   const wrapped = async (...args: A): Promise<R> => {
-    const key = cacheKey(args, opts)
+    // The key includes the resolved tags (sorted), so two calls with the
+    // same arguments but different tag thunks do not collide.
+    const callTags = tagsFor(args)
+    const key = cacheKey(args, { ...opts, tags: callTags })
     const now = Date.now()
     const hit = cacheStore.get(key)
     if (hit) {
       if (now < hit.expiresAt) return hit.value as R
       if (swrMs > 0 && now < hit.staleUntil) {
-        void refresh(key, args) // background revalidate, serve stale now
+        void refresh(key, args, callTags) // background revalidate, serve stale now
         return hit.value as R
       }
       cacheStore.delete(key)
     }
     const inflight = cachePending.get(key)
     if (inflight) return (await inflight) as R
-    return (await runAndStore(key, args)) as R
+    return (await runAndStore(key, args, callTags)) as R
   }
-  const runAndStore = async (key: string, args: A): Promise<R> => {
+  const runAndStore = async (key: string, args: A, tags: string[]): Promise<R> => {
     const p = (async () => {
       try {
         const value = await fn(...args)
@@ -271,7 +295,7 @@ export function cache<A extends unknown[], R>(
           value,
           expiresAt: Date.now() + ttlMs,
           staleUntil: Date.now() + ttlMs + swrMs,
-          tags: [...(opts.tags ?? [])],
+          tags: [...tags],
         })
         return value
       } finally {
@@ -281,9 +305,9 @@ export function cache<A extends unknown[], R>(
     cachePending.set(key, p)
     return (await p) as R
   }
-  const refresh = (key: string, args: A): Promise<unknown> => {
+  const refresh = (key: string, args: A, tags: string[]): Promise<unknown> => {
     if (cachePending.has(key)) return cachePending.get(key)!
-    return runAndStore(key, args)
+    return runAndStore(key, args, tags)
   }
   return Object.assign(wrapped, { $$oxideCache: true as const, opts })
 }
@@ -365,21 +389,16 @@ if (typeof globalThis.__oxide_cache !== 'function') {
       if (Array.isArray(t)) return t.filter((x): x is string => typeof x === 'string')
       return typeof t === 'string' ? [t] : []
     }
+    // The compiler emits `tags` as a plain array when every `cacheTag(…)`
+    // argument is a literal, and as a thunk `(...args) => [...]` when at
+    // least one is an expression. `cache()` accepts both, resolving the
+    // thunk per call — so a `cacheTag('posts:' + slug)` reaches the cache
+    // entry with the value of `slug` for that call.
     return cache(fn, {
       ttl: opts.life?.ttl,
       swr: opts.life?.swr,
-      get tags() {
-        // The `cache()` API reads `opts.tags` once, at wrap time; a
-        // per-call tag is a future enhancement (the Rust tier keys
-        // entries by content hash, not by a fixed list). For now the
-        // static portion is what registers.
-        const t = opts.tags
-        return Array.isArray(t) ? (t as string[]) : []
-      },
+      tags: opts.tags as string[] | ((...args: unknown[]) => string[]) | undefined,
     })
-    // Note: `tagsOf` is unused today because `cache()` reads a fixed tag
-    // list; it becomes the source for the per-call tag registration when
-    // the Rust L1 tier is wired to the request path.
   }
 }
 
