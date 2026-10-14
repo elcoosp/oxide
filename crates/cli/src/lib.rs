@@ -471,6 +471,19 @@ fn config_rules_to_router(
         .collect()
 }
 
+/// True when any entry is a Vue/Svelte single-file component. Those need
+/// the precompile pass + `precompiled` map, which only `ChunkBundler`
+/// consumes today; RolldownBundler handles TS/JSX via Rolldown's built-in
+/// Oxc pipeline and produces real sourcemaps (`SourceMapType::File`).
+fn has_sfc_entries(entries: &BTreeMap<String, PathBuf>) -> bool {
+    entries.values().any(|p| {
+        matches!(
+            p.extension().and_then(|e| e.to_str()),
+            Some("vue") | Some("svelte")
+        )
+    })
+}
+
 fn bundle_env_options(
     env: oxide_bundler::BundleEnv,
     entries: BTreeMap<String, PathBuf>,
@@ -960,10 +973,20 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             entries.insert(e.id.0.clone(), rootp.join(&cfg.routes.dir).join(&e.file));
         }
     }
-    let bundler = oxide_bundler::ChunkBundler::new(&rootp);
-    use oxide_bundler::Bundler as _;
     let client_out = dist.join("client");
     let server_out = dist.join("server");
+    // Bundler selection: RolldownBundler for plain JS/TS/TSX projects (it
+    // gets real sourcemaps from Rolldown's `SourceMapType::File` and
+    // Rolldown's built-in Oxc lowering for free). SFC projects must use
+    // ChunkBundler, which consults the `precompiled` map produced by the
+    // tooling pool above; RolldownBundler does not consume that map yet.
+    use oxide_bundler::Bundler as _;
+    let use_rolldown = !has_sfc_entries(&entries);
+    if use_rolldown {
+        outln!(w, "bundler: rolldown");
+    } else {
+        outln!(w, "bundler: chunk (SFC entries present)");
+    }
 
     // §6.3 precompile pass: run Vue / Svelte SFCs through the tooling pool
     // once per env, then hand the emitted JS to the bundler via
@@ -981,22 +1004,34 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         outln!(w, "precompiled {} SFC(s) for server", server_precompiled.len());
     }
 
-    let _client = bundler
-        .bundle(&bundle_env_options(
-            oxide_bundler::BundleEnv::Client,
-            entries.clone(),
-            client_out.clone(),
-            client_precompiled,
-        ))
-        .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
-    let _server = bundler
-        .bundle(&bundle_env_options(
-            oxide_bundler::BundleEnv::Ssr,
-            entries.clone(),
-            server_out.clone(),
-            server_precompiled,
-        ))
-        .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+    let make_opts = |env: oxide_bundler::BundleEnv,
+                     out: PathBuf,
+                     pre: BTreeMap<PathBuf, String>| {
+        bundle_env_options(env, entries.clone(), out, pre)
+    };
+    let client_opts = make_opts(
+        oxide_bundler::BundleEnv::Client,
+        client_out.clone(),
+        client_precompiled,
+    );
+    let server_opts = make_opts(
+        oxide_bundler::BundleEnv::Ssr,
+        server_out.clone(),
+        server_precompiled,
+    );
+    if use_rolldown {
+        let rb = oxide_bundler::RolldownBundler::new(&rootp);
+        rb.bundle(&client_opts)
+            .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+        rb.bundle(&server_opts)
+            .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+    } else {
+        let cb = oxide_bundler::ChunkBundler::new(&rootp);
+        cb.bundle(&client_opts)
+            .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+        cb.bundle(&server_opts)
+            .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+    }
     // The bundler writes client.manifest.json / server.manifest.json into the out dirs.
     let client_manifest = read_json(&client_out.join("client.manifest.json"))
         .ok_or_else(|| anyhow::anyhow!("bundler did not write client.manifest.json"))?;

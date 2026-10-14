@@ -290,3 +290,61 @@ fn rolldown_reads_tsconfig_paths_aliases() {
         "aliased util must be resolved and inlined:\n{code}"
     );
 }
+
+
+#[test]
+fn rolldown_emits_real_sourcemaps_next_to_chunks() {
+    // §6.4 / D3: sourcemaps are Rolldown's job, not the in-house bundler's.
+    // `SourceMapType::File` (set by RolldownBundler when `options.sourcemap`
+    // is true) writes `<chunk>.js.map` next to each chunk and appends the
+    // `//# sourceMappingURL=` comment to the chunk body. Assert both.
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "src/index.js",
+        "function greet(name) {\n  return `hello ${name}`;\n}\nconsole.log(greet('world'));\n",
+    );
+
+    let mut o = opts(dir.path(), BundleEnv::Client, &[("index", "src/index.js")]);
+    o.sourcemap = true;
+
+    let out = RolldownBundler::new(dir.path())
+        .bundle(&o)
+        .expect("rolldown bundle with sourcemap");
+
+    let entry = out
+        .chunks
+        .iter()
+        .find(|c| c.kind == ChunkKind::Entry)
+        .expect("entry chunk present");
+
+    // 1. The .map file exists on disk.
+    let map_path = dir.path().join("dist").join(format!("{}.map", entry.file));
+    assert!(
+        map_path.is_file(),
+        "expected sourcemap at {}, files: {:?}",
+        map_path.display(),
+        std::fs::read_dir(dir.path().join("dist")).map(|rd| rd
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>())
+    );
+
+    // 2. The .map body is valid V3 JSON with the required fields.
+    let raw = std::fs::read_to_string(&map_path).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&raw).expect("valid JSON sourcemap");
+    assert_eq!(v["version"], 3, "sourcemap version must be 3");
+    assert!(v["mappings"].is_string(), "mappings present");
+    let sources = v["sources"].as_array().expect("sources array");
+    assert!(
+        sources.iter().any(|s| s.as_str().is_some_and(|s| s.contains("index.js"))),
+        "expected original file in sources, got {sources:?}"
+    );
+
+    // 3. The chunk body references the map.
+    let js = std::fs::read_to_string(dir.path().join("dist").join(&entry.file)).unwrap();
+    assert!(
+        js.contains("sourceMappingURL="),
+        "chunk should carry sourceMappingURL comment, body:\n{js}"
+    );
+}

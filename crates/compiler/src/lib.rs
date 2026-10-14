@@ -29,7 +29,7 @@ pub mod framework;
 pub mod generate_params;
 mod oxc_backend;
 
-pub use oxc_backend::OxcTransformer;
+pub use oxc_backend::{lower_to_js, OxcTransformer};
 pub use framework::{compiler_for, Framework, FrameworkCompiler, FrameworkInput, FrameworkOutput, ReactInline, SolidInline, ToolingDispatcher};
 pub use generate_params::{extract_generate_params, GenerateParamsResult};
 
@@ -64,6 +64,10 @@ pub struct TransformInput {
 #[derive(Debug, Clone, Default)]
 pub struct TransformOutput {
     pub code: String,
+    /// V3 sourcemap from `code` back to the original source. `None` only when
+    /// the lower stage is skipped or fails; a successful lower always
+    /// produces one.
+    pub map: Option<oxc_sourcemap::OwnedSourceMap>,
     pub scan: ImportScan,
     pub directives: Vec<Directive>,
     pub server_fns: Vec<ServerFnStub>,
@@ -316,6 +320,8 @@ impl Transformer for ScannerTransformer {
         }
         Ok(TransformOutput {
             code,
+            // ScannerTransformer does not lower to JS, so it produces no map.
+            map: None,
             scan,
             directives,
             server_fns,

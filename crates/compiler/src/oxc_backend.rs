@@ -20,6 +20,7 @@ use oxc_allocator::Allocator;
 use oxc_ast::ast::{Program, Statement};
 use oxc_parser::Parser;
 use oxc_span::SourceType;
+use std::path::PathBuf;
 use std::collections::BTreeSet;
 
 /// Oxc-backed transformer (D4). Parse errors surface as `CMP-PARSE` diagnostics;
@@ -92,15 +93,16 @@ impl Transformer for OxcTransformer {
             code = inject_hmr_boundary(&code, &input.path, input.lang)?;
         }
 
-        let lowered = match lower_to_js(&code, input.lang, &input.path) {
-            Ok(s) => s,
+        let (lowered, map) = match lower_to_js(&code, input.lang, &input.path) {
+            Ok((s, m)) => (s, m),
             Err(e) => {
                 diagnostics.push(e.0);
-                code
+                (code, None)
             }
         };
         Ok(TransformOutput {
             code: lowered,
+            map,
             scan,
             directives,
             server_fns,
@@ -109,7 +111,14 @@ impl Transformer for OxcTransformer {
     }
 }
 
-fn lower_to_js(code: &str, lang: &'static str, path: &str) -> Result<String> {
+/// Lower TS/JSX to plain JS and produce a V3 sourcemap back to the original
+/// source. The map is `None` only if codegen chose not to emit one, which
+/// today cannot happen given we always set `source_map_path`.
+pub fn lower_to_js(
+    code: &str,
+    lang: &'static str,
+    path: &str,
+) -> Result<(String, Option<oxc_sourcemap::OwnedSourceMap>)> {
     let allocator = Allocator::default();
     let source_type = source_type_for(lang);
     let parsed = Parser::new(&allocator, code, source_type).parse();
@@ -136,8 +145,18 @@ fn lower_to_js(code: &str, lang: &'static str, path: &str) -> Result<String> {
         oxc_transformer::Transformer::new(&allocator, std::path::Path::new(path), &options);
     let _ = transformer.build_with_scoping(scoping, &mut program);
 
-    let ret = oxc_codegen::Codegen::new().build(&program);
-    Ok(ret.code)
+    // Turn on sourcemap generation in codegen. `source_map_path` becomes the
+    // `sources[0]` entry — the user's original file path as it appears on disk.
+    let cg_options = oxc_codegen::CodegenOptions {
+        source_map_path: Some(PathBuf::from(path)),
+        ..oxc_codegen::CodegenOptions::default()
+    };
+    let ret = oxc_codegen::Codegen::new()
+        .with_options(cg_options)
+        .build(&program);
+    let code = ret.code;
+    let map = ret.map.map(|m| m.into_owned_sourcemap());
+    Ok((code, map))
 }
 
 fn source_type_for(lang: &str) -> SourceType {

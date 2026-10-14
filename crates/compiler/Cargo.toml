@@ -22,3 +22,4 @@ oxc_allocator = { workspace = true }
 oxc_semantic = { workspace = true }
 oxc_transformer = { workspace = true }
 oxc_codegen = { workspace = true }
+oxc_sourcemap = "9.0.0"
