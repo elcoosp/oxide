@@ -4638,6 +4638,8 @@ dependencies = [
  "bytes",
  "deno_core",
  "futures",
+ "oxide-cache",
+ "oxide-compiler",
  "oxide-diagnostics",
  "oxide-odf",
  "serde",
