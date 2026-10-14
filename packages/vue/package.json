@@ -39,5 +39,6 @@
   "devDependencies": {
     "vue": "^3.6.0-rc.11",
     "@vue/server-renderer": "^3.6.0-rc.11"
-  }
+  },
+  "sideEffects": false
 }

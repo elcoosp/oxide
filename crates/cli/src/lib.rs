@@ -542,6 +542,32 @@ fn bundle_env_options(
         h.update(&rnd);
         h.finalize().to_hex().to_string()[..32].to_string()
     };
+    // §6.1: `process.env.NODE_ENV` drives React's dev-vs-production
+    // bundle selection. Setting it at the CLI level (rather than in the
+    // bundler) keeps the bundler agnostic of a project's framework — the
+    // CLI is what decides a build is a production build. Without this,
+    // React ships the dev build (~1 MB) into every island chunk.
+    let mut define: BTreeMap<String, String> = BTreeMap::new();
+    match env {
+        oxide_bundler::BundleEnv::Client => {
+            define.insert(
+                "process.env.NODE_ENV".to_string(),
+                "\"production\"".to_string(),
+            );
+        }
+        oxide_bundler::BundleEnv::Ssr => {
+            // Server rendering must NOT bake in "production": loaders may
+            // read `process.env.NODE_ENV` at request time to decide dev
+            // diagnostics vs. silent failures, and a worker evaluates them
+            // with the real environment. Left unset so the define is a
+            // no-op on the server bundle.
+        }
+        oxide_bundler::BundleEnv::Edge => {
+            // Edge runtimes do not have a `process` global; a define
+            // baking in "production" would be accurate but the runtime is
+            // a browser-like sandbox, so leave it untouched for now.
+        }
+    }
     oxide_bundler::BundleOptions {
         env,
         entries,
@@ -550,7 +576,7 @@ fn bundle_env_options(
         minify: false,
         sourcemap: false,
         externals: Vec::new(),
-        define: BTreeMap::new(),
+        define,
         tsconfig_paths: BTreeMap::new(),
         build_secret,
         precompiled,
