@@ -13,6 +13,7 @@ oxide-cache = { workspace = true }
 oxide-router = { workspace = true }
 oxide-render = { workspace = true }
 oxide-config = { workspace = true }
+url = { workspace = true }
 oxide-odf = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true, features = ["server-auto", "server-graceful", "client", "client-legacy", "http1", "http2", "tokio"] }

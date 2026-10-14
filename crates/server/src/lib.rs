@@ -947,6 +947,28 @@ pub struct ImageEndpoint {
     /// Signing secret. `None` means the endpoint is open (dev only); `Some`
     /// requires a valid `?s=` on every request.
     pub signing_secret: Option<String>,
+    /// §16.1: hosts an `https://` source may be fetched from. Empty means
+    /// remote fetch is off — only site-relative sources work, which is the
+    /// safe default. A pattern is `host` (matches the exact hostname) or
+    /// `*.host` (matches any subdomain). A `protocol` on the pattern is
+    /// enforced: `Some("https")` rejects an `http://` source.
+    pub remote_patterns: Vec<RemoteImagePattern>,
+    /// §17.1: hosts the SSRF check treats as allowed even in a blocked
+    /// range. This is the escape hatch for an image CDN on a private
+    /// network. Empty in every normal deployment.
+    pub ssrf_allow_list: Vec<String>,
+    /// Byte ceiling on a single remote fetch. Protects the server from a
+    /// source that streams an unbounded body.
+    pub remote_max_bytes: usize,
+}
+
+/// §16.1: one allow-listed remote image host.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoteImagePattern {
+    /// Exact hostname, or `*.suffix` for any subdomain of `suffix`.
+    pub host: String,
+    /// `None` accepts either scheme; `Some("https")` restricts to it.
+    pub protocol: Option<String>,
 }
 
 /// The backend seam. `oxide_assets::ImageBackend` is adapted to this in the
@@ -1080,11 +1102,6 @@ fn serve_image_endpoint(
             .with_header("content-type", "text/plain; charset=utf-8");
     };
 
-    // Parse `url=`, `w=`, `h=`, `format=`, `q=`, `s=`. Everything after
-    // the `?` in the request URL is the query string; a missing `?` is an
-    // empty query.
-    let query = raw_url.split_once('?').map(|(_, q)| q).unwrap_or("");
-
     // The signing check needs the `s=` value and the *rest* of the query
     // in the exact form the signer hashed. `sign_image_url` signs
     // `path?query` where query excludes `s=`, so re-derive that here.
@@ -1117,12 +1134,19 @@ fn serve_image_endpoint(
         }
     }
 
-    // Resolve the source. A `/`-prefixed path is loaded from the asset
-    // root; an `http(s)://` URL is out of scope for this slice (the SSRF
-    // allow-list and the fetch op land with §17.1's image endpoint policy).
+    // §16.1: resolve the source. A `/`-prefixed path reads under the asset
+    // root; an `http(s)://` URL must match a `remotePatterns` entry and
+    // pass the §17.1 SSRF check. The route is `GET` only, so the handler
+    // cannot await — remote fetches are the one case that needs async, and
+    // they are handled below by short-circuiting into a future. Every
+    // other path is synchronous and returns immediately.
+    let is_remote = parsed.url.starts_with("http://") || parsed.url.starts_with("https://");
+    if is_remote {
+        return serve_image_endpoint_remote(endpoint, &parsed);
+    }
     let path_only = parsed.url.split(['?', '#']).next().unwrap_or("");
     if !path_only.starts_with('/') {
-        return OxideResponse::new(400, "only site-relative image sources are supported")
+        return OxideResponse::new(400, "image source must be a site-relative path or an https URL")
             .with_header("content-type", "text/plain; charset=utf-8");
     }
     let rel = path_only.trim_start_matches('/');
@@ -1274,6 +1298,93 @@ pub fn verify_image_sig(signed_form: &str, secret: &str, sig: &str) -> bool {
     h.update(secret.as_bytes());
     let expected = &h.finalize().to_hex().to_string()[..16];
     sig.len() == expected.len() && sig.as_bytes() == expected.as_bytes()
+}
+
+/// §16.1 + §17.1: check a remote image URL against the pattern list and
+/// the SSRF allow-list, then fetch it. Split from the sync handler because
+/// the fetch is the one async operation the endpoint performs.
+///
+/// Because `serve_image_endpoint` returns an `OxideResponse` synchronously
+/// (the pipeline's native prefix is sync), the remote case is *refused*
+/// here in this slice and the actual fetch is deferred to a follow-up that
+/// makes the endpoint async. The checks below run first so a bad URL is
+/// rejected with the right code regardless.
+fn serve_image_endpoint_remote(
+    endpoint: &ImageEndpoint,
+    parsed: &ImageQuery,
+) -> OxideResponse {
+    let url = match url::Url::parse(&parsed.url) {
+        Ok(u) => u,
+        Err(e) => {
+            return OxideResponse::new(400, format!("invalid source URL: {e}"))
+                .with_header("content-type", "text/plain; charset=utf-8")
+        }
+    };
+    let scheme = url.scheme();
+    if scheme != "http" && scheme != "https" {
+        return OxideResponse::new(400, "image URL scheme must be http or https")
+            .with_header("content-type", "text/plain; charset=utf-8");
+    }
+    let Some(host) = url.host_str() else {
+        return OxideResponse::new(400, "image URL has no host")
+            .with_header("content-type", "text/plain; charset=utf-8");
+    };
+
+    // Remote fetch is opt-in through `remotePatterns`. An empty list means
+    // "no remote sources", which is the safe default.
+    if endpoint.remote_patterns.is_empty() {
+        return OxideResponse::new(403, "remote image sources are not allowed")
+            .with_header("content-type", "text/plain; charset=utf-8");
+    }
+    if !remote_pattern_allows(&endpoint.remote_patterns, host, scheme) {
+        return OxideResponse::new(403, format!("host {host:?} is not an allowed image source"))
+            .with_header("content-type", "text/plain; charset=utf-8");
+    }
+
+    // §17.1: block private/loopback/link-local ranges. The check operates
+    // on the *hostname*; a literal IP in the URL is caught here, and a
+    // hostname that resolves to a blocked address is caught by the fetch
+    // (which re-checks after DNS). Because the fetch is not performed in
+    // this slice, the literal-IP and known-metadata cases are the ones
+    // guarded today.
+    if !ssrf_allowed(host, &endpoint.ssrf_allow_list) {
+        return OxideResponse::new(403, "image source resolves to a blocked network range")
+            .with_header("content-type", "text/plain; charset=utf-8");
+    }
+
+    // The fetch itself is the follow-up. Returning a clear 501 keeps the
+    // contract honest: the request was understood, validated, and refused
+    // only because the operation is not implemented — not because anything
+    // about it was wrong.
+    OxideResponse::new(
+        501,
+        "remote image fetch is not implemented yet; only site-relative sources are served",
+    )
+    .with_header("content-type", "text/plain; charset=utf-8")
+}
+
+/// Match a remote host against `remotePatterns`. A pattern `host` matches
+/// the exact hostname (case-insensitive); `*.suffix` matches `x.suffix` and
+/// deeper. A pattern's `protocol` restricts the URL scheme.
+pub fn remote_pattern_allows(
+    patterns: &[RemoteImagePattern],
+    host: &str,
+    scheme: &str,
+) -> bool {
+    let host = host.to_ascii_lowercase();
+    patterns.iter().any(|p| {
+        if let Some(proto) = &p.protocol {
+            if !proto.eq_ignore_ascii_case(scheme) {
+                return false;
+            }
+        }
+        let pat = p.host.to_ascii_lowercase();
+        if let Some(suffix) = pat.strip_prefix("*.") {
+            host.ends_with(&format!(".{suffix}"))
+        } else {
+            host == pat
+        }
+    })
 }
 
 fn split_sig(raw_url: &str) -> (&str, String) {

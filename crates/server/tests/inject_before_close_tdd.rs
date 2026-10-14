@@ -128,3 +128,66 @@ async fn passes_errors_through() {
     let second = s.next().await.expect("second item");
     assert!(second.is_err(), "error must propagate");
 }
+
+
+// ---------------------------------------------------------------------------
+// §16.1 remote image source gating.
+//
+// `remote_pattern_allows` decides whether a URL's host is permitted by
+// `config.images.remotePatterns`. The matching rules: an exact host, or a
+// `*.suffix` wildcard; an optional protocol restriction. These tests pin
+// every branch, including the ones a hostile input would try.
+// ---------------------------------------------------------------------------
+
+use oxide_server::{remote_pattern_allows, RemoteImagePattern};
+
+fn pat(host: &str) -> RemoteImagePattern {
+    RemoteImagePattern { host: host.to_string(), protocol: None }
+}
+fn pat_proto(host: &str, proto: &str) -> RemoteImagePattern {
+    RemoteImagePattern { host: host.to_string(), protocol: Some(proto.to_string()) }
+}
+
+#[test]
+fn exact_host_matches() {
+    let patterns = vec![pat("cdn.example.com")];
+    assert!(remote_pattern_allows(&patterns, "cdn.example.com", "https"));
+    assert!(!remote_pattern_allows(&patterns, "example.com", "https"));
+    assert!(!remote_pattern_allows(&patterns, "evil.example.com", "https"));
+}
+
+#[test]
+fn wildcard_matches_subdomains_and_the_apex_does_not() {
+    let patterns = vec![pat("*.example.com")];
+    // A subdomain matches.
+    assert!(remote_pattern_allows(&patterns, "cdn.example.com", "https"));
+    assert!(remote_pattern_allows(&patterns, "a.b.example.com", "https"));
+    // The bare apex does not — `*.example.com` is "any subdomain", and a
+    // config that wanted the apex would list it explicitly.
+    assert!(!remote_pattern_allows(&patterns, "example.com", "https"));
+    // `notexample.com` must not match the wildcard via a substring.
+    assert!(!remote_pattern_allows(&patterns, "notexample.com", "https"));
+}
+
+#[test]
+fn host_match_is_case_insensitive() {
+    let patterns = vec![pat("CDN.Example.COM")];
+    assert!(remote_pattern_allows(&patterns, "cdn.example.com", "https"));
+    assert!(remote_pattern_allows(&patterns, "CDN.example.com", "HTTPS"));
+}
+
+#[test]
+fn protocol_restriction_is_enforced() {
+    let patterns = vec![pat_proto("cdn.example.com", "https")];
+    assert!(remote_pattern_allows(&patterns, "cdn.example.com", "https"));
+    assert!(!remote_pattern_allows(&patterns, "cdn.example.com", "http"));
+}
+
+#[test]
+fn an_empty_pattern_list_allows_nothing() {
+    // The endpoint rejects a remote source outright when the list is
+    // empty (before this fn is even called), but the fn itself must also
+    // say "no".
+    let patterns: Vec<RemoteImagePattern> = vec![];
+    assert!(!remote_pattern_allows(&patterns, "cdn.example.com", "https"));
+}
