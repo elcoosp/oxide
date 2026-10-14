@@ -1360,3 +1360,61 @@ experience'` read **dynamic** before and **static** after.
    `benchmarks/` is a README.
 3. **§4.4 app snapshots, §12 HTTP/3, §19 editor tooling, §22 full assertion
    set** — larger, spec-named, not started.
+
+## Session 12 — §9.3 L1 cache: the op protocol works, the request path does not use it
+
+**Date:** 2026-10-14
+**Scope:** finish §9.3 — the L1 cache on the request path.
+
+### What landed (correct, and verified in isolation)
+
+| Commit | Change |
+| --- | --- |
+| `cdf7d38` | `oxide-jshost` depends on `oxide-cache` |
+| `a9ce6dc` | `WorkerMsg::OpRequest` / `OpResponse` are now handled: the reader dispatches a worker-originated op to a `CacheHandler` and writes the reply back on the worker's stdin |
+| `f04b72e` | the worker installs `globalThis.__oxide_op_request(op, args)` and resolves it from `op_response` frames |
+| `b28e076` | `cache()` consults the host tier through the bridge before its in-process `Map`; `hostSet` mirrors a computed value back |
+| `e50b77c` | `NodeHost` carries a `CacheHandler` to the pool it builds; a recycled worker keeps it (the `Worker` struct survives `replace_worker` — only its pipes are swapped) |
+| `7278884` | `build_framework_stack` builds a `TieredCache` (memory + optional disk under `.oxide/cache/l1`) and attaches it |
+
+Each piece is sound. `impl CacheHandler for TieredCache` (`2b…`) makes the concrete store usable as the host tier. The protocol is symmetric and the frames round-trip.
+
+### Why the end-to-end proof failed, precisely
+
+A fixture whose `'use cache'` function increments a counter and is called from a page loader renders **1, 2, 3** across three requests — a miss every time.
+
+Root cause, confirmed by inspecting the emitted tree:
+
+- The **page component** is bundled. Its chunk carries the compiled `__oxide_cache(...)` wrapper — but a component does not call the loader's cached function.
+- The **loader** is **not** bundled. `oxide-worker.mjs`'s `dispatchLoaderRun` does
+  `await import(versioned(pathToFileURL(module_path).href))` — it loads
+  `page.server.ts` **from source** at request time, through `tsx-loader.mjs`
+  (sucrase type-strip), and `tsx-loader.mjs` does not run the compiler passes.
+- So the loader module the worker evaluates is the author's source: `'use cache'`
+  is an inert string directive, `cacheTag(…)`/`cacheLife(…)` return marker
+  objects nobody reads, and the function body runs on every request.
+
+The L1 cache is not consulted because the *wrapper that would call it was never
+created for that module*. The op protocol, the `CacheHandler`, the pool wiring,
+and the runtime branch are all correct and unreached on this path.
+
+### The fix, scoped
+
+`tsx-loader.mjs` must run `OxcTransformer::transform_passes_only` (or the
+`'use cache'` sub-pass) on a `.server.ts` module before returning it — the same
+pass the bundler runs. That is a WASM/NAPI boundary the loader does not have
+today: the loader is Node ESM, the pass is Rust. Two options:
+
+1. **Add a worker op** `compile:server-module` that returns the pass-rewritten
+   source; `tsx-loader.mjs` calls it (async `load` makes this possible) before
+   returning `{ format: 'module', source }`.
+2. **Ship a small JS port** of the directive pass. Rejected — it duplicates
+   logic that must stay single-sourced.
+
+Option 1 is the right one and is a focused slice: one op, one loader call.
+
+### State
+
+Everything committed is sound and tested where testable without the missing
+piece. The end-to-end probe is the honest failing case, recorded here so the
+next session starts from it rather than rediscovering it.
