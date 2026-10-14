@@ -56,6 +56,7 @@ const MATRIX: &[(Target, &[&str])] = &[
     (Target::Cloudflare, &["deploy.json", "worker.js", "wrangler.toml", "_routes.json", "edge.js"]),
     (Target::CloudflarePages, &["deploy.json", "_worker.js", "wrangler.toml", "_routes.json", "edge.js"]),
     (Target::Vercel,     &["deploy.json", "vercel.json", "api/handler.mjs"]),
+    (Target::VercelFunctions, &["deploy.json", "vercel.json", "api/handler.mjs"]),
     (Target::Netlify,    &["deploy.json", "netlify.toml", "netlify/functions/handler.mjs"]),
     (Target::Lambda,     &["deploy.json", "handler.mjs", "template.yaml"]),
     (Target::Deno,       &["deploy.json", "server.ts", "deno.json"]),

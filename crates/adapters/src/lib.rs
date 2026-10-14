@@ -30,6 +30,7 @@ pub enum Target {
     CloudflarePages,
     Lambda,
     Vercel,
+    VercelFunctions,
     Netlify,
     Deno,
     Bun,
@@ -46,6 +47,7 @@ impl Target {
             "cloudflare-pages" | "cfpages" => Target::CloudflarePages,
             "lambda" => Target::Lambda,
             "vercel" => Target::Vercel,
+            "vercel-functions" | "vercel-fn" => Target::VercelFunctions,
             "netlify" => Target::Netlify,
             "deno" => Target::Deno,
             "bun" => Target::Bun,
@@ -62,6 +64,7 @@ impl Target {
             Target::CloudflarePages => "cloudflare-pages",
             Target::Lambda => "lambda",
             Target::Vercel => "vercel",
+            Target::VercelFunctions => "vercel-functions",
             Target::Netlify => "netlify",
             Target::Deno => "deno",
             Target::Bun => "bun",
@@ -131,7 +134,7 @@ pub fn capability_matrix(target: Target) -> BTreeMap<Capability, FeatureSupport>
             (Tls, Full),
         ]),
         // Serverless platforms: remote cache + platform-managed TLS.
-        Target::Lambda | Target::Vercel | Target::Netlify => row([
+        Target::Lambda | Target::Vercel | Target::VercelFunctions | Target::Netlify => row([
             (L0Cache, Degraded),
             (Isr, Degraded),
             (Sockets, Unsupported),
@@ -165,16 +168,16 @@ pub fn degradation(target: Target, cap: Capability) -> Option<&'static str> {
         (Target::Cloudflare | Target::CloudflarePages, Isr) => {
             "ISR via stale-while-revalidate at the edge"
         }
-        (Target::Lambda | Target::Vercel | Target::Netlify, L0Cache) => {
+        (Target::Lambda | Target::Vercel | Target::VercelFunctions | Target::Netlify, L0Cache) => {
             "remote cache handler; L0 is cold per instance"
         }
-        (Target::Lambda | Target::Vercel | Target::Netlify, Isr) => {
+        (Target::Lambda | Target::Vercel | Target::VercelFunctions | Target::Netlify, Isr) => {
             "ISR via on-demand regeneration where the platform supports it"
         }
-        (Target::Lambda | Target::Vercel | Target::Netlify, ImageOptimization) => {
+        (Target::Lambda | Target::Vercel | Target::VercelFunctions | Target::Netlify, ImageOptimization) => {
             "build-time optimization plus the platform image service"
         }
-        (Target::Lambda | Target::Vercel | Target::Netlify, Snapshots) => {
+        (Target::Lambda | Target::Vercel | Target::VercelFunctions | Target::Netlify, Snapshots) => {
             "snapshot-friendly cold start; isolate reuse not guaranteed"
         }
         _ => return None,
@@ -433,13 +436,13 @@ pub fn emit(target: Target, artifact: &BuildArtifact, out_dir: &Path) -> Result<
             }
             written.push(write_deploy(out_dir, target, build_id, "_worker.js")?);
         }
-        Target::Lambda | Target::Vercel | Target::Netlify => {
+        Target::Lambda | Target::Vercel | Target::VercelFunctions | Target::Netlify => {
             // Shared: copy the SSR bundle directory to <deploy>/server/ so
             // the handler's relative import resolves at deploy time. The
             // import path differs per target (below).
             written.extend(copy_server_bundle(artifact, out_dir)?);
             match target {
-                Target::Vercel => {
+                Target::Vercel | Target::VercelFunctions => {
                     let api_dir = out_dir.join("api");
                     std::fs::create_dir_all(&api_dir).map_err(|e| {
                         err("ADP-IO", format!("cannot create {}: {e}", api_dir.display()))
@@ -448,15 +451,17 @@ pub fn emit(target: Target, artifact: &BuildArtifact, out_dir: &Path) -> Result<
                         api_dir.join("handler.mjs"),
                         &serverless_handler(build_id, "../server/ssr/index.js"),
                     )?);
-                    written.push(write_json(
-                        out_dir.join("vercel.json"),
-                        &serde_json::json!({
+                    let cfg = if target == Target::VercelFunctions {
+                        vercel_functions_json(build_id)
+                    } else {
+                        serde_json::json!({
                             "version": 2,
                             "rewrites": [
                                 { "source": "/(.*)", "destination": "/api/handler" }
                             ]
-                        }),
-                    )?);
+                        })
+                    };
+                    written.push(write_json(out_dir.join("vercel.json"), &cfg)?);
                     written.push(write_deploy(out_dir, target, build_id, "api/handler.mjs")?);
                 }
                 Target::Netlify => {
@@ -968,6 +973,30 @@ export default { fetch: handler };
 export { cacheKey, mergeHead, encodeOdf };
 "#;
     tpl.replace("__BUILD_ID__", build_id)
+}
+
+/// `vercel.json` variant that uses the newer `functions` layout (§18).
+///
+/// Instead of a rewrite that fans every path to `/api/handler`, this
+/// registers the `api/handler` function with an explicit memory /
+/// `maxDuration` budget and lets Vercel route at the edge. Deploy with
+/// `vercel deploy --prebuilt`. Same handler file, same relative import
+/// — only the routing config differs.
+pub fn vercel_functions_json(build_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "version": 2,
+        "name": format!("oxide-{build_id}"),
+        "functions": {
+            "api/handler.mjs": {
+                "runtime": "nodejs20.x",
+                "memory": 1024,
+                "maxDuration": 30
+            }
+        },
+        "rewrites": [
+            { "source": "/(.*)", "destination": "/api/handler" }
+        ]
+    })
 }
 
 /// `deno.json` for the Deno Deploy target (§18). Declares the deploy
