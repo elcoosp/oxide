@@ -2367,3 +2367,132 @@ async fn fetch_propagates_trace_context_header() {
 
 
 }
+
+// ---------------------------------------------------------------------------
+// Conformance §22: CLI-level E2E against the smoke-app.
+//
+// The existing `smoke_app_builds_its_own_pages` covers the shape of the
+// prerendered HTML. This test tightens the contract on the *emitted
+// artifacts*: every server/client chunk must be valid JavaScript (i.e. the
+// bundler actually lowered TS/JSX), and the deploy directory must contain
+// the characteristic files for its target. It is the CLI-level counterweight
+// to the in-process §22 suite.
+// ---------------------------------------------------------------------------
+
+/// Shell out to `node --check <file>`; returns Err on any failure.
+fn node_check(path: &std::path::Path) -> Result<(), String> {
+    use std::process::Command;
+    let out = Command::new("node")
+        .arg("--check")
+        .arg(path)
+        .output()
+        .map_err(|e| format!("spawn node: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "node --check {} failed:\n{}",
+            path.display(),
+            String::from_utf8_lossy(&out.stderr)
+        ))
+    }
+}
+
+/// Walk `dir` recursively, returning all regular files. Symlinks are not
+/// followed (there are none in the smoke-app's `dist/`).
+fn walk_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.is_file() {
+                out.push(p);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+#[tokio::test]
+#[ignore]
+async fn smoke_app_emits_valid_js_in_every_chunk() {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root");
+    let smoke = workspace.join("examples/smoke-app");
+    assert!(smoke.join("oxide.config.ts").is_file(), "smoke-app fixture missing");
+
+    let dist = smoke.join("dist");
+    let _ = std::fs::remove_dir_all(&dist);
+
+    let (code, out) = run_ok(&["oxide", "build", "--root", smoke.to_str().unwrap()]).await;
+    assert_eq!(code, 0, "build exit code; output:\n{out}");
+    assert!(out.contains("build ok"), "build summary: {out}");
+
+    // Every emitted .js must be valid JavaScript. This is the exact check
+    // that failed before the bundler ran the Oxc lowering pass.
+    let mut checked = 0usize;
+    for f in walk_files(&dist) {
+        if f.extension().is_some_and(|e| e == "js") {
+            node_check(&f).unwrap_or_else(|e| panic!("{e}"));
+            checked += 1;
+        }
+    }
+    assert!(checked >= 2, "expected at least the client + server chunks; got {checked}");
+
+    // Chunks land in both envs.
+    let client_dir = dist.join("client");
+    let server_dir = dist.join("server");
+    assert!(client_dir.is_dir(), "dist/client must exist");
+    assert!(server_dir.is_dir(), "dist/server must exist");
+    assert!(
+        walk_files(&client_dir).iter().any(|p| p.extension().is_some_and(|e| e == "js")),
+        "dist/client must contain at least one .js chunk"
+    );
+    assert!(
+        walk_files(&server_dir).iter().any(|p| p.extension().is_some_and(|e| e == "js")),
+        "dist/server must contain at least one .js chunk"
+    );
+
+    // Manifests written.
+    assert!(client_dir.join("client.manifest.json").is_file());
+    assert!(server_dir.join("server.manifest.json").is_file());
+
+    // Server chunks must not contain TS-only syntax after lowering. This is
+    // a belt-and-braces check — `node --check` already rejects `interface`
+    // and `<div>` in strict module mode, but a direct grep pinpoints the
+    // failure if it ever regresses.
+    for f in walk_files(&server_dir) {
+        if f.extension().is_none_or(|e| e != "js") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&f).expect("read chunk");
+        assert!(
+            !src.contains("interface "),
+            "server chunk {} still has TS `interface`",
+            f.display()
+        );
+        assert!(
+            !src.contains("<div>") && !src.contains("<h1>"),
+            "server chunk {} still has raw JSX",
+            f.display()
+        );
+    }
+
+    // Deploy dir matches the `binary` target from the smoke-app config.
+    let deploy = dist.join("deploy");
+    assert!(deploy.is_dir(), "dist/deploy must exist for the binary target");
+    for name in ["deploy.json", "client.manifest.json", "server.manifest.json"] {
+        assert!(
+            deploy.join(name).is_file(),
+            "deploy/{name} missing (binary target characteristic file)"
+        );
+    }
+}
