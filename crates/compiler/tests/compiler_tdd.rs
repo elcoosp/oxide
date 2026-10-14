@@ -894,3 +894,29 @@ fn infer_falls_back_to_dynamic_on_a_parse_error() {
     let m = infer_render_mode(src, "page.server.ts");
     assert_eq!(m.mode, "dynamic");
 }
+
+#[test]
+fn infer_dynamic_for_destructured_cookies_without_member_use() {
+    // §10.1: binding `cookies` out of the load event observes request state
+    // even when the body never calls `cookies.get(...)`.
+    let src = "export const load = async ({ cookies }) => ({});\n";
+    let m = infer_render_mode(src, "page.server.ts");
+    assert_eq!(m.mode, "dynamic");
+    assert_eq!(m.trigger, Some("cookies"));
+}
+
+#[test]
+fn infer_dynamic_for_destructured_locals_without_member_use() {
+    let src = "export const load = async ({ locals }) => ({});\n";
+    let m = infer_render_mode(src, "page.server.ts");
+    assert_eq!(m.mode, "dynamic");
+    assert_eq!(m.trigger, Some("locals"));
+}
+
+#[test]
+fn infer_dynamic_for_function_expression_with_request_param() {
+    let src = "export const load = async function ({ searchParams }) { return {}; };\n";
+    let m = infer_render_mode(src, "page.server.ts");
+    assert_eq!(m.mode, "dynamic");
+    assert_eq!(m.trigger, Some("searchParams"));
+}
