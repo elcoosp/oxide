@@ -385,6 +385,42 @@ impl<'a> Scanner<'a> {
         }
     }
 
+    /// Consume a dynamic value without parsing it. Advances to the first
+    /// `,` or closing `}` / `]` / `)` at the value's own nesting level,
+    /// **without** consuming that terminator — the caller's loop handles it.
+    /// Tracks `()[]{}` so a nested call or literal does not end the skip
+    /// early, and consumes string literals whole so a comma inside one does
+    /// not either.
+    fn skip_value(&mut self) -> Option<()> {
+        let mut depth = 0i32;
+        loop {
+            let c = self.peek()?;
+            match c {
+                '(' | '[' | '{' => {
+                    depth += 1;
+                    self.bump();
+                }
+                ')' | ']' | '}' => {
+                    if depth == 0 {
+                        return Some(());
+                    }
+                    depth -= 1;
+                    self.bump();
+                }
+                ',' if depth == 0 => return Some(()),
+                q @ ('"' | '\'') => {
+                    self.parse_string(q)?;
+                }
+                '`' => {
+                    self.parse_template()?;
+                }
+                _ => {
+                    self.bump();
+                }
+            }
+        }
+    }
+
     /// `react({ compiler: true })` & friends. Every argument must be a literal
     /// object; unknown factories make the extraction dynamic (`None`).
     fn parse_factory_call(&mut self, name: &str) -> Option<Value> {
@@ -402,7 +438,15 @@ impl<'a> Scanner<'a> {
                     self.bump();
                 }
                 _ => {
-                    args.push(self.parse_value()?);
+                    if let Some(v) = self.parse_value() {
+                        args.push(v);
+                    } else {
+                        // A dynamic argument (a variable, a function). Skip
+                        // it: the factory's *name* is still known, so the
+                        // `{ name, adapter }` shape survives; only the
+                        // options it would have supplied are unknown.
+                        self.skip_value()?;
+                    }
                     self.skip_trivia()?;
                     match self.peek()? {
                         ',' => {
@@ -485,8 +529,21 @@ impl<'a> Scanner<'a> {
                         return None;
                     }
                     self.bump();
-                    let v = self.parse_value()?;
-                    map.insert(key, v);
+                    // A dynamic value (`componentFor: (r) => …`, a variable,
+                    // `process.env.X`) is *skipped*, not fatal. The key is
+                    // not representable statically, so the consumer falls
+                    // back to the field's default — which is right for an
+                    // unknown key like `componentFor`, and better than
+                    // discarding the whole config for a dynamic `manifest`
+                    // or `siteUrl`.
+                    match self.parse_value() {
+                        Some(v) => {
+                            map.insert(key, v);
+                        }
+                        None => {
+                            self.skip_value()?;
+                        }
+                    }
                 }
             }
         }
@@ -514,7 +571,11 @@ impl<'a> Scanner<'a> {
                     self.bump();
                 }
                 _ => {
-                    items.push(self.parse_value()?);
+                    if let Some(v) = self.parse_value() {
+                        items.push(v);
+                    } else {
+                        self.skip_value()?;
+                    }
                     self.skip_trivia()?;
                     match self.peek()? {
                         ',' => {
