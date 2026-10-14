@@ -31,6 +31,7 @@ fn opts(root: &Path, env: BundleEnv, entries: &[(&str, &str)]) -> BundleOptions 
         build_secret: "test-secret".to_string(),
         precompiled: BTreeMap::new(),
         jsx_import_source: None,
+        transform_hook: None,
     }
 }
 
@@ -393,4 +394,107 @@ fn rolldown_precompiled_plugin_serves_precompiled_js() {
         !js.contains("<template>"),
         "raw SFC must not appear in chunk:\n{js}"
     );
+}
+
+
+// ---------------------------------------------------------------------------
+// §15.1: a plugin-supplied `transform` hook runs on each module before the
+// compiler passes.
+//
+// The hook is a closure the CLI builds from a loaded WASM component; the
+// bundler only knows the closure. This test uses a fake hook (no wasmtime,
+// fast) to prove the exact contract: it is called with `(id, source)`, its
+// return value replaces the source, and the replacement reaches the chunk.
+// ---------------------------------------------------------------------------
+
+use oxide_bundler::TransformHook;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
+#[test]
+fn transform_hook_runs_before_the_compiler_passes() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "src/index.js",
+        "export const marker = 'ORIGINAL';\nconsole.log(marker);\n",
+    );
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_hook = Arc::clone(&calls);
+    // The hook must be *defensive*: Rolldown calls it for whatever module
+    // is in flight, and a panic inside a plugin hook on a current-thread
+    // runtime deadlocks the executor (there is no other thread to unwind
+    // to). Recording the id and rewriting only when the marker is present
+    // is the contract a real plugin follows — return the input unchanged
+    // for a module the plugin does not recognise.
+    let seen_ids = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let seen_ids_for_hook = Arc::clone(&seen_ids);
+    let hook = TransformHook::new(move |id: &str, source: &str| {
+        seen_ids_for_hook.lock().unwrap().push(id.to_string());
+        calls_for_hook.fetch_add(1, Ordering::SeqCst);
+        if source.contains("ORIGINAL") {
+            Ok(source.replace("ORIGINAL", "REWRITTEN"))
+        } else {
+            Ok(source.to_string())
+        }
+    });
+
+    let mut o = opts(dir.path(), BundleEnv::Client, &[("index", "src/index.js")]);
+    o.transform_hook = Some(hook);
+
+    let out = RolldownBundler::new(dir.path())
+        .bundle(&o)
+        .expect("bundle with a transform hook");
+
+    assert!(
+        calls.load(Ordering::SeqCst) >= 1,
+        "the hook ran at least once (ids seen: {:?})",
+        seen_ids.lock().unwrap()
+    );
+    assert!(
+        seen_ids
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|id| id.ends_with("index.js")),
+        "the hook must see the user module, not only Rolldown's virtual ones: {:?}",
+        seen_ids.lock().unwrap()
+    );
+
+    let entry = out
+        .chunks
+        .iter()
+        .find(|c| c.kind == ChunkKind::Entry)
+        .expect("entry chunk");
+    let js = std::fs::read_to_string(dir.path().join("dist").join(&entry.file)).unwrap();
+    assert!(
+        js.contains("REWRITTEN"),
+        "the hook's replacement must reach the chunk:\n{js}"
+    );
+    assert!(
+        !js.contains("ORIGINAL"),
+        "the original text must be gone:\n{js}"
+    );
+}
+
+#[test]
+fn transform_hook_error_does_not_fail_the_build() {
+    // A plugin that errors is reported and skipped; the build continues
+    // with the module's original source. (The CLI prints the plugin's
+    // diagnostic to stderr; failing the build on a plugin error is a
+    // policy choice left for a follow-up.)
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "src/index.js", "export const a = 1;\n");
+
+    let hook = TransformHook::new(|_id: &str, _source: &str| {
+        Err(oxide_bundler::err("PLG-TEST", "simulated plugin failure"))
+    });
+    let mut o = opts(dir.path(), BundleEnv::Client, &[("index", "src/index.js")]);
+    o.transform_hook = Some(hook);
+
+    let out = RolldownBundler::new(dir.path())
+        .bundle(&o)
+        .expect("a plugin error must not fail the bundle");
+    assert!(!out.chunks.is_empty(), "the chunk is still emitted");
 }
