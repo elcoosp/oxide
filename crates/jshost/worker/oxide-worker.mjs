@@ -550,6 +550,14 @@ async function compileServerModule(entryPath) {
   return { url: entryInfo.tmpUrl, isTemp: true };
 }
 
+function decodeURIComponentSafe(s) {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
 async function dispatchLoaderRun(id, input) {
   const { module_path, route, params, url, method, headers } = input.payload ?? {};
   if (typeof module_path !== "string" || module_path.length === 0) {
@@ -576,6 +584,66 @@ async function dispatchLoaderRun(id, input) {
       registry.set(nid, promise);
       return { __deferred: nid };
     };
+
+    // §16.6: a real CookieStore over the request's `cookie` header, with
+    // writes collected as `Set-Cookie` values. `get` parses the header once;
+    // `set`/`delete` append to `setCookies`. A same-name overwrite replaces
+    // the pending value so a load that sets then re-sets a cookie sends one
+    // header, not two.
+    const inboundCookieHeader = (Array.isArray(headers) ? headers : []).find(
+      (h) => Array.isArray(h) && String(h[0]).toLowerCase() === "cookie",
+    );
+    const jar = new Map();
+    if (inboundCookieHeader) {
+      for (const part of String(inboundCookieHeader[1]).split(";")) {
+        const eq = part.indexOf("=");
+        if (eq > 0) {
+          const k = part.slice(0, eq).trim();
+          const v = part.slice(eq + 1).trim();
+          if (k) jar.set(k, decodeURIComponentSafe(v));
+        }
+      }
+    }
+    const pendingCookies = new Map(); // name → Set-Cookie value
+    const serializeCookie = (name, value, opts = {}) => {
+      let s = `${name}=${encodeURIComponent(value)}`;
+      if (opts.path) s += `; Path=${opts.path}`;
+      if (opts.domain) s += `; Domain=${opts.domain}`;
+      if (typeof opts.maxAge === "number") s += `; Max-Age=${opts.maxAge}`;
+      if (opts.httpOnly) s += "; HttpOnly";
+      if (opts.secure) s += "; Secure";
+      if (opts.sameSite) {
+        const ss = String(opts.sameSite);
+        s += `; SameSite=${ss[0].toUpperCase()}${ss.slice(1).toLowerCase()}`;
+      }
+      return s;
+    };
+    const cookies = {
+      get: (name) => jar.get(name),
+      set: (name, value, opts) => {
+        jar.set(name, value);
+        pendingCookies.set(name, serializeCookie(name, value, opts));
+      },
+      delete: (name) => {
+        jar.delete(name);
+        pendingCookies.set(name, serializeCookie(name, "", { maxAge: 0, path: "/" }));
+      },
+    };
+
+    // §9.2: headers the load adds via `setHeaders`. Collected in insertion
+    // order and applied to the response by the pipeline.
+    const extraHeaders = [];
+    const setHeaders = (h) => {
+      if (!h || typeof h !== "object") return;
+      for (const [k, v] of Object.entries(h)) extraHeaders.push([String(k), String(v)]);
+    };
+
+    // §9.2: `parent()` awaits the parent layout's data. The CLI pre-resolves
+    // the layout chain and passes it in as `parentData`; a load with no parent
+    // resolves to an empty object.
+    const parentData = (input.payload && input.payload.parent_data) || {};
+    const parent = async () => parentData;
+
     const event = {
       route: route ?? "",
       params: params ?? {},
@@ -586,6 +654,9 @@ async function dispatchLoaderRun(id, input) {
         headers: Array.isArray(headers) ? headers : [],
       },
       locals: {},
+      cookies,
+      setHeaders,
+      parent,
       defer,
       __oxideDeferredRegistry: registry,
     };
@@ -601,12 +672,21 @@ async function dispatchLoaderRun(id, input) {
           status: err.status,
           location: err.location ?? null,
           data: { message: err.message ?? "" },
+          setCookies: [...pendingCookies.values()],
+          headers: extraHeaders,
         });
         return;
       }
       throw err;
     }
-    callOk(id, { ok: true, status: 200, location: null, data: result ?? {} });
+    callOk(id, {
+      ok: true,
+      status: 200,
+      location: null,
+      data: result ?? {},
+      setCookies: [...pendingCookies.values()],
+      headers: extraHeaders,
+    });
   } catch (e) {
     callErr(id, "JSH-LOADER", `loader:run failed: ${e?.message ?? e}`);
   }
