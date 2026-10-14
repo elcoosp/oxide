@@ -100,6 +100,51 @@ pub struct BundleOptions {
     /// live. The CLI reads the framework adapter's declared
     /// `jsxImportSource` and forwards it here.
     pub jsx_import_source: Option<String>,
+    /// §15.1: an optional `transform` hook a plugin supplies. Called with
+    /// `(module id, source)` before the compiler passes run, on every
+    /// module inside the project root. Returns the rewritten source.
+    ///
+    /// `oxide-bundler` does not depend on `oxide-plugin` — that would pull
+    /// `wasmtime` into the bundler for a feature most builds do not use.
+    /// The CLI pre-loads a WASM component, wraps it, and hands the closure
+    /// in; the bundler only knows "call this function".
+    ///
+    /// A hook that returns an error fails the module's transform; the
+    /// diagnostic surfaces through the normal `BundleOutput::diagnostics`
+    /// path.
+    pub transform_hook: Option<TransformHook>,
+}
+
+/// §15.1: a plugin-supplied transform, wrapped so it can live inside a
+/// `#[derive(Debug, Clone, Default)]` struct. `BundleOptions` derives
+/// `Debug` for diagnostics; a bare `Arc<dyn Fn…>` cannot, and the
+/// newtype's `Debug` prints only that a hook is present (never its
+/// internals, which are a loaded WASM component in the CLI's case).
+#[derive(Clone)]
+pub struct TransformHook(
+    #[allow(clippy::type_complexity)]
+    pub std::sync::Arc<dyn Fn(&str, &str) -> Result<String> + Send + Sync>,
+);
+
+impl TransformHook {
+    /// Wrap a closure so `BundleOptions` can hold it.
+    pub fn new<F>(f: F) -> Self
+    where
+        F: Fn(&str, &str) -> Result<String> + Send + Sync + 'static,
+    {
+        Self(std::sync::Arc::new(f))
+    }
+
+    /// Run the hook.
+    pub fn call(&self, id: &str, source: &str) -> Result<String> {
+        (self.0)(id, source)
+    }
+}
+
+impl std::fmt::Debug for TransformHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TransformHook(..)")
+    }
 }
 
 /// A resolved module in the graph.
