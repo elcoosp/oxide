@@ -184,6 +184,39 @@ mod tests {
     }
 
     #[test]
+    fn loader_output_round_trips_side_effect_fields() {
+        // §9.2 / §16.6: cookies and headers a load set survive serde, so the
+        // CLI shim can hand them from the worker to the response builder.
+        let out = LoaderOutput {
+            status: 303,
+            location: Some("/login".into()),
+            data: serde_json::json!({"message": "redirect"}),
+            set_cookies: vec![
+                "sid=abc; Path=/; HttpOnly; SameSite=Lax".into(),
+                "theme=dark; Path=/".into(),
+            ],
+            headers: vec![("x-oxide-visits".into(), "7".into())],
+        };
+        let s = serde_json::to_string(&out).unwrap();
+        let back: LoaderOutput = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, out);
+        assert_eq!(back.set_cookies.len(), 2);
+        assert_eq!(back.headers[0].0, "x-oxide-visits");
+    }
+
+    #[test]
+    fn loader_output_defaults_have_no_side_effects() {
+        // `ok` and `Default` must not invent cookies/headers.
+        let o = LoaderOutput::ok(serde_json::json!({"a": 1}));
+        assert!(o.set_cookies.is_empty());
+        assert!(o.headers.is_empty());
+        // An older worker response without the new fields still deserializes.
+        let old = r#"{"status":200,"location":null,"data":{}}"#;
+        let parsed: LoaderOutput = serde_json::from_str(old).unwrap();
+        assert!(parsed.set_cookies.is_empty() && parsed.headers.is_empty());
+    }
+
+    #[test]
     fn input_round_trips_through_serde() {
         let mut i = LoaderRunInput::new("/abs.ts", "routes/blog/[slug]", "/blog/hi");
         i.params.insert("slug".into(), "hi".into());
