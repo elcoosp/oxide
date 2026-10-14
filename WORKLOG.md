@@ -928,3 +928,294 @@ link steps and cuts peak RSS below the 4 GB ceiling.
 1. **Island fixture for Playwright** — the current suite has no `<ox-island>` to hydrate. A follow-up adds one to smoke-app (or a new fixture) and asserts hydration in the browser.
 2. **Rolldown plugin hook for `precompiled`** — `ChunkBundler` still serves SFC projects because RolldownBundler doesn't consume the precompiled map. Wiring that would let one bundler serve all projects.
 3. **`deno_node` module loading for V8Host** — upstream, not ours.
+
+## Session 10 — islands in a browser, four fixtures, native image endpoint, server functions, 'use cache'
+
+**Date:** 2026-10-14
+**Scope:** everything since session 9. Seventeen commits; every slice
+verified by running it, not by inspection.
+
+This entry is long because the session was: it starts at the island
+feature and ends at "server functions work end-to-end against a real
+`oxide start`". It is grouped by feature, each with its proof.
+
+### 1. Islands — from markup to a real browser click
+
+Commits `756a9d2`, `cae43af`, `f1f1f8c`, `b59f733`, `59dc9e8`,
+`27ab15e`.
+
+The pieces existed in isolation. Making them work surfaced six distinct
+bugs, in the order a user would have hit them:
+
+1. **The boot script tag was injected but `/client/*` was not served.**
+   `oxide start` builds a pipeline with `assets: None`; the emitted
+   `dist/client/*.js` had no route. Fixed by loading `dist/` into the
+   static-asset store (`/client/x.js` → `<dist>/client/x.js`).
+
+2. **Live responses did not carry the boot script.** `oxide build`
+   injects it into prerendered files; `oxide start` renders through
+   `build_dispatch`, which had no knowledge of islands. Fixed by
+   threading the boot URL through and splicing the tag into the
+   streaming response.
+
+3. **The streaming splice put the tag after `</body>`.** The position
+   was `i + CLOSE.len()` (end of marker) not `i` (start). Browsers
+   reflow stray elements so it worked, but the code and the comment
+   disagreed. Fixed and moved to `oxide-server::inject_before_close`
+   — a generic body-stream transform, tested in a crate that does not
+   link V8 (see §"Test location" below).
+
+4. **React's IR `hydrateIsland` cannot hydrate hooks.** It calls the
+   component directly with a synthetic `client` prop; a `useState`
+   component throws `Cannot read properties of null`. Fixed with
+   `react-dom/client`'s `hydrateRoot`. The named `adapter` export stays
+   the IR path (the conformance suite drives it against a fake DOM);
+   the browser hydration lives on a separate `clientAdapter` export the
+   boot entry imports.
+
+5. **`boot.ts` touched `window` at module top level.** `@oxide/react`
+   re-exports it, and `oxide.config.ts` imports `@oxide/react` — so it
+   was evaluated in the Node worker (`window is not defined`), aborting
+   the framework stack before the build ran. Fixed: every DOM access is
+   behind a guard, and the module exports `boot()` / `installBootRuntime()`
+   instead of auto-running.
+
+6. **The CSP blocked the boot script.** `strict-dynamic` ignores
+   `'self'`; the tag had no nonce. Worse, `finish_response` derived the
+   nonce from a response header that never carried the request id, so
+   *every* response got the same nonce (`blake3("")`) — a security hole
+   on its own. Fixed: `finish_response` takes the request id; the CLI's
+   streaming injector derives the same value. The two now match.
+
+`b59f733` added `NODE_ENV=production` for the client bundle (React's dev
+build is ~1 MB) and `sideEffects: false` to the framework packages. The
+counter chunk went **960 KB → 6.8 KB**, total client **~1.01 MB → ~38 KB**.
+
+`59dc9e8` runs the whole thing in Chromium: Playwright 7/7, including a
+click that advances the counter 3 → 4 → 5.
+
+### 2. Four framework fixtures + Rust-native Solid compilation
+
+Commits `b92ac0d`, `a36d22f`.
+
+`examples/smoke-app` → `examples/smoke-app-react`, joined by
+`smoke-app-vue`, `smoke-app-svelte`, `smoke-app-solid`. Each is a real
+project — a `.vue`/`.svelte`/`.tsx` page, a neutral `page.server.ts`
+loader, an `oxide.config.ts` that imports the page.
+
+Three gaps this exposed:
+
+- **§10.1 mode inference was missing.** Any route with a `page.server.ts`
+  was treated as dynamic, so nothing prerendered. `read_page_config` in
+  `crates/router` now infers `static` vs `dynamic` from a marker scan
+  (cookies, headers, locals, searchParams), and `cmd_build` honors it.
+  The scan is a regex, not the source-span compiler pass the spec
+  describes — documented as the follow-up.
+
+- **Vue's compiled output kept TypeScript.** `@vue/compiler-sfc` with
+  `lang="ts"` emits TS annotations; Node only strips types from files
+  with a `.ts` extension, and the loader hands back a `.vue`. Fixed in
+  `tsx-loader.mjs` (dev) and the `tooling:vue-compile` worker op
+  (build): sucrase `typescript` on the compiler output.
+
+- **Solid's JSX does not compile to React's factory calls.** Solid 2.0
+  emits `ssr`-template literals importing from `@solidjs/web`; Oxc's
+  automatic runtime produces `jsx()`/`jsxs()` from `react/jsx-runtime`.
+  The spec's answer is a framework compiler in the tooling pool. The
+  right dependency is **`solid-jsx-oxc`** — a Rust/OXC-native Solid JSX
+  compiler with NAPI bindings, from the SolidJS maintainers. No babel.
+  The project chose Rolldown + Oxc precisely to avoid a JS compile path,
+  and this keeps it that way. `tooling:solid-compile` calls it; the
+  `0.1.0-alpha` ignores `moduleName`, so the emitted `solid-js/web`
+  specifier is rewritten to `@solidjs/web`.
+
+All four fixtures build and render their own page through their
+framework's real SSR renderer:
+
+| fixture | body |
+| --- | --- |
+| `smoke-app-react` | `<h1>Home</h1>` + `<ox-island data-ox-island="Counter" …>` |
+| `smoke-app-vue` | `<h1>Home</h1><p>Hello from Oxide (vue)</p>` |
+| `smoke-app-svelte` | `<h1>Home</h1> <p>Hello from Oxide (svelte)</p>` |
+| `smoke-app-solid` | `<h1>Home</h1><p>Hello from Oxide (solid)</p>` |
+
+### 3. Test location — a lesson worth writing down
+
+Two slices were rewritten because of *where* the test lived, not what it
+asserted.
+
+- The four-fixture conformance check started as a `#[test]` in
+  `oxide-cli`'s lib test target. That target statically links V8
+  (~140 MB) and relinks on every source change: ~5 minutes per
+  iteration, then four Node workers spawning in-process. Moving it to
+  `tests/fixtures/check.sh` — a shell script driving the already-built
+  `target/debug/oxide-cli` — runs the same four builds in **13 seconds**.
+
+- The streaming injector moved from `oxide-cli` to `oxide-server` for
+  the same reason: `oxide-server` does not depend on `oxide-jshost`, so
+  its tests compile in seconds instead of minutes.
+
+Rule: **if a test only needs the built binary, do not put it inside a
+target that links V8.**
+
+Also fixed: `[profile.test] opt-level` was `1`, `[profile.dev]` was `0`.
+Different opt-levels mean different rlibs, so the first `cargo test`
+after a `cargo check` recompiled the whole dependency tree (ravif,
+resvg, tiny-skia, skrifa, lightningcss, comrak, syntect) — minutes of
+silent `rustc`. Both are `0` now.
+
+### 4. `/sitemap.xml` and `/robots.txt` (§16.3)
+
+Commit `8f3b504`.
+
+`oxide-assets` already had `sitemap_xml` / `robots_txt`; nothing called
+them. Added `OxideConfig.siteUrl` (and `KNOWN_KEYS`), then
+`emit_sitemap_and_robots` in `cmd_build`. The sitemap walks the route
+table for URL-addressable pages plus `dist/prerendered/**.html` as the
+ground truth for "which URL exists" — which is what includes the
+runtime-`generateParams` enumerations. React's fixture emits three
+absolute URLs (`/`, `/blog/hello-prod`, `/blog/second-post`).
+
+`robots_txt` with no rules now emits an explicit
+`User-agent: *\nDisallow:` — the previous empty output was valid but
+ambiguous.
+
+### 5. Native `/_oxide/image` endpoint (§16.1)
+
+Commits `fdff7b3`, `b9ff957`.
+
+`oxide-assets` had the transform (`RustImageBackend`) and the signer
+(`sign_image_url`); nothing served the route. Added:
+
+- **`oxide-server`** — `ImageEndpoint` + a `/_oxide/image` branch in
+  `native_prefix`. Source resolution (a `/`-prefixed path under an asset
+  root; canonicalized containment rejects traversal), the optional
+  signature check, and the response headers (`Cache-Control: immutable`,
+  `ETag` from the backend's cache key, `Vary: Accept`).
+
+- **`oxide-cli`** — `AssetsImageBackend` adapts
+  `oxide_assets::ImageBackend` to the server's trait seam, so
+  `oxide-server` never depends on `oxide-assets` (which pulls
+  ravif/resvg/skrifa/lightningcss). `build_image_endpoint` reads
+  `OXIDE_IMAGE_SECRET` for the signing check.
+
+- **Remote source gating** (`b9ff957`) — `remote_pattern_allows` (exact
+  host or `*.suffix`; optional protocol), plus the existing §17.1
+  `ssrf_allowed`. The fetch itself returns `501` — `serve_request`'s
+  native prefix is synchronous and the fetch needs `.await`.
+
+Verified live against `oxide start`:
+
+| request | result |
+| --- | --- |
+| `?url=/test-red.png` | 200, `image/png`, immutable, ETag |
+| `?url=…&w=64` | 200, resized, distinct ETag |
+| `?url=…&w=64&format=webp` | 200, WebP (RIFF verified) |
+| `?url=/../../etc/passwd` | 404 |
+| `?format=jxl` | 400 |
+| (no `url`) | 400 |
+
+### 6. Server functions (§9.4) — end-to-end
+
+Commits `65acb8f`, `aa8efad`, `43e28fa`.
+
+Four pieces, three of them new:
+
+- **Client caller** — `packages/oxide/src/fn.ts`, `__oxide_call_fn(id,
+  args)`, POSTs to `/_oxide/fn/<id>`. The compiler's stub (both the
+  scanner and Oxc paths) emits an import of it plus
+  `export const NAME = (async (...args) => __oxide_call_fn("<id>", args));`.
+  Previously the stub referenced bare `__oxide_encode`/`__oxide_decode`
+  globals nothing defined.
+
+- **HTTP route** — `oxide-server` gains `ServerFnDispatcher` (a trait
+  seam) and `NativePrefix::ServerFn`. The pipeline enforces POST-only
+  (405 + `Allow`), `application/oxide-fn` content type (415), and CSRF,
+  then dispatches on an async arm. The envelope is
+  `{"ok":true,"data":…}` / `{"ok":false,"code":…,"message":…}`.
+
+- **Registration** — the compiler appends
+  `__oxide_register_fn("<id>", <export>)` to a `.server.ts` on the SSR
+  env, but nothing defined that global. `oxide/server` installs it.
+
+- **Worker op + host** — `server-fn:run` imports the SSR adapter entry
+  once (its import graph registers every `serverFn`), looks the id up in
+  `__oxide_fn_registry`, runs it, returns the value. `ServerFnHost` wraps
+  it; the CLI's `ServerFnDispatcherImpl` maps `JSH-FN-NOT-FOUND` → 404,
+  `JSH-FN-THREW` → 400.
+
+**The bundler gap this exposed.** `RolldownBundler` deferred to
+Rolldown's own Oxc lowering, which strips TS but knows nothing about
+`'use cache'`, `serverFn`, or the server-only guard. So an SSR chunk
+carried raw `serverFn(async …)` and no `__oxide_register_fn`. Fixed with
+`OxidePassesPlugin` (`crates/bundler`) calling a new
+`OxcTransformer::transform_passes_only` — the AST passes without the
+TS/JSX lower, so Rolldown lowers once, downstream. It skips anything
+outside the project root, `node_modules`, and precompiled SFCs.
+
+**And a subtle one.** `bundle_env_options` generated its own per-build
+secret on each call, so the client and server bundles hashed *different*
+secrets into the same function name — the stub POSTed an id the registry
+never held. `cmd_build` now generates one secret for both.
+
+Verified live: `POST /_oxide/fn/<id>` with `["Grace"]` →
+`{"ok":true,"data":{"message":"Hello Grace from a server fn"}}`. Unknown
+id → 404; `GET` → 405; wrong content type → 415.
+
+### 7. `'use cache'` (§9.3) — directive installed, two limitations
+
+Commit `75d16f1`.
+
+The compiler's `'use cache'` pass emits
+`__oxide_cache(fn, module, export, {tags, life})`; nothing defined it.
+`oxide/server` installs the global (mirroring `__oxide_register_fn`),
+adapting `{tags, life}` to the existing runtime `cache()`.
+
+Verified the emitted shape in a real build:
+`__oxide_cache(async e => …, "<abs path>", "getPost", {life:{ttl:60,swr:300}})`.
+
+**Two limitations, both documented in the code:**
+
+1. **Non-literal tags are dropped.** `cacheTag('posts:' + slug)` depends
+   on an argument the static extractor cannot evaluate, so `tags` is
+   absent from the emitted options. A literal (`cacheTag('posts')`)
+   survives. The fix is a thunk: `tags: (...args) => [...]`.
+2. **The Rust L1 tier is not on the request path.** The runtime wrapper
+   is an in-process `Map`. Cross-request / cross-node caching needs the
+   worker `cache_get`/`cache_set` ops (declared in the `Op` table, not
+   implemented) bridging to `oxide_cache::CacheHandler`.
+
+### Test state at the end of this session
+
+| suite | result |
+| --- | --- |
+| `packages/oxide` | 69 |
+| `packages/react` | 36 |
+| `packages/vue` | 30 |
+| `packages/svelte` | 29 |
+| `packages/solid` | 29 |
+| conformance (`conformance/test`) | 4/4 adapters |
+| Playwright | 7/7 (real Chromium) |
+| `oxide-compiler` `compiler_tdd` | 39 |
+| `oxide-server` `inject_before_close_tdd` | 16 |
+| four-fixture CLI gate (`tests/fixtures/check.sh`) | PASS, ~13 s |
+
+### What remains
+
+Ordered by leverage:
+
+1. **§9.3 tags + L1 cache on the request path** — the compiler emits a
+   tag thunk, the runtime registers resolved tags, the worker
+   `cache_get`/`cache_set` ops bridge to `CacheHandler`. Closes both
+   documented limitations in one slice.
+2. **§16.1 remote image fetch** — validation done; the fetch needs
+   `serve_request`'s native prefix restructured for `.await`.
+3. **§15 plugin host wiring** — `crates/plugin/src/wasm.rs` has a working
+   `WasmPlugin`; connect it to the bundler's transform chain.
+4. **§10.1 mode inference as a real compiler pass** — the current scan is
+   a regex; the spec wants source spans and a diagnostic naming the read
+   that made a route dynamic.
+5. **§21 benchmark harness** — `benchmarks/` is a README; the reference
+   apps exist (the four fixtures), the harness does not.
+6. **§4.4 app snapshots**, **§12 HTTP/3**, **§19 editor tooling**,
+   **§22 full assertion set** — larger, spec-named, not started.

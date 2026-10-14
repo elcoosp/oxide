@@ -323,44 +323,58 @@ intended work. The commit body of `e4c0e89` names the correction.)
 
 ---
 
-## 7. Follow-ups — most closed on 2026-10-14
+## 7. Status at end of session 10 (2026-10-14)
 
-> See WORKLOG.md session 8 for the full slice list.
+> See `WORKLOG.md` session 10 for the full slice list with per-feature proofs.
 
-| Item | Status |
-| --- | --- |
-| Vue / Svelte server compilation in the bundler | **done** (`74cd442`, `d89ab42`); Solid uses Oxc JSX with the Solid pragma |
-| Per-build server-fn secret | **done** (`a133612`) |
-| Conformance §22 CLI-level E2Es | **done** (`9e7d25b`) |
-| Deno Deploy config + Cloudflare Pages target | **done** (`1bd8749`) |
-| Vercel `functions` layout | **done** (`365e12c`) |
-| V8Host migration for `render_pool` | **selectable** (`6cfa6d7`); mechanism complete, default stays Node until `deno_node` module loading lands |
-| Playwright E2E for islands hydration | **suite landed**; browser run needs a larger host. Islands fixture is the follow-up. |
-| Real sourcemaps (rolldown backend) | **done** (`9746ab5`); `cmd_build` uses RolldownBundler for TS/JSX projects |
+### Closed this session
 
-The bundler transform gap from §3 is closed (`a3ba56b`).
+| Item | Commit | Verified by |
+| --- | --- | --- |
+| Islands in a real browser (React `hydrateRoot`) | `59dc9e8` | Playwright 7/7, incl. a click |
+| Client bundle 960 KB → 6.8 KB | `b59f733` | live build |
+| Streaming injector position + crate move | `27ab15e` | `oxide-server` tests |
+| Four framework fixtures | `b92ac0d` | four builds, `tests/fixtures/check.sh` |
+| Rust-native Solid JSX (`solid-jsx-oxc`) | `b92ac0d` | smoke-app-solid renders its page |
+| §10.1 mode inference | `b92ac0d` | `oxide routes` + prerender |
+| CLI-level conformance gate | `a36d22f` | 4 fixtures, 13 s |
+| §16.1 `/_oxide/image` endpoint | `fdff7b3` | live curl |
+| §16.1 remote-source gating | `b9ff957` | unit tests |
+| §16.3 sitemap + robots | `8f3b504` | four fixtures |
+| §9.4 server functions end-to-end | `65acb8f` + `aa8efad` + `43e28fa` | live POST → `Hello Grace…` |
+| §9.3 `'use cache'` directive installed | `75d16f1` | emitted shape in a real build |
 
+### The one rule this session learned
 
+**If a test only needs the built binary, do not put it inside a target
+that links V8.** `oxide-cli`'s test target statically links V8 (~140 MB)
+and relinks on every source change — ~5 min per iteration. Two slices
+were moved out of it: the four-fixture gate to
+`tests/fixtures/check.sh` (5 min → 13 s), the streaming injector to
+`oxide-server` (a crate with no V8 dependency).
 
-- **V8Host migration** for `render_pool`. Post-MLP per the spec,
-  gated on `deno_node` integration for npm resolution. One-line swap
-  in `build_framework_stack` once that lands. The `JsHost` / `Pool`
-  abstraction already supports it.
-- **Vue / Svelte / Solid server compilation** in the bundler (see §3.5).
-  Their runtime adapters and TSX-equivalent transforms work through the
-  tooling pool at dev time; the build path needs the same wiring.
-- **Real Playwright E2E** for islands hydration. The current tests use
-  a hand-rolled fake DOM in each adapter package; a browser-based
-  variant would catch hydration mismatches the fake cannot.
-- **Conformance suite: CLI-level E2Es.** The current §22 suite drives
-  adapters in-process. Adding a variant that runs the CLI against the
-  smoke-app and asserts on the output would tighten the top-level
-  contract.
-- **Deployment adapters** for the platforms not yet covered
-  (Lambda full templates, Vercel `functions` layout, Deno Deploy
-  config, Cloudflare Pages).
+Also: `[profile.test] opt-level` now matches `[profile.dev]` (`0`).
+Different opt-levels mean different rlibs, so `cargo test` after
+`cargo check` recompiled the whole dependency tree in silence.
 
----
+### Genuinely open, ordered by leverage
+
+1. **§9.3 tags + L1 cache on the request path.** The `'use cache'`
+   wrapper is installed but (a) drops a non-literal `cacheTag` argument
+   and (b) caches in-process only. The fix: the compiler emits a tag
+   thunk, the runtime registers resolved tags, the worker
+   `cache_get`/`cache_set` ops (in the `Op` table, unimplemented) bridge
+   to `oxide_cache::CacheHandler`.
+2. **§16.1 remote image fetch.** Validation is done; `serve_request`'s
+   native prefix must become awaitable for the fetch itself.
+3. **§15 plugin host.** `crates/plugin/src/wasm.rs` has a working
+   `WasmPlugin`; wire it to the bundler's transform chain.
+4. **§10.1 inference as a real pass.** Today a marker regex; the spec
+   wants source spans + a diagnostic naming the read.
+5. **§21 benchmark harness.** The four fixtures are the reference apps;
+   `benchmarks/` is a README.
+6. **§4.4 snapshots, §12 HTTP/3, §19 editor tooling, §22 full
+   assertion set.** Larger, spec-named, not started.
 
 ## 8. Where to start
 
