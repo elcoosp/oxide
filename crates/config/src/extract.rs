@@ -147,6 +147,52 @@ fn extract_islands_map(source: &str) -> Option<Value> {
     }
 }
 
+/// `true` when a skipped config value is function-shaped (an arrow with
+/// `=>`, a `function` expression, an `async` function). Only callbacks are
+/// silently droppable during static extraction (§14.2): every other dynamic
+/// shape must force V8 evaluation instead of substituting a default.
+fn is_function_like(text: &str) -> bool {
+    let t = text.trim_start();
+    if t.starts_with("function") || t.starts_with("async") {
+        return true;
+    }
+    // Arrow: a top-level `=>` outside any brackets/strings.
+    let mut depth = 0i32;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut in_template = false;
+    let b = t.as_bytes();
+    let mut i = 0;
+    while i + 1 < b.len() {
+        let c = b[i] as char;
+        if in_single {
+            if c == '\'' {
+                in_single = false;
+            }
+        } else if in_double {
+            if c == '"' {
+                in_double = false;
+            }
+        } else if in_template {
+            if c == '`' {
+                in_template = false;
+            }
+        } else {
+            match c {
+                '\'' => in_single = true,
+                '"' => in_double = true,
+                '`' => in_template = true,
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth -= 1,
+                '=' if depth == 0 && b[i + 1] == b'>' => return true,
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
 /// Strip `//`-prefixed line comments. Leaves strings alone; the configs we
 /// parse never contain `//` inside a string literal in a way that matters.
 fn strip_line_comments(source: &str) -> String {
@@ -438,13 +484,24 @@ impl<'a> Scanner<'a> {
                     self.bump();
                 }
                 _ => {
+                    let astart = self.p;
                     if let Some(v) = self.parse_value() {
+                        // A successfully-parsed non-object argument is a real
+                        // value with unknown meaning (e.g. a config path
+                        // string): the factory's options cannot be known
+                        // statically, so the extraction is dynamic. An
+                        // *unparseable* argument (a callback) is skipped —
+                        // the factory's name still identifies the slot.
+                        if !matches!(v, Value::Object(_)) {
+                            return None;
+                        }
                         args.push(v);
                     } else {
                         // A dynamic argument (a variable, a function). Skip
                         // it: the factory's *name* is still known, so the
                         // `{ name, adapter }` shape survives; only the
                         // options it would have supplied are unknown.
+                        self.p = astart;
                         self.skip_value()?;
                     }
                     self.skip_trivia()?;
@@ -476,7 +533,9 @@ impl<'a> Scanner<'a> {
         }
         for arg in args {
             let Value::Object(fields) = arg else {
-                return None; // non-object literal argument → dynamic
+                // Unreachable: non-object literals return `None` above and
+                // unparseable arguments are never pushed.
+                return None;
             };
             for (k, v) in fields {
                 obj.insert(k, v);
@@ -492,11 +551,20 @@ impl<'a> Scanner<'a> {
         }
         self.bump();
         let mut map = Map::new();
+        // §14.2: dynamic values are skipped per-key so one dynamic field
+        // does not discard the statically-known rest. But when *everything*
+        // was skipped the object carries no static information at all, and
+        // returning an empty object would tell the caller "static success"
+        // instead of falling back to V8 evaluation — so that case is `None`.
+        let mut skipped_any = false;
         loop {
             self.skip_trivia()?;
             match self.peek()? {
                 '}' => {
                     self.bump();
+                    if map.is_empty() && skipped_any {
+                        return None;
+                    }
                     return Some(Value::Object(map));
                 }
                 ',' => {
@@ -529,19 +597,27 @@ impl<'a> Scanner<'a> {
                         return None;
                     }
                     self.bump();
-                    // A dynamic value (`componentFor: (r) => …`, a variable,
-                    // `process.env.X`) is *skipped*, not fatal. The key is
-                    // not representable statically, so the consumer falls
-                    // back to the field's default — which is right for an
-                    // unknown key like `componentFor`, and better than
-                    // discarding the whole config for a dynamic `manifest`
-                    // or `siteUrl`.
+                    // A function-valued field (`componentFor: (r) => …`) is
+                    // *skipped*, not fatal: callbacks carry no static config,
+                    // so the consumer falls back to the field's default.
+                    // Any other dynamic value (identifier reference,
+                    // `process.env`, await, …) resolves to a real value only
+                    // V8 can compute, so the whole extraction is dynamic
+                    // (`None`) and the caller evaluates instead of silently
+                    // substituting a default (§14.2).
+                    let vstart = self.p;
                     match self.parse_value() {
                         Some(v) => {
                             map.insert(key, v);
                         }
                         None => {
+                            self.p = vstart;
                             self.skip_value()?;
+                            if is_function_like(&self.s[vstart..self.p]) {
+                                skipped_any = true;
+                            } else {
+                                return None;
+                            }
                         }
                     }
                 }
@@ -571,10 +647,18 @@ impl<'a> Scanner<'a> {
                     self.bump();
                 }
                 _ => {
+                    let vstart = self.p;
                     if let Some(v) = self.parse_value() {
                         items.push(v);
                     } else {
+                        // Same rule as object fields (§14.2): callbacks are
+                        // dropped, any other dynamic element makes the array
+                        // — and therefore the extraction — dynamic.
+                        self.p = vstart;
                         self.skip_value()?;
+                        if !is_function_like(&self.s[vstart..self.p]) {
+                            return None;
+                        }
                     }
                     self.skip_trivia()?;
                     match self.peek()? {
