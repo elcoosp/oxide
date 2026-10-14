@@ -594,6 +594,7 @@ fn bundle_env_options(
     precompiled: BTreeMap<PathBuf, String>,
     jsx_import_source: Option<String>,
     build_secret: String,
+    transform_hook: Option<oxide_bundler::TransformHook>,
 ) -> oxide_bundler::BundleOptions {
     // §6.1: `process.env.NODE_ENV` drives React's dev-vs-production
     // bundle selection. Setting it at the CLI level (rather than in the
@@ -638,6 +639,7 @@ fn bundle_env_options(
         build_secret,
         precompiled,
         jsx_import_source,
+        transform_hook,
     }
 }
 
@@ -1331,6 +1333,10 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         h.finalize().to_hex().to_string()[..32].to_string()
     };
 
+    // §15.1: a WASM component plugin's transform hook, if the config
+    // declares one. Built once, shared by both envs.
+    let transform_hook = build_transform_hook(&rootp, &cfg);
+
     let client_opts = bundle_env_options(
         oxide_bundler::BundleEnv::Client,
         client_entries,
@@ -1338,6 +1344,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         client_precompiled,
         jsx_source.clone(),
         build_secret.clone(),
+        transform_hook.clone(),
     );
     let server_opts = bundle_env_options(
         oxide_bundler::BundleEnv::Ssr,
@@ -1346,6 +1353,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         server_precompiled,
         jsx_source,
         build_secret,
+        transform_hook,
     );
     let rb = oxide_bundler::RolldownBundler::new(&rootp);
     rb.bundle(&client_opts)
@@ -2342,6 +2350,106 @@ fn build_server_fn_dispatcher(
         host: oxide_jshost::ServerFnHost::new(std::sync::Arc::clone(pool)),
         entry_path,
     }))
+}
+
+/// §15.1 kind 2: load the WASM component plugin the config declares, if
+/// any, and wrap its `transform` hook as a closure the bundler can call.
+///
+/// The config's `plugins` array is `Vec<serde_json::Value>` (its shape is
+/// the plugin manifest plus a path). A WASM entry looks like:
+///
+///     { "kind": "wasm", "path": "./plugins/my-plugin.wasm",
+///       "name": "my-plugin", "witWorld": "oxide:plugin/hooks",
+///       "capabilities": [], "hooks": ["transform"] }
+///
+/// Returns `None` when no WASM plugin is configured, when the path does not
+/// exist, or when the component fails to load — a broken plugin is reported
+/// on stderr and the build continues without it, matching how the framework
+/// stack degrades. Making a broken plugin fail the build is a policy choice
+/// for a follow-up.
+fn build_transform_hook(root: &Path, cfg: &OxideConfig) -> Option<oxide_bundler::TransformHook> {
+    for p in &cfg.plugins {
+        let kind = p.get("kind").and_then(|v| v.as_str());
+        if kind != Some("wasm") {
+            continue;
+        }
+        let Some(rel) = p.get("path").and_then(|v| v.as_str()) else {
+            eprintln!("warn: wasm plugin entry has no `path`; skipping");
+            continue;
+        };
+        let abs = if Path::new(rel).is_absolute() {
+            PathBuf::from(rel)
+        } else {
+            root.join(rel)
+        };
+        let Ok(bytes) = std::fs::read(&abs) else {
+            eprintln!("warn: wasm plugin {} not readable; skipping", abs.display());
+            continue;
+        };
+
+        let manifest = oxide_plugin::WasmPluginManifest {
+            name: p
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("wasm-plugin")
+                .to_string(),
+            wit_world: p
+                .get("witWorld")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            capabilities: p
+                .get("capabilities")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            hooks: p
+                .get("hooks")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str())
+                        .filter_map(|s| match s {
+                            "transform" => Some(oxide_plugin::Hook::Transform),
+                            "load" => Some(oxide_plugin::Hook::Load),
+                            "resolveId" | "resolve_id" => Some(oxide_plugin::Hook::ResolveId),
+                            _ => None,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        };
+
+        let plugin = match oxide_plugin::WasmPlugin::load(&bytes, manifest, Some(&abs)) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!(
+                    "warn: wasm plugin {} failed to load: {} {}; skipping",
+                    abs.display(),
+                    e.0.code,
+                    e.0.message
+                );
+                continue;
+            }
+        };
+        // Only a plugin that declares *and* exports `transform` gets a hook.
+        if !plugin.available_hooks().contains(&oxide_plugin::Hook::Transform) {
+            continue;
+        }
+        let plugin = std::sync::Mutex::new(plugin);
+        return Some(oxide_bundler::TransformHook::new(move |_id, source| {
+            // `call_string_hook` takes `&mut self` (the store is stateful);
+            // a `Mutex` makes the closure `Sync`. Plugin transforms are not
+            // hot enough for the lock to matter.
+            let mut guard = plugin.lock().unwrap_or_else(|p| p.into_inner());
+            guard.call_string_hook(&oxide_plugin::Hook::Transform, source)
+        }));
+    }
+    None
 }
 
 fn load_client_assets(rootp: &Path) -> Option<oxide_server::StaticAssets> {
