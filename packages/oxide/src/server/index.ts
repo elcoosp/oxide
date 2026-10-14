@@ -231,6 +231,25 @@ interface CacheEntry {
   tags: string[]
 }
 
+/**
+ * §9.3: the worker's host-op bridge, installed by `oxide-worker.mjs`. In a
+ * Node worker it sends an `op_request` to Rust; in a browser it is absent
+ * (there is no Rust host), so every call here falls back to the in-process
+ * Map. The declaration makes the call site type-safe without importing the
+ * worker.
+ */
+declare global {
+  // eslint-disable-next-line no-var
+  var __oxide_op_request:
+    | ((op: string, args: unknown) => Promise<unknown>)
+    | undefined
+}
+
+/** True when a Rust host is reachable through the op bridge. */
+function hostOpAvailable(): boolean {
+  return typeof globalThis.__oxide_op_request === 'function'
+}
+
 const cacheStore = new Map<string, CacheEntry>()
 const cachePending = new Map<string, Promise<unknown>>()
 
@@ -273,6 +292,20 @@ export function cache<A extends unknown[], R>(
     // same arguments but different tag thunks do not collide.
     const callTags = tagsFor(args)
     const key = cacheKey(args, { ...opts, tags: callTags })
+
+    // §9.3: when a Rust host is reachable (`oxide-worker.mjs` installed
+    // the op bridge), the tiered cache is authoritative — it survives
+    // across requests and, with a remote handler, across nodes. The
+    // in-process Map is the fallback: the browser has no host, and a
+    // worker whose pool has no `CacheHandler` answers `null`.
+    if (hostOpAvailable()) {
+      const host = await hostGet(key)
+      if (host !== undefined) {
+        // A host entry is a fresh hit — the Rust tier owns TTL/SWR.
+        return host as R
+      }
+    }
+
     const now = Date.now()
     const hit = cacheStore.get(key)
     if (hit) {
@@ -287,6 +320,35 @@ export function cache<A extends unknown[], R>(
     if (inflight) return (await inflight) as R
     return (await runAndStore(key, args, callTags)) as R
   }
+
+  /** §9.3: `cache_get` through the host bridge. `undefined` means "not
+   *  cached" — a null reply, or no host, or a host error (the in-process
+   *  Map then runs). */
+  async function hostGet(key: string): Promise<unknown | undefined> {
+    try {
+      const v = await globalThis.__oxide_op_request!('cache_get', { key })
+      return v === null ? undefined : v
+    } catch {
+      // A host error is not fatal — the in-process tier answers.
+      return undefined
+    }
+  }
+
+  /** §9.3: `cache_set` through the host bridge. Best-effort: a failure
+   *  leaves the in-process Map as the only copy. */
+  function hostSet(key: string, value: unknown, tags: string[]): void {
+    if (!hostOpAvailable()) return
+    // `ttl`/`swr` are seconds on the wire (§11.3).
+    void globalThis
+      .__oxide_op_request!('cache_set', {
+        key,
+        body: value,
+        tags,
+        ttl: opts.ttl ?? 0,
+        swr: opts.swr,
+      })
+      .catch(() => {})
+  }
   const runAndStore = async (key: string, args: A, tags: string[]): Promise<R> => {
     const p = (async () => {
       try {
@@ -297,6 +359,8 @@ export function cache<A extends unknown[], R>(
           staleUntil: Date.now() + ttlMs + swrMs,
           tags: [...tags],
         })
+        // §9.3: mirror to the Rust tier when a host is reachable.
+        hostSet(key, value, tags)
         return value
       } finally {
         cachePending.delete(key)
