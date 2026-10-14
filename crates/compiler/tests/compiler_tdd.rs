@@ -740,3 +740,75 @@ fn oxc_transformer_use_cache_arrow_with_tags_via_ast() {
     );
     assert!(out.code.contains("return 42;"));
 }
+
+
+// ---------------------------------------------------------------------------
+// §9.3: a non-literal `cacheTag(…)` argument is emitted as a thunk.
+//
+// `cacheTag('posts:' + slug)` depends on the wrapped function's parameter
+// — the static extractor cannot evaluate it, and dropping it would lose
+// the tag entirely. The pass emits `tags: (slug) => ['posts:' + slug]`,
+// taking the wrapped function's own parameter list so the expression sees
+// the same bindings; the runtime resolves the thunk per call.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn use_cache_non_literal_tag_becomes_a_thunk() {
+    let code = "export const getPost = async (slug: string) => {\n  'use cache'\n  cacheTag('posts:' + slug)\n  return { slug }\n}\n";
+    let input = TransformInput {
+        path: "posts.server.ts".into(),
+        code: code.into(),
+        env: Env::Ssr,
+        lang: "ts",
+        build_secret: "s".into(),
+        dev: false,
+        jsx_import_source: None,
+    };
+    let out = oxc_transform(input);
+    // Codegen normalizes quote style, so assert on the shape: the thunk
+    // takes the wrapped fn's parameter list and evaluates the tag
+    // expression, keeping `slug` in scope.
+    // Two normalizations apply: codegen rewrites quote style, and the
+    // TS-strip pass removes the parameter's `: string` annotation (the
+    // emitted module is JS). Both are expected — assert on the shape.
+    assert!(
+        out.code.contains(r#"tags: (slug) => ["posts:" + slug]"#),
+        "a non-literal tag must become a thunk over the wrapped fn's params:\n{}",
+        out.code
+    );
+    // The original call is gone from the body — the wrapper runs it once.
+    assert!(
+        !out.code.contains("cacheTag("),
+        "the hoisted cacheTag call must be blanked from the fn body:\n{}",
+        out.code
+    );
+}
+
+#[test]
+fn use_cache_literal_tag_stays_a_plain_array() {
+    // The static case is unchanged: a literal tag is a constant array, not
+    // a thunk, so the common path has no per-call closure.
+    let code = "export const getHome = async () => {\n  'use cache'\n  cacheTag('home')\n  return 1\n}\n";
+    let input = TransformInput {
+        path: "home.server.ts".into(),
+        code: code.into(),
+        env: Env::Ssr,
+        lang: "ts",
+        build_secret: "s".into(),
+        dev: false,
+        jsx_import_source: None,
+    };
+    let out = oxc_transform(input);
+    // Codegen normalizes `'home'` to `"home"`. Assert on the array shape,
+    // accepting either quote style.
+    assert!(
+        out.code.contains("tags: [\"home\"]") || out.code.contains("tags: ['home']"),
+        "a literal tag stays a plain array:\n{}",
+        out.code
+    );
+    assert!(
+        !out.code.contains("=> ["),
+        "no thunk is emitted when every tag is a literal:\n{}",
+        out.code
+    );
+}
