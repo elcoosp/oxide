@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 pub mod mcp;
 
+mod build_cache;
 pub mod precompile;
 mod framework_shim;
 pub mod loader_shim;
@@ -1288,9 +1289,24 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // cannot double the prefix — `PathBuf::join` returns the RHS unchanged
     // when it is absolute.
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
+    let dist = rootp.join("dist");
+
+    // §5.1 early cutoff. The fingerprint walk is only paid when the previous
+    // output is present — a clean tree short-circuits before any I/O.
+    // `OXIDE_FORCE_BUILD=1` bypasses the skip for a build that must run.
+    if dist.join("client/client.manifest.json").is_file()
+        && dist.join("server/server.manifest.json").is_file()
+        && std::env::var_os("OXIDE_FORCE_BUILD").is_none()
+    {
+        let fp = build_cache::fingerprint(&rootp, "production", r#static);
+        if build_cache::is_up_to_date(&rootp, &fp) {
+            outln!(w, "build up to date (no tracked input changed) — skipping");
+            return Ok(0);
+        }
+    }
+
     let cfg = load_config_strict(&rootp, "production")?;
     let tree = refine_render_modes_from_ast(&rootp, &cfg, scan_routes(&rootp, &cfg)?);
-    let dist = rootp.join("dist");
     let routes_root = rootp.join(&cfg.routes.dir);
 
     // §7 / §9.1: build the framework stack (renderer + loader). Renderer
@@ -1794,6 +1810,11 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         written.len(),
         target.as_str()
     );
+    // §5.1: remember this build's inputs so an unchanged re-run can skip.
+    let fp = build_cache::fingerprint(&rootp, "production", r#static);
+    if let Err(e) = build_cache::store(&rootp, &fp) {
+        eprintln!("warn: could not write build fingerprint: {e}");
+    }
     Ok(0)
 }
 
