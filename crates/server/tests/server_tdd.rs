@@ -54,6 +54,8 @@ fn pipeline(
         metrics: None,
         inspector: None,
         page_renderer: None,
+        image_endpoint: None,
+        server_fns: None,
     }
     }
 
@@ -769,6 +771,8 @@ async fn metrics_endpoint_renders_prometheus_text() {
         metrics: Some(m),
             inspector: None,
         page_renderer: None,
+        image_endpoint: None,
+        server_fns: None,
     };
     let d = &echo_dispatch();
     let resp = p.serve_request(req("GET", "/_oxide/metrics", &[]), d).await;
@@ -798,6 +802,8 @@ async fn metrics_endpoint_404_when_not_configured() {
         metrics: None,
             inspector: None,
         page_renderer: None,
+        image_endpoint: None,
+        server_fns: None,
     };
     let d = &echo_dispatch();
     let resp = p.serve_request(req("GET", "/_oxide/metrics", &[]), d).await;
@@ -822,6 +828,8 @@ async fn pipeline_observes_native_branch_requests() {
         metrics: Some(Arc::clone(&m)),
             inspector: None,
         page_renderer: None,
+        image_endpoint: None,
+        server_fns: None,
     };
     let d = &echo_dispatch();
     // Health is a native-prefix branch (_native label).
@@ -852,6 +860,8 @@ async fn with_metrics_attaches_registry() {
         metrics: None,
             inspector: None,
         page_renderer: None,
+        image_endpoint: None,
+        server_fns: None,
     };
     let p = p.with_metrics(Arc::clone(&m));
     assert!(p.metrics().is_some());
@@ -892,6 +902,8 @@ fn inspector_pipeline() -> Pipeline {
             html: "<!doctype html><title>Oxide Inspector</title>".into(),
         })),
         page_renderer: None,
+        image_endpoint: None,
+        server_fns: None,
     }
 }
 
