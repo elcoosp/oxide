@@ -158,6 +158,13 @@ pub enum Op {
     WsSend = 9,
     Log = 10,
     Trace = 11,
+    /// §9.3 / §6.2: run the compiler passes on one `.server.ts` source and
+    /// return the rewritten source. The worker's loader path needs the
+    /// `'use cache'` / server-fn rewrites applied before it evaluates a
+    /// module, and the Node ESM loader hook runs on its own thread with no
+    /// way to reach Rust — so the worker's main thread calls this op and
+    /// imports the rewritten file.
+    CompileModule = 12,
 }
 
 impl Op {
@@ -174,6 +181,7 @@ impl Op {
             9 => Op::WsSend,
             10 => Op::Log,
             11 => Op::Trace,
+            12 => Op::CompileModule,
             _ => return None,
         })
     }
@@ -193,6 +201,7 @@ pub fn op_name(op: Op) -> &'static str {
         Op::WsSend => "ws_send",
         Op::Log => "log",
         Op::Trace => "trace",
+        Op::CompileModule => "compile_module",
     }
 }
 
@@ -1537,14 +1546,22 @@ async fn op_dispatch(
                 return Err(err("JSH-OP", "cache_get requires a string `key`"));
             };
             match cache.get(key).await? {
-                Some(entry) => Ok(serde_json::json!({
-                    "body": entry.body,
-                    "status": entry.status,
-                    "headers": entry.headers,
-                    "tags": entry.tags,
-                    "storedAt": entry.stored_at,
-                    "etag": entry.etag,
-                })),
+                Some(entry) => {
+                    // `cache_set` stored the value as JSON bytes. Decode
+                    // them so the runtime receives the value itself, not the
+                    // entry envelope — a caller does `const v = await
+                    // cacheGet(key)` and expects `v` to be what it stored.
+                    // A body that is not valid JSON is returned as the raw
+                    // UTF-8 string, which is the honest best-effort for a
+                    // value the tier round-trips as opaque bytes.
+                    let value: serde_json::Value = serde_json::from_slice(&entry.body)
+                        .unwrap_or_else(|_| {
+                            serde_json::Value::String(
+                                String::from_utf8_lossy(&entry.body).into_owned(),
+                            )
+                        });
+                    Ok(value)
+                }
                 None => Ok(serde_json::Value::Null),
             }
         }
@@ -1599,6 +1616,42 @@ async fn op_dispatch(
             let soft = args.get("soft").and_then(|v| v.as_bool()).unwrap_or(true);
             let n = cache.invalidate_tag(tag, soft).await?;
             Ok(serde_json::json!({ "invalidated": n }))
+        }
+        Op::CompileModule => {
+            let Some(code) = args.get("code").and_then(|v| v.as_str()) else {
+                return Err(err("JSH-OP", "compile_module requires a string `code`"));
+            };
+            let Some(path) = args.get("path").and_then(|v| v.as_str()) else {
+                return Err(err("JSH-OP", "compile_module requires a string `path`"));
+            };
+            let lang = match args.get("lang").and_then(|v| v.as_str()) {
+                Some("tsx") => "tsx",
+                Some("jsx") => "jsx",
+                Some("js") | Some("mjs") => "mjs",
+                _ => "ts",
+            };
+            let input = oxide_compiler::TransformInput {
+                path: path.to_string(),
+                code: code.to_string(),
+                // The loader path is server-side: the passes that matter
+                // here (`'use cache'` on a `.server.ts`) run on `Ssr`.
+                env: oxide_compiler::Env::Ssr,
+                lang,
+                // No bundle is being emitted on this path, so the id a
+                // server-fn stub would compute is unused. `'use cache'`
+                // emits `__oxide_cache(fn, module, export, opts)` — no
+                // secret involved.
+                build_secret: String::new(),
+                dev: true,
+                jsx_import_source: None,
+            };
+            match oxide_compiler::OxcTransformer.transform_passes_only(&input) {
+                Ok(code) => Ok(serde_json::json!({ "code": code })),
+                Err(e) => Err(err(
+                    "JSH-COMPILE",
+                    format!("compile_module failed for {path}: {}", e.0.message),
+                )),
+            }
         }
         _ => Err(err(
             "JSH-OP",
