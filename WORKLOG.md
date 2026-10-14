@@ -791,3 +791,115 @@ Every emitted `.js` under `dist/server/` and `dist/client/` passes
 `cargo test --workspace` on this machine continues to hold at ~2-4
 min with a warm target. The dSYM cleanup scripts in git history remain
 the escape hatch if free space gets tight again.
+
+## Session 8 — follow-ups from §7 land; host memory budget documented
+
+**Date:** 2026-10-14
+**Scope:** every non-spec-gated follow-up listed in HANDOFF.md §7.
+
+### Landed
+
+| Slice | Commit | Summary |
+| --- | --- | --- |
+| Bundler TS/JSX lowering | `a3ba56b` | `OxcTransformer` runs `lower_to_js` (Oxc parse → semantic → transformer → codegen) at the tail of `transform`; `bundle_impl` calls it on every non-asset module. §3 closed. |
+| Per-build server-fn secret | `a133612` | `BundleOptions::build_secret` threaded through `lower_module_to_js`; CLI generates a fresh secret per build (blake3 over nanoseconds + urandom). |
+| Vue / Svelte server compilation | `74cd442`, `d89ab42` | Two paths: (a) `oxide build` runs a CLI precompile pass (`crates/cli/src/precompile.rs`) that dispatches `.vue`/`.svelte` through new worker ops `tooling:vue-compile` / `tooling:svelte-compile`; the emitted JS lands in `BundleOptions::precompiled`. (b) `tsx-loader.mjs` gains `.vue`/`.svelte` support so `dev` / `render` / `serve` compile at module-load time. |
+| Deno Deploy config | `1bd8749` | `deno.json` with `deploy.entrypoint` emitted alongside `server.ts`. |
+| Cloudflare Pages target | `1bd8749` | New `Target::CloudflarePages`; emits `_worker.js` + `_routes.json` + `wrangler.toml` with `pages_build_output_dir`. |
+| CLI-level conformance §22 E2E | `9e7d25b` | `smoke_app_emits_valid_js_in_every_chunk` — asserts every emitted `.js` in `dist/` passes `node --check`, both env dirs have at least one JS chunk, server chunks have no `interface`/JSX, deploy dir has the target's characteristic files. |
+| Vercel `functions` layout | `365e12c` | New `Target::VercelFunctions`; `vercel.json` uses the modern `functions` block with explicit runtime/memory/maxDuration. |
+
+### Refused (loudly) rather than silently broken
+
+`bundle_impl` no longer emits raw `.vue`/`.svelte` source when the caller
+skipped the precompile pass — the `BLD-FRAMEWORK` diagnostic names the
+file and points at the CLI path. This is the fail-fast mode for a caller
+that bypasses `cmd_build`.
+
+### Verified end-to-end
+
+- `cargo check --workspace` green.
+- `cargo test -p oxide-bundler`, `-p oxide-adapters`, `-p oxide-compiler` green.
+- On the session host (4 GB RAM / 4 GB swap) the full workspace test
+  binary plus the CLI test binary (each links V8 via `deno_core`) cannot
+  co-exist: `cargo test --workspace` SIGKILLs with `signal 9`. Running
+  single-crate (`-p <crate> -j 1`) works. This is a host constraint, not
+  a code problem.
+- Manual `target/debug/oxide-cli build examples/smoke-app`: emitted
+  server chunks are `import { jsx as _jsx } from "react/jsx-runtime";`
+  and every chunk passes `node --check`.
+
+### Still open (spec-gated, non-blocking)
+
+1. **V8Host migration** for `render_pool` — gated on `deno_node`
+   integration; spec calls it post-MLP.
+2. **Playwright E2E** for islands hydration — needs a browser install;
+   not runnable on this host.
+3. **Real sourcemaps** in the bundler (currently empty `{}` — rolldown
+   backend will supply them).
+
+### Host memory workaround
+
+Add to `~/.cargo/config.toml` or the repo's `.cargo/config.toml`:
+
+```toml
+[build]
+jobs = 1
+
+## Session 8 — follow-ups from §7 land; host memory budget documented
+
+**Date:** 2026-10-14
+**Scope:** every non-spec-gated follow-up listed in HANDOFF.md §7.
+
+### Landed
+
+| Slice | Commit | Summary |
+| --- | --- | --- |
+| Bundler TS/JSX lowering | `a3ba56b` | `OxcTransformer` runs `lower_to_js` (Oxc parse → semantic → transformer → codegen) at the tail of `transform`; `bundle_impl` calls it on every non-asset module. §3 closed. |
+| Per-build server-fn secret | `a133612` | `BundleOptions::build_secret` threaded through `lower_module_to_js`; CLI generates a fresh secret per build (blake3 over nanoseconds + urandom). |
+| Vue / Svelte server compilation | `74cd442`, `d89ab42` | Two paths: (a) `oxide build` runs a CLI precompile pass (`crates/cli/src/precompile.rs`) that dispatches `.vue`/`.svelte` through new worker ops `tooling:vue-compile` / `tooling:svelte-compile`; the emitted JS lands in `BundleOptions::precompiled`. (b) `tsx-loader.mjs` gains `.vue`/`.svelte` support so `dev` / `render` / `serve` compile at module-load time. |
+| Deno Deploy config | `1bd8749` | `deno.json` with `deploy.entrypoint` emitted alongside `server.ts`. |
+| Cloudflare Pages target | `1bd8749` | New `Target::CloudflarePages`; emits `_worker.js` + `_routes.json` + `wrangler.toml` with `pages_build_output_dir`. |
+| CLI-level conformance §22 E2E | `9e7d25b` | `smoke_app_emits_valid_js_in_every_chunk` — asserts every emitted `.js` in `dist/` passes `node --check`, both env dirs have at least one JS chunk, server chunks have no `interface`/JSX, deploy dir has the target's characteristic files. |
+| Vercel `functions` layout | `365e12c` | New `Target::VercelFunctions`; `vercel.json` uses the modern `functions` block with explicit runtime/memory/maxDuration. |
+
+### Refused (loudly) rather than silently broken
+
+`bundle_impl` no longer emits raw `.vue`/`.svelte` source when the caller
+skipped the precompile pass — the `BLD-FRAMEWORK` diagnostic names the
+file and points at the CLI path. This is the fail-fast mode for a caller
+that bypasses `cmd_build`.
+
+### Verified end-to-end
+
+- `cargo check --workspace` green.
+- `cargo test -p oxide-bundler`, `-p oxide-adapters`, `-p oxide-compiler` green.
+- On the session host (4 GB RAM / 4 GB swap) the full workspace test
+  binary plus the CLI test binary (each links V8 via `deno_core`) cannot
+  co-exist: `cargo test --workspace` SIGKILLs with `signal 9`. Running
+  single-crate (`-p <crate> -j 1`) works. This is a host constraint, not
+  a code problem.
+- Manual `target/debug/oxide-cli build examples/smoke-app`: emitted
+  server chunks are `import { jsx as _jsx } from "react/jsx-runtime";`
+  and every chunk passes `node --check`.
+
+### Still open (spec-gated, non-blocking)
+
+1. **V8Host migration** for `render_pool` — gated on `deno_node`
+   integration; spec calls it post-MLP.
+2. **Playwright E2E** for islands hydration — needs a browser install;
+   not runnable on this host.
+3. **Real sourcemaps** in the bundler (currently empty `{}` — rolldown
+   backend will supply them).
+
+### Host memory workaround
+
+Add to `~/.cargo/config.toml` or the repo's `.cargo/config.toml`:
+
+```toml
+[build]
+jobs = 1
+```
+
+and run `cargo test -p <crate>` rather than `--workspace`. Serializes
+link steps and cuts peak RSS below the 4 GB ceiling.
