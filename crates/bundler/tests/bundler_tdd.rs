@@ -131,6 +131,7 @@ fn opts(root: &Path, env: BundleEnv, entries: &[(&str, &str)]) -> BundleOptions 
         precompiled: BTreeMap::new(),
         jsx_import_source: None,
         transform_hook: None,
+        css_transform: None,
     }
 }
 
@@ -611,4 +612,44 @@ fn resolve_helper_relative_tsx_and_package_exports() {
         .unwrap_err();
     assert_eq!(e.0.code, "BLD-RESOLVE");
     assert!(e.0.fix.is_some());
+}
+
+// ------------------------------------------------------- §6.6 css transform
+
+#[test]
+fn css_transform_hook_rewrites_emitted_stylesheet() {
+    // §6.6: the bundler hands every emitted stylesheet to `css_transform`
+    // before writing it. The CLI wraps Lightning CSS in this hook, so a
+    // project with nesting / unprefixed properties gets the lowered form.
+    // This test uses a marker-appending hook to prove the call reaches
+    // the write site and its return value is what lands on disk.
+    let dir = tempfile::tempdir().unwrap();
+    fixture(dir.path());
+    let mut o = opts(dir.path(), BundleEnv::Client, CLIENT_ENTRIES);
+    o.css_transform = Some(oxide_bundler::CssTransformHook::new(
+        |path: &str, source: &str, is_module: bool, minify: bool| {
+            assert!(path.ends_with("card.css"), "hook saw unexpected path: {path}");
+            assert!(!is_module, "card.css must not be treated as a CSS module");
+            let _ = minify;
+            let mut out = source.to_string();
+            out.push_str("\n/* TRANSFORMED-BY-HOOK */\n");
+            Ok((out, BTreeMap::new()))
+        },
+    ));
+    let out = ChunkBundler::new(dir.path()).bundle(&o).unwrap();
+    let css_file = out
+        .chunks
+        .iter()
+        .flat_map(|c| c.css.iter())
+        .next()
+        .expect("a css file was emitted");
+    let css = std::fs::read_to_string(dir.path().join("dist").join(css_file)).unwrap();
+    assert!(
+        css.contains("/* TRANSFORMED-BY-HOOK */"),
+        "hook output must reach disk, got:\n{css}"
+    );
+    assert!(
+        css.contains("rebeccapurple"),
+        "original css must still be present, got:\n{css}"
+    );
 }
