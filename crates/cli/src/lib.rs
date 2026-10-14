@@ -2109,6 +2109,11 @@ fn build_dispatch(
                 // output (error(...) or redirect(...)) short-circuits the
                 // response; a 200 output threads `data` into the render phase.
                 let mut data = serde_json::Value::Object(Default::default());
+                // §16.6 / §9.2: cookies and headers a load set on the success
+                // path. Collected here and applied to whichever response the
+                // render phase produces (stream or error).
+                let mut loader_set_cookies: Vec<String> = Vec::new();
+                let mut loader_headers: Vec<(String, String)> = Vec::new();
 
                 if has_server_module {
                     if let (Some(runner), Some(module_path), Some(route_id)) =
@@ -2143,11 +2148,22 @@ fn build_dispatch(
                                 if let Some(loc) = out.location {
                                     resp = resp.with_header("location", loc);
                                 }
+                                // §16.6 / §9.2: cookies the load set and headers
+                                // it added ride the short-circuiting response
+                                // (a redirect that also sets a session cookie).
+                                for c in &out.set_cookies {
+                                    resp = resp.with_header("set-cookie", c.clone());
+                                }
+                                for (k, v) in &out.headers {
+                                    resp = resp.with_header(k, v.clone());
+                                }
                                 metrics.observe(&label, started.elapsed(), out.status);
                                 return resp;
                             }
                             Ok(out) => {
                                 data = out.data;
+                                loader_set_cookies = out.set_cookies;
+                                loader_headers = out.headers;
                             }
                             Err(e) => {
                                 tracing::error!(
@@ -2212,8 +2228,15 @@ fn build_dispatch(
                                 }
                                 None => bridged,
                             };
-                            oxide_server::OxideResponse::stream(200, body)
-                                .with_header("content-type", "text/html; charset=utf-8")
+                            let mut resp = oxide_server::OxideResponse::stream(200, body)
+                                .with_header("content-type", "text/html; charset=utf-8");
+                            for c in &loader_set_cookies {
+                                resp = resp.with_header("set-cookie", c.clone());
+                            }
+                            for (k, v) in &loader_headers {
+                                resp = resp.with_header(k, v.clone());
+                            }
+                            resp
                         }
                         Err(e) => {
                             tracing::error!(
