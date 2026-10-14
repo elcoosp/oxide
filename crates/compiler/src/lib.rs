@@ -969,7 +969,7 @@ pub fn infer_render_mode(source: &str, path: &str) -> InferredMode {
     }
 
     let mut found: Option<((usize, usize), &'static str)> = None;
-    walk_for_request_reads(&parsed.program, &mut found);
+    walk_for_request_reads(&parsed.program, source, &mut found);
     match found {
         Some(((start, end), trigger)) => InferredMode {
             mode: "dynamic",
@@ -989,10 +989,11 @@ pub fn infer_render_mode(source: &str, path: &str) -> InferredMode {
 /// what a diagnostic points at.
 fn walk_for_request_reads<'a>(
     program: &oxc_ast::ast::Program<'a>,
+    source: &str,
     found: &mut Option<((usize, usize), &'static str)>,
 ) {
     for stmt in &program.body {
-        walk_stmt_for_request_reads(stmt, found);
+        walk_stmt_for_request_reads(stmt, source, found);
         if found.is_some() {
             return;
         }
@@ -1001,49 +1002,50 @@ fn walk_for_request_reads<'a>(
 
 fn walk_stmt_for_request_reads<'a>(
     stmt: &oxc_ast::ast::Statement<'a>,
+    source: &str,
     found: &mut Option<((usize, usize), &'static str)>,
 ) {
-    use oxc_ast::ast::{Declaration, Statement};
+    use oxc_ast::ast::Statement;
     if found.is_some() {
         return;
     }
     match stmt {
-        Statement::ExpressionStatement(es) => walk_expr(&es.expression, found),
+        Statement::ExpressionStatement(es) => walk_expr(&es.expression, source, found),
         Statement::ReturnStatement(r) => {
             if let Some(arg) = &r.argument {
-                walk_expr(arg, found);
+                walk_expr(arg, source, found);
             }
         }
         Statement::VariableDeclaration(v) => {
             for d in &v.declarations {
                 if let Some(init) = &d.init {
-                    walk_expr(init, found);
+                    walk_expr(init, source, found);
                 }
             }
         }
         Statement::IfStatement(i) => {
-            walk_expr(&i.test, found);
-            walk_stmt_for_request_reads(&i.consequent, found);
+            walk_expr(&i.test, source, found);
+            walk_stmt_for_request_reads(&i.consequent, source, found);
             if let Some(alt) = &i.alternate {
-                walk_stmt_for_request_reads(alt, found);
+                walk_stmt_for_request_reads(alt, source, found);
             }
         }
         Statement::BlockStatement(b) => {
             for s in &b.body {
-                walk_stmt_for_request_reads(s, found);
+                walk_stmt_for_request_reads(s, source, found);
                 if found.is_some() {
                     return;
                 }
             }
         }
         Statement::ExportDeclaration(e) => {
-            walk_decl(&e.declaration, found);
+            walk_decl(&e.declaration, source, found);
         }
         Statement::ExportDefaultDeclaration(e) => {
             if let oxc_ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(f) = &e.declaration {
                 if let Some(body) = &f.body {
                     for s in &body.statements {
-                        walk_stmt_for_request_reads(s, found);
+                        walk_stmt_for_request_reads(s, source, found);
                         if found.is_some() {
                             return;
                         }
@@ -1052,9 +1054,12 @@ fn walk_stmt_for_request_reads<'a>(
             }
         }
         Statement::FunctionDeclaration(f) => {
+            if check_fn_params_for_request_read(&f.params, source, found) {
+                return;
+            }
             if let Some(body) = &f.body {
                 for s in &body.statements {
-                    walk_stmt_for_request_reads(s, found);
+                    walk_stmt_for_request_reads(s, source, found);
                     if found.is_some() {
                         return;
                     }
@@ -1063,14 +1068,14 @@ fn walk_stmt_for_request_reads<'a>(
         }
         Statement::TryStatement(t) => {
             for s in &t.block.body {
-                walk_stmt_for_request_reads(s, found);
+                walk_stmt_for_request_reads(s, source, found);
                 if found.is_some() {
                     return;
                 }
             }
             if let Some(h) = &t.handler {
                 for s in &h.body.body {
-                    walk_stmt_for_request_reads(s, found);
+                    walk_stmt_for_request_reads(s, source, found);
                     if found.is_some() {
                         return;
                     }
@@ -1083,6 +1088,7 @@ fn walk_stmt_for_request_reads<'a>(
 
 fn walk_decl<'a>(
     d: &oxc_ast::ast::Declaration<'a>,
+    source: &str,
     found: &mut Option<((usize, usize), &'static str)>,
 ) {
     use oxc_ast::ast::Declaration;
@@ -1090,14 +1096,17 @@ fn walk_decl<'a>(
         Declaration::VariableDeclaration(v) => {
             for d in &v.declarations {
                 if let Some(init) = &d.init {
-                    walk_expr(init, found);
+                    walk_expr(init, source, found);
                 }
             }
         }
         Declaration::FunctionDeclaration(f) => {
+            if check_fn_params_for_request_read(&f.params, source, found) {
+                return;
+            }
             if let Some(body) = &f.body {
                 for s in &body.statements {
-                    walk_stmt_for_request_reads(s, found);
+                    walk_stmt_for_request_reads(s, source, found);
                     if found.is_some() {
                         return;
                     }
@@ -1110,6 +1119,7 @@ fn walk_decl<'a>(
 
 fn walk_expr<'a>(
     e: &oxc_ast::ast::Expression<'a>,
+    source: &str,
     found: &mut Option<((usize, usize), &'static str)>,
 ) {
     use oxc_ast::ast::{Argument, Expression};
@@ -1139,7 +1149,7 @@ fn walk_expr<'a>(
                     return;
                 }
             }
-            walk_expr(&m.object, found);
+            walk_expr(&m.object, source, found);
         }
         Expression::ComputedMemberExpression(m) => {
             if let Expression::Identifier(obj) = &m.object {
@@ -1148,17 +1158,17 @@ fn walk_expr<'a>(
                     return;
                 }
             }
-            walk_expr(&m.object, found);
-            walk_expr(&m.expression, found);
+            walk_expr(&m.object, source, found);
+            walk_expr(&m.expression, source, found);
         }
         Expression::CallExpression(call) => {
-            walk_expr(&call.callee, found);
+            walk_expr(&call.callee, source, found);
             for a in &call.arguments {
                 match a {
-                    Argument::SpreadElement(s) => walk_expr(&s.argument, found),
+                    Argument::SpreadElement(s) => walk_expr(&s.argument, source, found),
                     _ => {
                         if let Some(e) = a.as_expression() {
-                            walk_expr(e, found);
+                            walk_expr(e, source, found);
                         }
                     }
                 }
@@ -1167,26 +1177,26 @@ fn walk_expr<'a>(
                 }
             }
         }
-        Expression::AwaitExpression(a) => walk_expr(&a.argument, found),
-        Expression::ParenthesizedExpression(p) => walk_expr(&p.expression, found),
-        Expression::AssignmentExpression(a) => walk_expr(&a.right, found),
+        Expression::AwaitExpression(a) => walk_expr(&a.argument, source, found),
+        Expression::ParenthesizedExpression(p) => walk_expr(&p.expression, source, found),
+        Expression::AssignmentExpression(a) => walk_expr(&a.right, source, found),
         Expression::ConditionalExpression(c) => {
-            walk_expr(&c.test, found);
-            walk_expr(&c.consequent, found);
-            walk_expr(&c.alternate, found);
+            walk_expr(&c.test, source, found);
+            walk_expr(&c.consequent, source, found);
+            walk_expr(&c.alternate, source, found);
         }
         Expression::BinaryExpression(b) => {
-            walk_expr(&b.left, found);
-            walk_expr(&b.right, found);
+            walk_expr(&b.left, source, found);
+            walk_expr(&b.right, source, found);
         }
         Expression::LogicalExpression(l) => {
-            walk_expr(&l.left, found);
-            walk_expr(&l.right, found);
+            walk_expr(&l.left, source, found);
+            walk_expr(&l.right, source, found);
         }
         Expression::ObjectExpression(o) => {
             for p in &o.properties {
                 if let oxc_ast::ast::ObjectPropertyKind::ObjectProperty(op) = p {
-                    walk_expr(&op.value, found);
+                    walk_expr(&op.value, source, found);
                     if found.is_some() {
                         return;
                     }
@@ -1196,7 +1206,7 @@ fn walk_expr<'a>(
         Expression::ArrayExpression(arr) => {
             for el in &arr.elements {
                 if let Some(e) = el.as_expression() {
-                    walk_expr(e, found);
+                    walk_expr(e, source, found);
                 }
                 if found.is_some() {
                     return;
@@ -1204,12 +1214,18 @@ fn walk_expr<'a>(
             }
         }
         Expression::ArrowFunctionExpression(a) => {
+            // §10.1: destructured request state in params counts as a read:
+            // `load = async ({ cookies }) => ...` observes request state
+            // without ever producing a member expression on it.
+            if check_fn_params_for_request_read(&a.params, source, found) {
+                return;
+            }
             // `ArrowFunctionBody` is `FunctionBody | INHERIT(Expression)`;
             // the inherited variant's accessor is `as_expression`.
             match &a.body {
                 oxc_ast::ast::ArrowFunctionBody::FunctionBody(b) => {
                     for s in &b.statements {
-                        walk_stmt_for_request_reads(s, found);
+                        walk_stmt_for_request_reads(s, source, found);
                         if found.is_some() {
                             return;
                         }
@@ -1217,13 +1233,75 @@ fn walk_expr<'a>(
                 }
                 other => {
                     if let Some(expr) = other.as_expression() {
-                        walk_expr(expr, found);
+                        walk_expr(expr, source, found);
+                    }
+                }
+            }
+        }
+        Expression::FunctionExpression(f) => {
+            if check_fn_params_for_request_read(&f.params, source, found) {
+                return;
+            }
+            if let Some(body) = &f.body {
+                for s in &body.statements {
+                    walk_stmt_for_request_reads(s, source, found);
+                    if found.is_some() {
+                        return;
                     }
                 }
             }
         }
         _ => {}
     }
+}
+
+/// §10.1: the formal params of a loader-shaped function bind the request
+/// event (`{ cookies }`, `{ locals }`, `{ searchParams }`, `request`).
+/// A binding of one of those names is a request-specific read even when
+/// the body never performs a member access on it
+/// (`async ({ cookies }) => ({})` returns an empty object but is dynamic).
+fn check_fn_params_for_request_read(
+    params: &oxc_ast::ast::FormalParameters<'_>,
+    source: &str,
+    found: &mut Option<((usize, usize), &'static str)>,
+) -> bool {
+    let (start, end) = (params.span.start as usize, params.span.end as usize);
+    let text = source.get(start..end).unwrap_or("");
+    for name in ["cookies", "locals", "searchParams", "request"] {
+        if has_word(text, name) {
+            let trigger: &'static str = match name {
+                "cookies" => "cookies",
+                "locals" => "locals",
+                "searchParams" => "searchParams",
+                _ => "request.headers",
+            };
+            *found = Some(((start, end), trigger));
+            return true;
+        }
+    }
+    false
+}
+
+/// Word-boundary substring search without pulling in a regex.
+fn has_word(haystack: &str, needle: &str) -> bool {
+    let hb = haystack.as_bytes();
+    let nb = needle.as_bytes();
+    if nb.len() > hb.len() {
+        return false;
+    }
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
+    let mut i = 0;
+    while i + nb.len() <= hb.len() {
+        if &hb[i..i + nb.len()] == nb {
+            let before = i == 0 || !is_word(hb[i - 1]);
+            let after = i + nb.len() == hb.len() || !is_word(hb[i + nb.len()]);
+            if before && after {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
 }
 
 /// The four request-scoped names the spec (§10.1) treats as dynamic.
