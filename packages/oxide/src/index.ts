@@ -15,3 +15,4 @@ export { attachDeferGlue, wireDeferreds, DeferredClient, type SwapDetail } from 
 export { enhance, type EnhanceForm, type EnhanceOptions } from './client/enhance.ts'
 export { toBase64, fromBase64 } from './bytes.ts'
 export { boot } from './client/boot.ts'
+export { __oxide_call_fn } from './fn.ts'

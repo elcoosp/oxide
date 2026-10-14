@@ -506,6 +506,7 @@ pub fn transform_server_fn_stubs(
     let mut edits: Vec<(usize, usize, String)> = Vec::new();
     let mut stubs: Vec<ServerFnStub> = Vec::new();
     let mut ssr_lines: Vec<String> = Vec::new();
+    let mut client_stub_ids: Vec<String> = Vec::new();
     let mut i = 0usize;
     while i + 5 < toks.len() {
         let matches_shape = is_word(code, &toks[i], "export")
@@ -560,13 +561,20 @@ pub fn transform_server_fn_stubs(
         });
         match env {
             Env::Client => {
+                // The stub calls `__oxide_call_fn` from `oxide/fn` rather
+                // than inlining the fetch. The previous form referenced
+                // bare `__oxide_encode`/`__oxide_decode` globals that no
+                // module defined; emitting an import makes the stub
+                // self-contained and lets the runtime own the wire format
+                // (JSON today, ODF once the browser decoder ships).
                 let stub = format!(
-                    "export const {name} = (async (...args) => {{ const r = await \
-                     fetch(\"/_oxide/fn/{id}\", {{ method: \"POST\", headers: {{ \"content-type\": \
-                     \"application/oxide-fn\" }}, body: __oxide_encode(args) }}); return \
-                     __oxide_decode(await r.arrayBuffer()); }});"
+                    "export const {name} = (async (...args) => \
+                     __oxide_call_fn(\"{id}\", args));"
                 );
                 edits.push((toks[i].start, end, stub));
+                // Collect the ids so the transform tail can prepend a single
+                // import when at least one stub was emitted.
+                client_stub_ids.push(id.clone());
             }
             Env::Ssr | Env::Edge => {
                 ssr_lines.push(format!("__oxide_register_fn(\"{id}\", {name});"));
@@ -579,6 +587,12 @@ pub fn transform_server_fn_stubs(
     edits.sort_by_key(|&(s, _, _)| std::cmp::Reverse(s));
     for (s, e, t) in edits {
         out.replace_range(s..e, &t);
+    }
+    if !client_stub_ids.is_empty() {
+        // One import regardless of how many stubs were emitted. Placed at
+        // the top so it sits before any code the transform left in place.
+        let import = "import { __oxide_call_fn } from \"oxide/fn\";\n";
+        out = format!("{import}{out}");
     }
     if !ssr_lines.is_empty() {
         if !out.is_empty() && !out.ends_with('\n') {

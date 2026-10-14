@@ -927,6 +927,60 @@ pub struct Pipeline {
     /// The transform never enters JS. `None` disables the endpoint (a
     /// 404), which is what a project with images turned off wants.
     pub image_endpoint: Option<Arc<crate::ImageEndpoint>>,
+    /// Optional server-function dispatcher (§9.4). When `Some`,
+    /// `POST /_oxide/fn/<id>` routes through it. The dispatcher owns the
+    /// id → handler map, the input validation, and the encode/decode of
+    /// the arguments; the pipeline owns only the CSRF check, the method
+    /// and content-type guards, and the response envelope.
+    ///
+    /// Like `image_endpoint`, this is a trait seam: the pipeline does not
+    /// depend on the runtime that actually executes a user function.
+    pub server_fns: Option<Arc<dyn ServerFnDispatcher>>,
+}
+
+/// §9.4: the seam between the HTTP pipeline and whichever runtime executes
+/// a user's server function. The CLI wires a dispatcher backed by the
+/// render pool (`oxide-jshost`); tests can wire a table of closures.
+#[async_trait::async_trait]
+pub trait ServerFnDispatcher: Send + Sync {
+    /// Look up the function registered under `id` and run it with `args`.
+    /// `Ok(bytes)` is the response body — the *encoded* return value, in
+    /// whatever wire format the dispatcher and client agreed on. `Err` is
+    /// a coded failure the pipeline turns into a 4xx/5xx envelope.
+    async fn dispatch(&self, id: &str, args_json: &[u8]) -> std::result::Result<Vec<u8>, DispatchError>;
+}
+
+/// A server-fn dispatch failure. The pipeline maps `status` to the HTTP
+/// response and `code`/`message` into the JSON error envelope.
+#[derive(Debug, Clone)]
+pub struct DispatchError {
+    pub status: u16,
+    pub code: String,
+    pub message: String,
+}
+
+impl DispatchError {
+    pub fn not_found(id: &str) -> Self {
+        Self {
+            status: 404,
+            code: "FN-NOT-FOUND".into(),
+            message: format!("no server function registered under id {id:?}"),
+        }
+    }
+    pub fn bad_request(message: impl Into<String>) -> Self {
+        Self {
+            status: 400,
+            code: "FN-BAD-REQUEST".into(),
+            message: message.into(),
+        }
+    }
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self {
+            status: 500,
+            code: "FN-INTERNAL".into(),
+            message: message.into(),
+        }
+    }
 }
 
 /// §16.1 image endpoint, host-side. Owns the backend choice, the source
@@ -1017,6 +1071,7 @@ impl Default for Pipeline {
             inspector: None,
             page_renderer: None,
             image_endpoint: None,
+            server_fns: None,
         }
     }
 }
@@ -1399,12 +1454,56 @@ fn split_sig(raw_url: &str) -> (&str, String) {
     (path, filtered.join("&"))
 }
 
+/// §9.4: run a server function through the dispatcher and build the JSON
+/// response envelope. `{"ok":true,"data":…}` on success, `{"ok":false,
+/// "code":…,"message":…}` on failure — the shape `oxide/fn`'s
+/// `__oxide_call_fn` decodes.
+async fn run_server_fn(
+    dispatcher: Option<&dyn ServerFnDispatcher>,
+    id: &str,
+    args: &Bytes,
+) -> OxideResponse {
+    let Some(dispatcher) = dispatcher else {
+        return OxideResponse::json(
+            404,
+            serde_json::json!({
+                "ok": false,
+                "code": "FN-NO-DISPATCHER",
+                "message": "server functions are not enabled in this build",
+            }),
+        );
+    };
+    match dispatcher.dispatch(id, args).await {
+        Ok(body) => {
+            // The dispatcher returns the *encoded* return value; the
+            // envelope wraps it. If the dispatcher already produced a
+            // full envelope (a future optimization), the double-wrap is
+            // harmless because the client unwraps `data` anyway.
+            let data: serde_json::Value = serde_json::from_slice(&body)
+                .unwrap_or_else(|_| serde_json::Value::String(String::from_utf8_lossy(&body).into_owned()));
+            OxideResponse::json(200, serde_json::json!({ "ok": true, "data": data }))
+        }
+        Err(e) => OxideResponse::json(
+            e.status,
+            serde_json::json!({ "ok": false, "code": e.code, "message": e.message }),
+        ),
+    }
+}
+
 /// Result of the native (no-JS) prefix of the pipeline ([`Pipeline::native_prefix`]).
 enum NativePrefix {
     /// Response returned as-is (limits, host, health, rules, csrf failures).
     Raw(OxideResponse),
     /// Static asset hit — finished with security + rule headers.
     Static(OxideResponse, Vec<(String, String)>),
+    /// A server-function call (§9.4): the pipeline has already checked the
+    /// method, the content type, and CSRF; the async arm runs the
+    /// dispatcher and builds the JSON envelope.
+    ServerFn {
+        id: String,
+        args: Bytes,
+        rule_headers: Vec<(String, String)>,
+    },
     /// Proceed to dispatch carrying the merged rule headers.
     Dispatch(Vec<(String, String)>),
 }
@@ -1492,6 +1591,17 @@ impl Pipeline {
                     m.observe("_static", started.elapsed(), finished.status);
                 }
                 Box::pin(std::future::ready(finished))
+            }
+            NativePrefix::ServerFn { id, args, rule_headers } => {
+                // §9.4: the pipeline already checked method + content type
+                // + CSRF in `native_prefix`; this arm runs the user's
+                // function and builds the response envelope.
+                let request_id = req.request_id.clone();
+                let dispatch = self.server_fns.clone();
+                Box::pin(async move {
+                    let resp = run_server_fn(dispatch.as_deref(), &id, &args).await;
+                    self.finish_response(resp, &rule_headers, &request_id)
+                })
             }
             NativePrefix::Dispatch(rule_headers) => {
                 // Capture the request id before `req` moves into `dispatch` —
@@ -1587,6 +1697,52 @@ impl Pipeline {
                 self.image_endpoint.as_deref(),
                 &req.url,
             ));
+        }
+
+        // (3d) server functions (§9.4): `POST /_oxide/fn/<id>`.
+        //
+        // The route is POST-only, requires the `application/oxide-fn`
+        // content type (so a form action POST is not mistaken for one), and
+        // passes CSRF before the dispatcher is reached. The id is taken
+        // from the path; the body is the encoded argument list.
+        if let Some(id) = path.strip_prefix("/_oxide/fn/") {
+            if !req.method.eq_ignore_ascii_case("POST") {
+                return NativePrefix::Raw(
+                    OxideResponse::new(405, "server functions are POST-only")
+                        .with_header("allow", "POST")
+                        .with_header("content-type", "text/plain; charset=utf-8"),
+                );
+            }
+            let ct = req
+                .header("content-type")
+                .unwrap_or("")
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim();
+            if ct != "application/oxide-fn" {
+                return NativePrefix::Raw(
+                    OxideResponse::new(
+                        415,
+                        "server functions require content-type application/oxide-fn",
+                    )
+                    .with_header("content-type", "text/plain; charset=utf-8"),
+                );
+            }
+            if let Err(d) = crate::csrf_check(req, &self.security.csrf) {
+                return NativePrefix::Raw(OxideResponse::new(403, d.message));
+            }
+            let id = percent_decode(id);
+            // Merge rule headers so a matching header rule still applies.
+            let mut rule_headers: Vec<(String, String)> = Vec::new();
+            match self.rules.evaluate(&path) {
+                oxide_router::RuleOutcome::Headers(map) => {
+                    rule_headers = map.into_iter().collect();
+                }
+                _ => {}
+            }
+            let args = req.body.clone();
+            return NativePrefix::ServerFn { id, args, rule_headers };
         }
 
         // (4) native rules (§12.1 step 4).

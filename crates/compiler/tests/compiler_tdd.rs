@@ -243,12 +243,22 @@ fn stubs_client_emit_fetch_stub_per_export() {
     assert_eq!(out.matches("export const checkout").count(), 1);
     assert!(!out.contains("serverFn("));
     for stub in &stubs {
-        let needle = format!("fetch(\"/_oxide/fn/{}\"", stub.id);
+        let needle = format!("__oxide_call_fn(\"{}\"", stub.id);
         assert!(out.contains(&needle), "missing {needle}");
     }
-    assert!(out.contains("__oxide_encode(args)"));
-    assert!(out.contains("__oxide_decode(await r.arrayBuffer())"));
-    assert!(out.contains("\"content-type\": \"application/oxide-fn\""));
+    assert!(
+        out.contains("import { __oxide_call_fn } from \"oxide/fn\";"),
+        "the client stub must import the runtime caller exactly once"
+    );
+    // The fetch + wire format live in `oxide/fn` now; the emitted stub only
+    // names the id. Assert that shape instead of the old inline fetch.
+    for stub in &stubs {
+        assert!(
+            out.contains(&format!("__oxide_call_fn(\"{}\"", stub.id)),
+            "stub for {} must call the runtime with its id",
+            stub.id
+        );
+    }
 }
 
 #[test]
@@ -279,8 +289,8 @@ fn stubs_schema_first_arg_supported() {
     let (out, stubs) = transform_server_fn_stubs(code, "x.server.ts", Env::Client, "s").unwrap();
     assert_eq!(stubs.len(), 1);
     assert_eq!(stubs[0].export_name, "create");
-    assert!(out.contains("fetch(\"/_oxide/fn/"));
-    assert!(out.contains("__oxide_encode(args)"));
+    assert!(out.contains("__oxide_call_fn("));
+    assert!(out.contains("import { __oxide_call_fn } from \"oxide/fn\";"));
     assert_eq!(out.matches("export const create").count(), 1);
 }
 
@@ -443,8 +453,8 @@ fn transformer_server_module_client_env_stubs() {
         jsx_import_source: None,
     };
     let out = ScannerTransformer.transform(&input).unwrap();
-    // client env: fetch stubs, no 'use cache' handling (ssr only), no server swap
-    assert!(out.code.contains("fetch(\"/_oxide/fn/"));
+    // client env: fn stub calls, no 'use cache' handling (ssr only), no server swap
+    assert!(out.code.contains("__oxide_call_fn("));
     assert!(!out.code.contains("__oxide_register_fn("));
     assert_eq!(out.server_fns.len(), 1);
 }
@@ -487,6 +497,7 @@ fn oxc_transformer_parses_valid_syntax_without_diagnostics() {
         lang: "tsx",
         build_secret: "s".into(),
         dev: false,
+        jsx_import_source: None,
     };
     let out = oxc_transform(input);
     assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
@@ -590,7 +601,7 @@ fn oxc_transformer_server_fn_client_stub_via_ast() {
         out.server_fns[0].id,
         server_fn_id("cart.server.ts", "addToCart", "sec")
     );
-    assert!(out.code.contains("fetch(\"/_oxide/fn/"));
+    assert!(out.code.contains("__oxide_call_fn("));
     assert!(!out.code.contains("serverFn("));
 }
 

@@ -10,7 +10,8 @@
     "./test": "./src/test.ts",
     "./types": "./src/types.ts",
     "./package.json": "./package.json",
-    "./client/boot": "./src/client/boot.ts"
+    "./client/boot": "./src/client/boot.ts",
+    "./fn": "./src/fn.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts"

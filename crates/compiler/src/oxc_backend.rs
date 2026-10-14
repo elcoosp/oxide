@@ -527,6 +527,7 @@ fn ast_server_fn_stubs(
     let mut edits: Vec<(u32, u32, String)> = Vec::new();
     let mut stubs: Vec<ServerFnStub> = Vec::new();
     let mut ssr_lines: Vec<String> = Vec::new();
+    let mut client_stub_ids: Vec<String> = Vec::new();
 
     // Helper: is `expr` a call to `serverFn(...)`?
     fn as_server_fn_call<'a>(
@@ -545,7 +546,7 @@ fn ast_server_fn_stubs(
         }
     }
 
-    let handle_var_decl = |var: &oxc_ast::ast::VariableDeclaration<'_>,
+    let mut handle_var_decl = |var: &oxc_ast::ast::VariableDeclaration<'_>,
                                edits: &mut Vec<(u32, u32, String)>,
                                stubs: &mut Vec<ServerFnStub>,
                                ssr_lines: &mut Vec<String>| {
@@ -564,16 +565,20 @@ fn ast_server_fn_stubs(
             });
 
             let repl = match env {
+                // §9.4: the client stub delegates to `__oxide_call_fn` from
+                // `oxide/fn`, which owns the fetch + wire format. Previously
+                // this inlined a fetch calling bare `__oxide_encode` /
+                // `__oxide_decode` globals that no module defines.
                 Env::Client => format!(
-                    "{name} = (async (...args) => {{ const r = await \
-                     fetch(\"/_oxide/fn/{id}\", {{ method: \"POST\", headers: {{ \"content-type\": \
-                     \"application/oxide-fn\" }}, body: __oxide_encode(args) }}); return \
-                     __oxide_decode(await r.arrayBuffer()); }});"
+                    "{name} = (async (...args) => __oxide_call_fn(\"{id}\", args));"
                 ),
                 Env::Ssr | Env::Edge => code[d.span.start as usize..d.span.end as usize].to_string(),
             };
             edits.push((d.span.start, d.span.end, repl));
 
+            if matches!(env, Env::Client) {
+                client_stub_ids.push(id.clone());
+            }
             if matches!(env, Env::Ssr | Env::Edge) {
                 ssr_lines.push(format!("__oxide_register_fn(\"{id}\", {name});"));
             }
@@ -601,6 +606,10 @@ fn ast_server_fn_stubs(
         out.replace_range(*s as usize..*e as usize, t);
     }
 
+    if !client_stub_ids.is_empty() {
+        let import = "import { __oxide_call_fn } from \"oxide/fn\";\n";
+        out = format!("{import}{out}");
+    }
     if !ssr_lines.is_empty() {
         if !out.ends_with('\n') {
             out.push('\n');

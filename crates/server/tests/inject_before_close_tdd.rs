@@ -191,3 +191,120 @@ fn an_empty_pattern_list_allows_nothing() {
     let patterns: Vec<RemoteImagePattern> = vec![];
     assert!(!remote_pattern_allows(&patterns, "cdn.example.com", "https"));
 }
+
+// ---------------------------------------------------------------------------
+// §9.4 server-function route: `POST /_oxide/fn/<id>`.
+//
+// The pipeline does the guards (method, content type, CSRF) and hands off
+// to a `ServerFnDispatcher`. These tests drive the pipeline end-to-end
+// against a hand-written dispatcher — no runtime, no V8, no worker.
+// ---------------------------------------------------------------------------
+
+use oxide_server::{
+    DispatchError, OxideRequest, Pipeline, ServerFnDispatcher,
+};
+use std::sync::Arc;
+
+struct EchoDispatcher;
+#[async_trait::async_trait]
+impl ServerFnDispatcher for EchoDispatcher {
+    async fn dispatch(
+        &self,
+        id: &str,
+        args_json: &[u8],
+    ) -> Result<Vec<u8>, DispatchError> {
+        if id == "missing" {
+            return Err(DispatchError::not_found(id));
+        }
+        // Echo back a value derived from both the id and the args so a test
+        // can tell which branch ran.
+        let args: serde_json::Value = serde_json::from_slice(args_json)
+            .map_err(|e| DispatchError::bad_request(format!("args not JSON: {e}")))?;
+        Ok(serde_json::to_vec(&serde_json::json!({
+            "id": id,
+            "args": args,
+        }))
+        .unwrap())
+    }
+}
+
+fn fn_pipeline() -> Pipeline {
+    Pipeline {
+        server_fns: Some(Arc::new(EchoDispatcher)),
+        ..Default::default()
+    }
+}
+
+fn fn_request(method: &str, id: &str, body: &str, ct: &str) -> OxideRequest {
+    OxideRequest {
+        method: method.to_string(),
+        url: format!("/_oxide/fn/{id}"),
+        headers: vec![
+            ("content-type".into(), ct.into()),
+            ("sec-fetch-site".into(), "same-origin".into()),
+        ],
+        body: bytes::Bytes::from(body.to_string()),
+        request_id: "test-fn".into(),
+    }
+}
+
+#[tokio::test]
+async fn server_fn_post_dispatches_and_wraps_in_envelope() {
+    let p = fn_pipeline();
+    let req = fn_request("POST", "add", r#"{"args":[1,2]}"#, "application/oxide-fn");
+    let resp = p.serve_request(req, &|_r| {
+        Box::pin(async { oxide_server::OxideResponse::new(500, "dispatch should not run") })
+    }).await;
+    assert_eq!(resp.status, 200);
+    let body: serde_json::Value = serde_json::from_slice(&resp.body).expect("json body");
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["data"]["id"], "add");
+    assert_eq!(body["data"]["args"]["args"][0], 1);
+}
+
+#[tokio::test]
+async fn server_fn_get_is_rejected_with_405() {
+    let p = fn_pipeline();
+    let req = fn_request("GET", "add", "", "application/oxide-fn");
+    let resp = p.serve_request(req, &|_r| {
+        Box::pin(async { oxide_server::OxideResponse::new(500, "dispatch should not run") })
+    }).await;
+    assert_eq!(resp.status, 405);
+    assert!(resp.header("allow").is_some_and(|v| v.contains("POST")));
+}
+
+#[tokio::test]
+async fn server_fn_wrong_content_type_is_rejected_with_415() {
+    let p = fn_pipeline();
+    let req = fn_request("POST", "add", "{}", "application/json");
+    let resp = p.serve_request(req, &|_r| {
+        Box::pin(async { oxide_server::OxideResponse::new(500, "dispatch should not run") })
+    }).await;
+    assert_eq!(resp.status, 415);
+}
+
+#[tokio::test]
+async fn server_fn_unknown_id_is_404_with_error_envelope() {
+    let p = fn_pipeline();
+    let req = fn_request("POST", "missing", "{}", "application/oxide-fn");
+    let resp = p.serve_request(req, &|_r| {
+        Box::pin(async { oxide_server::OxideResponse::new(500, "dispatch should not run") })
+    }).await;
+    assert_eq!(resp.status, 404);
+    let body: serde_json::Value = serde_json::from_slice(&resp.body).expect("json body");
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["code"], "FN-NOT-FOUND");
+}
+
+#[tokio::test]
+async fn server_fn_without_dispatcher_is_404() {
+    // No dispatcher wired (a build with server functions disabled).
+    let p = Pipeline::default();
+    let req = fn_request("POST", "add", "{}", "application/oxide-fn");
+    let resp = p.serve_request(req, &|_r| {
+        Box::pin(async { oxide_server::OxideResponse::new(500, "dispatch should not run") })
+    }).await;
+    assert_eq!(resp.status, 404);
+    let body: serde_json::Value = serde_json::from_slice(&resp.body).expect("json body");
+    assert_eq!(body["code"], "FN-NO-DISPATCHER");
+}
