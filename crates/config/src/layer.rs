@@ -40,6 +40,7 @@ const KNOWN_KEYS: &[&str] = &[
     "environments",
     "dev",
     "siteUrl",
+    "manifest",
 ];
 
 /// Environment variables allowed to override config (§14.2), as dotted paths.
