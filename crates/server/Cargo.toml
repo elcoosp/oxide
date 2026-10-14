@@ -30,6 +30,7 @@ zstd = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 blake3 = { workspace = true }
+ring = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 
