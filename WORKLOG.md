@@ -1507,3 +1507,102 @@ fixed — it is a test-harness race, not a product bug.
 The directive works end-to-end: the compiler emits the wrapper, the
 wrapper reaches the Rust tier, the tier is configurable (memory + optional
 disk), and a 'use cache' function's value survives across requests.
+
+## Session 14 — §6.6 CSS wiring: complete (and the handoff's plan was wrong)
+
+Inherited state: the working tree carried a partial §6.6 slice — a
+`CssTransformHook` on `BundleOptions`, a `build_css_transform_hook` in the
+CLI, and `css_transform: None` in every `BundleOptions` literal. It
+compiled, but the handoff's verification step had never been run.
+
+### The finding
+
+The slice was **dead code on the active build path.** Two reasons:
+
+1. `cmd_build` calls `oxide_bundler::RolldownBundler`. Only the in-house
+   `ChunkBundler`'s write site consumed `options.css_transform`; the
+   Rolldown backend accepted the field and ignored it.
+2. Rolldown 1.2.13 refuses CSS outright. `module_task.rs` returns
+   `unsupported_feature("Bundling CSS is no longer supported …")` the
+   moment a loaded module's type is `Css`. So an `oxide build` on a project
+   with any `.css` import failed with `BLD-ROLLDOWN` before a hook could
+   fire.
+
+Reproduced directly: adding `theme.css` + an import to
+`examples/smoke-app-react` made `oxide build` exit 1 with
+`BLD-ROLLDOWN rolldown write: Bundling CSS is no longer supported`.
+
+This is the handoff's own rule 8 ("verify the actual emitted artifact, not
+the log") catching its own plan: the prior session verified `cargo check`,
+not a build.
+
+### The fix
+
+A `CssPlugin` in `crates/bundler/src/rolldown_backend.rs`, following the
+pattern `PrecompiledPlugin` and `OxidePassesPlugin` already established:
+
+- The refusal runs **after** `load_source`, so a plugin's `load` hook can
+  intercept a `.css` module first.
+- `CssPlugin::load` reads the file, calls `options.css_transform` (the CLI's
+  Lightning CSS wrapper), emits the result via
+  `ctx.emit_file(EmittedAsset { … source: StrOrBytes::Str(code) })` under a
+  content-hashed name derived the same way `ChunkBundler` derives its CSS
+  file names, and returns `ModuleType::Js` so Rolldown never sees a `Css`
+  module.
+- The JS the importer receives is a default export carrying the asset URL
+  (or the local→scoped map for a CSS module). Raw CSS never enters the JS
+  chunk.
+- The plugin is registered for **every** build, not only when a hook is
+  present — Rolldown refuses `.css` whether or not a transform exists.
+
+One Rust wrinkle: the hook signature returns `impl Future`, and two
+`async move` blocks in one fn do not unify (even identical ones have
+distinct types). `CssPlugin::load` computes everything eagerly in a closure
+and ends with a single `async move`.
+
+### Verified end-to-end
+
+A `theme.css` with nesting, `user-select`, and hex colours, imported from
+the smoke-app's home page:
+
+    oxide build → exit 0
+    dist/client/theme-<hash>.css
+    dist/server/theme-<hash>.css
+
+Emitted CSS showed Lightning CSS had run: `#ff0000` → `red`, `#ffffff` →
+`#fff`. The handoff expected `-webkit-user-select` and lowered nesting;
+neither appeared because `baseline-widely-available` includes Safari ≥ 16.4,
+which needs neither. The transform is target-correct — the handoff's
+expectation was the wrong one, not the wiring.
+
+### Commits
+
+| Commit | Scope |
+| --- | --- |
+| `496fe9f` | `CssTransformHook` on `BundleOptions` |
+| `ef029eb` | prebundle options carry `css_transform: None` |
+| `a9a1e72` | `CssPlugin` for `RolldownBundler` |
+| `6647ee2` | options fixture (`framework_refusal`) |
+| `7a9833c` | options fixture (`jsx_lowering`) |
+| `e7e2ee8` | Rolldown `.css` import test + no-css regression test |
+| `9113e91` | `ChunkBundler` hook test |
+| `d1acc14` | CLI `build_css_transform_hook` wiring |
+
+### Test state
+
+| suite | result |
+| --- | --- |
+| oxide-bundler | 35 across four binaries (was 33) |
+| four-fixture CLI gate | PASS, ~13 s |
+| cargo check --workspace | green |
+
+### Follow-ups
+
+- The `warn: framework renderer not wired: … Unknown file extension
+  ".css"` line on a build with a stylesheet is the **worker's** loader
+  refusing `.css` when it loads the page module — a separate path from the
+  bundler. It did not fail the build, but it degrades the framework
+  renderer for that route. Worth its own slice.
+- §21 findings 1–3 from the prior handoff remain open: warm build ≥ cold
+  (graph engine + CAS not on the build path), 951 KB Vue SSR bundle
+  (externals), and cold start vs snapshots (§4.4).
