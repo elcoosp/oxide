@@ -1,20 +1,13 @@
-// Island fixture E2E. The smoke-app home page SSRs a `<ox-island>` host for
-// the Counter component via `react-dom/server` (through the real adapter).
-// The suite asserts the wire HTML carries the island shape the client boot
-// script (`packages/oxide/src/client/boot.ts`) scans for.
+// Island fixture E2E against `oxide start`.
 //
-// What this proves today:
-//   - `oxide start` (real-SSR path) emits the `<ox-island>` wrapper with
-//     the exact attribute names the render crate's `island_element()` uses.
-//   - The island's React children render as normal SSR markup inside.
-//   - Props survive as base64 in `data-ox-props`.
+// Two things this covers that the fake-DOM tests can't:
 //
-// What it does NOT yet prove (follow-up slices):
-//   - Automatic island wrapping (pages currently hand-write the wrapper).
-//   - Client-side hydration — clicking the button and observing a DOM
-//     change needs the boot script emitted + injected by the build.
-//
-// Both are documented in WORKLOG session 10.
+//   1. Wire shape: the live server response carries the exact `<ox-island>`
+//      markup the client boot script scans for, plus the injected
+//      `<script type="module" src="/client/<boot>">` tag.
+//   2. Real hydration: the browser loads the boot chunk, hydrates the
+//      Counter with `react-dom/client`, and a click on the button advances
+//      the value from its SSR-rendered 3 to 4.
 
 import { test, expect } from '@playwright/test'
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -55,26 +48,62 @@ test.afterAll(() => {
   server?.kill('SIGTERM')
 })
 
-test('home page SSRs an <ox-island> host with the expected attributes', async ({ page }) => {
-  await page.goto('http://127.0.0.1:3101/')
-  const island = page.locator('ox-island')
-  await expect(island).toHaveCount(1)
-  await expect(island).toHaveAttribute('data-ox-island', 'Counter')
-  await expect(island).toHaveAttribute('data-ox-chunk', '/islands/counter.ts')
-  await expect(island).toHaveAttribute('data-ox-strategy', 'load')
+test('server HTML carries the island markup and boot script', async ({ request }) => {
+  const r = await request.get('http://127.0.0.1:3101/')
+  expect(r.status()).toBe(200)
+  const html = await r.text()
+  expect(html).toContain('data-ox-island="Counter"')
+  expect(html).toContain('data-ox-chunk="Counter"')
+  expect(html).toContain('data-ox-strategy="load"')
   // base64(JSON.stringify({initial:3}))
-  await expect(island).toHaveAttribute('data-ox-props', 'eyJpbml0aWFsIjozfQ==')
+  expect(html).toContain('data-ox-props="eyJpbml0aWFsIjozfQ=="')
+  expect(html).toMatch(/<script type="module" src="\/client\/[^"]+"><\/script>/)
 })
 
-test('island SSR markup contains the counter with the initial value', async ({ page }) => {
+test('browser hydrates the counter island and a click advances it', async ({ page }) => {
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(e.message))
+
   await page.goto('http://127.0.0.1:3101/')
-  // React's `renderToString` produced the Counter's button; the value 3
-  // comes from `props.initial` carried through the island directive.
-  const span = page.locator('ox-island button span')
-  await expect(span).toHaveText('3')
+
+  // The island host exists and carries the attributes the boot scanner reads.
+  const island = page.locator('ox-island[data-ox-chunk="Counter"]')
+  await expect(island).toHaveCount(1)
+
+  // SSR value: the button text is 3 (from `props.initial`).
+  const value = island.locator('button span')
+  await expect(value).toHaveText('3')
+
+  // React hydration is complete once the boot chunk's effect has run. Wait
+  // for the boot marker the module sets before React's own event listeners
+  // bind (hydration is async; a click before it lands is a silent no-op).
+  // Wait for `done`, not `pending` — the client sets `pending` synchronously
+  // on entry (double-hydration guard) and `done` only after the framework
+  // adapter has attached its event listeners. Clicking between those two
+  // points is a silent no-op.
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector('ox-island[data-ox-chunk="Counter"]')
+      return !!el && el.getAttribute('data-ox-hydrated') === 'done'
+    },
+    { timeout: 10_000 },
+  )
+
+  // Click: the SSR'd markup and React's own DOM must be in sync, so the
+  // increment updates the SAME span React found in the tree.
+  await island.locator('button').click()
+  await expect(value).toHaveText('4', { timeout: 5_000 })
+
+  // Click again to confirm it's a live counter, not a one-shot.
+  await island.locator('button').click()
+  await expect(value).toHaveText('5')
+
+  // No page-level errors during hydration.
+  expect(errors).toEqual([])
 })
 
-test('the h1 still renders alongside the island', async ({ page }) => {
+test('home page h1 renders alongside the island', async ({ page }) => {
   await page.goto('http://127.0.0.1:3101/')
   await expect(page.locator('h1')).toHaveText('Home')
 })

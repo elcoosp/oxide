@@ -79,23 +79,42 @@ export interface IslandCtx extends IslandsOptions {
   loadChunk: (chunk: string) => Promise<unknown>
 }
 
-/** Hydrate one island now: decode props → load chunk → adapter dispatch. */
+/** Hydrate one island now: decode props → load chunk → adapter dispatch.
+ *
+ * Two attributes bracket the work so consumers (tests, devtools, a
+ * readiness check) can distinguish "hydration started" from "hydration
+ * finished":
+ *   * `data-ox-hydrated="pending"` — set synchronously on entry, serves as
+ *     the double-hydration guard.
+ *   * `data-ox-hydrated="done"` — set after the adapter's `hydrateIsland`
+ *     returns, i.e. once framework listeners are attached. A browser test
+ *     that needs to click the island waits for this.
+ *   * `data-ox-hydrated="error"` — the adapter threw; the island stays
+ *     inert and the attribute records why.
+ */
 export async function hydrateIsland(el: IslandHost, ctx: IslandCtx): Promise<(() => void) | undefined> {
   const host = el as IslandHost & { 'data-ox-hydrated'?: unknown }
-  if (host.getAttribute('data-ox-hydrated')) return undefined // hydration guard
-  host.setAttribute?.('data-ox-hydrated', '1')
-  const chunk = el.getAttribute('data-ox-chunk') ?? ''
-  const propsAttr = el.getAttribute('data-ox-props')
-  const props = propsAttr ? decodeIslandProps(propsAttr) : undefined
-  const mod = await ctx.loadChunk(chunk)
-  const adapter = ctx.adapter
-  if (typeof adapter.hydrateIsland === 'function') {
-    return adapter.hydrateIsland(el as Element, mod, props)
+  const state = host.getAttribute('data-ox-hydrated')
+  if (state === 'pending' || state === 'done') return undefined // guard
+  host.setAttribute?.('data-ox-hydrated', 'pending')
+  try {
+    const chunk = el.getAttribute('data-ox-chunk') ?? ''
+    const propsAttr = el.getAttribute('data-ox-props')
+    const props = propsAttr ? decodeIslandProps(propsAttr) : undefined
+    const mod = await ctx.loadChunk(chunk)
+    const adapter = ctx.adapter
+    let disposer: (() => void) | undefined
+    if (typeof adapter.hydrateIsland === 'function') {
+      disposer = adapter.hydrateIsland(el as Element, mod, props)
+    } else if (typeof adapter.hydrate === 'function') {
+      disposer = adapter.hydrate(el as Element, { props, mod })
+    }
+    host.setAttribute?.('data-ox-hydrated', 'done')
+    return disposer
+  } catch (e) {
+    host.setAttribute?.('data-ox-hydrated', 'error')
+    throw e
   }
-  if (typeof adapter.hydrate === 'function') {
-    return adapter.hydrate(el as Element, { props, mod })
-  }
-  return undefined
 }
 
 /**

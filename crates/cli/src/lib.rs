@@ -1571,6 +1571,108 @@ fn render_stream_to_body_stream(
     Box::pin(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)))
 }
 
+/// §10.3: splice `<script type="module" src="/<url>">` into a streaming HTML
+/// response right before the closing `</body>` tag. Works when `</body>` is
+/// split across chunk boundaries by keeping a rolling tail of the last
+/// `CLOSE.len() - 1` bytes and scanning for the tag on each new chunk.
+///
+/// The transform emits everything up to and including `</body>` unchanged,
+/// then the boot tag, then the rest. Once the tag has been emitted, the
+/// remaining stream is passed through byte-for-byte.
+fn inject_boot_script_streaming(
+    src: oxide_server::BodyStream,
+    boot_url: &str,
+) -> oxide_server::BodyStream {
+    use bytes::Bytes;
+    use futures::StreamExt as _;
+
+    const CLOSE: &[u8] = b"</body>";
+    let tag: Vec<u8> = format!(r#"<script type="module" src="/{boot_url}"></script>"#).into_bytes();
+    let boot_url_owned = boot_url.to_string();
+
+    let (tx, mut rx) =
+        tokio::sync::mpsc::channel::<std::result::Result<Bytes, std::io::Error>>(8);
+    tokio::spawn(async move {
+        let _ = boot_url_owned; // move it in for the closure's lifetime
+        let mut pending: Vec<u8> = Vec::new();
+        let mut injected = false;
+        let mut src = src;
+        while let Some(item) = src.next().await {
+            let chunk = match item {
+                Ok(b) => b,
+                Err(e) => {
+                    let _ = tx.send(Err(e)).await;
+                    return;
+                }
+            };
+            if injected {
+                if tx.send(Ok(chunk)).await.is_err() {
+                    return;
+                }
+                continue;
+            }
+            // Scan the buffer + new chunk for `</body>`.
+            pending.extend_from_slice(&chunk);
+            let mut emit_from = 0usize;
+            let mut found_at: Option<usize> = None;
+            // Only scan the tail — everything before `pending.len() - CLOSE.len()`
+            // was already scanned on a previous iteration.
+            let scan_start = pending
+                .len()
+                .saturating_sub(chunk.len() + CLOSE.len().saturating_sub(1));
+            let mut i = scan_start;
+            while i + CLOSE.len() <= pending.len() {
+                if &pending[i..i + CLOSE.len()] == CLOSE {
+                    found_at = Some(i + CLOSE.len());
+                    break;
+                }
+                i += 1;
+            }
+            if let Some(pos) = found_at {
+                // Emit up to and including `</body>`, then the tag.
+                let head = Bytes::from(pending[..pos].to_vec());
+                let tail = pending[pos..].to_vec();
+                if tx.send(Ok(head)).await.is_err() {
+                    return;
+                }
+                if tx.send(Ok(Bytes::from(tag.clone()))).await.is_err() {
+                    return;
+                }
+                if !tail.is_empty() && tx.send(Ok(Bytes::from(tail))).await.is_err() {
+                    return;
+                }
+                pending.clear();
+                injected = true;
+                continue;
+            }
+            // No match yet: emit everything except the last CLOSE.len()-1
+            // bytes (they could be the start of a tag spanning the next chunk).
+            let keep = CLOSE.len() - 1;
+            if pending.len() > keep {
+                let flush_len = pending.len() - keep;
+                let flush = Bytes::from(pending[..flush_len].to_vec());
+                pending.drain(..flush_len);
+                if tx.send(Ok(flush)).await.is_err() {
+                    return;
+                }
+            }
+            let _ = emit_from;
+            emit_from = 0;
+        }
+        // Stream ended without a closing body: flush whatever we held and
+        // append the tag so the boot script still loads.
+        if !injected {
+            if !pending.is_empty() {
+                let _ = tx.send(Ok(Bytes::from(pending))).await;
+            }
+            let _ = tx.send(Ok(Bytes::from(tag))).await;
+        }
+        // tx drops here, closing the stream cleanly.
+    });
+    Box::pin(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn build_dispatch(
     tree: std::sync::Arc<oxide_router::RouteTree>,
     metrics: std::sync::Arc<oxide_server::Metrics>,
@@ -1578,9 +1680,11 @@ fn build_dispatch(
     page_renderer: Option<std::sync::Arc<dyn oxide_server::PageRenderer>>,
     loader_runner: Option<std::sync::Arc<dyn oxide_server::LoaderRunner>>,
     routes_root: std::path::PathBuf,
+    boot_script_url: Option<String>,
 ) -> std::sync::Arc<
     dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
 > {
+    let boot_script_url_for_render = boot_script_url.clone();
     std::sync::Arc::new(move |req: oxide_server::OxideRequest| {
             let started = std::time::Instant::now();
             let raw = req.url.split(['?', '#']).next().unwrap_or("/").to_string();
@@ -1677,6 +1781,10 @@ fn build_dispatch(
             let loader_runner = loader_runner.clone();
             let metrics = std::sync::Arc::clone(&metrics);
             let req_owned = req.clone();
+            // Shadow so the async block moves a per-call clone rather than
+            // the outer closure's captured value (which would be E0507 —
+            // an `Fn` closure cannot surrender a captured variable).
+            let boot_script_url_for_render = boot_script_url_for_render.clone();
 
             Box::pin(async move {
                 // §9.1: loader phase. When the matched route declares a server
@@ -1758,10 +1866,18 @@ fn build_dispatch(
                         Ok(render_stream) => {
                             metrics.observe(&label, started.elapsed(), 200);
                             // Bridge the renderer's Send-only stream to the
-                            // transport's Send + Sync body stream, then hand
-                            // it to hyper un-collected so each chunk flushes
-                            // as it arrives.
-                            let body = render_stream_to_body_stream(render_stream);
+                            // transport's Send + Sync body stream. If the
+                            // project registered islands, splice the boot
+                            // script tag right before `</body>` — the sliding
+                            // window in `inject_boot_script_streaming` buffers
+                            // at most `len("</body>") - 1` bytes so a tag
+                            // split across chunks still lands in the right
+                            // place and every other chunk flushes untouched.
+                            let bridged = render_stream_to_body_stream(render_stream);
+                            let body = match boot_script_url_for_render.as_deref() {
+                                Some(url) => inject_boot_script_streaming(bridged, url),
+                                None => bridged,
+                            };
                             oxide_server::OxideResponse::stream(200, body)
                                 .with_header("content-type", "text/html; charset=utf-8")
                         }
@@ -1833,6 +1949,24 @@ async fn start_server_inner(
     .await
 }
 
+/// §12.1 step 3: load `dist/client/` into the pipeline's static asset store so
+/// the shell's `<script type="module" src="/client/...">` resolves. Returns
+/// `None` when the directory is missing (dev before a build, or an app with
+/// no client bundle) — the pipeline then 404s those paths, which is honest.
+///
+/// `StaticAssets::scan` indexes every file by its URL path relative to the
+/// root, so `<root>/client/counter-abc.js` is reachable at
+/// `/client/counter-abc.js` when the root itself is `dist/`. Since our
+/// directory is `dist/client` and the URL prefix is `/client`, we scan
+/// `dist/` — then the boot chunk's `/client/...` URL matches the file path.
+fn load_client_assets(rootp: &Path) -> Option<oxide_server::StaticAssets> {
+    let dist = rootp.join("dist");
+    if !dist.is_dir() {
+        return None;
+    }
+    oxide_server::StaticAssets::scan(dist).ok()
+}
+
 async fn start_server_inner_full(
     root: &str,
     bind: Option<(std::net::IpAddr, u16)>,
@@ -1861,9 +1995,10 @@ async fn start_server_inner_full(
     // route pattern (e.g. `/blog/[slug]`), never the resolved URL.
     let metrics = std::sync::Arc::new(oxide_server::Metrics::new());
 
+    let assets = load_client_assets(&rootp);
     let pipeline = std::sync::Arc::new(oxide_server::Pipeline {
         rules,
-        assets: None,
+        assets,
         limits: oxide_server::Limits::default(),
         security: oxide_server::SecuritySettings {
             csp: cfg.security.csp.clone(),
@@ -1885,6 +2020,22 @@ async fn start_server_inner_full(
     });
     let proxy_rules: Vec<oxide_dev::ProxyRule> = proxy_rules.clone();
     let routes_root = rootp.join(&cfg.routes.dir);
+    // §10.3: the same boot URL that the build-time prerender injects also
+    // has to be spliced into every live request's shell — otherwise dev /
+    // serve would ship pages whose `<ox-island>` markup is inert.
+    let boot_script_url: Option<String> = {
+        let client_manifest = rootp.join("dist/client/client.manifest.json");
+        std::fs::read_to_string(&client_manifest)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .and_then(|v| {
+                v.get("routes")
+                    .and_then(|r| r.get("__boot__"))
+                    .and_then(|r| r.get("entry_chunk"))
+                    .and_then(|e| e.as_str())
+                    .map(|f| format!("client/{f}"))
+            })
+    };
     let dispatch = build_dispatch(
         std::sync::Arc::clone(&tree),
         std::sync::Arc::clone(&metrics),
@@ -1892,6 +2043,7 @@ async fn start_server_inner_full(
         stack.page_renderer,
         stack.loader_runner,
         routes_root,
+        boot_script_url,
     );
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (tx, rx) = tokio::sync::watch::channel(false);

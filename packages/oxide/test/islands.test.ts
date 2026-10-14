@@ -171,7 +171,7 @@ test('islands: hydrateIsland dispatches directly and is idempotent', async () =>
   const adapter = fakeAdapter()
   const disposer = await hydrateIsland(el, { adapter, loadChunk: async () => ({}) })
   assert.equal(typeof disposer, 'function')
-  assert.equal(el.attrs['data-ox-hydrated'], '1')
+  assert.equal(el.attrs['data-ox-hydrated'], 'done')
   await hydrateIsland(el, { adapter, loadChunk: async () => ({}) })
   assert.equal(adapter.calls.length, 1, 'second call is a no-op')
   assert.deepEqual(adapter.calls[0].props, { n: 1 })
