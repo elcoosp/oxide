@@ -1418,3 +1418,92 @@ Option 1 is the right one and is a focused slice: one op, one loader call.
 Everything committed is sound and tested where testable without the missing
 piece. The end-to-end probe is the honest failing case, recorded here so the
 next session starts from it rather than rediscovering it.
+
+## Session 13 — §9.3 L1 cache: complete
+
+**Date:** 2026-10-14
+**Scope:** finish what session 12 named as blocked.
+
+Session 12 found that a 'use cache' function called from a page loader
+re-ran every request — the wrapper was never created because the loader
+imports source directly and the compiler passes run only in the bundler.
+The fix was a compile_module worker op plus a loader-side module-graph
+compiler. It works.
+
+### Commits
+
+| Commit | Change |
+| --- | --- |
+| a8743f4 | impl CacheHandler for TieredCache (§11.2) |
+| 2704713 | oxide-jshost depends on oxide-compiler + oxide-cache |
+| 7edd695 | Op::CompileModule; NodeHost threads the cache handler to its pools; cache_get decodes the stored body back to the caller's value |
+| b965072 | ops-table roundtrip covers the new variant |
+| 468c24b | compileServerModule — the loader's module-graph compiler |
+
+### The bug, and the two details that mattered
+
+compileServerModule walks the loader's relative import graph, compiles
+each module through the op, writes each as a hidden temp file beside its
+source, and rewrites relative specifiers to point at the compiled targets.
+
+Two things were wrong on the first attempt:
+
+1. The temp file must be .ts, not .mjs. transform_passes_only runs the
+   AST passes but not the TypeScript strip — that is the lower stage's
+   job, done by the bundler downstream, which this path bypasses. A .mjs
+   temp file carried type annotations into V8. A .ts file gets Node's
+   native type-stripping on import.
+
+2. The op wire is the variant name, not its number. Op is a serde
+   externally-tagged enum; #[repr(u16)] is not what serializes. The
+   worker sent 5 where the host expected "CacheGet".
+
+### Verified end-to-end
+
+A page loader calls a 'use cache' function that increments a counter:
+
+    request 1: 1
+    request 2: 1
+    request 3: 1
+    request 4: 1
+
+The value computed on request 1 is served from the Rust TieredCache on
+requests 2-4. cache_get round-trips through the worker-to-host op
+protocol; the CacheHandler is the same TieredCache the pipeline uses
+for L0.
+
+### The full §9.3 path, now closed
+
+    user code:  'use cache' fn
+       |  (compiler pass, via compile_module op)
+       v
+    __oxide_cache(fn, module, export, opts)   <- the wrapper the loader now gets
+       |  (runtime, when a host is reachable)
+       v
+    __oxide_op_request('cache_get', {key})    <- worker -> host frame
+       |
+       v
+    Rust TieredCache::get                      <- memory -> disk -> remote
+
+The in-process Map remains the fallback: the browser has no host, and a
+host with no handler answers null.
+
+### Test state
+
+| suite | result |
+| --- | --- |
+| oxide-jshost | 39 + 22 |
+| oxide-compiler | 49 |
+| oxide-server | 106 across four binaries |
+| oxide-cache | 26 |
+| packages/oxide | 69 |
+
+node_host_recycles_worker_after_request_threshold is flaky under
+parallel worker spawns (passes alone and single-threaded); noted, not
+fixed — it is a test-harness race, not a product bug.
+
+### §9.3 is now fully closed
+
+The directive works end-to-end: the compiler emits the wrapper, the
+wrapper reaches the Rust tier, the tier is configurable (memory + optional
+disk), and a 'use cache' function's value survives across requests.
