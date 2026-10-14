@@ -434,6 +434,129 @@ impl Plugin for PrecompiledPlugin {
     }
 }
 
+/// §6.6: run every `.css` module through `css_transform` (Lightning CSS,
+/// wrapped by the CLI) and emit the result as a content-hashed asset.
+///
+/// Rolldown 1.2.x refuses a `.css` module outright — `module_task.rs`
+/// returns `unsupported_feature("Bundling CSS is no longer supported …")`
+/// the moment a loaded module's type is `Css`. That check runs *after* the
+/// plugin `load` hooks, so a plugin can serve the stylesheet as JavaScript
+/// (`ModuleType::Js`) and emit the CSS itself. Without this plugin an
+/// `oxide build` on a project with any stylesheet import fails before the
+/// bundler produces anything.
+#[derive(Debug)]
+pub struct CssPlugin {
+    css_transform: Option<crate::CssTransformHook>,
+}
+
+impl CssPlugin {
+    pub fn new(css_transform: Option<crate::CssTransformHook>) -> Self {
+        Self { css_transform }
+    }
+
+    fn json_string(s: &str) -> String {
+        serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
+    }
+}
+
+impl Plugin for CssPlugin {
+    fn name(&self) -> std::borrow::Cow<'static, str> {
+        "oxide-css".into()
+    }
+
+    fn register_hook_usage(&self) -> HookUsage {
+        HookUsage::Load
+    }
+
+    fn load(
+        &self,
+        ctx: SharedLoadPluginContext,
+        args: &HookLoadArgs<'_>,
+    ) -> impl std::future::Future<Output = HookLoadReturn> + Send {
+        // The work is synchronous (a disk read and the transform hook); doing
+        // it eagerly and returning a single `async move` keeps the return type
+        // one concrete future. Multiple `async move` blocks in one fn do not
+        // unify — even identical ones have distinct types.
+        let out: Option<HookLoadOutput> = (|| {
+            // A rolldown id may carry a query/fragment (`./x.css?inline`);
+            // the on-disk path is the part before it.
+            let id = args.id.to_string();
+            let bare = id.split(['?', '#']).next().unwrap_or(&id).to_string();
+            if !Path::new(&bare).extension().is_some_and(|e| e == "css") {
+                return None;
+            }
+            // A missing file is left to rolldown's own loader to report.
+            let source = std::fs::read_to_string(&bare).ok()?;
+            let is_module = bare.contains(".module.");
+
+            let (code, exports) = match &self.css_transform {
+                Some(hook) => match hook.call(&bare, &source, is_module, false) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        // A transform error degrades to verbatim CSS and is
+                        // reported on stderr, matching the JS transform hook.
+                        eprintln!(
+                            "css transform failed for {bare}: {} {}",
+                            e.0.code, e.0.message
+                        );
+                        (source.clone(), BTreeMap::new())
+                    }
+                },
+                None => (source.clone(), BTreeMap::new()),
+            };
+
+            // A content-hashed asset name, derived the same way `ChunkBundler`
+            // derives its CSS file names, so an unchanged stylesheet lands on
+            // the same file across builds.
+            let stem = Path::new(&bare)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "style".to_string());
+            let hash = crate::ChunkBundler::content_hash(&[code.as_bytes()]);
+            let file_name = format!("{stem}-{hash}.css");
+
+            let asset = rolldown_common::EmittedAsset {
+                name: Some(file_name.clone()),
+                original_file_name: Some(bare.clone()),
+                file_name: Some(ArcStr::from(file_name.clone())),
+                source: rolldown_common::StrOrBytes::Str(code),
+            };
+            if let Err(e) = ctx.emit_file(asset, None, None) {
+                eprintln!("css emit failed for {bare}: {e}");
+            }
+
+            // The JS the importer receives. A plain stylesheet gets a default
+            // export carrying the emitted URL; a CSS module also re-exports the
+            // local-name → scoped-name map so `import styles from
+            // './x.module.css'` works.
+            let mut js = String::new();
+            if is_module && !exports.is_empty() {
+                let entries: Vec<String> = exports
+                    .iter()
+                    .map(|(k, v)| {
+                        format!("{}: {}", Self::json_string(k), Self::json_string(v))
+                    })
+                    .collect();
+                js.push_str(&format!("export default {{ {} }};\n", entries.join(", ")));
+            } else {
+                js.push_str(&format!(
+                    "export default {};\n",
+                    Self::json_string(&file_name)
+                ));
+            }
+
+            Some(HookLoadOutput {
+                code: ArcStr::from(js),
+                map: None,
+                side_effects: None,
+                module_type: Some(ModuleType::Js),
+            })
+        })();
+
+        async move { Ok(out) }
+    }
+}
+
 /// The plugin list for a Rolldown run: the oxide passes (always) and the
 /// precompiled-SFC server (only when the CLI supplied precompiled JS).
 fn oxide_plugins(options: &BundleOptions, root: &Path) -> Vec<std::sync::Arc<Pluginable>> {
@@ -452,6 +575,12 @@ fn oxide_plugins(options: &BundleOptions, root: &Path) -> Vec<std::sync::Arc<Plu
             options.transform_hook.clone(),
         ),
     )];
+    // §6.6: the CSS plugin runs for every project. Rolldown 1.2.x refuses
+    // `.css` modules at `module_task.rs`; intercepting them in the `load`
+    // hook is the only way an `oxide build` with a stylesheet succeeds.
+    plugins.push(Pluginable::new_shared(CssPlugin::new(
+        options.css_transform.clone(),
+    )));
     if !options.precompiled.is_empty() {
         plugins.push(Pluginable::new_shared(PrecompiledPlugin::new(
             options.precompiled.clone(),
