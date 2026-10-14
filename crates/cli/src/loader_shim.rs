@@ -137,6 +137,34 @@ mod tests {
     }
 
     #[test]
+    fn output_from_raw_parses_cookies_and_headers() {
+        // §9.2 / §16.6: the worker returns `setCookies` (raw Set-Cookie values)
+        // and `headers` (k/v pairs); the shim lifts them onto LoaderOutput.
+        let raw = json!({
+            "ok": true,
+            "status": 200,
+            "location": null,
+            "data": {"visits": "42"},
+            "setCookies": ["visits=42; Path=/; HttpOnly; SameSite=Lax"],
+            "headers": [["x-oxide-visits", "42"]],
+        });
+        let out = output_from_raw(&raw).unwrap();
+        assert_eq!(out.status, 200);
+        assert_eq!(out.set_cookies.len(), 1);
+        assert!(out.set_cookies[0].starts_with("visits=42"));
+        assert_eq!(out.headers, vec![("x-oxide-visits".to_string(), "42".to_string())]);
+    }
+
+    #[test]
+    fn output_from_raw_tolerates_missing_side_effect_fields() {
+        // An older worker without the fields parses to empty lists, not an error.
+        let raw = json!({ "ok": true, "status": 200, "location": null, "data": {} });
+        let out = output_from_raw(&raw).unwrap();
+        assert!(out.set_cookies.is_empty());
+        assert!(out.headers.is_empty());
+    }
+
+    #[test]
     fn output_from_raw_success() {
         let raw = json!({ "ok": true, "status": 200, "location": null, "data": {"title": "x"} });
         let out = output_from_raw(&raw).unwrap();
