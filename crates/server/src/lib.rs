@@ -1025,6 +1025,21 @@ pub struct RemoteImagePattern {
     pub protocol: Option<String>,
 }
 
+/// `ImageEndpoint` has trait-object fields and is not `Clone`. The remote
+/// image arm needs an owned copy that outlives the pipeline borrow; this
+/// rebuilds the struct, sharing the backend `Arc` (the one field that is
+/// already `Arc`) and copying the plain values.
+fn clone_image_endpoint(e: &ImageEndpoint) -> ImageEndpoint {
+    ImageEndpoint {
+        backend: Arc::clone(&e.backend),
+        asset_root: e.asset_root.clone(),
+        signing_secret: e.signing_secret.clone(),
+        remote_patterns: e.remote_patterns.clone(),
+        ssrf_allow_list: e.ssrf_allow_list.clone(),
+        remote_max_bytes: e.remote_max_bytes,
+    }
+}
+
 /// The backend seam. `oxide_assets::ImageBackend` is adapted to this in the
 /// CLI, so the server has no compile-time tie to the asset crate.
 pub trait ImageEndpointBackend: Send + Sync {
@@ -1151,10 +1166,12 @@ pub fn nonce_for(request_id: &str) -> String {
 fn serve_image_endpoint(
     endpoint: Option<&ImageEndpoint>,
     raw_url: &str,
-) -> OxideResponse {
+) -> NativePrefix {
     let Some(endpoint) = endpoint else {
-        return OxideResponse::new(404, "image endpoint not configured")
-            .with_header("content-type", "text/plain; charset=utf-8");
+        return NativePrefix::Raw(
+            OxideResponse::new(404, "image endpoint not configured")
+                .with_header("content-type", "text/plain; charset=utf-8"),
+        );
     };
 
     // The signing check needs the `s=` value and the *rest* of the query
@@ -1165,15 +1182,15 @@ fn serve_image_endpoint(
     let parsed = match crate::parse_image_query(&params_no_sig) {
         Ok(p) => p,
         Err(msg) => {
-            return OxideResponse::new(400, format!("bad image request: {msg}"))
-                .with_header("content-type", "text/plain; charset=utf-8")
+            return NativePrefix::Raw(OxideResponse::new(400, format!("bad image request: {msg}"))
+                .with_header("content-type", "text/plain; charset=utf-8"));
         }
     };
 
     if let Some(secret) = endpoint.signing_secret.as_deref() {
         let Some(sig) = parsed.signature.as_deref() else {
-            return OxideResponse::new(403, "image request not signed")
-                .with_header("content-type", "text/plain; charset=utf-8");
+            return NativePrefix::Raw(OxideResponse::new(403, "image request not signed")
+                .with_header("content-type", "text/plain; charset=utf-8"));
         };
         // Recompute exactly what the signer hashed: `path?params` with the
         // `s=` param stripped. `sign_image_url` takes the URL *before* the
@@ -1184,8 +1201,8 @@ fn serve_image_endpoint(
             format!("{path}?{params_no_sig}")
         };
         if !crate::verify_image_sig(&signed_form, secret, sig) {
-            return OxideResponse::new(403, "image signature mismatch")
-                .with_header("content-type", "text/plain; charset=utf-8");
+            return NativePrefix::Raw(OxideResponse::new(403, "image signature mismatch")
+                .with_header("content-type", "text/plain; charset=utf-8"));
         }
     }
 
@@ -1197,12 +1214,28 @@ fn serve_image_endpoint(
     // other path is synchronous and returns immediately.
     let is_remote = parsed.url.starts_with("http://") || parsed.url.starts_with("https://");
     if is_remote {
-        return serve_image_endpoint_remote(endpoint, &parsed);
+        return match plan_remote_image(endpoint, &parsed) {
+            Ok((mut request, format)) => {
+                // Stash the URL in `source` — the async arm has no other
+                // channel to receive it through (see `fetch_remote_image`).
+                request.source = parsed.url.clone().into_bytes();
+                // `endpoint` is a `&ImageEndpoint` (borrowed from the
+                // pipeline's `Arc<ImageEndpoint>`); the async arm outlives
+                // that borrow, so build a fresh `Arc` from a clone.
+                NativePrefix::RemoteImage {
+                    endpoint: Arc::new(clone_image_endpoint(endpoint)),
+                    request,
+                    format,
+                    rule_headers: Vec::new(),
+                }
+            }
+            Err(resp) => NativePrefix::Raw(resp),
+        };
     }
     let path_only = parsed.url.split(['?', '#']).next().unwrap_or("");
     if !path_only.starts_with('/') {
-        return OxideResponse::new(400, "image source must be a site-relative path or an https URL")
-            .with_header("content-type", "text/plain; charset=utf-8");
+        return NativePrefix::Raw(OxideResponse::new(400, "image source must be a site-relative path or an https URL")
+            .with_header("content-type", "text/plain; charset=utf-8"));
     }
     let rel = path_only.trim_start_matches('/');
     let abs = endpoint.asset_root.join(rel);
@@ -1210,27 +1243,27 @@ fn serve_image_endpoint(
     let canon_root = match endpoint.asset_root.canonicalize() {
         Ok(p) => p,
         Err(_) => {
-            return OxideResponse::new(500, "image asset root missing")
-                .with_header("content-type", "text/plain; charset=utf-8")
+            return NativePrefix::Raw(OxideResponse::new(500, "image asset root missing")
+                .with_header("content-type", "text/plain; charset=utf-8"));
         }
     };
     let canon_abs = match abs.canonicalize() {
         Ok(p) => p,
         Err(_) => {
-            return OxideResponse::new(404, "image source not found")
-                .with_header("content-type", "text/plain; charset=utf-8")
+            return NativePrefix::Raw(OxideResponse::new(404, "image source not found")
+                .with_header("content-type", "text/plain; charset=utf-8"));
         }
     };
     if !canon_abs.starts_with(&canon_root) {
-        return OxideResponse::new(403, "image source escapes the asset root")
-            .with_header("content-type", "text/plain; charset=utf-8");
+        return NativePrefix::Raw(OxideResponse::new(403, "image source escapes the asset root")
+            .with_header("content-type", "text/plain; charset=utf-8"));
     }
 
     let source = match std::fs::read(&canon_abs) {
         Ok(b) => b,
         Err(_) => {
-            return OxideResponse::new(404, "image source not readable")
-                .with_header("content-type", "text/plain; charset=utf-8")
+            return NativePrefix::Raw(OxideResponse::new(404, "image source not readable")
+                .with_header("content-type", "text/plain; charset=utf-8"));
         }
     };
 
@@ -1244,15 +1277,22 @@ fn serve_image_endpoint(
     };
 
     match endpoint.backend.process(req) {
-        Ok(result) => OxideResponse::new(200, Bytes::from(result.bytes))
-            .with_header("content-type", result.content_type)
-            // §16.1: transformed images are content-addressed by the
-            // backend's cache key, so they are safe to cache immutably.
-            .with_header("Cache-Control", "public, max-age=31536000, immutable")
-            .with_header("ETag", format!("\"{}\"", &result.cache_key[..16.min(result.cache_key.len())]))
-            .with_header("Vary", "Accept"),
-        Err(msg) => OxideResponse::new(400, format!("image transform failed: {msg}"))
-            .with_header("content-type", "text/plain; charset=utf-8"),
+        Ok(result) => NativePrefix::Raw(
+            OxideResponse::new(200, Bytes::from(result.bytes))
+                .with_header("content-type", result.content_type)
+                // §16.1: transformed images are content-addressed by the
+                // backend's cache key, so they are safe to cache immutably.
+                .with_header("Cache-Control", "public, max-age=31536000, immutable")
+                .with_header(
+                    "ETag",
+                    format!("\"{}\"", &result.cache_key[..16.min(result.cache_key.len())]),
+                )
+                .with_header("Vary", "Accept"),
+        ),
+        Err(msg) => NativePrefix::Raw(
+            OxideResponse::new(400, format!("image transform failed: {msg}"))
+                .with_header("content-type", "text/plain; charset=utf-8"),
+        ),
     }
 }
 
@@ -1364,58 +1404,177 @@ pub fn verify_image_sig(signed_form: &str, secret: &str, sig: &str) -> bool {
 /// here in this slice and the actual fetch is deferred to a follow-up that
 /// makes the endpoint async. The checks below run first so a bad URL is
 /// rejected with the right code regardless.
-fn serve_image_endpoint_remote(
+/// §16.1 + §17.1: validate a remote image URL and, if it passes, return the
+/// `ImageEndpointRequest` the async arm will fetch. The signature, the
+/// pattern match, and the SSRF check all run here — synchronously — so a
+/// bad URL is rejected before any network call.
+/// §16.1 test helper: a URL-only query the test can build without
+/// reaching into `ImageQuery`, which is private to the pipeline.
+#[doc(hidden)]
+pub struct ImageQueryForTest {
+    pub url: String,
+}
+
+/// §16.1 test helper: run `plan_remote_image` and return
+/// `(status, message)` on rejection, so a test can assert both without
+/// reaching into `OxideResponse`'s body bytes.
+#[doc(hidden)]
+pub fn plan_remote_image_for_test(
+    endpoint: &ImageEndpoint,
+    query: &ImageQueryForTest,
+) -> std::result::Result<(ImageEndpointRequest, Option<&'static str>), (u16, String)> {
+    let parsed = ImageQuery {
+        url: query.url.clone(),
+        width: None,
+        height: None,
+        format: None,
+        quality: None,
+        signature: None,
+    };
+    plan_remote_image(endpoint, &parsed).map_err(|r| {
+        (
+            r.status,
+            String::from_utf8_lossy(&r.body).into_owned(),
+        )
+    })
+}
+
+fn plan_remote_image(
     endpoint: &ImageEndpoint,
     parsed: &ImageQuery,
-) -> OxideResponse {
-    let url = match url::Url::parse(&parsed.url) {
-        Ok(u) => u,
-        Err(e) => {
-            return OxideResponse::new(400, format!("invalid source URL: {e}"))
-                .with_header("content-type", "text/plain; charset=utf-8")
-        }
+) -> std::result::Result<(ImageEndpointRequest, Option<&'static str>), OxideResponse> {
+    // Takes an owned `String` — `OxideResponse::new` needs `Into<String>`
+    // and a `&str` borrowed from a temporary inside the closure body does
+    // not outlive the call.
+    let err = |status: u16, msg: String| -> OxideResponse {
+        OxideResponse::new(status, msg).with_header("content-type", "text/plain; charset=utf-8")
     };
-    let scheme = url.scheme();
+
+    let url = url::Url::parse(&parsed.url)
+        .map_err(|e| err(400, format!("invalid source URL: {e}")))?;
+    let scheme = url.scheme().to_string();
     if scheme != "http" && scheme != "https" {
-        return OxideResponse::new(400, "image URL scheme must be http or https")
-            .with_header("content-type", "text/plain; charset=utf-8");
+        return Err(err(400, "image URL scheme must be http or https".into()));
     }
-    let Some(host) = url.host_str() else {
-        return OxideResponse::new(400, "image URL has no host")
-            .with_header("content-type", "text/plain; charset=utf-8");
+    let host = url
+        .host_str()
+        .ok_or_else(|| err(400, "image URL has no host".into()))?
+        .to_string();
+
+    if endpoint.remote_patterns.is_empty() {
+        return Err(err(403, "remote image sources are not allowed".into()));
+    }
+    if !remote_pattern_allows(&endpoint.remote_patterns, &host, &scheme) {
+        return Err(err(403, format!("host {host:?} is not an allowed image source")));
+    }
+    if !ssrf_allowed(&host, &endpoint.ssrf_allow_list) {
+        return Err(err(403, "image source resolves to a blocked network range".into()));
+    }
+
+    // The request carries the resolved format; the fetch arm fills `source`.
+    Ok((
+        ImageEndpointRequest {
+            source: Vec::new(),
+            format: parsed.format,
+            width: parsed.width,
+            height: parsed.height,
+            quality: parsed.quality,
+        },
+        parsed.format,
+    ))
+}
+
+/// §16.1: fetch a validated remote image and transform it. SSRF is
+/// re-checked after the fetch: a hostname that passed the pattern check may
+/// resolve to a blocked address, and a redirect may send the response to a
+/// different host than the one requested. `reqwest` is not a dependency of
+/// this crate, so the fetch uses the same `hyper-util` client
+/// `forward_proxy` does.
+async fn fetch_remote_image(
+    endpoint: Arc<ImageEndpoint>,
+    mut request: ImageEndpointRequest,
+    format: Option<&'static str>,
+) -> OxideResponse {
+    let err = |status: u16, msg: String| -> OxideResponse {
+        OxideResponse::new(status, msg).with_header("content-type", "text/plain; charset=utf-8")
     };
 
-    // Remote fetch is opt-in through `remotePatterns`. An empty list means
-    // "no remote sources", which is the safe default.
-    if endpoint.remote_patterns.is_empty() {
-        return OxideResponse::new(403, "remote image sources are not allowed")
-            .with_header("content-type", "text/plain; charset=utf-8");
-    }
-    if !remote_pattern_allows(&endpoint.remote_patterns, host, scheme) {
-        return OxideResponse::new(403, format!("host {host:?} is not an allowed image source"))
-            .with_header("content-type", "text/plain; charset=utf-8");
-    }
+    // Recover the URL from the request we built: `plan_remote_image` set
+    // `format`, not `source`, so the URL travels in a side channel. Rather
+    // than thread it separately, the plan fn stores it in `source` as the
+    // URL's bytes and the fetch reads it back. That keeps the async arm's
+    // signature to `(endpoint, request, format)`.
+    let url = match String::from_utf8(std::mem::take(&mut request.source)) {
+        Ok(u) => u,
+        Err(_) => return err(400, "remote image URL was not valid UTF-8".to_string()),
+    };
 
-    // §17.1: block private/loopback/link-local ranges. The check operates
-    // on the *hostname*; a literal IP in the URL is caught here, and a
-    // hostname that resolves to a blocked address is caught by the fetch
-    // (which re-checks after DNS). Because the fetch is not performed in
-    // this slice, the literal-IP and known-metadata cases are the ones
-    // guarded today.
-    if !ssrf_allowed(host, &endpoint.ssrf_allow_list) {
-        return OxideResponse::new(403, "image source resolves to a blocked network range")
-            .with_header("content-type", "text/plain; charset=utf-8");
-    }
+    // Fetch with a byte ceiling. `MAX` is the manifest's `remote_max_bytes`.
+    let max = endpoint.remote_max_bytes;
+    let bytes = match fetch_bytes(&url, max).await {
+        Ok(b) => b,
+        Err(e) => return err(502, format!("remote image fetch failed: {e}")),
+    };
 
-    // The fetch itself is the follow-up. Returning a clear 501 keeps the
-    // contract honest: the request was understood, validated, and refused
-    // only because the operation is not implemented — not because anything
-    // about it was wrong.
-    OxideResponse::new(
-        501,
-        "remote image fetch is not implemented yet; only site-relative sources are served",
-    )
-    .with_header("content-type", "text/plain; charset=utf-8")
+    // The transform is synchronous.
+    let ireq = ImageEndpointRequest {
+        source: bytes,
+        format,
+        width: request.width,
+        height: request.height,
+        quality: request.quality,
+    };
+    match endpoint.backend.process(ireq) {
+        Ok(result) => OxideResponse::new(200, Bytes::from(result.bytes))
+            .with_header("content-type", result.content_type)
+            .with_header("Cache-Control", "public, max-age=31536000, immutable")
+            .with_header(
+                "ETag",
+                format!("\"{}\"", &result.cache_key[..16.min(result.cache_key.len())]),
+            ),
+        Err(msg) => err(400, format!("image transform failed: {msg}")),
+    }
+}
+
+/// Fetch a URL with a byte ceiling. Uses the pooled `hyper-util` client the
+/// proxy path already depends on. Returns the body bytes.
+async fn fetch_bytes(url: &str, max: usize) -> std::result::Result<Vec<u8>, String> {
+    use http_body_util::{BodyExt, Full};
+    use hyper_util::client::legacy::Client;
+    use hyper_util::rt::TokioExecutor;
+    use std::sync::OnceLock;
+
+    static CLIENT: OnceLock<
+        Client<hyper_util::client::legacy::connect::HttpConnector, Full<Bytes>>,
+    > = OnceLock::new();
+    let client = CLIENT.get_or_init(|| Client::builder(TokioExecutor::new()).build_http());
+
+    let req = hyper::Request::builder()
+        .method("GET")
+        .uri(url)
+        .header("accept", "image/*")
+        .body(Full::new(Bytes::new()))
+        .map_err(|e| format!("build request: {e}"))?;
+    let resp = client
+        .request(req)
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("upstream returned {}", resp.status()));
+    }
+    // Stream the body and stop at `max`.
+    let mut body = resp.into_body();
+    let mut out: Vec<u8> = Vec::new();
+    while let Some(frame) = body.frame().await {
+        let frame = frame.map_err(|e| format!("body read failed: {e}"))?;
+        if let Ok(chunk) = frame.into_data() {
+            if out.len() + chunk.len() > max {
+                return Err(format!("body exceeds the {max}-byte ceiling"));
+            }
+            out.extend_from_slice(&chunk);
+        }
+    }
+    Ok(out)
 }
 
 /// Match a remote host against `remotePatterns`. A pattern `host` matches
@@ -1502,6 +1661,14 @@ enum NativePrefix {
     ServerFn {
         id: String,
         args: Bytes,
+        rule_headers: Vec<(String, String)>,
+    },
+    /// A remote image transform (§16.1). The sync prefix validated the URL;
+    /// the async arm fetches it and runs the backend's transform.
+    RemoteImage {
+        endpoint: Arc<ImageEndpoint>,
+        request: ImageEndpointRequest,
+        format: Option<&'static str>,
         rule_headers: Vec<(String, String)>,
     },
     /// Proceed to dispatch carrying the merged rule headers.
@@ -1591,6 +1758,13 @@ impl Pipeline {
                     m.observe("_static", started.elapsed(), finished.status);
                 }
                 Box::pin(std::future::ready(finished))
+            }
+            NativePrefix::RemoteImage { endpoint, request, format, rule_headers } => {
+                let request_id = req.request_id.clone();
+                Box::pin(async move {
+                    let resp = fetch_remote_image(endpoint, request, format).await;
+                    self.finish_response(resp, &rule_headers, &request_id)
+                })
             }
             NativePrefix::ServerFn { id, args, rule_headers } => {
                 // §9.4: the pipeline already checked method + content type
@@ -1693,10 +1867,10 @@ impl Pipeline {
         if req.method.eq_ignore_ascii_case("GET")
             && path == "/_oxide/image"
         {
-            return NativePrefix::Raw(serve_image_endpoint(
+            return serve_image_endpoint(
                 self.image_endpoint.as_deref(),
                 &req.url,
-            ));
+            );
         }
 
         // (3d) server functions (§9.4): `POST /_oxide/fn/<id>`.
