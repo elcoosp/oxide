@@ -113,6 +113,54 @@ pub struct BundleOptions {
     /// diagnostic surfaces through the normal `BundleOutput::diagnostics`
     /// path.
     pub transform_hook: Option<TransformHook>,
+    /// §6.6: an optional CSS transform. The bundler does not depend on
+    /// `oxide-assets` (which pulls lightningcss + the image/font stack);
+    /// the CLI builds a closure over `LightningCssBackend` and hands it in.
+    /// `None` writes CSS verbatim (minified by the in-house `minify` when
+    /// `minify: true`).
+    pub css_transform: Option<CssTransformHook>,
+}
+
+/// §6.6: a CSS transform the CLI supplies. Called with
+/// `(path, source, is_module, minify)` and returns the transformed CSS plus
+/// any CSS-modules class-name map. Mirrors `TransformHook`; the newtype
+/// exists because `BundleOptions` derives `Debug`.
+#[derive(Clone)]
+pub struct CssTransformHook(
+    #[allow(clippy::type_complexity)]
+    pub std::sync::Arc<
+        dyn Fn(&str, &str, bool, bool) -> Result<(String, BTreeMap<String, String>)>
+            + Send
+            + Sync,
+    >,
+);
+
+impl CssTransformHook {
+    pub fn new<F>(f: F) -> Self
+    where
+        F: Fn(&str, &str, bool, bool) -> Result<(String, BTreeMap<String, String>)>
+            + Send
+            + Sync
+            + 'static,
+    {
+        Self(std::sync::Arc::new(f))
+    }
+
+    pub fn call(
+        &self,
+        path: &str,
+        source: &str,
+        is_module: bool,
+        minify: bool,
+    ) -> Result<(String, BTreeMap<String, String>)> {
+        (self.0)(path, source, is_module, minify)
+    }
+}
+
+impl std::fmt::Debug for CssTransformHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CssTransformHook(..)")
+    }
 }
 
 /// §15.1: a plugin-supplied transform, wrapped so it can live inside a
@@ -687,8 +735,25 @@ impl ChunkBundler {
             bodies.insert(b.file.clone(), body);
             // css files
             for (src_path, css_file) in &b.css_files {
-                let src = &by_path[src_path].source;
-                let css = if options.minify {
+                let m = &by_path[src_path];
+                let src = &m.source;
+                let is_module = src_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().contains(".module."))
+                    .unwrap_or(false);
+                let css = if let Some(hook) = &options.css_transform {
+                    let path = src_path.to_string_lossy();
+                    match hook.call(&path, src, is_module, options.minify) {
+                        Ok((code, _exports)) => code,
+                        Err(e) => {
+                            diagnostics.push(oxide_diagnostics::Diagnostic::error(
+                                e.0.code,
+                                format!("CSS transform failed for {path}: {}", e.0.message),
+                            ));
+                            src.clone()
+                        }
+                    }
+                } else if options.minify {
                     minify::minify(src)
                 } else {
                     src.clone()
