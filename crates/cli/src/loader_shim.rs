@@ -48,7 +48,40 @@ pub fn output_from_raw(raw: &Value) -> oxide_server::Result<LoaderOutput> {
         .get("data")
         .cloned()
         .unwrap_or_else(|| Value::Object(Default::default()));
-    Ok(LoaderOutput { status, location, data })
+    // §9.2 / §16.6: side effects the load produced. The worker returns
+    // `setCookies` as an array of raw `Set-Cookie` values (built from
+    // `event.cookies.set(...)`) and `headers` as an array of `[k, v]` pairs
+    // (from `event.setHeaders(...)`). Absent fields are an empty list, so an
+    // older worker response still parses.
+    let set_cookies = raw
+        .get("setCookies")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let headers = raw
+        .get("headers")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|pair| {
+                    let k = pair.get(0)?.as_str()?;
+                    let v = pair.get(1)?.as_str()?;
+                    Some((k.to_string(), v.to_string()))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok(LoaderOutput {
+        status,
+        location,
+        data,
+        set_cookies,
+        headers,
+    })
 }
 
 /// A `LoaderRunner` backed by the Node worker. Construct with
