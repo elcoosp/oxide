@@ -327,6 +327,7 @@ impl ScriptedLoader {
                 status,
                 location: None,
                 data: serde_json::json!({ "message": message }),
+                ..Default::default()
             })),
         }
     }
@@ -337,6 +338,7 @@ impl ScriptedLoader {
                 status,
                 location: Some(location.to_string()),
                 data: serde_json::json!({}),
+                ..Default::default()
             })),
         }
     }
