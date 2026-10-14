@@ -198,8 +198,32 @@ pub async fn build_framework_stack(
     // project config. `Node` (default) resolves npm from the workspace;
     // `V8` runs `deno_core` in-process and is the spec's long-term default
     // once `deno_node` module loading lands.
+    // §9.3 / §11: a Rust cache tier the worker reaches through the
+    // `op_request` protocol. Memory-only by default; a project that
+    // configures a disk root gets the L1 tier too.
+    let cache_tier: Arc<dyn oxide_cache::CacheHandler> = {
+        let t = oxide_cache::TieredCache::new(512 * 1024 * 1024);
+        // A disk root beside the config, when one is known. `with_disk`
+        // takes ownership and returns the cache on success; on failure the
+        // memory-only value is gone, so build a fresh one — a disk-tier
+        // failure is rare (a permissions or redb problem) and a memory-only
+        // fallback is the right degradation.
+        let disk = config_path
+            .and_then(|p| p.parent())
+            .map(|root| root.join(".oxide/cache/l1"))
+            .filter(|d| std::fs::create_dir_all(d).is_ok());
+        let with_disk = disk.and_then(|d| t.with_disk(d).ok());
+        match with_disk {
+            Some(c) => Arc::new(c),
+            None => Arc::new(oxide_cache::TieredCache::new(512 * 1024 * 1024)),
+        }
+    };
+
     let host: Arc<dyn JsHost> = match backend {
-        JsBackend::Node => Arc::new(NodeHost::new(NodeHost::worker_script_default())),
+        JsBackend::Node => Arc::new(
+            NodeHost::new(NodeHost::worker_script_default())
+                .with_cache_handler(Arc::clone(&cache_tier)),
+        ),
         JsBackend::V8 => Arc::new(V8Host),
     };
     let pool = match host.tooling_pool(PoolConfig::default()) {
