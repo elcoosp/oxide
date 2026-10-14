@@ -54,10 +54,10 @@ pub(crate) fn encode_with_preamble(root: &Value, shared: &[(u32, Value)]) -> Res
     // preamble: pre-resolved shared entries, written verbatim (their internal
     // containers occupy no slots; refs inside entries must target 0..n).
     for entry in &entries {
-        enc.write_value(entry, 1, false)?;
+        enc.write_tree(entry, 1, false)?;
     }
     // root: participates in slot numbering and dedup
-    enc.write_value(root, 1, true)?;
+    enc.write_tree(root, 1, true)?;
 
     if enc.out.len() > MAX_BYTES {
         return Err(err(
@@ -81,7 +81,58 @@ struct Encoder {
 }
 
 impl Encoder {
-    fn write_value(&mut self, v: &Value, depth: u32, register: bool) -> Result<()> {
+    /// Write one value tree iteratively over an explicit frame stack (§17.1):
+    /// a hostile `MAX_DEPTH`-deep value must fail with `ODF-DEPTH`, not by
+    /// overflowing the host thread's stack before the guard can fire.
+    ///
+    /// `register` selects slot numbering + dedup (root subtrees) versus a
+    /// verbatim write (preamble entries, whose containers occupy no slots).
+    /// The flag applies to the whole subtree, exactly as the former
+    /// recursion threaded it through every level.
+    fn write_tree(&mut self, root: &Value, depth: u32, register: bool) -> Result<()> {
+        // Seed: leaves write flat; containers emit their header and push.
+        if !self.visit(root, depth, register)? {
+            return Ok(());
+        }
+        let mut stack: Vec<EFrame<'_>> = Vec::new();
+        self.push_frame(&mut stack, root, depth, register)?;
+        while stack.last().is_some() {
+            let next = stack.last_mut().expect("just checked").advance();
+            let Some((child, key)) = next else {
+                let done = stack.pop().expect("just checked");
+                if let Some(slot) = done.slot_to_close {
+                    // The slot stays registered; only the "in progress"
+                    // flag is cleared. Index by `slot`, not `last_mut()`:
+                    // nested containers registered while writing the
+                    // subtree keep their own flags untouched.
+                    self.active[slot] = false;
+                }
+                continue;
+            };
+            if let Some(k) = key {
+                if !crate::wire::valid_object_key(k) {
+                    return Err(err(
+                        "ODF-KEY",
+                        format!(
+                            "reserved object key `{k}` (§17.1: use a Map for data-level keys)"
+                        ),
+                    ));
+                }
+                write_varu(&mut self.out, k.len() as u32);
+                self.out.extend_from_slice(k.as_bytes());
+            }
+            let child_depth = stack.last().map(|f| f.depth + 1).unwrap_or(1);
+            if self.visit(child, child_depth, register)? {
+                self.push_frame(&mut stack, child, child_depth, register)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Emit one value's tag (and, for containers, its header): leaves and
+    /// dedup-matched containers finish immediately (`Ok(false)`); a new
+    /// inline container needs a frame (`Ok(true)`).
+    fn visit(&mut self, v: &Value, depth: u32, register: bool) -> Result<bool> {
         if depth > MAX_DEPTH {
             return Err(err(
                 "ODF-DEPTH",
@@ -91,23 +142,33 @@ impl Encoder {
         match v {
             Value::Array(_) | Value::Object(_) | Value::Map(_) | Value::Set(_) => {
                 if register {
-                    return self.write_shared_container(v, depth);
+                    if let Some(wrote_ref) = self.dedup_or_register(v)? {
+                        debug_assert!(wrote_ref);
+                        return Ok(false);
+                    }
                 }
-                self.write_container_header(v, depth, register)
+                self.write_header(v)?;
+                Ok(true)
             }
-            other => self.write_leaf(other),
+            other => {
+                self.write_leaf(other)?;
+                Ok(false)
+            }
         }
     }
 
-    /// Dedup scan + slot registration, then an inline write.
-    fn write_shared_container(&mut self, v: &Value, depth: u32) -> Result<()> {
+    /// Dedup scan + slot registration for one container. Returns `Ok(Some)`
+    /// when a `Ref(slot)` was written (nothing more to do), `Ok(None)` when
+    /// the container was registered inline and still needs its header.
+    fn dedup_or_register(&mut self, v: &Value) -> Result<Option<bool>> {
         let start = self.table.len().saturating_sub(DEDUP_WINDOW);
         for slot in (start..self.table.len()).rev() {
             if self.active[slot] {
                 continue; // never alias an in-progress ancestor
             }
             if crate::bitexact_eq(&self.table[slot], v) {
-                return self.write_ref(slot as u32);
+                self.write_ref(slot as u32)?;
+                return Ok(Some(true));
             }
         }
         if self.table.len() >= MAX_REFS as usize {
@@ -116,60 +177,51 @@ impl Encoder {
                 format!("more than {MAX_REFS} shared slots would be registered"),
             ));
         }
-        let slot = self.table.len();
+        // Register inline: the slot index is `table.len()`, recovered by
+        // `push_frame` when the frame is created (nothing mutates the
+        // table between registration and the push: only header bytes are
+        // emitted in between).
         self.table.push(v.clone());
         self.active.push(true);
-        let r = self.write_container_header(v, depth, true);
-        // the slot stays registered; only the "in progress" flag is cleared.
-        // Index by `slot`, not `last_mut()`: nested containers registered while
-        // writing the subtree must keep their own flags untouched.
-        self.active[slot] = false;
-        r
+        Ok(None)
     }
 
-    /// Write the tag + count + children of a container value.
-    fn write_container_header(&mut self, v: &Value, depth: u32, register: bool) -> Result<()> {
+    /// Push the frame for a freshly headered container.
+    fn push_frame<'a>(
+        &self,
+        stack: &mut Vec<EFrame<'a>>,
+        v: &'a Value,
+        depth: u32,
+        register: bool,
+    ) -> Result<()> {
+        // `register` trees number this container as the latest slot (the
+        // dedup step just pushed it); preamble trees occupy no slots.
+        let slot_to_close = if register { Some(self.table.len() - 1) } else { None };
+        stack.push(EFrame::for_value(v, depth, slot_to_close));
+        Ok(())
+    }
+
+    /// Write a container's tag + entry count. Children follow from the
+    /// frame driver; keys are emitted per child by `write_tree`.
+    fn write_header(&mut self, v: &Value) -> Result<()> {
         match v {
             Value::Array(items) => {
                 self.out.push(tags::ARRAY);
                 write_varu(&mut self.out, items.len() as u32);
-                for item in items {
-                    self.write_value(item, depth + 1, register)?;
-                }
             }
             Value::Set(items) => {
                 self.out.push(tags::SET);
                 write_varu(&mut self.out, items.len() as u32);
-                for item in items {
-                    self.write_value(item, depth + 1, register)?;
-                }
             }
             Value::Object(map) => {
                 self.out.push(tags::OBJECT);
                 write_varu(&mut self.out, map.len() as u32);
-                for (k, val) in map {
-                    if !crate::wire::valid_object_key(k) {
-                        return Err(err(
-                            "ODF-KEY",
-                            format!(
-                                "reserved object key `{k}` (§17.1: use a Map for data-level keys)"
-                            ),
-                        ));
-                    }
-                    write_varu(&mut self.out, k.len() as u32);
-                    self.out.extend_from_slice(k.as_bytes());
-                    self.write_value(val, depth + 1, register)?;
-                }
             }
             Value::Map(pairs) => {
                 self.out.push(tags::MAP);
                 write_varu(&mut self.out, pairs.len() as u32);
-                for (k, val) in pairs {
-                    self.write_value(k, depth + 1, register)?;
-                    self.write_value(val, depth + 1, register)?;
-                }
             }
-            other => unreachable!("write_container_header called on {other:?}"),
+            other => unreachable!("write_header called on {other:?}"),
         }
         Ok(())
     }
@@ -289,5 +341,72 @@ impl Encoder {
             }
         }
         Ok(())
+    }
+}
+
+/// One container under construction on the explicit work stack.
+/// Map pairs count as two children (key, then value); object keys are bare
+/// strings emitted alongside their value child.
+struct EFrame<'a> {
+    depth: u32,
+    /// Active-table slot to deactivate when this frame completes (`None`
+    /// for preamble subtrees, which occupy no slots).
+    slot_to_close: Option<usize>,
+    kind: EKind<'a>,
+}
+
+enum EKind<'a> {
+    Array { items: &'a [Value], idx: usize },
+    Set { items: &'a [Value], idx: usize },
+    Object { entries: Vec<(&'a str, &'a Value)>, idx: usize },
+    Map { pairs: &'a [(Value, Value)], idx: usize },
+}
+
+impl<'a> EFrame<'a> {
+    fn for_value(v: &'a Value, depth: u32, slot_to_close: Option<usize>) -> Self {
+        let kind = match v {
+            Value::Array(items) => EKind::Array { items, idx: 0 },
+            Value::Set(items) => EKind::Set { items, idx: 0 },
+            Value::Object(map) => EKind::Object {
+                entries: map.iter().map(|(k, val)| (k.as_str(), val)).collect(),
+                idx: 0,
+            },
+            Value::Map(pairs) => EKind::Map { pairs, idx: 0 },
+            other => unreachable!("frame built for {other:?}"),
+        };
+        EFrame { depth, slot_to_close, kind }
+    }
+
+    /// Next child to visit plus, for objects, the key bytes to emit first.
+    /// Returns `None` when the frame is exhausted.
+    fn advance(&mut self) -> Option<(&'a Value, Option<&'a str>)> {
+        match &mut self.kind {
+            EKind::Array { items, idx } | EKind::Set { items, idx } => {
+                let i = *idx;
+                if i >= items.len() {
+                    return None;
+                }
+                *idx = i + 1;
+                Some((&items[i], None))
+            }
+            EKind::Object { entries, idx } => {
+                let i = *idx;
+                if i >= entries.len() {
+                    return None;
+                }
+                *idx = i + 1;
+                let (k, v) = entries[i];
+                Some((v, Some(k)))
+            }
+            EKind::Map { pairs, idx } => {
+                let i = *idx;
+                if i >= pairs.len() * 2 {
+                    return None;
+                }
+                *idx = i + 1;
+                let (k, v) = &pairs[i / 2];
+                Some((if i % 2 == 0 { k } else { v }, None))
+            }
+        }
     }
 }
