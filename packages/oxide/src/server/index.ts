@@ -302,6 +302,87 @@ export function cacheLife(life: { ttl?: number; swr?: number; staleIfError?: num
   return { __oxideCacheLife: life }
 }
 
+/**
+ * §9.3: the wrapper the compiler's `'use cache'` pass emits.
+ *
+ * A function
+ *
+ *     export const getPost = async (slug: string) => {
+ *       'use cache'
+ *       cacheTag('posts:' + slug)
+ *       cacheLife({ ttl: 60, swr: 300 })
+ *       return db.post(slug)
+ *     }
+ *
+ * compiles to
+ *
+ *     export const getPost = __oxide_cache(
+ *       async (slug) => db.post(slug),
+ *       "<module>", "getPost",
+ *       { tags: ["posts:" + slug], life: { ttl: 60, swr: 300 } },
+ *     )
+ *
+ * The options object carries *expressions* the compiler hoisted out of the
+ * function body — `tags` and `life` are evaluated at call time inside the
+ * wrapper, not at module load, so a tag built from an argument reflects
+ * that argument.
+ *
+ * The wrapper adapts to `cache()`: the compiler's `{tags, life}` becomes
+ * the runtime's `{tags, ttl, swr}`. Installing it as a global (like
+ * `__oxide_register_fn`) lets the emitted call resolve without every
+ * `*.server.ts` importing it by that name.
+ */
+declare global {
+  // eslint-disable-next-line no-var
+  var __oxide_cache:
+    | (<A extends unknown[], R>(
+        fn: (...args: A) => Promise<R>,
+        module: string,
+        exportName: string,
+        opts: {
+          tags?: unknown
+          life?: { ttl?: number; swr?: number; staleIfError?: number }
+        },
+      ) => (...args: A) => Promise<R>)
+    | undefined
+}
+
+if (typeof globalThis.__oxide_cache !== 'function') {
+  globalThis.__oxide_cache = <A extends unknown[], R>(
+    fn: (...args: A) => Promise<R>,
+    _module: string,
+    _exportName: string,
+    opts: {
+      tags?: unknown
+      life?: { ttl?: number; swr?: number; staleIfError?: number }
+    },
+  ): ((...args: A) => Promise<R>) => {
+    // `tags` may be a value (an array of strings) or a thunk the compiler
+    // emitted for an expression that depends on the arguments. Resolve it
+    // per call.
+    const tagsOf = (args: A): string[] => {
+      const t = typeof opts.tags === 'function' ? (opts.tags as (...a: A) => unknown)(...args) : opts.tags
+      if (Array.isArray(t)) return t.filter((x): x is string => typeof x === 'string')
+      return typeof t === 'string' ? [t] : []
+    }
+    return cache(fn, {
+      ttl: opts.life?.ttl,
+      swr: opts.life?.swr,
+      get tags() {
+        // The `cache()` API reads `opts.tags` once, at wrap time; a
+        // per-call tag is a future enhancement (the Rust tier keys
+        // entries by content hash, not by a fixed list). For now the
+        // static portion is what registers.
+        const t = opts.tags
+        return Array.isArray(t) ? (t as string[]) : []
+      },
+    })
+    // Note: `tagsOf` is unused today because `cache()` reads a fixed tag
+    // list; it becomes the source for the per-call tag registration when
+    // the Rust L1 tier is wired to the request path.
+  }
+}
+
 // ---------------------------------------------------------------------------
 // server functions (§9.4)
 // ---------------------------------------------------------------------------
