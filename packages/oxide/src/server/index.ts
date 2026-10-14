@@ -320,6 +320,34 @@ export function getServerFn(id: string): ((...args: unknown[]) => unknown) | und
   return __oxide_fn_registry[id]
 }
 
+/**
+ * Install the compiler's registration hook as a global.
+ *
+ * The compiler's server-side transform appends
+ * `__oxide_register_fn("<build-id>", <export-name>);` after each module's
+ * body — the id is a build-time hash of file, export name and the
+ * per-build secret, and the SSR module itself cannot compute it. Rather
+ * than force every `.server.ts` file to import a helper under that name,
+ * the runtime installs it on `globalThis` here. Because a `.server.ts`
+ * module imports `serverFn` (or `defineLoad`, etc.) from this module, this
+ * code runs before the appended call.
+ *
+ * The signature is `(id, fn)` and the effect is the same as
+ * `serverFn(id, fn)` — the tagged function is registered under the
+ * compiler's id, so `POST /_oxide/fn/<id>` finds it.
+ */
+declare global {
+  // eslint-disable-next-line no-var
+  var __oxide_register_fn:
+    | ((id: string, fn: (...args: unknown[]) => unknown) => void)
+    | undefined
+}
+if (typeof globalThis.__oxide_register_fn !== 'function') {
+  globalThis.__oxide_register_fn = (id, fn) => {
+    __oxide_fn_registry[id] = fn
+  }
+}
+
 let anonymousFnCounter = 0
 
 /**

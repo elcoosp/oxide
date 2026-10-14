@@ -37,7 +37,7 @@ pub mod framework_renderer;
 pub mod loader_host;
 pub use framework_host::{FrameworkDescriptor, FrameworkHost};
 pub use framework_renderer::{FrameworkHostRenderer, FrameworkRenderInput, FrameworkRenderer, RenderStream};
-pub use loader_host::LoaderHost;
+pub use loader_host::{LoaderHost, ServerFnError, ServerFnHost};
 pub use tooling_pool::{ModuleCall, ToolingModules};
 
 pub type Result<T> = std::result::Result<T, OxideError>;

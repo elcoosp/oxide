@@ -236,3 +236,94 @@ mod tests {
         assert!(err.0.message.contains("missing `params` array"));
     }
 }
+
+
+/// §9.4: the host for `server-fn:run`. A server function is registered at
+/// module-evaluation time under a build-computed id; `run` sends the id,
+/// the arguments, and the SSR adapter entry the worker needs to populate
+/// its registry, and returns the encoded result.
+///
+/// The `entry_path` is passed on every call rather than stored, because a
+/// project may run more than one SSR entry (unusual, but supported) and
+/// keeping it per-call means the host stays a thin wrapper.
+pub struct ServerFnHost {
+    pool: Arc<dyn Pool>,
+}
+
+impl ServerFnHost {
+    pub fn new(pool: Arc<dyn Pool>) -> Self {
+        Self { pool }
+    }
+
+    /// Run the server function named `fn_id`. `args_json` is the raw JSON
+    /// array the client sent (or an empty slice for no arguments);
+    /// `entry_path` is the absolute path to the SSR adapter entry
+    /// (`dist/server/ssr/index.js`) whose import graph registers every
+    /// `serverFn` in the project.
+    ///
+    /// Returns the resolved value as JSON. A function that threw, an
+    /// unknown id, and a missing registry all surface as `JSH-FN*` errors
+    /// so the pipeline can build the right envelope.
+    pub async fn run(
+        &self,
+        fn_id: &str,
+        args_json: &[u8],
+        entry_path: &str,
+    ) -> Result<Value> {
+        let args_str = std::str::from_utf8(args_json).unwrap_or("[]");
+        let payload = serde_json::json!({
+            "fn_id": fn_id,
+            "args_json": args_str,
+            "entry_path": entry_path,
+        });
+        let call_input = CallInput {
+            payload,
+            headers: Default::default(),
+            has_body: false,
+            request_id: format!("server-fn:run:{fn_id}"),
+        };
+        let entry = EntryRef {
+            kind: "server-fn:run".into(),
+            module: entry_path.to_string(),
+            export: fn_id.to_string(),
+        };
+        let mut stream = self.pool.call(entry, call_input).await?;
+        let bytes = stream.collect().await?;
+        let v: Value = serde_json::from_slice(&bytes).map_err(|e| {
+            crate::err("JSH-FN", format!("server-fn:run returned invalid JSON: {e}"))
+        })?;
+        if let Some(err_msg) = v.get("__oxide_error").and_then(|x| x.as_str()) {
+            return Err(crate::err("JSH-FN", err_msg.to_string()));
+        }
+        Ok(v)
+    }
+}
+
+/// The coded failure a `server-fn:run` call can carry. The worker
+/// distinguishes "id not registered" from "the function threw" from a
+/// transport failure, and the pipeline maps each to a different HTTP
+/// response — so the host surfaces the code, not just the message.
+#[derive(Debug, Clone)]
+pub struct ServerFnError {
+    pub code: String,
+    pub message: String,
+}
+
+impl ServerFnHost {
+    /// Like `run`, but returns the coded error instead of an opaque
+    /// `OxideError`. The pipeline uses this form so a `JSH-FN-NOT-FOUND`
+    /// becomes a 404 with an `FN-NOT-FOUND` envelope rather than a 500.
+    pub async fn run_coded(
+        &self,
+        fn_id: &str,
+        args_json: &[u8],
+        entry_path: &str,
+    ) -> std::result::Result<Value, ServerFnError> {
+        self.run(fn_id, args_json, entry_path)
+            .await
+            .map_err(|e| ServerFnError {
+                code: e.0.code.to_string(),
+                message: e.0.message.to_string(),
+            })
+    }
+}

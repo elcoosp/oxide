@@ -2214,6 +2214,81 @@ fn build_image_endpoint(
     }))
 }
 
+/// §9.4: the `ServerFnDispatcher` impl backed by the render worker.
+///
+/// Wraps `oxide_jshost::ServerFnHost`, which forwards `(id, args)` to the
+/// worker's `server-fn:run` op. `entry_path` is the SSR adapter entry
+/// (`dist/server/ssr/index.js`) — the worker imports it once to populate
+/// the `__oxide_fn_registry` global that the compiler's `__oxide_register_fn`
+/// lines fill in.
+///
+/// The pipeline's `NativePrefix::ServerFn` arm calls this; the JSON body
+/// the function returns becomes the `{ok, data}` envelope's `data`.
+struct ServerFnDispatcherImpl {
+    host: oxide_jshost::ServerFnHost,
+    entry_path: String,
+}
+
+#[async_trait::async_trait]
+impl oxide_server::ServerFnDispatcher for ServerFnDispatcherImpl {
+    async fn dispatch(
+        &self,
+        id: &str,
+        args_json: &[u8],
+    ) -> std::result::Result<Vec<u8>, oxide_server::DispatchError> {
+        match self
+            .host
+            .run_coded(id, args_json, &self.entry_path)
+            .await
+        {
+            Ok(v) => serde_json::to_vec(&v).map_err(|e| {
+                oxide_server::DispatchError::internal(format!("serialize fn result: {e}"))
+            }),
+            Err(e) => {
+                // The worker's JSH-FN-NOT-FOUND maps to a 404 envelope; a
+                // function that threw maps to a 400 with the message; any
+                // other failure is a 500.
+                let err = match e.code.as_str() {
+                    "JSH-FN-NOT-FOUND" => oxide_server::DispatchError {
+                        status: 404,
+                        code: "FN-NOT-FOUND".into(),
+                        message: e.message,
+                    },
+                    "JSH-FN-THREW" => oxide_server::DispatchError {
+                        status: 400,
+                        code: "FN-THREW".into(),
+                        message: e.message,
+                    },
+                    _ => oxide_server::DispatchError::internal(e.message),
+                };
+                Err(err)
+            }
+        }
+    }
+}
+
+/// Build the dispatcher when a pool and an SSR entry are both present.
+/// Otherwise `None`, and the pipeline answers every `/_oxide/fn/*` request
+/// with a clean `FN-NO-DISPATCHER` 404.
+fn build_server_fn_dispatcher(
+    rootp: &Path,
+    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
+) -> Option<std::sync::Arc<dyn oxide_server::ServerFnDispatcher>> {
+    let pool = pool?;
+    // The SSR entry is written by `oxide build`; in dev without a prior
+    // build there is none, which is correct — the dev render path uses
+    // the source graph, not the emitted bundle.
+    let entry = rootp.join("dist/server/ssr/index.js");
+    if !entry.is_file() {
+        return None;
+    }
+    let entry_path = entry.to_string_lossy().to_string();
+    Some(std::sync::Arc::new(ServerFnDispatcherImpl {
+        host: oxide_jshost::ServerFnHost::new(std::sync::Arc::clone(pool)),
+        entry_path,
+    }))
+}
+
 fn load_client_assets(rootp: &Path) -> Option<oxide_server::StaticAssets> {
     let dist = rootp.join("dist");
     if !dist.is_dir() {
@@ -2252,10 +2327,12 @@ async fn start_server_inner_full(
 
     let assets = load_client_assets(&rootp);
     let image_endpoint = build_image_endpoint(&rootp, &cfg);
+    let server_fns = build_server_fn_dispatcher(&rootp, stack.pool.as_ref());
     let pipeline = std::sync::Arc::new(oxide_server::Pipeline {
         rules,
         assets,
         image_endpoint,
+        server_fns,
         limits: oxide_server::Limits::default(),
         security: oxide_server::SecuritySettings {
             csp: cfg.security.csp.clone(),

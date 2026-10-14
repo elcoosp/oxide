@@ -65,6 +65,8 @@ const callOk = (id, value) =>
 
 // Cache required modules across calls (CJS path).
 const modCache = new Map();
+// Server-fn graph imports, keyed by (entry path, module generation).
+const serverFnGraphCache = new Map();
 function loadModule(name) {
   if (!modCache.has(name)) {
     try {
@@ -437,6 +439,100 @@ async function dispatchFrameworkInvalidate(id, _input) {
 // as strings. Used by `oxide build` to enumerate static paths for a route
 // whose generateParams cannot be evaluated statically (e.g. it reads
 // `process.env` or builds an array programmatically).
+// ---------------------------------------------------------------------------
+// §9.4 server functions.
+//
+// A `serverFn(...)` export in a `.server.ts` module is registered at
+// import time under a build-computed id (`__oxide_register_fn("<id>", fn)`,
+// which the runtime installs on `globalThis`). A client call POSTs to
+// `/_oxide/fn/<id>`; the CLI's dispatcher forwards (id, args) here, and
+// this op imports the modules that own the registry, looks the id up, runs
+// it, and returns the encoded result.
+//
+// Registry ownership: the ids are compiled into the SSR chunks. Rather
+// than track which module registered what, the op imports the SSR adapter
+// entry once (`ssr/index.js`), which imports every route module, which
+// imports its `.server.ts` sidecar — so every `serverFn` in the project
+// has run its registration by the time the entry finishes importing. The
+// import is cached; subsequent calls reuse it.
+//
+// This mirrors how the render path is set up: the whole graph is one
+// import graph rooted at `ssr/index.js`.
+
+// import_once is a Map<abs-path, Promise<module>>; the versioned() tag
+// bumps on HMR invalidation, matching the rest of the worker.
+async function loadServerFnGraph(entryPath) {
+  const key = `fn-graph:${entryPath}:gen${moduleGeneration}`;
+  if (!serverFnGraphCache.has(key)) {
+    const p = (async () => {
+      await import(versioned(pathToFileURL(entryPath).href));
+      return true;
+    })();
+    serverFnGraphCache.set(key, p);
+  }
+  return serverFnGraphCache.get(key);
+}
+
+async function dispatchServerFn(id, input) {
+  const { fn_id, args_json, entry_path } = input.payload ?? {};
+  if (typeof fn_id !== "string" || fn_id.length === 0) {
+    callErr(id, "JSH-FN", "server-fn requires a `fn_id` string");
+    return;
+  }
+  if (typeof entry_path !== "string" || entry_path.length === 0) {
+    callErr(id, "JSH-FN", "server-fn requires an `entry_path` string (the SSR adapter entry)");
+    return;
+  }
+
+  try {
+    await loadServerFnGraph(entry_path);
+  } catch (e) {
+    callErr(id, "JSH-FN", `failed to import the SSR entry: ${e?.message ?? e}`);
+    return;
+  }
+
+  const registry = globalThis.__oxide_fn_registry;
+  if (!registry || typeof registry !== "object") {
+    callErr(
+      id,
+      "JSH-FN",
+      "no server-fn registry: the SSR entry did not import `oxide/server`",
+    );
+    return;
+  }
+  const fn = registry[fn_id];
+  if (typeof fn !== "function") {
+    // Not an error at the op level — the HTTP layer turns this into a
+    // 404 envelope. Signal "not found" distinctly from "ran and threw".
+    callErr(id, "JSH-FN-NOT-FOUND", `no server function registered under id ${fn_id}`);
+    return;
+  }
+
+  // Arguments arrive as a JSON array. The wire format is JSON for now;
+  // ODF is a drop-in replacement for both directions once the browser
+  // decoder ships.
+  let args;
+  try {
+    args = args_json ? JSON.parse(args_json) : [];
+  } catch (e) {
+    callErr(id, "JSH-FN", `arguments are not valid JSON: ${e?.message ?? e}`);
+    return;
+  }
+  if (!Array.isArray(args)) {
+    callErr(id, "JSH-FN", "arguments must be a JSON array");
+    return;
+  }
+
+  try {
+    const value = await fn(...args);
+    callOk(id, { value });
+  } catch (e) {
+    // A function that throws is not a transport failure — report the
+    // message so the HTTP layer can build an error envelope.
+    callErr(id, "JSH-FN-THREW", e?.message ?? String(e));
+  }
+}
+
 async function dispatchGenerateParamsRun(id, input) {
   const { module_path } = input.payload ?? {};
   if (typeof module_path !== "string" || module_path.length === 0) {
@@ -507,6 +603,7 @@ async function handleCall(msg) {
   if (entry.kind === "loader:run") { await dispatchLoaderRun(id, input); return; }
   if (entry.kind === "framework:invalidate") { await dispatchFrameworkInvalidate(id, input); return; }
   if (entry.kind === "generate-params:run") { await dispatchGenerateParamsRun(id, input); return; }
+  if (entry.kind === "server-fn:run") { await dispatchServerFn(id, input); return; }
   if (entry.kind === "die") process.exit(1);
   if (entry.kind === "sleep") {
     await new Promise((r) => setTimeout(r, Number(input.payload?.ms ?? 100)));
