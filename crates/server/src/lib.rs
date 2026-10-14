@@ -13,6 +13,8 @@ pub mod page_renderer;
 pub mod loader;
 pub use page_renderer::{PageRenderInput, PageRenderer, RenderStream};
 pub use loader::{LoaderOutput, LoaderRunInput, LoaderRunner};
+pub mod session;
+pub use session::{Session, SessionCodec};
 pub mod trace_context;
 
 use bytes::Bytes;
