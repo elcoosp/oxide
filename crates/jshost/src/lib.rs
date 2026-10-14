@@ -1013,6 +1013,10 @@ struct Worker {
     pid: Mutex<Option<u32>>,
     /// Serializes recycle/respawn replacement on this worker.
     recycle_lock: tokio::sync::Mutex<()>,
+    /// §9.3: the Rust cache tier a `cache_get` / `cache_set` / `cache_tag`
+    /// request from user code dispatches to. `None` means the runtime's
+    /// in-process Map is the only cache.
+    cache: Option<Arc<dyn oxide_cache::CacheHandler>>,
 }
 
 /// Spawn `node <worker_script>` with piped stdio; returns (child, stdin, stdout).
@@ -1066,6 +1070,11 @@ pub struct NodePool {
     /// Per-call wall time (ms) for queue-wait percentiles, capped at 1000 samples.
     queue_waits: Mutex<VecDeque<f64>>,
     draining: AtomicBool,
+    /// §11.2 / §9.3: the Rust tier a worker reaches through the
+    /// `op_request` protocol. When `Some`, a `cache_get` / `cache_set` /
+    /// `cache_tag` request from user code is dispatched here; when `None`,
+    /// the runtime's in-process `Map` is the only cache.
+    cache_handler: Option<Arc<dyn oxide_cache::CacheHandler>>,
 }
 
 /// Response timeout per call (§4.3 watchdog).
@@ -1103,6 +1112,7 @@ impl NodePool {
             counters,
             queue_waits: Mutex::new(VecDeque::new()),
             draining: AtomicBool::new(false),
+            cache_handler: None,
         }))
     }
 
@@ -1145,6 +1155,7 @@ impl NodePool {
             dead: AtomicBool::new(false),
             pid: Mutex::new(None),
             recycle_lock: tokio::sync::Mutex::new(()),
+            cache: None,
         });
         let reader = spawn_reader(stdout, Arc::clone(&worker), counters);
         *worker.reader_handle.lock().unwrap() = Some(reader);
@@ -1472,6 +1483,96 @@ fn stream_sender(
     Some(tx)
 }
 
+/// §4.5: run a worker-originated op against the host. Only the three cache
+/// ops are implemented — a `fetch` / `stream_write` / `ws_*` request from a
+/// worker answers with an "unimplemented" error, which the runtime sees as
+/// an op failure and can fall back on.
+async fn op_dispatch(
+    cache: Option<&dyn oxide_cache::CacheHandler>,
+    op: Op,
+    args: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    match op {
+        Op::CacheGet => {
+            let Some(cache) = cache else {
+                // No handler: answer `null`, which the runtime reads as a
+                // miss and covers with its in-process Map.
+                return Ok(serde_json::Value::Null);
+            };
+            let Some(key) = args.get("key").and_then(|v| v.as_str()) else {
+                return Err(err("JSH-OP", "cache_get requires a string `key`"));
+            };
+            match cache.get(key).await? {
+                Some(entry) => Ok(serde_json::json!({
+                    "body": entry.body,
+                    "status": entry.status,
+                    "headers": entry.headers,
+                    "tags": entry.tags,
+                    "storedAt": entry.stored_at,
+                    "etag": entry.etag,
+                })),
+                None => Ok(serde_json::Value::Null),
+            }
+        }
+        Op::CacheSet => {
+            let Some(cache) = cache else {
+                return Ok(serde_json::json!({ "stored": false }));
+            };
+            let Some(key) = args.get("key").and_then(|v| v.as_str()) else {
+                return Err(err("JSH-OP", "cache_set requires a string `key`"));
+            };
+            let Some(body) = args.get("body") else {
+                return Err(err("JSH-OP", "cache_set requires a `body` field"));
+            };
+            // `body` is a JSON value; serialize it to bytes.
+            let bytes = serde_json::to_vec(body).map_err(|e| {
+                err("JSH-OP", format!("cache_set body is not serializable: {e}"))
+            })?;
+            let tags: Vec<String> = args
+                .get("tags")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                .unwrap_or_default();
+            let ttl_secs = args.get("ttl").and_then(|v| v.as_u64()).unwrap_or(0);
+            let swr_secs = args.get("swr").and_then(|v| v.as_u64());
+            let entry = oxide_cache::Entry {
+                body: bytes,
+                status: 200,
+                headers: Vec::new(),
+                tags,
+                policy: oxide_cache::Policy {
+                    ttl: std::time::Duration::from_secs(ttl_secs),
+                    swr: swr_secs.map(std::time::Duration::from_secs),
+                    stale_if_error: None,
+                    soft_tags: true,
+                },
+                stored_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0),
+                etag: String::new(),
+            };
+            cache.set(key, entry).await?;
+            Ok(serde_json::json!({ "stored": true }))
+        }
+        Op::CacheTag => {
+            let Some(cache) = cache else {
+                return Ok(serde_json::json!({ "invalidated": 0 }));
+            };
+            let Some(tag) = args.get("tag").and_then(|v| v.as_str()) else {
+                return Err(err("JSH-OP", "cache_tag requires a string `tag`"));
+            };
+            let soft = args.get("soft").and_then(|v| v.as_bool()).unwrap_or(true);
+            let n = cache.invalidate_tag(tag, soft).await?;
+            Ok(serde_json::json!({ "invalidated": n }))
+        }
+        _ => Err(err(
+            "JSH-OP",
+            format!("worker op `{}` is not implemented on this host", op_name(op)),
+        )),
+    }
+}
+
 fn handle_worker_msg(
     msg: WorkerMsg,
     worker: &Arc<Worker>,
@@ -1526,12 +1627,34 @@ fn handle_worker_msg(
             streams.remove(&id);
             resolve(worker, id, Err(OxideError(diagnostic)));
         }
-        // Host→worker directions (Call; OpRequest/OpResponse per §4.5) and pongs
-        // are not produced by workers on this channel; ignore defensively.
-        WorkerMsg::Call { .. }
-        | WorkerMsg::OpRequest { .. }
-        | WorkerMsg::OpResponse { .. }
-        | WorkerMsg::Pong { .. } => {}
+        // §4.5 / §9.3: a `cache_get` / `cache_set` / `cache_tag` request
+        // from user code. The reader owns stdout; the response goes back on
+        // the worker's stdin. Dispatch to the handler and write an
+        // `op_response`. When no handler is configured, answer `null` so
+        // the runtime's in-process fallback runs.
+        WorkerMsg::OpRequest { id, op, args } => {
+            let cache = worker.cache.clone();
+            let worker = Arc::clone(worker);
+            tokio::spawn(async move {
+                let (ok, data) = match op_dispatch(cache.as_deref(), op, &args).await {
+                    Ok(v) => (true, v),
+                    Err(e) => (
+                        false,
+                        serde_json::json!({ "code": e.0.code, "message": e.0.message }),
+                    ),
+                };
+                let reply = WorkerMsg::OpResponse { id, ok, data };
+                if let Ok(bytes) = frame(&reply) {
+                    let mut stdin = worker.stdin.lock().await;
+                    use tokio::io::AsyncWriteExt as _;
+                    let _ = stdin.write_all(&bytes).await;
+                    let _ = stdin.flush().await;
+                }
+            });
+        }
+        // Host→worker directions (Call; OpResponse per §4.5) and pongs are
+        // not produced by workers on this channel; ignore defensively.
+        WorkerMsg::Call { .. } | WorkerMsg::OpResponse { .. } | WorkerMsg::Pong { .. } => {}
     }
 }
 
