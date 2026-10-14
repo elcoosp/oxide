@@ -308,3 +308,99 @@ async fn server_fn_without_dispatcher_is_404() {
     let body: serde_json::Value = serde_json::from_slice(&resp.body).expect("json body");
     assert_eq!(body["code"], "FN-NO-DISPATCHER");
 }
+
+// ---------------------------------------------------------------------------
+// §16.1: remote image source validation (the sync half of the endpoint).
+//
+// `plan_remote_image` parses the URL, checks the pattern list, and runs the
+// SSRF check — all before any network call. The fetch itself is not tested
+// here (it would need a live server); these pin the rejections.
+// ---------------------------------------------------------------------------
+
+use oxide_server::{
+    plan_remote_image_for_test, ImageEndpoint, ImageEndpointBackend,
+    ImageEndpointRequest, ImageEndpointResult, ImageQueryForTest,
+};
+
+/// A backend that never runs — the plan fn does not touch it.
+struct NoopBackend;
+impl ImageEndpointBackend for NoopBackend {
+    fn process(
+        &self,
+        _req: ImageEndpointRequest,
+    ) -> Result<ImageEndpointResult, String> {
+        Err("noop".into())
+    }
+}
+
+fn endpoint_with(patterns: Vec<RemoteImagePattern>) -> ImageEndpoint {
+    ImageEndpoint {
+        backend: Arc::new(NoopBackend),
+        asset_root: std::path::PathBuf::from("/tmp"),
+        signing_secret: None,
+        remote_patterns: patterns,
+        ssrf_allow_list: Vec::new(),
+        remote_max_bytes: 1024,
+    }
+}
+
+fn query(url: &str) -> ImageQueryForTest {
+    ImageQueryForTest { url: url.to_string() }
+}
+
+
+#[test]
+fn plan_rejects_a_host_not_in_remote_patterns() {
+    let e = endpoint_with(vec![pat("cdn.example.com")]);
+    let r = plan_remote_image_for_test(&e, &query("https://evil.example.com/a.png"));
+    assert!(r.is_err(), "an unlisted host must be rejected");
+    let (status, msg) = r.unwrap_err();
+    assert_eq!(status, 403);
+    assert!(msg.contains("not an allowed image source"), "{msg}");
+}
+
+#[test]
+fn plan_rejects_an_empty_pattern_list() {
+    // The safe default: no patterns means no remote sources.
+    let e = endpoint_with(vec![]);
+    let r = plan_remote_image_for_test(&e, &query("https://cdn.example.com/a.png"));
+    assert_eq!(r.unwrap_err().0, 403);
+}
+
+#[test]
+fn plan_rejects_a_loopback_literal() {
+    // §17.1: a literal loopback address is blocked even if the host
+    // matched a pattern — the SSRF check runs after the pattern check.
+    let e = endpoint_with(vec![pat("127.0.0.1"), pat("localhost")]);
+    assert_eq!(
+        plan_remote_image_for_test(&e, &query("http://127.0.0.1/a.png"))
+            .unwrap_err()
+            .0,
+        403
+    );
+    assert_eq!(
+        plan_remote_image_for_test(&e, &query("http://localhost/a.png"))
+            .unwrap_err()
+            .0,
+        403
+    );
+}
+
+#[test]
+fn plan_rejects_a_non_http_scheme() {
+    let e = endpoint_with(vec![pat("cdn.example.com")]);
+    let (status, msg) =
+        plan_remote_image_for_test(&e, &query("file:///etc/passwd")).unwrap_err();
+    assert_eq!(status, 400);
+    assert!(msg.contains("scheme"), "{msg}");
+}
+
+#[test]
+fn plan_accepts_an_allowed_https_source() {
+    let e = endpoint_with(vec![pat("cdn.example.com")]);
+    let (req, _format) =
+        plan_remote_image_for_test(&e, &query("https://cdn.example.com/a.png")).unwrap();
+    // `source` is empty at this point — the async arm fills it after the
+    // fetch.
+    assert!(req.source.is_empty());
+}
