@@ -52,13 +52,15 @@ async fn wait_in_flight(pool: &dyn Pool, n: u64) {
     panic!("in_flight never reached {n}");
 }
 
-/// Poll until worker `idx` has reported its `Ready{pid}` greeting (bounded 500ms).
+/// Poll until worker `idx` has reported its `Ready{pid}` greeting.
+/// Generous budget (10 s): spawning `node` under full-workspace parallel
+/// load can take a while; success returns on the first greeting.
 async fn wait_ready(pool: &NodePool, idx: usize) -> Option<u32> {
-    for _ in 0..100 {
+    for _ in 0..200 {
         if let Some(pid) = pool.worker_pids()[idx] {
             return Some(pid);
         }
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
     None
 }
@@ -566,12 +568,13 @@ async fn v8_pool_recycles_warm() {
         let _ = s.collect().await.unwrap();
     }
 
-    // Give the spawned replacement task a moment to complete.
-    for _ in 0..50 {
+    // Give the spawned replacement task a moment to complete (generous
+    // budget for parallel load; success returns on the first observation).
+    for _ in 0..200 {
         if pool.stats().recycles >= 1 {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
     let st = pool.stats();
     assert!(
