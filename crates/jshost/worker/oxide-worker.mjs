@@ -63,6 +63,48 @@ const callErr = (id, code, message) => out({ t: "call_err", id, diagnostic: diag
 const callOk = (id, value) =>
   out({ t: "call_ok", id, chunks: [b64(Buffer.from(JSON.stringify(value), "utf8"))], complete: true });
 
+// ---------------------------------------------------------------------------
+// §4.5 / §9.3: worker-originated ops.
+//
+// The runtime (user code) reaches the host through `__oxide_op_request`. It
+// sends an `op_request` frame and awaits the matching `op_response` on
+// stdin. Only the three cache ops are handled by the host today; any other
+// op answers an error the caller can fall back on.
+//
+// The map is keyed by a monotonic id. A response arriving for an id with no
+// pending entry is a late reply to a call whose timeout already fired —
+// dropped, not an error.
+const pendingOps = new Map();
+let nextOpId = 1;
+
+function oxideOpRequest(op, args) {
+  return new Promise((resolve, reject) => {
+    const id = nextOpId++;
+    pendingOps.set(id, { resolve, reject });
+    out({ t: "op_request", id, op: opNumber(op), args: args ?? {} });
+  });
+}
+
+// The wire op is a number (`Op` is `#[repr(u16)]` on the Rust side).
+function opNumber(name) {
+  switch (name) {
+    case "stream_write": return 1;
+    case "response_head": return 2;
+    case "request_body_read": return 3;
+    case "serialize": return 4;
+    case "cache_get": return 5;
+    case "cache_set": return 6;
+    case "cache_tag": return 7;
+    case "fetch": return 8;
+    case "ws_send": return 9;
+    case "log": return 10;
+    case "trace": return 11;
+    default: return 0;
+  }
+}
+
+globalThis.__oxide_op_request = oxideOpRequest;
+
 // Cache required modules across calls (CJS path).
 const modCache = new Map();
 // Server-fn graph imports, keyed by (entry path, module generation).
@@ -638,6 +680,22 @@ process.stdin.on("data", (chunk) => {
     if (buf.length < 4 + len) return;
     const msg = JSON.parse(buf.subarray(4, 4 + len).toString("utf8"));
     buf = buf.subarray(4 + len);
+    if (msg.t === "op_response") {
+      // §4.5: a reply to an op the worker sent. Resolve the pending
+      // promise; a late reply (its id already removed) is dropped.
+      const p = pendingOps.get(msg.id);
+      if (p) {
+        pendingOps.delete(msg.id);
+        if (msg.ok) {
+          p.resolve(msg.data);
+        } else {
+          const e = new Error(msg.data?.message ?? "host op failed");
+          e.code = msg.data?.code ?? "JSH-OP";
+          p.reject(e);
+        }
+      }
+      continue;
+    }
     if (msg.t !== "call") continue;
     Promise.resolve(handleCall(msg)).catch((e) =>
       callErr(msg.id, "JSH-WORKER-ERR", String(e?.message ?? e)),
