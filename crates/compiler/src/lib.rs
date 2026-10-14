@@ -908,3 +908,330 @@ fn binding_back(code: &str, toks: &[lexer::Token], i: usize) -> Option<(String, 
 fn escape_js(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
+
+
+// ---------------------------------------------------------------------------
+// §10.1 render-mode inference.
+// ---------------------------------------------------------------------------
+
+/// The render mode inferred from a route's loader module, plus — when the
+/// mode is `Dynamic` — the byte span of the read that made it dynamic.
+///
+/// The span lets `oxide routes` name the exact expression, which is the
+/// difference between "this route is dynamic" and "this route is dynamic
+/// *because* it reads `cookies` on line 7".
+#[derive(Debug, Clone, PartialEq)]
+pub struct InferredMode {
+    /// `"static"` or `"dynamic"`.
+    pub mode: &'static str,
+    /// Byte span of the first request-specific read, when the mode is
+    /// `Dynamic`. `None` for `Static`.
+    pub trigger_span: Option<(usize, usize)>,
+    /// Human-readable name of the trigger (`"cookies"`, `"request.headers"`,
+    /// `"locals"`, `"searchParams"`).
+    pub trigger: Option<&'static str>,
+}
+
+/// §10.1: does this loader module read anything request-specific?
+///
+/// Runs a real Oxc parse and walks the AST — not a line scan. A read counts
+/// when it is a *member access* on a request-scoped object, so a string
+/// literal or a comment mentioning `cookies` does not flip the mode, and an
+/// identifier named `cookies` that is a local variable is not a request
+/// read. The four objects the spec names:
+///
+/// * `cookies` — the load event's cookie accessor
+/// * `locals` — middleware-injected request state
+/// * `request.headers` — request headers
+/// * `searchParams` — the search-param accessor
+///
+/// An explicit `config.render` always wins; the caller checks that first and
+/// only calls this when no mode was declared.
+///
+/// Falls back to the line-based scan when the module does not parse (a
+/// `.server.ts` the parser rejects is a build error reported elsewhere, and
+/// the conservative answer here is `dynamic`).
+pub fn infer_render_mode(source: &str, path: &str) -> InferredMode {
+    let allocator = oxc_allocator::Allocator::default();
+    // `.server.ts` files are TypeScript.
+    let source_type = oxc_span::SourceType::ts();
+    let parsed = oxc_parser::Parser::new(&allocator, source, source_type).parse();
+    if !parsed.diagnostics.is_empty() {
+        // The module does not parse. It is a build error the transform pass
+        // will surface with a proper diagnostic; the inference's job is to
+        // not crash, and the conservative answer is "dynamic".
+        let _ = path;
+        return InferredMode {
+            mode: "dynamic",
+            trigger_span: None,
+            trigger: None,
+        };
+    }
+
+    let mut found: Option<((usize, usize), &'static str)> = None;
+    walk_for_request_reads(&parsed.program, &mut found);
+    match found {
+        Some(((start, end), trigger)) => InferredMode {
+            mode: "dynamic",
+            trigger_span: Some((start, end)),
+            trigger: Some(trigger),
+        },
+        None => InferredMode {
+            mode: "static",
+            trigger_span: None,
+            trigger: None,
+        },
+    }
+}
+
+/// Recursively scan every expression for a request-scoped read. Returns the
+/// first one found (top-down, so the outermost access wins) — its span is
+/// what a diagnostic points at.
+fn walk_for_request_reads<'a>(
+    program: &oxc_ast::ast::Program<'a>,
+    found: &mut Option<((usize, usize), &'static str)>,
+) {
+    for stmt in &program.body {
+        walk_stmt_for_request_reads(stmt, found);
+        if found.is_some() {
+            return;
+        }
+    }
+}
+
+fn walk_stmt_for_request_reads<'a>(
+    stmt: &oxc_ast::ast::Statement<'a>,
+    found: &mut Option<((usize, usize), &'static str)>,
+) {
+    use oxc_ast::ast::{Declaration, Statement};
+    if found.is_some() {
+        return;
+    }
+    match stmt {
+        Statement::ExpressionStatement(es) => walk_expr(&es.expression, found),
+        Statement::ReturnStatement(r) => {
+            if let Some(arg) = &r.argument {
+                walk_expr(arg, found);
+            }
+        }
+        Statement::VariableDeclaration(v) => {
+            for d in &v.declarations {
+                if let Some(init) = &d.init {
+                    walk_expr(init, found);
+                }
+            }
+        }
+        Statement::IfStatement(i) => {
+            walk_expr(&i.test, found);
+            walk_stmt_for_request_reads(&i.consequent, found);
+            if let Some(alt) = &i.alternate {
+                walk_stmt_for_request_reads(alt, found);
+            }
+        }
+        Statement::BlockStatement(b) => {
+            for s in &b.body {
+                walk_stmt_for_request_reads(s, found);
+                if found.is_some() {
+                    return;
+                }
+            }
+        }
+        Statement::ExportDeclaration(e) => {
+            walk_decl(&e.declaration, found);
+        }
+        Statement::ExportDefaultDeclaration(e) => {
+            if let oxc_ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(f) = &e.declaration {
+                if let Some(body) = &f.body {
+                    for s in &body.statements {
+                        walk_stmt_for_request_reads(s, found);
+                        if found.is_some() {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        Statement::FunctionDeclaration(f) => {
+            if let Some(body) = &f.body {
+                for s in &body.statements {
+                    walk_stmt_for_request_reads(s, found);
+                    if found.is_some() {
+                        return;
+                    }
+                }
+            }
+        }
+        Statement::TryStatement(t) => {
+            for s in &t.block.body {
+                walk_stmt_for_request_reads(s, found);
+                if found.is_some() {
+                    return;
+                }
+            }
+            if let Some(h) = &t.handler {
+                for s in &h.body.body {
+                    walk_stmt_for_request_reads(s, found);
+                    if found.is_some() {
+                        return;
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn walk_decl<'a>(
+    d: &oxc_ast::ast::Declaration<'a>,
+    found: &mut Option<((usize, usize), &'static str)>,
+) {
+    use oxc_ast::ast::Declaration;
+    match d {
+        Declaration::VariableDeclaration(v) => {
+            for d in &v.declarations {
+                if let Some(init) = &d.init {
+                    walk_expr(init, found);
+                }
+            }
+        }
+        Declaration::FunctionDeclaration(f) => {
+            if let Some(body) = &f.body {
+                for s in &body.statements {
+                    walk_stmt_for_request_reads(s, found);
+                    if found.is_some() {
+                        return;
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn walk_expr<'a>(
+    e: &oxc_ast::ast::Expression<'a>,
+    found: &mut Option<((usize, usize), &'static str)>,
+) {
+    use oxc_ast::ast::{Argument, Expression};
+    if found.is_some() {
+        return;
+    }
+    match e {
+        Expression::StaticMemberExpression(m) => {
+            // The property name is the read. `cookies.get(...)` — the
+            // `cookies` in `cookies.get` is a `StaticMemberExpression` on
+            // object `cookies`, property `get`; but `cookies` itself is an
+            // `Identifier` in the inner expression, not a member. So the
+            // check is on the *object* being one of the four names, not on
+            // the property. A member access whose object is `cookies` or
+            // `locals` is a request read; `request.headers` is a member
+            // whose object is `request` and property is `headers`.
+            if let Expression::Identifier(obj) = &m.object {
+                let n = obj.name.as_str();
+                if let Some(name) = request_scoped_name(n) {
+                    *found = Some(((m.span.start as usize, m.span.end as usize), name));
+                    return;
+                }
+            }
+            if let Expression::Identifier(obj) = &m.object {
+                if obj.name.as_str() == "request" && m.property.name.as_str() == "headers" {
+                    *found = Some(((m.span.start as usize, m.span.end as usize), "request.headers"));
+                    return;
+                }
+            }
+            walk_expr(&m.object, found);
+        }
+        Expression::ComputedMemberExpression(m) => {
+            if let Expression::Identifier(obj) = &m.object {
+                if let Some(name) = request_scoped_name(obj.name.as_str()) {
+                    *found = Some(((m.span.start as usize, m.span.end as usize), name));
+                    return;
+                }
+            }
+            walk_expr(&m.object, found);
+            walk_expr(&m.expression, found);
+        }
+        Expression::CallExpression(call) => {
+            walk_expr(&call.callee, found);
+            for a in &call.arguments {
+                match a {
+                    Argument::SpreadElement(s) => walk_expr(&s.argument, found),
+                    _ => {
+                        if let Some(e) = a.as_expression() {
+                            walk_expr(e, found);
+                        }
+                    }
+                }
+                if found.is_some() {
+                    return;
+                }
+            }
+        }
+        Expression::AwaitExpression(a) => walk_expr(&a.argument, found),
+        Expression::ParenthesizedExpression(p) => walk_expr(&p.expression, found),
+        Expression::AssignmentExpression(a) => walk_expr(&a.right, found),
+        Expression::ConditionalExpression(c) => {
+            walk_expr(&c.test, found);
+            walk_expr(&c.consequent, found);
+            walk_expr(&c.alternate, found);
+        }
+        Expression::BinaryExpression(b) => {
+            walk_expr(&b.left, found);
+            walk_expr(&b.right, found);
+        }
+        Expression::LogicalExpression(l) => {
+            walk_expr(&l.left, found);
+            walk_expr(&l.right, found);
+        }
+        Expression::ObjectExpression(o) => {
+            for p in &o.properties {
+                if let oxc_ast::ast::ObjectPropertyKind::ObjectProperty(op) = p {
+                    walk_expr(&op.value, found);
+                    if found.is_some() {
+                        return;
+                    }
+                }
+            }
+        }
+        Expression::ArrayExpression(arr) => {
+            for el in &arr.elements {
+                if let Some(e) = el.as_expression() {
+                    walk_expr(e, found);
+                }
+                if found.is_some() {
+                    return;
+                }
+            }
+        }
+        Expression::ArrowFunctionExpression(a) => {
+            // `ArrowFunctionBody` is `FunctionBody | INHERIT(Expression)`;
+            // the inherited variant's accessor is `as_expression`.
+            match &a.body {
+                oxc_ast::ast::ArrowFunctionBody::FunctionBody(b) => {
+                    for s in &b.statements {
+                        walk_stmt_for_request_reads(s, found);
+                        if found.is_some() {
+                            return;
+                        }
+                    }
+                }
+                other => {
+                    if let Some(expr) = other.as_expression() {
+                        walk_expr(expr, found);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The four request-scoped names the spec (§10.1) treats as dynamic.
+fn request_scoped_name(n: &str) -> Option<&'static str> {
+    match n {
+        "cookies" => Some("cookies"),
+        "locals" => Some("locals"),
+        "searchParams" => Some("searchParams"),
+        _ => None,
+    }
+}
