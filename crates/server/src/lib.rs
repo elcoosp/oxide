@@ -1267,6 +1267,114 @@ impl Pipeline {
     }
 }
 
+/// Splice `tag` into a chunked HTML body stream immediately before the first
+/// `</body>` (matched across chunk boundaries via a small rolling buffer).
+///
+/// Used by the framework pipeline to inject the island boot script into a
+/// live SSR response. The transform is generic — any tag, any close marker —
+/// because it's just a byte-stream rewrite and there's no reason to special-
+/// case HTML here.
+///
+/// Buffer bound: the rolling tail keeps at most `close.len() - 1` bytes
+/// between iterations, so a large response does not accumulate in memory.
+/// If the stream ends without a matching `close`, the tag is appended at the
+/// end (the shell is malformed HTML at that point anyway; the boot script
+/// still has to load).
+pub fn inject_before_close(
+    src: BodyStream,
+    close: &[u8],
+    tag: &[u8],
+) -> BodyStream {
+    use bytes::Bytes;
+    use futures::StreamExt as _;
+
+    if close.is_empty() {
+        // No anchor: pass through unchanged. A caller passing an empty
+        // needle is a bug, but returning the source unmodified is safer
+        // than panicking.
+        return src;
+    }
+
+    let close_owned: Vec<u8> = close.to_vec();
+    let tag_owned: Vec<u8> = tag.to_vec();
+    let (tx, mut rx) =
+        tokio::sync::mpsc::channel::<std::result::Result<Bytes, std::io::Error>>(8);
+
+    tokio::spawn(async move {
+        let close = close_owned;
+        let tag = tag_owned;
+        let mut tail: Vec<u8> = Vec::new();
+        let mut injected = false;
+        let mut src = src;
+
+        while let Some(item) = src.next().await {
+            let chunk = match item {
+                Ok(b) => b,
+                Err(e) => {
+                    let _ = tx.send(Err(e)).await;
+                    return;
+                }
+            };
+            if injected {
+                if tx.send(Ok(chunk)).await.is_err() {
+                    return;
+                }
+                continue;
+            }
+
+            let mut buf: Vec<u8> = std::mem::take(&mut tail);
+            buf.extend_from_slice(&chunk);
+
+            if let Some(idx) = find_subslice(&buf, &close) {
+                let before = Bytes::from(buf[..idx].to_vec());
+                let after = Bytes::from(buf[idx..].to_vec());
+                if tx.send(Ok(before)).await.is_err() {
+                    return;
+                }
+                if tx.send(Ok(Bytes::from(tag.clone()))).await.is_err() {
+                    return;
+                }
+                if !after.is_empty() && tx.send(Ok(after)).await.is_err() {
+                    return;
+                }
+                injected = true;
+                continue;
+            }
+
+            let keep = close.len() - 1;
+            if buf.len() > keep {
+                let flush_len = buf.len() - keep;
+                let flush = Bytes::from(buf[..flush_len].to_vec());
+                if tx.send(Ok(flush)).await.is_err() {
+                    return;
+                }
+                tail = buf[flush_len..].to_vec();
+            } else {
+                tail = buf;
+            }
+        }
+
+        if !injected {
+            if !tail.is_empty() {
+                let _ = tx.send(Ok(Bytes::from(tail))).await;
+            }
+            let _ = tx.send(Ok(Bytes::from(tag))).await;
+        }
+    });
+
+    Box::pin(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)))
+}
+
+/// First index of `needle` in `haystack`. Naive window scan; the needles we
+/// search for here are tiny (`</body>` is 7 bytes) so any preprocessing would
+/// cost more than it saves.
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
 /// Convert between hyper and Oxide request/response (streaming bodies preserved via BoxBody).
 pub fn to_hyper_response(
     resp: OxideResponse,

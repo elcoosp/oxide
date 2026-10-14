@@ -1576,101 +1576,7 @@ fn render_stream_to_body_stream(
 /// split across chunk boundaries by keeping a rolling tail of the last
 /// `CLOSE.len() - 1` bytes and scanning for the tag on each new chunk.
 ///
-/// The transform emits everything up to and including `</body>` unchanged,
-/// then the boot tag, then the rest. Once the tag has been emitted, the
-/// remaining stream is passed through byte-for-byte.
-fn inject_boot_script_streaming(
-    src: oxide_server::BodyStream,
-    boot_url: &str,
-) -> oxide_server::BodyStream {
-    use bytes::Bytes;
-    use futures::StreamExt as _;
 
-    const CLOSE: &[u8] = b"</body>";
-    let tag: Vec<u8> = format!(r#"<script type="module" src="/{boot_url}"></script>"#).into_bytes();
-    let boot_url_owned = boot_url.to_string();
-
-    let (tx, mut rx) =
-        tokio::sync::mpsc::channel::<std::result::Result<Bytes, std::io::Error>>(8);
-    tokio::spawn(async move {
-        let _ = boot_url_owned; // move it in for the closure's lifetime
-        let mut pending: Vec<u8> = Vec::new();
-        let mut injected = false;
-        let mut src = src;
-        while let Some(item) = src.next().await {
-            let chunk = match item {
-                Ok(b) => b,
-                Err(e) => {
-                    let _ = tx.send(Err(e)).await;
-                    return;
-                }
-            };
-            if injected {
-                if tx.send(Ok(chunk)).await.is_err() {
-                    return;
-                }
-                continue;
-            }
-            // Scan the buffer + new chunk for `</body>`.
-            pending.extend_from_slice(&chunk);
-            let mut emit_from = 0usize;
-            let mut found_at: Option<usize> = None;
-            // Only scan the tail — everything before `pending.len() - CLOSE.len()`
-            // was already scanned on a previous iteration.
-            let scan_start = pending
-                .len()
-                .saturating_sub(chunk.len() + CLOSE.len().saturating_sub(1));
-            let mut i = scan_start;
-            while i + CLOSE.len() <= pending.len() {
-                if &pending[i..i + CLOSE.len()] == CLOSE {
-                    found_at = Some(i + CLOSE.len());
-                    break;
-                }
-                i += 1;
-            }
-            if let Some(pos) = found_at {
-                // Emit up to and including `</body>`, then the tag.
-                let head = Bytes::from(pending[..pos].to_vec());
-                let tail = pending[pos..].to_vec();
-                if tx.send(Ok(head)).await.is_err() {
-                    return;
-                }
-                if tx.send(Ok(Bytes::from(tag.clone()))).await.is_err() {
-                    return;
-                }
-                if !tail.is_empty() && tx.send(Ok(Bytes::from(tail))).await.is_err() {
-                    return;
-                }
-                pending.clear();
-                injected = true;
-                continue;
-            }
-            // No match yet: emit everything except the last CLOSE.len()-1
-            // bytes (they could be the start of a tag spanning the next chunk).
-            let keep = CLOSE.len() - 1;
-            if pending.len() > keep {
-                let flush_len = pending.len() - keep;
-                let flush = Bytes::from(pending[..flush_len].to_vec());
-                pending.drain(..flush_len);
-                if tx.send(Ok(flush)).await.is_err() {
-                    return;
-                }
-            }
-            let _ = emit_from;
-            emit_from = 0;
-        }
-        // Stream ended without a closing body: flush whatever we held and
-        // append the tag so the boot script still loads.
-        if !injected {
-            if !pending.is_empty() {
-                let _ = tx.send(Ok(Bytes::from(pending))).await;
-            }
-            let _ = tx.send(Ok(Bytes::from(tag))).await;
-        }
-        // tx drops here, closing the stream cleanly.
-    });
-    Box::pin(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)))
-}
 
 #[allow(clippy::too_many_arguments)]
 fn build_dispatch(
@@ -1869,13 +1775,22 @@ fn build_dispatch(
                             // transport's Send + Sync body stream. If the
                             // project registered islands, splice the boot
                             // script tag right before `</body>` — the sliding
-                            // window in `inject_boot_script_streaming` buffers
+                            // window in `oxide_server::inject_before_close` buffers
                             // at most `len("</body>") - 1` bytes so a tag
                             // split across chunks still lands in the right
                             // place and every other chunk flushes untouched.
                             let bridged = render_stream_to_body_stream(render_stream);
                             let body = match boot_script_url_for_render.as_deref() {
-                                Some(url) => inject_boot_script_streaming(bridged, url),
+                                Some(url) => {
+                                    let tag = format!(
+                                        r#"<script type="module" src="/{url}"></script>"#,
+                                    );
+                                    oxide_server::inject_before_close(
+                                        bridged,
+                                        b"</body>",
+                                        tag.as_bytes(),
+                                    )
+                                }
                                 None => bridged,
                             };
                             oxide_server::OxideResponse::stream(200, body)
