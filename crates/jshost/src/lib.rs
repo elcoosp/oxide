@@ -1015,8 +1015,10 @@ struct Worker {
     recycle_lock: tokio::sync::Mutex<()>,
     /// §9.3: the Rust cache tier a `cache_get` / `cache_set` / `cache_tag`
     /// request from user code dispatches to. `None` means the runtime's
-    /// in-process Map is the only cache.
-    cache: Option<Arc<dyn oxide_cache::CacheHandler>>,
+    /// in-process Map is the only cache. A `Mutex` because the pool builds
+    /// workers before the caller attaches a handler; the read happens once
+    /// per op request, not on the hot path.
+    cache: Mutex<Option<Arc<dyn oxide_cache::CacheHandler>>>,
 }
 
 /// Spawn `node <worker_script>` with piped stdio; returns (child, stdin, stdout).
@@ -1070,11 +1072,22 @@ pub struct NodePool {
     /// Per-call wall time (ms) for queue-wait percentiles, capped at 1000 samples.
     queue_waits: Mutex<VecDeque<f64>>,
     draining: AtomicBool,
-    /// §11.2 / §9.3: the Rust tier a worker reaches through the
-    /// `op_request` protocol. When `Some`, a `cache_get` / `cache_set` /
-    /// `cache_tag` request from user code is dispatched here; when `None`,
-    /// the runtime's in-process `Map` is the only cache.
-    cache_handler: Option<Arc<dyn oxide_cache::CacheHandler>>,
+}
+
+impl NodePool {
+    /// §9.3: attach the Rust cache tier. Also propagates to workers spawned
+    /// later by `replace_worker`, so a recycled worker keeps the handler.
+    pub fn with_cache_handler(
+        self: &Arc<Self>,
+        handler: Arc<dyn oxide_cache::CacheHandler>,
+    ) {
+        for w in &self.workers {
+            *w.cache.lock().unwrap() = Some(Arc::clone(&handler));
+        }
+        // `replace_worker` swaps a worker's *pipes*, not the `Worker`
+        // struct, so the handler on each worker survives a recycle without
+        // any extra bookkeeping.
+    }
 }
 
 /// Response timeout per call (§4.3 watchdog).
@@ -1112,7 +1125,6 @@ impl NodePool {
             counters,
             queue_waits: Mutex::new(VecDeque::new()),
             draining: AtomicBool::new(false),
-            cache_handler: None,
         }))
     }
 
@@ -1155,7 +1167,7 @@ impl NodePool {
             dead: AtomicBool::new(false),
             pid: Mutex::new(None),
             recycle_lock: tokio::sync::Mutex::new(()),
-            cache: None,
+            cache: Mutex::new(None),
         });
         let reader = spawn_reader(stdout, Arc::clone(&worker), counters);
         *worker.reader_handle.lock().unwrap() = Some(reader);
@@ -1362,6 +1374,9 @@ pub struct NodeHost {
     pub node_bin: String,
     pub worker_script: std::path::PathBuf,
     pub request_counter: AtomicU64,
+    /// §9.3: the Rust cache tier a worker's `op_request` frames dispatch to.
+    /// `None` means the runtime's in-process Map is the only cache.
+    pub cache_handler: Option<Arc<dyn oxide_cache::CacheHandler>>,
 }
 
 impl NodeHost {
@@ -1370,7 +1385,18 @@ impl NodeHost {
             node_bin: "node".into(),
             worker_script: worker_script.into(),
             request_counter: AtomicU64::new(0),
+            cache_handler: None,
         }
+    }
+
+    /// §9.3: attach a cache tier. Workers spawned by this host dispatch
+    /// `cache_get` / `cache_set` / `cache_tag` to it.
+    pub fn with_cache_handler(
+        mut self,
+        handler: Arc<dyn oxide_cache::CacheHandler>,
+    ) -> Self {
+        self.cache_handler = Some(handler);
+        self
     }
     /// Locate the bundled worker script relative to this crate.
     pub fn worker_script_default() -> std::path::PathBuf {
@@ -1380,10 +1406,18 @@ impl NodeHost {
 
 impl JsHost for NodeHost {
     fn render_pool(&self, cfg: PoolConfig) -> Result<Arc<dyn Pool>> {
-        NodePool::spawn(&self.node_bin, self.worker_script.clone(), cfg).map(|p| p as Arc<dyn Pool>)
+        let p = NodePool::spawn(&self.node_bin, self.worker_script.clone(), cfg)?;
+        if let Some(h) = &self.cache_handler {
+            p.with_cache_handler(Arc::clone(h));
+        }
+        Ok(p as Arc<dyn Pool>)
     }
     fn tooling_pool(&self, cfg: PoolConfig) -> Result<Arc<dyn Pool>> {
-        NodePool::spawn(&self.node_bin, self.worker_script.clone(), cfg).map(|p| p as Arc<dyn Pool>)
+        let p = NodePool::spawn(&self.node_bin, self.worker_script.clone(), cfg)?;
+        if let Some(h) = &self.cache_handler {
+            p.with_cache_handler(Arc::clone(h));
+        }
+        Ok(p as Arc<dyn Pool>)
     }
     fn backend_name(&self) -> &'static str {
         "node"
@@ -1633,7 +1667,7 @@ fn handle_worker_msg(
         // `op_response`. When no handler is configured, answer `null` so
         // the runtime's in-process fallback runs.
         WorkerMsg::OpRequest { id, op, args } => {
-            let cache = worker.cache.clone();
+            let cache = worker.cache.lock().unwrap().clone();
             let worker = Arc::clone(worker);
             tokio::spawn(async move {
                 let (ok, data) = match op_dispatch(cache.as_deref(), op, &args).await {
