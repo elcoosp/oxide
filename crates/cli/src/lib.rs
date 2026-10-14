@@ -2499,7 +2499,11 @@ async fn cmd_serve(
 async fn cmd_routes(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = PathBuf::from(root);
     let cfg = load_config_or_default(&rootp, "development");
-    let tree = scan_routes(&rootp, &cfg)?;
+    // §10.1: same AST refinement `cmd_build` uses, so the table shows the
+    // authoritative mode rather than the scanner's line-oriented guess.
+    // (Without it, a loader with `'…cookies…'` in a string literal reads
+    // as dynamic here while the build treats it as static.)
+    let tree = refine_render_modes_from_ast(&rootp, &cfg, scan_routes(&rootp, &cfg)?);
     tree.typegen(&rootp)
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
     // Join render modes from the machine-readable manifest typegen just wrote.
