@@ -595,6 +595,7 @@ fn bundle_env_options(
     jsx_import_source: Option<String>,
     build_secret: String,
     transform_hook: Option<oxide_bundler::TransformHook>,
+    css_transform: oxide_bundler::CssTransformHook,
 ) -> oxide_bundler::BundleOptions {
     // §6.1: `process.env.NODE_ENV` drives React's dev-vs-production
     // bundle selection. Setting it at the CLI level (rather than in the
@@ -640,6 +641,7 @@ fn bundle_env_options(
         precompiled,
         jsx_import_source,
         transform_hook,
+        css_transform: Some(css_transform),
     }
 }
 
@@ -1411,6 +1413,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // §15.1: a WASM component plugin's transform hook, if the config
     // declares one. Built once, shared by both envs.
     let transform_hook = build_transform_hook(&rootp, &cfg);
+    // §6.6: Lightning CSS for every emitted stylesheet.
+    let css_transform = build_css_transform_hook(&cfg);
 
     let client_opts = bundle_env_options(
         oxide_bundler::BundleEnv::Client,
@@ -1420,6 +1424,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         jsx_source.clone(),
         build_secret.clone(),
         transform_hook.clone(),
+        css_transform.clone(),
     );
     let server_opts = bundle_env_options(
         oxide_bundler::BundleEnv::Ssr,
@@ -1429,6 +1434,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         jsx_source,
         build_secret,
         transform_hook,
+        css_transform,
     );
     let rb = oxide_bundler::RolldownBundler::new(&rootp);
     rb.bundle(&client_opts)
@@ -2444,6 +2450,39 @@ fn build_server_fn_dispatcher(
 /// on stderr and the build continues without it, matching how the framework
 /// stack degrades. Making a broken plugin fail the build is a policy choice
 /// for a follow-up.
+/// §6.6: the CSS transform the bundler calls for every emitted stylesheet.
+/// Wraps `LightningCssBackend` (Lightning CSS with the project's browser
+/// target) so the bundler does not depend on `oxide-assets`.
+fn build_css_transform_hook(cfg: &OxideConfig) -> oxide_bundler::CssTransformHook {
+    use oxide_assets::{CssBackend as _, CssInput, CssKind, LightningCssBackend};
+
+    // `build.target` is the browserslist expression (`baseline-widely-available`
+    // by default); lightningcss accepts the same shape.
+    let targets = vec![cfg.build.target.clone()];
+    oxide_bundler::CssTransformHook::new(move |path, source, is_module, minify| {
+        let input = CssInput {
+            code: source.to_string(),
+            file: Some(path.to_string()),
+            kind: if is_module {
+                CssKind::Module
+            } else {
+                CssKind::Global
+            },
+            minify,
+            targets: targets.clone(),
+        };
+        LightningCssBackend
+            .transform(&input)
+            .map(|out| (out.code, out.exports))
+            .map_err(|e| {
+                oxide_bundler::err(
+                    "BLD-CSS",
+                    format!("lightningcss failed for {path}: {}", e.0.message),
+                )
+            })
+    })
+}
+
 fn build_transform_hook(root: &Path, cfg: &OxideConfig) -> Option<oxide_bundler::TransformHook> {
     for p in &cfg.plugins {
         let kind = p.get("kind").and_then(|v| v.as_str());
