@@ -130,6 +130,7 @@ fn opts(root: &Path, env: BundleEnv, entries: &[(&str, &str)]) -> BundleOptions 
         build_secret: "test-secret".to_string(),
         precompiled: BTreeMap::new(),
         jsx_import_source: None,
+        transform_hook: None,
     }
 }
 
