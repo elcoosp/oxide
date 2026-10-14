@@ -185,11 +185,15 @@ fn ops_table_roundtrip_and_names() {
         assert!(!op_name(op).is_empty());
     }
     assert_eq!(Op::from_u16(0), None);
-    assert_eq!(Op::from_u16(12), None);
+    // `CompileModule = 12` was added for the loader-path compilation
+    // (§9.3 / §6.2); 13 is the first unused value.
+    assert_eq!(Op::from_u16(12), Some(Op::CompileModule));
+    assert_eq!(Op::from_u16(13), None);
     assert_eq!(Op::from_u16(u16::MAX), None);
     assert_eq!(op_name(Op::StreamWrite), "stream_write");
     assert_eq!(op_name(Op::RequestBodyRead), "request_body_read");
     assert_eq!(op_name(Op::Trace), "trace");
+    assert_eq!(op_name(Op::CompileModule), "compile_module");
 }
 
 // -------------------------------------------------------- scripted backend ---
