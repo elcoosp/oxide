@@ -55,6 +55,7 @@ http-body-util = "0.1.5"
 bytes = "1.12.1"
 futures = "0.3.34"
 async-trait = "0.1.92"
+ring = "0.17"
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring"] }
 rustls-pemfile = "2.2.0"
