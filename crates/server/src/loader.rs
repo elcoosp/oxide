@@ -68,17 +68,33 @@ impl LoaderRunInput {
 /// 4xx/5xx on `error(...)`. `location` is set only for redirects. `data`
 /// is the (JSON) loader return value; on error/redirect it carries at most
 /// a `message` for diagnostics.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+///
+/// `set_cookies` and `headers` carry side effects a load produced through the
+/// §9.2 event surface (`event.cookies.set(...)`, `event.setHeaders(...)`). They
+/// are applied to the eventual HTTP response by the pipeline; keeping them on
+/// the output (rather than threading a mutable response through the runner)
+/// is what lets the `LoaderRunner` trait stay a pure input → output call.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct LoaderOutput {
     pub status: u16,
     pub location: Option<String>,
     pub data: Value,
+    /// Raw `Set-Cookie` header values, in the order the load set them.
+    #[serde(default)]
+    pub set_cookies: Vec<String>,
+    /// Headers the load added via `setHeaders`, in insertion order.
+    #[serde(default)]
+    pub headers: Vec<(String, String)>,
 }
 
 impl LoaderOutput {
-    /// Success with the given data.
+    /// Success with the given data and no side-effect headers.
     pub fn ok(data: Value) -> Self {
-        Self { status: 200, location: None, data }
+        Self {
+            status: 200,
+            data,
+            ..Default::default()
+        }
     }
     /// Whether this output should short-circuit the render (non-200).
     pub fn short_circuits(&self) -> bool {
@@ -120,7 +136,7 @@ mod tests {
     impl LoaderRunner for HttpErrLoader {
         fn name(&self) -> &str { "http-err" }
         async fn run(&self, _input: LoaderRunInput) -> Result<LoaderOutput> {
-            Ok(LoaderOutput { status: 404, location: None, data: serde_json::json!({"message":"not found"}) })
+            Ok(LoaderOutput { status: 404, data: serde_json::json!({"message":"not found"}), ..Default::default() })
         }
     }
 
@@ -142,9 +158,9 @@ mod tests {
 
     #[test]
     fn non_200_short_circuits() {
-        assert!(LoaderOutput { status: 404, location: None, data: serde_json::json!({}) }.short_circuits());
-        assert!(LoaderOutput { status: 303, location: Some("/".into()), data: serde_json::json!({}) }.short_circuits());
-        assert!(LoaderOutput { status: 500, location: None, data: serde_json::json!({}) }.short_circuits());
+        assert!(LoaderOutput { status: 404, data: serde_json::json!({}), ..Default::default() }.short_circuits());
+        assert!(LoaderOutput { status: 303, location: Some("/".into()), data: serde_json::json!({}), ..Default::default() }.short_circuits());
+        assert!(LoaderOutput { status: 500, data: serde_json::json!({}), ..Default::default() }.short_circuits());
     }
 
     #[tokio::test]
