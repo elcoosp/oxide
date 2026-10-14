@@ -812,3 +812,85 @@ fn use_cache_literal_tag_stays_a_plain_array() {
         out.code
     );
 }
+
+
+// ---------------------------------------------------------------------------
+// §10.1 render-mode inference (AST pass).
+//
+// `infer_render_mode` returns `Static` unless the loader module reads a
+// request-scoped value — `cookies`, `locals`, `request.headers`, or
+// `searchParams`. The pass walks the real AST, so a comment or a string
+// literal mentioning one of those names does not flip the mode.
+// ---------------------------------------------------------------------------
+
+use oxide_compiler::infer_render_mode;
+
+#[test]
+fn infer_static_for_a_plain_loader() {
+    let src = "export const load = async ({ params }) => {\n  return { slug: params.slug }\n}\n";
+    let m = infer_render_mode(src, "page.server.ts");
+    assert_eq!(m.mode, "static");
+    assert!(m.trigger.is_none());
+}
+
+#[test]
+fn infer_dynamic_for_cookies() {
+    let src = "export const load = async ({ cookies }) => {\n  const sid = cookies.get('session')\n  return { sid }\n}\n";
+    let m = infer_render_mode(src, "page.server.ts");
+    assert_eq!(m.mode, "dynamic");
+    assert_eq!(m.trigger, Some("cookies"));
+    assert!(m.trigger_span.is_some(), "a trigger span lets a diagnostic point at the read");
+}
+
+#[test]
+fn infer_dynamic_for_request_headers() {
+    let src = "export const load = async ({ request }) => {\n  const ua = request.headers.get('user-agent')\n  return { ua }\n}\n";
+    let m = infer_render_mode(src, "page.server.ts");
+    assert_eq!(m.mode, "dynamic");
+    assert_eq!(m.trigger, Some("request.headers"));
+}
+
+#[test]
+fn infer_dynamic_for_locals() {
+    let src = "export const load = async ({ locals }) => {\n  return { user: locals.user }\n}\n";
+    let m = infer_render_mode(src, "page.server.ts");
+    assert_eq!(m.mode, "dynamic");
+    assert_eq!(m.trigger, Some("locals"));
+}
+
+#[test]
+fn infer_dynamic_for_search_params() {
+    let src = "export const load = async ({ searchParams }) => {\n  return { q: searchParams.q }\n}\n";
+    let m = infer_render_mode(src, "page.server.ts");
+    assert_eq!(m.mode, "dynamic");
+    assert_eq!(m.trigger, Some("searchParams"));
+}
+
+#[test]
+fn infer_ignores_a_comment_mentioning_cookies() {
+    // The regex scan this replaces would have flagged this. The AST walk
+    // does not, because the string is not a member access on a request
+    // object.
+    let src = "// Note: we intentionally do NOT read cookies here.\nexport const load = async () => {\n  const banner = 'uses cookies'\n  return { banner }\n}\n";
+    let m = infer_render_mode(src, "page.server.ts");
+    assert_eq!(m.mode, "static", "a comment must not flip the mode");
+}
+
+#[test]
+fn infer_ignores_an_unrelated_locals_identifier() {
+    // A variable named `locals` that is not the request object: the read
+    // `myLocals.x` is on a differently-named binding, so the mode stays
+    // static.
+    let src = "export const load = async () => {\n  const myLocals = { user: null }\n  return { user: myLocals.user }\n}\n";
+    let m = infer_render_mode(src, "page.server.ts");
+    assert_eq!(m.mode, "static");
+}
+
+#[test]
+fn infer_falls_back_to_dynamic_on_a_parse_error() {
+    // A module the parser rejects is a build error reported elsewhere; the
+    // inference must not crash and must not claim the route is prerenderable.
+    let src = "export const load = async ( { \n";
+    let m = infer_render_mode(src, "page.server.ts");
+    assert_eq!(m.mode, "dynamic");
+}
