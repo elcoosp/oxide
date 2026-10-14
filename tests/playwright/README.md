@@ -1,7 +1,7 @@
 # @oxide/playwright
 
 Real-browser E2E for the framework adapter read path (§7 / §22). The suite
-boots `oxide start` against `examples/smoke-app` and drives Chromium against
+boots `oxide start` against `examples/smoke-app-react` and drives Chromium against
 it via Playwright.
 
 Not run by the default `pnpm test` — the workspace dev host has ~4 GB RAM

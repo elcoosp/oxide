@@ -32,7 +32,7 @@ test('factory: createRealAdapter returns a §7-shaped FrameworkAdapter', () => {
   assert.equal(a.contract, 1)
   assert.equal(a.name, 'solid')
   assert.deepEqual(a.extensions, ['.tsx'])
-  assert.equal(a.jsxImportSource, 'solid-js')
+  assert.equal(a.jsxImportSource, '@solidjs/web')
   assert.deepEqual(a.capabilities, { suspense: 'native', islands: true, hmr: 'component' })
   const plugins = a.plugins({})
   assert.ok(plugins.length >= 1)

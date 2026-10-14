@@ -590,7 +590,7 @@ async fn write_prerender_without_loader_uses_empty_data() {
 
 // --------------------------------------- smoke-app E2E (real user path)
 
-/// The `examples/smoke-app` fixture is a working project that exercises the
+/// The `examples/smoke-app-react` fixture is a working project that exercises the
 /// whole stack: a real `.ts` config importing `@oxide/react` via the
 /// workspace, a `page.tsx` + `page.server.ts` per route, and the CLI's
 /// config-loading path. This test runs the three CLI commands against it
@@ -609,7 +609,7 @@ async fn smoke_app_renders_through_real_config() {
         .parent()
         .and_then(|p| p.parent())
         .expect("workspace root");
-    let smoke = workspace.join("examples/smoke-app");
+    let smoke = workspace.join("examples/smoke-app-react");
     assert!(
         smoke.join("oxide.config.ts").is_file(),
         "smoke-app fixture missing at {}; is examples/* a workspace member?",
@@ -726,7 +726,7 @@ async fn http_get(
     String::from_utf8_lossy(&buf).into_owned()
 }
 
-/// Start the real dev server against `examples/smoke-app` and issue HTTP
+/// Start the real dev server against `examples/smoke-app-react` and issue HTTP
 /// requests. This closes the loop between the CLI subcommands (already
 /// E2E-tested in `smoke_app_renders_through_real_config`) and the
 /// long-running server path: config load → stack build → dispatch →
@@ -755,7 +755,7 @@ async fn dev_server_serves_smoke_app_over_http() {
         .parent()
         .and_then(|p| p.parent())
         .expect("workspace root");
-    let smoke = workspace.join("examples/smoke-app");
+    let smoke = workspace.join("examples/smoke-app-react");
     let config_path = smoke.join("oxide.config.ts");
     assert!(
         config_path.is_file(),
@@ -898,7 +898,7 @@ async fn smoke_app_builds_its_own_pages() {
         .parent()
         .and_then(|p| p.parent())
         .expect("workspace root");
-    let smoke = workspace.join("examples/smoke-app");
+    let smoke = workspace.join("examples/smoke-app-react");
     assert!(
         smoke.join("oxide.config.ts").is_file(),
         "smoke-app fixture missing at {}",
@@ -1022,7 +1022,7 @@ async fn start_serves_smoke_app_over_http() {
         .parent()
         .and_then(|p| p.parent())
         .expect("workspace root");
-    let smoke = workspace.join("examples/smoke-app");
+    let smoke = workspace.join("examples/smoke-app-react");
     let config_path = smoke.join("oxide.config.ts");
     assert!(
         config_path.is_file(),
@@ -2428,7 +2428,7 @@ async fn smoke_app_emits_valid_js_in_every_chunk() {
         .parent()
         .and_then(|p| p.parent())
         .expect("workspace root");
-    let smoke = workspace.join("examples/smoke-app");
+    let smoke = workspace.join("examples/smoke-app-react");
     assert!(smoke.join("oxide.config.ts").is_file(), "smoke-app fixture missing");
 
     let dist = smoke.join("dist");
@@ -2523,7 +2523,7 @@ async fn smoke_app_emits_island_markup_and_boot_script() {
         .parent()
         .and_then(|p| p.parent())
         .expect("workspace root");
-    let smoke = workspace.join("examples/smoke-app");
+    let smoke = workspace.join("examples/smoke-app-react");
     assert!(
         smoke.join("oxide.config.ts").is_file(),
         "smoke-app fixture missing at {}",

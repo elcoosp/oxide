@@ -40,6 +40,17 @@ export const adapter: FrameworkAdapter = {
   update,
 }
 
+/**
+ * `clientAdapter` — the browser-side adapter for the island boot entry.
+ *
+ * For vue this is currently the same object as the named `adapter`
+ * (the framework's client hydration path is the IR replay). When
+ * vue's real client-side hydration is wired (parallel to React's
+ * `react-dom/client` path), it overrides `hydrateIsland` here and the
+ * generated boot entry picks it up with no CLI change.
+ */
+export const clientAdapter: FrameworkAdapter = adapter
+
 // ---------------------------------------------------------------------------
 // Config surface (spec §14): a callable default export so oxide.config.ts can
 // write `framework: vue({ ssr: 'real', componentFor })`. With no component

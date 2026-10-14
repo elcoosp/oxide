@@ -95,6 +95,7 @@ pub fn prebundle(opts: &PrebundleOptions) -> Result<PrebundleManifest> {
         define: BTreeMap::new(),
         tsconfig_paths: BTreeMap::new(),
         precompiled: BTreeMap::new(),
+        jsx_import_source: None,
     };
     options.entries.insert("_prebundle".into(), synthetic.clone());
 

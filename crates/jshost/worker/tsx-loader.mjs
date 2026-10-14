@@ -28,8 +28,42 @@ function tryRequire(name) {
 const sucrase = tryRequire('sucrase')
 const vueSfc = tryRequire('@vue/compiler-sfc')
 const svelteCompiler = tryRequire('svelte/compiler')
+const solidJsxOxc = (() => {
+  const m = tryRequire('solid-jsx-oxc')
+  return m ? (m.default ?? m) : null
+})()
+
+// §6.3: which framework's JSX compiler to use for `.tsx`/`.jsx`. The CLI
+// sets this before spawning the worker (the adapter name from the loaded
+// config): `react` (default) or `solid`. Vue and Svelte entries have their
+// own SFC compilers below.
+const FRAMEWORK = (process.env.OXIDE_FRAMEWORK ?? 'react').toLowerCase()
 
 function compileTsx(source, path) {
+  // Solid's JSX compiles to `ssr`/template calls, not React's `jsx()`
+  // factories — `solid-jsx-oxc` (Rust/OXC, NAPI) is the compiler for it.
+  // Its output keeps TS annotations, so a follow-up type-strip runs after.
+  if (FRAMEWORK === 'solid' && solidJsxOxc) {
+    const out = solidJsxOxc.transform(source, {
+      moduleName: '@solidjs/web',
+      generate: 'ssr',
+      hydratable: true,
+      filename: path,
+    })
+    let js = typeof out === 'string' ? out : out.code
+    // The alpha ignores `moduleName` and emits `solid-js/web`; Solid 2.0
+    // moved the runtime to `@solidjs/web`. Rewrite the specifier.
+    js = js.replaceAll('from "solid-js/web"', 'from "@solidjs/web"')
+           .replaceAll("from 'solid-js/web'", "from '@solidjs/web'")
+    if (sucrase) {
+      js = sucrase.transform(js, {
+        transforms: ['typescript'],
+        production: true,
+        filePath: path,
+      }).code
+    }
+    return js
+  }
   if (!sucrase) return null
   const result = sucrase.transform(source, {
     transforms: ['typescript', 'jsx'],
@@ -53,7 +87,19 @@ function compileVue(source, path) {
     inlineTemplate: true,
     templateOptions: { ssr: true },
   })
-  return script.content
+  // `compileScript` preserves TypeScript annotations (`lang="ts"` in the
+  // `<script setup>` block). Node only strips types from sources it loads
+  // off disk with a `.ts`/`.mts`/`.cts` extension — a `.vue` loader hook
+  // must strip them itself, or the runtime hits "Unexpected token ':'".
+  const ts = script.content
+  if (sucrase) {
+    return sucrase.transform(ts, {
+      transforms: ['typescript'],
+      production: true,
+      filePath: path,
+    }).code
+  }
+  return ts
 }
 
 function compileSvelte(source, path) {
@@ -63,7 +109,22 @@ function compileSvelte(source, path) {
     generate: 'ssr',
     css: 'injected',
   })
-  return compiled?.js?.code ?? ''
+  const js = compiled?.js?.code ?? ''
+  // Svelte 5 runs `<script lang="ts">` through its own type stripper when
+  // it can find one, but without a preprocessor the types pass through.
+  // Strip defensively — sucrase leaves plain JS untouched.
+  if (sucrase) {
+    try {
+      return sucrase.transform(js, {
+        transforms: ['typescript'],
+        production: true,
+        filePath: path,
+      }).code
+    } catch {
+      return js
+    }
+  }
+  return js
 }
 
 export async function load(url, context, nextLoad) {

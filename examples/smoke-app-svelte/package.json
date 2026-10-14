@@ -1,0 +1,12 @@
+{
+  "name": "smoke-app-svelte",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Svelte counterpart of examples/smoke-app: proves the CLI build pipeline is framework-neutral.",
+  "dependencies": {
+    "@oxide/svelte": "workspace:*",
+    "oxide": "workspace:*",
+    "svelte": "^5.57.0"
+  }
+}

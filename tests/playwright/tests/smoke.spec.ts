@@ -16,7 +16,7 @@ import { existsSync } from 'node:fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(__dirname, '..', '..', '..')
-const smokeRoot = join(repoRoot, 'examples', 'smoke-app')
+const smokeRoot = join(repoRoot, 'examples', 'smoke-app-react')
 const oxideBin = join(repoRoot, 'target', 'debug', 'oxide-cli')
 
 let server: ChildProcess | undefined

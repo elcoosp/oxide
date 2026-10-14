@@ -46,10 +46,10 @@ export function createRealAdapter(opts: RealAdapterOptions) {
   return makeRealAdapter({
     name: 'solid',
     extensions: ['.tsx'],
-    jsxImportSource: 'solid-js',
+    jsxImportSource: '@solidjs/web',
     capabilities: { suspense: 'native', islands: true, hmr: 'component' },
     plugins: () => [
-      { name: 'oxide:solid-jsx', enforce: 'pre', transform: 'jsx', jsxImportSource: 'solid-js' },
+      { name: 'oxide:solid-jsx', enforce: 'pre', transform: 'jsx', jsxImportSource: '@solidjs/web' },
       { name: 'oxide:solid-hmr', enforce: 'post', hmr: 'component' },
     ],
     irRender,

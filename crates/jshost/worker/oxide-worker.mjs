@@ -18,6 +18,15 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
+const sucrase = (() => { try { return require('sucrase') } catch { return null } })();
+const solidJsxOxc = (() => {
+  try {
+    const m = require('solid-jsx-oxc')
+    return m.default ?? m
+  } catch {
+    return null
+  }
+})();
 const b64 = (buf) => buf.toString("base64");
 
 // ---------------------------------------------------------------------------
@@ -77,8 +86,74 @@ function loadModule(name) {
 // round-trip and keeps the tooling-pool protocol generic.
 // ---------------------------------------------------------------------------
 
+async function dispatchSolidCompile(id, input) {
+  const { source, filename, ssr } = input.payload ?? {};
+  if (typeof source !== "string" || typeof filename !== "string") {
+    callErr(id, "JSH-SOLID", "solid-compile requires {source, filename}");
+    return;
+  }
+  if (!solidJsxOxc || typeof solidJsxOxc.transform !== "function") {
+    callErr(
+      id,
+      "JSH-SOLID",
+      "solid-compile requires `solid-jsx-oxc` in the workspace (Rust/OXC Solid JSX compiler)",
+    );
+    return;
+  }
+  // `solid-jsx-oxc` compiles `<main>…</main>` JSX into `ssr`-template
+  // literals — same shape as `babel-preset-solid`, but the transform is
+  // Rust/OXC-native (no babel, no per-file JS glue). Its output preserves
+  // TypeScript type annotations in function signatures (it parses `.tsx`
+  // but does not strip types), so a type-strip pass runs on the result.
+  // By this point the JSX is already gone, so plain sucrase `typescript`
+  // is enough and cannot trip on JSX syntax.
+  // Solid 1.x's runtime lived at `solid-js/web`; Solid 2.0 moved it to
+  // the `@solidjs/web` package. `solid-jsx-oxc`'s default `moduleName`
+  // points at the 1.x path, which no longer exists in a 2.0 workspace.
+  // Passing the 2.0 name is what makes the emitted `import { ssr } from
+  // "@solidjs/web"` resolvable by Rolldown.
+  let out;
+  try {
+    out = solidJsxOxc.transform(source, {
+      moduleName: "@solidjs/web",
+      generate: ssr ? "ssr" : "dom",
+      hydratable: true,
+      filename,
+    });
+  } catch (e) {
+    callErr(id, "JSH-SOLID", `solid transform: ${e.message ?? e}`);
+    return;
+  }
+  let js = typeof out === "string" ? out : out?.code;
+  if (typeof js !== "string") {
+    callErr(id, "JSH-SOLID", "solid transform produced no code");
+    return;
+  }
+  // `solid-jsx-oxc@0.1.0-alpha.1` ignores `moduleName` and always emits
+  // `from "solid-js/web"` — the Solid 1.x runtime location. Solid 2.0
+  // moved the runtime to `@solidjs/web`. Rewriting the import specifier
+  // here keeps the compiler choice (Rust/OXC, no babel) and matches what
+  // the project actually has installed. When upstream honors `moduleName`,
+  // this rewrite becomes a no-op (the same string).
+  js = js.replaceAll('from "solid-js/web"', 'from "@solidjs/web"')
+         .replaceAll("from 'solid-js/web'", "from '@solidjs/web'");
+  if (sucrase) {
+    try {
+      js = sucrase.transform(js, {
+        transforms: ["typescript"],
+        production: true,
+        filePath: filename,
+      }).code;
+    } catch (e) {
+      callErr(id, "JSH-SOLID", `solid type-strip: ${e.message ?? e}`);
+      return;
+    }
+  }
+  callOk(id, { js });
+}
+
 async function dispatchVueCompile(id, input) {
-  const { source, filename } = input.payload ?? {};
+  const { source, filename, generate } = input.payload ?? {};
   if (typeof source !== "string" || typeof filename !== "string") {
     callErr(id, "JSH-VUE", "vue-compile requires {source, filename}");
     return;
@@ -100,13 +175,32 @@ async function dispatchVueCompile(id, input) {
     script = vue.compileScript(parsed.descriptor, {
       id: shortId,
       inlineTemplate: true,
-      templateOptions: { ssr: false },
+      // The SSR `generate` mode also uses the browser compiler under the
+      // hood; the difference is the render-function shape. Pass through
+      // the caller's mode so the server bundle uses SSR render fns.
+      templateOptions: { ssr: generate === "ssr" },
     });
   } catch (e) {
     callErr(id, "JSH-VUE", `vue compileScript: ${e.message ?? e}`);
     return;
   }
-  callOk(id, { js: script.content });
+  // `<script setup lang="ts">` preserves TypeScript annotations in the
+  // output. The bundler's Rolldown pipeline expects JS here; strip types
+  // with sucrase (the same transform the dev loader uses).
+  let js = script.content;
+  if (sucrase) {
+    try {
+      js = sucrase.transform(js, {
+        transforms: ["typescript"],
+        production: true,
+        filePath: filename,
+      }).code;
+    } catch (e) {
+      callErr(id, "JSH-VUE", `vue type-strip: ${e.message ?? e}`);
+      return;
+    }
+  }
+  callOk(id, { js });
 }
 
 async function dispatchSvelteCompile(id, input) {
@@ -129,7 +223,21 @@ async function dispatchSvelteCompile(id, input) {
     callErr(id, "JSH-SVELTE", `svelte compile: ${e.message ?? e}`);
     return;
   }
-  const js = compiled?.js?.code ?? "";
+  let js = compiled?.js?.code ?? "";
+  // `<script lang="ts">` passes type annotations through to the emitted
+  // JS. Strip them the same way the Vue op does.
+  if (sucrase) {
+    try {
+      js = sucrase.transform(js, {
+        transforms: ["typescript"],
+        production: true,
+        filePath: filename,
+      }).code;
+    } catch {
+      // Svelte's output is already valid JS in the common case; if
+      // sucrase cannot parse it, keep the original rather than fail.
+    }
+  }
   callOk(id, { js });
 }
 
@@ -393,6 +501,7 @@ async function handleCall(msg) {
   if (entry.kind === "tooling:module") { await dispatchToolingModule(id, input); return; }
   if (entry.kind === "tooling:vue-compile") { await dispatchVueCompile(id, input); return; }
   if (entry.kind === "tooling:svelte-compile") { await dispatchSvelteCompile(id, input); return; }
+  if (entry.kind === "tooling:solid-compile") { await dispatchSolidCompile(id, input); return; }
   if (entry.kind === "framework:load") { await dispatchFrameworkLoad(id, input); return; }
   if (entry.kind === "framework:render") { await dispatchFrameworkRender(id, input); return; }
   if (entry.kind === "loader:run") { await dispatchLoaderRun(id, input); return; }

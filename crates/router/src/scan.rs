@@ -361,6 +361,14 @@ fn valid_param_name(name: &str) -> bool {
 
 /// Best-effort config extraction from `page.server.ts` (full parsing is the
 /// compiler's job; the scanner reads the obvious literals for `oxide routes`).
+///
+/// §10.1 mode inference runs here when no explicit `config.render` is
+/// declared. A route is `static` unless its loader body reads a
+/// request-specific value: `cookies`, `request.headers`, `locals`, or
+/// `searchParams`. The full-fidelity version is the compiler's job (with
+/// source spans and diagnostics); this heuristic keeps `oxide routes`,
+/// `oxide build`, and the dev inspector in agreement today. An explicit
+/// `config.render` always wins.
 fn read_page_config(path: &Path, render_mode: &mut Option<String>, tags: &mut Vec<String>) {
     let Ok(text) = fs::read_to_string(path) else {
         return;
@@ -372,6 +380,13 @@ fn read_page_config(path: &Path, render_mode: &mut Option<String>, tags: &mut Ve
     });
     if let Some(c) = re.captures(&text) {
         *render_mode = Some(c[1].to_string());
+    } else if has_request_specific_read(&text) {
+        // §10.1: no explicit config, and the loader reads from the request.
+        *render_mode = Some("dynamic".to_string());
+    } else {
+        // §10.1: no explicit config, and no request-specific reads. The
+        // route is eligible for prerendering at build time.
+        *render_mode = Some("static".to_string());
     }
     static TAGS: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let re =
@@ -384,6 +399,46 @@ fn read_page_config(path: &Path, render_mode: &mut Option<String>, tags: &mut Ve
             tags.push(m[1].to_string());
         }
     }
+}
+
+/// §10.1: does the loader body read a request-scoped value?
+///
+/// Reads the three shapes the spec names plus the loader-event accessor
+/// spelling:
+///
+/// * `cookies` — request cookies
+/// * `request.headers` — request headers
+/// * `locals` — middleware-injected request state
+/// * `searchParams` — the search-param accessor (the load event exposes it
+///   as `searchParams`; the underlying `URL` may also be read via
+///   `request.url`, which is deliberately NOT treated as a marker — a
+///   route can inspect the URL for canonicalisation without becoming
+///   per-request).
+///
+/// The scan is line-oriented: it strips line comments so a `// uses cookies`
+/// note does not flip the mode. Block comments and string literals are not
+/// handled — the compiler pass (a follow-up) will be authoritative.
+fn has_request_specific_read(source: &str) -> bool {
+    for raw in source.lines() {
+        let line = raw.split("//").next().unwrap_or("");
+        // Only look at the loader/actions bodies? For now, a whole-file scan
+        // is fine: a top-level import of `cookies` from `oxide/server`
+        // without a loader body would also mark the route dynamic, which is
+        // conservative (fails closed on the safe side).
+        if line.contains("cookies") {
+            return true;
+        }
+        if line.contains("locals") {
+            return true;
+        }
+        if line.contains("request.headers") {
+            return true;
+        }
+        if line.contains("searchParams") {
+            return true;
+        }
+    }
+    false
 }
 
 /// Deterministic ordering (§8.1): (depth, per-segment priority static > param >

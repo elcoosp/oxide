@@ -20,7 +20,7 @@ export const adapter: FrameworkAdapter = {
   contract: 1,
   name: 'solid',
   extensions: ['.tsx'],
-  jsxImportSource: 'solid-js',
+  jsxImportSource: '@solidjs/web',
   capabilities: {
     suspense: 'native',
     islands: true,
@@ -31,7 +31,7 @@ export const adapter: FrameworkAdapter = {
     // component-scoped HMR. Runtime-agnostic shapes (no deps installed here).
     void opts
     return [
-      { name: 'oxide:solid-jsx', enforce: 'pre', transform: 'jsx', jsxImportSource: 'solid-js' },
+      { name: 'oxide:solid-jsx', enforce: 'pre', transform: 'jsx', jsxImportSource: '@solidjs/web' },
       { name: 'oxide:solid-hmr', enforce: 'post', hmr: 'component' },
     ]
   },
@@ -42,6 +42,17 @@ export const adapter: FrameworkAdapter = {
   mount: mount as (root: Element, input: ClientInput) => Disposer,
   update,
 }
+
+/**
+ * `clientAdapter` — the browser-side adapter for the island boot entry.
+ *
+ * For solid this is currently the same object as the named `adapter`
+ * (the framework's client hydration path is the IR replay). When
+ * solid's real client-side hydration is wired (parallel to React's
+ * `react-dom/client` path), it overrides `hydrateIsland` here and the
+ * generated boot entry picks it up with no CLI change.
+ */
+export const clientAdapter: FrameworkAdapter = adapter
 
 // ---------------------------------------------------------------------------
 // Config surface (spec §14): a callable default export so oxide.config.ts can

@@ -65,7 +65,7 @@ target/release/oxide-cli doctor
 Run the smoke app end to end:
 
 ```sh
-cd examples/smoke-app
+cd examples/smoke-app-react
 
 ../../target/release/oxide-cli routes   # scan routes, emit typegen
 ../../target/release/oxide-cli build    # bundle, emit deploy artifacts
@@ -161,4 +161,4 @@ before the implementation (`*_tdd.rs` suites).
   cross-cutting invariants
 - [`conformance/`](conformance/) — the Atlas reference app and the cross-adapter suite
 - [`benchmarks/README.md`](benchmarks/README.md) — benchmark method and per-route JS budgets
-- [`examples/smoke-app`](examples/smoke-app) — the minimal app used in the end-to-end smoke run
+- [`examples/smoke-app-react`](examples/smoke-app-react) — the minimal app used in the end-to-end smoke run

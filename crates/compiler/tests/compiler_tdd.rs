@@ -405,6 +405,7 @@ fn transformer_page_server_ssr_end_to_end() {
         lang: "ts",
         build_secret: "s3cr3t".into(),
         dev: false,
+        jsx_import_source: None,
     };
     let out = ScannerTransformer.transform(&input).unwrap();
     // scan
@@ -439,6 +440,7 @@ fn transformer_server_module_client_env_stubs() {
         lang: "ts",
         build_secret: "s3cr3t".into(),
         dev: false,
+        jsx_import_source: None,
     };
     let out = ScannerTransformer.transform(&input).unwrap();
     // client env: fetch stubs, no 'use cache' handling (ssr only), no server swap
@@ -457,6 +459,7 @@ fn transformer_client_page_dev_injects_refresh() {
         lang: "tsx",
         build_secret: "s3cr3t".into(),
         dev: true,
+        jsx_import_source: None,
     };
     let out = ScannerTransformer.transform(&input).unwrap();
     assert!(out.scan.imports.contains(&"./Button".to_string()));
@@ -498,6 +501,7 @@ fn oxc_transformer_surfaces_cmp_parse_on_syntax_error() {
         lang: "ts",
         build_secret: "s".into(),
         dev: false,
+        jsx_import_source: None,
     };
     let out = oxc_transform(input);
     assert!(
@@ -517,6 +521,7 @@ fn oxc_transformer_scan_uses_ast_spans() {
         lang: "ts",
         build_secret: "s".into(),
         dev: false,
+        jsx_import_source: None,
     };
     let out = oxc_transform(input);
     for spec in ["./a", "./b", "./c", "./d"] {
@@ -538,6 +543,7 @@ fn oxc_transformer_use_cache_directive_via_ast() {
         lang: "ts",
         build_secret: "s".into(),
         dev: false,
+        jsx_import_source: None,
     };
     let out = oxc_transform(input);
     assert_eq!(out.directives.len(), 1, "directives: {:?}", out.directives);
@@ -556,6 +562,7 @@ fn oxc_transformer_use_cache_arrow_binding_via_ast() {
         lang: "ts",
         build_secret: "s".into(),
         dev: false,
+        jsx_import_source: None,
     };
     let out = oxc_transform(input);
     assert_eq!(out.directives.len(), 1);
@@ -574,6 +581,7 @@ fn oxc_transformer_server_fn_client_stub_via_ast() {
         lang: "ts",
         build_secret: "sec".into(),
         dev: false,
+        jsx_import_source: None,
     };
     let out = oxc_transform(input);
     assert_eq!(out.server_fns.len(), 1);
@@ -596,6 +604,7 @@ fn oxc_transformer_server_fn_ssr_keeps_body_via_ast() {
         lang: "ts",
         build_secret: "sec".into(),
         dev: false,
+        jsx_import_source: None,
     };
     let out = oxc_transform(input);
     assert_eq!(out.server_fns.len(), 1);
@@ -620,6 +629,7 @@ fn oxc_transformer_use_cache_hoists_tags_and_life_via_ast() {
         lang: "ts",
         build_secret: "s".into(),
         dev: false,
+        jsx_import_source: None,
     };
     let out = oxc_transform(input);
     assert_eq!(out.directives.len(), 1);
@@ -670,6 +680,7 @@ fn oxc_transformer_use_cache_multiple_tags_via_ast() {
         lang: "ts",
         build_secret: "s".into(),
         dev: false,
+        jsx_import_source: None,
     };
     let out = oxc_transform(input);
     // NOTE: output now runs through `oxc_codegen` (lowering pass), which
@@ -705,6 +716,7 @@ fn oxc_transformer_use_cache_arrow_with_tags_via_ast() {
         lang: "ts",
         build_secret: "s".into(),
         dev: false,
+        jsx_import_source: None,
     };
     let out = oxc_transform(input);
     // NOTE: output now runs through `oxc_codegen` (lowering pass), which

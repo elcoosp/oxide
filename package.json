@@ -23,5 +23,9 @@
   },
   "engines": {
     "node": ">=24"
+  },
+  "devDependencies": {},
+  "dependencies": {
+    "solid-jsx-oxc": "0.1.0-alpha.1"
   }
 }

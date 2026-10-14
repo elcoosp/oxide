@@ -68,7 +68,7 @@ once at the top of the function:
 Downstream joins (`root.join("dist")`, `routes_root.join(e.file)`,
 bundler entry resolution) all expect absolute paths. When `root` is
 relative and a downstream layer joins it to a path that already carries
-the root prefix, the result is `examples/smoke-app/examples/smoke-app/...`
+the root prefix, the result is `examples/smoke-app-react/examples/smoke-app-react/...`
 — a silently doubled path that produces "file not found" errors far
 from the actual bug.
 

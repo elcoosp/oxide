@@ -58,6 +58,12 @@ pub struct TransformInput {
     /// Per-build secret for server-fn ids (§9.4 unguessable, rotating).
     pub build_secret: String,
     pub dev: bool,
+    /// §6.3: the JSX runtime the framework adapter declares via
+    /// `FrameworkAdapter.jsxImportSource`. `None` means the Oxc default
+    /// (React's `react/jsx-runtime`). Solid 2.0 declares
+    /// `@solidjs/web`; React declares `react`. Vue and Svelte entries
+    /// arrive precompiled, so this is unread for them.
+    pub jsx_import_source: Option<String>,
 }
 
 /// Transform output: new code + discovered metadata.

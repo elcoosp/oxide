@@ -94,6 +94,12 @@ pub struct BundleOptions {
     /// calling `bundle`. When a module's path appears here, the bundler
     /// uses the provided source and skips the disk read + the SFC refusal.
     pub precompiled: BTreeMap<PathBuf, String>,
+    /// §6.3: the JSX runtime to import in the lowered output. `None` means
+    /// the Oxc default (`react/jsx-runtime`). Solid 2.0 sets this to
+    /// `@solidjs/web` — its `jsx-runtime` subpath is where `jsx`/`jsxs`
+    /// live. The CLI reads the framework adapter's declared
+    /// `jsxImportSource` and forwards it here.
+    pub jsx_import_source: Option<String>,
 }
 
 /// A resolved module in the graph.
@@ -601,6 +607,7 @@ impl ChunkBundler {
                     &m.resolved,
                     options.env,
                     &build_secret,
+                    options.jsx_import_source.as_deref(),
                     &mut diagnostics,
                 );
                 body.push_str(&lowered);
@@ -905,6 +912,7 @@ fn lower_module_to_js(
     resolved: &Path,
     env: BundleEnv,
     build_secret: &str,
+    jsx_import_source: Option<&str>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> String {
     let input = TransformInput {
@@ -914,6 +922,7 @@ fn lower_module_to_js(
         lang: lang_of(resolved),
         build_secret: build_secret.to_string(),
         dev: false,
+        jsx_import_source: jsx_import_source.map(str::to_string),
     };
     match OxcTransformer.transform(&input) {
         Ok(out) => {

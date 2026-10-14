@@ -1,0 +1,13 @@
+{
+  "name": "smoke-app-vue",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Vue counterpart of examples/smoke-app: proves the CLI build pipeline is framework-neutral.",
+  "dependencies": {
+    "@oxide/vue": "workspace:*",
+    "oxide": "workspace:*",
+    "vue": "^3.6.0-rc.11",
+    "@vue/server-renderer": "^3.6.0-rc.11"
+  }
+}

@@ -15,6 +15,9 @@ use crate::{
 };
 use oxide_diagnostics::Diagnostic;
 use arcstr::ArcStr;
+use rolldown_common::{
+    BundlerTransformOptions, Either, JsxOptions as RolldownJsxOptions,
+};
 use rolldown::{
     Bundler as RolldownCore, BundlerBuilder, BundlerOptions, InputItem, IsExternal, OutputFormat,
     Platform, RawMinifyOptions, SourceMapType, TsConfig,
@@ -123,11 +126,26 @@ impl RolldownBundler {
             }
         };
 
+        // §6.3: when the adapter declares a non-default JSX runtime (Solid
+        // 2.0's `@solidjs/web`), tell Rolldown's Oxc transform to import
+        // from it. Without this Rolldown lowers `.tsx` against React's
+        // runtime — the chunk bundles, but the elements are React
+        // elements and Solid's SSR produces an empty string.
+        let transform = options.jsx_import_source.as_ref().map(|src| {
+            let mut jsx = RolldownJsxOptions::default();
+            jsx.import_source = Some(src.clone());
+            BundlerTransformOptions {
+                jsx: Some(Either::Right(jsx)),
+                ..Default::default()
+            }
+        });
+
         BundlerOptions {
             input: Some(input),
             cwd: Some(self.root.clone()),
             platform: Some(platform),
             format: Some(OutputFormat::Esm),
+            transform,
             // `dir` = output directory; Rolldown's `write()` persists files there.
             dir: Some(options.out_dir.to_string_lossy().into_owned()),
             sourcemap,

@@ -93,7 +93,12 @@ impl Transformer for OxcTransformer {
             code = inject_hmr_boundary(&code, &input.path, input.lang)?;
         }
 
-        let (lowered, map) = match lower_to_js(&code, input.lang, &input.path) {
+        let (lowered, map) = match lower_to_js(
+            &code,
+            input.lang,
+            &input.path,
+            input.jsx_import_source.as_deref(),
+        ) {
             Ok((s, m)) => (s, m),
             Err(e) => {
                 diagnostics.push(e.0);
@@ -118,6 +123,7 @@ pub fn lower_to_js(
     code: &str,
     lang: &'static str,
     path: &str,
+    jsx_import_source: Option<&str>,
 ) -> Result<(String, Option<oxc_sourcemap::OwnedSourceMap>)> {
     let allocator = Allocator::default();
     let source_type = source_type_for(lang);
@@ -136,9 +142,19 @@ pub fn lower_to_js(
     let semantic_ret = oxc_semantic::SemanticBuilder::new().build(&program);
     let scoping = semantic_ret.semantic.into_scoping();
 
+    // §6.3: the JSX runtime is the adapter's choice. React uses the
+    // `react/jsx-runtime` default; Solid 2.0 declares `@solidjs/web`, whose
+    // `jsx-runtime` subpath is where `jsx`/`jsxs`/`Fragment` live. Without
+    // this the emitted code imports React's runtime into a Solid page — the
+    // chunk parses but produces React elements, and Solid's SSR renders an
+    // empty string because its reactive tree was never built.
+    let mut jsx = oxc_transformer::JsxOptions::enable();
+    if let Some(src) = jsx_import_source {
+        jsx.import_source = Some(src.to_string());
+    }
     let options = oxc_transformer::TransformOptions {
         typescript: oxc_transformer::TypeScriptOptions::default(),
-        jsx: oxc_transformer::JsxOptions::enable(),
+        jsx,
         ..Default::default()
     };
     let transformer =

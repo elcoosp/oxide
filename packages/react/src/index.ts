@@ -38,13 +38,33 @@ export const adapter: FrameworkAdapter = {
   render,
   head,
   hydrate: hydrate as (root: Element, input: ClientInput) => Disposer,
-  // §10.3: client hydration uses React's own runtime so `useState` and
-  // event handlers survive. The IR path (`irHydrateIsland`) remains
-  // available for the conformance suite and environments without
-  // `react-dom/client`.
-  hydrateIsland: reactHydrateIsland as unknown as FrameworkAdapter['hydrateIsland'],
+  // §7: the named `adapter` export is the neutral-IR adapter. Its
+  // `hydrateIsland` replays deterministic markup against the hand-rolled
+  // fake DOM (see packages/react/test/helpers), which the §22 conformance
+  // suite drives. Real React hydration lives on `clientAdapter` below —
+  // `hydrateRoot` needs a live DOM and would crash on the fake one.
+  hydrateIsland: irHydrateIsland as unknown as FrameworkAdapter['hydrateIsland'],
   mount: mount as (root: Element, input: ClientInput) => Disposer,
   update,
+}
+
+/**
+ * `clientAdapter` — the browser-side adapter for the island boot entry.
+ *
+ * Same manifest as the named `adapter`, but `hydrateIsland` is React's own
+ * `hydrateRoot` so `useState`, event handlers and refs work. The generated
+ * boot entry (`<out_dir>/.oxide/island-boot.mjs`) imports this, not the
+ * neutral-IR `adapter`, so the two have distinct, well-named roles:
+ *
+ *   * `adapter`      → tests, conformance, environments without React
+ *   * `clientAdapter` → production browser hydration
+ *
+ * `react-dom/client` is code-split inside `reactHydrateIsland`, so a page
+ * with no islands never fetches it.
+ */
+export const clientAdapter: FrameworkAdapter = {
+  ...adapter,
+  hydrateIsland: reactHydrateIsland as unknown as FrameworkAdapter['hydrateIsland'],
 }
 
 // ---------------------------------------------------------------------------

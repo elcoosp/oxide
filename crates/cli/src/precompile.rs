@@ -120,6 +120,23 @@ async fn compile_vue(pool: &Arc<dyn Pool>, path: &Path, source: &str) -> anyhow:
         .ok_or_else(|| anyhow::anyhow!("vue-compile returned no `js` field"))
 }
 
+async fn compile_solid(pool: &Arc<dyn Pool>, path: &Path, source: &str, ssr: bool) -> anyhow::Result<String> {
+    let v = call_pool(
+        pool,
+        "tooling:solid-compile",
+        json!({
+            "source": source,
+            "filename": path.to_string_lossy(),
+            "ssr": ssr,
+        }),
+    )
+    .await?;
+    v.get("js")
+        .and_then(|x| x.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| anyhow::anyhow!("solid-compile returned no `js` field"))
+}
+
 async fn compile_svelte(pool: &Arc<dyn Pool>, path: &Path, source: &str, generate: &str) -> anyhow::Result<String> {
     let v = call_pool(
         pool,
@@ -143,6 +160,7 @@ pub async fn precompile_entries(
     pool: Option<&Arc<dyn Pool>>,
     entries: &BTreeMap<String, PathBuf>,
     svelte_generate: &str,
+    framework: Option<&str>,
 ) -> BTreeMap<PathBuf, String> {
     let Some(pool) = pool else {
         return BTreeMap::new();
@@ -167,6 +185,22 @@ pub async fn precompile_entries(
             }
         }
 
+        // §6.3: Solid's JSX compiler is `babel-preset-solid`, not Oxc's
+        // automatic runtime — its output is `ssrElement`/template calls,
+        // not `jsx()` factories. Route `.tsx`/`.jsx` through it when the
+        // project declares the Solid adapter.
+        if matches!(ext, "tsx" | "jsx") && framework == Some("solid") {
+            let ssr = svelte_generate == "ssr";
+            match compile_solid(pool, &path, &source, ssr).await {
+                Ok(js) => {
+                    out.insert(path, js);
+                }
+                Err(e) => {
+                    eprintln!("warn: solid precompile failed for {}: {e}", path.display());
+                }
+            }
+            continue;
+        }
         match ext {
             "vue" => match compile_vue(pool, &path, &source).await {
                 Ok(js) => {

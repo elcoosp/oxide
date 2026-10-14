@@ -141,6 +141,29 @@ impl std::fmt::Debug for FrameworkStack {
 /// they share module caches and stay warm across requests. Any failure
 /// (worker can't spawn, config can't load) degrades gracefully: the
 /// affected piece is `None`, the caller falls back to the IR path.
+/// Best-effort extraction of the adapter name from a config file's source.
+/// Matches `framework: react(` / `framework: solid(` / etc. Used only to
+/// seed `OXIDE_FRAMEWORK` before the config is dynamically imported; the
+/// full config load replaces this with the authoritative value.
+fn peek_framework_name(path: &std::path::Path) -> Option<String> {
+    let src = std::fs::read_to_string(path).ok()?;
+    for name in ["react", "vue", "svelte", "solid"] {
+        // Simple textual search: `framework: <name>(` — the shape every
+        // config in this workspace uses. A `framework({ ... })` with no
+        // adapter factory leaves the caller's default (react) in place.
+        let needle = format!("framework: {name}(");
+        if src.contains(&needle) {
+            return Some(name.to_string());
+        }
+        // Also `framework: <name> ({ ... })` and `framework: <name>({`.
+        let needle2 = format!("framework:{name}(");
+        if src.contains(&needle2) {
+            return Some(name.to_string());
+        }
+    }
+    None
+}
+
 fn backend_str(b: JsBackend) -> &'static str {
     match b {
         JsBackend::Node => "node",
@@ -153,6 +176,23 @@ pub async fn build_framework_stack(
     backend: JsBackend,
 ) -> FrameworkStack {
     use oxide_jshost::{FrameworkHostRenderer, JsHost, NodeHost, PoolConfig, V8Host};
+
+    // §6.3: which framework's JSX the worker's `tsx-loader.mjs` should
+    // lower `.tsx`/`.jsx` against. Read here (not at the CLI call sites) so
+    // the config's own `import ... from './page.tsx'` statement goes
+    // through the right compiler — the config loader runs a dynamic import
+    // inside `build_framework_stack`, before any render request. The value
+    // is a best-effort peek at the config file's first `framework: X(...)`
+    // match; the CLI can override it via the same env var.
+    if let Some(cfg_path) = config_path {
+        if std::env::var_os("OXIDE_FRAMEWORK").is_none() {
+            if let Some(name) = peek_framework_name(cfg_path) {
+                // SAFETY: called before any worker thread is spawned; no
+                // concurrent reader or writer touches this variable.
+                unsafe { std::env::set_var("OXIDE_FRAMEWORK", name) };
+            }
+        }
+    }
 
     // §4.2 / D2: the backend is selectable via `server.backend` in the
     // project config. `Node` (default) resolves npm from the workspace;
