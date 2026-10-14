@@ -21,6 +21,8 @@ const components: Record<string, unknown> = {
 }
 
 export default defineConfig({
+  // §16.3: origin used by the emitted `sitemap.xml` and `robots.txt`.
+  siteUrl: 'https://smoke.example.com',
   framework: react({
     ssr: 'real',
     componentFor: (route: string) => components[route],

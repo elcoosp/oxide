@@ -600,10 +600,19 @@ pub fn sitemap_xml(urls: &[&str]) -> String {
 
 /// robots.txt (§16.3): one `User-agent:`/`Disallow:` group per `(agent, rule)`,
 /// optional trailing `Sitemap:` line.
+///
+/// With no rules the emitted file is still valid — a crawler reads an empty
+/// `robots.txt` as "allow everything" — but an explicit `User-agent: *`
+/// group is clearer and is what every deployment actually wants. Emit that
+/// default when the caller passes no rules.
 pub fn robots_txt(rules: &[(&str, &str)], sitemap: Option<&str>) -> String {
     let mut s = String::new();
-    for (agent, rule) in rules {
-        s.push_str(&format!("User-agent: {agent}\nDisallow: {rule}\n"));
+    if rules.is_empty() {
+        s.push_str("User-agent: *\nDisallow:\n");
+    } else {
+        for (agent, rule) in rules {
+            s.push_str(&format!("User-agent: {agent}\nDisallow: {rule}\n"));
+        }
     }
     if let Some(sm) = sitemap {
         s.push_str(&format!("Sitemap: {sm}\n"));

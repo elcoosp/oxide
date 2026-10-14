@@ -210,6 +210,14 @@ fn extract_minimal_framework(source: &str) -> Option<Value> {
         );
     }
 
+    // 3b. `siteUrl: 'https://…'` — §16.3 sitemap/robots origin. Best-effort
+    // string match; the full config parser is authoritative when it succeeds.
+    // The serde rename is camelCase, so the JSON key must be `siteUrl`, not
+    // the Rust field's snake_case name.
+    if let Some(site) = scan_top_level_string(source, "siteUrl") {
+        obj.insert("siteUrl".into(), Value::String(site));
+    }
+
     // 4. §10.3: `framework({ ..., islands: { Name: 'path', ... } })` — merge
     //    into the framework object if any islands were declared.
     if let Some(islands) = extract_islands_map(source) {

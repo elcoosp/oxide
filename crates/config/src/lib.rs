@@ -68,6 +68,13 @@ pub struct OxideConfig {
     pub environments: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub dev: DevConfig,
+    /// §16.3: absolute site origin used by `sitemap.xml` and `robots.txt`.
+    /// Example: `"https://example.com"`. When absent, the build tries
+    /// `OXIDE_SITE_URL` from the environment; if both are missing, the
+    /// sitemap is emitted with site-relative paths (still valid, just less
+    /// useful to crawlers) and `robots.txt` omits the `Sitemap:` line.
+    #[serde(default)]
+    pub site_url: Option<String>,
 }
 
 /// Content collections configuration (§16.5).
@@ -110,6 +117,7 @@ impl Default for OxideConfig {
             extends: Vec::new(),
             environments: BTreeMap::new(),
             dev: DevConfig::default(),
+            site_url: None,
         }
     }
 }
