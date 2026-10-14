@@ -175,6 +175,57 @@ pub fn lower_to_js(
     Ok((code, map))
 }
 
+impl OxcTransformer {
+    /// Run only the AST-driven passes — `'use cache'` rewriting, server-fn
+    /// stubs, HMR boundary — and *not* the TS/JSX lowering stage.
+    ///
+    /// Used by the Rolldown integration: Rolldown runs its own Oxc
+    /// lowering on the output, so the framework-specific transforms happen
+    /// here first, on the original source (correct spans, correct
+    /// identifiers), and the TS/JSX strip happens once downstream. Running
+    /// `transform` instead would lower twice and double-codegen.
+    ///
+    /// Returns the rewritten source. The `scan`/`directives`/`server_fns`
+    /// metadata is computed by the caller when needed; this method is
+    /// deliberately narrow.
+    pub fn transform_passes_only(&self, input: &TransformInput) -> Result<String> {
+        let allocator = Allocator::default();
+        let source_type = source_type_for(input.lang);
+        let parsed = Parser::new(&allocator, &input.code, source_type).parse();
+        if !parsed.diagnostics.is_empty() {
+            return Err(crate::err(
+                "CMP-PARSE",
+                format!(
+                    "`{}` failed to parse: {} error(s)",
+                    input.path,
+                    parsed.diagnostics.len()
+                ),
+            ));
+        }
+
+        let mut code = input.code.clone();
+        let server = is_server_module_path(&input.path);
+        if server && input.env == Env::Ssr {
+            let (c, _) = ast_use_cache(&parsed.program, &code, &input.path)?;
+            code = c;
+        }
+        if server {
+            let (c, _) = ast_server_fn_stubs(
+                &parsed.program,
+                &code,
+                &input.path,
+                input.env,
+                &input.build_secret,
+            )?;
+            code = c;
+        }
+        if input.dev && !server {
+            code = inject_hmr_boundary(&code, &input.path, input.lang)?;
+        }
+        Ok(code)
+    }
+}
+
 fn source_type_for(lang: &str) -> SourceType {
     match lang {
         "tsx" => SourceType::tsx(),

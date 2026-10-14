@@ -24,8 +24,9 @@ use rolldown::{
 };
 use rolldown_common::{ModuleType, Output};
 use rolldown_plugin::{
-    HookLoadArgs, HookLoadOutput, HookLoadReturn, HookUsage, Plugin, Pluginable,
-    SharedLoadPluginContext,
+    HookLoadArgs, HookLoadOutput, HookLoadReturn, HookTransformArgs, HookTransformReturn,
+    HookTransformOutput, HookUsage, Plugin, Pluginable, SharedLoadPluginContext,
+    SharedTransformPluginContext,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -163,7 +164,7 @@ impl Bundler for RolldownBundler {
         let ropts = self.build_options(options);
         let out_dir = options.out_dir.clone();
         let env = options.env;
-        let plugins = precompiled_plugins(options);
+        let plugins = oxide_plugins(options, &self.root);
 
         // Rolldown is async; run it on a dedicated current-thread runtime on a
         // scoped thread so this works regardless of the caller's runtime context.
@@ -433,10 +434,149 @@ impl Plugin for PrecompiledPlugin {
     }
 }
 
-fn precompiled_plugins(options: &BundleOptions) -> Vec<std::sync::Arc<Pluginable>> {
-    if options.precompiled.is_empty() {
-        Vec::new()
-    } else {
-        vec![Pluginable::new_shared(PrecompiledPlugin::new(options.precompiled.clone()))]
+/// The plugin list for a Rolldown run: the oxide passes (always) and the
+/// precompiled-SFC server (only when the CLI supplied precompiled JS).
+fn oxide_plugins(options: &BundleOptions, root: &Path) -> Vec<std::sync::Arc<Pluginable>> {
+    let mut plugins: Vec<std::sync::Arc<Pluginable>> = vec![Pluginable::new_shared(
+        OxidePassesPlugin::new(
+            // The compiler's `Env` mirrors the bundler's `BundleEnv`
+            // one-to-one; map rather than re-derive.
+            match options.env {
+                BundleEnv::Client => oxide_compiler::Env::Client,
+                BundleEnv::Ssr => oxide_compiler::Env::Ssr,
+                BundleEnv::Edge => oxide_compiler::Env::Edge,
+            },
+            options.build_secret.clone(),
+            root.to_path_buf(),
+            options.precompiled.clone(),
+        ),
+    )];
+    if !options.precompiled.is_empty() {
+        plugins.push(Pluginable::new_shared(PrecompiledPlugin::new(
+            options.precompiled.clone(),
+        )));
+    }
+    plugins
+}
+
+
+/// §6.2 steps 4-6: the framework passes Rolldown's own Oxc lowering does
+/// not perform. Rolldown strips TS and lowers JSX; it knows nothing about
+/// `'use cache'`, `serverFn(...)` stubs, or the server-only guard — so an
+/// SSR chunk built by `RolldownBundler` alone carries a raw
+/// `serverFn(async …)` call and no `__oxide_register_fn` line.
+///
+/// This plugin runs `OxcTransformer::transform_passes_only` on each module
+/// *before* Rolldown lowers it: the passes see the original source (exact
+/// spans, real identifiers) and the TS/JSX strip still happens once,
+/// downstream, in Rolldown.
+#[derive(Debug)]
+pub struct OxidePassesPlugin {
+    env: oxide_compiler::Env,
+    build_secret: String,
+    /// Absolute project root. A module outside it (a `node_modules`
+    /// dependency, a linked workspace package) is skipped — the passes are
+    /// for the application's own modules.
+    root: PathBuf,
+    /// Paths the CLI already precompiled (`solid-jsx-oxc`,
+    /// `@vue/compiler-sfc`, `svelte/compiler`). Their emitted JS must not go
+    /// through the passes a second time.
+    precompiled: BTreeMap<PathBuf, String>,
+}
+
+impl OxidePassesPlugin {
+    pub fn new(
+        env: oxide_compiler::Env,
+        build_secret: String,
+        root: PathBuf,
+        precompiled: BTreeMap<PathBuf, String>,
+    ) -> Self {
+        Self { env, build_secret, root, precompiled }
+    }
+
+    /// Should the passes run on the module at `id`?
+    fn should_transform(&self, id: &str) -> bool {
+        let bare = id.split(['?', '#']).next().unwrap_or(id);
+        let path = Path::new(bare);
+        if !path.is_absolute() || !path.starts_with(&self.root) {
+            return false;
+        }
+        if path.components().any(|c| c.as_os_str() == "node_modules") {
+            return false;
+        }
+        if path
+            .extension()
+            .is_some_and(|e| e == "css" || e == "json" || e == "vue" || e == "svelte")
+        {
+            return false;
+        }
+        if self.precompiled.contains_key(path) {
+            return false;
+        }
+        true
+    }
+
+    fn lang_of(path: &str) -> &'static str {
+        match Path::new(path).extension().and_then(|e| e.to_str()) {
+            Some("ts") => "ts",
+            Some("tsx") => "tsx",
+            Some("jsx") => "jsx",
+            Some("mjs") | Some("js") => "mjs",
+            _ => "mjs",
+        }
+    }
+}
+
+impl Plugin for OxidePassesPlugin {
+    fn name(&self) -> std::borrow::Cow<'static, str> {
+        "oxide-passes".into()
+    }
+
+    fn register_hook_usage(&self) -> HookUsage {
+        HookUsage::Transform
+    }
+
+    fn transform(
+        &self,
+        _ctx: SharedTransformPluginContext,
+        args: &HookTransformArgs<'_>,
+    ) -> impl std::future::Future<Output = HookTransformReturn> + Send {
+        // The passes are synchronous. Doing the work eagerly (rather than
+        // inside the future) keeps this a plain fn whose return type still
+        // matches the hook contract.
+        let replacement: Option<String> = if self.should_transform(args.id) {
+            let input = oxide_compiler::TransformInput {
+                path: args.id.to_string(),
+                code: args.code.to_string(),
+                env: self.env,
+                lang: Self::lang_of(args.id),
+                build_secret: self.build_secret.clone(),
+                dev: false,
+                jsx_import_source: None,
+            };
+            match oxide_compiler::OxcTransformer.transform_passes_only(&input) {
+                Ok(code) if code != args.code.as_str() => Some(code),
+                // Unchanged output: return `None` so Rolldown keeps its own
+                // copy and any downstream map it has already built.
+                Ok(_) => None,
+                // A module the pass cannot parse is left untouched and
+                // Rolldown reports its own diagnostic. Failing here would
+                // regress code that compiles today but the pass's narrow
+                // parser does not fully cover.
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
+        async move {
+            match replacement {
+                Some(code) => Ok(Some(HookTransformOutput {
+                    code: Some(code),
+                    ..Default::default()
+                })),
+                None => Ok(None),
+            }
+        }
     }
 }

@@ -37,7 +37,11 @@ export async function __oxide_call_fn(id: string, args: unknown[]): Promise<unkn
   const r = await fetch(`/_oxide/fn/${encodeURIComponent(id)}`, {
     method: 'POST',
     headers: { 'content-type': 'application/oxide-fn' },
-    body: JSON.stringify({ args }),
+    // The body is the bare argument array. The server's worker op
+    // (`server-fn:run`) reads it as `args_json` and `JSON.parse`s it into
+    // the argument list directly — wrapping it in `{args: …}` would make
+    // the worker reject a valid call with "arguments must be a JSON array".
+    body: JSON.stringify(args),
   })
   // 404 → the id is not registered (a stale client bundle, or a fn that
   // was tree-shaken away). Any non-2xx carries the same body shape so the

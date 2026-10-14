@@ -553,29 +553,8 @@ fn bundle_env_options(
     out_dir: PathBuf,
     precompiled: BTreeMap<PathBuf, String>,
     jsx_import_source: Option<String>,
+    build_secret: String,
 ) -> oxide_bundler::BundleOptions {
-    // §9.4 per-build secret: fresh on each invocation so the unguessable
-    // server-fn URL prefix rotates between deployments.
-    //
-    // IMPORTANT: `/dev/urandom` never EOFs. `std::fs::read` would read
-    // forever, allocating the whole file (which is unbounded). Use a
-    // bounded `read_exact` on the 16 bytes we actually need.
-    let build_secret = {
-        use std::io::Read as _;
-        let mut h = blake3::Hasher::new();
-        h.update(
-            &std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos().to_le_bytes())
-                .unwrap_or([0u8; 16]),
-        );
-        let mut rnd = [0u8; 16];
-        if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-            let _ = f.read_exact(&mut rnd);
-        }
-        h.update(&rnd);
-        h.finalize().to_hex().to_string()[..32].to_string()
-    };
     // §6.1: `process.env.NODE_ENV` drives React's dev-vs-production
     // bundle selection. Setting it at the CLI level (rather than in the
     // bundler) keeps the bundler agnostic of a project's framework — the
@@ -1288,12 +1267,37 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             .or(cfg.framework.name.as_deref())
             .unwrap_or("react"),
     );
+    // §9.4: one per-build secret for both environments. The server-fn id
+    // is a hash of file, export name and *this secret*; if the client and
+    // server bundles computed it from different secrets, the client stub
+    // would POST an id the server's registry never registered.
+    //
+    // `/dev/urandom` never EOFs, so `std::fs::read` would read forever;
+    // `read_exact` on 16 bytes is the bounded form.
+    let build_secret = {
+        use std::io::Read as _;
+        let mut h = blake3::Hasher::new();
+        h.update(
+            &std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos().to_le_bytes())
+                .unwrap_or([0u8; 16]),
+        );
+        let mut rnd = [0u8; 16];
+        if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+            let _ = f.read_exact(&mut rnd);
+        }
+        h.update(&rnd);
+        h.finalize().to_hex().to_string()[..32].to_string()
+    };
+
     let client_opts = bundle_env_options(
         oxide_bundler::BundleEnv::Client,
         client_entries,
         client_out.clone(),
         client_precompiled,
         jsx_source.clone(),
+        build_secret.clone(),
     );
     let server_opts = bundle_env_options(
         oxide_bundler::BundleEnv::Ssr,
@@ -1301,6 +1305,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         server_out.clone(),
         server_precompiled,
         jsx_source,
+        build_secret,
     );
     let rb = oxide_bundler::RolldownBundler::new(&rootp);
     rb.bundle(&client_opts)
@@ -2241,9 +2246,19 @@ impl oxide_server::ServerFnDispatcher for ServerFnDispatcherImpl {
             .run_coded(id, args_json, &self.entry_path)
             .await
         {
-            Ok(v) => serde_json::to_vec(&v).map_err(|e| {
-                oxide_server::DispatchError::internal(format!("serialize fn result: {e}"))
-            }),
+            Ok(v) => {
+                // The worker op returns `{value: <fn result>}` — a stable
+                // envelope it can extend later (streaming, diagnostics). The
+                // HTTP envelope wraps the *value*, not the worker's
+                // container, so the client sees `data` = the fn's own return
+                // and not `{value: …}`.
+                let value = v.get("value").cloned().unwrap_or(v);
+                serde_json::to_vec(&value).map_err(|e| {
+                    oxide_server::DispatchError::internal(format!(
+                        "serialize fn result: {e}"
+                    ))
+                })
+            }
             Err(e) => {
                 // The worker's JSH-FN-NOT-FOUND maps to a 404 envelope; a
                 // function that threw maps to a 400 with the message; any
