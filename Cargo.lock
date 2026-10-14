@@ -4723,6 +4723,7 @@ dependencies = [
  "oxide-odf",
  "oxide-render",
  "oxide-router",
+ "ring",
  "rustls-pemfile",
  "serde",
  "serde_json",
