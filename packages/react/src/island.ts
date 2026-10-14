@@ -19,7 +19,7 @@
 // output is identical.
 
 import { createElement, type ReactNode } from 'react'
-import { toBase64 } from './ir.ts'
+import { toBase64 } from '../../oxide/src/bytes.ts'
 
 /** Hydration timing (§10.3): `load` (immediate), `idle`, `visible`, or
  *  `{ media: '(...)' }` for a CSS media query. */

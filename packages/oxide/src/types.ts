@@ -86,8 +86,16 @@ export interface FrameworkAdapter {
 
   // ---- client entry ----
   hydrate(root: Element, input: ClientInput): Disposer
-  /** Islands mode (§10.3); adapters without islands omit it. */
-  hydrateIsland?(el: Element, mod: unknown, props: unknown): Disposer
+  /** Islands mode (§10.3); adapters without islands omit it.
+   *
+   *  May return the disposer synchronously (IR replay) or as a promise
+   *  (React's `react-dom/client` path, which code-splits its runtime on
+   *  first use). Callers await either. */
+  hydrateIsland?(
+    el: Element,
+    mod: unknown,
+    props: unknown,
+  ): Disposer | Promise<Disposer>
   /** SPA mode shell mount. */
   mount(root: Element, input: ClientInput): Disposer
   /** Client navigation: swap the route tree. */

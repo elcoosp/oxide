@@ -164,10 +164,7 @@ export function hash6(input: string): string {
   return h.toString(16).padStart(8, '0').slice(0, 6)
 }
 
-/** Base64 with a browser fallback (island props, §10.3). */
-export function toBase64(s: string): string {
-  const g = globalThis as { btoa?: (s: string) => string; Buffer?: { from(s: string, enc: string): { toString(enc: string): string } } }
-  if (typeof g.btoa === 'function') return g.btoa(unescape(encodeURIComponent(s)))
-  if (g.Buffer) return g.Buffer.from(s, 'utf8').toString('base64')
-  throw new TypeError('toBase64: no base64 encoder available')
-}
+// Base64 helpers live in the shared `oxide` package (single implementation
+// across every adapter); re-exported here so existing `from './ir.ts'`
+// imports keep working.
+export { toBase64, fromBase64 } from '../../oxide/src/bytes.ts'

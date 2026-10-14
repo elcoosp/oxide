@@ -12,7 +12,8 @@
 import type { FrameworkAdapter, RenderInput, RenderCtx, HeadTags, ClientInput, Disposer } from '../../oxide/src/types.ts'
 import type { Plugin } from '../../oxide/src/types.ts'
 import { render, renderToString, renderShellToString, head, mergeHead, applyTitleTemplate, islandModules, pageComponent } from './render.ts'
-import { hydrate, hydrateIsland, mount, update, type ClientOptions } from './hydrate.ts'
+import { hydrate, hydrateIsland as irHydrateIsland, mount, update, type ClientOptions } from './hydrate.ts'
+import { reactHydrateIsland } from './hydrate-island-real.ts'
 import { createRealAdapter, type RealAdapterOptions } from './real-adapter.ts'
 
 export const adapter: FrameworkAdapter = {
@@ -37,7 +38,11 @@ export const adapter: FrameworkAdapter = {
   render,
   head,
   hydrate: hydrate as (root: Element, input: ClientInput) => Disposer,
-  hydrateIsland: hydrateIsland as unknown as FrameworkAdapter['hydrateIsland'],
+  // §10.3: client hydration uses React's own runtime so `useState` and
+  // event handlers survive. The IR path (`irHydrateIsland`) remains
+  // available for the conformance suite and environments without
+  // `react-dom/client`.
+  hydrateIsland: reactHydrateIsland as unknown as FrameworkAdapter['hydrateIsland'],
   mount: mount as (root: Element, input: ClientInput) => Disposer,
   update,
 }
@@ -87,7 +92,7 @@ export default reactFactory
 
 // Re-exports for app code and the conformance suite.
 export { render, renderToString, renderShellToString, head, mergeHead, applyTitleTemplate }
-export { hydrate, hydrateIsland, mount, update, type ClientOptions }
+export { hydrate, irHydrateIsland, mount, update, type ClientOptions }
 export { islandModules, pageComponent }
 export { reactHydrateIsland } from './hydrate-island-real.ts'
 export { Island, type IslandProps, type IslandStrategy } from './island.ts'

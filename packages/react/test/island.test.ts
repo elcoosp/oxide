@@ -13,7 +13,7 @@ import assert from 'node:assert/strict'
 import { createElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { Island } from '../src/island.ts'
-import { toBase64 } from '../src/ir.ts'
+import { toBase64 } from '../../oxide/src/bytes.ts'
 
 function render(node: ReactNode): string {
   return renderToStaticMarkup(node as Parameters<typeof renderToStaticMarkup>[0])

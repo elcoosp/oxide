@@ -19,7 +19,13 @@ interface IslandsDoc {
 }
 
 export interface IslandsAdapter {
-  hydrateIsland?(el: Element, mod: unknown, props: unknown): () => void
+  /** Synchronous (IR replay) or asynchronous (React's `react-dom/client`,
+   *  which code-splits its runtime). The caller awaits either. */
+  hydrateIsland?(
+    el: Element,
+    mod: unknown,
+    props: unknown,
+  ): (() => void) | Promise<() => void>
   hydrate?(root: Element, input: unknown): () => void
 }
 
@@ -105,7 +111,12 @@ export async function hydrateIsland(el: IslandHost, ctx: IslandCtx): Promise<(()
     const adapter = ctx.adapter
     let disposer: (() => void) | undefined
     if (typeof adapter.hydrateIsland === 'function') {
-      disposer = adapter.hydrateIsland(el as Element, mod, props)
+      // `hydrateIsland` may be synchronous (IR path) or async (React's
+      // `react-dom/client` path code-splits its runtime on first use).
+      // `await` handles both — a non-promise value resolves immediately.
+      disposer = await Promise.resolve(
+        adapter.hydrateIsland(el as Element, mod, props),
+      )
     } else if (typeof adapter.hydrate === 'function') {
       disposer = adapter.hydrate(el as Element, { props, mod })
     }

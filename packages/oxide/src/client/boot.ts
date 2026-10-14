@@ -1,63 +1,109 @@
-// Oxide client boot (§10.3). Loaded as an ESM module on any page whose
-// shell carried `<script type="module" src="/client/boot.js">`. Scans the
-// live DOM for `<ox-island>` hosts, decodes their props, and dispatches
-// each into a registered framework adapter's `hydrateIsland`.
+// Oxide client boot (§10.3). The generated per-project boot entry
+// (`.oxide/island-boot.mjs`, written by `oxide build`) imports this module,
+// registers the framework adapter, and then calls `boot()`.
 //
-// Framework-agnostic by design: the app registers its adapter once via
-// `registerAdapter(adapter)`, and this module does the scanning + chunk
-// loading + strategy scheduling. That keeps `packages/oxide` free of any
-// React/Vue/Svelte/Solid import.
+// This module MUST be import-safe in the SSR / config-loader environment:
+// `@oxide/react` re-exports it, and `oxide.config.ts` imports `@oxide/react`
+// for its adapter factory — so this file gets evaluated in the Node worker
+// where `window` and `document` do not exist. Everything touching the DOM
+// is behind a runtime guard; the module has no top-level side effects.
 
 import { hydrateIslands, type IslandsOptions } from './islands.ts'
 import type { FrameworkAdapter } from '../types.ts'
 
 interface BootState {
   adapter?: FrameworkAdapter
-  // Adapter's own module loader — resolves a chunk id from the client
-  // manifest to the module namespace. This is framework-specific
-  // (React's `lazy`, Vue's `defineAsyncComponent`, etc.) and is supplied
-  // by the registered adapter.
   loadChunk: (chunk: string) => Promise<unknown>
 }
 
-declare global {
-  interface Window {
-    __oxideBoot?: BootState
-    /** App code calls this once before boot scans the DOM. */
-    __oxideRegisterAdapter?: (adapter: FrameworkAdapter, loadChunk: BootState['loadChunk']) => void
+interface BootWindow extends Window {
+  __oxideBoot?: BootState
+  __oxideRegisterAdapter?: (adapter: FrameworkAdapter, loadChunk: BootState['loadChunk']) => void
+  __oxideBootRun?: () => void
+}
+
+/** A `Window` shaped object, or `undefined` in a non-browser environment. */
+function maybeWindow(): BootWindow | undefined {
+  const g = globalThis as { window?: BootWindow }
+  return g.window
+}
+
+/**
+ * Install the boot runtime on `window` if it isn't already there. Idempotent
+ * across duplicate module evaluations (bundler dedup failure, SPA reimport).
+ * No-op outside the browser.
+ */
+function ensureInstalled(w: BootWindow): void {
+  if (w.__oxideRegisterAdapter) return
+  w.__oxideBoot = {
+    loadChunk: async (chunk) => {
+      return await import(/* @vite-ignore */ chunk)
+    },
+  }
+  w.__oxideRegisterAdapter = (adapter, loadChunk) => {
+    const state = w.__oxideBoot
+    if (!state) return
+    state.adapter = adapter
+    state.loadChunk = loadChunk
+  }
+  w.__oxideBootRun = () => {
+    const state = w.__oxideBoot
+    if (!state?.adapter) return
+    const doc = (globalThis as { document?: Document }).document
+    if (!doc) return
+    const opts: IslandsOptions = {
+      doc: doc as unknown as IslandsOptions['doc'],
+      adapter: state.adapter,
+      loadChunk: state.loadChunk,
+    }
+    hydrateIslands(opts)
   }
 }
 
-window.__oxideBoot = {
-  loadChunk: async (chunk) => {
-    // Fallback: dynamic import the chunk as a module URL. Real apps
-    // override via __oxideRegisterAdapter to route through their client
-    // manifest.
-    return await import(/* @vite-ignore */ chunk)
-  },
-}
-
-window.__oxideRegisterAdapter = (adapter, loadChunk) => {
-  if (!window.__oxideBoot) return
-  window.__oxideBoot.adapter = adapter
-  window.__oxideBoot.loadChunk = loadChunk
-}
-
-function run() {
-  const state = window.__oxideBoot
-  if (!state?.adapter) return
-  const opts: IslandsOptions = {
-    doc: document,
-    adapter: state.adapter,
-    loadChunk: state.loadChunk,
+/**
+ * Register an adapter and its chunk loader, then run the island scan. The
+ * generated boot entry calls this after its static imports have resolved.
+ * Safe to call multiple times: the scan is idempotent because each
+ * `<ox-island>` host carries a `data-ox-hydrated` guard after its first
+ * hydration attempt.
+ *
+ * Runs synchronously if the document is already interactive; otherwise
+ * waits for `DOMContentLoaded`.
+ */
+export function boot(): void {
+  const w = maybeWindow()
+  if (!w) return
+  ensureInstalled(w)
+  const run = w.__oxideBootRun
+  if (typeof run !== 'function') return
+  const doc = (globalThis as { document?: Document }).document
+  if (!doc) return
+  if (doc.readyState === 'loading') {
+    doc.addEventListener('DOMContentLoaded', run, { once: true })
+  } else {
+    run()
   }
-  hydrateIslands(opts)
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', run, { once: true })
-} else {
-  run()
+/**
+ * Install the boot runtime on `window` without running the island scan.
+ * Called by the generated entry before `boot()` so `__oxideRegisterAdapter`
+ * is available when the entry imports the framework adapter. No-op outside
+ * the browser — safe to call from any module.
+ */
+export function installBootRuntime(): void {
+  const w = maybeWindow()
+  if (!w) return
+  ensureInstalled(w)
+}
+
+// Install eagerly when the browser context is present, so a hand-written
+// entry that imports `boot` and calls `window.__oxideRegisterAdapter`
+// directly still works. The SSR/config-loader environment does not reach
+// this branch.
+{
+  const w = maybeWindow()
+  if (w) ensureInstalled(w)
 }
 
 export {}

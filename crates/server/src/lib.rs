@@ -1002,8 +1002,11 @@ fn path_has_extension(path: &str) -> bool {
     }
 }
 
-/// Per-request CSP nonce derived from the request id (deterministic, unique per request).
-fn nonce_for(request_id: &str) -> String {
+/// Per-request CSP nonce derived from the request id (deterministic, unique
+/// per request). Public because the framework dispatch injected by the CLI
+/// must stamp the same nonce on any script it adds to the response — a script
+/// tag without the nonce is blocked by `strict-dynamic` (§17.1).
+pub fn nonce_for(request_id: &str) -> String {
     blake3::hash(request_id.as_bytes()).to_hex()[..32].to_string()
 }
 
@@ -1094,18 +1097,24 @@ impl Pipeline {
                 Box::pin(std::future::ready(resp))
             }
             NativePrefix::Static(resp, rule_headers) => {
-                let finished = self.finish_response(resp, &rule_headers);
+                let request_id = req.request_id.clone();
+                let finished = self.finish_response(resp, &rule_headers, &request_id);
                 if let Some(m) = &metrics {
                     m.observe("_static", started.elapsed(), finished.status);
                 }
                 Box::pin(std::future::ready(finished))
             }
             NativePrefix::Dispatch(rule_headers) => {
+                // Capture the request id before `req` moves into `dispatch` —
+                // `finish_response` needs it to derive the per-request CSP
+                // nonce, and the framework dispatch derives the same value
+                // from the same id to stamp the boot script tag (§17.1).
+                let request_id = req.request_id.clone();
                 // Call dispatch synchronously; only the (Send) boxed future crosses the await.
                 let fut = dispatch(req);
                 Box::pin(async move {
                     let resp = fut.await;
-                    self.finish_response(resp, &rule_headers)
+                    self.finish_response(resp, &rule_headers, &request_id)
                 })
             }
         }
@@ -1233,14 +1242,16 @@ impl Pipeline {
         &self,
         resp: OxideResponse,
         rule_headers: &[(String, String)],
+        request_id: &str,
     ) -> OxideResponse {
-        let nonce = nonce_for(
-            resp.headers
-                .iter()
-                .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-request-id"))
-                .map(|(_, v)| v.as_str())
-                .unwrap_or(""),
-        );
+        // §17.1: the CSP nonce is derived from the request id. The id is a
+        // property of the *request*, not the response; hashing an empty
+        // string when the response carries no `x-oxide-request-id` header
+        // (which is the normal path — the header is only added on native
+        // error responses) yields the same nonce for every response, which
+        // is both a security hole and a mismatch against the framework
+        // dispatch's per-request nonce.
+        let nonce = nonce_for(request_id);
         let mut r = resp;
         let csp_nonce = match self.security.csp.as_str() {
             "off" => None,

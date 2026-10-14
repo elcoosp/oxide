@@ -57,7 +57,7 @@ test('server HTML carries the island markup and boot script', async ({ request }
   expect(html).toContain('data-ox-strategy="load"')
   // base64(JSON.stringify({initial:3}))
   expect(html).toContain('data-ox-props="eyJpbml0aWFsIjozfQ=="')
-  expect(html).toMatch(/<script type="module" src="\/client\/[^"]+"><\/script>/)
+  expect(html).toMatch(/<script type="module" src="\/client\/[^"]+" nonce="[a-f0-9]+"><\/script>/)
 })
 
 test('browser hydrates the counter island and a click advances it', async ({ page }) => {

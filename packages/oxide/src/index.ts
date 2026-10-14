@@ -13,3 +13,5 @@ export {
 } from './client/islands.ts'
 export { attachDeferGlue, wireDeferreds, DeferredClient, type SwapDetail } from './client/defer-glue.ts'
 export { enhance, type EnhanceForm, type EnhanceOptions } from './client/enhance.ts'
+export { toBase64, fromBase64 } from './bytes.ts'
+export { boot } from './client/boot.ts'
