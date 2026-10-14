@@ -4463,6 +4463,7 @@ dependencies = [
 name = "oxide-bundler"
 version = "0.1.0"
 dependencies = [
+ "arcstr",
  "blake3",
  "oxc_resolver",
  "oxide-compiler",
@@ -4470,6 +4471,7 @@ dependencies = [
  "oxide-graph",
  "rolldown",
  "rolldown_common",
+ "rolldown_plugin",
  "serde",
  "serde_json",
  "tempfile",

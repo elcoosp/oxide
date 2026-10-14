@@ -122,6 +122,8 @@ oxc_transformer = { version = "0.153.0" }
 oxc_codegen = { version = "0.153.0" }
 rolldown = { version = "1.2.13" }
 rolldown_common = { version = "1.2.13" }
+rolldown_plugin = { version = "1.2.13" }
+arcstr = "1"
 lightningcss = { version = "1.0.0-alpha.72", features = ["bundler", "sourcemap"] }
 ravif = { version = "0.13.0" }
 skrifa = { version = "0.48.0" }

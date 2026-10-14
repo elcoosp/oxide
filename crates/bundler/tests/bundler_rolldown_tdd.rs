@@ -348,3 +348,48 @@ fn rolldown_emits_real_sourcemaps_next_to_chunks() {
         "chunk should carry sourceMappingURL comment, body:\n{js}"
     );
 }
+
+
+#[test]
+fn rolldown_precompiled_plugin_serves_precompiled_js() {
+    // §6.3: `.vue`/`.svelte` files are lowered to JS by the tooling pool
+    // and handed to the bundler via `BundleOptions::precompiled`. The
+    // PrecompiledPlugin intercepts Rolldown's `load` hook and serves the
+    // JS in place of the raw SFC, so RolldownBundler can handle SFC
+    // projects directly (previously the CLI had to fall back to
+    // ChunkBundler for them, losing sourcemaps).
+    let dir = tempfile::tempdir().unwrap();
+
+    // The "SFC" on disk is NOT valid JS — if the plugin fails to intercept,
+    // Rolldown's parse will fail and the test will see the error.
+    write(
+        dir.path(),
+        "src/page.vue",
+        "<template><div>hello</div></template>\n",
+    );
+
+    let vue_path = dir.path().join("src/page.vue").canonicalize().unwrap();
+    let precompiled_js = "export default { name: 'Page' };\nconsole.log('page loaded');\n";
+    let mut o = opts(dir.path(), BundleEnv::Ssr, &[("page", "src/page.vue")]);
+    o.precompiled.insert(vue_path, precompiled_js.to_string());
+
+    let out = RolldownBundler::new(dir.path())
+        .bundle(&o)
+        .expect("rolldown should bundle the precompiled SFC");
+
+    // The precompiled body survived; the raw `<template>` did not.
+    let entry = out
+        .chunks
+        .iter()
+        .find(|c| c.kind == ChunkKind::Entry)
+        .expect("entry chunk");
+    let js = std::fs::read_to_string(dir.path().join("dist").join(&entry.file)).unwrap();
+    assert!(
+        js.contains("page loaded") || js.contains("Page"),
+        "precompiled body must be present in chunk:\n{js}"
+    );
+    assert!(
+        !js.contains("<template>"),
+        "raw SFC must not appear in chunk:\n{js}"
+    );
+}

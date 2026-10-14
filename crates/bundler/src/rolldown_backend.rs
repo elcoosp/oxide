@@ -14,11 +14,16 @@ use crate::{
     RouteBundle, ServerManifest, ServerRoute,
 };
 use oxide_diagnostics::Diagnostic;
+use arcstr::ArcStr;
 use rolldown::{
-    Bundler as RolldownCore, BundlerOptions, InputItem, IsExternal, OutputFormat, Platform,
-    RawMinifyOptions, SourceMapType, TsConfig,
+    Bundler as RolldownCore, BundlerBuilder, BundlerOptions, InputItem, IsExternal, OutputFormat,
+    Platform, RawMinifyOptions, SourceMapType, TsConfig,
 };
-use rolldown_common::Output;
+use rolldown_common::{ModuleType, Output};
+use rolldown_plugin::{
+    HookLoadArgs, HookLoadOutput, HookLoadReturn, HookUsage, Plugin, Pluginable,
+    SharedLoadPluginContext,
+};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -140,6 +145,7 @@ impl Bundler for RolldownBundler {
         let ropts = self.build_options(options);
         let out_dir = options.out_dir.clone();
         let env = options.env;
+        let plugins = precompiled_plugins(options);
 
         // Rolldown is async; run it on a dedicated current-thread runtime on a
         // scoped thread so this works regardless of the caller's runtime context.
@@ -151,8 +157,22 @@ impl Bundler for RolldownBundler {
                         .build()
                         .map_err(|e| err("BLD-ROLLDOWN", format!("tokio runtime: {e}")))?;
                     rt.block_on(async move {
-                        let mut b = RolldownCore::new(ropts)
-                            .map_err(|e| err("BLD-ROLLDOWN", format!("rolldown init: {e}")))?;
+                        // BundlerBuilder lets us pass plugins alongside options.
+                        // The plugin list may be empty (pure JS/TS/TSX project);
+                        // in that case we go through the direct constructor.
+                        let mut b = if plugins.is_empty() {
+                            RolldownCore::new(ropts).map_err(|e| {
+                                err("BLD-ROLLDOWN", format!("rolldown init: {e}"))
+                            })?
+                        } else {
+                            BundlerBuilder::default()
+                                .with_options(ropts)
+                                .with_plugins(plugins)
+                                .build()
+                                .map_err(|e| {
+                                    err("BLD-ROLLDOWN", format!("rolldown init: {e}"))
+                                })?
+                        };
                         let ro = b
                             .write()
                             .await
@@ -335,4 +355,70 @@ fn convert(
         server_manifest,
         diagnostics,
     })
+}
+
+
+/// §6.3: serve precompiled JS for `.vue` / `.svelte` modules.
+///
+/// The CLI's `precompile.rs` pass runs the tooling pool to lower SFCs and
+/// hands the results in via `BundleOptions::precompiled`. This plugin
+/// intercepts Rolldown's `load` hook for those paths and returns the JS,
+/// marking it `ModuleType::Js` so Rolldown skips trying to parse the raw
+/// SFC as JavaScript. Without it the CLI had to fall back to ChunkBundler
+/// for any project with an SFC entry, losing Rolldown's sourcemaps.
+#[derive(Debug)]
+pub struct PrecompiledPlugin {
+    sources: BTreeMap<PathBuf, String>,
+}
+
+impl PrecompiledPlugin {
+    pub fn new(sources: BTreeMap<PathBuf, String>) -> Self {
+        Self { sources }
+    }
+
+    /// Exact path, then canonicalized (`/var` vs `/private/var` on macOS —
+    /// same trap the CLI's canonicalize steps guard against).
+    fn lookup(&self, id: &str) -> Option<String> {
+        let p = Path::new(id);
+        if let Some(s) = self.sources.get(p) {
+            return Some(s.clone());
+        }
+        let canon = PathBuf::from(id).canonicalize().ok()?;
+        self.sources.get(&canon).cloned()
+    }
+}
+
+impl Plugin for PrecompiledPlugin {
+    fn name(&self) -> std::borrow::Cow<'static, str> {
+        "oxide-precompiled".into()
+    }
+
+    fn register_hook_usage(&self) -> HookUsage {
+        HookUsage::Load
+    }
+
+    fn load(
+        &self,
+        _ctx: SharedLoadPluginContext,
+        args: &HookLoadArgs<'_>,
+    ) -> impl std::future::Future<Output = HookLoadReturn> + Send {
+        let src = self.lookup(args.id);
+        async move {
+            let Some(code) = src else { return Ok(None) };
+            Ok(Some(HookLoadOutput {
+                code: ArcStr::from(code),
+                map: None,
+                side_effects: None,
+                module_type: Some(ModuleType::Js),
+            }))
+        }
+    }
+}
+
+fn precompiled_plugins(options: &BundleOptions) -> Vec<std::sync::Arc<Pluginable>> {
+    if options.precompiled.is_empty() {
+        Vec::new()
+    } else {
+        vec![Pluginable::new_shared(PrecompiledPlugin::new(options.precompiled.clone()))]
+    }
 }
