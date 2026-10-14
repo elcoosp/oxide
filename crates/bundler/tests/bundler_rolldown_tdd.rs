@@ -32,6 +32,7 @@ fn opts(root: &Path, env: BundleEnv, entries: &[(&str, &str)]) -> BundleOptions 
         precompiled: BTreeMap::new(),
         jsx_import_source: None,
         transform_hook: None,
+        css_transform: None,
     }
 }
 
@@ -497,4 +498,100 @@ fn transform_hook_error_does_not_fail_the_build() {
         .bundle(&o)
         .expect("a plugin error must not fail the bundle");
     assert!(!out.chunks.is_empty(), "the chunk is still emitted");
+}
+
+
+// ---------------------------------------------------------------------------
+// §6.6: a `.css` import through `RolldownBundler` must run the CSS transform
+// hook and emit the result as an asset. Rolldown 1.2.x refuses a `.css`
+// module outright (`module_task.rs` → "Bundling CSS is no longer supported");
+// the `CssPlugin` intercepts it in the `load` hook and emits the stylesheet
+// via `ctx.emit_file`. Without that plugin the build fails before the hook
+// can run — this test pins the behaviour, not just the hook contract.
+// ---------------------------------------------------------------------------
+
+use oxide_bundler::CssTransformHook;
+
+#[test]
+fn rolldown_css_plugin_emits_transformed_stylesheet() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "src/index.js",
+        "import './theme.css';\nexport const x = 1;\nconsole.log(x);\n",
+    );
+    write(
+        dir.path(),
+        "src/theme.css",
+        ".a { color: #ff0000; }\n",
+    );
+
+    let hook = CssTransformHook::new(|_path: &str, source: &str, _is_module: bool, _minify: bool| {
+        // A marker suffix proves the transform ran and its output is what
+        // reached disk. A real hook (the CLI's) lowers the CSS via Lightning.
+        Ok((
+            format!("{source}\n/* CSS-HOOK-RAN */\n"),
+            BTreeMap::new(),
+        ))
+    });
+    let mut o = opts(dir.path(), BundleEnv::Client, &[("index", "src/index.js")]);
+    o.css_transform = Some(hook);
+
+    let out = RolldownBundler::new(dir.path())
+        .bundle(&o)
+        .expect("a .css import must not fail the build");
+
+    // The entry chunk imports the stylesheet, so the emitted CSS must exist
+    // on disk with the hook's output.
+    let css_paths: Vec<std::path::PathBuf> = std::fs::read_dir(dir.path().join("dist"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "css"))
+        .collect();
+    assert!(
+        !css_paths.is_empty(),
+        "expected an emitted .css, dir: {:?}",
+        std::fs::read_dir(dir.path().join("dist"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+    );
+    let css = std::fs::read_to_string(&css_paths[0]).unwrap();
+    assert!(
+        css.contains("CSS-HOOK-RAN"),
+        "the hook output must reach disk:\n{css}"
+    );
+    assert!(
+        css.contains("#ff0000") || css.contains("color"),
+        "original declaration must survive:\n{css}"
+    );
+
+    // And the JS chunk must carry a default export for the stylesheet URL,
+    // not the raw CSS text.
+    let entry = out
+        .chunks
+        .iter()
+        .find(|c| c.kind == ChunkKind::Entry)
+        .expect("entry chunk");
+    let js = std::fs::read_to_string(dir.path().join("dist").join(&entry.file)).unwrap();
+    assert!(
+        !js.contains("color: #ff0000") && !js.contains("color:#ff0000"),
+        "raw CSS must not leak into the JS chunk:\n{js}"
+    );
+}
+
+#[test]
+fn rolldown_without_a_css_import_is_unaffected() {
+    // A build with no stylesheet must behave exactly as before — the CSS
+    // plugin is registered on every run, so it must not perturb a pure-JS
+    // project.
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "src/index.js", "export const a = 1;\n");
+    let out = RolldownBundler::new(dir.path())
+        .bundle(&opts(dir.path(), BundleEnv::Client, &[("index", "src/index.js")]))
+        .expect("pure-JS bundle");
+    assert_eq!(out.chunks.len(), 1);
+    assert!(out.client_manifest.is_some());
 }
