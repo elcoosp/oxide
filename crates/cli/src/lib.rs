@@ -614,7 +614,8 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // project's oxide.config.{ts,mjs,js}. Both fall back gracefully when the
     // config is absent or the worker can't start.
     let config_path_opt = find_config_file(&rootp).ok();
-    let stack = framework_shim::build_framework_stack(config_path_opt.as_deref()).await;
+    let stack = framework_shim::build_framework_stack(config_path_opt.as_deref(),
+        cfg.server.backend).await;
     if let Some(name) = stack.renderer_name() {
         outln!(w, "framework renderer: {}", name);
     }
@@ -958,7 +959,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // is used for prerendering static routes; loader is present but not
     // consumed during build (build-time loader evaluation is a follow-up).
     let config_path_opt = find_config_file(&rootp).ok();
-    let stack = framework_shim::build_framework_stack(config_path_opt.as_deref()).await;
+    let stack = framework_shim::build_framework_stack(config_path_opt.as_deref(),
+        cfg.server.backend).await;
     if let Some(name) = stack.renderer_name() {
         outln!(w, "framework renderer: {}", name);
     }
@@ -1831,11 +1833,17 @@ async fn cmd_serve(
     port: Option<u16>,
     label: &str,
     w: Writer<'_>,
-) -> anyhow::Result<i32> {    // §7 / §9.1: build the framework stack (renderer + loader) for the
+) -> anyhow::Result<i32> {
+    // §7 / §9.1: build the framework stack (renderer + loader) for the
     // production server. Same wiring as `cmd_dev`.
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| std::path::PathBuf::from(root));
+    let cfg = load_config_or_default(&rootp, "production");
     let config_path_opt = find_config_file(&rootp).ok();
-    let stack = framework_shim::build_framework_stack(config_path_opt.as_deref()).await;
+    let stack = framework_shim::build_framework_stack(
+        config_path_opt.as_deref(),
+        cfg.server.backend,
+    )
+    .await;
     if let Some(name) = stack.renderer_name() {
         outln!(w, "framework renderer: {}", name);
     }

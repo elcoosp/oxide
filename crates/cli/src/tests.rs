@@ -763,7 +763,7 @@ async fn dev_server_serves_smoke_app_over_http() {
     let smoke_str = smoke.to_str().expect("smoke path utf-8");
 
     // Build the same framework stack cmd_dev builds.
-    let stack = crate::framework_shim::build_framework_stack(Some(&config_path)).await;
+    let stack = crate::framework_shim::build_framework_stack(Some(&config_path), oxide_config::JsBackend::Node).await;
     assert!(
         stack.has_renderer(),
         "framework renderer must attach for the smoke-app's oxide.config.ts"
@@ -1030,7 +1030,7 @@ async fn start_serves_smoke_app_over_http() {
     let smoke_str = smoke.to_str().expect("smoke path utf-8");
 
     // Build the same framework stack `cmd_serve` builds.
-    let stack = crate::framework_shim::build_framework_stack(Some(&config_path)).await;
+    let stack = crate::framework_shim::build_framework_stack(Some(&config_path), oxide_config::JsBackend::Node).await;
     assert!(
         stack.has_renderer(),
         "framework renderer must attach for the smoke-app's oxide.config.ts"

@@ -137,6 +137,20 @@ impl Default for RoutesConfig {
     }
 }
 
+/// Which JavaScript host backs the render pool (§4.2, D2). `Node` is the
+/// current default because it can resolve npm from the workspace; `V8` runs
+/// `deno_core` in-process and is the spec's long-term default once
+/// `deno_node` module loading lands. Selecting `v8` today is honest — the
+/// pool starts, but user-module ops return a clear `JSH-NOKIND` error rather
+/// than silently falling back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum JsBackend {
+    #[default]
+    Node,
+    V8,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ServerConfig {
@@ -144,6 +158,8 @@ pub struct ServerConfig {
     pub host: String,
     pub compression: Vec<String>,
     pub http3: bool,
+    /// §4.2: which JS host backend to use for the render pool.
+    pub backend: JsBackend,
 }
 impl Default for ServerConfig {
     fn default() -> Self {
@@ -152,6 +168,7 @@ impl Default for ServerConfig {
             host: "localhost".into(),
             compression: vec!["zstd".into(), "br".into(), "gzip".into()],
             http3: false,
+            backend: JsBackend::default(),
         }
     }
 }
