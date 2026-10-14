@@ -76,49 +76,103 @@ impl TypedArrayKind {
 /// their IEEE-754 bit pattern, so `NaN == NaN` (same payload) and `0.0 != -0.0`.
 /// The encoder uses it for structural-sharing detection so that `-0.0` and
 /// distinct NaN payloads are never merged.
+///
+/// Iterative over an explicit stack (§17.1): comparing hostile `MAX_DEPTH`-deep
+/// values must not overflow the host thread's stack.
 pub fn bitexact_eq(a: &Value, b: &Value) -> bool {
-    match (a, b) {
-        (Value::Null, Value::Null) => true,
-        (Value::Undefined, Value::Undefined) => true,
-        (Value::Bool(x), Value::Bool(y)) => x == y,
-        (Value::Number(x), Value::Number(y)) => x.to_bits() == y.to_bits(),
-        (Value::BigInt(x), Value::BigInt(y)) => x == y,
-        (Value::String(x), Value::String(y)) => x == y,
-        (Value::Date(x), Value::Date(y)) => x == y,
-        (Value::Url(x), Value::Url(y)) => x == y,
-        (Value::RegExp(s1, f1), Value::RegExp(s2, f2)) => s1 == s2 && f1 == f2,
-        (Value::Array(x), Value::Array(y)) | (Value::Set(x), Value::Set(y)) => {
-            x.len() == y.len() && x.iter().zip(y).all(|(u, v)| bitexact_eq(u, v))
+    let mut stack: Vec<(&Value, &Value)> = vec![(a, b)];
+    while let Some((x, y)) = stack.pop() {
+        match (x, y) {
+            (Value::Null, Value::Null) => {}
+            (Value::Undefined, Value::Undefined) => {}
+            (Value::Bool(u), Value::Bool(v)) => {
+                if u != v {
+                    return false;
+                }
+            }
+            (Value::Number(u), Value::Number(v)) => {
+                if u.to_bits() != v.to_bits() {
+                    return false;
+                }
+            }
+            (Value::BigInt(u), Value::BigInt(v)) => {
+                if u != v {
+                    return false;
+                }
+            }
+            (Value::String(u), Value::String(v)) => {
+                if u != v {
+                    return false;
+                }
+            }
+            (Value::Date(u), Value::Date(v)) => {
+                if u != v {
+                    return false;
+                }
+            }
+            (Value::Url(u), Value::Url(v)) => {
+                if u != v {
+                    return false;
+                }
+            }
+            (Value::RegExp(s1, f1), Value::RegExp(s2, f2)) => {
+                if s1 != s2 || f1 != f2 {
+                    return false;
+                }
+            }
+            (Value::Array(u), Value::Array(v)) | (Value::Set(u), Value::Set(v)) => {
+                if u.len() != v.len() {
+                    return false;
+                }
+                stack.extend(u.iter().zip(v.iter()));
+            }
+            (Value::Object(u), Value::Object(v)) => {
+                if u.len() != v.len() {
+                    return false;
+                }
+                for ((k1, v1), (k2, v2)) in u.iter().zip(v.iter()) {
+                    if k1 != k2 {
+                        return false;
+                    }
+                    stack.push((v1, v2));
+                }
+            }
+            (Value::Map(u), Value::Map(v)) => {
+                if u.len() != v.len() {
+                    return false;
+                }
+                for ((k1, v1), (k2, v2)) in u.iter().zip(v.iter()) {
+                    stack.push((k1, k2));
+                    stack.push((v1, v2));
+                }
+            }
+            (Value::TypedArray(k1, d1), Value::TypedArray(k2, d2)) => {
+                if k1 != k2 || d1 != d2 {
+                    return false;
+                }
+            }
+            (
+                Value::Error { name: n1, message: m1, stack: s1 },
+                Value::Error { name: n2, message: m2, stack: s2 },
+            ) => {
+                if n1 != n2 || m1 != m2 || s1 != s2 {
+                    return false;
+                }
+            }
+            (Value::Ref(u), Value::Ref(v)) => {
+                if u != v {
+                    return false;
+                }
+            }
+            (Value::Deferred { id: u }, Value::Deferred { id: v }) => {
+                if u != v {
+                    return false;
+                }
+            }
+            _ => return false,
         }
-        (Value::Object(x), Value::Object(y)) => {
-            x.len() == y.len()
-                && x.iter()
-                    .zip(y.iter())
-                    .all(|((k1, v1), (k2, v2))| k1 == k2 && bitexact_eq(v1, v2))
-        }
-        (Value::Map(x), Value::Map(y)) => {
-            x.len() == y.len()
-                && x.iter()
-                    .zip(y)
-                    .all(|((k1, v1), (k2, v2))| bitexact_eq(k1, k2) && bitexact_eq(v1, v2))
-        }
-        (Value::TypedArray(k1, d1), Value::TypedArray(k2, d2)) => k1 == k2 && d1 == d2,
-        (
-            Value::Error {
-                name: n1,
-                message: m1,
-                stack: s1,
-            },
-            Value::Error {
-                name: n2,
-                message: m2,
-                stack: s2,
-            },
-        ) => n1 == n2 && m1 == m2 && s1 == s2,
-        (Value::Ref(x), Value::Ref(y)) => x == y,
-        (Value::Deferred { id: x }, Value::Deferred { id: y }) => x == y,
-        _ => false,
     }
+    true
 }
 
 /// Append an unsigned LEB128 varuint (7 bits per byte, high bit = continuation).
