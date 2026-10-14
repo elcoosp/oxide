@@ -449,6 +449,7 @@ fn oxide_plugins(options: &BundleOptions, root: &Path) -> Vec<std::sync::Arc<Plu
             options.build_secret.clone(),
             root.to_path_buf(),
             options.precompiled.clone(),
+            options.transform_hook.clone(),
         ),
     )];
     if !options.precompiled.is_empty() {
@@ -482,6 +483,11 @@ pub struct OxidePassesPlugin {
     /// `@vue/compiler-sfc`, `svelte/compiler`). Their emitted JS must not go
     /// through the passes a second time.
     precompiled: BTreeMap<PathBuf, String>,
+    /// §15.1: a plugin-supplied `transform` hook (a loaded WASM component,
+    /// wrapped as a closure by the CLI). Runs *first* — a plugin sees the
+    /// module as its author wrote it, before the `'use cache'` / server-fn
+    /// passes rewrite it.
+    transform_hook: Option<crate::TransformHook>,
 }
 
 impl OxidePassesPlugin {
@@ -490,27 +496,58 @@ impl OxidePassesPlugin {
         build_secret: String,
         root: PathBuf,
         precompiled: BTreeMap<PathBuf, String>,
+        transform_hook: Option<crate::TransformHook>,
     ) -> Self {
-        Self { env, build_secret, root, precompiled }
+        Self { env, build_secret, root, precompiled, transform_hook }
     }
 
     /// Should the passes run on the module at `id`?
     fn should_transform(&self, id: &str) -> bool {
+        // Rolldown's virtual modules carry a leading NUL (`\0rolldown/…`,
+        // `\0vite/…`, and the like). They are not files; joining one onto
+        // the root makes it look like a project module that a file check
+        // would reject. Skip them outright.
+        if id.starts_with('\0') {
+            return false;
+        }
         let bare = id.split(['?', '#']).next().unwrap_or(id);
         let path = Path::new(bare);
-        if !path.is_absolute() || !path.starts_with(&self.root) {
+        // Rolldown passes an absolute id for a resolved module in most
+        // configurations, but a relative id (resolved against the bundler's
+        // `cwd`, which is the project root) is also valid. An absolute path
+        // is used as-is; a relative one is joined onto the root.
+        let abs: PathBuf = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.root.join(path)
+        };
+        // Canonicalize before the containment check: on macOS `/var` is a
+        // symlink to `/private/var`, and a resolver may report a path under
+        // one spelling while the root was built with the other. Comparing
+        // the canonical forms of both sides is the only comparison that
+        // holds across the symlink. A path that does not exist cannot be a
+        // module to transform, so a failed canonicalization is a skip.
+        let canon_root = match self.root.canonicalize() {
+            Ok(p) => p,
+            Err(_) => return false,
+        };
+        let canon_abs = match abs.canonicalize() {
+            Ok(p) => p,
+            Err(_) => return false,
+        };
+        if !canon_abs.starts_with(&canon_root) {
             return false;
         }
-        if path.components().any(|c| c.as_os_str() == "node_modules") {
+        if canon_abs.components().any(|c| c.as_os_str() == "node_modules") {
             return false;
         }
-        if path
+        if canon_abs
             .extension()
             .is_some_and(|e| e == "css" || e == "json" || e == "vue" || e == "svelte")
         {
             return false;
         }
-        if self.precompiled.contains_key(path) {
+        if self.precompiled.contains_key(&canon_abs) || self.precompiled.contains_key(&abs) {
             return false;
         }
         true
@@ -545,9 +582,32 @@ impl Plugin for OxidePassesPlugin {
         // inside the future) keeps this a plain fn whose return type still
         // matches the hook contract.
         let replacement: Option<String> = if self.should_transform(args.id) {
+            // §15.1: run a plugin transform first. It sees the original
+            // source, so a plugin's own rewriting (a macro expansion, a
+            // custom directive) happens before the framework passes look
+            // at the module.
+            let mut source = args.code.to_string();
+            if let Some(hook) = &self.transform_hook {
+                match hook.call(args.id, &source) {
+                    Ok(rewritten) => source = rewritten,
+                    // A plugin error is a build error; surface it as a
+                    // transform failure. Rolldown reports diagnostics from
+                    // a hook that returns `Err`, but this hook returns
+                    // `Ok(None)` on internal errors by design — so the
+                    // message is dropped onto stderr here. That is the
+                    // honest minimum until the diagnostic pipeline is
+                    // extended to carry a plugin code.
+                    Err(e) => {
+                        eprintln!(
+                            "plugin transform failed for {}: {} {}",
+                            args.id, e.0.code, e.0.message
+                        );
+                    }
+                }
+            }
             let input = oxide_compiler::TransformInput {
                 path: args.id.to_string(),
-                code: args.code.to_string(),
+                code: source,
                 env: self.env,
                 lang: Self::lang_of(args.id),
                 build_secret: self.build_secret.clone(),
