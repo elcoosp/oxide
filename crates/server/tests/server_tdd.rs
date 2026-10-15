@@ -584,6 +584,36 @@ fn ssrf_allowed_table() {
     assert!(!ssrf_allowed("169.254.169.254", &["10.0.0.5".to_string()]));
 }
 
+/// SEC-03: every resolved address is validated before connecting. A
+/// hostname that resolves to *any* blocked address is rejected — the
+/// resolve-then-check is what defeats DNS rebinding.
+#[test]
+fn sec03_first_blocked_addr_catches_any_blocked_resolution() {
+    use oxide_server::first_blocked_addr;
+    use std::net::IpAddr;
+    let parse = |s: &str| s.parse::<IpAddr>().unwrap();
+    // All public → None.
+    assert!(first_blocked_addr(
+        &[parse("93.184.216.34"), parse("8.8.8.8")],
+        &[]
+    )
+    .is_none());
+    // One private among public → that private address.
+    let bad = first_blocked_addr(&[parse("8.8.8.8"), parse("10.0.0.5")], &[]);
+    assert_eq!(bad, Some(parse("10.0.0.5")));
+    // Link-local metadata range is blocked.
+    assert_eq!(
+        first_blocked_addr(&[parse("169.254.169.254")], &[]),
+        Some(parse("169.254.169.254"))
+    );
+    // An allow-listed host bypasses the range check.
+    assert!(first_blocked_addr(
+        &[parse("10.0.0.5")],
+        &["10.0.0.5".to_string()]
+    )
+    .is_none());
+}
+
 #[test]
 fn host_allowed_rules() {
     let empty: Vec<String> = vec![];
