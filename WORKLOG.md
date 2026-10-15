@@ -3457,3 +3457,12 @@ Proof: `cargo test -p oxide-server` all suites green (41+21+61); `cargo check -p
 - Conformance note: escape-additive only (new escapes for `'`/`\`/`"`/`\n`); existing byte-identity assertions unaffected — full TS suite re-run is in the exit audit.
 
 Proof: render 12, server 43+21+61, cli 95 — all green.
+
+## Task SEC-04 — CSRF hardening + token issuer
+
+- Verified the gating matrix already matches spec: fail-open only when BOTH `Origin` and `Sec-Fetch-Site` are absent; `Sec-Fetch-Site: cross-site` without Origin rejects (existing tests `csrf_sec_fetch_site_signals` cover it).
+- Token rescue: plain `==` → `constant_time_eq` (helper existed).
+- Issuer: `finish_response_with_request` (new; `finish_response` kept as a wrapper) sets `oxide_csrf=<32hex>; Path=/; SameSite=Lax` on GET/HEAD in `token` mode when the request carries no such cookie; all 4 `serve_request` arms pass method + cookie through.
+- Tests: `csrf_token_mode_matrix` (match/mismatch/missing), `csrf_token_issued_on_get_without_cookie` (issue → no re-issue with cookie → issued pair passes double-submit on cross-origin POST).
+
+Proof: server suites 43+21+63 green; `cargo check -p oxide-cli` clean.
