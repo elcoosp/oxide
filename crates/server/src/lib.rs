@@ -1529,12 +1529,14 @@ fn plan_remote_image(
     ))
 }
 
-/// §16.1: fetch a validated remote image and transform it. SSRF is
-/// re-checked after the fetch: a hostname that passed the pattern check may
-/// resolve to a blocked address, and a redirect may send the response to a
-/// different host than the one requested. `reqwest` is not a dependency of
-/// this crate, so the fetch uses the same `hyper-util` client
-/// `forward_proxy` does.
+/// §16.1: fetch a validated remote image and transform it.
+///
+/// SEC-03: `fetch_remote_checked` resolves the host, validates **every**
+/// resolved address against the SSRF block ranges, connects to a validated
+/// address (connect-by-IP, defeating DNS rebinding between check and
+/// connect), and re-validates the host pattern + SSRF ranges at every
+/// redirect hop. `reqwest` is not a dependency of this crate, so the fetch
+/// uses the same `hyper-util` client `forward_proxy` does.
 async fn fetch_remote_image(
     endpoint: Arc<ImageEndpoint>,
     mut request: ImageEndpointRequest,
@@ -1556,7 +1558,14 @@ async fn fetch_remote_image(
 
     // Fetch with a byte ceiling. `MAX` is the manifest's `remote_max_bytes`.
     let max = endpoint.remote_max_bytes;
-    let bytes = match fetch_bytes(&url, max).await {
+    let bytes = match fetch_remote_checked(
+        &url,
+        max,
+        &endpoint.remote_patterns,
+        &endpoint.ssrf_allow_list,
+    )
+    .await
+    {
         Ok(b) => b,
         Err(e) => return err(502, format!("remote image fetch failed: {e}")),
     };
@@ -1583,7 +1592,31 @@ async fn fetch_remote_image(
 
 /// Fetch a URL with a byte ceiling. Uses the pooled `hyper-util` client the
 /// proxy path already depends on. Returns the body bytes.
-async fn fetch_bytes(url: &str, max: usize) -> std::result::Result<Vec<u8>, String> {
+/// SEC-03: which of `addrs` are blocked? Returns the first blocked address,
+/// or `None` when every address passes. Pure, so it is unit-tested.
+pub fn first_blocked_addr(
+    addrs: &[std::net::IpAddr],
+    ssrf_allow_list: &[String],
+) -> Option<std::net::IpAddr> {
+    addrs
+        .iter()
+        .copied()
+        .find(|a| !ssrf_allowed(&a.to_string(), ssrf_allow_list))
+}
+
+/// SEC-03: resolve `host:port`, reject any resolved address in a blocked
+/// range, then connect to a **validated** address (connect-by-IP, so DNS
+/// cannot rebind to a blocked address between the check and the connect).
+/// Follows up to 5 redirects, re-validating the image host pattern and the
+/// SSRF range at every hop. This is what the doc comment always claimed;
+/// before this fix the code was a plain GET with default redirect-following
+/// and zero re-checks.
+async fn fetch_remote_checked(
+    url: &str,
+    max: usize,
+    patterns: &[RemoteImagePattern],
+    ssrf_allow_list: &[String],
+) -> std::result::Result<Vec<u8>, String> {
     use http_body_util::{BodyExt, Full};
     use hyper_util::client::legacy::Client;
     use hyper_util::rt::TokioExecutor;
@@ -1594,32 +1627,101 @@ async fn fetch_bytes(url: &str, max: usize) -> std::result::Result<Vec<u8>, Stri
     > = OnceLock::new();
     let client = CLIENT.get_or_init(|| Client::builder(TokioExecutor::new()).build_http());
 
-    let req = hyper::Request::builder()
-        .method("GET")
-        .uri(url)
-        .header("accept", "image/*")
-        .body(Full::new(Bytes::new()))
-        .map_err(|e| format!("build request: {e}"))?;
-    let resp = client
-        .request(req)
-        .await
-        .map_err(|e| format!("request failed: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("upstream returned {}", resp.status()));
-    }
-    // Stream the body and stop at `max`.
-    let mut body = resp.into_body();
-    let mut out: Vec<u8> = Vec::new();
-    while let Some(frame) = body.frame().await {
-        let frame = frame.map_err(|e| format!("body read failed: {e}"))?;
-        if let Ok(chunk) = frame.into_data() {
-            if out.len() + chunk.len() > max {
-                return Err(format!("body exceeds the {max}-byte ceiling"));
-            }
-            out.extend_from_slice(&chunk);
+    let mut current = url::Url::parse(url).map_err(|e| format!("invalid URL: {e}"))?;
+    for _hop in 0..=5 {
+        let scheme = current.scheme().to_string();
+        if scheme != "http" && scheme != "https" {
+            return Err(format!("scheme {scheme} not allowed"));
         }
+        let host = current
+            .host_str()
+            .ok_or_else(|| "no host".to_string())?
+            .to_string();
+        if !remote_pattern_allows(patterns, &host, &scheme) {
+            return Err(format!("host {host:?} is not an allowed image source"));
+        }
+        let port = current
+            .port_or_known_default()
+            .ok_or_else(|| "no port".to_string())?;
+
+        // Resolve and validate every address before connecting.
+        let addrs: Vec<std::net::IpAddr> = tokio::net::lookup_host((host.as_str(), port))
+            .await
+            .map_err(|e| format!("dns: {e}"))?
+            .map(|s| s.ip())
+            .collect();
+        if addrs.is_empty() {
+            return Err("dns: no addresses".into());
+        }
+        if let Some(bad) = first_blocked_addr(&addrs, ssrf_allow_list) {
+            return Err(format!("resolves to a blocked address {bad}"));
+        }
+
+        // Connect to the validated address; carry the real Host header so
+        // name-based virtual hosting still works.
+        let ip = addrs[0];
+        let ip_lit = if ip.is_ipv6() {
+            format!("[{ip}]")
+        } else {
+            ip.to_string()
+        };
+        let path = if current.path().is_empty() { "/" } else { current.path() };
+        let query = current
+            .query()
+            .map(|q| format!("?{q}"))
+            .unwrap_or_default();
+        let connect_url = format!("{scheme}://{ip_lit}:{port}{path}{query}");
+        let host_header = if (scheme == "http" && port == 80)
+            || (scheme == "https" && port == 443)
+        {
+            host.clone()
+        } else {
+            format!("{host}:{port}")
+        };
+
+        let req = hyper::Request::builder()
+            .method("GET")
+            .uri(&connect_url)
+            .header("host", host_header)
+            .header("accept", "image/*")
+            .body(Full::new(Bytes::new()))
+            .map_err(|e| format!("build request: {e}"))?;
+        let resp = client
+            .request(req)
+            .await
+            .map_err(|e| format!("request failed: {e}"))?;
+
+        if resp.status().is_redirection() {
+            // Re-validate the redirect target on the next loop iteration
+            // (host pattern + DNS + range); a 302 to `169.254.169.254` or to
+            // a non-allowed host must not be followed blindly.
+            let location = resp
+                .headers()
+                .get("location")
+                .and_then(|v| v.to_str().ok())
+                .ok_or_else(|| "redirect without a Location header".to_string())?;
+            current = current
+                .join(location)
+                .map_err(|e| format!("bad redirect target: {e}"))?;
+            continue;
+        }
+        if !resp.status().is_success() {
+            return Err(format!("upstream returned {}", resp.status()));
+        }
+        let mut body = resp.into_body();
+        let mut out: Vec<u8> = Vec::new();
+        while let Some(frame) = body.frame().await {
+            let frame = frame.map_err(|e| format!("body read failed: {e}"))?;
+            if let Ok(chunk) = frame.into_data() {
+                if out.len() + chunk.len() > max {
+                    return Err(format!("body exceeds the {max}-byte ceiling"));
+                }
+                out.extend_from_slice(&chunk);
+            }
+        }
+        return Ok(out);
     }
-    Ok(out)
+    Err("too many redirects (max 5)".into())
 }
 
 /// Match a remote host against `remotePatterns`. A pattern `host` matches
