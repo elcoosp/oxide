@@ -2190,3 +2190,39 @@ Commits `631aad1` (config) + `2ae25e8` (CLI). Fixture gate PASS.
 Remaining on finding 2: nothing for the bundle size itself; the deploy-policy
 question ("does `binary` ship `node_modules`?") is now answered by the user
 choosing whether to set the list — the default keeps working without it.
+
+### Session 16 addendum — §21 finding 2 (Vue SSR externals) resolved
+
+Re-measuring the §21 table on the current binary confirmed **only the
+build-time columns were stale** — the JS-byte columns matched exactly. So
+finding 2 (Vue's 951 KB server bundle) was real, not a stale report:
+
+    smoke-app-react   serverJS  39445   (unchanged)
+    smoke-app-vue     serverJS 951049   (unchanged — finding 2 is live)
+    smoke-app-svelte  serverJS   1435
+    smoke-app-solid   serverJS  11982
+
+Cause: `bundle_env_options` set `externals: Vec::new()` for every environment,
+so Rolldown inlined `@vue/server-renderer` and the whole Vue runtime into the
+SSR entry.
+
+Fix: `build.ssrExternals` — an opt-in list of specifiers left external in the
+SSR bundle only. Empty by default, which preserves the self-contained server
+bundle the `binary` adapter needs. A Node-target deployment that ships
+`node_modules` sets it.
+
+**Verified:** `smoke-app-vue` with
+`ssrExternals: ['vue', '@vue/server-renderer', '@vue/runtime-core',
+'@vue/runtime-dom', '@vue/shared']`:
+
+    server JS bytes:  951049  →  522
+    render:           still 200 with `data-v-app` and the page marker
+
+(951 KB → 522 bytes; the SSR entry now re-exports the route, which imports
+`vue` / `@vue/server-renderer` from `node_modules` at run time.)
+
+Commits `631aad1` (config) + `2ae25e8` (CLI). Fixture gate PASS.
+
+Remaining on finding 2: nothing for the bundle size itself; the deploy-policy
+question ("does `binary` ship `node_modules`?") is now answered by the user
+choosing whether to set the list — the default keeps working without it.
