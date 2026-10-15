@@ -224,7 +224,16 @@ pub async fn build_framework_stack(
             NodeHost::new(NodeHost::worker_script_default())
                 .with_cache_handler(Arc::clone(&cache_tier)),
         ),
-        JsBackend::V8 => Arc::new(V8Host),
+        JsBackend::V8 => {
+            // §4.4: if `oxide build` wrote a snapshot, boot from it.
+            let snap = config_path
+                .and_then(|p| p.parent())
+                .map(|root| root.join(".oxide/snapshot.bin"));
+            match snap {
+                Some(path) if path.is_file() => Arc::new(V8Host::from_snapshot_file(&path)),
+                _ => Arc::new(V8Host::new()),
+            }
+        }
     };
     let pool = match host.tooling_pool(PoolConfig::default()) {
         Ok(p) => p,
@@ -509,7 +518,7 @@ mod backend_tests {
     #[tokio::test]
     async fn v8_backend_builds_a_pool() {
         use oxide_jshost::JsHost;
-        let v8 = oxide_jshost::V8Host;
+        let v8 = oxide_jshost::V8Host::new();
         assert_eq!(v8.backend_name(), "v8");
         // Pool construction must succeed (first V8 init can be slow; ignore
         // the outcome on hosts without a prebuilt deno_core snapshot).

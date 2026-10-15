@@ -1226,6 +1226,76 @@ fn emit_snapshot_lint(
     Ok(())
 }
 
+/// §4.4: build a V8 startup snapshot from the emitted server bundle and
+/// write it to `<root>/.oxide/snapshot.bin`. `oxide start` with
+/// `server.backend = "v8"` loads it, restoring the evaluated bundle heap
+/// instead of re-evaluating it per worker.
+///
+/// A snapshot failure (a bundle that does not evaluate cleanly in V8) is
+/// reported and skipped — the server still runs without one.
+fn emit_snapshot_blob(root: &Path, server_out: &Path, w: Writer<'_>) -> anyhow::Result<()> {
+    let entry = server_out.join("ssr/index.js");
+    if !entry.is_file() {
+        return Ok(());
+    }
+    // Collect the bundle's JS files (a small graph: ssr/ + routes/ + shared).
+    let mut files: Vec<(std::path::PathBuf, String)> = Vec::new();
+    fn walk(dir: &Path, out: &mut Vec<(std::path::PathBuf, String)>) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().is_some_and(|x| x == "js") {
+                if let Ok(s) = std::fs::read_to_string(&p) {
+                    out.push((p, s));
+                }
+            }
+        }
+    }
+    walk(server_out, &mut files);
+    if files.is_empty() {
+        return Ok(());
+    }
+    // `create_snapshot` builds its own Tokio runtime internally and drops it;
+    // dropping a runtime from inside an async context panics ("Cannot drop a
+    // runtime in a context where blocking is not allowed"). `cmd_build` is
+    // async, so run the snapshot on a dedicated thread where the inner runtime
+    // is dropped outside any async context.
+    let entry_str = entry.to_string_lossy().to_string();
+    let built = std::thread::spawn(move || {
+        oxide_jshost::snapshot_build_bundle(&entry_str, &files)
+    })
+    .join()
+    .unwrap_or_else(|_| {
+        Err(oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
+            "SNP-PANIC",
+            "snapshot builder thread panicked",
+        )))
+    });
+
+    match built {
+        Ok(snap) if !snap.blob.is_empty() => {
+            let dir = root.join(".oxide");
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| anyhow::anyhow!("create {}: {e}", dir.display()))?;
+            std::fs::write(dir.join("snapshot.bin"), &snap.blob)
+                .map_err(|e| anyhow::anyhow!("write snapshot.bin: {e}"))?;
+            outln!(w, "snapshot: {} bytes", snap.blob.len());
+        }
+        Ok(snap) => {
+            // No blob; the warnings say why. Not fatal.
+            for warn in &snap.warnings {
+                outln!(w, "snapshot: skipped ({warn})");
+            }
+        }
+        Err(e) => {
+            outln!(w, "snapshot: skipped ({} {})", e.0.code, e.0.message);
+        }
+    }
+    Ok(())
+}
+
 fn emit_web_manifest(
     cfg: &oxide_config::OxideConfig,
     dist: &Path,
@@ -1997,6 +2067,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     emit_web_manifest(&cfg, &dist, w)?;
     // §16.2: bundle configured font families into dist/fonts + fonts.css.
     emit_fonts(&cfg, &rootp, &dist, w)?;
+    // §4.4: build a V8 startup snapshot from the server bundle.
+    emit_snapshot_blob(&rootp, &server_out, w)?;
     outln!(
         w,
         "build ok — {} routes, {} prerendered, {} deploy file(s) for `{}` in dist/deploy",
