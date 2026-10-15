@@ -154,6 +154,15 @@ impl RolldownBundler {
             external,
             define,
             tsconfig,
+            // §4.2: a config/SSR bundle for a bare V8 host must be one file —
+            // `code_splitting: false` inlines dynamic imports so a CJS runtime
+            // (react) is evaluated in place instead of landing in a chunk that
+            // re-exports the `require` wrapper.
+            code_splitting: if options.inline_dynamic_imports {
+                Some(rolldown_common::CodeSplittingMode::Bool(false))
+            } else {
+                None
+            },
             ..Default::default()
         }
     }
