@@ -3846,3 +3846,63 @@ Verified: `cargo test --workspace` **883 passed / 0 failed**, including a
 new `is_secret_like` unit test and the updated 64-hex signature tests.
 
 Commits: (below).
+
+## SEC-11 — pipeline order + full rules on the server-fn route
+
+Two fixes:
+
+1. **§12.1 order.** Static assets are step 3; native rules are step 4. The
+   pipeline ran rules first, so a static file under a rule source was
+   redirected/rewritten instead of served. Swapped: static assets are matched
+   before the rules engine. A static hit is returned immediately (no rule
+   headers), matching the spec.
+2. **Server-fn route honored only rate-limit + headers.** `POST
+   /_oxide/fn/<id>` now evaluates the full rules engine — redirect,
+   basic-auth (401), rate-limit (429), and header rules — before running the
+   function.
+
+Verified: `cargo test -p oxide-server` (43+21+66) green; the static test now
+asserts a static file under a header-rule source is served without the rule
+header (the spec order).
+
+Commits: (below).
+
+## SEC-11 — pipeline order + full rules on the server-fn route
+
+Two fixes:
+
+1. **§12.1 order.** Static assets are step 3; native rules are step 4. The
+   pipeline ran rules first, so a static file under a rule source was
+   redirected/rewritten instead of served. Swapped: static assets are matched
+   before the rules engine. A static hit is returned immediately (no rule
+   headers), matching the spec.
+2. **Server-fn route honored only rate-limit + headers.** `POST
+   /_oxide/fn/<id>` now evaluates the full rules engine — redirect,
+   basic-auth (401), rate-limit (429), and header rules — before running the
+   function.
+
+Verified: `cargo test -p oxide-server` (43+21+66) green; the static test now
+asserts a static file under a header-rule source is served without the rule
+header (the spec order).
+
+Commits: (below).
+
+## SEC-11 — pipeline order + full rules on the server-fn route
+
+Two fixes:
+
+1. **§12.1 order.** Static assets are step 3; native rules are step 4. The
+   pipeline ran rules first, so a static file under a rule source was
+   redirected/rewritten instead of served. Swapped: static assets are matched
+   before the rules engine. A static hit is returned immediately (no rule
+   headers), matching the spec.
+2. **Server-fn route honored only rate-limit + headers.** `POST
+   /_oxide/fn/<id>` now evaluates the full rules engine — redirect,
+   basic-auth (401), rate-limit (429), and header rules — before running the
+   function.
+
+Verified: `cargo test -p oxide-server` (43+21+66) green; the static test now
+asserts a static file under a header-rule source is served without the rule
+header (the spec order).
+
+Commits: (below).
