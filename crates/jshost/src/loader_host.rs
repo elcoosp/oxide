@@ -299,6 +299,89 @@ impl ServerFnHost {
     }
 }
 
+/// §9.3: the host for `action:run`. An action is a named function in a
+/// route's `actions` export; `run` sends the module path, the action name,
+/// the form body (JSON-encoded entries), and the request context, and
+/// returns the action's result plus any cookies/headers/revalidations it
+/// produced.
+pub struct ActionHost {
+    pool: Arc<dyn Pool>,
+}
+
+/// The result of running an action, in the shape the HTTP pipeline needs.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ActionOutcome {
+    pub status: u16,
+    pub location: Option<String>,
+    pub data: Value,
+    #[serde(default, rename = "setCookies")]
+    pub set_cookies: Vec<String>,
+    #[serde(default)]
+    pub headers: Vec<(String, String)>,
+    /// Tag/path invalidations the action requested (§11.3).
+    #[serde(default)]
+    pub revalidate: Vec<RevalidateEvent>,
+}
+
+/// One recorded revalidation (§11.3): a tag or a path.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum RevalidateEvent {
+    Tag { tag: String },
+    Path { path: String },
+}
+
+impl ActionHost {
+    pub fn new(pool: Arc<dyn Pool>) -> Self {
+        Self { pool }
+    }
+
+    /// Run the named action in `module_path`. `form_json` is the JSON array
+    /// of `[key, value]` form entries.
+    pub async fn run(
+        &self,
+        module_path: &str,
+        action: &str,
+        form_json: &str,
+        params: &serde_json::Map<String, Value>,
+        url: &str,
+        method: &str,
+        headers: &[(String, String)],
+    ) -> Result<ActionOutcome> {
+        let payload = serde_json::json!({
+            "module_path": module_path,
+            "action": action,
+            "form_json": form_json,
+            "params": params,
+            "url": url,
+            "method": method,
+            "headers": headers,
+        });
+        let call_input = CallInput {
+            payload,
+            headers: Default::default(),
+            has_body: false,
+            request_id: format!("action:run:{action}"),
+        };
+        let entry = EntryRef {
+            kind: "action:run".into(),
+            module: module_path.to_string(),
+            export: action.to_string(),
+        };
+        let mut stream = self.pool.call(entry, call_input).await?;
+        let bytes = stream.collect().await?;
+        let v: Value = serde_json::from_slice(&bytes).map_err(|e| {
+            crate::err("JSH-ACTION", format!("action:run returned invalid JSON: {e}"))
+        })?;
+        if let Some(err_msg) = v.get("__oxide_error").and_then(|x| x.as_str()) {
+            return Err(crate::err("JSH-ACTION", err_msg.to_string()));
+        }
+        serde_json::from_value(v).map_err(|e| {
+            crate::err("JSH-ACTION", format!("action:run result shape: {e}"))
+        })
+    }
+}
+
 /// The coded failure a `server-fn:run` call can carry. The worker
 /// distinguishes "id not registered" from "the function threw" from a
 /// transport failure, and the pipeline maps each to a different HTTP
