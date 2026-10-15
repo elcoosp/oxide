@@ -119,6 +119,11 @@ pub struct BundleOptions {
     /// `None` writes CSS verbatim (minified by the in-house `minify` when
     /// `minify: true`).
     pub css_transform: Option<CssTransformHook>,
+    /// §4.2: when `false`, dynamic imports are inlined into the entry instead
+    /// of split into separate chunks. A self-contained file is what a bare V8
+    /// ESM host needs — a split CJS runtime lands in a chunk that exports the
+    /// `require` wrapper, not the module's namespace.
+    pub inline_dynamic_imports: bool,
 }
 
 /// §6.6: a CSS transform the CLI supplies. Called with
