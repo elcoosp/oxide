@@ -1890,3 +1890,79 @@ Two bugs surfaced and were fixed while verifying:
     req3: x-oxide-cache: L0-hit
 
 Committed `a5aec6c` + `850e53f`. Four-fixture gate PASS (2×).
+
+### Session 15 addendum — §9.3 form actions on the server
+
+`enhance.ts` (client progressive-enhancement) existed, but there was **no
+server path**: a `<form method="post" action="?/name">` POST fell through to
+the route render and the action never ran. Now implemented end-to-end:
+
+- **Worker op `action:run`** — imports the route's `page.server.ts`, calls
+  `actions[name].run(ctx)` with a real `ctx` (params, request, locals,
+  `cookies`, `setHeaders`, `input` validated through a Standard Schema when
+  attached, `form` as `FormData`, `revalidate` collectors). `error()` /
+  `redirect()` sentinels become status + location; a missing action is
+  `JSH-ACTION-NOT-FOUND` (distinct from "ran and threw").
+- **`oxide_jshost::ActionHost`** + `ActionOutcome` — the pool bridge, the
+  twin of `ServerFnHost`.
+- **`oxide_server::ActionDispatcher`** seam + `run_action`, and a
+  `Pipeline::actions` field. `run_action` honours the dispatcher's
+  `DispatchError.status` rather than re-deriving it from a code string.
+- **CLI wiring** — `ActionDispatcherImpl`, `build_action_dispatcher`, and
+  detection in the dispatch delegate: a POST whose query is `?/<name>`
+  routes to the action before the loader phase. Form bodies parse as
+  `application/x-www-form-urlencoded`; the action's `Set-Cookie` /
+  `setHeaders` ride the response; `x-oxide-revalidate` carries tag/path
+  invalidations to the L0 layer.
+
+Also fixed while verifying: `start_server_inner_full` did not canonicalize
+its root, so every route-module path was relative and the worker (which
+resolves against its own cwd) reported `ENOENT`.
+
+**Verified end-to-end** (a fixture route with a `greet` + a `boom` action):
+
+    POST /?/greet  (body name=Ada) → 200 {"message":"Hello Ada"}
+                                     set-cookie: greeted=Ada; Path=/; HttpOnly
+                                     x-oxide-greeted: Ada
+    POST /?/boom                   → 400 {"message":"bad input"}
+    POST /?/missing                → 404 ACT-NOT-FOUND
+
+Commits: `c15b645` `d139f7e` `f18755c` `d3bf1a5` `af9fc1b`.
+
+### Session 15 addendum — §9.3 form actions on the server
+
+`enhance.ts` (client progressive-enhancement) existed, but there was **no
+server path**: a `<form method="post" action="?/name">` POST fell through to
+the route render and the action never ran. Now implemented end-to-end:
+
+- **Worker op `action:run`** — imports the route's `page.server.ts`, calls
+  `actions[name].run(ctx)` with a real `ctx` (params, request, locals,
+  `cookies`, `setHeaders`, `input` validated through a Standard Schema when
+  attached, `form` as `FormData`, `revalidate` collectors). `error()` /
+  `redirect()` sentinels become status + location; a missing action is
+  `JSH-ACTION-NOT-FOUND` (distinct from "ran and threw").
+- **`oxide_jshost::ActionHost`** + `ActionOutcome` — the pool bridge, the
+  twin of `ServerFnHost`.
+- **`oxide_server::ActionDispatcher`** seam + `run_action`, and a
+  `Pipeline::actions` field. `run_action` honours the dispatcher's
+  `DispatchError.status` rather than re-deriving it from a code string.
+- **CLI wiring** — `ActionDispatcherImpl`, `build_action_dispatcher`, and
+  detection in the dispatch delegate: a POST whose query is `?/<name>`
+  routes to the action before the loader phase. Form bodies parse as
+  `application/x-www-form-urlencoded`; the action's `Set-Cookie` /
+  `setHeaders` ride the response; `x-oxide-revalidate` carries tag/path
+  invalidations to the L0 layer.
+
+Also fixed while verifying: `start_server_inner_full` did not canonicalize
+its root, so every route-module path was relative and the worker (which
+resolves against its own cwd) reported `ENOENT`.
+
+**Verified end-to-end** (a fixture route with a `greet` + a `boom` action):
+
+    POST /?/greet  (body name=Ada) → 200 {"message":"Hello Ada"}
+                                     set-cookie: greeted=Ada; Path=/; HttpOnly
+                                     x-oxide-greeted: Ada
+    POST /?/boom                   → 400 {"message":"bad input"}
+    POST /?/missing                → 404 ACT-NOT-FOUND
+
+Commits: `c15b645` `d139f7e` `f18755c` `d3bf1a5` `af9fc1b`.
