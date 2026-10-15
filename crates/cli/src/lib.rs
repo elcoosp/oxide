@@ -616,6 +616,9 @@ fn generate_island_boot_entry(
          return modules[chunk] ?? (await import(chunk));\n});\n",
     );
     out.push_str("boot();\n");
+    // §16.6 / §20: report Core Web Vitals to `/_oxide/vitals`. Guarded and
+    // no-op outside the browser; the boot entry only runs in one.
+    out.push_str("import { reportWebVitals } from 'oxide/client';\nreportWebVitals();\n");
     out
 }
 
