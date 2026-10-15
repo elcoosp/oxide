@@ -13,6 +13,7 @@ pub mod mcp;
 
 mod build_cache;
 mod precompile_cache;
+mod l0_cache;
 pub mod precompile;
 mod framework_shim;
 pub mod loader_shim;
@@ -450,7 +451,16 @@ fn refine_render_modes_from_ast(
             continue;
         }
         let server = routes_root.join(e.file.with_file_name("page.server.ts"));
-        let Ok(source) = std::fs::read_to_string(&server) else { continue };
+        let Ok(source) = std::fs::read_to_string(&server) else {
+            // §10.1: a page route with no `page.server.ts` has no loader and
+            // therefore reads no request state — it is `static`. Without this
+            // the mode stays `None`, and the §11 L0 layer cannot tell it can
+            // be cached. An explicit mode the scanner already set is kept.
+            if matches!(e.render_mode.as_deref(), Some("static") | Some("dynamic") | None) {
+                e.render_mode = Some("static".to_string());
+            }
+            continue;
+        };
         // An explicit `config.render` always wins (§10.1): the scanner wrote
         // the literal value into `render_mode`, and it is indistinguishable
         // from an inferred `static`/`dynamic` after the fact — so re-check
@@ -2089,6 +2099,7 @@ fn build_dispatch(
     loader_runner: Option<std::sync::Arc<dyn oxide_server::LoaderRunner>>,
     routes_root: std::path::PathBuf,
     boot_script_url: Option<String>,
+    l0: Option<std::sync::Arc<l0_cache::L0Cache>>,
 ) -> std::sync::Arc<
     dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
 > {
@@ -2150,19 +2161,21 @@ fn build_dispatch(
 
             // Pre-compute the loader inputs synchronously so the async block
             // owns plain data (no borrow of `matched`).
-            let (module_path, route_id, params, has_server_module): (
+            let (module_path, route_id, params, has_server_module, render_mode): (
                 Option<std::path::PathBuf>,
                 Option<String>,
                 std::collections::BTreeMap<String, String>,
                 bool,
+                Option<String>,
             ) = match &matched {
                 Some(m) => (
                     Some(routes_root.join(m.route.file.with_file_name("page.server.ts"))),
                     Some(m.route.id.0.clone()),
                     m.params.clone(),
                     m.route.has_server_module,
+                    m.route.render_mode.clone(),
                 ),
-                None => (None, None, std::collections::BTreeMap::new(), false),
+                None => (None, None, std::collections::BTreeMap::new(), false, None),
             };
             // The URL pattern (`pattern_of(segments)`) is for metrics labels;
             // the ROUTE ID is what the framework adapter's `componentFor`
@@ -2193,8 +2206,49 @@ fn build_dispatch(
             // the outer closure's captured value (which would be E0507 —
             // an `Fn` closure cannot surrender a captured variable).
             let boot_script_url_for_render = boot_script_url_for_render.clone();
+            // §11 L0: only a GET on a static/isr route is a cache candidate.
+            let l0 = l0.clone();
+            // A route with a server module may read request state the L0 key
+            // does not capture (undeclared cookies/headers); only a route with
+            // no server module is safely shareable across requests.
+            let l0_eligible = req.method.eq_ignore_ascii_case("GET")
+                && l0_cache::mode_is_cacheable(render_mode.as_deref())
+                && !has_server_module
+                && route_id.is_some();
+            let l0_route = route_id_for_render.clone().unwrap_or_default();
+            let l0_params = {
+                let mut ks: Vec<(&String, &String)> = params.iter().collect();
+                ks.sort();
+                ks.iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect::<Vec<_>>()
+                    .join("&")
+            };
+            let l0_vary = l0_cache::vary_of(&req_owned.headers);
 
             Box::pin(async move {
+                // §11.1 L0: a cache hit serves the stored response with the
+                // live request's CSP nonce substituted in, no JS on the path.
+                if l0_eligible {
+                    if let Some(cache) = l0.as_ref() {
+                        if let Some(hit) =
+                            cache.get(&l0_route, &l0_params, &l0_vary).await
+                        {
+                            let nonce = oxide_server::nonce_for(&req_owned.request_id);
+                            let body = hit.materialize(&nonce);
+                            let mut resp = oxide_server::OxideResponse::new(hit.status, body);
+                            for (k, v) in &hit.headers {
+                                resp = resp.with_header(k, v.clone());
+                            }
+                            // §20: an explicit cache-outcome header makes the L0
+                            // layer observable and testable.
+                            resp = resp.with_header("x-oxide-cache", "L0-hit");
+                            metrics.observe(&label, started.elapsed(), hit.status);
+                            return resp;
+                        }
+                    }
+                }
+
                 // §9.1: loader phase. When the matched route declares a server
                 // module and a LoaderRunner is attached, run it. A non-200
                 // output (error(...) or redirect(...)) short-circuits the
@@ -2319,8 +2373,59 @@ fn build_dispatch(
                                 }
                                 None => bridged,
                             };
+                            // §11 L0: when this response is cacheable, collect
+                            // the streamed body once so it can be stored, then
+                            // serve it from memory. The body was rendered with
+                            // the live request's nonce; replace it with the
+                            // sentinel before storing so any request can reuse
+                            // it. A response that set a cookie is NOT cached
+                            // (it varies per user).
+                            if l0_eligible && loader_set_cookies.is_empty() {
+                                if let Some(cache) = l0.as_ref() {
+                                    use futures::StreamExt as _;
+                                    let nonce =
+                                        oxide_server::nonce_for(&req_owned.request_id);
+                                    let mut collected: Vec<u8> = Vec::new();
+                                    let mut stream = body;
+                                    while let Some(item) = stream.next().await {
+                                        match item {
+                                            Ok(chunk) => collected.extend_from_slice(&chunk),
+                                            Err(_) => break,
+                                        }
+                                    }
+                                    let sentineled = String::from_utf8_lossy(&collected)
+                                        .replace(&nonce, l0_cache::NONCE_SENTINEL)
+                                        .into_bytes();
+                                    let mut store_headers = vec![(
+                                        "content-type".to_string(),
+                                        "text/html; charset=utf-8".to_string(),
+                                    )];
+                                    for (k, v) in &loader_headers {
+                                        store_headers.push((k.clone(), v.clone()));
+                                    }
+                                    cache
+                                        .put(
+                                            &l0_route,
+                                            &l0_params,
+                                            &l0_vary,
+                                            200,
+                                            store_headers,
+                                            sentineled,
+                                            vec![l0_route.clone()],
+                                        )
+                                        .await;
+                                    let mut resp = oxide_server::OxideResponse::new(200, collected)
+                                        .with_header("content-type", "text/html; charset=utf-8")
+                                        .with_header("x-oxide-cache", "L0-miss");
+                                    for (k, v) in &loader_headers {
+                                        resp = resp.with_header(k, v.clone());
+                                    }
+                                    return resp;
+                                }
+                            }
                             let mut resp = oxide_server::OxideResponse::stream(200, body)
-                                .with_header("content-type", "text/html; charset=utf-8");
+                                .with_header("content-type", "text/html; charset=utf-8")
+                                .with_header("x-oxide-cache", "bypass");
                             for c in &loader_set_cookies {
                                 resp = resp.with_header("set-cookie", c.clone());
                             }
@@ -2762,7 +2867,15 @@ async fn start_server_inner_full(
 ) -> anyhow::Result<StartedServer> {
     let rootp = PathBuf::from(root);
     let cfg = load_config_or_default(&rootp, "production");
-    let tree = std::sync::Arc::new(scan_routes(&rootp, &cfg)?);
+    // §10.1: refine inferred render modes from the AST, exactly as `oxide build`
+    // does — otherwise the live server sees the scanner's line-oriented guess
+    // (and `None` for a route with no `page.server.ts`), and the §11 L0 layer
+    // cannot tell a static route from a dynamic one.
+    let tree = std::sync::Arc::new(refine_render_modes_from_ast(
+        &rootp,
+        &cfg,
+        scan_routes(&rootp, &cfg)?,
+    ));
     let (bind_ip, requested_port) = match bind {
         // A caller-supplied port is honoured verbatim — including 0, which
         // means "ephemeral, OS chooses" (the test and CI convention).
@@ -2812,19 +2925,36 @@ async fn start_server_inner_full(
     // §10.3: the same boot URL that the build-time prerender injects also
     // has to be spliced into every live request's shell — otherwise dev /
     // serve would ship pages whose `<ox-island>` markup is inert.
-    let boot_script_url: Option<String> = {
+    let client_manifest_json: Option<serde_json::Value> = {
         let client_manifest = rootp.join("dist/client/client.manifest.json");
         std::fs::read_to_string(&client_manifest)
             .ok()
             .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-            .and_then(|v| {
-                v.get("routes")
-                    .and_then(|r| r.get("__boot__"))
-                    .and_then(|r| r.get("entry_chunk"))
-                    .and_then(|e| e.as_str())
-                    .map(|f| format!("client/{f}"))
-            })
     };
+    let boot_script_url: Option<String> = client_manifest_json
+        .as_ref()
+        .and_then(|v| {
+            v.get("routes")
+                .and_then(|r| r.get("__boot__"))
+                .and_then(|r| r.get("entry_chunk"))
+                .and_then(|e| e.as_str())
+                .map(|f| format!("client/{f}"))
+        });
+    // §11 L0: a response cache for static/isr routes. The build id scopes
+    // entries to this deployment, so a rebuild invalidates them; it comes from
+    // the client manifest, falling back to a source-derived hash when no build
+    // is present (a dev server with no `dist/` still serves, just uncached).
+    let build_id = client_manifest_json
+        .as_ref()
+        .and_then(|v| v.get("build_id"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| "dev".to_string());
+    let l0 = Some(std::sync::Arc::new(l0_cache::L0Cache::new(
+        std::sync::Arc::new(oxide_cache::TieredCache::new(512 * 1024 * 1024)),
+        build_id,
+        std::time::Duration::from_secs(60),
+    )));
     let dispatch = build_dispatch(
         std::sync::Arc::clone(&tree),
         std::sync::Arc::clone(&metrics),
@@ -2833,6 +2963,7 @@ async fn start_server_inner_full(
         stack.loader_runner,
         routes_root,
         boot_script_url,
+        l0,
     );
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (tx, rx) = tokio::sync::watch::channel(false);
