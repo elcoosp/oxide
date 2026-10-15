@@ -726,6 +726,7 @@ fn bundle_env_options(
         transform_hook,
         css_transform: Some(css_transform),
         inline_dynamic_imports: false,
+        resolve_conditions: None,
     }
 }
 
@@ -1387,6 +1388,18 @@ fn emit_config_bundle(
         // resolved by the loader; a single inlined file is simpler and what the
         // bare V8 host wants.
         inline_dynamic_imports: true,
+        // BUG-SOLID: resolve conditions must match the V8 loader
+        // (`v8_loader.rs`). `worker` FIRST gives `@solidjs/web` its SSR build
+        // (`dist/server.js`); the `browser`-only default gave it the CLIENT
+        // build, whose `ssr()` returns undefined → a shell with an empty body.
+        // `worker` still yields a browser-compatible `react-dom/server`.
+        resolve_conditions: Some(vec![
+            "worker".into(),
+            "browser".into(),
+            "import".into(),
+            "module".into(),
+            "default".into(),
+        ]),
     };
     use oxide_bundler::Bundler as _;
     let backend = oxide_bundler::RolldownBundler::new(root);
