@@ -1296,6 +1296,85 @@ fn emit_snapshot_blob(root: &Path, server_out: &Path, w: Writer<'_>) -> anyhow::
     Ok(())
 }
 
+/// §4.2: for the V8 backend, bundle `oxide.config.ts` (and the framework
+/// adapter it imports) into a single self-contained ESM file. Bare V8 ESM has
+/// no CommonJS interop — `react` is CJS and `import('react')` fails with
+/// "does not provide an export named 'createElement'". Rolldown resolves CJS,
+/// so bundling the config graph once at build gives V8 a file it can import.
+///
+/// Written to `<root>/.oxide/config.server.js`; `build_framework_stack` points
+/// the V8 renderer at it. A no-op for the Node backend, which imports the
+/// config directly.
+fn emit_config_bundle(
+    cfg: &oxide_config::OxideConfig,
+    root: &Path,
+    w: Writer<'_>,
+) -> anyhow::Result<()> {
+    if !matches!(cfg.server.backend, oxide_config::JsBackend::V8) {
+        return Ok(());
+    }
+    let Some(config_file) = find_config_file(root).ok() else {
+        return Ok(());
+    };
+    let out_dir = root.join(".oxide");
+    std::fs::create_dir_all(&out_dir)
+        .map_err(|e| anyhow::anyhow!("create {}: {e}", out_dir.display()))?;
+
+    let mut entries: BTreeMap<String, PathBuf> = BTreeMap::new();
+    entries.insert("config".to_string(), config_file.clone());
+    let opts = oxide_bundler::BundleOptions {
+        env: oxide_bundler::BundleEnv::Ssr,
+        entries,
+        out_dir: out_dir.clone(),
+        minify: false,
+        sourcemap: false,
+        externals: Vec::new(),
+        define: BTreeMap::new(),
+        tsconfig_paths: BTreeMap::new(),
+        build_secret: "config-bundle".to_string(),
+        precompiled: BTreeMap::new(),
+        jsx_import_source: None,
+        transform_hook: None,
+        css_transform: None,
+    };
+    use oxide_bundler::Bundler as _;
+    let backend = oxide_bundler::RolldownBundler::new(root);
+    match backend.bundle(&opts) {
+        Ok(out) => {
+            // The entry chunk is written as `<name>-<hash>.js`; rename it to
+            // the stable name the loader expects.
+            // Find the entry chunk's written file and copy it to the stable
+            // name the V8 renderer imports. `copy` (not `rename`) so a
+            // re-run finds the source again; a missing source is a warning,
+            // not a build failure — the Node backend never needs this file.
+            let entry_file = out
+                .chunks
+                .iter()
+                .find(|c| c.kind == oxide_bundler::ChunkKind::Entry)
+                .map(|c| c.file.clone());
+            match entry_file {
+                Some(file) => {
+                    let from = out_dir.join(&file);
+                    let to = out_dir.join("config.server.js");
+                    if from != to {
+                        std::fs::copy(&from, &to).map_err(|e| {
+                            anyhow::anyhow!("copy {} -> config.server.js: {e}", from.display())
+                        })?;
+                    }
+                    outln!(w, "config bundle: .oxide/config.server.js");
+                }
+                None => {
+                    outln!(w, "config bundle: no entry chunk produced; V8 will load the raw config");
+                }
+            }
+        }
+        Err(e) => {
+            outln!(w, "config bundle: skipped ({} {})", e.0.code, e.0.message);
+        }
+    }
+    Ok(())
+}
+
 fn emit_web_manifest(
     cfg: &oxide_config::OxideConfig,
     dist: &Path,
@@ -1550,6 +1629,10 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     let routes_root = rootp.join(&cfg.routes.dir);
     // §4.4: report top-level side effects that would break a V8 snapshot.
     emit_snapshot_lint(&cfg, &rootp, &tree, w)?;
+    // §4.2: for the V8 backend, bundle the config graph to ESM **now** — the
+    // framework stack built just below renders during prerender, and V8 cannot
+    // import the raw `.ts` config (React is CJS; bare V8 ESM has no interop).
+    emit_config_bundle(&cfg, &rootp, w)?;
 
     // §7 / §9.1: build the framework stack (renderer + loader). Renderer
     // is used for prerendering static routes; loader is present but not
