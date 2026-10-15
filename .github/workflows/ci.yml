@@ -40,3 +40,38 @@ jobs:
         with: { version: 9 }
       - name: Conformance suite (all four adapters)
         run: pnpm -C conformance test
+
+  fixtures-v8:
+    name: V8 backend fixture gate (PH0-03)
+    runs-on: macos-latest   # V8 host is built/tested on macOS here; ubuntu if
+                            # the toolchain supports it — see WORKLOG.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - run: pnpm install --frozen-lockfile
+      - name: Build the CLI
+        run: cargo build -p oxide-cli
+      - name: V8 backend fixture gate
+        run: ./tests/fixtures/check-v8.sh
+
+  bench-gate:
+    name: bench regression gate (>5% fails, §21)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - run: pnpm install --frozen-lockfile
+      - name: Build the CLI
+        run: cargo build -p oxide-cli
+      - name: Run the benchmark table
+        run: ./benchmarks/run.sh | tee /tmp/bench.txt
+      - name: Compare to report.md (>5% regression fails)
+        run: ./benchmarks/gate.sh /tmp/bench.txt benchmarks/report.md
