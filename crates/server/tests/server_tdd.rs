@@ -1807,3 +1807,52 @@ fn sec05_trusted_proxy_resolution() {
     assert_eq!(proto, None);
     assert_eq!(host, Some("real.host"));
 }
+
+/// SEC-06: a slowloris (a client that opens a connection and drips headers
+/// without ever completing them) is dropped after `slow_request_timeout_ms`,
+/// not held forever.
+#[tokio::test]
+async fn sec06_slow_header_drip_is_dropped() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let addr = free_port_addr().await;
+    // Short header-read timeout so the test is fast.
+    let limits = Limits {
+        slow_request_timeout_ms: 300,
+        ..Default::default()
+    };
+    let p = Arc::new(pipeline(
+        RulesEngine::default(),
+        None,
+        limits,
+        SecuritySettings::default(),
+    ));
+    let dispatch: Arc<dyn Fn(OxideRequest) -> BoxFuture<'static, OxideResponse> + Send + Sync> =
+        Arc::new(|_r: OxideRequest| Box::pin(async move { OxideResponse::html(200, "ok") }));
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let server = tokio::spawn(Server::serve(addr, p, dispatch, rx));
+
+    // Wait for the listener.
+    for _ in 0..200 {
+        if tokio::net::TcpStream::connect(addr).await.is_ok() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+    // Drip a partial request line + one header, never terminate with CRLFCRLF.
+    s.write_all(b"GET / HTTP/1.1\r\nHost: t\r\n").await.unwrap();
+    // The server must close the connection within a few multiples of the
+    // timeout; a read then returns 0 (EOF) rather than blocking forever.
+    let mut buf = [0u8; 16];
+    let res = tokio::time::timeout(Duration::from_secs(5), s.read(&mut buf)).await;
+    match res {
+        Ok(Ok(0)) => {} // EOF: the server closed the connection — good
+        Ok(Ok(n)) => panic!("expected EOF, got {n} bytes: {:?}", &buf[..n]),
+        Ok(Err(e)) => panic!("unexpected read error: {e}"),
+        Err(_) => panic!("slowloris connection was NOT dropped within 5s"),
+    }
+
+    tx.send(true).unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(10), server).await;
+}
