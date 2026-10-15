@@ -3391,8 +3391,16 @@ async fn start_server_inner_full(
         .and_then(|v| v.as_str())
         .map(str::to_string)
         .unwrap_or_else(|| "dev".to_string());
+    // BUG-02: wrap the framework stack's cache tier, not a fresh one. The
+    // worker's `'use cache'` entries and the L0 response cache now share one
+    // handler, so BUG-01's invalidation reaches both. A stack built without a
+    // cache (tests, `FrameworkStack::empty()`) gets a private tier.
+    let l0_tier: std::sync::Arc<dyn oxide_cache::CacheHandler> = stack
+        .cache_tier
+        .clone()
+        .unwrap_or_else(|| std::sync::Arc::new(oxide_cache::TieredCache::new(512 * 1024 * 1024)));
     let l0 = Some(std::sync::Arc::new(l0_cache::L0Cache::new(
-        std::sync::Arc::new(oxide_cache::TieredCache::new(512 * 1024 * 1024)),
+        l0_tier,
         build_id,
         std::time::Duration::from_secs(60),
     )));
