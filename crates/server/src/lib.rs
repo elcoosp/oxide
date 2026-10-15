@@ -1956,6 +1956,37 @@ impl Pipeline {
             });
         }
 
+        // (3a.1) web-vitals beacon (§16.6 / §20). The client's reporting hook
+        // POSTs `navigator.sendBeacon('/_oxide/vitals', JSON)`; we record each
+        // sample into the metrics registry. A beacon must be cheap and never
+        // error in a way the page sees — a malformed body is a 204, not a 4xx,
+        // because the browser does not read the response anyway. Recording
+        // never enters JS.
+        if req.method.eq_ignore_ascii_case("POST") && path == "/_oxide/vitals" {
+            if let Some(m) = &self.metrics {
+                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&req.body) {
+                    // Accept one sample `{name, value, route?}` or an array.
+                    let items: Vec<&serde_json::Value> = match &v {
+                        serde_json::Value::Array(a) => a.iter().collect(),
+                        other => vec![other],
+                    };
+                    for it in items {
+                        let name = it.get("name").and_then(|x| x.as_str()).unwrap_or("");
+                        let value = it.get("value").and_then(|x| x.as_f64());
+                        let route = it.get("route").and_then(|x| x.as_str()).unwrap_or("");
+                        if !name.is_empty() {
+                            if let Some(val) = value {
+                                m.observe_vital(name, route, val);
+                            }
+                        }
+                    }
+                }
+            }
+            return NativePrefix::Raw(
+                OxideResponse::new(204, Bytes::new()),
+            );
+        }
+
         // (3a.2) inspector endpoints (§13.4) — only when configured (dev only).
         if let Some(insp) = &self.inspector {
             if req.method.eq_ignore_ascii_case("GET") && path == "/__oxide" {
