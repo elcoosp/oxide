@@ -2668,3 +2668,151 @@ The four-fixture gate failed mid-session with "Cannot find module
 `node_modules/` was **empty** (a prior `rm`/install glitch), not any source
 change. `pnpm install` restored it and the gate passed. Worth remembering:
 check `node_modules` before suspecting the code.
+
+## Session 18 (cont.) — V8 build/serve wired; the render path is flaky
+
+Committing the verified infrastructure and being honest about the rest.
+
+### What genuinely works (committed, tested)
+
+- **Transpiling V8 loader** (`v8_loader.rs`): `.ts`/`.tsx` → JS via
+  `oxide_compiler::lower_to_js`; relative + bare (node_modules) resolution via
+  `oxc_resolver`; `node:*` builtin shims; `file://`/absolute specifiers. Tested
+  on real TS with transitive imports (`v8_ts_loader_tdd`).
+- **§4.6 Web globals**: `TextEncoder`/`TextDecoder`, `ReadableStream`,
+  `atob`/`btoa`, `queueMicrotask`, `structuredClone`, plus the earlier
+  `process`/`Buffer` shim.
+- **§4.4 snapshots**: `snapshot_build_bundle` builds a real V8 blob from the
+  multi-file server bundle (816 KB, no warnings); `V8Host::with_snapshot` /
+  `from_snapshot_file` restore it in every worker (and warm replacements);
+  `oxide build` writes `.oxide/snapshot.bin`; `start` loads it. **Verified: V8
+  loads and runs a real built route module; snapshot with vs without was 5/5
+  vs 3/5 on the flaky path.**
+- **Config bundling**: `oxide build` bundles the config graph to
+  `.oxide/config.server.js` (rolldown resolves React's CJS into ESM). The V8
+  renderer imports it; the Node renderer imports the raw `.ts`.
+- **Bundler `inline_dynamic_imports`** option (rolldown `code_splitting:
+  false`).
+- **Four-fixture Node gate: PASS** (the shipped default is unaffected).
+
+### What is NOT solid: the full V8 render is flaky (~1/5)
+
+The V8 *serving* path — boot V8, import the bundled config, run the React
+adapter's real SSR — succeeds intermittently. Failure modes seen:
+
+1. `<!-- oxide: real SSR unavailable: react deps not installed -->` — the
+   adapter's `isReactAvailable()` (`await import('react')`, then check
+   `createElement`) returns false, falling back to the IR renderer. Intermittent.
+2. `curl: (52) Empty reply` — the V8 worker dropped the connection, no log line.
+   Points at the 2.7 MB inlined config bundle crashing the isolate on some loads.
+
+The config bundle is either 62 KB code-split (chunks must be copied alongside —
+done, but `__toESM` wrappers then resolve inconsistently) or 2.7 MB inlined
+(self-contained, but large enough to crash the worker intermittently). Neither
+is reliable.
+
+**Root cause.** React is CommonJS. `real-ssr.ts` does a *runtime* `await
+import('react')`. Rolldown compiles that to `import('./react-*.js').then(m =>
+__toESM(m.default))`; whether `__toESM` yields a namespace with `createElement`
+depends on which chunk the require wrapper landed in, which varies. A bare V8
+ESM host has no `cjs-module-lexer` equivalent, so this is exactly D2's
+"`deno_node` module loading has not landed" — the same wall session 18 named.
+
+**The real fix** (next session, not this one — I thrashed here): a CJS→ESM
+namespace shim in `v8_loader::load`. When a resolved module is CJS (no
+`"type":"module"`, `module.exports` present), evaluate it once inside a V8
+context with a `module`/`exports`/`require` shim and cache the resulting
+namespace — the `cjs-module-lexer` job, done in Rust. That makes
+`import('react')` deterministic regardless of how rolldown chunked it, and
+unblocks the V8 render for good. It is bounded and self-contained.
+
+Alternatively: stop relying on runtime `import()` in the adapter and have
+`oxide build` emit a `render` entry that statically imports `@oxide/react`'s
+real-SSR path, so rolldown resolves the CJS at build time.
+
+### Commits this session (V8 arc)
+
+`84fb548` `0a706b3` `f876858` `e2e4d64` `56a00ea` `7223e48` `ba19bae`
+`0bfab1e` `561ffba` `ed2f775` `73785a0` `27b56b8` `20fe705` — plus the
+`inline_dynamic_imports` + config-bundle commits (10) this continuation.
+
+### Honest bottom line
+
+The V8 **infrastructure** is real and tested. The V8 **full render** is not
+reliable yet, and the blocker is CJS interop for a dynamically-imported
+framework runtime — a known, named dependency gap, not a wiring bug. The Node
+backend (default) is unaffected and the gate passes.
+
+## Session 18 (cont.) — V8 build/serve wired; the render path is flaky
+
+Committing the verified infrastructure and being honest about the rest.
+
+### What genuinely works (committed, tested)
+
+- **Transpiling V8 loader** (`v8_loader.rs`): `.ts`/`.tsx` → JS via
+  `oxide_compiler::lower_to_js`; relative + bare (node_modules) resolution via
+  `oxc_resolver`; `node:*` builtin shims; `file://`/absolute specifiers. Tested
+  on real TS with transitive imports (`v8_ts_loader_tdd`).
+- **§4.6 Web globals**: `TextEncoder`/`TextDecoder`, `ReadableStream`,
+  `atob`/`btoa`, `queueMicrotask`, `structuredClone`, plus the earlier
+  `process`/`Buffer` shim.
+- **§4.4 snapshots**: `snapshot_build_bundle` builds a real V8 blob from the
+  multi-file server bundle (816 KB, no warnings); `V8Host::with_snapshot` /
+  `from_snapshot_file` restore it in every worker (and warm replacements);
+  `oxide build` writes `.oxide/snapshot.bin`; `start` loads it. **Verified: V8
+  loads and runs a real built route module; snapshot with vs without was 5/5
+  vs 3/5 on the flaky path.**
+- **Config bundling**: `oxide build` bundles the config graph to
+  `.oxide/config.server.js` (rolldown resolves React's CJS into ESM). The V8
+  renderer imports it; the Node renderer imports the raw `.ts`.
+- **Bundler `inline_dynamic_imports`** option (rolldown `code_splitting:
+  false`).
+- **Four-fixture Node gate: PASS** (the shipped default is unaffected).
+
+### What is NOT solid: the full V8 render is flaky (~1/5)
+
+The V8 *serving* path — boot V8, import the bundled config, run the React
+adapter's real SSR — succeeds intermittently. Failure modes seen:
+
+1. `<!-- oxide: real SSR unavailable: react deps not installed -->` — the
+   adapter's `isReactAvailable()` (`await import('react')`, then check
+   `createElement`) returns false, falling back to the IR renderer. Intermittent.
+2. `curl: (52) Empty reply` — the V8 worker dropped the connection, no log line.
+   Points at the 2.7 MB inlined config bundle crashing the isolate on some loads.
+
+The config bundle is either 62 KB code-split (chunks must be copied alongside —
+done, but `__toESM` wrappers then resolve inconsistently) or 2.7 MB inlined
+(self-contained, but large enough to crash the worker intermittently). Neither
+is reliable.
+
+**Root cause.** React is CommonJS. `real-ssr.ts` does a *runtime* `await
+import('react')`. Rolldown compiles that to `import('./react-*.js').then(m =>
+__toESM(m.default))`; whether `__toESM` yields a namespace with `createElement`
+depends on which chunk the require wrapper landed in, which varies. A bare V8
+ESM host has no `cjs-module-lexer` equivalent, so this is exactly D2's
+"`deno_node` module loading has not landed" — the same wall session 18 named.
+
+**The real fix** (next session, not this one — I thrashed here): a CJS→ESM
+namespace shim in `v8_loader::load`. When a resolved module is CJS (no
+`"type":"module"`, `module.exports` present), evaluate it once inside a V8
+context with a `module`/`exports`/`require` shim and cache the resulting
+namespace — the `cjs-module-lexer` job, done in Rust. That makes
+`import('react')` deterministic regardless of how rolldown chunked it, and
+unblocks the V8 render for good. It is bounded and self-contained.
+
+Alternatively: stop relying on runtime `import()` in the adapter and have
+`oxide build` emit a `render` entry that statically imports `@oxide/react`'s
+real-SSR path, so rolldown resolves the CJS at build time.
+
+### Commits this session (V8 arc)
+
+`84fb548` `0a706b3` `f876858` `e2e4d64` `56a00ea` `7223e48` `ba19bae`
+`0bfab1e` `561ffba` `ed2f775` `73785a0` `27b56b8` `20fe705` — plus the
+`inline_dynamic_imports` + config-bundle commits (10) this continuation.
+
+### Honest bottom line
+
+The V8 **infrastructure** is real and tested. The V8 **full render** is not
+reliable yet, and the blocker is CJS interop for a dynamically-imported
+framework runtime — a known, named dependency gap, not a wiring bug. The Node
+backend (default) is unaffected and the gate passes.
