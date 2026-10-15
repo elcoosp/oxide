@@ -482,7 +482,7 @@ async fn v8_host_runs_a_module_export() {
         "export function echo(p) { return { html: '<html>' + p.title + '</html>' }; }\n",
     );
 
-    let host = V8Host;
+    let host = V8Host::new();
     assert_eq!(host.backend_name(), "v8");
     let pool = host.render_pool(v8_cfg(1)).unwrap();
     let mut s = pool
@@ -500,7 +500,7 @@ async fn v8_host_runs_a_module_export() {
 
 #[tokio::test]
 async fn v8_host_boom_and_missing_module_report_errors() {
-    let host = V8Host;
+    let host = V8Host::new();
     let pool = host.tooling_pool(v8_cfg(1)).unwrap();
 
     // `boom` is a Rust-side sentinel the pool mirrors from the Node worker.
@@ -531,7 +531,7 @@ async fn v8_host_multiple_workers_dispatch_and_drain() {
         "export function echo(p) { return { html: '<html>' + p.title + '</html>' }; }\n",
     );
 
-    let host = V8Host;
+    let host = V8Host::new();
     let pool = host.render_pool(v8_cfg(2)).unwrap();
     assert_eq!(pool.stats().workers, 2);
 
@@ -563,7 +563,7 @@ async fn v8_host_abort_request_resolves_pending_call() {
         "export function echo(p) { return { html: '<html>' + p.title + '</html>' }; }\n",
     );
 
-    let host = V8Host;
+    let host = V8Host::new();
     let pool = host.render_pool(v8_cfg(1)).unwrap();
     tokio::time::sleep(Duration::from_millis(20)).await;
     pool.abort_request("req-not-in-flight"); // no-op on unknown id
@@ -587,7 +587,7 @@ async fn v8_pool_recycles_warm() {
         "export function echo() { return { ok: true }; }\n",
     );
 
-    let host = V8Host;
+    let host = V8Host::new();
     let cfg = PoolConfig {
         size: 1,
         recycle_after_requests: 2,
@@ -630,7 +630,7 @@ async fn v8_ops_are_registered_and_callable() {
         "export function probe() {\n           const id = globalThis.oxide.trace('hello');\n           return { id };\n         }\n",
     );
 
-    let host = V8Host;
+    let host = V8Host::new();
     let pool = host.render_pool(PoolConfig { size: 1, ..Default::default() }).unwrap();
     let mut s = pool
         .call(v8_entry(&module, "probe"), input(json!({})))
