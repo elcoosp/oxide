@@ -37,7 +37,7 @@ pub mod tooling;
 pub mod v8_ops;
 pub mod snapshot;
 pub mod v8_loader;
-pub use snapshot::{lint_top_level_side_effects, loader_options, snapshot_build, snapshot_build_bundle, AppSnapshot, SideEffect, SNAPSHOT_FORMAT};
+pub use snapshot::{lint_top_level_side_effects, loader_options, snapshot_build, snapshot_build_bundle, snapshot_build_runtime, AppSnapshot, SideEffect, SNAPSHOT_FORMAT};
 pub mod tooling_pool;
 pub mod framework_host;
 pub mod framework_renderer;
@@ -697,6 +697,82 @@ if (typeof globalThis.TextDecoder === 'undefined') {
 // (react-dom/server.browser) schedules work through a MessageChannel. A
 // macrotask-based port is enough: `postMessage` queues delivery after the
 // current task, which is what the scheduler expects.
+// §4.6 tier 1: Web Crypto's `crypto.getRandomValues` / `randomUUID`, backed
+// by REAL OS entropy through the `op_oxide_random` op (ring's SystemRandom).
+//
+// This MUST be a CSPRNG: a `Math.random` filler would silently produce
+// predictable tokens for any code that mints a session id, CSRF nonce or
+// idempotency key. If the op returns short (the OS RNG failed), the shim
+// THROWS — a caller fails loudly rather than proceed with weak randomness.
+// §4.6 tier 1: `setTimeout`/`setInterval`/`clearTimeout`/`clearInterval`,
+// backed by the `op_oxide_sleep` op (a real tokio timer the event loop polls).
+// A framework's async SSR scheduler (Solid's `renderToString`) flushes through
+// a `setTimeout(…, 0)`; without this it never resolves and the render is empty.
+if (typeof globalThis.setTimeout === 'undefined') {
+  const timers = new Map();
+  let nextId = 1;
+  globalThis.setTimeout = function (fn, ms, ...args) {
+    const id = nextId++;
+    const handle = { cancelled: false, interval: false, ms: ms || 0, fn, args };
+    timers.set(id, handle);
+    const run = () => {
+      Deno.core.ops.op_oxide_sleep(handle.ms).then(() => {
+        if (handle.cancelled) return;
+        if (handle.interval) {
+          try { fn(...args); } catch (e) { queueMicrotask(() => { throw e; }); }
+          run();
+        } else {
+          timers.delete(id);
+          try { fn(...args); } catch (e) { queueMicrotask(() => { throw e; }); }
+        }
+      });
+    };
+    run();
+    return id;
+  };
+  globalThis.setInterval = function (fn, ms, ...args) {
+    const id = globalThis.setTimeout(fn, ms, ...args);
+    const h = timers.get(id);
+    if (h) h.interval = true;
+    return id;
+  };
+  globalThis.clearTimeout = function (id) { const h = timers.get(id); if (h) h.cancelled = true; timers.delete(id); };
+  globalThis.clearInterval = globalThis.clearTimeout;
+}
+
+if (typeof globalThis.crypto === 'undefined') {
+  const entropy = (n) => {
+    const b = Deno.core.ops.op_oxide_random(n);
+    const view = b instanceof Uint8Array ? b : new Uint8Array(b);
+    if (view.length !== n) {
+      throw new Error(
+        'crypto: OS entropy unavailable (op_oxide_random returned ' + view.length +
+        ' of ' + n + ' bytes); refusing to return weak randomness'
+      );
+    }
+    return view;
+  };
+  const fill = (arr) => {
+    const view = arr instanceof Uint8Array ? arr : new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
+    if (view.length > 65536) throw new Error('crypto.getRandomValues: quota exceeded (65536 bytes max)');
+    const rnd = entropy(view.length);
+    view.set(rnd);
+    return arr;
+  };
+  globalThis.crypto = {
+    getRandomValues: fill,
+    randomUUID: function () {
+      const b = entropy(16);
+      b[6] = (b[6] & 0x0f) | 0x40;
+      b[8] = (b[8] & 0x3f) | 0x80;
+      const h = [];
+      for (let i = 0; i < 16; i++) h.push(b[i].toString(16).padStart(2, '0'));
+      return h.slice(0, 4).join('') + '-' + h.slice(4, 6).join('') + '-' +
+             h.slice(6, 8).join('') + '-' + h.slice(8, 10).join('') + '-' + h.slice(10, 16).join('');
+    },
+  };
+}
+
 if (typeof globalThis.MessageChannel === 'undefined') {
   globalThis.MessagePort = class MessagePort {
     constructor() { this.onmessage = null; this._other = null; this._closed = false; }
@@ -846,6 +922,79 @@ globalThis.__oxideDispatch = async function (kind, moduleUrl, exportName, payloa
   }
 };
 
+// loader:run — import a route's `page.server.ts` (transpiled by the Rust
+// loader) and call its `load(event)`. Mirrors the Node worker's
+// dispatchLoaderRun: a full LoadEvent (cookies, setHeaders, parent, defer),
+// with `error()`/`redirect()` sentinels turned into status + location.
+globalThis.__oxideLoaderRun = async function (moduleUrl, input) {
+  try {
+    const mod = await import(moduleUrl);
+    const load = mod.load;
+    if (typeof load !== 'function') {
+      return JSON.stringify({ __oxide_error: 'module has no callable `load` export' });
+    }
+    const registry = new Map();
+    let nextId = 1;
+    const defer = (p) => { const id = nextId++; registry.set(id, p); return { __deferred: id }; };
+
+    const hdrs = Array.isArray(input.headers) ? input.headers : [];
+    const inbound = hdrs.find((h) => Array.isArray(h) && String(h[0]).toLowerCase() === 'cookie');
+    const jar = new Map();
+    if (inbound) {
+      for (const part of String(inbound[1]).split(';')) {
+        const eq = part.indexOf('=');
+        if (eq > 0) { const k = part.slice(0, eq).trim(); if (k) jar.set(k, decodeURIComponent(part.slice(eq + 1).trim())); }
+      }
+    }
+    const pending = new Map();
+    const ser = (n, v, o) => {
+      o = o || {};
+      let s = n + '=' + encodeURIComponent(v);
+      if (o.path) s += '; Path=' + o.path;
+      if (o.domain) s += '; Domain=' + o.domain;
+      if (typeof o.maxAge === 'number') s += '; Max-Age=' + o.maxAge;
+      if (o.httpOnly) s += '; HttpOnly';
+      if (o.secure) s += '; Secure';
+      if (o.sameSite) { const ss = String(o.sameSite); s += '; SameSite=' + ss[0].toUpperCase() + ss.slice(1).toLowerCase(); }
+      return s;
+    };
+    const cookies = {
+      get: (n) => jar.get(n),
+      set: (n, v, o) => { jar.set(n, v); pending.set(n, ser(n, v, o)); },
+      delete: (n) => { jar.delete(n); pending.set(n, ser(n, '', { maxAge: 0, path: '/' })); },
+    };
+    const extra = [];
+    const setHeaders = (h) => { if (h && typeof h === 'object') for (const [k, v] of Object.entries(h)) extra.push([String(k), String(v)]); };
+
+    const event = {
+      route: input.route || '',
+      params: input.params || {},
+      url: input.url || '/',
+      request: { method: input.method || 'GET', url: input.url || '/', headers: hdrs },
+      locals: {},
+      cookies,
+      setHeaders,
+      parent: async () => ({}),
+      defer,
+      __oxideDeferredRegistry: registry,
+    };
+    let result;
+    try {
+      result = await load(event);
+    } catch (err) {
+      if (err && typeof err.status === 'number') {
+        return JSON.stringify({ status: err.status, location: err.location ?? null,
+          data: { message: err.message ?? '' }, setCookies: [...pending.values()], headers: extra });
+      }
+      throw err;
+    }
+    return JSON.stringify({ status: 200, location: null, data: result ?? {},
+      setCookies: [...pending.values()], headers: extra });
+  } catch (e) {
+    return JSON.stringify({ __oxide_error: 'loader:run failed: ' + ((e && e.message) || e) });
+  }
+};
+
 // framework:load — import the config (transpiled by the Rust loader), read the
 // adapter descriptor off `default.framework`. Mirrors the Node worker.
 globalThis.__oxideFrameworkLoad = async function (configPath) {
@@ -902,6 +1051,46 @@ globalThis.__oxideFrameworkRender = async function (configPath, renderInput) {
 };
 "#;
 
+/// The single V8 extension every worker uses — and the one the startup
+/// snapshot is built from.
+///
+/// It carries the bootstrap (`V8_BOOTSTRAP`) as a `js_file` and the oxide ops.
+/// Both the snapshot build and the worker load construct it through this one
+/// function, so the extension **name and op order match exactly**. deno_core
+/// rejects a snapshot loaded with a differently-named extension
+/// ("loaded in wrong order"), and a snapshot's op external-reference table is
+/// keyed by that order.
+pub(crate) fn oxide_extension() -> deno_core::Extension {
+    use deno_core::ExtensionFileSource;
+    use std::borrow::Cow;
+    use std::sync::Arc;
+    // deno_core requires extension source be 7-bit ASCII; the bootstrap's
+    // comments carry `§`/`—`. Escaping each non-ASCII scalar to `\uXXXX` is
+    // semantics-preserving in JS (cosmetic in a comment, identical elsewhere).
+    let bootstrap_src = crate::snapshot::escape_non_ascii(V8_BOOTSTRAP);
+    let bootstrap =
+        ExtensionFileSource::new_computed("oxide:bootstrap", Arc::from(bootstrap_src.as_str()));
+    deno_core::Extension {
+        name: "oxide_runtime",
+        deps: &[],
+        js_files: Cow::Owned(vec![bootstrap]),
+        esm_files: Cow::Borrowed(&[]),
+        lazy_loaded_esm_files: Cow::Borrowed(&[]),
+        lazy_loaded_js_files: Cow::Borrowed(&[]),
+        synthetic_esm_modules: Cow::Borrowed(&[]),
+        esm_entry_point: None,
+        ops: Cow::Owned(crate::v8_ops::op_decls()),
+        objects: Cow::Borrowed(&[]),
+        external_references: Cow::Borrowed(&[]),
+        global_template_middleware: None,
+        global_object_middleware: None,
+        op_state_fn: None,
+        needs_lazy_init: false,
+        middleware_fn: None,
+        enabled: true,
+    }
+}
+
 /// Messages from the pool to a V8 worker thread.
 enum V8Msg {
     Call {
@@ -954,29 +1143,10 @@ fn spawn_v8_worker(snapshot: Option<&'static [u8]>) -> Result<Arc<V8WorkerHandle
             };
             let local = tokio::task::LocalSet::new();
             local.block_on(&rt, async move {
-                // Build the ops extension. `op_decls()` returns the §4.5
-                // stateless ops; request-scoped ops land here once the JS
-                // render path exists.
-                use deno_core::Extension;
-                let ext = Extension {
-                    name: "oxide_ops",
-                    deps: &[],
-                    js_files: std::borrow::Cow::Borrowed(&[]),
-                    esm_files: std::borrow::Cow::Borrowed(&[]),
-                    lazy_loaded_esm_files: std::borrow::Cow::Borrowed(&[]),
-                    lazy_loaded_js_files: std::borrow::Cow::Borrowed(&[]),
-                    synthetic_esm_modules: std::borrow::Cow::Borrowed(&[]),
-                    esm_entry_point: None,
-                    ops: std::borrow::Cow::Owned(crate::v8_ops::op_decls()),
-                    objects: std::borrow::Cow::Borrowed(&[]),
-                    external_references: std::borrow::Cow::Borrowed(&[]),
-                    global_template_middleware: None,
-                    global_object_middleware: None,
-                    op_state_fn: None,
-                    needs_lazy_init: false,
-                    middleware_fn: None,
-                    enabled: true,
-                };
+                // The one shared extension: bootstrap js_file + oxide ops.
+                // Identical to what `snapshot_build_runtime` snapshots, so the
+                // name and op order match when a blob is restored.
+                let ext = crate::oxide_extension();
                 // §4.2: a real `ModuleLoader` so the runtime can evaluate an
                 // ESM bundle. `FsModuleLoader` resolves `file://` specifiers
                 // and reads them from disk — which is exactly what a
@@ -996,24 +1166,19 @@ fn spawn_v8_worker(snapshot: Option<&'static [u8]>) -> Result<Arc<V8WorkerHandle
                     // (process/Buffer/oxide.*/__oxideDispatch) and its module
                     // graph. Loading it means the extension list and loader
                     // are NOT re-supplied — the heap is restored verbatim.
-                    // A snapshot restores the heap (the bootstrap and its
-                    // module graph) but NOT runtime options like the module
-                    // loader — dynamic `import()` still needs one. So set the
-                    // loader either way; only the `extensions` list differs (a
-                    // snapshot already contains them).
-                    if snapshot.is_some() {
-                        JsRuntime::new(RuntimeOptions {
-                            startup_snapshot: snapshot,
-                            module_loader: Some(module_loader),
-                            ..Default::default()
-                        })
-                    } else {
-                        JsRuntime::new(RuntimeOptions {
-                            extensions: vec![ext],
-                            module_loader: Some(module_loader),
-                            ..Default::default()
-                        })
-                    }
+                    // A snapshot restores the evaluated heap, but deno_core
+                    // still needs the SAME extension (for its op external-
+                    // reference table) and `skip_op_registration: true`, or the
+                    // op count baked into the blob will not match the runtime's
+                    // (`range end index N out of range`). This mirrors
+                    // `create_snapshot`'s own warmup-load pattern.
+                    JsRuntime::new(RuntimeOptions {
+                        startup_snapshot: snapshot,
+                        extensions: vec![ext],
+                        skip_op_registration: snapshot.is_some(),
+                        module_loader: Some(module_loader),
+                        ..Default::default()
+                    })
                 })) {
                     Ok(r) => r,
                     Err(_) => {
@@ -1021,10 +1186,6 @@ fn spawn_v8_worker(snapshot: Option<&'static [u8]>) -> Result<Arc<V8WorkerHandle
                         return;
                     }
                 };
-                if let Err(e) = js.execute_script("oxide:bootstrap", V8_BOOTSTRAP.to_string()) {
-                    let _ = init_tx.send(Err(err("JSH-V8", format!("bootstrap: {e}"))));
-                    return;
-                }
                 let _ = init_tx.send(Ok(()));
 
                 while let Some(msg) = rx.recv().await {
@@ -1096,6 +1257,37 @@ async fn v8_dispatch(
     if entry.kind == "die" {
         return Err(err("JSH-CRASH", "worker simulated crash (kind `die`)"));
     }
+    // §9.1: the loader op imports `entry.module` (a page.server.ts) and calls
+    // its `load(event)`. The envelope is the LoaderOutput shape
+    // (`{status, location, data, …}`), not the generic `{ok, value}` — handle
+    // it before the generic path.
+    if entry.kind == "loader:run" {
+        let url = v8_module_url(&entry.module)?;
+        let u = serde_json::to_string(&url).unwrap_or_else(|_| "\"\"".into());
+        let inp = serde_json::to_string(&input.payload).unwrap_or_else(|_| "{}".into());
+        let script = format!("globalThis.__oxideLoaderRun({u}, {inp})");
+        let promise = js
+            .execute_script("oxide:loader", script)
+            .map_err(|e| err("JSH-V8", format!("loader dispatch: {e}")))?;
+        let resolve = js.resolve(promise);
+        let resolved = js
+            .with_event_loop_promise(resolve, deno_core::PollEventLoopOptions::default())
+            .await
+            .map_err(|e| err("JSH-V8", format!("loader await: {e}")))?;
+        let s = {
+            deno_core::scope!(scope, js);
+            let local = deno_core::v8::Local::new(scope, resolved);
+            local.to_rust_string_lossy(scope)
+        };
+        let v: serde_json::Value = serde_json::from_str(&s)
+            .map_err(|e| err("JSH-V8", format!("loader returned non-JSON: {e}")))?;
+        if let Some(m) = v.get("__oxide_error").and_then(|x| x.as_str()) {
+            return Err(err("JSH-LOADER", m.to_string()));
+        }
+        let bytes = serde_json::to_vec(&v).unwrap_or_default();
+        return Ok(CallStream::Complete(Bytes::from(bytes)));
+    }
+
     // The framework ops take their module from the payload's `path`, not from
     // `entry.module` (the Node worker's shape). Route them to their dedicated
     // JS entry points.
