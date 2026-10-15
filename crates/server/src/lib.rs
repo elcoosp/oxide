@@ -2250,25 +2250,56 @@ impl Pipeline {
                 .and_then(|v| v.split(',').next())
                 .map(|s| s.trim().to_string())
                 .unwrap_or_else(|| "local".to_string());
+            // SEC-11: the server-fn route evaluates the FULL rules engine —
+            // redirect, basic-auth, rate-limit, and header rules — not just
+            // rate-limit + headers. A fn behind an auth gate 401s; one under a
+            // redirect rule redirects.
             match self.rules.evaluate_with_key(&path, &fn_client_key) {
                 oxide_router::RuleOutcome::Headers(map) => {
                     rule_headers = map.into_iter().collect();
                 }
-                // SEC-11 (partial): a rate-limited server-fn 429s too.
                 oxide_router::RuleOutcome::RateLimited { retry_after_secs } => {
                     return NativePrefix::Raw(
                         OxideResponse::new(429, "too many requests")
                             .with_header("retry-after", retry_after_secs.to_string()),
                     );
                 }
-                _ => {}
+                oxide_router::RuleOutcome::AuthRequired => {
+                    return NativePrefix::Raw(
+                        OxideResponse::new(401, "unauthorized")
+                            .with_header("WWW-Authenticate", "Basic realm=\"oxide\""),
+                    );
+                }
+                oxide_router::RuleOutcome::Redirect {
+                    destination,
+                    status,
+                } => {
+                    return NativePrefix::Raw(
+                        OxideResponse::new(status, Bytes::new())
+                            .with_header("Location", destination),
+                    );
+                }
+                oxide_router::RuleOutcome::Rewrite(_) | oxide_router::RuleOutcome::None => {}
             }
             let args = req.body.clone();
             return NativePrefix::ServerFn { id, args, rule_headers };
         }
 
-        // (4) native rules (§12.1 step 4).
+        // (4) static assets (§12.1 step 3 — BEFORE rules, per the spec order).
+        // A static file under a rule source is served, not redirected: the
+        // asset store answers first. `rule_headers` is populated by step (5)
+        // for the dispatch path; a static hit returns before rules run.
         let mut rule_headers: Vec<(String, String)> = Vec::new();
+        let is_get_head = matches!(req.method.to_ascii_uppercase().as_str(), "GET" | "HEAD");
+        if is_get_head && (path_has_extension(&path) || path.starts_with("/_oxide/static")) {
+            if let Some(assets) = &self.assets {
+                if let Some(resp) = assets.serve(req, &path) {
+                    return NativePrefix::Static(resp, rule_headers);
+                }
+            }
+        }
+
+        // (5) native rules (§12.1 step 4).
         // SEC-01: pass the client key so `rate_limit.key = "ip"` buckets per
         // client. `X-Forwarded-For` is only trusted behind a proxy (SEC-05);
         // here we use it if present, else a constant loopback key (the socket
@@ -2308,17 +2339,6 @@ impl Pipeline {
                 );
             }
             oxide_router::RuleOutcome::None => {}
-        }
-
-        // (5) static assets (§12.1 step 3): GET/HEAD with an extension or the
-        // /_oxide/static prefix.
-        let is_get_head = matches!(req.method.to_ascii_uppercase().as_str(), "GET" | "HEAD");
-        if is_get_head && (path_has_extension(&path) || path.starts_with("/_oxide/static")) {
-            if let Some(assets) = &self.assets {
-                if let Some(resp) = assets.serve(req, &path) {
-                    return NativePrefix::Static(resp, rule_headers);
-                }
-            }
         }
 
         // (6) dispatch (§12.1 step 7) with CSRF verification (§17.1) first.
