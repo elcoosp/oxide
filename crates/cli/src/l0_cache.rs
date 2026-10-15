@@ -361,4 +361,61 @@ mod tests {
         assert!(!mode_is_cacheable(Some("spa")));
         assert!(!mode_is_cacheable(None));
     }
+
+    // ---------------------------------------------------------- BUG-01
+    // The revalidate path: an entry tagged `path:<path>` must be
+    // invalidated by `invalidate_path(<path>)`, and an entry tagged with the
+    // route id must be invalidated by `invalidate_tag(<route>)`.
+
+    #[tokio::test]
+    async fn invalidate_path_removes_a_path_tagged_entry() {
+        let c = cache(60);
+        c.put(
+            "routes/index",
+            "",
+            "",
+            200,
+            vec![],
+            b"HOME".to_vec(),
+            vec!["routes/index".into(), "path:/".into()],
+        )
+        .await;
+        assert!(c.get("routes/index", "", "").await.is_some(), "cached");
+
+        let n = c.invalidate_path("/", true).await;
+        assert!(n >= 1, "invalidate_path must match the path:-tagged entry, got {n}");
+        assert!(
+            c.get("routes/index", "", "").await.is_none(),
+            "the entry is gone after invalidate_path"
+        );
+    }
+
+    #[tokio::test]
+    async fn invalidate_tag_removes_a_route_tagged_entry() {
+        let c = cache(60);
+        c.put(
+            "routes/index",
+            "",
+            "",
+            200,
+            vec![],
+            b"HOME".to_vec(),
+            vec!["routes/index".into(), "path:/".into()],
+        )
+        .await;
+        let n = c.invalidate_tag("routes/index", true).await;
+        assert!(n >= 1, "invalidate_tag must match the route-tagged entry, got {n}");
+        assert!(c.get("routes/index", "", "").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn invalidate_path_does_not_match_an_untagged_path() {
+        // Before BUG-01 the put site tagged with the route id only; a path
+        // event then matched nothing. This pins that an entry *without* the
+        // path tag is not swept by an unrelated invalidate_path.
+        let c = cache(60);
+        c.put("routes/index", "", "", 200, vec![], b"H".to_vec(), vec!["routes/index".into()]).await;
+        let _ = c.invalidate_path("/other", true).await;
+        assert!(c.get("routes/index", "", "").await.is_some(), "unrelated path must not sweep");
+    }
 }
