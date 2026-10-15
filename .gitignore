@@ -10,3 +10,4 @@ packages/react/.tmp-e2e/
 crates/jshost/tests/.tmp-e2e/
 examples/*/dist/
 examples/*/.oxide/
+/.oxide/
