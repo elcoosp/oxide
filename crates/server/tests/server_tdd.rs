@@ -1763,3 +1763,47 @@ async fn csrf_token_issued_on_get_without_cookie() {
     );
     assert!(csrf_check(&r3, "token").is_ok());
 }
+
+/// SEC-05: a trusted proxy's X-Forwarded-* headers are honoured; an
+/// untrusted peer's are ignored entirely.
+#[test]
+fn sec05_trusted_proxy_resolution() {
+    use oxide_server::{effective_client, peer_is_trusted};
+    use std::net::IpAddr;
+    let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+    let trusted = vec!["10.0.0.0/8".to_string(), "127.0.0.1/32".to_string()];
+
+    // A peer inside a trusted CIDR is trusted.
+    assert!(peer_is_trusted(ip("10.1.2.3"), &trusted));
+    assert!(peer_is_trusted(ip("127.0.0.1"), &trusted));
+    // An arbitrary peer is not.
+    assert!(!peer_is_trusted(ip("8.8.8.8"), &trusted));
+    // Empty trust list trusts nobody.
+    assert!(!peer_is_trusted(ip("127.0.0.1"), &[]));
+
+    // Trusted peer: XFF / proto / host honoured.
+    let (client, proto, host) = effective_client(
+        ip("10.0.0.5"),
+        &trusted,
+        Some("203.0.113.7, 10.0.0.5"),
+        Some("https"),
+        Some("app.example.com"),
+        Some("internal.local"),
+    );
+    assert_eq!(client, Some("203.0.113.7"));
+    assert_eq!(proto, Some("https"));
+    assert_eq!(host, Some("app.example.com"));
+
+    // Untrusted peer: every forwarded header ignored, real Host only.
+    let (client, proto, host) = effective_client(
+        ip("8.8.8.8"),
+        &trusted,
+        Some("203.0.113.7"),
+        Some("https"),
+        Some("evil.example"),
+        Some("real.host"),
+    );
+    assert_eq!(client, None);
+    assert_eq!(proto, None);
+    assert_eq!(host, Some("real.host"));
+}
