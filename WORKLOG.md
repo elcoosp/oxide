@@ -3429,3 +3429,12 @@ Proof: `pnpm --filter oxide test` 84/84; react/vue/svelte/solid adapter suites g
 - Added `PageProps<TData>` to `packages/oxide/src/types.ts` (via `export *`).
 
 Proof: `pnpm --filter create-oxide test` 5/5; all 16 scaffolds generated to /tmp/scaff; every `.ts` passes `node --check`; greps clean (no `<html` in layouts, no `./page.server` value import, `defineAction` imported where used).
+
+## Task BUG-12 — Snapshot envelope: version guard + drop dead IO
+
+- Deleted the dead bundle walk in `emit_snapshot_blob` (walked + read the whole server bundle, then discarded it via `let _ =`); only the `ssr/index.js` existence gate remains.
+- `snapshot.bin` is now a versioned JSON envelope: `{format, oxide_version, source_hash, blob_b64}` (filename kept — `check-v8.sh` asserts it).
+- New `V8Host::load_snapshot_envelope` parses + validates (format == SNAPSHOT_FORMAT, version == CARGO_PKG_VERSION); stale/foreign/raw blobs → `JSH-SNAPVER` naming expected vs found; missing file → `Ok(None)`. `from_snapshot_file` downgrades to no-snapshot with a loud stderr warn (code-cache fallback note for SPEC-01).
+- Tests: `bug12_tests` round-trip + corrupt/stale/missing/downgrade (jshost 43 passed).
+
+Proof: rebuilt CLI, `oxide build --root examples/smoke-app-react` → envelope keys verified (`format: 1, version: 0.1.0, blob_b64 len 1008484`).
