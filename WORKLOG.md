@@ -1824,3 +1824,69 @@ precompile CAS: `1f62c38` `76d58bb` `c2aadac`; fonts: `88c2628` `300be26`
   (`google`) fetch nothing yet.
 - The `warn: framework renderer not wired … Unknown file extension ".css"`
   from session 14 is still open (worker loader refuses `.css`).
+
+### Session 15 addendum — §11 L0 response cache on the request path
+
+The pipeline had **no response cache**: every request re-ran loader + render,
+even for a `static` route. §21 lists "L0 cache hit p99 < 1 ms" as unmeasured
+"no L0 cache on the request path yet". Now implemented:
+
+- **`crates/cli/src/l0_cache.rs`** — `L0Cache` over `oxide_cache::TieredCache`,
+  keyed by `CacheKey { layer: L0, route, params, vary, build_id }`.
+- **Nonce substitution.** A rendered body embeds a per-request CSP nonce. The
+  cache stores bodies with a `__OXIDE_L0_NONCE__` sentinel and substitutes the
+  live request's nonce on serve; the CSP header is never cached (the pipeline
+  re-derives it in `finish_response`).
+- **Eligibility:** `GET`, mode `static`/`isr`, **no server module** (a loader
+  may read request state the key does not capture), and no `set-cookie`.
+- **Wiring:** the CLI dispatch delegate checks L0 before the loader phase; a
+  streamed cacheable response is collected once, sentineled, and stored.
+  `x-oxide-cache: L0-hit | L0-miss | bypass` makes the layer observable.
+
+Two bugs surfaced and were fixed while verifying:
+1. The **serve** path used raw `scan_routes` (no AST refinement), so a static
+   route read as `render_mode: None` and never cached. It now calls
+   `refine_render_modes_from_ast`, same as `oxide build`.
+2. `refine_render_modes_from_ast` left `render_mode: None` for a page with no
+   `page.server.ts`. §10.1 says such a route is `static`; it now defaults so.
+
+**Verified end-to-end** (`smoke-app-react`, 3 sequential GETs to `/`):
+
+    req1: x-oxide-cache: L0-miss
+    req2: x-oxide-cache: L0-hit
+    req3: x-oxide-cache: L0-hit
+
+Committed `a5aec6c` + `850e53f`. Four-fixture gate PASS (2×).
+
+### Session 15 addendum — §11 L0 response cache on the request path
+
+The pipeline had **no response cache**: every request re-ran loader + render,
+even for a `static` route. §21 lists "L0 cache hit p99 < 1 ms" as unmeasured
+"no L0 cache on the request path yet". Now implemented:
+
+- **`crates/cli/src/l0_cache.rs`** — `L0Cache` over `oxide_cache::TieredCache`,
+  keyed by `CacheKey { layer: L0, route, params, vary, build_id }`.
+- **Nonce substitution.** A rendered body embeds a per-request CSP nonce. The
+  cache stores bodies with a `__OXIDE_L0_NONCE__` sentinel and substitutes the
+  live request's nonce on serve; the CSP header is never cached (the pipeline
+  re-derives it in `finish_response`).
+- **Eligibility:** `GET`, mode `static`/`isr`, **no server module** (a loader
+  may read request state the key does not capture), and no `set-cookie`.
+- **Wiring:** the CLI dispatch delegate checks L0 before the loader phase; a
+  streamed cacheable response is collected once, sentineled, and stored.
+  `x-oxide-cache: L0-hit | L0-miss | bypass` makes the layer observable.
+
+Two bugs surfaced and were fixed while verifying:
+1. The **serve** path used raw `scan_routes` (no AST refinement), so a static
+   route read as `render_mode: None` and never cached. It now calls
+   `refine_render_modes_from_ast`, same as `oxide build`.
+2. `refine_render_modes_from_ast` left `render_mode: None` for a page with no
+   `page.server.ts`. §10.1 says such a route is `static`; it now defaults so.
+
+**Verified end-to-end** (`smoke-app-react`, 3 sequential GETs to `/`):
+
+    req1: x-oxide-cache: L0-miss
+    req2: x-oxide-cache: L0-hit
+    req3: x-oxide-cache: L0-hit
+
+Committed `a5aec6c` + `850e53f`. Four-fixture gate PASS (2×).
