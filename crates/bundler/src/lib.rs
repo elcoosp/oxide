@@ -291,6 +291,59 @@ pub struct BundleOutput {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+/// SEC-08: scan the client bundle for `process.env.<NAME>` where NAME looks
+/// like a secret (`SECRET|KEY|TOKEN|PASSWORD|PRIVATE`). A secret read in a
+/// module that ships to the browser would leak it into the bundle — this
+/// fails the build with `CMP-SECRET` naming the module and the env var.
+/// `PUBLIC_*`/`NX_*`/`npm_*` are allow-listed (conventionally public).
+pub fn scan_client_secrets(chunks: &[Chunk]) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    for chunk in chunks {
+        let src = match std::fs::read_to_string(&chunk.file) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        // A conservative textual scan: `process.env.NAME`. This is the
+        // build-time shape a bundler would otherwise inline.
+        let mut rest = src.as_str();
+        while let Some(i) = rest.find("process.env.") {
+            let after = &rest[i + "process.env.".len()..];
+            let name: String = after
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            if is_secret_like(&name) {
+                out.push(Diagnostic::error(
+                    "CMP-SECRET",
+                    format!(
+                        "`process.env.{name}` is read in client module `{}`;                          this would ship the secret to the browser. Move the                          read to a server module or rename to `PUBLIC_{name}`.",
+                        chunk.file
+                    ),
+                ));
+            }
+            rest = &after[name.len().min(after.len())..];
+            if rest.is_empty() {
+                break;
+            }
+        }
+    }
+    out
+}
+
+fn is_secret_like(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    if upper.starts_with("PUBLIC_")
+        || upper.starts_with("NX_")
+        || upper.starts_with("NPM_")
+        || upper == "NODE_ENV"
+    {
+        return false;
+    }
+    ["SECRET", "KEY", "TOKEN", "PASSWORD", "PRIVATE"]
+        .iter()
+        .any(|m| upper.contains(m))
+}
+
 /// Functional bundler: resolve (relative + tsconfig paths + node_modules `exports`),
 /// scan imports via `oxide-compiler`, topo-sort, split per route with a shared-chunk
 /// heuristic (modules used by ≥2 entries), emit content-hashed chunks + manifests.
@@ -1250,5 +1303,23 @@ fn topo_order(
         (Some(order), Vec::new())
     } else {
         (None, cycles.into_iter().collect())
+    }
+}
+
+#[cfg(test)]
+mod sec08_tests {
+    use super::*;
+    #[test]
+    fn scan_client_secrets_flags_secret_like_env() {
+        assert!(is_secret_like("STRIPE_SECRET"));
+        assert!(is_secret_like("API_KEY"));
+        assert!(is_secret_like("AUTH_TOKEN"));
+        assert!(is_secret_like("DB_PASSWORD"));
+        assert!(is_secret_like("PRIVATE_KEY"));
+        assert!(!is_secret_like("NODE_ENV"));
+        assert!(!is_secret_like("PUBLIC_API_KEY"));
+        assert!(!is_secret_like("NX_TOKEN"));
+        assert!(!is_secret_like("npm_TOKEN"));
+        assert!(!is_secret_like("APP_NAME"));
     }
 }

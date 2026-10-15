@@ -1496,8 +1496,17 @@ pub fn verify_image_sig(signed_form: &str, secret: &str, sig: &str) -> bool {
     let mut h = blake3::Hasher::new();
     h.update(signed_form.as_bytes());
     h.update(secret.as_bytes());
-    let expected = &h.finalize().to_hex().to_string()[..16];
-    sig.len() == expected.len() && sig.as_bytes() == expected.as_bytes()
+    // SEC-08: full 64-hex digest, constant-time compare (was a 16-hex
+    // prefix with a short-circuiting byte compare).
+    let expected = h.finalize().to_hex().to_string();
+    if expected.len() != sig.len() {
+        return false;
+    }
+    expected
+        .bytes()
+        .zip(sig.bytes())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
 }
 
 /// §16.1 + §17.1: check a remote image URL against the pattern list and
