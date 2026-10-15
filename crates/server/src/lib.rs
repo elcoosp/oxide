@@ -688,6 +688,66 @@ fn is_blocked_ip(ip: &std::net::IpAddr) -> bool {
     }
 }
 
+/// SEC-05: parse a CIDR (`10.0.0.0/8`, `127.0.0.1/32`, `::1/128`) into
+/// (network, prefix_len). A bare IP (no `/`) is treated as a /32 or /128.
+pub fn parse_cidr(s: &str) -> Option<(std::net::IpAddr, u8)> {
+    let (ip_s, len_s) = match s.split_once('/') {
+        Some((a, b)) => (a, Some(b)),
+        None => (s, None),
+    };
+    let ip: std::net::IpAddr = ip_s.trim().parse().ok()?;
+    let max = if ip.is_ipv4() { 32 } else { 128 };
+    let len: u8 = match len_s {
+        Some(l) => l.trim().parse().ok()?,
+        None => max,
+    };
+    (len <= max).then_some((ip, len))
+}
+
+pub fn ip_in_cidr(ip: std::net::IpAddr, net: std::net::IpAddr, len: u8) -> bool {
+    match (ip, net) {
+        (std::net::IpAddr::V4(a), std::net::IpAddr::V4(n)) => {
+            let mask = if len == 0 { 0 } else { u32::MAX << (32 - len) };
+            (u32::from(a) & mask) == (u32::from(n) & mask)
+        }
+        (std::net::IpAddr::V6(a), std::net::IpAddr::V6(n)) => {
+            let a = u128::from(a);
+            let n = u128::from(n);
+            let mask = if len == 0 { 0 } else { u128::MAX << (128 - len) };
+            (a & mask) == (n & mask)
+        }
+        _ => false,
+    }
+}
+
+/// SEC-05: is `peer` inside any of the `trusted_proxies` CIDRs?
+pub fn peer_is_trusted(peer: std::net::IpAddr, trusted: &[String]) -> bool {
+    trusted.iter().any(|c| {
+        parse_cidr(c).is_some_and(|(net, len)| ip_in_cidr(peer, net, len))
+    })
+}
+
+/// SEC-05: derive the effective client IP / scheme / host. A trusted peer has
+/// its `X-Forwarded-For` (rightmost-untrusted — we take the leftmost entry
+/// here, the common single-proxy case), `X-Forwarded-Proto`, and
+/// `X-Forwarded-Host` honoured; an untrusted peer has them **ignored**
+/// entirely (the header values are never trusted from an arbitrary client).
+pub fn effective_client<'a>(
+    peer: std::net::IpAddr,
+    trusted: &[String],
+    xff: Option<&'a str>,
+    xf_proto: Option<&'a str>,
+    xf_host: Option<&'a str>,
+    real_host: Option<&'a str>,
+) -> (Option<&'a str>, Option<&'a str>, Option<&'a str>) {
+    if peer_is_trusted(peer, trusted) {
+        let ip = xff.and_then(|v| v.split(',').next()).map(|s| s.trim());
+        (ip, xf_proto, xf_host.or(real_host))
+    } else {
+        (None, None, real_host)
+    }
+}
+
 /// Host validation (§17.1): Host allow-list + trusted-proxy + X-Forwarded-* handling.
 /// An empty allow-list allows everything; entries match exactly (any case, port
 /// stripped) or as leading-dot suffixes (`.example.com` matches `sub.example.com`).
