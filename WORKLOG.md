@@ -3438,3 +3438,12 @@ Proof: `pnpm --filter create-oxide test` 5/5; all 16 scaffolds generated to /tmp
 - Tests: `bug12_tests` round-trip + corrupt/stale/missing/downgrade (jshost 43 passed).
 
 Proof: rebuilt CLI, `oxide build --root examples/smoke-app-react` → envelope keys verified (`format: 1, version: 0.1.0, blob_b64 len 1008484`).
+
+## Task SEC-02 — CSPRNG request ids/nonces + HSTS on TLS
+
+- `next_request_id()`: 16 CSPRNG bytes via `ring::SystemRandom`, hex (`req-<32hex>`); counter fallback (prefixed `req-c`) only if the OS RNG fails. Nonce plumbing (`nonce_for` = blake3(id)) unchanged — L0 sentinel + boot-tag consumers fixed at one change point.
+- `Pipeline` gains `tls: bool` (default false); `finish_response` passes `self.tls` to `security_headers` (was hardcoded `false`); CLI `start_server_inner_full` sets `tls: tls.is_some()`.
+- HSTS value now `max-age=63072000; includeSubDomains` per §17.1 (updated the existing assertion).
+- Tests: in-crate `request_ids_are_unique_csprng`; integration `hsts_emitted_only_on_tls` (plain 200 without HSTS, TLS 200 with HSTS) + `nonces_are_unpredictable_across_ids`; 8 test-literal `tls: false` additions.
+
+Proof: `cargo test -p oxide-server` all suites green (41+21+61); `cargo check -p oxide-cli` clean.
