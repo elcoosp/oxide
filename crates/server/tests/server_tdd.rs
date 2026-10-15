@@ -1658,3 +1658,71 @@ async fn hsts_emitted_only_on_tls() {
     assert!(!has_hsts(&r_plain), "plain HTTP must not emit HSTS");
     assert!(has_hsts(&r_tls), "TLS must emit HSTS");
 }
+
+#[test]
+fn csrf_token_mode_matrix() {
+    // SEC-04: token rescue compares oxide_csrf cookie vs x-oxide-csrf header.
+    let pair = |h: &str, c: &str| {
+        req(
+            "POST",
+            "/",
+            &[
+                ("origin", "https://evil.test"),
+                ("host", "app.test"),
+                ("x-oxide-csrf", h),
+                ("cookie", &format!("oxide_csrf={c}")),
+            ],
+        )
+    };
+    assert!(csrf_check(&pair("tok123", "tok123"), "token").is_ok());
+    assert!(csrf_check(&pair("tok123", "other"), "token").is_err());
+    // Missing pair → still rejected on cross-origin POST.
+    let bare = req(
+        "POST",
+        "/",
+        &[("origin", "https://evil.test"), ("host", "app.test")],
+    );
+    assert!(csrf_check(&bare, "token").is_err());
+}
+
+#[tokio::test]
+async fn csrf_token_issued_on_get_without_cookie() {
+    // SEC-04 issuer: GET in token mode without the cookie → Set-Cookie.
+    let mut sec = SecuritySettings::default();
+    sec.csrf = "token".into();
+    let p = pipeline(RulesEngine::default(), None, Limits::default(), sec);
+    let d = &echo_dispatch();
+    let r = p.serve_request(req("GET", "/", &[]), d).await;
+    let set: Vec<&str> = r
+        .headers
+        .iter()
+        .filter(|(k, _)| k.eq_ignore_ascii_case("set-cookie"))
+        .map(|(_, v)| v.as_str())
+        .collect();
+    assert_eq!(set.len(), 1, "one csrf cookie issued: {set:?}");
+    assert!(set[0].starts_with("oxide_csrf="), "cookie name: {}", set[0]);
+    assert!(set[0].contains("SameSite=Lax"), "samesite: {}", set[0]);
+    // Second request carrying the cookie → no re-issue.
+    let token = set[0].split(';').next().unwrap();
+    let r2 = p
+        .serve_request(req("GET", "/", &[("cookie", token)]), d)
+        .await;
+    assert!(
+        r2.headers
+            .iter()
+            .all(|(k, _)| !k.eq_ignore_ascii_case("set-cookie")),
+        "no re-issue when cookie present"
+    );
+    // ...and the issued pair passes the double-submit check on POST.
+    let r3 = req(
+        "POST",
+        "/",
+        &[
+            ("origin", "https://evil.test"),
+            ("host", "app.test"),
+            ("x-oxide-csrf", token.trim_start_matches("oxide_csrf=")),
+            ("cookie", token),
+        ],
+    );
+    assert!(csrf_check(&r3, "token").is_ok());
+}

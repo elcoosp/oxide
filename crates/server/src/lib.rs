@@ -577,7 +577,9 @@ fn csrf_reject(req: &OxideRequest, mode: &str) -> std::result::Result<(), Diagno
         let header = req.header("x-oxide-csrf");
         let cookie = cookie_value(req.header("cookie").unwrap_or(""), "oxide_csrf");
         if let (Some(h), Some(c)) = (header, cookie) {
-            if h == c {
+            // SEC-04: constant-time compare (the `==` rescue leaked the
+            // token prefix via timing).
+            if constant_time_eq(h.as_bytes(), c.as_bytes()) {
                 return Ok(());
             }
         }
@@ -1873,7 +1875,13 @@ impl Pipeline {
             }
             NativePrefix::Static(resp, rule_headers) => {
                 let request_id = req.request_id.clone();
-                let finished = self.finish_response(resp, &rule_headers, &request_id);
+                let finished = self.finish_response_with_request(
+                    resp,
+                    &rule_headers,
+                    &request_id,
+                    Some(&req.method),
+                    req.header("cookie"),
+                );
                 if let Some(m) = &metrics {
                     m.observe("_static", started.elapsed(), finished.status);
                 }
@@ -1881,9 +1889,11 @@ impl Pipeline {
             }
             NativePrefix::RemoteImage { endpoint, request, format, rule_headers } => {
                 let request_id = req.request_id.clone();
+                let method = req.method.clone();
+                let cookie = req.header("cookie").map(str::to_string);
                 Box::pin(async move {
                     let resp = fetch_remote_image(endpoint, request, format).await;
-                    self.finish_response(resp, &rule_headers, &request_id)
+                    self.finish_response_with_request(resp, &rule_headers, &request_id, Some(&method), cookie.as_deref())
                 })
             }
             NativePrefix::ServerFn { id, args, rule_headers } => {
@@ -1891,10 +1901,12 @@ impl Pipeline {
                 // + CSRF in `native_prefix`; this arm runs the user's
                 // function and builds the response envelope.
                 let request_id = req.request_id.clone();
+                let method = req.method.clone();
+                let cookie = req.header("cookie").map(str::to_string);
                 let dispatch = self.server_fns.clone();
                 Box::pin(async move {
                     let resp = run_server_fn(dispatch.as_deref(), &id, &args).await;
-                    self.finish_response(resp, &rule_headers, &request_id)
+                    self.finish_response_with_request(resp, &rule_headers, &request_id, Some(&method), cookie.as_deref())
                 })
             }
             NativePrefix::Dispatch(rule_headers) => {
@@ -1903,11 +1915,13 @@ impl Pipeline {
                 // nonce, and the framework dispatch derives the same value
                 // from the same id to stamp the boot script tag (§17.1).
                 let request_id = req.request_id.clone();
+                let method = req.method.clone();
+                let cookie = req.header("cookie").map(str::to_string);
                 // Call dispatch synchronously; only the (Send) boxed future crosses the await.
                 let fut = dispatch(req);
                 Box::pin(async move {
                     let resp = fut.await;
-                    self.finish_response(resp, &rule_headers, &request_id)
+                    self.finish_response_with_request(resp, &rule_headers, &request_id, Some(&method), cookie.as_deref())
                 })
             }
         }
@@ -2126,6 +2140,22 @@ impl Pipeline {
         rule_headers: &[(String, String)],
         request_id: &str,
     ) -> OxideResponse {
+        self.finish_response_with_request(resp, rule_headers, request_id, None, None)
+    }
+
+    /// `finish_response` plus the CSRF token issuer (SEC-04): on a GET/HEAD
+    /// response in `token` mode with no `oxide_csrf` cookie on the request,
+    /// set a random 32-hex cookie (SameSite=Lax, Path=/). `method`/`cookie`
+    /// are `None` on paths where the request is no longer available (all
+    /// current call sites pass them; `None` skips issuance, never fails).
+    fn finish_response_with_request(
+        &self,
+        resp: OxideResponse,
+        rule_headers: &[(String, String)],
+        request_id: &str,
+        method: Option<&str>,
+        cookie_header: Option<&str>,
+    ) -> OxideResponse {
         // §17.1: the CSP nonce is derived from the request id. The id is a
         // property of the *request*, not the response; hashing an empty
         // string when the response carries no `x-oxide-request-id` header
@@ -2155,6 +2185,24 @@ impl Pipeline {
             .any(|(k, _)| k.eq_ignore_ascii_case("server-timing"))
         {
             r = r.with_header("Server-Timing", RequestTimings::default().server_timing());
+        }
+        // SEC-04 issuer: token mode needs a token to exist. Issue on safe
+        // methods only; the double-submit check compares this cookie against
+        // the `x-oxide-csrf` header on unsafe methods.
+        if self.security.csrf.eq_ignore_ascii_case("token")
+            && matches!(method.map(|m| m.to_ascii_uppercase()).as_deref(), Some("GET") | Some("HEAD"))
+            && cookie_value(cookie_header.unwrap_or(""), "oxide_csrf").is_none()
+        {
+            use ring::rand::SecureRandom as _;
+            let rng = ring::rand::SystemRandom::new();
+            let mut bytes = [0u8; 16];
+            if rng.fill(&mut bytes).is_ok() {
+                let hex: String = bytes.iter().flat_map(|b| [char::from_digit((b >> 4) as u32, 16).unwrap(), char::from_digit((b & 0xf) as u32, 16).unwrap()]).collect();
+                r = r.with_header(
+                    "Set-Cookie",
+                    &format!("oxide_csrf={hex}; Path=/; SameSite=Lax"),
+                );
+            }
         }
         r
     }
