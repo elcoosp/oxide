@@ -3721,3 +3721,53 @@ test (trusted peer's XFF/proto/host honoured; untrusted peer's ignored) and a
 config round-trip for the new keys.
 
 Commits: (below).
+
+## SEC-06 — slowloris enforcement + TLS handshakes off the accept loop
+
+Two defects in the accept loop:
+
+1. **A slowloris was never dropped.** `Limits.slow_request_timeout_ms` (30 s)
+   was declared but never enforced. Fixed: the hyper-util auto builder now
+   configures `http1().timer(TokioTimer::new()).header_read_timeout(Some(30s))`,
+   so a client that drips headers without completing them is dropped. The
+   timeout is read from `pipeline.limits`.
+2. **The TLS handshake blocked the accept loop.** `acceptor.accept(stream)`
+   was awaited inline, so one stuck handshake stalled every subsequent
+   connection. Fixed: the handshake runs in a spawned task wrapped in a 10 s
+   `tokio::time::timeout`; a timeout or error logs and returns, the accept
+   loop keeps accepting.
+
+The connection is registered with the graceful registry through
+`graceful.watcher()` (a fresh `Send` handle per connection — `Watcher` takes
+`self`, deliberately not `Clone`).
+
+Verified: `cargo test -p oxide-server` (43+21+66) green, including a new
+slowloris test — a socket that sends a partial request and never terminates it
+gets EOF within a few multiples of the timeout instead of hanging.
+
+Commits: (below).
+
+## SEC-06 — slowloris enforcement + TLS handshakes off the accept loop
+
+Two defects in the accept loop:
+
+1. **A slowloris was never dropped.** `Limits.slow_request_timeout_ms` (30 s)
+   was declared but never enforced. Fixed: the hyper-util auto builder now
+   configures `http1().timer(TokioTimer::new()).header_read_timeout(Some(30s))`,
+   so a client that drips headers without completing them is dropped. The
+   timeout is read from `pipeline.limits`.
+2. **The TLS handshake blocked the accept loop.** `acceptor.accept(stream)`
+   was awaited inline, so one stuck handshake stalled every subsequent
+   connection. Fixed: the handshake runs in a spawned task wrapped in a 10 s
+   `tokio::time::timeout`; a timeout or error logs and returns, the accept
+   loop keeps accepting.
+
+The connection is registered with the graceful registry through
+`graceful.watcher()` (a fresh `Send` handle per connection — `Watcher` takes
+`self`, deliberately not `Clone`).
+
+Verified: `cargo test -p oxide-server` (43+21+66) green, including a new
+slowloris test — a socket that sends a partial request and never terminates it
+gets EOF within a few multiples of the timeout instead of hanging.
+
+Commits: (below).
