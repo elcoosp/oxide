@@ -2342,3 +2342,91 @@ would have paid on any request that needed the renderer.
 
 `84fb548` (V8 host), `0a706b3` (integration tests), `f876858` (lazy
 renderer), `e2e4d64` (resolve form).
+
+### Session 17 addendum — V8 runs a real bundle; boot profile after the fix
+
+Two more results, both measured.
+
+**§4.6 tier-2 compat prelude.** A probe importing the real built SSR bundle
+into bare V8 failed with `process is not defined`. The bundle references
+`process.env.NODE_ENV` (React's dev/prod switch), `process.emit` (a lib's
+existence check), and `Buffer` (utf8/base64). The bootstrap now installs a
+narrow `process` (env + no-op emit + cwd/platform/nextTick) and a
+`Buffer` subclassing `Uint8Array` with `from`/`isBuffer`/`toString` for
+utf8 + base64. After the prelude, importing the same bundle reaches
+`module ... has no callable export routes` — i.e. **the import succeeded**;
+`routes` is an object. Calling the route module's `default` (the React page
+component) returns its full element tree in V8:
+
+    {"type":"main","props":{"data-greeting-fn":"anonymous-1",
+     "children":[{"type":"h1","props":{"children":"Home"}}, ...]}}
+
+So a self-contained `dist/server` bundle now evaluates in-process in V8,
+not just in Node. Pinned by `crates/jshost/tests/v8_bundle_tdd.rs` (ignored;
+needs a prior `oxide build`).
+
+**Boot profile after the lazy renderer.** Instrumenting
+`build_framework_stack` post-fix:
+
+    [fw]    0.0ns  enter
+    [fw]   26.0ms  cache_tier
+    [fw]   26.1ms  host
+    [fw]   42.1ms  pool spawned     ← was 391 ms
+
+The 325 ms config evaluation is off the boot path; what remains is the disk
+cache tier (~26 ms) + pool spawn (~16 ms).
+
+**What §4.4 still needs.** The snapshot blob itself. `create_snapshot`
+builds its internal `JsRuntimeForSnapshot` with `..Default::default()` — no
+`ModuleLoader` — so it cannot resolve the bundle's relative imports from
+disk. It *can* resolve them through `ExtModuleLoader`, which URL-joins
+relative imports among registered `esm_files`. So the path is: register
+every file of the built bundle as an `esm_file` under its `file://` URL, set
+`esm_entry_point` to the SSR entry, and let `create_snapshot` evaluate the
+graph into a blob — then load it at start via `loader_options`. That is the
+next slice; it is now bounded and unblocked (V8 can already run the bundle),
+where before it needed a module loader that did not exist.
+
+### Session 17 addendum — V8 runs a real bundle; boot profile after the fix
+
+Two more results, both measured.
+
+**§4.6 tier-2 compat prelude.** A probe importing the real built SSR bundle
+into bare V8 failed with `process is not defined`. The bundle references
+`process.env.NODE_ENV` (React's dev/prod switch), `process.emit` (a lib's
+existence check), and `Buffer` (utf8/base64). The bootstrap now installs a
+narrow `process` (env + no-op emit + cwd/platform/nextTick) and a
+`Buffer` subclassing `Uint8Array` with `from`/`isBuffer`/`toString` for
+utf8 + base64. After the prelude, importing the same bundle reaches
+`module ... has no callable export routes` — i.e. **the import succeeded**;
+`routes` is an object. Calling the route module's `default` (the React page
+component) returns its full element tree in V8:
+
+    {"type":"main","props":{"data-greeting-fn":"anonymous-1",
+     "children":[{"type":"h1","props":{"children":"Home"}}, ...]}}
+
+So a self-contained `dist/server` bundle now evaluates in-process in V8,
+not just in Node. Pinned by `crates/jshost/tests/v8_bundle_tdd.rs` (ignored;
+needs a prior `oxide build`).
+
+**Boot profile after the lazy renderer.** Instrumenting
+`build_framework_stack` post-fix:
+
+    [fw]    0.0ns  enter
+    [fw]   26.0ms  cache_tier
+    [fw]   26.1ms  host
+    [fw]   42.1ms  pool spawned     ← was 391 ms
+
+The 325 ms config evaluation is off the boot path; what remains is the disk
+cache tier (~26 ms) + pool spawn (~16 ms).
+
+**What §4.4 still needs.** The snapshot blob itself. `create_snapshot`
+builds its internal `JsRuntimeForSnapshot` with `..Default::default()` — no
+`ModuleLoader` — so it cannot resolve the bundle's relative imports from
+disk. It *can* resolve them through `ExtModuleLoader`, which URL-joins
+relative imports among registered `esm_files`. So the path is: register
+every file of the built bundle as an `esm_file` under its `file://` URL, set
+`esm_entry_point` to the SSR entry, and let `create_snapshot` evaluate the
+graph into a blob — then load it at start via `loader_options`. That is the
+next slice; it is now bounded and unblocked (V8 can already run the bundle),
+where before it needed a module loader that did not exist.
