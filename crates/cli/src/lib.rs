@@ -1263,10 +1263,8 @@ fn emit_snapshot_blob(root: &Path, server_out: &Path, w: Writer<'_>) -> anyhow::
     // runtime in a context where blocking is not allowed"). `cmd_build` is
     // async, so run the snapshot on a dedicated thread where the inner runtime
     // is dropped outside any async context.
-    let entry_str = entry.to_string_lossy().to_string();
-    let built = std::thread::spawn(move || {
-        oxide_jshost::snapshot_build_bundle(&entry_str, &files)
-    })
+    let _ = (&entry, &files); // bundle no longer snapshotted (imported at runtime)
+    let built = std::thread::spawn(oxide_jshost::snapshot_build_runtime)
     .join()
     .unwrap_or_else(|_| {
         Err(oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
@@ -1309,6 +1307,7 @@ fn emit_snapshot_blob(root: &Path, server_out: &Path, w: Writer<'_>) -> anyhow::
 fn emit_config_bundle(
     cfg: &oxide_config::OxideConfig,
     root: &Path,
+    precompiled: BTreeMap<PathBuf, String>,
     w: Writer<'_>,
 ) -> anyhow::Result<()> {
     // Always bundle the config — do NOT gate on `cfg.server.backend`. The
@@ -1348,7 +1347,9 @@ fn emit_config_bundle(
         define: BTreeMap::new(),
         tsconfig_paths: BTreeMap::new(),
         build_secret: "config-bundle".to_string(),
-        precompiled: BTreeMap::new(),
+        // The config imports the SFCs directly (`import Home from './page.vue'`),
+        // so the precompiled JS must ride along or rolldown parses the raw SFC.
+        precompiled,
         jsx_import_source: None,
         transform_hook: None,
         css_transform: None,
@@ -1669,10 +1670,6 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     let routes_root = rootp.join(&cfg.routes.dir);
     // §4.4: report top-level side effects that would break a V8 snapshot.
     emit_snapshot_lint(&cfg, &rootp, &tree, w)?;
-    // §4.2: for the V8 backend, bundle the config graph to ESM **now** — the
-    // framework stack built just below renders during prerender, and V8 cannot
-    // import the raw `.ts` config (React is CJS; bare V8 ESM has no interop).
-    emit_config_bundle(&cfg, &rootp, w)?;
 
     // §7 / §9.1: build the framework stack (renderer + loader). Renderer
     // is used for prerendering static routes; loader is present but not
@@ -1752,7 +1749,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     let precompile_cache = precompile_cache::PrecompileCache::open_soft(&rootp);
     let tool_version = env!("CARGO_PKG_VERSION");
     let client_precompiled = precompile::precompile_entries(
-        stack.pool.as_ref(),
+        stack.tooling_pool.as_ref(),
         &entries,
         "dom",
         framework_name,
@@ -1761,7 +1758,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     )
     .await;
     let server_precompiled = precompile::precompile_entries(
-        stack.pool.as_ref(),
+        stack.tooling_pool.as_ref(),
         &entries,
         "ssr",
         framework_name,
@@ -1769,6 +1766,14 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         tool_version,
     )
     .await;
+    // §4.2: bundle the config graph to ESM for the V8 backend, NOW that the
+    // SFCs are precompiled (the config imports them directly). V8 cannot import
+    // the raw `.ts` config — a CJS framework runtime has no V8 ESM interop.
+    {
+        let mut merged: BTreeMap<PathBuf, String> = client_precompiled.clone();
+        merged.extend(server_precompiled.clone());
+        emit_config_bundle(&cfg, &rootp, merged, w)?;
+    }
     if !client_precompiled.is_empty() {
         outln!(w, "precompiled {} SFC(s) for client", client_precompiled.len());
     }
