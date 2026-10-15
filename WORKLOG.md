@@ -3390,3 +3390,13 @@ build mints a fresh one); `oxide doctor` reports the secret's presence.
 Changed: `OxidePassesPlugin::transform` now fails the build with `CMP-PASS <id>: <msg>` instead of returning `Ok(None)` on pass errors (untransformed 'use cache'/server-fn code was a correctness hole). `cmd_build` captures `BundleOutput::diagnostics` (rolldown warnings, already built) from both envs and writes `.oxide/last-build-diagnostics.json` via new `persist_diagnostics` helper — on failure (failing bundle's diags) and on success (`[]` when clean so stale errors don't linger). MCP `oxide_errors` reader unchanged; now has data.
 
 Proof: `cargo test -p oxide-bundler`, `-p oxide-cli --lib` (95 passed) green; `oxide build --root examples/smoke-app-react` ok, `.oxide/last-build-diagnostics.json` contains `[]`.
+
+## Task BUG-13/14/15/16 + SEC-07(part) — small correctness batch
+
+- BUG-13: `precompile.rs::scan_import_specs` now delegates to `oxide_compiler::scan_import_spans` (byte-span, multi-line safe); `jsx_import_source_for` returns `@solidjs/web` for solid, None (react default) otherwise, honouring the adapter `jsxImportSource` contract.
+- BUG-14: corrected stale AVIF doc (encode is real via ravif). i18n/router/config/bundler comments verified current (ICU4X actually wired; no change needed).
+- BUG-15: `router.ts` dataCache bounded at 64 with insertion-order eviction (`dataCachePut`); new test: 70 fills → /p69 cached, /p0 refetched. `pnpm --filter oxide test`: 84 pass.
+- BUG-16: `frame()` checks `json.len() > MAX_FRAME_LEN` before the `as u32` cast (wrap guard).
+- SEC-07(part): `escape_attr` now escapes `'` → `&#39;` (all injected attrs single-quoted).
+
+Proof: `cargo test -p oxide-render/-p oxide-cli/-p oxide-jshost --lib` green; oxide package 84/84.
