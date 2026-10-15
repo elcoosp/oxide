@@ -1646,6 +1646,44 @@ async fn write_prerender(
     Ok(())
 }
 
+/// §9.4 / BUG-05: read (or create) the per-project build secret.
+///
+/// Stored at `<root>/.oxide/secret` as 64 hex chars (32 bytes of entropy,
+/// blake3-folded). A missing file is created once from the OS CSPRNG; every
+/// subsequent build reads the same value, so server-fn ids and manifests are
+/// byte-stable across builds. Deleting the file (or `oxide secrets rotate`)
+/// rotates the secret — server-fn ids then change, which is the intended
+/// effect of a rotation.
+///
+/// A malformed file (wrong length, non-hex) is a hard error: silently
+/// regenerating would churn every fn id without telling anyone.
+fn build_secret(rootp: &std::path::Path) -> anyhow::Result<String> {
+    let key_file = rootp.join(".oxide/secret");
+    if let Ok(existing) = std::fs::read_to_string(&key_file) {
+        let s = existing.trim();
+        if s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Ok(s.to_string());
+        }
+        anyhow::bail!(
+            "{} is malformed (expected 64 hex chars); delete it or run `oxide secrets rotate`",
+            key_file.display()
+        );
+    }
+    // Create once. `/dev/urandom` never EOFs, so `read_exact` on a fixed
+    // buffer is the bounded form (a plain `read` would block forever).
+    use std::io::Read as _;
+    let mut rnd = [0u8; 32];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut rnd))
+        .map_err(|e| anyhow::anyhow!("cannot read /dev/urandom for the build secret: {e}"))?;
+    let s = blake3::hash(&rnd).to_hex().to_string();
+    std::fs::create_dir_all(rootp.join(".oxide"))
+        .map_err(|e| anyhow::anyhow!("cannot create .oxide/: {e}"))?;
+    std::fs::write(&key_file, &s)
+        .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", key_file.display()))?;
+    Ok(s)
+}
+
 async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<i32> {
     // Canonicalize once at entry. Downstream joins (routes scan, bundler,
     // write_prerender) all expect absolute paths so a nested `root.join`
@@ -1794,29 +1832,13 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             .or(cfg.framework.name.as_deref())
             .unwrap_or("react"),
     );
-    // §9.4: one per-build secret for both environments. The server-fn id
-    // is a hash of file, export name and *this secret*; if the client and
-    // server bundles computed it from different secrets, the client stub
-    // would POST an id the server's registry never registered.
-    //
-    // `/dev/urandom` never EOFs, so `std::fs::read` would read forever;
-    // `read_exact` on 16 bytes is the bounded form.
-    let build_secret = {
-        use std::io::Read as _;
-        let mut h = blake3::Hasher::new();
-        h.update(
-            &std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos().to_le_bytes())
-                .unwrap_or([0u8; 16]),
-        );
-        let mut rnd = [0u8; 16];
-        if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-            let _ = f.read_exact(&mut rnd);
-        }
-        h.update(&rnd);
-        h.finalize().to_hex().to_string()[..32].to_string()
-    };
+    // §9.4 / BUG-05: a **stable** per-project secret for both environments.
+    // The server-fn id is `blake3(file, export, secret)`; if the secret
+    // changed per build, every build would produce different fn ids and the
+    // manifests could never be byte-stable (§6.4) — chunk caching would be
+    // structurally impossible. The secret lives in `.oxide/secret` (rotated
+    // only on demand via `oxide secrets rotate`), never in the repo.
+    let build_secret = build_secret(&rootp)?;
 
     // §15.1: a WASM component plugin's transform hook, if the config
     // declares one. Built once, shared by both envs.
