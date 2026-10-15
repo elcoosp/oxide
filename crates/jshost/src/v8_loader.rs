@@ -90,7 +90,17 @@ impl TranspileLoader {
                 ".cjs".into(),
                 ".json".into(),
             ],
-            condition_names: vec!["node".into(), "import".into(), "default".into()],
+            // §4.6: the V8 runtime is browser-like (no Node built-ins), so
+            // resolve with browser/worker conditions. `node` would pick a
+            // framework's Node build (e.g. react-dom/server.node.js →
+            // require('stream')), which V8 cannot run.
+            condition_names: vec![
+                "browser".into(),
+                "worker".into(),
+                "import".into(),
+                "module".into(),
+                "default".into(),
+            ],
             main_fields: vec!["module".into(), "main".into()],
             ..Default::default()
         };
