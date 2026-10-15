@@ -146,7 +146,12 @@ fn rules_engine_pipeline_position_smoke() {
             status: 301
         }
     );
-    assert_eq!(redirect.evaluate("/api/x"), RuleOutcome::RateLimited);
+    // SEC-01: the first call is within budget; only after `max` calls is the
+    // rule rate-limited. The bucket now decides, not the rule's presence.
+    assert_ne!(
+        redirect.evaluate("/api/x"),
+        RuleOutcome::RateLimited { retry_after_secs: 0 }
+    );
     assert_eq!(redirect.evaluate("/nothing"), RuleOutcome::None);
 }
 
