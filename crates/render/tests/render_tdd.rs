@@ -549,3 +549,66 @@ fn render_mode_roundtrip() {
     }
     assert!(RenderMode::parse("nope").is_none());
 }
+
+// ---------------------------------------------------------------- script_placeholder (§16.6)
+
+#[test]
+fn script_placeholder_src_carries_strategy_and_nonce() {
+    let attrs = std::collections::BTreeMap::new();
+    let out = script_placeholder("defer", Some("/a.js"), None, false, &attrs, "n0nce").unwrap();
+    assert!(out.starts_with("<script data-ox-script"), "{out}");
+    assert!(out.contains("data-ox-strategy=\"defer\""), "{out}");
+    assert!(out.contains("data-ox-src=\"/a.js\""), "{out}");
+    assert!(out.contains("nonce=\"n0nce\""), "{out}");
+    assert!(out.ends_with("></script>"), "{out}");
+    // The placeholder must not carry a real `src` attribute or body — those
+    // belong on the client-injected element.
+    assert!(!out.contains(" src=\"/a.js\""), "{out}");
+    assert!(!out.contains(" data-ox-inline="), "{out}");
+}
+
+#[test]
+fn script_placeholder_inline_is_base64_and_marks_module() {
+    let attrs = std::collections::BTreeMap::new();
+    let out = script_placeholder("idle", None, Some("console.log(1)"), true, &attrs, "n").unwrap();
+    assert!(out.contains("data-ox-strategy=\"idle\""), "{out}");
+    assert!(out.contains("data-ox-module"), "{out}");
+    assert!(out.contains("data-ox-inline="), "{out}");
+    // Decode and confirm round-trip.
+    let b64 = out.split("data-ox-inline=\"").nth(1).unwrap();
+    let b64 = b64.split('"').next().unwrap();
+    use base64::Engine as _;
+    let raw = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+    assert_eq!(String::from_utf8(raw).unwrap(), "console.log(1)");
+    // No `data-ox-src` for an inline script.
+    assert!(!out.contains("data-ox-src"), "{out}");
+}
+
+#[test]
+fn script_placeholder_rejects_empty_and_ambiguous() {
+    let attrs = std::collections::BTreeMap::new();
+    let e = script_placeholder("defer", None, None, false, &attrs, "n").unwrap_err();
+    assert_eq!(e.0.code, "RND-SCRIPT");
+    let e = script_placeholder("defer", Some("/a.js"), Some("x"), false, &attrs, "n").unwrap_err();
+    assert_eq!(e.0.code, "RND-SCRIPT");
+}
+
+#[test]
+fn script_placeholder_escapes_hostile_src_and_attrs() {
+    let mut attrs = std::collections::BTreeMap::new();
+    attrs.insert("data-x".to_string(), "\"><script>alert(1)</script>".to_string());
+    let out = script_placeholder(
+        "defer",
+        Some("\"><script>alert(2)</script>"),
+        None,
+        false,
+        &attrs,
+        "n&\"",
+    )
+    .unwrap();
+    // No literal `<`/`>`/`"` may leak from any interpolated value.
+    assert!(!out.contains("><script>"), "{out}");
+    assert!(out.contains("&lt;script&gt;"), "{out}");
+    assert!(out.contains("&quot;"), "{out}");
+    assert!(out.contains("nonce=\"n&amp;&quot;\""), "{out}");
+}
