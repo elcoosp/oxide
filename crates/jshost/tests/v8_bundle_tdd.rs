@@ -25,7 +25,7 @@ async fn v8_evaluates_a_real_bundle_route_module() {
         eprintln!("SKIP: run `oxide build examples/smoke-app-react` first");
         return;
     };
-    let pool = V8Host.render_pool(PoolConfig::default()).unwrap();
+    let pool = V8Host::new().render_pool(PoolConfig::default()).unwrap();
     let mut s = pool
         .call(
             EntryRef {
