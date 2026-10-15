@@ -354,12 +354,29 @@ pub struct SecurityConfig {
     pub csp: String,
     /// `origin | token | off`
     pub csrf: String,
+    /// SEC-05: hosts the server accepts in the `Host` header (421 otherwise).
+    /// Empty = accept any host. A leading-dot entry (`.example.com`) matches
+    /// subdomains; a bare entry matches exactly.
+    pub host_allow_list: Vec<String>,
+    /// SEC-05: hosts the SSRF check treats as allowed even in a blocked range.
+    pub ssrf_allow_list: Vec<String>,
+    /// SEC-05: CIDRs whose `X-Forwarded-For`/`-Proto`/`-Host` headers are
+    /// trusted. A peer outside this set has those headers ignored entirely.
+    /// Empty = trust no proxy.
+    pub trusted_proxies: Vec<String>,
+    /// SEC-05 / §16.6: cookie-signing keys (32+ bytes each, first signs).
+    /// Empty = derive from `.oxide/secret`.
+    pub cookie_keys: Vec<String>,
 }
 impl Default for SecurityConfig {
     fn default() -> Self {
         Self {
             csp: "strict".into(),
             csrf: "origin".into(),
+            host_allow_list: Vec::new(),
+            ssrf_allow_list: Vec::new(),
+            trusted_proxies: Vec::new(),
+            cookie_keys: Vec::new(),
         }
     }
 }
@@ -522,5 +539,24 @@ mod tests {
         assert_eq!(b.ssr_externals, vec!["vue", "@vue/server-renderer"]);
         let out = serde_json::to_string(&b).unwrap();
         assert!(out.contains("ssrExternals"));
+    }
+}
+
+#[cfg(test)]
+mod security_cfg_tests {
+    use super::*;
+    #[test]
+    fn security_config_parses_allow_lists() {
+        // SEC-05: the new keys deserialize from camelCase JSON.
+        let j = r#"{"csp":"strict","csrf":"origin",
+            "hostAllowList":["app.example.com"],
+            "ssrfAllowList":["10.0.0.5"],
+            "trustedProxies":["10.0.0.0/8"],
+            "cookieKeys":["key1"]}"#;
+        let s: SecurityConfig = serde_json::from_str(j).unwrap();
+        assert_eq!(s.host_allow_list, vec!["app.example.com"]);
+        assert_eq!(s.ssrf_allow_list, vec!["10.0.0.5"]);
+        assert_eq!(s.trusted_proxies, vec!["10.0.0.0/8"]);
+        assert_eq!(s.cookie_keys, vec!["key1"]);
     }
 }
