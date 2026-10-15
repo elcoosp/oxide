@@ -13,7 +13,7 @@
 //! returns an `Arc<dyn PageRenderer>` ready to hand to the pipeline.
 
 use async_trait::async_trait;
-use oxide_jshost::{FrameworkRenderInput, FrameworkRenderer};
+use oxide_jshost::{FrameworkHostRenderer, FrameworkRenderInput, FrameworkRenderer};
 use oxide_config::JsBackend;
 use oxide_server::{LoaderRunner, PageRenderInput, PageRenderer};
 use std::sync::Arc;
@@ -175,7 +175,7 @@ pub async fn build_framework_stack(
     config_path: Option<&std::path::Path>,
     backend: JsBackend,
 ) -> FrameworkStack {
-    use oxide_jshost::{FrameworkHostRenderer, JsHost, NodeHost, PoolConfig, V8Host};
+    use oxide_jshost::{JsHost, NodeHost, PoolConfig, V8Host};
 
     // §6.3: which framework's JSX the worker's `tsx-loader.mjs` should
     // lower `.tsx`/`.jsx` against. Read here (not at the CLI call sites) so
@@ -252,21 +252,16 @@ pub async fn build_framework_stack(
     // The page renderer needs a config file. Its absence is normal.
     let page_renderer: Option<Arc<dyn PageRenderer>> = match config_path {
         Some(path) => {
-            match FrameworkHostRenderer::new(
-                pool,
-                path.to_string_lossy().to_string(),
-            )
-            .await
-            {
-                Ok(hr) => Some(Arc::new(AdapterPageRenderer::new(Arc::new(hr)))),
-                Err(e) => {
-                    eprintln!(
-                        "warn: framework renderer not wired: {} {}",
-                        e.0.code, e.0.message
-                    );
-                    None
-                }
-            }
+            // §4.4 / §21: do NOT evaluate the config here — it costs ~325 ms
+            // and blocks the bind. Build a renderer that loads on first render.
+            let peeked = peek_framework_name(path).unwrap_or_else(|| "react".to_string());
+            let lazy = LazyFrameworkRenderer {
+                pool: Arc::clone(&pool),
+                config_path: path.to_string_lossy().to_string(),
+                name: peeked,
+                inner: tokio::sync::OnceCell::new(),
+            };
+            Some(Arc::new(AdapterPageRenderer::new(Arc::new(lazy))))
         }
         None => None,
     };
@@ -275,6 +270,60 @@ pub async fn build_framework_stack(
         page_renderer,
         loader_runner: Some(loader_runner),
         pool: Some(pool_for_stack),
+    }
+}
+
+/// §4.4 / §21: a `FrameworkRenderer` that builds its inner
+/// `FrameworkHostRenderer` — which evaluates the project config through the
+/// worker (~325 ms on the reference app, measured) — on **first render**, not
+/// at server start.
+///
+/// `build_framework_stack` otherwise pays that cost before the socket can
+/// bind, yet nothing on the native path (health, static assets, the L0 cache)
+/// touches the renderer. The first dynamic render pays the load it would pay
+/// anyway, because `FrameworkHost::render` re-imports the config per call.
+pub struct LazyFrameworkRenderer {
+    pool: Arc<dyn oxide_jshost::Pool>,
+    config_path: String,
+    /// Peeked from the config source at construction: the descriptor's own
+    /// name is only known after the load this type defers.
+    name: String,
+    inner: tokio::sync::OnceCell<Arc<dyn FrameworkRenderer>>,
+}
+
+impl LazyFrameworkRenderer {
+    async fn resolve(&self) -> oxide_jshost::Result<Arc<dyn FrameworkRenderer>> {
+        let v = self
+            .inner
+            .get_or_try_init(|| async {
+                let hr = FrameworkHostRenderer::new(
+                    Arc::clone(&self.pool),
+                    self.config_path.clone(),
+                )
+                .await?;
+                Ok::<Arc<dyn FrameworkRenderer>, oxide_diagnostics::OxideError>(Arc::new(hr))
+            })
+            .await?;
+        Ok(Arc::clone(v))
+    }
+}
+
+#[async_trait]
+impl FrameworkRenderer for LazyFrameworkRenderer {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    async fn render(
+        &self,
+        input: FrameworkRenderInput,
+    ) -> oxide_jshost::Result<String> {
+        self.resolve().await?.render(input).await
+    }
+    async fn render_streaming(
+        &self,
+        input: FrameworkRenderInput,
+    ) -> oxide_jshost::Result<oxide_jshost::RenderStream> {
+        self.resolve().await?.render_streaming(input).await
     }
 }
 
