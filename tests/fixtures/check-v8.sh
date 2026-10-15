@@ -71,6 +71,19 @@ assert old in c, "server: line not found — fixture changed shape"
 open(p, "w").write(c.replace(old, new, 1))
 PYEOF
 
+# BUG-04: give the temp copy an actions-only-delta server module on the
+# index route (plain functions, no imports — runs on both backends), so the
+# gate proves V8 action dispatch parity end-to-end (POST ?/greet).
+cat > "$DIR/src/routes/index/page.server.ts" << 'TSEOF'
+export const load = async () => ({ marker: 'index-loader' });
+export const actions = {
+  greet: async (event) => {
+    const form = Object.fromEntries(event.form.entries());
+    return { hello: form.name ?? 'nobody' };
+  },
+};
+TSEOF
+
 echo "=== build (backend=v8, temp root) ==="
 printf '%-22s %-6s %s\n' "stage" "exit" "detail"
 printf '%-22s %-6s %s\n' "-----" "----" "------"
@@ -125,6 +138,24 @@ else
         fail=1
         echo "--- start log tail ---"
         tail -20 "$WORK/start.log" | sed 's/^/  /'
+    fi
+    # BUG-04: runtime generateParams parity — the blog route's `.map`
+    # generateParams must have enumerated through the V8 worker at build.
+    for f in hello-prod second-post; do
+        if [ -f "$DIR/dist/prerendered/blog/$f.html" ]; then
+            printf '%-22s %-6s %s\n' "generate-params" "ok" "$f.html prerendered via v8"
+        else
+            printf '%-22s %-6s %s\n' "generate-params" "MISS" "$f.html absent"
+            fail=1
+        fi
+    done
+    # BUG-04: action parity — POST ?/greet through __oxideActionRun.
+    abody=$(curl -s -X POST "http://127.0.0.1:$PORT/?/greet" -d 'name=Ada' -H 'content-type: application/x-www-form-urlencoded' 2>/dev/null || true)
+    if [ "$abody" = '{"hello":"Ada"}' ]; then
+        printf '%-22s %-6s %s\n' "action-post" "ok" "$abody"
+    else
+        printf '%-22s %-6s %s\n' "action-post" "FAIL" "got: $abody"
+        fail=1
     fi
 fi
 

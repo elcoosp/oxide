@@ -596,7 +596,7 @@ async fn v8_pool_recycles_warm() {
     let pool = host.render_pool(cfg).unwrap();
     assert_eq!(pool.stats().recycles, 0);
 
-    for _ in 0..3 {
+    for _ in 0..2 {
         let mut s = pool
             .call(v8_entry(&module, "echo"), input(json!({})))
             .await
@@ -604,12 +604,24 @@ async fn v8_pool_recycles_warm() {
         let _ = s.collect().await.unwrap();
     }
 
+    // Warm replacement is async: wait for the recycle to land BEFORE the
+    // next call, otherwise the call races the replacement spawn and
+    // honestly fails JSH-POOL (no live worker yet) — that race is by
+    // design (BUG-03), not what this test asserts.
     for _ in 0..200 {
         if pool.stats().recycles >= 1 {
             break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+    assert!(pool.stats().recycles >= 1, "expected a recycle after 2 calls");
+
+    let mut s = pool
+        .call(v8_entry(&module, "echo"), input(json!({})))
+        .await
+        .unwrap();
+    let _ = s.collect().await.unwrap();
+
     let st = pool.stats();
     assert!(st.recycles >= 1, "expected at least one recycle, got {}", st.recycles);
     assert_eq!(st.failed, 0, "recycle must not fail any call");
@@ -651,7 +663,7 @@ fn op_decls_returns_the_documented_ops() {
     // the §4.6 tier-1 prelude installs, so they live in the ops table rather
     // than in the JS bootstrap.
     let decls = oxide_jshost::v8_ops::op_decls();
-    assert_eq!(decls.len(), 5, "expected log, trace, serialize, random, sleep");
+    assert_eq!(decls.len(), 8, "expected log, trace, serialize, random, sleep + 3 cache ops (BUG-02)");
     // Op names are namespaced with the `op_oxide_` prefix so the JS side can
     // distinguish them from deno_core built-ins.
     let names: Vec<&str> = decls.iter().map(|d| d.name).collect();
@@ -661,6 +673,9 @@ fn op_decls_returns_the_documented_ops() {
         "op_oxide_serialize",
         "op_oxide_random",
         "op_oxide_sleep",
+        "op_oxide_cache_get",
+        "op_oxide_cache_set",
+        "op_oxide_cache_tag",
     ] {
         assert!(names.iter().any(|n| n.contains(want)), "missing {want}: {names:?}");
     }

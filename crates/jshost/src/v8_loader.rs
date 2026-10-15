@@ -118,6 +118,14 @@ impl TranspileLoader {
     }
 }
 
+/// Split `?query` off a specifier/URL. BUG-04 generation tags.
+fn split_query(s: &str) -> (&str, Option<&str>) {
+    match s.split_once('?') {
+        Some((base, q)) => (base, Some(q)),
+        None => (s, None),
+    }
+}
+
 /// Try `p` as-is, then with each module extension appended.
 fn probe_extensions(p: &Path) -> Option<PathBuf> {
     if p.is_file() {
@@ -188,25 +196,37 @@ impl ModuleLoader for TranspileLoader {
         referrer: &str,
         _kind: ResolutionKind,
     ) -> ModuleResolveResponse {
+        // BUG-04: generation query (?v=N from __oxideFrameworkInvalidate).
+        // Strip for path resolution, then re-attach to the canonical URL so
+        // deno_core caches generations separately. A nested relative import
+        // with no query inherits the referrer's — the whole graph moves to
+        // the new generation together (mirrors the Node worker's versioned()
+        // tagger).
+        let (spec_base, spec_query) = split_query(specifier);
+        let (_, ref_query) = split_query(referrer);
+        let query = spec_query.or(ref_query);
         // §4.6 tier 2: a `node:*` specifier resolves to an in-memory shim, not
         // a file. V8 has no Node built-ins; the shim covers the handful a
         // framework runtime touches (a no-op `createRequire`, an empty
         // `path`/`fs`). Without this, bundling React's ESM build — which
         // imports `node:module` for a dev-only warning — fails at load.
-        if let Some(builtin) = specifier.strip_prefix("node:") {
+        if let Some(builtin) = spec_base.strip_prefix("node:") {
             // Drop the colon: `oxide:shim/module`, so the shim's path is a
             // clean `/shim/<name>` with no second `:` to confuse URL parsing.
             let url = deno_core::ModuleSpecifier::parse(&format!("oxide:shim/{builtin}"))
                 .map_err(|_| deno_error::JsErrorBox::generic("bad node: specifier"))?;
             return Ok(url);
         }
-        let Some(path) = self.resolve_to_path(specifier, referrer) else {
+        let Some(path) = self.resolve_to_path(spec_base, referrer) else {
             return Err(deno_error::JsErrorBox::generic(format!(
                 "cannot resolve `{specifier}` from `{referrer}`"
             )));
         };
-        let url = deno_core::ModuleSpecifier::from_file_path(&path)
+        let mut url = deno_core::ModuleSpecifier::from_file_path(&path)
             .map_err(|_| deno_error::JsErrorBox::generic("path is not a file URL"))?;
+        if let Some(q) = query {
+            url.set_query(Some(q));
+        }
         Ok(url)
     }
 
@@ -227,14 +247,20 @@ impl ModuleLoader for TranspileLoader {
                 None,
             )));
         }
-        let path = match module_specifier.to_file_path() {
+        let (spec_no_query, _) = split_query(module_specifier.as_str());
+        let path = match deno_core::ModuleSpecifier::parse(spec_no_query)
+            .map_err(|_| deno_error::JsErrorBox::generic("module specifier is not a file path"))
+            .and_then(|u| {
+                u.to_file_path()
+                    .map_err(|_| deno_error::JsErrorBox::generic("module specifier is not a file path"))
+            }) {
             Ok(p) => p,
-            Err(_) => {
-                return ModuleLoadResponse::Sync(Err(deno_error::JsErrorBox::generic(
-                    "module specifier is not a file path",
-                )));
+            Err(e) => {
+                return ModuleLoadResponse::Sync(Err(e));
             }
         };
+        // The ModuleSource keeps the ORIGINAL specifier (query included) so
+        // deno_core caches `?v=N` generations as distinct modules (BUG-04).
         let spec = module_specifier.clone();
         let jsx = self.jsx_import_source.clone();
         let fut = async move {

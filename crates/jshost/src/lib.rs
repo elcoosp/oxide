@@ -910,7 +910,7 @@ globalThis.oxide = {
 globalThis.__oxideDispatch = async function (kind, moduleUrl, exportName, payload) {
   let mod;
   try {
-    mod = await import(moduleUrl);
+    mod = await import(globalThis.__oxideVersioned(moduleUrl));
   } catch (e) {
     return JSON.stringify({
       __oxide_error: 'import failed for ' + moduleUrl + ': ' + ((e && e.message) || e),
@@ -939,7 +939,7 @@ globalThis.__oxideDispatch = async function (kind, moduleUrl, exportName, payloa
 // with `error()`/`redirect()` sentinels turned into status + location.
 globalThis.__oxideLoaderRun = async function (moduleUrl, input) {
   try {
-    const mod = await import(moduleUrl);
+    const mod = await import(globalThis.__oxideVersioned(moduleUrl));
     const load = mod.load;
     if (typeof load !== 'function') {
       return JSON.stringify({ __oxide_error: 'module has no callable `load` export' });
@@ -1013,7 +1013,7 @@ globalThis.__oxideFrameworkLoad = async function (configPath) {
     const url = configPath.startsWith('file://')
       ? configPath
       : 'file://' + (configPath.startsWith('/') ? '' : '/') + configPath;
-    const mod = await import(url);
+    const mod = await import(globalThis.__oxideVersioned(url));
     const cfg = (mod && mod.default) || mod;
     const fw = cfg && cfg.framework;
     if (!fw || typeof fw !== 'object') {
@@ -1039,7 +1039,7 @@ globalThis.__oxideFrameworkRender = async function (configPath, renderInput) {
     const url = configPath.startsWith('file://')
       ? configPath
       : 'file://' + (configPath.startsWith('/') ? '' : '/') + configPath;
-    const mod = await import(url);
+    const mod = await import(globalThis.__oxideVersioned(url));
     const cfg = (mod && mod.default) || mod;
     const fw = cfg && cfg.framework;
     if (!fw || typeof fw.render !== 'function') {
@@ -1058,6 +1058,226 @@ globalThis.__oxideFrameworkRender = async function (configPath, renderInput) {
       __oxide_error: 'framework:render failed: ' + ((e && e.message) || e) +
         ' [reactLoadError=' + (globalThis.__oxideReactLoadError || 'none') + ']',
     });
+  }
+};
+
+// BUG-04: V8 dispatch parity. The Node worker special-cases action:run,
+// server-fn:run, generate-params:run and framework:invalidate (envelope
+// semantics the generic mod[export](payload) arm cannot provide); these
+// entry points port that logic to the V8 bootstrap so backend=v8
+// mis-executes nothing.
+//
+// Module generations (§13.3): `__oxideFrameworkInvalidate` bumps
+// `__oxideGeneration`; every entry point below imports through
+// `__oxideVersioned`, and the Rust loader propagates the referrer's `?v=`
+// to nested relative imports — so a bumped generation re-evaluates the
+// whole graph, mirroring the Node worker's versioned() tagger.
+globalThis.__oxideGeneration = 0;
+globalThis.__oxideVersioned = function (url) {
+  const g = globalThis.__oxideGeneration | 0;
+  if (!g) return url;
+  return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'v=' + g;
+};
+globalThis.__oxideFrameworkInvalidate = async function () {
+  globalThis.__oxideGeneration = (globalThis.__oxideGeneration | 0) + 1;
+  return JSON.stringify({ generation: globalThis.__oxideGeneration });
+};
+
+// Minimal FormData for action dispatch when the host has none (the bootstrap
+// provides Web globals piecemeal; FormData is not among them). Enough for
+// `Object.fromEntries(form.entries())` and for user code reading the form.
+function __oxideFormData(entries) {
+  if (typeof globalThis.FormData === 'function') {
+    const fd = new globalThis.FormData();
+    for (const [k, v] of entries) fd.append(k, v);
+    return fd;
+  }
+  const items = Array.from(entries);
+  return {
+    append: (k, v) => { items.push([String(k), String(v)]); },
+    entries: function* () { for (const [k, v] of items) yield [k, v]; },
+    get: (k) => { const f = items.find(([kk]) => kk === String(k)); return f ? f[1] : null; },
+    has: (k) => items.some(([kk]) => kk === String(k)),
+    [Symbol.iterator]: function* () { for (const [k, v] of items) yield [k, v]; },
+  };
+}
+
+function __oxideCookieJar(hdrs) {
+  const jar = new Map();
+  const inbound = (Array.isArray(hdrs) ? hdrs : []).find(
+    (h) => Array.isArray(h) && String(h[0]).toLowerCase() === 'cookie');
+  if (inbound) {
+    for (const part of String(inbound[1]).split(';')) {
+      const eq = part.indexOf('=');
+      if (eq > 0) { const k = part.slice(0, eq).trim(); if (k) jar.set(k, decodeURIComponent(part.slice(eq + 1).trim())); }
+    }
+  }
+  const pending = new Map();
+  const ser = (n, v, o) => {
+    o = o || {};
+    let s = n + '=' + encodeURIComponent(v);
+    if (o.path) s += '; Path=' + o.path;
+    if (o.domain) s += '; Domain=' + o.domain;
+    if (typeof o.maxAge === 'number') s += '; Max-Age=' + o.maxAge;
+    if (o.httpOnly) s += '; HttpOnly';
+    if (o.secure) s += '; Secure';
+    if (o.sameSite) { const ss = String(o.sameSite); s += '; SameSite=' + ss[0].toUpperCase() + ss.slice(1).toLowerCase(); }
+    return s;
+  };
+  return {
+    cookies: {
+      get: (n) => jar.get(n),
+      set: (n, v, o) => { jar.set(n, v); pending.set(n, ser(n, v, o)); },
+      delete: (n) => { jar.delete(n); pending.set(n, ser(n, '', { maxAge: 0, path: '/' })); },
+    },
+    pending,
+  };
+}
+
+// action:run — port of the Node worker's dispatchActionRun: cookies, Standard
+// Schema input validation, revalidate collectors, error()/redirect() sentinel
+// mapping. Envelope: {ok,status,location,data,setCookies,headers,revalidate}
+// or {__oxide_error[, __oxide_code]} (NOT-FOUND codes survive so the pipeline
+// maps them to 404, as with the Node backend).
+globalThis.__oxideActionRun = async function (moduleUrl, input) {
+  try {
+    const mod = await import(globalThis.__oxideVersioned(moduleUrl));
+    const name = input.action;
+    if (typeof name !== 'string' || !name) {
+      return JSON.stringify({ __oxide_error: 'action:run requires an `action` name', __oxide_code: 'JSH-ACTION' });
+    }
+    const handlers = mod.actions;
+    if (!handlers || typeof handlers !== 'object') {
+      return JSON.stringify({ __oxide_error: 'module has no `actions` export', __oxide_code: 'JSH-ACTION' });
+    }
+    const def = handlers[name];
+    if (!def) {
+      return JSON.stringify({ __oxide_error: 'no action named `' + name + '`', __oxide_code: 'JSH-ACTION-NOT-FOUND' });
+    }
+    const run = typeof def === 'function' ? def : def.run;
+    if (typeof run !== 'function') {
+      return JSON.stringify({ __oxide_error: 'action `' + name + '` has no run function', __oxide_code: 'JSH-ACTION' });
+    }
+    let entries;
+    try {
+      entries = input.form_json ? JSON.parse(input.form_json) : [];
+    } catch (e) {
+      return JSON.stringify({ __oxide_error: 'form body is not valid: ' + ((e && e.message) || e), __oxide_code: 'JSH-ACTION' });
+    }
+    const form = __oxideFormData(entries);
+    const revalidateLog = [];
+    const revalidate = {
+      tag: (t) => revalidateLog.push({ type: 'tag', tag: String(t) }),
+      path: (p) => revalidateLog.push({ type: 'path', path: String(p) }),
+    };
+    const { cookies, pending } = __oxideCookieJar(input.headers);
+    const extra = [];
+    const setHeaders = (h) => { if (h && typeof h === 'object') for (const [k, v] of Object.entries(h)) extra.push([String(k), String(v)]); };
+    let validated;
+    if (def && def.input && typeof def.input['~standard']?.validate === 'function') {
+      const raw = Object.fromEntries(form.entries());
+      const res = await def.input['~standard'].validate(raw);
+      if (res.issues && res.issues.length > 0) {
+        return JSON.stringify({ ok: true, status: 422, location: null,
+          data: { message: res.issues.map((i) => i.message).join('; ') },
+          setCookies: [...pending.values()], headers: extra, revalidate: revalidateLog });
+      }
+      validated = res.value;
+    } else {
+      validated = Object.fromEntries(form.entries());
+    }
+    const event = {
+      params: input.params ?? {},
+      request: { method: input.method ?? 'POST', url: input.url ?? '/', headers: Array.isArray(input.headers) ? input.headers : [] },
+      locals: {},
+      cookies,
+      setHeaders,
+      input: validated,
+      form,
+      revalidate,
+    };
+    let result;
+    try {
+      result = await run(event);
+    } catch (err) {
+      if (err && typeof err.status === 'number') {
+        return JSON.stringify({ ok: true, status: err.status, location: err.location ?? null,
+          data: { message: err.message ?? '' }, setCookies: [...pending.values()], headers: extra, revalidate: revalidateLog });
+      }
+      throw err;
+    }
+    return JSON.stringify({ ok: true, status: 200, location: null, data: result ?? {},
+      setCookies: [...pending.values()], headers: extra, revalidate: revalidateLog });
+  } catch (e) {
+    return JSON.stringify({ __oxide_error: 'action:run failed: ' + ((e && e.message) || e), __oxide_code: 'JSH-ACTION' });
+  }
+};
+
+// server-fn:run — port of dispatchServerFn. Imports the SSR entry graph (which
+// runs `__oxide_register_fn` registrations into `globalThis.__oxide_fn_registry`
+// via the imported `oxide/server` module), looks up fn_id, calls with the JSON
+// args array. Codes (NOT-FOUND vs THREW) survive for the pipeline's mapping.
+globalThis.__oxideServerFnRun = async function (entryUrl, fnId, argsJson) {
+  try {
+    if (typeof fnId !== 'string' || !fnId) {
+      return JSON.stringify({ __oxide_error: 'server-fn requires a `fn_id` string', __oxide_code: 'JSH-FN' });
+    }
+    await import(globalThis.__oxideVersioned(entryUrl));
+    const registry = globalThis.__oxide_fn_registry;
+    if (!registry || typeof registry !== 'object') {
+      return JSON.stringify({ __oxide_error: 'no server-fn registry: the SSR entry did not import `oxide/server`', __oxide_code: 'JSH-FN' });
+    }
+    const fn = registry[fnId];
+    if (typeof fn !== 'function') {
+      return JSON.stringify({ __oxide_error: 'no server function registered under id ' + fnId, __oxide_code: 'JSH-FN-NOT-FOUND' });
+    }
+    let args;
+    try {
+      args = argsJson ? JSON.parse(argsJson) : [];
+    } catch (e) {
+      return JSON.stringify({ __oxide_error: 'arguments are not valid JSON: ' + ((e && e.message) || e), __oxide_code: 'JSH-FN' });
+    }
+    if (!Array.isArray(args)) {
+      return JSON.stringify({ __oxide_error: 'arguments must be a JSON array', __oxide_code: 'JSH-FN' });
+    }
+    try {
+      const value = await fn(...args);
+      return JSON.stringify({ value: value === undefined ? null : value });
+    } catch (e) {
+      return JSON.stringify({ __oxide_error: (e && e.message) || String(e), __oxide_code: 'JSH-FN-THREW' });
+    }
+  } catch (e) {
+    return JSON.stringify({ __oxide_error: 'server-fn:run failed: ' + ((e && e.message) || e), __oxide_code: 'JSH-FN' });
+  }
+};
+
+// generate-params:run — port of dispatchGenerateParamsRun. Returns the
+// `{params:[...]}` envelope LoaderHost expects (never the generic
+// `{ok,value}` — that mismatch is the JSH-PARAMS failure this fixes).
+globalThis.__oxideGenerateParamsRun = async function (moduleUrl) {
+  try {
+    const mod = await import(globalThis.__oxideVersioned(moduleUrl));
+    const gp = mod.generateParams;
+    if (gp === undefined) {
+      return JSON.stringify({ params: [] });
+    }
+    const value = typeof gp === 'function' ? await gp() : gp;
+    if (!Array.isArray(value)) {
+      return JSON.stringify({ __oxide_error: 'generateParams must return an array; got ' + (value === null ? 'null' : typeof value), __oxide_code: 'JSH-PARAMS' });
+    }
+    const params = value.map((item) => {
+      if (item === null || typeof item !== 'object' || Array.isArray(item)) return {};
+      const out = {};
+      for (const [k, v] of Object.entries(item)) {
+        if (v === null || v === undefined) continue;
+        if (typeof v === 'object') continue;
+        out[k] = typeof v === 'string' ? v : String(v);
+      }
+      return out;
+    });
+    return JSON.stringify({ params });
+  } catch (e) {
+    return JSON.stringify({ __oxide_error: 'generate-params:run failed: ' + ((e && e.message) || e), __oxide_code: 'JSH-PARAMS' });
   }
 };
 "#;
@@ -1265,12 +1485,57 @@ fn v8_module_url(path: &str) -> Result<String> {
 /// with `input.payload`, and returns the JSON result. The call is async — a
 /// dynamic `import()` and a user async function both suspend — so the worker
 /// loop drives the V8 event loop through the returned promise.
+/// Execute `script` (a call into a `globalThis.__oxide*` bootstrap entry
+/// point returning a JSON envelope string) and parse the envelope.
+/// `site` names the call for diagnostics; `default_code` is the error code
+/// when the envelope carries a message but no `__oxide_code`.
+async fn exec_v8_json(
+    js: &mut JsRuntime,
+    site: &'static str,
+    script: String,
+    default_code: &'static str,
+) -> Result<serde_json::Value> {
+    // `execute_script` takes `impl IntoModuleName` for the name and
+    // `impl IntoModuleCodeString` for the code. A `String` satisfies both
+    // (`site` is a `&str` param, not `&'static str`; `script` is owned).
+    let promise = js
+        .execute_script(site.to_string(), script)
+        .map_err(|e| err("JSH-V8", format!("{site} dispatch: {e}")))?;
+    let resolve = js.resolve(promise);
+    let resolved = js
+        .with_event_loop_promise(resolve, deno_core::PollEventLoopOptions::default())
+        .await
+        .map_err(|e| err("JSH-V8", format!("{site} await: {e}")))?;
+    let s = {
+        deno_core::scope!(scope, js);
+        let local = deno_core::v8::Local::new(scope, resolved);
+        local.to_rust_string_lossy(scope)
+    };
+    let v: serde_json::Value = serde_json::from_str(&s)
+        .map_err(|e| err("JSH-V8", format!("{site} returned non-JSON: {e}")))?;
+    if let Some(m) = v.get("__oxide_error").and_then(|x| x.as_str()) {
+        // Codes cross the JS boundary as strings but `err` needs
+        // `&'static str` — allow-list the codes the bootstrap can emit so
+        // NOT-FOUND vs THREW survives for the pipeline's HTTP mapping.
+        let code: &'static str = match v.get("__oxide_code").and_then(|x| x.as_str()) {
+            Some("JSH-ACTION-NOT-FOUND") => "JSH-ACTION-NOT-FOUND",
+            Some("JSH-FN-NOT-FOUND") => "JSH-FN-NOT-FOUND",
+            Some("JSH-FN-THREW") => "JSH-FN-THREW",
+            Some("JSH-ACTION") => "JSH-ACTION",
+            Some("JSH-FN") => "JSH-FN",
+            Some("JSH-PARAMS") => "JSH-PARAMS",
+            _ => default_code,
+        };
+        return Err(err(code, m.to_string()));
+    }
+    Ok(v)
+}
+
 async fn v8_dispatch(
     js: &mut JsRuntime,
     entry: &EntryRef,
     input: &CallInput,
-) -> Result<CallStream> {
-    // Kinds the Node worker special-cases are handled Rust-side so semantics
+) -> Result<CallStream> {    // Kinds the Node worker special-cases are handled Rust-side so semantics
     // match without burdening the JS dispatch.
     if entry.kind == "boom" {
         return Err(err(
@@ -1368,6 +1633,95 @@ async fn v8_dispatch(
             serde_json::to_vec(&v).unwrap_or_default()
         };
         return Ok(CallStream::Complete(Bytes::from(out)));
+    }
+
+    // BUG-04: V8 dispatch parity for the envelope-semantic kinds. The Node
+    // worker implements these with dedicated entry points (cookies/defer/
+    // revalidate for actions; {ok,value} vs {params} for generate-params;
+    // generation bump for invalidate); the generic mod[export](payload) arm
+    // below silently mis-executes them. Each maps to its __oxide* bootstrap
+    // entry point (same logic as oxide-worker.mjs).
+    if entry.kind == "action:run" {
+        let url = v8_module_url(&entry.module)?;
+        let u = serde_json::to_string(&url).unwrap_or_else(|_| "\"\"".into());
+        let inp = serde_json::to_string(&input.payload).unwrap_or_else(|_| "{}".into());
+        let v = exec_v8_json(
+            js,
+            "oxide:action",
+            format!("globalThis.__oxideActionRun({u}, {inp})"),
+            "JSH-ACTION",
+        )
+        .await?;
+        let bytes = serde_json::to_vec(&v).unwrap_or_default();
+        return Ok(CallStream::Complete(Bytes::from(bytes)));
+    }
+    if entry.kind == "server-fn:run" {
+        let fn_id = input
+            .payload
+            .get("fn_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let entry_path = input
+            .payload
+            .get("entry_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&entry.module);
+        let url = v8_module_url(entry_path)?;
+        let u = serde_json::to_string(&url).unwrap_or_else(|_| "\"\"".into());
+        let f = serde_json::to_string(fn_id).unwrap_or_else(|_| "\"\"".into());
+        // args_json arrives as a JSON *string* (the array text); pass it as
+        // a JS string literal — the bootstrap JSON.parses it, as Node does.
+        let args_expr = serde_json::to_string(
+            input
+                .payload
+                .get("args_json")
+                .and_then(|v| v.as_str())
+                .unwrap_or("[]"),
+        )
+        .unwrap_or_else(|_| "\"[]\"".into());
+        let v = exec_v8_json(
+            js,
+            "oxide:server-fn",
+            format!("globalThis.__oxideServerFnRun({u}, {f}, {args_expr})"),
+            "JSH-FN",
+        )
+        .await?;
+        let bytes = serde_json::to_vec(&v).unwrap_or_default();
+        return Ok(CallStream::Complete(Bytes::from(bytes)));
+    }
+    if entry.kind == "generate-params:run" {
+        let url = v8_module_url(&entry.module)?;
+        let u = serde_json::to_string(&url).unwrap_or_else(|_| "\"\"".into());
+        let v = exec_v8_json(
+            js,
+            "oxide:generate-params",
+            format!("globalThis.__oxideGenerateParamsRun({u})"),
+            "JSH-PARAMS",
+        )
+        .await?;
+        let bytes = serde_json::to_vec(&v).unwrap_or_default();
+        return Ok(CallStream::Complete(Bytes::from(bytes)));
+    }
+    if entry.kind == "framework:invalidate" {
+        let v = exec_v8_json(
+            js,
+            "oxide:invalidate",
+            "globalThis.__oxideFrameworkInvalidate()".to_string(),
+            "JSH-FRAMEWORK",
+        )
+        .await?;
+        let bytes = serde_json::to_vec(&v).unwrap_or_default();
+        return Ok(CallStream::Complete(Bytes::from(bytes)));
+    }
+    if entry.kind == "tooling:module" {
+        // The SFC compilers are npm packages needing Node built-ins; they
+        // run on the Node tooling pool even when the render backend is V8
+        // (framework_shim). Reaching V8 is a wiring error — refuse loudly
+        // (JSH-V8KIND) rather than mis-executing.
+        return Err(err(
+            "JSH-V8KIND",
+            "tooling:module is not available on the V8 backend; use the Node tooling pool",
+        ));
     }
 
     if entry.module.is_empty() {
