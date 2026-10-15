@@ -2430,3 +2430,95 @@ every file of the built bundle as an `esm_file` under its `file://` URL, set
 graph into a blob — then load it at start via `loader_options`. That is the
 next slice; it is now bounded and unblocked (V8 can already run the bundle),
 where before it needed a module loader that did not exist.
+
+### Session 17 addendum 2 — the §4.4 snapshot blob, and an honest measurement
+
+**`snapshot_build_bundle` works.** A multi-file SSR bundle snapshots into a
+real V8 startup blob:
+
+    blob=816333 bytes  warnings=[]
+
+The mechanism (three fixes, each found by running it):
+1. Register **every** bundle file as an extension `esm_file` under its
+   `file://` URL and set `esm_entry_point` to the SSR entry. `create_snapshot`
+   builds its runtime with no `ModuleLoader`, but `ExtModuleLoader` URL-joins
+   relative imports among registered sources — so the whole graph evaluates.
+2. deno_core requires extension source be **7-bit ASCII**. A real bundle's
+   banner has `§`/`—`. `escape_non_ascii` rewrites each non-ASCII scalar to a
+   `\uXXXX` escape — semantics-preserving in JS (identical in strings,
+   templates, regex; cosmetic in comments).
+3. `from_file_path` keeps `..` verbatim, but URL *joining* (how a relative
+   import resolves) collapses it. With `<manifest>/../../project/...` paths the
+   registered and resolved specifiers differed, giving "was not passed as an
+   extension module". Canonicalize each path first.
+
+Pinned by `crates/jshost/tests/snapshot_bundle_tdd.rs`.
+
+**But it is not yet a cold-start win, and the numbers say so.** Measured:
+
+    snapshot_build (one-time, at build):  29.2 ms
+    cold JsRuntime::new:                   6.0 ms
+    JsRuntime::new from the blob:          1.6 ms
+
+Two reasons not to overclaim:
+
+1. That 4.4 ms delta is **in-process and warm** — V8 was already initialized by
+   the snapshot build in the same process, so it does not measure
+   process-cold boot. A real number needs the blob written to disk by
+   `oxide build` and loaded by a fresh `oxide start`.
+2. The serving path uses **`NodeHost`**, not `V8Host` (`JsBackend::default()`
+   is `Node`). So the snapshot is not on the CLI's cold-start path at all
+   today. §21's ≤ 50 ms cold-start target is gated on running the render path
+   on V8 — which is now *possible* (the V8 host loads and runs a real bundle,
+   §4.6 prelude in place) but not the default.
+
+So the honest status: the V8 host is real, it runs a real bundle, and a real
+snapshot can be built from it — the three things that were blocked before this
+session. Wiring build→disk→start and making V8 the serving backend is the next
+slice, and it is now unblocked rather than unknown.
+
+### Session 17 addendum 2 — the §4.4 snapshot blob, and an honest measurement
+
+**`snapshot_build_bundle` works.** A multi-file SSR bundle snapshots into a
+real V8 startup blob:
+
+    blob=816333 bytes  warnings=[]
+
+The mechanism (three fixes, each found by running it):
+1. Register **every** bundle file as an extension `esm_file` under its
+   `file://` URL and set `esm_entry_point` to the SSR entry. `create_snapshot`
+   builds its runtime with no `ModuleLoader`, but `ExtModuleLoader` URL-joins
+   relative imports among registered sources — so the whole graph evaluates.
+2. deno_core requires extension source be **7-bit ASCII**. A real bundle's
+   banner has `§`/`—`. `escape_non_ascii` rewrites each non-ASCII scalar to a
+   `\uXXXX` escape — semantics-preserving in JS (identical in strings,
+   templates, regex; cosmetic in comments).
+3. `from_file_path` keeps `..` verbatim, but URL *joining* (how a relative
+   import resolves) collapses it. With `<manifest>/../../project/...` paths the
+   registered and resolved specifiers differed, giving "was not passed as an
+   extension module". Canonicalize each path first.
+
+Pinned by `crates/jshost/tests/snapshot_bundle_tdd.rs`.
+
+**But it is not yet a cold-start win, and the numbers say so.** Measured:
+
+    snapshot_build (one-time, at build):  29.2 ms
+    cold JsRuntime::new:                   6.0 ms
+    JsRuntime::new from the blob:          1.6 ms
+
+Two reasons not to overclaim:
+
+1. That 4.4 ms delta is **in-process and warm** — V8 was already initialized by
+   the snapshot build in the same process, so it does not measure
+   process-cold boot. A real number needs the blob written to disk by
+   `oxide build` and loaded by a fresh `oxide start`.
+2. The serving path uses **`NodeHost`**, not `V8Host` (`JsBackend::default()`
+   is `Node`). So the snapshot is not on the CLI's cold-start path at all
+   today. §21's ≤ 50 ms cold-start target is gated on running the render path
+   on V8 — which is now *possible* (the V8 host loads and runs a real bundle,
+   §4.6 prelude in place) but not the default.
+
+So the honest status: the V8 host is real, it runs a real bundle, and a real
+snapshot can be built from it — the three things that were blocked before this
+session. Wiring build→disk→start and making V8 the serving backend is the next
+slice, and it is now unblocked rather than unknown.
