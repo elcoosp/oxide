@@ -248,10 +248,13 @@ pub async fn build_framework_stack(
             let snap = config_path
                 .and_then(|p| p.parent())
                 .map(|root| root.join(".oxide/snapshot.bin"));
-            match snap {
-                Some(path) if path.is_file() => Arc::new(V8Host::from_snapshot_file(&path)),
-                _ => Arc::new(V8Host::new()),
-            }
+            let host = match snap {
+                Some(path) if path.is_file() => V8Host::from_snapshot_file(&path),
+                _ => V8Host::new(),
+            };
+            // BUG-02: give the V8 backend the same cache tier as Node — it
+            // had none, so `'use cache'` silently degraded to per-worker Maps.
+            Arc::new(host.with_cache_handler(Arc::clone(&cache_tier)))
         }
     };
     let pool = match host.tooling_pool(PoolConfig::default()) {
