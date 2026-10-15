@@ -20,7 +20,7 @@ use rolldown_common::{
 };
 use rolldown::{
     Bundler as RolldownCore, BundlerBuilder, BundlerOptions, InputItem, IsExternal, OutputFormat,
-    Platform, RawMinifyOptions, SourceMapType, TsConfig,
+    Platform, RawMinifyOptions, ResolveOptions, SourceMapType, TsConfig,
 };
 use rolldown_common::{ModuleType, Output};
 use rolldown_plugin::{
@@ -141,10 +141,19 @@ impl RolldownBundler {
             }
         });
 
+        // BUG-SOLID: explicit resolve conditions, when the caller set them.
+        // These are tried ahead of the platform defaults; the config bundle
+        // uses worker-first so it agrees with the V8 loader.
+        let resolve = options.resolve_conditions.as_ref().map(|conds| ResolveOptions {
+            condition_names: Some(conds.clone()),
+            ..Default::default()
+        });
+
         BundlerOptions {
             input: Some(input),
             cwd: Some(self.root.clone()),
             platform: Some(platform),
+            resolve,
             format: Some(OutputFormat::Esm),
             transform,
             // `dir` = output directory; Rolldown's `write()` persists files there.
@@ -790,5 +799,51 @@ impl Plugin for OxidePassesPlugin {
                 None => Ok(None),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod bug_solid_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn opts_with(conds: Option<Vec<String>>) -> BundleOptions {
+        BundleOptions {
+            env: BundleEnv::Client,
+            entries: std::collections::BTreeMap::new(),
+            out_dir: PathBuf::from("/tmp/oxide-test-out"),
+            resolve_conditions: conds,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn resolve_conditions_reach_rolldown_options() {
+        // BUG-SOLID: the config bundle's worker-first conditions must actually
+        // land on `BundlerOptions.resolve.condition_names`, or `@solidjs/web`
+        // resolves to its client build (whose `ssr()` returns undefined).
+        let b = RolldownBundler::new("/tmp");
+        let want = vec![
+            "worker".to_string(),
+            "browser".to_string(),
+            "import".to_string(),
+            "module".to_string(),
+            "default".to_string(),
+        ];
+        let ro = b.build_options(&opts_with(Some(want.clone())));
+        let got = ro
+            .resolve
+            .and_then(|r| r.condition_names)
+            .expect("resolve.condition_names set");
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn no_resolve_conditions_leaves_defaults() {
+        // A bundle that does not set conditions keeps rolldown's platform
+        // defaults (the pre-BUG-SOLID behavior for every non-config bundle).
+        let b = RolldownBundler::new("/tmp");
+        let ro = b.build_options(&opts_with(None));
+        assert!(ro.resolve.is_none(), "no explicit resolve without conditions");
     }
 }
