@@ -35,6 +35,20 @@ if [ ! -x "$CLI" ]; then
     exit 1
 fi
 
+# ── sub-command dispatcher (§21 harnesses) ───────────────────────────────
+# `run.sh` with no argument runs the whole table. The named subcommands run
+# one harness each and are what CI's regression gate invokes per metric.
+case "${1:-}" in
+    bench:hmr)    exec "$ROOT/benchmarks/hmr.sh" "${@:2}" ;;
+    bench:cache)  exec "$ROOT/benchmarks/cache_bench.sh" "${@:2}" ;;
+    bench:cold)   exec "$ROOT/benchmarks/coldstart.sh" "${@:2}" ;;
+    ""|bench)     : ;;   # fall through to the full table
+    -h|--help)
+        echo "usage: run.sh [bench:hmr|bench:cache|bench:cold]"
+        exit 0 ;;
+    *) echo "unknown subcommand: $1" >&2; exit 2 ;;
+esac
+
 FIXTURES=(smoke-app-react smoke-app-vue smoke-app-svelte smoke-app-solid)
 
 # ── helpers ──────────────────────────────────────────────────────────────
