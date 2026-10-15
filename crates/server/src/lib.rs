@@ -938,6 +938,42 @@ pub struct Pipeline {
     /// Like `image_endpoint`, this is a trait seam: the pipeline does not
     /// depend on the runtime that actually executes a user function.
     pub server_fns: Option<Arc<dyn ServerFnDispatcher>>,
+    /// Optional action dispatcher (§9.3). When `Some`, a form POST to an
+    /// action URL routes through it. Like `server_fns`, this is a trait seam.
+    pub actions: Option<Arc<dyn ActionDispatcher>>,
+}
+
+/// §9.3: the seam between the HTTP pipeline and whichever runtime runs a
+/// user's form action. Mirrors `ServerFnDispatcher`: the pipeline owns the
+/// request parsing, the CSRF check, and the response envelope; the CLI wires
+/// a dispatcher backed by the render pool.
+#[async_trait::async_trait]
+pub trait ActionDispatcher: Send + Sync {
+    /// Run the named action from `module_path` with the form body. `Ok`
+    /// carries the action's result (status, location, data, cookies,
+    /// headers, revalidations); `Err` is a coded transport/runner failure.
+    async fn dispatch(
+        &self,
+        module_path: &str,
+        action: &str,
+        form_json: &str,
+        params: &serde_json::Map<String, serde_json::Value>,
+        url: &str,
+        method: &str,
+        headers: &[(String, String)],
+    ) -> std::result::Result<ActionRunResult, DispatchError>;
+}
+
+/// The result of an action run, in the shape the pipeline builds a response
+/// from. Field names match the worker's `action:run` reply.
+#[derive(Debug, Clone, Default)]
+pub struct ActionRunResult {
+    pub status: u16,
+    pub location: Option<String>,
+    pub data: serde_json::Value,
+    pub set_cookies: Vec<String>,
+    pub headers: Vec<(String, String)>,
+    pub revalidate: Vec<(String, String)>,
 }
 
 /// §9.4: the seam between the HTTP pipeline and whichever runtime executes
@@ -1089,6 +1125,7 @@ impl Default for Pipeline {
             page_renderer: None,
             image_endpoint: None,
             server_fns: None,
+            actions: None,
         }
     }
 }
@@ -1360,7 +1397,7 @@ fn parse_image_query(query: &str) -> std::result::Result<ImageQuery, String> {
     })
 }
 
-fn percent_decode(s: &str) -> String {
+pub fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -1650,6 +1687,83 @@ async fn run_server_fn(
         ),
     }
 }
+
+/// §9.3: run a form action through the dispatcher and build the response.
+/// A not-found action is a 404, a transport failure a 500; a validated
+/// failure (422) and the action's own status pass through. Cookies and
+/// headers the action set ride the response; revalidations are applied to
+/// nothing here (the pipeline has no cache handle) — they are surfaced on
+/// the response as a header the cache layer can read.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_action(
+    dispatcher: Option<&dyn ActionDispatcher>,
+    module_path: &str,
+    route: &str,
+    action: &str,
+    form_json: &str,
+    params: &serde_json::Map<String, serde_json::Value>,
+    url: &str,
+    method: &str,
+    headers: &[(String, String)],
+) -> OxideResponse {
+    let Some(dispatcher) = dispatcher else {
+        return OxideResponse::json(
+            500,
+            serde_json::json!({"error": {"code": "ACT-NO-DISPATCHER", "message": "no action dispatcher configured"}}),
+        );
+    };
+    match dispatcher
+        .dispatch(module_path, action, form_json, params, url, method, headers)
+        .await
+    {
+        Ok(out) => {
+            let mut resp = if out.status == 200 {
+                OxideResponse::json(200, out.data.clone())
+            } else {
+                let mut r = OxideResponse::new(out.status, out.data.to_string())
+                    .with_header("content-type", "application/json");
+                if let Some(loc) = out.location.clone() {
+                    r = r.with_header("location", loc);
+                }
+                r
+            };
+            for c in &out.set_cookies {
+                resp = resp.with_header("set-cookie", c.clone());
+            }
+            for (k, v) in &out.headers {
+                resp = resp.with_header(k, v.clone());
+            }
+            // §11.3: tag/path invalidations the action requested. The CLI
+            // dispatch reads this header and applies it to the L0/L1 cache.
+            if !out.revalidate.is_empty() {
+                let encoded: Vec<String> = out
+                    .revalidate
+                    .iter()
+                    .map(|(k, v)| format!("{k}:{v}"))
+                    .collect();
+                resp = resp.with_header("x-oxide-revalidate", encoded.join(","));
+            }
+            resp
+        }
+        Err(e) => {
+            // The dispatcher already mapped the worker's error code to an
+            // HTTP status; honour it rather than re-deriving from the code
+            // string (the CLI rewrites `JSH-ACTION*` to `ACT*`, so a string
+            // compare here would always miss and fall through to 500).
+            let status = e.status;
+            OxideResponse::json(
+                status,
+                serde_json::json!({"error": {
+                    "code": e.code,
+                    "message": e.message,
+                    "route": route,
+                    "action": action,
+                }}),
+            )
+        }
+    }
+}
+
 
 /// Result of the native (no-JS) prefix of the pipeline ([`Pipeline::native_prefix`]).
 enum NativePrefix {
