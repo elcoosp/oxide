@@ -217,8 +217,9 @@ pub fn sign_image_url(url: &str, secret: &str) -> String {
     let mut h = Hasher::new();
     h.update(url.as_bytes());
     h.update(secret.as_bytes());
-    let hex = h.finalize().to_hex().to_string();
-    let sig = &hex[..16];
+    // SEC-08: the full 64-hex digest. The old 16-hex (64-bit) prefix was
+    // forgeable by birthday search; 256 bits is not.
+    let sig = h.finalize().to_hex().to_string();
     if url.contains('?') {
         format!("{url}&s={sig}")
     } else {
@@ -226,17 +227,26 @@ pub fn sign_image_url(url: &str, secret: &str) -> String {
     }
 }
 
-/// §16.1: verify the signature `sign_image_url` produced. Constant-time-ish
-/// comparison is not required here — the signature is a fixed-length hex
-/// prefix of a blake3 hash, and timing leaks on a public image proxy do not
-/// reveal the secret (it never appears in a response). A byte-wise compare
-/// is enough.
+/// §16.1 / SEC-08: verify the signature `sign_image_url` produced.
+/// Constant-time compare (see [`constant_time_eq_hex`]).
 pub fn verify_image_signature(url: &str, secret: &str, sig: &str) -> bool {
     let mut h = Hasher::new();
     h.update(url.as_bytes());
     h.update(secret.as_bytes());
-    let expected = &h.finalize().to_hex().to_string()[..16];
-    sig.len() == expected.len() && sig.as_bytes() == expected.as_bytes()
+    let expected = h.finalize().to_hex().to_string();
+    constant_time_eq_hex(&expected, sig)
+}
+
+/// SEC-08: constant-time hex-string compare. Length is allowed to leak (it
+/// is public); the bytes are compared without an early exit.
+pub fn constant_time_eq_hex(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.bytes()
+        .zip(b.bytes())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
 }
 
 /// §16.1: an `/_oxide/image` request parsed from its query string. Every
