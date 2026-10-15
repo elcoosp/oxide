@@ -13,6 +13,7 @@
 //! `.svelte` module without a precompiled entry.
 
 use anyhow::Context;
+use crate::precompile_cache::{PrecompileCache, PrecompileKey};
 use oxide_jshost::{CallInput, EntryRef, Pool};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -154,6 +155,55 @@ async fn compile_svelte(pool: &Arc<dyn Pool>, path: &Path, source: &str, generat
         .ok_or_else(|| anyhow::anyhow!("svelte-compile returned no `js` field"))
 }
 
+/// A cache key for one file. `None` framework falls back to the file extension.
+fn cache_key_for(
+    path: &Path,
+    source: &str,
+    framework: &str,
+    generate: &str,
+    tool_version: &str,
+) -> PrecompileKey {
+    // Include the path in the source digest so two identical files in different
+    // directories do not share an entry — the compiler output can embed the
+    // filename (Vue scope ids, Svelte css hashing), so path is an input.
+    let mut h = blake3::Hasher::new();
+    h.update(path.to_string_lossy().as_bytes());
+    h.update(&[0]);
+    h.update(source.as_bytes());
+    PrecompileKey {
+        source_hash: h.finalize().to_hex().to_string(),
+        framework: framework.to_string(),
+        generate: generate.to_string(),
+        tool_version: tool_version.to_string(),
+    }
+}
+
+/// Run `compile`, consulting `cache` first. On a hit the compiler is skipped
+/// entirely; on a miss the result is stored. A cache error is logged and the
+/// freshly compiled value is returned.
+async fn cached_compile<F, Fut>(
+    cache: Option<&PrecompileCache>,
+    key: PrecompileKey,
+    compile: F,
+) -> anyhow::Result<String>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<String>>,
+{
+    if let Some(c) = cache {
+        if let Some(hit) = c.get(&key) {
+            return Ok(hit);
+        }
+    }
+    let js = compile().await?;
+    if let Some(c) = cache {
+        if let Err(e) = c.put(&key, &js) {
+            eprintln!("warn: precompile cache store failed: {}", e.0.message);
+        }
+    }
+    Ok(js)
+}
+
 /// Walk the entry set and precompile every reachable `.vue` / `.svelte` file.
 /// Returns a `path → JS` map ready for `BundleOptions::precompiled`.
 pub async fn precompile_entries(
@@ -161,6 +211,8 @@ pub async fn precompile_entries(
     entries: &BTreeMap<String, PathBuf>,
     svelte_generate: &str,
     framework: Option<&str>,
+    cache: Option<&PrecompileCache>,
+    tool_version: &str,
 ) -> BTreeMap<PathBuf, String> {
     let Some(pool) = pool else {
         return BTreeMap::new();
@@ -191,7 +243,8 @@ pub async fn precompile_entries(
         // project declares the Solid adapter.
         if matches!(ext, "tsx" | "jsx") && framework == Some("solid") {
             let ssr = svelte_generate == "ssr";
-            match compile_solid(pool, &path, &source, ssr).await {
+            let key = cache_key_for(&path, &source, "solid", svelte_generate, tool_version);
+            match cached_compile(cache, key, || compile_solid(pool, &path, &source, ssr)).await {
                 Ok(js) => {
                     out.insert(path, js);
                 }
@@ -202,26 +255,35 @@ pub async fn precompile_entries(
             continue;
         }
         match ext {
-            "vue" => match compile_vue(pool, &path, &source).await {
-                Ok(js) => {
-                    // Compiled JS may itself import other .vue files (rare but
-                    // possible via `defineAsyncComponent`); the scan above
-                    // already covered the pre-compile source, which is where
-                    // those imports live in practice.
-                    out.insert(path, js);
+            "vue" => {
+                let key = cache_key_for(&path, &source, "vue", svelte_generate, tool_version);
+                match cached_compile(cache, key, || compile_vue(pool, &path, &source)).await {
+                    Ok(js) => {
+                        // Compiled JS may itself import other .vue files (rare
+                        // but possible via `defineAsyncComponent`); the scan
+                        // above already covered the pre-compile source.
+                        out.insert(path, js);
+                    }
+                    Err(e) => {
+                        eprintln!("warn: vue precompile failed for {}: {e}", path.display());
+                    }
                 }
-                Err(e) => {
-                    eprintln!("warn: vue precompile failed for {}: {e}", path.display());
+            }
+            "svelte" => {
+                let key = cache_key_for(&path, &source, "svelte", svelte_generate, tool_version);
+                match cached_compile(cache, key, || {
+                    compile_svelte(pool, &path, &source, svelte_generate)
+                })
+                .await
+                {
+                    Ok(js) => {
+                        out.insert(path, js);
+                    }
+                    Err(e) => {
+                        eprintln!("warn: svelte precompile failed for {}: {e}", path.display());
+                    }
                 }
-            },
-            "svelte" => match compile_svelte(pool, &path, &source, svelte_generate).await {
-                Ok(js) => {
-                    out.insert(path, js);
-                }
-                Err(e) => {
-                    eprintln!("warn: svelte precompile failed for {}: {e}", path.display());
-                }
-            },
+            }
             _ => { /* JS/TS/TSX handled by the bundler's Oxc lowering */ }
         }
     }
