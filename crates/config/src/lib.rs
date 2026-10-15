@@ -309,6 +309,23 @@ impl Default for ImagesConfig {
 pub struct FontsConfig {
     pub providers: Vec<String>,
     pub subset: Vec<String>,
+    /// §16.2: font families to fetch/subset/self-host at build time.
+    pub families: Vec<FontFamilyConfig>,
+}
+
+/// One font family to bundle at build (§16.2): a family name, the weights and
+/// styles to emit, and where the face files come from. Local paths are the
+/// supported source today; a provider name reserves the fetch path.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FontFamilyConfig {
+    pub family: String,
+    /// `"local"` or a provider name (google, …). Local copies files verbatim.
+    pub provider: String,
+    pub weights: Vec<u32>,
+    pub styles: Vec<String>,
+    /// Filesystem paths to the face files, relative to the project root.
+    pub local_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
