@@ -20,6 +20,7 @@
 
 pub mod ppr;
 
+use base64::Engine as _;
 use bytes::Bytes;
 use futures::channel::mpsc;
 use futures::StreamExt;
@@ -330,6 +331,72 @@ pub fn island_element(directive: &IslandDirective, ssr_html: &str) -> String {
         p = escape_attr(&directive.props_b64),
         ssr = ssr_html,
     )
+}
+
+/// `<Script>` placeholder emission (spec §16.6).
+///
+/// The server renders an inert `<script data-ox-script …>` tag that carries
+/// the loading intent. The client scheduler in
+/// `packages/oxide/src/client/scripts.ts` scans `script[data-ox-script]` and
+/// injects the *real* `<script>` element per strategy:
+///
+/// - `defer` (default), `idle`, `worker`, `afterInteractive`, `lazy`.
+///
+/// The placeholder is inert and CSP-safe:
+/// - It has **no** `src` attribute (a `src` script's URL goes in `data-ox-src`);
+///   appending `<script src>` here would defeat the deferred strategy.
+/// - It has **no** text content (an inline body is base64-encoded into
+///   `data-ox-inline`).
+/// - It carries the page's CSP `nonce`, so a `strict-dynamic` policy admits it.
+///   The empty body means nothing runs; the client injects the real code.
+///
+/// Exactly one of `src` / `content` must be present. A `<Script>` with
+/// neither has nothing to load; a `<Script>` with both is ambiguous. Both are
+/// rejected with `RND-SCRIPT` — fail loudly rather than silently drop.
+///
+/// Attribute order is deterministic so golden tests and diff-based CI are
+/// stable: marker, strategy, src|inline, module flag, user attrs (sorted by
+/// `BTreeMap`), nonce.
+pub fn script_placeholder(
+    strategy: &str,
+    src: Option<&str>,
+    content: Option<&str>,
+    module: bool,
+    attrs: &BTreeMap<String, String>,
+    nonce: &str,
+) -> Result<String> {
+    match (src, content) {
+        (None, None) => {
+            return Err(err(
+                "RND-SCRIPT",
+                "<Script> requires either a `src` or inline `content`",
+            ));
+        }
+        (Some(_), Some(_)) => {
+            return Err(err(
+                "RND-SCRIPT",
+                "<Script> cannot have both `src` and inline `content`",
+            ));
+        }
+        _ => {}
+    }
+    let mut out = String::from("<script data-ox-script data-ox-script-placeholder");
+    out.push_str(&format!(" data-ox-strategy=\"{}\"", escape_attr(strategy)));
+    if let Some(s) = src {
+        out.push_str(&format!(" data-ox-src=\"{}\"", escape_attr(s)));
+    } else if let Some(c) = content {
+        let b64 = base64::engine::general_purpose::STANDARD.encode(c.as_bytes());
+        out.push_str(&format!(" data-ox-inline=\"{}\"", b64));
+    }
+    if module {
+        out.push_str(" data-ox-module");
+    }
+    for (k, v) in attrs {
+        out.push_str(&format!(" {k}=\"{}\"", escape_attr(v)));
+    }
+    out.push_str(&format!(" nonce=\"{}\"", escape_attr(nonce)));
+    out.push_str("></script>");
+    Ok(out)
 }
 
 /// Hydration bootstrap: `<script type='application/oxide-data' nonce>` payload +
