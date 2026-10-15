@@ -3605,3 +3605,55 @@ green; the server test now asserts the first `/api` call is 200 and the second
 (with `max: 1`) is 429 with `Retry-After`.
 
 Commits: `c655a61` `7919ff9` `83ff797` `0989fb4` `333e23c`.
+
+## SEC-03 — SSRF validation survives DNS + redirects
+
+The doc comment claimed "SSRF is re-checked after the fetch: … after
+redirects and DNS resolution". The code was a plain hyper GET with default
+redirect-following and **zero** re-checks: `http://evil.example` → DNS to
+127.0.0.1, or a 302 to `http://169.254.169.254/`, both passed.
+
+Fixed: `fetch_remote_checked` (replacing `fetch_bytes` for the image path):
+1. Resolves the host and validates **every** returned address against the
+   SSRF block ranges (`first_blocked_addr`, extracted pure for testing).
+2. Connects to a **validated** address by IP (carrying the real `Host`
+   header), so DNS cannot rebind to a blocked address between check and
+   connect.
+3. Follows up to 5 redirects, re-validating the host pattern + DNS + SSRF
+   ranges at every hop.
+4. The caller (`fetch_remote_image`) passes the endpoint's patterns + allow
+   list; the doc comment now describes what the code actually does.
+
+The same helper will be the body of PERF-05's `fetch` op — noted so the two
+do not drift.
+
+Verified: `cargo test -p oxide-server` (43+21+64) green, including a new unit
+test proving a host resolving to any blocked address is rejected.
+
+Commits: (below).
+
+## SEC-03 — SSRF validation survives DNS + redirects
+
+The doc comment claimed "SSRF is re-checked after the fetch: … after
+redirects and DNS resolution". The code was a plain hyper GET with default
+redirect-following and **zero** re-checks: `http://evil.example` → DNS to
+127.0.0.1, or a 302 to `http://169.254.169.254/`, both passed.
+
+Fixed: `fetch_remote_checked` (replacing `fetch_bytes` for the image path):
+1. Resolves the host and validates **every** returned address against the
+   SSRF block ranges (`first_blocked_addr`, extracted pure for testing).
+2. Connects to a **validated** address by IP (carrying the real `Host`
+   header), so DNS cannot rebind to a blocked address between check and
+   connect.
+3. Follows up to 5 redirects, re-validating the host pattern + DNS + SSRF
+   ranges at every hop.
+4. The caller (`fetch_remote_image`) passes the endpoint's patterns + allow
+   list; the doc comment now describes what the code actually does.
+
+The same helper will be the body of PERF-05's `fetch` op — noted so the two
+do not drift.
+
+Verified: `cargo test -p oxide-server` (43+21+64) green, including a new unit
+test proving a host resolving to any blocked address is rejected.
+
+Commits: (below).
