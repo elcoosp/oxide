@@ -1,385 +1,156 @@
-# Oxide session handoff — framework adapter read path complete; bundler transform gap open
+# Oxide session handoff — §9.3 actions, §11 L0 cache, §5.1 warm build, §16.2 fonts, §16.6 sessions
 
-**Date written:** 2026-10-13
+**Date written:** 2026-10-15
 **Repo:** `oxide` (meta-framework, spec v0.1)
-**Working tree:** clean at handoff time
+**Working tree:** clean. HEAD is `6e7f93e`.
+**Session:** 42 commits since `11fbdfd`; +3651 / −426 across 29 files.
 
-The framework-adapter **read path** (dev / serve / render / build)
-is functionally complete and covered end-to-end. The **serverless
-deploy artifacts** are textually correct but not yet runtime-runnable:
-the bundler emits raw TypeScript + JSX into the SSR chunks instead of
-compiling them. That is the next slice and it is scoped below.
+Everything below was verified against a real build, a real HTTP response, or a
+real worker call — not just `cargo check`. That discipline is what found every
+bug this session (see "The recurring lesson").
 
 ---
 
-## 1. What this session accomplished
+## 1. What this session landed (all committed, all green)
 
-### The big milestone — framework-adapter read path closed
-
-Every HTML-producing command now dispatches through the project's
-`oxide.config.{ts,mjs,js}` framework adapter:
-
-| Command | Behavior | Status |
+| Area | Spec | What shipped |
 | --- | --- | --- |
-| `oxide config` | Loads `.ts` config through the worker, emits descriptor JSON | ✅ |
-| `oxide render <route>` | Runs loader, dispatches through adapter, prints HTML | ✅ |
-| `oxide render <route> --stream` | Same, but consumes the stream chunk-by-chunk | ✅ |
-| `oxide build` | Bundles, prerenders static routes (incl. runtime `generateParams`), emits per-target artifacts | ✅ |
-| `oxide dev` | HTTP dev server, chunked streaming, HMR invalidation on file change | ✅ |
-| `oxide start` | Production server, chunked streaming | ✅ |
+| Warm build | §5.1 | `build_cache.rs` — a blake3 project fingerprint; an unchanged `oxide build` **skips entirely** (~3.3 s → ~90 ms; target ≤ 500 ms). `OXIDE_FORCE_BUILD=1` bypasses. |
+| Precompile cache | §5.4 / §6.3 | `precompile_cache.rs` — a Tier-B CAS cache keyed by `blake3(path‖source)‖framework‖mode‖compiler-version`. An unchanged SFC is not recompiled. |
+| L0 response cache | §11.1 | `l0_cache.rs` — a response cache for `static`/`isr` routes, with **CSP-nonce substitution** (bodies stored with a sentinel, the live nonce swapped in on serve) and `x-oxide-cache: L0-hit\|L0-miss\|bypass`. |
+| Cookies + sessions | §9.2 / §16.6 | `session.rs` — ChaCha20-Poly1305 encrypted, rotatable cookies (`ring`). Worker builds a real `CookieStore`; `LoaderOutput` carries `set_cookies`/`headers`; the CLI applies them to the response. |
+| Form actions | §9.3 | End-to-end: worker `action:run` op, `ActionHost`, `ActionDispatcher` seam, CLI detection of `POST ?/<name>`. `error()`/`redirect()` sentinels, `cookies`, `setHeaders`, `revalidate`, Standard-Schema input validation. |
+| Fonts | §16.2 | `FontsConfig.families` + `emit_fonts` → `dist/fonts/` + `dist/fonts.css` with metric-override fallback faces. Fixed a latent bug: the `@font-face` `format()` hint was hard-coded `woff2`. |
 
-All four framework adapters (`@oxide/react`, `@oxide/vue`, `@oxide/svelte`,
-`@oxide/solid`) are wired with current upstreams (React 19.3, Vue 3.6.0-rc.11,
-Svelte 5.57, Solid 2.0.0-rc.14 + `@solidjs/web`).
+Plus earlier-session carry-overs committed here: §10.1 destructured-request-param
+inference, §14.2 non-callback-dynamic config → V8, §17.1 ODF stack-overflow fixes.
 
-### Streaming (trait → wire → transport → HTTP)
+### Verified end-to-end (the proof, not the log)
 
-- `FrameworkRenderer::render_streaming` (jshost) — default collects;
-  `FrameworkHostRenderer` overrides to forward each worker `CallStream`
-  chunk (no buffering).
-- `PageRenderer::render_streaming` (server) — same default.
-- `AdapterPageRenderer` (cli shim) — forwards through.
-- Worker emits each adapter chunk as its own `call_chunk` frame; raw HTML
-  bytes on the wire (no JSON envelope).
-- `OxideResponse::stream(status, BodyStream)` — new response body
-  variant. `to_hyper_response` handles both branches: streaming uses
-  chunked transfer, collected sets `content-length`. Body error type
-  moved from `Infallible` to `io::Error` so mid-response failures abort
-  the HTTP connection instead of silently truncating.
-- `build_dispatch` calls `renderer.render_streaming()` when a renderer is
-  attached; bridges the `Send`-only `RenderStream` to the `Send + Sync`
-  `BodyStream` via a small mpsc pump helper (`render_stream_to_body_stream`).
-- HTTP E2Es assert the transfer encoding explicitly:
-  - `GET /` → no `Content-Length`, `Transfer-Encoding: chunked`
-  - `GET /_oxide/health` → `Content-Length`, no `Transfer-Encoding`
-
-### Runtime `generateParams` (spec §10.5)
-
-- Worker op `generate-params:run` imports the module, calls the export
-  (function or value), returns a flat string map per entry.
-- `LoaderHost::generate_params` returns the enumerated entries.
-- `cmd_build`'s `Runtime` arm evaluates through the worker instead of
-  printing "requires runtime evaluation (post-MLP)".
-
-### TSX compilation (spec §6.3)
-
-- Worker `register-hooks.mjs` calls `module.register()` on
-  `tsx-loader.mjs` via `node --import` — warning-free replacement for
-  the deprecated `--experimental-loader`.
-- `tsx-loader.mjs` transforms `.tsx` / `.jsx` imports to plain JS via
-  sucrase at import time. **This is why `oxide dev` / `render` / `serve`
-  work**: the worker compiles at module-load time.
-
-### Deploy target fixes (spec §18)
-
-All 10 targets in `oxide_adapters::Target` now emit their characteristic
-files (verified by `crates/adapters/tests/deploy_matrix.rs`):
-
-- Binary / Docker / Node / Cloudflare / Deno / Bun — were already correct.
-- Static — copies prerendered outputs, emits `_headers` / `_redirects`.
-- **Vercel** — handler at `api/handler.mjs`; `vercel.json` uses modern
-  `rewrites` routing every path to `/api/handler`.
-- **Netlify** — handler at `netlify/functions/handler.mjs`; `netlify.toml`
-  declares `[build].functions`.
-- **Lambda** — handler at `handler.mjs`; `template.yaml` (SAM) declares
-  `Runtime: nodejs20.x`, `Handler: handler.handlerWrapper`, `HttpApi`
-  event.
-- `copy_server_bundle` copies the whole `dist/server/` tree (bundle +
-  chunks + manifest) into `<deploy>/server/`, so the handler's relative
-  import resolves at deploy time.
-- `serverless_handler` is parametrized with the import path — Lambda
-  `./server/ssr/index.js`, Vercel `../server/ssr/index.js`, Netlify
-  `../../server/ssr/index.js` — matching the handler file's depth.
-
-### CLI + fixture work
-
-- `defineConfig` helper + `OxideUserConfig` type in `packages/oxide`.
-- `examples/smoke-app` is a workspace member with a real `.ts` config,
-  real `.tsx` pages, a real loader, a runtime `generateParams`, and both
-  static and dynamic routes.
-- `cmd_render` runs the route's `page.server.ts` loader.
-- `cmd_build`'s config load uses `load_config_or_default` so a config
-  the Rust extractor can't fully parse still renders.
-- Minimal config scan (`extract_minimal_framework`) picks up `framework`,
-  `adapter`, and `routes.dir` from dynamic configs (create-oxide shape
-  with `componentFor` callbacks).
-- All `cmd_dev` / `cmd_serve` / `cmd_build` canonicalize `root` at entry
-  (the path-doubling bug bit three times — see `CONVENTIONS.md`).
+    # §11 L0
+    GET /  → x-oxide-cache: L0-miss ; GET / → L0-hit ; GET / → L0-hit
+    # §9.3 actions
+    POST /?/greet  (name=Ada) → 200 {"message":"Hello Ada"}
+                                set-cookie: greeted=Ada; Path=/; HttpOnly
+                                x-oxide-greeted: Ada
+    POST /?/boom              → 400 {"message":"bad input"}
+    POST /?/missing           → 404 ACT-NOT-FOUND
+    # §16.2 fonts
+    fonts: 1 file(s), dist/fonts.css   (size-adjust: 285.80% from real skrifa metrics)
+    # §5.1
+    warm build: 90 ms ("build up to date — skipping")
 
 ---
 
-## 2. Test state (all green at handoff)
+## 2. The recurring lesson (rule 8, again and again)
 
-| Suite | Command | Status |
-| --- | --- | --- |
-| Workspace Rust | `cargo test --workspace` | ✅ 746 tests |
-| TS packages | `pnpm run test:packages` | ✅ 7 packages |
-| Conformance §22 | `cd conformance && node --test test/*.test.ts` | ✅ |
-| jshost framework E2E | `cargo test -p oxide-jshost --test framework_host_e2e -- --ignored` | ✅ 3 |
-| jshost loader E2E | `cargo test -p oxide-jshost --test loader_host_e2e -- --ignored` | ✅ 5 |
-| jshost hmr E2E | `cargo test -p oxide-jshost --test hmr_e2e -- --ignored` | ✅ 2 |
-| adapters deploy matrix | `cargo test -p oxide-adapters` | ✅ 25 + 5 |
-| smoke-app CLI E2Es | `pnpm test:smoke` | ✅ 5 |
-| Full framework-adapter E2E | `pnpm test:framework-adapter` | ✅ |
+Every real bug this session was caught by **running the thing**, never by
+`cargo check`:
 
-The `#[ignore]`d E2Es spawn a Node worker and require `pnpm install`
-(workspace `node_modules`). They're excluded from the default test run
-by design.
+- §6.6 (prior session's slice) was **dead code**: the hook was wired into the
+  in-house `ChunkBundler`, but `oxide build` calls `RolldownBundler`, which
+  ignored it and refused `.css` outright. Only a real build exposed it.
+- §9.3 actions returned `ENOENT` because `start_server_inner_full` never
+  canonicalized its root — invisible until a POST.
+- §11 L0 never cached because the **serve** path used raw `scan_routes` (no
+  AST refinement), so a static route read `render_mode: None`. Only the
+  `x-oxide-cache` header made it visible.
+- §16.2 fonts labelled a `.ttf` as `format('woff2')` — a browser would skip
+  the face. Only reading the emitted CSS caught it.
 
-**Known intermittent flake (fixed):** `ws_decode_close_payload_rules`
-in `crates/server/tests/server_tdd.rs` was non-deterministic — it
-mutated a *masked* payload byte and asserted invalid UTF-8, which only
-held when the random mask key's high bit was clear. Fixed by
-hand-building the frame with mask key `[0,0,0,0]` so the payload byte
-is unambiguously `0xFF`.
+**Do not trust a green compile. Build it, fetch it, read the artifact.**
 
 ---
 
-## 3. Bundler transform gap — CLOSED on 2026-10-13
+## 3. Test state at handoff
 
-> **Resolved.** `bundle_impl` now runs every non-asset module through
-> `oxide_compiler::OxcTransformer` (Oxc parse + TypeScript + JSX +
-> codegen) before it lands in a chunk file. Regression coverage lives
-> in `crates/bundler/tests/bundler_jsx_lowering_tdd.rs`, which shells
-> out to `node --check` on every emitted `.js` chunk for TSX pages
-> (SSR + client) and a TS loader (SSR). See `WORKLOG.md` session 7
-> for the full slice. Remaining follow-ups (Vue / Svelte / Solid
-> compilation, per-build server-fn secret) are tracked in §7.
+| Suite | Result |
+| --- | --- |
+| `cargo check --workspace` | green |
+| oxide-server | 40 + 57 + 21 |
+| oxide-jshost | 39 + 22 |
+| oxide-cli --lib | 90 |
+| oxide-assets | 98 + 11 + 9 |
+| oxide-bundler | 47 across six binaries |
+| Four-fixture CLI gate | PASS |
 
-
-
-### The bug (confirmed by diagnostic)
-
-`crates/bundler/src/lib.rs`'s `bundle_impl` reads source, hashes it,
-scans imports, resolves dependencies, then writes the **raw source**
-into each chunk. It never calls `oxide_compiler::OxcTransformer`. So
-the emitted server chunks are TypeScript + JSX, not valid JavaScript.
-
-Verified with `node --check`:
-
-```
-$ node --check dist/server/routes-index-page-*.js
-SyntaxError: Unexpected token '<'    # JSX not lowered
-
-$ node --check dist/server/routes-blog-\[slug\]-page-*.js
-SyntaxError: Unexpected strict mode reserved word    # `interface Props {`
-```
-
-Every serverless target (Lambda / Vercel / Netlify) emits a deploy
-artifact that fails on first module load. `oxide dev` / `render` /
-`serve` are unaffected — those compile via the worker's sucrase hook
-(`tsx-loader.mjs`) at import time, which operates against source on
-disk, not the emitted chunks.
-
-### What's broken vs what works
-
-| Build path | Compiled to JS? | Deployable? |
-| --- | --- | --- |
-| `oxide render` / `dev` / `serve` (worker) | yes (sucrase at import) | n/a — HTTP |
-| `oxide build` → **serverless** target | **NO** | **no** |
-| `oxide build` → static target | n/a (HTML) | yes |
-| `oxide build` → binary / docker | n/a (Rust binary) | yes |
-
-### Scope of the fix
-
-1. **Recon** the exact site in `bundle_impl` where source becomes a
-   chunk (see below) plus the Oxc `TransformInput` / `TransformOutput`
-   shapes.
-2. **Patch `bundle_impl`** to call `oxide_compiler::OxcTransformer::transform`
-   on every non-asset module before emitting. Use `output.code` in place
-   of the raw source. `oxide-compiler` is already a bundler dep.
-3. **Handle diagnostics** from the transform — push parse errors into
-   the existing `diagnostics` vector.
-4. **Update tests** in `crates/bundler/tests/` to assert `node --check`
-   passes on every emitted server chunk (write a test helper that shells
-   out to `node --check`).
-5. **Follow-up (documented, not blocking):** Vue / Svelte / Solid server
-   compilation via the tooling pool. React via Oxc covers the smoke-app
-   today; the other three need `@vue/compiler-sfc`, `svelte/compiler`,
-   and `babel-preset-solid` in the worker, which is a separate slice.
-
-### Recon commands to run first
-
-```sh
-# Where does the source become a chunk?
-grep -n "chunks.push\|Chunk {\|file_of\|let mut chunks" crates/bundler/src/lib.rs | head -30
-
-# The bundle_impl body:
-python3 - << 'PYEOF'
-import pathlib, re
-src = pathlib.Path('crates/bundler/src/lib.rs').read_text()
-m = re.search(r'fn bundle_impl\([\s\S]*?\n    \}\n', src)
-if m:
-    print(m.group(0)[:5000])
-PYEOF
-
-# Oxc transformer signature:
-grep -n -A 20 "impl Transformer for OxcTransformer" crates/compiler/src/oxc_backend.rs | head -30
-grep -n -A 12 "pub struct TransformInput" crates/compiler/src/lib.rs
-grep -n -A 10 "pub struct TransformOutput" crates/compiler/src/lib.rs
-
-# Env enum (Client / Ssr / Edge):
-grep -n -A 8 "pub enum Env" crates/compiler/src/lib.rs
-
-# BundleEnv mapping:
-grep -n -A 8 "pub enum BundleEnv" crates/bundler/src/lib.rs
-
-# Where the raw source gets written into the chunk:
-grep -n "source.clone\|source.as_bytes\|chunk.*source\|module.content" crates/bundler/src/lib.rs | head -20
-```
+Known flaky: `node_host_recycles_worker_after_request_threshold` under parallel
+worker spawns (passes alone). Test-harness race, not a product bug.
 
 ---
 
-## 4. Conventions that worked this session
+## 4. Conventions in force
 
-1. **Narrow anchors, not large block literals.** A one-line anchor like
-   `match renderer.render(input).await {` matches byte-exactly; a
-   multi-line block with em-dashes and `§` characters does not survive
-   the shell/Python round-trip. When in doubt, print the file's repr
-   before writing the patch.
-
-2. **`set -euo pipefail` at the top of every patch script.** Without it,
-   a failing step prints an error and continues, landing a commit whose
-   message describes work that didn't happen. That happened twice.
-
-3. **Raw strings for line-oriented output.** Rust's `\`-at-end-of-line
-   strips both the newline *and* the leading whitespace of the next
-   line. This bug hit four times: Dockerfile `USER` glued to `COPY`,
-   Netlify TOML keys flattened, SAM YAML resource outdented,
-   serverless handler quotes over-escaped. Use `r#"..."#` for any
-   emitted config or script.
-
-4. **Brace-matching for struct/arm extraction.** When replacing a
-   whole `match` arm or a struct literal, count braces from the opening
-   line to find the exact close. Never use `.*?` regexes with nested
-   braces — they miss on the first `}`.
-
-5. **Recon before patch.** Every slice that skipped this needed a
-   second script to recover. The shapes that hurt: `RouteEntry` field
-   names, `Pipeline` struct literals, `CallStream` variant fields,
-   `OxcTransformer` signature. Print the struct / fn body first.
-
-6. **Commit after each green slice, one coherent unit per commit.**
-   Convention: `feat(scope):` / `fix(scope):` / `test(scope):` /
-   `docs(scope):`. The git log is the project's narrative; keep it
-   honest, including "this commit actually does what the previous
-   message claimed" when you need to correct the record.
-
-7. **Idempotency checks scoped to the function, not the file.** A
-   whole-file `if 'let page_renderer' in src` check returns True when
-   the pattern exists in *another* function. Extract the function body
-   by name and check within it.
+1. **One commit per file.** Conventional style. Fixture files restored with
+   `git checkout --` before `git add`.
+2. **Verify the artifact, not the log** (section 2).
+3. **Anchors for patches must be short and unique** — a one-line anchor
+   matches; a multi-line block with em-dashes/backticks does not survive a
+   shell/Python round-trip. Guards must be more specific than the field name.
+4. **`CARGO_TERM_PROGRESS_WHEN=always`** for a non-TTY.
+5. **Multiple `async move` blocks in one fn do not unify** — compute eagerly,
+   end with one `async move`.
+6. **Rolldown 1.2.13 refuses CSS** — any `.css` handling goes through a plugin
+   `load` hook.
+7. **The CAS (`redb`) is single-open.** Two `oxide` processes on one project
+   (a lingering `start` + a `build`) deadlock the index and a build fails with
+   `Database already open`. Kill stale servers before building.
+8. **Heredocs with backticks** need a quoted delimiter (`<<'EOF'`).
 
 ---
 
-## 5. Environment notes
+## 5. Where to start next (largest gaps first)
 
-- **Machine:** macOS arm64. Disk went from 25 GB free to 166 MB free
-  and back across the session; cleanup scripts (`find target -name
-  '*.dSYM' -delete`, drop test binaries, `cargo clean -p <crate>`)
-  are in the git history if needed again.
-- **Node:** v22.23.2 in PATH (from `~/.local/bin/node`). Node 24 is
-  installed via Homebrew as a keg-only formula at
-  `/opt/homebrew/opt/node@24/bin/node`. The workspace declares
-  `engines.node: ">=24"` and pnpm warns; adding the keg to PATH
-  suppresses the warning. Type stripping (`.ts` → JS) works on 22.18+
-  without a flag; the `tsx-loader.mjs` hook handles `.tsx`.
-- **`--experimental-loader` is deprecated** in Node 22. Use
-  `--import <register-shim.mjs>` with `module.register()`. The shim is
-  `crates/jshost/worker/register-hooks.mjs`.
-- **`cargo test --workspace`** takes ~2-4 minutes on this hardware with
-  a warm target; longer on cold.
+1. **§4.4 app snapshots + wiring `V8Host` into the render path.** This is the
+   §21 cold-start finding (782–2871 ms vs ≤ 50 ms target). `V8Host` is *real*
+   (`deno_core`, worker pool, warm replacement), and `snapshot.rs`
+   (`snapshot_build` / `loader_options`) is written — but the CLI uses
+   `NodeHost` exclusively (`grep V8Host crates/cli` → 0), and `snapshot_build`
+   is never called. This is the largest single slice and needs the render path
+   to run on V8. Multi-session.
+2. **§21 finding 2 — Vue's 951 KB SSR bundle.** Mark Node built-ins + the
+   large framework runtimes external for the SSR env. **Decide the deploy
+   policy first** (does `binary` ship `node_modules`?).
+3. **§9.3 `revalidate` → cache.** Actions now return `x-oxide-revalidate`, and
+   the CLI applies `path` invalidation to L0, but **tag** invalidation and L1
+   (`'use cache'`) are not yet connected.
+4. **§16.2 font subsetting + WOFF2.** The backend copies files verbatim;
+   `write-fonts` is a dep but no subsetter is wired; providers fetch nothing.
+5. **§16.6 web-vitals / `<Script>` / PWA service worker** — all unimplemented.
+6. **The worker loader refuses `.css`** (session-14 loose end) — a page that
+   imports a stylesheet degrades the framework renderer.
+7. **§12 HTTP/3, §15 JS plugin bridge, §19 editor tooling** — untouched.
+
+Sections not touched this session: §4.4 (above), §5 graph engine *node-by-node*
+(the build-level early cutoff shipped, but per-chunk cutoff needs the graph
+driving the bundler), §12 HTTP/3, §15.1 JS plugins, §19.3 editor tooling,
+§22 full assertion set.
 
 ---
 
 ## 6. Commit history (last 20)
 
 ```
-ff4779d feat(adapters): copy server bundle to deploy + target-relative imports
-e36e295 fix(adapters): real § in raw-string configs + deploy_matrix tests
-28062e0 fix(adapters): preserve indentation in Netlify toml + SAM yaml
-4701036 fix(adapters): Dockerfile missing newline before USER
-b7987a1 fix(config): minimal scan picks up adapter + routes.dir
-42ca4a0 test(server): deterministic hand-built frame in ws UTF-8 test
-a80061c docs: reference README for smoke-app + test:smoke shortcut
-091e814 docs(worklog): session 6 — streaming + runtime generateParams
-6ba89b7 feat(cli): cmd_build evaluates runtime generateParams via worker
-7a558b4 feat(jshost): generate-params:run worker op + LoaderHost::generate_params
-61d6c51 test(cli): 'oxide start' E2E — production server + chunked streaming
-e489b82 test(cli): assert chunked transfer for streaming responses
-e4c0e89 feat(cli): build_dispatch streams renderer output to hyper
-42bd5ad feat(cli): build_dispatch streams renderer output to hyper
-ea6fb1b feat(server): OxideResponse streaming body + to_hyper_response
-7255bd3 feat(jshost): worker preserves adapter chunk boundaries on the wire
-01b8fe9 fix(jshost): raw-HTML wire + 'oxide render --stream' exercises it
-f020394 feat(cli): 'oxide render' runs the loader + smoke-app uses loader data
-0a13a9f feat: streaming render trait across the framework adapter stack
-bf7d939 docs(worklog): session 5 — framework adapter read path complete
+6e7f93e docs(worklog): §9.3 form actions on the server
+af9fc1b feat(cli): run form actions through the render pool (§9.3)
+d3bf1a5 feat(server): ActionDispatcher seam + run_action, honour its status (§9.3)
+f18755c chore(jshost): export ActionHost + ActionOutcome (§9.3)
+d139f7e feat(jshost): ActionHost runs a route action over the pool (§9.3)
+c15b645 feat(jshost-worker): an action:run op for form actions (§9.3)
+ff6ba2c docs(worklog): §11 L0 response cache on the request path
+850e53f feat(cli): serve static routes from the L0 cache (§11.1)
+a5aec6c feat(cli): §11 L0 response cache with nonce substitution
+34cd0d7 docs(worklog): session 15 — cookies/sessions, precompile CAS, fonts, warm build
+879eac9 feat(cli): bundle font families at build — dist/fonts + fonts.css (§16.2)
+8cf9644 test(assets): font format hint + fallback-face metric override (§16.2)
+300be26 fix(assets): @font-face format() hint matches the file container (§16.2)
+88c2628 feat(config): FontsConfig carries families for §16.2 bundling
+c2aadac perf(cli): content-addressed cache for the §6.3 precompile pass (§5.4)
+44b13b4 test(cli): LoaderOutput literals carry the new side-effect fields (§9.2)
+10c6f70 feat(cli): apply loader set-cookies + headers to the response (§16.6)
+702fe92 feat(jshost-worker): build the full LoadEvent — cookies, setHeaders, parent (§9.2)
+42b3819 feat(server): LoaderOutput carries set-cookies + headers (§9.2)
+e15b83f feat(server): encrypted, rotatable session cookies (§16.6)
 ```
 
-(`42bd5ad` and `e4c0e89` have the same subject; the second corrects the
-first, whose patch failed to apply but whose message described the
-intended work. The commit body of `e4c0e89` names the correction.)
-
----
-
-## 7. Status at end of session 10 (2026-10-14)
-
-> See `WORKLOG.md` session 10 for the full slice list with per-feature proofs.
-
-### Closed this session
-
-| Item | Commit | Verified by |
-| --- | --- | --- |
-| Islands in a real browser (React `hydrateRoot`) | `59dc9e8` | Playwright 7/7, incl. a click |
-| Client bundle 960 KB → 6.8 KB | `b59f733` | live build |
-| Streaming injector position + crate move | `27ab15e` | `oxide-server` tests |
-| Four framework fixtures | `b92ac0d` | four builds, `tests/fixtures/check.sh` |
-| Rust-native Solid JSX (`solid-jsx-oxc`) | `b92ac0d` | smoke-app-solid renders its page |
-| §10.1 mode inference | `b92ac0d` | `oxide routes` + prerender |
-| CLI-level conformance gate | `a36d22f` | 4 fixtures, 13 s |
-| §16.1 `/_oxide/image` endpoint | `fdff7b3` | live curl |
-| §16.1 remote-source gating | `b9ff957` | unit tests |
-| §16.3 sitemap + robots | `8f3b504` | four fixtures |
-| §9.4 server functions end-to-end | `65acb8f` + `aa8efad` + `43e28fa` | live POST → `Hello Grace…` |
-| §9.3 `'use cache'` directive installed | `75d16f1` | emitted shape in a real build |
-
-### The one rule this session learned
-
-**If a test only needs the built binary, do not put it inside a target
-that links V8.** `oxide-cli`'s test target statically links V8 (~140 MB)
-and relinks on every source change — ~5 min per iteration. Two slices
-were moved out of it: the four-fixture gate to
-`tests/fixtures/check.sh` (5 min → 13 s), the streaming injector to
-`oxide-server` (a crate with no V8 dependency).
-
-Also: `[profile.test] opt-level` now matches `[profile.dev]` (`0`).
-Different opt-levels mean different rlibs, so `cargo test` after
-`cargo check` recompiled the whole dependency tree in silence.
-
-### Genuinely open, ordered by leverage
-
-1. **§9.3 tags + L1 cache on the request path.** The `'use cache'`
-   wrapper is installed but (a) drops a non-literal `cacheTag` argument
-   and (b) caches in-process only. The fix: the compiler emits a tag
-   thunk, the runtime registers resolved tags, the worker
-   `cache_get`/`cache_set` ops (in the `Op` table, unimplemented) bridge
-   to `oxide_cache::CacheHandler`.
-2. **§16.1 remote image fetch.** Validation is done; `serve_request`'s
-   native prefix must become awaitable for the fetch itself.
-3. **§15 plugin host.** `crates/plugin/src/wasm.rs` has a working
-   `WasmPlugin`; wire it to the bundler's transform chain.
-4. **§10.1 inference as a real pass.** Today a marker regex; the spec
-   wants source spans + a diagnostic naming the read.
-5. **§21 benchmark harness.** The four fixtures are the reference apps;
-   `benchmarks/` is a README.
-6. **§4.4 snapshots, §12 HTTP/3, §19 editor tooling, §22 full
-   assertion set.** Larger, spec-named, not started.
-
-## 8. Where to start
-
-Read `WORKLOG.md` (the session log) and `CONVENTIONS.md` (the seven
-rules above, plus the path-canonicalization rule). Then run
-`pnpm test:framework-adapter` — that's the full read-path E2E suite in
-one command. If it's green, the environment is healthy and the next
-slice (§3) is ready to start.
+Working tree clean at handoff.
