@@ -3466,3 +3466,73 @@ Proof: render 12, server 43+21+61, cli 95 — all green.
 - Tests: `csrf_token_mode_matrix` (match/mismatch/missing), `csrf_token_issued_on_get_without_cookie` (issue → no re-issue with cookie → issued pair passes double-submit on cross-origin POST).
 
 Proof: server suites 43+21+63 green; `cargo check -p oxide-cli` clean.
+
+## BUG-SOLID — Solid on V8 rendered the shell but an empty body
+
+Root cause: a **resolve-conditions mismatch**, not a compile inconsistency.
+The two compile paths produced byte-identical page components; the variable
+was *which build of `@solidjs/web` each bundle inlined*:
+
+| bundle | env | conditions | `@solidjs/web` "." → |
+| --- | --- | --- | --- |
+| dist route (`BundleEnv::Ssr`) | Node | `node` | `dist/server.js` (real SSR) |
+| V8 loader (`v8_loader.rs`) | — | `worker`-first | `dist/server.js` |
+| **config bundle** (`emit_config_bundle`) | **Client** | **browser** | **`dist/web.js` (client)** |
+
+`@solidjs/web`'s `dist/web.js` line 1870 is `function ssr(template, ...nodes) {}`
+— an empty stub returning `undefined`; `renderToString` then serializes an
+undefined tree to `""`. Hence "shell renders, body empty, zero exceptions".
+React/Vue/Svelte are immune (their SSR builds resolve fine under `browser`);
+Solid 2.0 is the only framework gating its server renderer behind
+`worker`/`node`.
+
+Fix: `BundleOptions.resolve_conditions: Option<Vec<String>>` →
+rolldown's `ResolveOptions.condition_names`. `emit_config_bundle` now passes
+the **same worker-first list `v8_loader.rs` uses**
+(`worker, browser, import, module, default`), so the config bundle and the V8
+sandbox agree on every package's build. `react-dom/server` still resolves to
+its browser-compatible build (no `require('stream')`), so the original
+browser-env rationale survives and the config bundle stays self-contained.
+
+**Verified end-to-end**: `oxide build --root <solid fixture, backend=v8>` →
+`oxide start` → `GET /` returns
+`<div id="root" data-solid=""><main><h1>Home</h1><p>Hello from Oxide (solid)</p></main></div>`
+— the page marker is present. Previously the body was empty. This closes the
+long-standing "Solid on V8 renders shell-only" item.
+
+Commits: `bbbac05` `4cb5073` `7f7b479` `68b2de3` `b2dcba2`.
+
+## BUG-SOLID — Solid on V8 rendered the shell but an empty body
+
+Root cause: a **resolve-conditions mismatch**, not a compile inconsistency.
+The two compile paths produced byte-identical page components; the variable
+was *which build of `@solidjs/web` each bundle inlined*:
+
+| bundle | env | conditions | `@solidjs/web` "." → |
+| --- | --- | --- | --- |
+| dist route (`BundleEnv::Ssr`) | Node | `node` | `dist/server.js` (real SSR) |
+| V8 loader (`v8_loader.rs`) | — | `worker`-first | `dist/server.js` |
+| **config bundle** (`emit_config_bundle`) | **Client** | **browser** | **`dist/web.js` (client)** |
+
+`@solidjs/web`'s `dist/web.js` line 1870 is `function ssr(template, ...nodes) {}`
+— an empty stub returning `undefined`; `renderToString` then serializes an
+undefined tree to `""`. Hence "shell renders, body empty, zero exceptions".
+React/Vue/Svelte are immune (their SSR builds resolve fine under `browser`);
+Solid 2.0 is the only framework gating its server renderer behind
+`worker`/`node`.
+
+Fix: `BundleOptions.resolve_conditions: Option<Vec<String>>` →
+rolldown's `ResolveOptions.condition_names`. `emit_config_bundle` now passes
+the **same worker-first list `v8_loader.rs` uses**
+(`worker, browser, import, module, default`), so the config bundle and the V8
+sandbox agree on every package's build. `react-dom/server` still resolves to
+its browser-compatible build (no `require('stream')`), so the original
+browser-env rationale survives and the config bundle stays self-contained.
+
+**Verified end-to-end**: `oxide build --root <solid fixture, backend=v8>` →
+`oxide start` → `GET /` returns
+`<div id="root" data-solid=""><main><h1>Home</h1><p>Hello from Oxide (solid)</p></main></div>`
+— the page marker is present. Previously the body was empty. This closes the
+long-standing "Solid on V8 renders shell-only" item.
+
+Commits: `bbbac05` `4cb5073` `7f7b479` `68b2de3` `b2dcba2`.
