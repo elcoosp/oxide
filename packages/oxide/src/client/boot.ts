@@ -9,6 +9,7 @@
 // is behind a runtime guard; the module has no top-level side effects.
 
 import { hydrateIslands, type IslandsOptions } from './islands.ts'
+import { loadScripts } from './scripts.ts'
 import type { FrameworkAdapter } from '../types.ts'
 
 interface BootState {
@@ -57,6 +58,8 @@ function ensureInstalled(w: BootWindow): void {
       loadChunk: state.loadChunk,
     }
     hydrateIslands(opts)
+    // §16.6: schedule server-rendered `<Script>` placeholders by strategy.
+    loadScripts({ doc: doc as never })
   }
 }
 
