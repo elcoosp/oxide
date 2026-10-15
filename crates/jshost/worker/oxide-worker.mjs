@@ -692,6 +692,181 @@ async function dispatchLoaderRun(id, input) {
   }
 }
 
+// --- Action op (spec §9.3) ----------------------------------------------
+//
+//   action:run   { module_path, action, form_json, params, url, method, headers }
+//              → { ok, status, location, data, setCookies, headers, revalidate }
+//
+// Imports the route's `page.server.ts`, calls `actions[action](ctx)`, and
+// returns the result. `error()`/`redirect()` sentinels become status +
+// location (same as a load). `revalidate` calls made through the action's
+// `ctx.revalidate` are collected and returned so the pipeline can invalidate.
+async function dispatchActionRun(id, input) {
+  const { module_path, action, form_json, params, url, method, headers } =
+    input.payload ?? {};
+  if (typeof module_path !== "string" || module_path.length === 0) {
+    callErr(id, "JSH-ACTION", "action:run requires a `module_path` string");
+    return;
+  }
+  if (typeof action !== "string" || action.length === 0) {
+    callErr(id, "JSH-ACTION", "action:run requires an `action` name");
+    return;
+  }
+  try {
+    const compiled = await compileServerModule(module_path);
+    const mod = await import(versioned(compiled.url));
+    const handlers = mod.actions;
+    if (!handlers || typeof handlers !== "object") {
+      callErr(id, "JSH-ACTION", `module at ${module_path} has no \`actions\` export`);
+      return;
+    }
+    const def = handlers[action];
+    if (!def) {
+      // Distinct from "ran and threw": the pipeline maps this to a 404.
+      callErr(id, "JSH-ACTION-NOT-FOUND", `no action named \`${action}\``);
+      return;
+    }
+    // `defineAction` returns `{ $$oxide: 'action', input, run }`; a plain
+    // async function is also accepted.
+    const run = typeof def === "function" ? def : def.run;
+    if (typeof run !== "function") {
+      callErr(id, "JSH-ACTION", `action \`${action}\` has no run function`);
+      return;
+    }
+
+    // Rebuild a FormData from the JSON the CLI sent (the pipeline parses the
+    // request body before calling in).
+    let form;
+    try {
+      const entries = form_json ? JSON.parse(form_json) : [];
+      form = new FormData();
+      for (const [k, v] of entries) form.append(k, v);
+    } catch (e) {
+      callErr(id, "JSH-ACTION", `form body is not valid: ${e?.message ?? e}`);
+      return;
+    }
+
+    // `revalidate` collectors (§11.3): recorded in order, returned to Rust.
+    const revalidateLog = [];
+    const revalidate = {
+      tag: (t) => revalidateLog.push({ type: "tag", tag: String(t) }),
+      path: (p) => revalidateLog.push({ type: "path", path: String(p) }),
+    };
+
+    // Cookie store over the request's cookie header + collected Set-Cookie.
+    const inbound = (Array.isArray(headers) ? headers : []).find(
+      (h) => Array.isArray(h) && String(h[0]).toLowerCase() === "cookie",
+    );
+    const jar = new Map();
+    if (inbound) {
+      for (const part of String(inbound[1]).split(";")) {
+        const eq = part.indexOf("=");
+        if (eq > 0) {
+          const k = part.slice(0, eq).trim();
+          if (k) jar.set(k, decodeURIComponentSafe(part.slice(eq + 1).trim()));
+        }
+      }
+    }
+    const pendingCookies = new Map();
+    const serializeCookie = (name, value, opts = {}) => {
+      let s = `${name}=${encodeURIComponent(value)}`;
+      if (opts.path) s += `; Path=${opts.path}`;
+      if (opts.domain) s += `; Domain=${opts.domain}`;
+      if (typeof opts.maxAge === "number") s += `; Max-Age=${opts.maxAge}`;
+      if (opts.httpOnly) s += "; HttpOnly";
+      if (opts.secure) s += "; Secure";
+      if (opts.sameSite) {
+        const ss = String(opts.sameSite);
+        s += `; SameSite=${ss[0].toUpperCase()}${ss.slice(1).toLowerCase()}`;
+      }
+      return s;
+    };
+    const cookies = {
+      get: (name) => jar.get(name),
+      set: (name, value, opts) => {
+        jar.set(name, value);
+        pendingCookies.set(name, serializeCookie(name, value, opts));
+      },
+      delete: (name) => {
+        jar.delete(name);
+        pendingCookies.set(name, serializeCookie(name, "", { maxAge: 0, path: "/" }));
+      },
+    };
+    const extraHeaders = [];
+    const setHeaders = (h) => {
+      if (!h || typeof h !== "object") return;
+      for (const [k, v] of Object.entries(h)) extraHeaders.push([String(k), String(v)]);
+    };
+
+    // Input validation via a Standard Schema validator, when attached.
+    let validated;
+    if (def && def.input && typeof def.input["~standard"]?.validate === "function") {
+      const raw = Object.fromEntries(form.entries());
+      const res = await def.input["~standard"].validate(raw);
+      if (res.issues && res.issues.length > 0) {
+        callOk(id, {
+          ok: true,
+          status: 422,
+          location: null,
+          data: { message: res.issues.map((i) => i.message).join("; ") },
+          setCookies: [...pendingCookies.values()],
+          headers: extraHeaders,
+          revalidate: revalidateLog,
+        });
+        return;
+      }
+      validated = res.value;
+    } else {
+      validated = Object.fromEntries(form.entries());
+    }
+
+    const event = {
+      params: params ?? {},
+      request: {
+        method: method ?? "POST",
+        url: url ?? "/",
+        headers: Array.isArray(headers) ? headers : [],
+      },
+      locals: {},
+      cookies,
+      setHeaders,
+      input: validated,
+      form,
+      revalidate,
+    };
+
+    let result;
+    try {
+      result = await run(event);
+    } catch (err) {
+      if (err && typeof err.status === "number") {
+        callOk(id, {
+          ok: true,
+          status: err.status,
+          location: err.location ?? null,
+          data: { message: err.message ?? "" },
+          setCookies: [...pendingCookies.values()],
+          headers: extraHeaders,
+          revalidate: revalidateLog,
+        });
+        return;
+      }
+      throw err;
+    }
+    callOk(id, {
+      ok: true,
+      status: 200,
+      location: null,
+      data: result ?? {},
+      setCookies: [...pendingCookies.values()],
+      headers: extraHeaders,
+      revalidate: revalidateLog,
+    });
+  } catch (e) {
+    callErr(id, "JSH-ACTION", `action:run failed: ${e?.message ?? e}`);
+  }
+}
+
 // --- HMR op (spec §13.3) --------------------------------------------------
 //
 //   framework:invalidate   {}   → { generation: N }
@@ -879,6 +1054,7 @@ async function handleCall(msg) {
   if (entry.kind === "framework:invalidate") { await dispatchFrameworkInvalidate(id, input); return; }
   if (entry.kind === "generate-params:run") { await dispatchGenerateParamsRun(id, input); return; }
   if (entry.kind === "server-fn:run") { await dispatchServerFn(id, input); return; }
+  if (entry.kind === "action:run") { await dispatchActionRun(id, input); return; }
   if (entry.kind === "die") process.exit(1);
   if (entry.kind === "sleep") {
     await new Promise((r) => setTimeout(r, Number(input.payload?.ms ?? 100)));
