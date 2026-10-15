@@ -888,6 +888,13 @@ globalThis.oxide = {
   log: (msg) => Deno.core.ops.op_oxide_log(String(msg)),
   trace: (name) => Deno.core.ops.op_oxide_trace(String(name)),
   serialize: (value) => Deno.core.ops.op_oxide_serialize(JSON.stringify(value)),
+  // Sec.11 / BUG-02: the cache tier the worker's `'use cache'` functions use.
+  // Returns JSON strings (op2 string returns are the portable form).
+  cacheGet: (key) => Deno.core.ops.op_oxide_cache_get(String(key)),
+  cacheSet: (key, status, bodyB64, tagsCsv) =>
+    Deno.core.ops.op_oxide_cache_set(
+      String(key), Number(status) | 0, String(bodyB64), String(tagsCsv)),
+  cacheTag: (tag) => Deno.core.ops.op_oxide_cache_tag(String(tag)),
 };
 
 // Sec.4.2 / Sec.4.4: the real V8 dispatch. `moduleUrl` is a `file://` URL the
@@ -1116,7 +1123,10 @@ struct V8WorkerHandle {
     retiring: AtomicBool,
 }
 
-fn spawn_v8_worker(snapshot: Option<&'static [u8]>) -> Result<Arc<V8WorkerHandle>> {
+fn spawn_v8_worker(
+    snapshot: Option<&'static [u8]>,
+    cache: Option<Arc<dyn oxide_cache::CacheHandler>>,
+) -> Result<Arc<V8WorkerHandle>> {
     let (tx, mut rx) = mpsc::channel::<V8Msg>(64);
     let (init_tx, init_rx) = std::sync::mpsc::channel::<Result<()>>();
     let handle = Arc::new(V8WorkerHandle {
@@ -1141,6 +1151,10 @@ fn spawn_v8_worker(snapshot: Option<&'static [u8]>) -> Result<Arc<V8WorkerHandle
                     return;
                 }
             };
+            // BUG-02: install the cache handler for this thread BEFORE the
+            // runtime evaluates any user module, so `oxide.cacheGet/Set/Tag`
+            // see it. Thread-local because a `JsRuntime` is `!Send`.
+            crate::v8_ops::set_cache_handler(cache);
             let local = tokio::task::LocalSet::new();
             local.block_on(&rt, async move {
                 // The one shared extension: bootstrap js_file + oxide ops.
@@ -1413,11 +1427,16 @@ pub struct V8Host {
     /// init, the bootstrap script, and the module graph's evaluation. Built by
     /// `oxide build` (`snapshot_build_bundle`) and read from disk at start.
     snapshot: Option<std::sync::Arc<Vec<u8>>>,
+    /// §9.3/§11 (BUG-02): the cache tier the worker's `'use cache'` functions
+    /// reach through `oxide.cacheGet/Set/Tag`. `None` means those ops answer
+    /// "no cache" (a miss / a no-op write) — honest, and the pre-BUG-02
+    /// behavior.
+    cache_handler: Option<std::sync::Arc<dyn oxide_cache::CacheHandler>>,
 }
 
 impl Default for V8Host {
     fn default() -> Self {
-        Self { snapshot: None }
+        Self { snapshot: None, cache_handler: None }
     }
 }
 
@@ -1433,7 +1452,19 @@ impl V8Host {
     pub fn with_snapshot(blob: Vec<u8>) -> Self {
         Self {
             snapshot: Some(std::sync::Arc::new(blob)),
+            cache_handler: None,
         }
+    }
+
+    /// §9.3/§11 (BUG-02): attach the cache tier. Mirrors
+    /// `NodeHost::with_cache_handler`; the handler reaches each worker's
+    /// `oxide.cacheGet/Set/Tag` ops through a thread-local installed at spawn.
+    pub fn with_cache_handler(
+        mut self,
+        handler: std::sync::Arc<dyn oxide_cache::CacheHandler>,
+    ) -> Self {
+        self.cache_handler = Some(handler);
+        self
     }
 
     /// Read a snapshot blob from `path` and build a host around it. A missing
@@ -1454,10 +1485,14 @@ impl V8Host {
         })
     }
 
-    fn build_pool(cfg: PoolConfig, snapshot: Option<&'static [u8]>) -> Result<Arc<V8Pool>> {
+    fn build_pool(
+        cfg: PoolConfig,
+        snapshot: Option<&'static [u8]>,
+        cache: Option<std::sync::Arc<dyn oxide_cache::CacheHandler>>,
+    ) -> Result<Arc<V8Pool>> {
         let mut workers = Vec::with_capacity(cfg.size.max(1));
         for _ in 0..cfg.size.max(1) {
-            workers.push(spawn_v8_worker(snapshot)?);
+            workers.push(spawn_v8_worker(snapshot, cache.clone())?);
         }
         Ok(Arc::new(V8Pool {
             cfg,
@@ -1467,16 +1502,19 @@ impl V8Host {
             queue_waits: Mutex::new(VecDeque::new()),
             draining: AtomicBool::new(false),
             snapshot,
+            cache_handler: cache,
         }))
     }
 }
 
 impl JsHost for V8Host {
     fn render_pool(&self, cfg: PoolConfig) -> Result<Arc<dyn Pool>> {
-        Self::build_pool(cfg, self.static_snapshot()).map(|p| p as Arc<dyn Pool>)
+        Self::build_pool(cfg, self.static_snapshot(), self.cache_handler.clone())
+            .map(|p| p as Arc<dyn Pool>)
     }
     fn tooling_pool(&self, cfg: PoolConfig) -> Result<Arc<dyn Pool>> {
-        Self::build_pool(cfg, self.static_snapshot()).map(|p| p as Arc<dyn Pool>)
+        Self::build_pool(cfg, self.static_snapshot(), self.cache_handler.clone())
+            .map(|p| p as Arc<dyn Pool>)
     }
     fn backend_name(&self) -> &'static str {
         "v8"
@@ -1497,6 +1535,8 @@ pub struct V8Pool {
     /// §4.4: the startup snapshot every worker (and each warm replacement)
     /// restores. `None` means each worker evaluates the bootstrap fresh.
     snapshot: Option<&'static [u8]>,
+    /// BUG-02: the cache tier every worker (and each replacement) installs.
+    cache_handler: Option<std::sync::Arc<dyn oxide_cache::CacheHandler>>,
 }
 
 impl V8Pool {
@@ -1521,6 +1561,7 @@ impl V8Pool {
         counters: Arc<PoolCounters>,
         idx: usize,
         snapshot: Option<&'static [u8]>,
+        cache: Option<std::sync::Arc<dyn oxide_cache::CacheHandler>>,
     ) {
         let old = {
             let guard = workers.read().unwrap_or_else(|p| p.into_inner());
@@ -1538,7 +1579,7 @@ impl V8Pool {
         }
 
         // Spawn fresh worker BEFORE signalling the old one (§4.3).
-        let fresh = match spawn_v8_worker(snapshot) {
+        let fresh = match spawn_v8_worker(snapshot, cache) {
             Ok(w) => w,
             Err(_) => {
                 // Could not replace — clear the retire flag so the pool can
@@ -1662,8 +1703,10 @@ impl Pool for V8Pool {
                     let workers = Arc::clone(&self.workers);
                     let counters = Arc::clone(&self.counters);
                     let snapshot = self.snapshot; // Copy (&'static [u8])
+                    let cache = self.cache_handler.clone();
                     tokio::spawn(async move {
-                        V8Pool::spawn_replacement(workers, counters, worker_idx, snapshot).await
+                        V8Pool::spawn_replacement(workers, counters, worker_idx, snapshot, cache)
+                            .await
                     });
                 }
                 Ok(stream)
