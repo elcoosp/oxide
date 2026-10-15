@@ -1175,6 +1175,48 @@ fn emit_fonts(cfg: &oxide_config::OxideConfig, root: &Path, dist: &Path, w: Writ
     Ok(())
 }
 
+/// §4.4: lint each route's server module for top-level side effects that
+/// break V8 snapshots — a `setTimeout`, `setInterval`, `new WebSocket` or
+/// `new EventSource` at module scope holds a live handle at snapshot time.
+/// The spec requires `oxide build` to report these with source locations so
+/// a user can move the work behind a lazy initializer. Advisory: it never
+/// fails the build, because the snapshot fallback (a V8 code cache) is a
+/// valid degradation.
+fn emit_snapshot_lint(
+    cfg: &oxide_config::OxideConfig,
+    root: &Path,
+    tree: &oxide_router::RouteTree,
+    w: Writer<'_>,
+) -> anyhow::Result<()> {
+    let routes_root = root.join(&cfg.routes.dir);
+    let mut count = 0usize;
+    for e in &tree.entries {
+        if !matches!(e.kind, oxide_router::RouteKind::Page) {
+            continue;
+        }
+        let server = routes_root.join(e.file.with_file_name("page.server.ts"));
+        let Ok(source) = std::fs::read_to_string(&server) else {
+            continue;
+        };
+        let rel = server
+            .strip_prefix(root)
+            .unwrap_or(&server)
+            .to_string_lossy()
+            .to_string();
+        for fx in oxide_jshost::lint_top_level_side_effects(&rel, &source) {
+            outln!(w, "warn: snapshot side effect at {}:{} — {}", fx.path, fx.line, fx.message);
+            count += 1;
+        }
+    }
+    if count > 0 {
+        outln!(
+            w,
+            "snapshot: {count} top-level side effect(s) — move them behind a lazy initializer for a clean snapshot"
+        );
+    }
+    Ok(())
+}
+
 fn emit_web_manifest(
     cfg: &oxide_config::OxideConfig,
     dist: &Path,
@@ -1427,6 +1469,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     let cfg = load_config_strict(&rootp, "production")?;
     let tree = refine_render_modes_from_ast(&rootp, &cfg, scan_routes(&rootp, &cfg)?);
     let routes_root = rootp.join(&cfg.routes.dir);
+    // §4.4: report top-level side effects that would break a V8 snapshot.
+    emit_snapshot_lint(&cfg, &rootp, &tree, w)?;
 
     // §7 / §9.1: build the framework stack (renderer + loader). Renderer
     // is used for prerendering static routes; loader is present but not
