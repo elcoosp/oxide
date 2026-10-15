@@ -3447,3 +3447,13 @@ Proof: rebuilt CLI, `oxide build --root examples/smoke-app-react` → envelope k
 - Tests: in-crate `request_ids_are_unique_csprng`; integration `hsts_emitted_only_on_tls` (plain 200 without HSTS, TLS 200 with HSTS) + `nonces_are_unpredictable_across_ids`; 8 test-literal `tls: false` additions.
 
 Proof: `cargo test -p oxide-server` all suites green (41+21+61); `cargo check -p oxide-cli` clean.
+
+## Task SEC-07 — Output escaping: 500 pages, `'`, metrics labels
+
+- 500 pages (3 sites in `crates/cli/src/lib.rs`: prerender loader-error file, live loader 500, render 500): worker error text now via `oxide_render::escape_text` (a `<script>` in the message renders inert). `escape_text`/`escape_attr` promoted from private to `pub`.
+- `escape_attr`: added `'` → `&#39;` (all injected attributes single-quoted).
+- Metrics: new `prom_escape` (`\`, `"`, `\n`) applied to every `route`/`metric` label value in `render()`.
+- Tests: render `escape_attr_covers_single_quote_and_script`; metrics `prom_escape_neutralizes_injection` + `hostile_route_renders_inert` (no raw newline → no fake exposition line).
+- Conformance note: escape-additive only (new escapes for `'`/`\`/`"`/`\n`); existing byte-identity assertions unaffected — full TS suite re-run is in the exit audit.
+
+Proof: render 12, server 43+21+61, cli 95 — all green.
