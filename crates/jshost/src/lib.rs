@@ -1121,6 +1121,11 @@ struct V8WorkerHandle {
     /// Set while this worker is being replaced (§4.3). Dispatch skips retiring
     /// workers so the fresh one takes over immediately.
     retiring: AtomicBool,
+    /// BUG-03: set when a send to this worker's channel fails — the worker
+    /// thread is gone. `choose_worker` treats a dead worker like a retiring
+    /// one, and the failing call spawns a warm replacement, so the pool
+    /// recovers instead of failing every call forever.
+    dead: AtomicBool,
 }
 
 fn spawn_v8_worker(
@@ -1135,6 +1140,7 @@ fn spawn_v8_worker(
         served: AtomicU64::new(0),
         pending: Mutex::new(HashMap::new()),
         retiring: AtomicBool::new(false),
+        dead: AtomicBool::new(false),
     });
     let handle_for_thread = Arc::clone(&handle);
 
@@ -1432,11 +1438,20 @@ pub struct V8Host {
     /// "no cache" (a miss / a no-op write) — honest, and the pre-BUG-02
     /// behavior.
     cache_handler: Option<std::sync::Arc<dyn oxide_cache::CacheHandler>>,
+    /// §4.4 / BUG-03: the leaked `&'static` view of `snapshot`, computed
+    /// **once**. Before this, `static_snapshot()` leaked a fresh copy on every
+    /// call (`render_pool` + `tooling_pool` + each pool rebuild), an unbounded
+    /// leak.
+    leaked: std::sync::OnceLock<Option<&'static [u8]>>,
 }
 
 impl Default for V8Host {
     fn default() -> Self {
-        Self { snapshot: None, cache_handler: None }
+        Self {
+            snapshot: None,
+            cache_handler: None,
+            leaked: std::sync::OnceLock::new(),
+        }
     }
 }
 
@@ -1453,6 +1468,7 @@ impl V8Host {
         Self {
             snapshot: Some(std::sync::Arc::new(blob)),
             cache_handler: None,
+            leaked: std::sync::OnceLock::new(),
         }
     }
 
@@ -1479,9 +1495,15 @@ impl V8Host {
     /// The `&'static` view of the snapshot, if any. Leaks the bytes on first
     /// call; a host is built once per process, so this is bounded.
     fn static_snapshot(&self) -> Option<&'static [u8]> {
-        self.snapshot.as_ref().map(|b| {
-            let leaked: &'static [u8] = Box::leak(b.as_slice().to_vec().into_boxed_slice());
-            leaked
+        // BUG-03: leak ONCE. `OnceLock` makes the `&'static` view stable for
+        // the host's lifetime, so repeated `build_pool` calls (render pool +
+        // tooling pool + every warm replacement) share one allocation.
+        *self.leaked.get_or_init(|| {
+            self.snapshot.as_ref().map(|b| {
+                let leaked: &'static [u8] =
+                    Box::leak(b.as_slice().to_vec().into_boxed_slice());
+                leaked
+            })
         })
     }
 
@@ -1625,7 +1647,9 @@ impl Pool for V8Pool {
             let loads: Vec<u64> = guard
                 .iter()
                 .map(|w| {
-                    if w.retiring.load(Ordering::Acquire) {
+                    // BUG-03: a dead worker is skipped exactly like a retiring
+                    // one (report max load).
+                    if w.retiring.load(Ordering::Acquire) || w.dead.load(Ordering::Acquire) {
                         u64::MAX
                     } else {
                         w.in_flight.load(Ordering::Relaxed)
@@ -1633,6 +1657,15 @@ impl Pool for V8Pool {
                 })
                 .collect();
             let idx = choose_worker(&loads, None);
+            if loads[idx] == u64::MAX {
+                // BUG-03: every worker is retiring or dead; a warm
+                // replacement is in flight. Fail this call honestly rather
+                // than dispatch into a dead channel.
+                return Err(err(
+                    "JSH-POOL",
+                    "no live V8 worker (all retiring/dead); a replacement is in flight",
+                ));
+            }
             (loads, Arc::clone(&guard[idx]), idx)
         };
         let _ = &loads;
@@ -1661,7 +1694,24 @@ impl Pool for V8Pool {
             worker.pending.lock().unwrap().remove(&id);
             worker.in_flight.fetch_sub(1, Ordering::Relaxed);
             self.counters.failed.fetch_add(1, Ordering::Relaxed);
-            return Err(err("JSH-CRASH", format!("worker channel closed: {e}")));
+            // BUG-03: the worker's thread is gone. Mark it dead (so
+            // `choose_worker` skips it) and spawn a warm replacement — a dead
+            // worker left in the set would fail every call forever. CAS so
+            // concurrent failures trigger one replacement.
+            if !worker.dead.swap(true, Ordering::AcqRel) {
+                let workers = Arc::clone(&self.workers);
+                let counters = Arc::clone(&self.counters);
+                let snapshot = self.snapshot;
+                let cache = self.cache_handler.clone();
+                tokio::spawn(async move {
+                    V8Pool::spawn_replacement(workers, counters, worker_idx, snapshot, cache)
+                        .await
+                });
+            }
+            return Err(err(
+                "JSH-CRASH",
+                format!("worker channel closed; replacement spawned: {e}"),
+            ));
         }
 
         let res = tokio::time::timeout(CALL_TIMEOUT, rx).await;
@@ -2548,5 +2598,30 @@ mod tests {
         assert_eq!(percentile(&[7.0], 0.99), 7.0);
         assert_eq!(percentile(&[1.0, 2.0, 3.0, 4.0], 0.5), 2.0);
         assert_eq!(percentile(&[1.0, 2.0, 3.0, 4.0], 0.99), 4.0);
+    }
+}
+
+#[cfg(test)]
+mod bug03_tests {
+    use super::*;
+
+    #[test]
+    fn static_snapshot_leaks_once_and_is_stable() {
+        let host = V8Host::with_snapshot(vec![1, 2, 3, 4]);
+        let a = host.static_snapshot().expect("snapshot present");
+        let b = host.static_snapshot().expect("snapshot present");
+        assert_eq!(
+            a.as_ptr(),
+            b.as_ptr(),
+            "the leaked snapshot must be stable across calls (BUG-03: leak once)"
+        );
+        assert_eq!(a, [1u8, 2, 3, 4].as_slice());
+    }
+
+    #[test]
+    fn snapshot_less_host_returns_none() {
+        let host = V8Host::new();
+        assert!(host.static_snapshot().is_none());
+        assert!(host.static_snapshot().is_none());
     }
 }
