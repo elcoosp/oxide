@@ -3657,3 +3657,15 @@ Verified: `cargo test -p oxide-server` (43+21+64) green, including a new unit
 test proving a host resolving to any blocked address is rejected.
 
 Commits: (below).
+
+## Task BUG-07 — V8 prelude correctness (TextDecoder stream / MessagePort macrotask / setInterval)
+
+Adapted to current code (it evolved since c00d6b5 — anchor drift noted, semantics preserved):
+
+- TextDecoder: the shim IS the live path (deno_core ships no native decoder — verified: no TextDecoder in deno_core-0.412.0). `decode(buf, {stream:true})` now buffers an incomplete trailing sequence for the next chunk instead of dropping it (mojibake fix on the exact path `__oxideFrameworkRender` uses); non-streaming trailing bytes emit U+FFFD; buffer resets on non-stream calls.
+- MessagePort: delivery via `op_oxide_sleep(0)` macrotask (was queueMicrotask, contradicting its own comment — microtask repost spins can starve I/O); queueMicrotask fallback only if the op throws.
+- setInterval: the chain/clear mechanics already worked (flag + cancelled-check); the real defect was the `queueMicrotask(() => { throw e })` rethrow — an uncaught exception that can kill the worker. Interval callbacks are now log-and-continue (`oxide.log('interval-error …')`); one-shot behavior untouched.
+- Tests: new `v8_prelude_tdd.rs` (3 ignored isolate tests: split-€ across chunks → `''`+`'€'`; port round-trip in order + timer-not-starved; interval survives throw, stops on clear, worker alive after). Negative control via stash: decoder + interval FAIL on old code, pass on new (message test passes both — behavior guard).
+- Deviation: no fixture-title change in check-v8.sh (smoke title is ASCII; altering it risks check.sh byte compares) — the isolate test drives the identical chunked-decode path instead.
+
+Proof: `cargo test -p oxide-jshost` green (43 lib + 22 integration); rebuilt CLI + `check-v8.sh` PASS (10/10, prerenders, action POST — React scheduler healthy on the macrotask port).
