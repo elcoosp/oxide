@@ -1269,31 +1269,14 @@ fn emit_snapshot_blob(root: &Path, server_out: &Path, w: Writer<'_>) -> anyhow::
     if !entry.is_file() {
         return Ok(());
     }
-    // Collect the bundle's JS files (a small graph: ssr/ + routes/ + shared).
-    let mut files: Vec<(std::path::PathBuf, String)> = Vec::new();
-    fn walk(dir: &Path, out: &mut Vec<(std::path::PathBuf, String)>) {
-        let Ok(rd) = std::fs::read_dir(dir) else { return };
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                walk(&p, out);
-            } else if p.extension().is_some_and(|x| x == "js") {
-                if let Ok(s) = std::fs::read_to_string(&p) {
-                    out.push((p, s));
-                }
-            }
-        }
-    }
-    walk(server_out, &mut files);
-    if files.is_empty() {
-        return Ok(());
-    }
+    // BUG-12: the old bundle walk is gone — the emitted snapshot is the
+    // runtime bootstrap only (imported at runtime by `__oxideDispatch`);
+    // only `entry` matters (its existence gates the snapshot at all).
     // `create_snapshot` builds its own Tokio runtime internally and drops it;
     // dropping a runtime from inside an async context panics ("Cannot drop a
     // runtime in a context where blocking is not allowed"). `cmd_build` is
     // async, so run the snapshot on a dedicated thread where the inner runtime
     // is dropped outside any async context.
-    let _ = (&entry, &files); // bundle no longer snapshotted (imported at runtime)
     let built = std::thread::spawn(oxide_jshost::snapshot_build_runtime)
     .join()
     .unwrap_or_else(|_| {
@@ -1308,8 +1291,24 @@ fn emit_snapshot_blob(root: &Path, server_out: &Path, w: Writer<'_>) -> anyhow::
             let dir = root.join(".oxide");
             std::fs::create_dir_all(&dir)
                 .map_err(|e| anyhow::anyhow!("create {}: {e}", dir.display()))?;
-            std::fs::write(dir.join("snapshot.bin"), &snap.blob)
-                .map_err(|e| anyhow::anyhow!("write snapshot.bin: {e}"))?;
+            // BUG-12: versioned `AppSnapshot` envelope (not a raw blob), so
+            // `from_snapshot_file` can reject stale/foreign snapshots with
+            // `JSH-SNAPVER` instead of an opaque deno_core error at spawn.
+            let env = serde_json::json!({
+                "format": oxide_jshost::SNAPSHOT_FORMAT,
+                "oxide_version": env!("CARGO_PKG_VERSION"),
+                "source_hash": snap.source_hash,
+                "blob_b64": base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    &snap.blob,
+                ),
+            });
+            std::fs::write(
+                dir.join("snapshot.bin"),
+                serde_json::to_vec(&env)
+                    .map_err(|e| anyhow::anyhow!("serialize snapshot envelope: {e}"))?,
+            )
+            .map_err(|e| anyhow::anyhow!("write snapshot.bin: {e}"))?;
             outln!(w, "snapshot: {} bytes", snap.blob.len());
         }
         Ok(snap) => {

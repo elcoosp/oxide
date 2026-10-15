@@ -1487,13 +1487,67 @@ impl V8Host {
         self
     }
 
-    /// Read a snapshot blob from `path` and build a host around it. A missing
-    /// or empty file yields a snapshot-less host — the caller still works.
+    /// Read a versioned snapshot envelope from `path` and build a host
+    /// around it (BUG-12). A missing file yields a snapshot-less host.
+    /// A corrupt/mismatched envelope is LOUD (stderr warn with `JSH-SNAPVER`
+    /// naming expected vs found) and downgrades to no-snapshot — the caller
+    /// still works (SPEC-01 completes the code-cache fallback ladder).
     pub fn from_snapshot_file(path: &std::path::Path) -> Self {
-        match std::fs::read(path) {
-            Ok(b) if !b.is_empty() => Self::with_snapshot(b),
-            _ => Self::default(),
+        match Self::load_snapshot_envelope(path) {
+            Ok(Some(blob)) => Self::with_snapshot(blob),
+            Ok(None) => Self::default(),
+            Err(e) => {
+                eprintln!(
+                    "warn: snapshot unavailable ({} {}); continuing without snapshot (code-cache fallback: SPEC-01)",
+                    e.0.code, e.0.message
+                );
+                Self::default()
+            }
         }
+    }
+
+    /// Parse the `AppSnapshot` envelope written by `oxide build` (BUG-12).
+    /// `Ok(None)` = file missing (no snapshot, not an error).
+    /// `Err` = present-but-unusable (`JSH-SNAPVER`), including old raw blobs.
+    pub fn load_snapshot_envelope(path: &std::path::Path) -> Result<Option<Vec<u8>>> {
+        use base64::Engine as _;
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(_) => return Ok(None),
+        };
+        let env: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| {
+            err(
+                "JSH-SNAPVER",
+                format!(
+                    "snapshot at {} is not a versioned envelope (stale raw blob?); expected format {} / oxide {}",
+                    path.display(),
+                    crate::SNAPSHOT_FORMAT,
+                    env!("CARGO_PKG_VERSION"),
+                ),
+            )
+        })?;
+        let format = env.get("format").and_then(|v| v.as_u64()).unwrap_or(u64::MAX);
+        let version = env.get("oxide_version").and_then(|v| v.as_str()).unwrap_or("<missing>");
+        if format != crate::SNAPSHOT_FORMAT as u64 || version != env!("CARGO_PKG_VERSION") {
+            return Err(err(
+                "JSH-SNAPVER",
+                format!(
+                    "snapshot at {} mismatch: found format {}/oxide {version}; expected format {}/oxide {}",
+                    path.display(),
+                    format,
+                    crate::SNAPSHOT_FORMAT,
+                    env!("CARGO_PKG_VERSION"),
+                ),
+            ));
+        }
+        let b64 = env.get("blob_b64").and_then(|v| v.as_str()).unwrap_or("");
+        let blob = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .map_err(|e| err("JSH-SNAPVER", format!("snapshot blob_b64 invalid: {e}")))?;
+        if blob.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(blob))
     }
 
     /// The `&'static` view of the snapshot, if any. Leaks the bytes on first
@@ -2602,6 +2656,61 @@ mod tests {
         assert_eq!(percentile(&[7.0], 0.99), 7.0);
         assert_eq!(percentile(&[1.0, 2.0, 3.0, 4.0], 0.5), 2.0);
         assert_eq!(percentile(&[1.0, 2.0, 3.0, 4.0], 0.99), 4.0);
+    }
+}
+
+#[cfg(test)]
+mod bug12_tests {
+    use super::*;
+
+    fn write_envelope(dir: &std::path::Path, name: &str, val: &serde_json::Value) -> std::path::PathBuf {
+        let p = dir.join(name);
+        std::fs::write(&p, serde_json::to_vec(val).unwrap()).unwrap();
+        p
+    }
+
+    fn envelope_of(blob: &[u8]) -> serde_json::Value {
+        use base64::Engine as _;
+        serde_json::json!({
+            "format": crate::SNAPSHOT_FORMAT,
+            "oxide_version": env!("CARGO_PKG_VERSION"),
+            "source_hash": "abc",
+            "blob_b64": base64::engine::general_purpose::STANDARD.encode(blob),
+        })
+    }
+
+    #[test]
+    fn envelope_round_trip() {
+        let dir = std::env::temp_dir().join(format!("ox-bug12-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = write_envelope(&dir, "snap.bin", &envelope_of(b"hello-blob"));
+        let out = V8Host::load_snapshot_envelope(&p).unwrap().expect("blob present");
+        assert_eq!(out, b"hello-blob");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn corrupt_and_stale_blobs_rejected_with_snapver() {
+        let dir = std::env::temp_dir().join(format!("ox-bug12-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Raw (pre-BUG-12) blob bytes.
+        let raw = dir.join("raw.bin");
+        std::fs::write(&raw, b"\x00\x01\x02not-json").unwrap();
+        let e = V8Host::load_snapshot_envelope(&raw).unwrap_err();
+        assert_eq!(e.0.code, "JSH-SNAPVER");
+        // Wrong version.
+        let mut bad = envelope_of(b"x");
+        bad["oxide_version"] = serde_json::Value::String("0.0.0-stale".into());
+        let p = write_envelope(&dir, "stale.bin", &bad);
+        let e = V8Host::load_snapshot_envelope(&p).unwrap_err();
+        assert_eq!(e.0.code, "JSH-SNAPVER");
+        // Missing file is Ok(None), not an error — server still boots.
+        let missing = dir.join("nope.bin");
+        assert!(V8Host::load_snapshot_envelope(&missing).unwrap().is_none());
+        // And from_snapshot_file downgrades loudly instead of failing.
+        let host = V8Host::from_snapshot_file(&raw);
+        assert!(host.snapshot.is_none());
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
 
