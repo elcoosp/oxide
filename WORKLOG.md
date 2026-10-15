@@ -2190,3 +2190,155 @@ Commits `631aad1` (config) + `2ae25e8` (CLI). Fixture gate PASS.
 Remaining on finding 2: nothing for the bundle size itself; the deploy-policy
 question ("does `binary` ship `node_modules`?") is now answered by the user
 choosing whether to set the list — the default keeps working without it.
+
+## Session 17 — a real V8 host, and the §21 cold-start lever
+
+Two things, both verified against running code.
+
+### V8Host: from a two-kind toy to a real module-loading host
+
+`V8Host` was a stub: `__oxideDispatch` hardcoded two kinds (`render` → a
+canned HTML string, `tooling:compile` → uppercased its input) and could not
+evaluate a module. It is now a genuine host:
+
+- **`FsModuleLoader`** in `JsRuntime::new` resolves and reads an ESM bundle
+  from disk.
+- **`__oxideDispatch` is async** — it `await import(moduleUrl)`s the entry,
+  calls the named export (default `default`) with the JSON payload, and
+  returns a `{ok, value}` / `{__oxide_error}` envelope. A relative module
+  path is turned into a `file://` URL.
+- **`v8_dispatch` is async**, driving the promise through
+  `with_event_loop_promise(js.resolve(..), ..)` — the two-statement form,
+  because the nested `js.with_event_loop_promise(js.resolve(..), ..)`
+  double-borrows `js`.
+- The worker loop `.await`s it.
+
+`crates/jshost/tests/v8_module_tdd.rs` proves it on real files: a named
+export runs, a default async export runs, a transitive relative import
+resolves, a missing export errors, a throwing export surfaces its message.
+The 6 old integration tests that encoded the toy were rewritten to load
+real modules (drain/recycle/abort semantics all still hold).
+
+This is not yet render parity: the framework adapters' `render` needs Node
+built-ins (`createRequire`, `pathToFileURL`) the V8 isolate has no
+`deno_node` for. The *module-call* path is complete; a project that selects
+`backend: 'v8'` now gets a working loader, not a `JSH-NOKIND`.
+
+### §21 cold start: the lever was a blocking config load
+
+Instrumented `cmd_serve`:
+
+    canonicalize            57.7µs
+    load_config            626.0µs
+    build_framework_stack  391.2ms   ← everything
+    start_server           398.6ms
+
+and inside `build_framework_stack`: pool spawn ~35 ms, **`framework:load`
+325 ms**. That op makes the worker `import()` `oxide.config.ts`, which
+imports the adapter, `oxide`, and **every page component** — cold Node
+module cache + a `.tsx` transform each. It ran *before* `start_server`, so
+the socket did not bind until it finished, yet nothing on the native path
+(health, static assets, the L0 cache) needs the renderer — and
+`FrameworkHost::render` re-imports the config per call anyway.
+
+**Correction to my own earlier numbers:** I had measured `oxide config
+--root X` at "31 ms" and concluded the config load was cheap. That was
+wrong — `config` takes `ROOT` **positionally**, so those runs died at
+argument parsing and never loaded anything. The instrumented 325 ms is the
+real, single cost. (Rule 2: verify the artifact, not the exit code.)
+
+**Fix:** `LazyFrameworkRenderer` — `build_framework_stack` now stores the
+pool + config path + a source-peeked name and defers
+`FrameworkHostRenderer::new` to a `tokio::sync::OnceCell` resolved on first
+render. The config load moves off the boot path entirely.
+
+**Measured** (`smoke-app-react`, best of 3, cold):
+
+| metric | before | after |
+| --- | ---: | ---: |
+| first TCP accept | 387–402 ms | **66–109 ms** |
+| first health 200 | ~434 ms | **147–188 ms** |
+
+First render still works — it now pays the ~336 ms config load, which it
+would have paid on any request that needed the renderer.
+
+### Commits
+
+`84fb548` (V8 host), `0a706b3` (integration tests), `f876858` (lazy
+renderer), `e2e4d64` (resolve form).
+
+## Session 17 — a real V8 host, and the §21 cold-start lever
+
+Two things, both verified against running code.
+
+### V8Host: from a two-kind toy to a real module-loading host
+
+`V8Host` was a stub: `__oxideDispatch` hardcoded two kinds (`render` → a
+canned HTML string, `tooling:compile` → uppercased its input) and could not
+evaluate a module. It is now a genuine host:
+
+- **`FsModuleLoader`** in `JsRuntime::new` resolves and reads an ESM bundle
+  from disk.
+- **`__oxideDispatch` is async** — it `await import(moduleUrl)`s the entry,
+  calls the named export (default `default`) with the JSON payload, and
+  returns a `{ok, value}` / `{__oxide_error}` envelope. A relative module
+  path is turned into a `file://` URL.
+- **`v8_dispatch` is async**, driving the promise through
+  `with_event_loop_promise(js.resolve(..), ..)` — the two-statement form,
+  because the nested `js.with_event_loop_promise(js.resolve(..), ..)`
+  double-borrows `js`.
+- The worker loop `.await`s it.
+
+`crates/jshost/tests/v8_module_tdd.rs` proves it on real files: a named
+export runs, a default async export runs, a transitive relative import
+resolves, a missing export errors, a throwing export surfaces its message.
+The 6 old integration tests that encoded the toy were rewritten to load
+real modules (drain/recycle/abort semantics all still hold).
+
+This is not yet render parity: the framework adapters' `render` needs Node
+built-ins (`createRequire`, `pathToFileURL`) the V8 isolate has no
+`deno_node` for. The *module-call* path is complete; a project that selects
+`backend: 'v8'` now gets a working loader, not a `JSH-NOKIND`.
+
+### §21 cold start: the lever was a blocking config load
+
+Instrumented `cmd_serve`:
+
+    canonicalize            57.7µs
+    load_config            626.0µs
+    build_framework_stack  391.2ms   ← everything
+    start_server           398.6ms
+
+and inside `build_framework_stack`: pool spawn ~35 ms, **`framework:load`
+325 ms**. That op makes the worker `import()` `oxide.config.ts`, which
+imports the adapter, `oxide`, and **every page component** — cold Node
+module cache + a `.tsx` transform each. It ran *before* `start_server`, so
+the socket did not bind until it finished, yet nothing on the native path
+(health, static assets, the L0 cache) needs the renderer — and
+`FrameworkHost::render` re-imports the config per call anyway.
+
+**Correction to my own earlier numbers:** I had measured `oxide config
+--root X` at "31 ms" and concluded the config load was cheap. That was
+wrong — `config` takes `ROOT` **positionally**, so those runs died at
+argument parsing and never loaded anything. The instrumented 325 ms is the
+real, single cost. (Rule 2: verify the artifact, not the exit code.)
+
+**Fix:** `LazyFrameworkRenderer` — `build_framework_stack` now stores the
+pool + config path + a source-peeked name and defers
+`FrameworkHostRenderer::new` to a `tokio::sync::OnceCell` resolved on first
+render. The config load moves off the boot path entirely.
+
+**Measured** (`smoke-app-react`, best of 3, cold):
+
+| metric | before | after |
+| --- | ---: | ---: |
+| first TCP accept | 387–402 ms | **66–109 ms** |
+| first health 200 | ~434 ms | **147–188 ms** |
+
+First render still works — it now pays the ~336 ms config load, which it
+would have paid on any request that needed the renderer.
+
+### Commits
+
+`84fb548` (V8 host), `0a706b3` (integration tests), `f876858` (lazy
+renderer), `e2e4d64` (resolve form).
