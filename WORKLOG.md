@@ -3384,3 +3384,9 @@ build mints a fresh one); `oxide doctor` reports the secret's presence.
 - `examples/smoke-app-react/.oxide/secret` = 64 hex chars after the first build.
 
 `.oxide/` is gitignored (per-checkout state, not per-commit).
+
+## Task BUG-06 — Diagnostics honesty: stop swallowing, persist, surface
+
+Changed: `OxidePassesPlugin::transform` now fails the build with `CMP-PASS <id>: <msg>` instead of returning `Ok(None)` on pass errors (untransformed 'use cache'/server-fn code was a correctness hole). `cmd_build` captures `BundleOutput::diagnostics` (rolldown warnings, already built) from both envs and writes `.oxide/last-build-diagnostics.json` via new `persist_diagnostics` helper — on failure (failing bundle's diags) and on success (`[]` when clean so stale errors don't linger). MCP `oxide_errors` reader unchanged; now has data.
+
+Proof: `cargo test -p oxide-bundler`, `-p oxide-cli --lib` (95 passed) green; `oxide build --root examples/smoke-app-react` ok, `.oxide/last-build-diagnostics.json` contains `[]`.
