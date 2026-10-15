@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 pub mod mcp;
 
 mod build_cache;
+mod precompile_cache;
 pub mod precompile;
 mod framework_shim;
 pub mod loader_shim;
@@ -1420,10 +1421,29 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         .adapter
         .as_deref()
         .or(cfg.framework.name.as_deref());
-    let client_precompiled =
-        precompile::precompile_entries(stack.pool.as_ref(), &entries, "dom", framework_name).await;
-    let server_precompiled =
-        precompile::precompile_entries(stack.pool.as_ref(), &entries, "ssr", framework_name).await;
+    // §6.3 / §5.4: the precompile pass is a pure function of
+    // (source, framework, mode, compiler version) and is cached in the Tier-B
+    // CAS, so an unchanged SFC is not recompiled on the next build.
+    let precompile_cache = precompile_cache::PrecompileCache::open_soft(&rootp);
+    let tool_version = env!("CARGO_PKG_VERSION");
+    let client_precompiled = precompile::precompile_entries(
+        stack.pool.as_ref(),
+        &entries,
+        "dom",
+        framework_name,
+        precompile_cache.as_ref(),
+        tool_version,
+    )
+    .await;
+    let server_precompiled = precompile::precompile_entries(
+        stack.pool.as_ref(),
+        &entries,
+        "ssr",
+        framework_name,
+        precompile_cache.as_ref(),
+        tool_version,
+    )
+    .await;
     if !client_precompiled.is_empty() {
         outln!(w, "precompiled {} SFC(s) for client", client_precompiled.len());
     }
