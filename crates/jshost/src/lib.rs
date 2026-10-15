@@ -36,7 +36,7 @@ use tokio::task::JoinHandle;
 pub mod tooling;
 pub mod v8_ops;
 pub mod snapshot;
-pub use snapshot::{lint_top_level_side_effects, loader_options, snapshot_build, AppSnapshot, SideEffect, SNAPSHOT_FORMAT};
+pub use snapshot::{lint_top_level_side_effects, loader_options, snapshot_build, snapshot_build_bundle, AppSnapshot, SideEffect, SNAPSHOT_FORMAT};
 pub mod tooling_pool;
 pub mod framework_host;
 pub mod framework_renderer;
@@ -552,8 +552,8 @@ use deno_core::{JsRuntime, RuntimeOptions};
 /// its named export with the JSON payload, returning a `{ok, value}` /
 /// `{__oxide_error}` envelope. `boom`/`die` are handled Rust-side before
 /// dispatch.
-const V8_BOOTSTRAP: &str = r#"
-// §4.6 tier 2: the minimal Node-compat globals a self-contained bundle needs.
+pub(crate) const V8_BOOTSTRAP: &str = r#"
+// Sec.4.6 tier 2: the minimal Node-compat globals a self-contained bundle needs.
 // A bundled SSR chunk references `process.env.NODE_ENV` (React's dev/prod
 // switch), `process.emit` (a library's existence check), and `Buffer`
 // (base64/UTF-8 helpers). Bare V8 has none of these; without the prelude an
@@ -615,14 +615,14 @@ if (typeof globalThis.Buffer === 'undefined') {
   globalThis.Buffer = OxideBuffer;
 }
 
-// §4.5 op namespace. deno_core exposes ops as `Deno.core.ops.op_oxide_*`.
+// Sec.4.5 op namespace. deno_core exposes ops as `Deno.core.ops.op_oxide_*`.
 globalThis.oxide = {
   log: (msg) => Deno.core.ops.op_oxide_log(String(msg)),
   trace: (name) => Deno.core.ops.op_oxide_trace(String(name)),
   serialize: (value) => Deno.core.ops.op_oxide_serialize(JSON.stringify(value)),
 };
 
-// §4.2 / §4.4: the real V8 dispatch. `moduleUrl` is a `file://` URL the
+// Sec.4.2 / Sec.4.4: the real V8 dispatch. `moduleUrl` is a `file://` URL the
 // runtime's `FsModuleLoader` resolves; `exportName` is the export to call
 // (`default` when empty); `payload` is the JSON argument. The result is a
 // JSON envelope string: `{ok, value}` on success, `{__oxide_error}` on a

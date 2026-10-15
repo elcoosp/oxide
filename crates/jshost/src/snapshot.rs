@@ -154,6 +154,166 @@ pub fn snapshot_build(entry: &str, source: &str) -> Result<AppSnapshot> {
     }
 }
 
+/// deno_core requires extension source to be 7-bit ASCII (a snapshot is a
+/// serialized V8 heap and the extension loader debug-asserts ASCII). A real
+/// bundle contains non-ASCII in a banner comment (`§`) and, potentially, in a
+/// user's string literals. Replacing each non-ASCII scalar with a `\uXXXX`
+/// escape is **semantics-preserving** for JavaScript: identical inside string,
+/// template and regex literals, and merely cosmetic inside a comment.
+fn escape_non_ascii(src: &str) -> String {
+    if src.is_ascii() {
+        return src.to_string();
+    }
+    let mut out = String::with_capacity(src.len() + 16);
+    for ch in src.chars() {
+        let cp = ch as u32;
+        if cp < 0x80 {
+            out.push(ch);
+        } else if cp <= 0xFFFF {
+            out.push_str(&format!("\\u{cp:04x}"));
+        } else {
+            // Astral: encode as a surrogate pair (each `\uXXXX`).
+            let v = cp - 0x1_0000;
+            let hi = 0xD800 + (v >> 10);
+            let lo = 0xDC00 + (v & 0x3FF);
+            out.push_str(&format!("\\u{hi:04x}\\u{lo:04x}"));
+        }
+    }
+    out
+}
+
+/// Build a snapshot from a **multi-file** server bundle (§4.4).
+///
+/// `snapshot_build` handles one module; a real `dist/server` bundle is a
+/// graph (`ssr/index.js` → `routes/*/page.js` → a shared `jsx-runtime-*.js`).
+/// deno_core's `create_snapshot` builds its internal runtime with no
+/// `ModuleLoader`, so it cannot read those files from disk — but
+/// `ExtModuleLoader` *does* resolve a relative import among the extension's
+/// registered `esm_files` by URL-joining. So: register every file under its
+/// `file://` URL, point `esm_entry_point` at the entry, and let the snapshot
+/// runtime evaluate the whole graph.
+///
+/// The §4.6 tier-2 compat globals (`process`, `Buffer`, `oxide.*`,
+/// `__oxideDispatch`) are installed first, as an extension `js_file`, because
+/// a bundled chunk references `process.env.NODE_ENV` at module scope and would
+/// otherwise throw `process is not defined` during evaluation.
+///
+/// `files` is `(absolute path, source)`. `entry_path` must be one of them.
+pub fn snapshot_build_bundle(
+    entry_path: &str,
+    files: &[(std::path::PathBuf, String)],
+) -> Result<AppSnapshot> {
+    use deno_core::{ExtensionFileSource, ModuleSpecifier};
+    use std::sync::Arc;
+
+    // A digest over every file so a rebuild is keyed on the whole graph.
+    let mut h = blake3::Hasher::new();
+    for (p, s) in files {
+        h.update(p.to_string_lossy().as_bytes());
+        h.update(&[0]);
+        h.update(s.as_bytes());
+        h.update(&[0]);
+    }
+    let source_hash = h.finalize().to_hex().to_string();
+    let mut warnings: Vec<String> = Vec::new();
+
+    // `file://` URL for every module; the entry must resolve to one of them.
+    // Canonicalize before building a `file://` URL. A path may contain `..`
+    // (the caller often passes `<manifest>/../../project/...`); `from_file_path`
+    // keeps `..` verbatim, but URL *joining* — what resolves a relative import
+    // — collapses it. The registered specifier and the resolved one would then
+    // differ and deno_core reports "was not passed as an extension module".
+    let url_of = |p: &std::path::Path| -> Option<String> {
+        let canon = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        ModuleSpecifier::from_file_path(&canon).ok().map(|u| u.to_string())
+    };
+    let entry_url = match url_of(std::path::Path::new(entry_path)) {
+        Some(u) => u,
+        None => {
+            return Ok(AppSnapshot {
+                format: SNAPSHOT_FORMAT,
+                blob: Vec::new(),
+                code_cache: None,
+                entry: entry_path.to_string(),
+                source_hash,
+                warnings: vec![format!("entry is not a file path: {entry_path}")],
+            });
+        }
+    };
+
+    let mut esm_files: Vec<ExtensionFileSource> = Vec::with_capacity(files.len());
+    for (p, src) in files {
+        let Some(url) = url_of(p) else { continue };
+        let spec: &'static str = leak(url);
+        let ascii = escape_non_ascii(src);
+        esm_files.push(ExtensionFileSource::new_computed(spec, Arc::from(ascii.as_str())));
+    }
+
+    // The compat bootstrap, as a plain JS file so it runs before the ESM entry.
+    let bootstrap_spec: &'static str = leak("oxide:bootstrap".to_string());
+    let bootstrap_ascii = escape_non_ascii(crate::V8_BOOTSTRAP);
+    let js_files: Vec<ExtensionFileSource> = vec![ExtensionFileSource::new_computed(
+        bootstrap_spec,
+        Arc::from(bootstrap_ascii.as_str()),
+    )];
+
+    let ext = deno_core::Extension {
+        name: leak(format!(
+            "oxide_snapshot_{}",
+            entry_path.replace(['/', '.', '-'], "_")
+        )),
+        deps: &[],
+        js_files: Cow::Owned(js_files),
+        esm_files: Cow::Owned(esm_files),
+        lazy_loaded_esm_files: Cow::Borrowed(&[]),
+        lazy_loaded_js_files: Cow::Borrowed(&[]),
+        synthetic_esm_modules: Cow::Borrowed(&[]),
+        esm_entry_point: Some(leak(entry_url)),
+        ops: Cow::Borrowed(&[]),
+        objects: Cow::Borrowed(&[]),
+        external_references: Cow::Borrowed(&[]),
+        global_template_middleware: None,
+        global_object_middleware: None,
+        op_state_fn: None,
+        needs_lazy_init: false,
+        middleware_fn: None,
+        enabled: true,
+    };
+
+    let options = CreateSnapshotOptions {
+        cargo_manifest_dir: leak(env!("CARGO_MANIFEST_DIR").to_string()),
+        startup_snapshot: None,
+        skip_op_registration: false,
+        extensions: vec![ext],
+        extension_transpiler: None,
+        with_runtime_cb: None,
+    };
+
+    match create_snapshot(options, None) {
+        Ok(output) => Ok(AppSnapshot {
+            format: SNAPSHOT_FORMAT,
+            blob: output.output.to_vec(),
+            code_cache: None,
+            entry: entry_path.to_string(),
+            source_hash,
+            warnings,
+        }),
+        Err(e) => {
+            warnings.push(format!(
+                "bundle snapshot failed ({e}); falling back to no snapshot"
+            ));
+            Ok(AppSnapshot {
+                format: SNAPSHOT_FORMAT,
+                blob: Vec::new(),
+                code_cache: None,
+                entry: entry_path.to_string(),
+                source_hash,
+                warnings,
+            })
+        }
+    }
+}
+
 /// Load a snapshot blob into a fresh `JsRuntime` (§4.4). Returns the
 /// `RuntimeOptions` to pass to `JsRuntime::new`, plus a bool that is `true`
 /// when a code-cache fallback is in use (the caller must then
