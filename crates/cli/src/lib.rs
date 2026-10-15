@@ -647,6 +647,10 @@ fn bundle_env_options(
     build_secret: String,
     transform_hook: Option<oxide_bundler::TransformHook>,
     css_transform: oxide_bundler::CssTransformHook,
+    // §6.1: specifiers left external in the SSR bundle. Empty for client/edge
+    // (a browser bundle cannot resolve a bare import) and for the default
+    // self-contained server bundle; populated from `build.ssrExternals`.
+    ssr_externals: Vec<String>,
 ) -> oxide_bundler::BundleOptions {
     // §6.1: `process.env.NODE_ENV` drives React's dev-vs-production
     // bundle selection. Setting it at the CLI level (rather than in the
@@ -685,7 +689,12 @@ fn bundle_env_options(
         // through `RolldownBundler` — a bare `.map` URL would 404.
         minify: true,
         sourcemap: false,
-        externals: Vec::new(),
+        // §21: externals only apply to the server bundle; a browser bundle
+        // must inline everything.
+        externals: match env {
+            oxide_bundler::BundleEnv::Ssr => ssr_externals,
+            _ => Vec::new(),
+        },
         define,
         tsconfig_paths: BTreeMap::new(),
         build_secret,
@@ -1623,6 +1632,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         build_secret.clone(),
         transform_hook.clone(),
         css_transform.clone(),
+        Vec::new(),
     );
     let server_opts = bundle_env_options(
         oxide_bundler::BundleEnv::Ssr,
@@ -1633,6 +1643,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         build_secret,
         transform_hook,
         css_transform,
+        cfg.build.ssr_externals.clone(),
     );
     let rb = oxide_bundler::RolldownBundler::new(&rootp);
     rb.bundle(&client_opts)
