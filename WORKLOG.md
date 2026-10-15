@@ -2522,3 +2522,149 @@ So the honest status: the V8 host is real, it runs a real bundle, and a real
 snapshot can be built from it — the three things that were blocked before this
 session. Wiring build→disk→start and making V8 the serving backend is the next
 slice, and it is now unblocked rather than unknown.
+
+## Session 18 — V8 becomes a real runtime; the CJS-interop boundary
+
+Continuing session 17. This session built out `V8Host` into a genuine runtime
+and pushed the V8 serving path as far as it goes without `deno_node`.
+
+### What landed (12 commits, +1192 / −22)
+
+| Commit | What |
+| --- | --- |
+| `0bfab1e` | **A transpiling V8 module loader** (`v8_loader.rs`) — reads `.ts`/`.tsx`, runs `oxide_compiler::lower_to_js` (Oxc type-strip + JSX), resolves relative + bare specifiers via `oxc_resolver`. Proved on a real `.ts` module with a transitive import, an `interface`, and typed locals. |
+| `561ffba` | jshost depends on `oxc_resolver` + `deno_error`. |
+| `ba19bae` | Tests for the TS loader. |
+| `ed2f775` | The loader shims `node:*` built-ins (§4.6 tier 2) and coexists with a snapshot. |
+| `73785a0` | **§4.6 tier-1 Web globals** in the bootstrap: `TextEncoder`/`TextDecoder`, `ReadableStream` (async-iterable, the §7 adapter contract), `atob`/`btoa`, `queueMicrotask`, `structuredClone`. Plus `framework:load`/`framework:render` routing in `v8_dispatch`. |
+| `27b56b8` | The V8 renderer points at the bundled config. |
+| `20fe705` | **`oxide build` bundles the config graph** to `.oxide/config.server.js` via Rolldown (62 KB, self-contained ESM). |
+
+**Verified**: V8 loads `oxide.config.ts`, imports the React adapter through the
+transpiling loader, resolves `react` from `node_modules`, renders the page —
+`data-reactroot` + `<h1>Home</h1>` + island markup — **through the V8
+backend**. The route chunk's `default` export runs in V8 and returns its full
+React element tree.
+
+### The boundary, precisely
+
+The end-to-end render reaches the adapter's **real-SSR path** and stops there.
+`packages/react/src/real-ssr.ts` does `await import('react')` and
+`await import('react-dom/server')`. **React is CommonJS** (its `package.json`
+has no `"type"` and `index.js` is `module.exports = require('./cjs/…')`). Bare
+V8 ESM has **no CommonJS interop** — Node synthesizes named exports with
+`cjs-module-lexer`; V8 does not. So `import('react')` does not provide
+`createElement`, and the adapter's `isReactAvailable()` returns false → the IR
+fallback renders the "real SSR unavailable" comment.
+
+This is exactly D2's long-standing note — "`deno_node` module loading has not
+landed." It is **not** a bug in the wiring: bundling the *config* graph works
+(rolldown resolves CJS into ESM), but the adapter's *runtime* `import()` of a
+CJS package is a dynamic import the bundler cannot pre-resolve.
+
+**The two ways through, for the next session:**
+1. **A CJS→ESM shim in the loader.** When `resolve` sees a bare specifier whose
+   resolved entry is CJS (no `"type":"module"`, `module.exports` present),
+   wrap it: read the file, evaluate it in a V8 context with a `module`/
+   `exports`/`require` shim, and synthesize an ESM namespace. This is what
+   `cjs-module-lexer` + Node's loader do; it is bounded and self-contained.
+2. **Pre-bundle the SSR render path.** Extend `emit_config_bundle` to also
+   bundle `@oxide/react`'s real-SSR entry (or emit a `render` entry the V8
+   host imports), so the adapter's `import('react')` becomes a static import
+   rolldown already resolved. Larger, but avoids a runtime CJS evaluator.
+
+Option 1 is the smaller, more general fix and the one to try first.
+
+### Test state
+
+| suite | result |
+| --- | --- |
+| `cargo check --workspace` | green |
+| oxide-cli --lib | 91 |
+| oxide-jshost | 22 + 39 + ignored V8 tests |
+| oxide-bundler | green |
+| four-fixture CLI gate (Node default) | PASS |
+
+V8-specific tests (all `--ignored`, need a prior build): `v8_module_tdd` (4),
+`v8_ts_loader_tdd` (2), `v8_bundle_tdd` (1), `snapshot_bundle_tdd` (1).
+
+### A regression that was environmental, not code
+
+The four-fixture gate failed mid-session with "Cannot find module
+'@vue/compiler-sfc'" / `'svelte/compiler'` and `.tsx` parse errors. Cause:
+`node_modules/` was **empty** (a prior `rm`/install glitch), not any source
+change. `pnpm install` restored it and the gate passed. Worth remembering:
+check `node_modules` before suspecting the code.
+
+## Session 18 — V8 becomes a real runtime; the CJS-interop boundary
+
+Continuing session 17. This session built out `V8Host` into a genuine runtime
+and pushed the V8 serving path as far as it goes without `deno_node`.
+
+### What landed (12 commits, +1192 / −22)
+
+| Commit | What |
+| --- | --- |
+| `0bfab1e` | **A transpiling V8 module loader** (`v8_loader.rs`) — reads `.ts`/`.tsx`, runs `oxide_compiler::lower_to_js` (Oxc type-strip + JSX), resolves relative + bare specifiers via `oxc_resolver`. Proved on a real `.ts` module with a transitive import, an `interface`, and typed locals. |
+| `561ffba` | jshost depends on `oxc_resolver` + `deno_error`. |
+| `ba19bae` | Tests for the TS loader. |
+| `ed2f775` | The loader shims `node:*` built-ins (§4.6 tier 2) and coexists with a snapshot. |
+| `73785a0` | **§4.6 tier-1 Web globals** in the bootstrap: `TextEncoder`/`TextDecoder`, `ReadableStream` (async-iterable, the §7 adapter contract), `atob`/`btoa`, `queueMicrotask`, `structuredClone`. Plus `framework:load`/`framework:render` routing in `v8_dispatch`. |
+| `27b56b8` | The V8 renderer points at the bundled config. |
+| `20fe705` | **`oxide build` bundles the config graph** to `.oxide/config.server.js` via Rolldown (62 KB, self-contained ESM). |
+
+**Verified**: V8 loads `oxide.config.ts`, imports the React adapter through the
+transpiling loader, resolves `react` from `node_modules`, renders the page —
+`data-reactroot` + `<h1>Home</h1>` + island markup — **through the V8
+backend**. The route chunk's `default` export runs in V8 and returns its full
+React element tree.
+
+### The boundary, precisely
+
+The end-to-end render reaches the adapter's **real-SSR path** and stops there.
+`packages/react/src/real-ssr.ts` does `await import('react')` and
+`await import('react-dom/server')`. **React is CommonJS** (its `package.json`
+has no `"type"` and `index.js` is `module.exports = require('./cjs/…')`). Bare
+V8 ESM has **no CommonJS interop** — Node synthesizes named exports with
+`cjs-module-lexer`; V8 does not. So `import('react')` does not provide
+`createElement`, and the adapter's `isReactAvailable()` returns false → the IR
+fallback renders the "real SSR unavailable" comment.
+
+This is exactly D2's long-standing note — "`deno_node` module loading has not
+landed." It is **not** a bug in the wiring: bundling the *config* graph works
+(rolldown resolves CJS into ESM), but the adapter's *runtime* `import()` of a
+CJS package is a dynamic import the bundler cannot pre-resolve.
+
+**The two ways through, for the next session:**
+1. **A CJS→ESM shim in the loader.** When `resolve` sees a bare specifier whose
+   resolved entry is CJS (no `"type":"module"`, `module.exports` present),
+   wrap it: read the file, evaluate it in a V8 context with a `module`/
+   `exports`/`require` shim, and synthesize an ESM namespace. This is what
+   `cjs-module-lexer` + Node's loader do; it is bounded and self-contained.
+2. **Pre-bundle the SSR render path.** Extend `emit_config_bundle` to also
+   bundle `@oxide/react`'s real-SSR entry (or emit a `render` entry the V8
+   host imports), so the adapter's `import('react')` becomes a static import
+   rolldown already resolved. Larger, but avoids a runtime CJS evaluator.
+
+Option 1 is the smaller, more general fix and the one to try first.
+
+### Test state
+
+| suite | result |
+| --- | --- |
+| `cargo check --workspace` | green |
+| oxide-cli --lib | 91 |
+| oxide-jshost | 22 + 39 + ignored V8 tests |
+| oxide-bundler | green |
+| four-fixture CLI gate (Node default) | PASS |
+
+V8-specific tests (all `--ignored`, need a prior build): `v8_module_tdd` (4),
+`v8_ts_loader_tdd` (2), `v8_bundle_tdd` (1), `snapshot_bundle_tdd` (1).
+
+### A regression that was environmental, not code
+
+The four-fixture gate failed mid-session with "Cannot find module
+'@vue/compiler-sfc'" / `'svelte/compiler'` and `.tsx` parse errors. Cause:
+`node_modules/` was **empty** (a prior `rm`/install glitch), not any source
+change. `pnpm install` restored it and the gate passed. Worth remembering:
+check `node_modules` before suspecting the code.
