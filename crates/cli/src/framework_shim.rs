@@ -268,6 +268,10 @@ pub async fn build_framework_stack(
             // CJS framework runtime (React) — bare V8 ESM has no CJS interop.
             // `oxide build` bundles the config graph to `.oxide/config.server.js`
             // (rolldown resolves CJS); point the V8 renderer at that.
+            // §4.2: the V8 backend imports the pre-bundled config; the Node
+            // backend imports the raw `.ts` (its tsx-loader transforms it and
+            // it has CJS interop). Pick by backend — the Node worker cannot
+            // load the V8-targeted bundle.
             let config_path = if matches!(backend, JsBackend::V8) {
                 path.parent()
                     .map(|root| root.join(".oxide/config.server.js"))
