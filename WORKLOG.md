@@ -3400,3 +3400,13 @@ Proof: `cargo test -p oxide-bundler`, `-p oxide-cli --lib` (95 passed) green; `o
 - SEC-07(part): `escape_attr` now escapes `'` → `&#39;` (all injected attrs single-quoted).
 
 Proof: `cargo test -p oxide-render/-p oxide-cli/-p oxide-jshost --lib` green; oxide package 84/84.
+
+## Task BUG-08 — `.css` through the worker + V8 loaders
+
+CSS is a server side-effect import: resolves, then evaluates to an empty module (SSR never applies styles; the client bundle's CssPlugin handles real CSS).
+
+- `tsx-loader.mjs::load`: `.css` → `{ format: 'module', source: 'export default "";' }` before the tsx/vue/svelte gate.
+- `oxide-worker.mjs::resolveRelative`: added `base + ".css"` candidate; `compileServerModule`: `.css` modules get the empty-module stub written to a NEW temp file (`<path>.oxide.css.mjs` — never the original path, which the write loop would otherwise overwrite).
+- `v8_loader.rs::load`: `.css` paths return the empty ESM source without touching oxc transforms.
+
+Proof: `cargo check/test -p oxide-jshost` green (41 passed); `node --check` on both edited workers.
