@@ -645,13 +645,23 @@ async fn v8_ops_are_registered_and_callable() {
 }
 
 #[test]
-fn op_decls_returns_three_ops() {
+fn op_decls_returns_the_documented_ops() {
+    // The V8 op surface (§4.5/§4.6): log, trace, serialize, random, sleep.
+    // `random` and `sleep` back `crypto.getRandomValues` and the timer shims
+    // the §4.6 tier-1 prelude installs, so they live in the ops table rather
+    // than in the JS bootstrap.
     let decls = oxide_jshost::v8_ops::op_decls();
-    assert_eq!(decls.len(), 3, "expected log, trace, serialize");
+    assert_eq!(decls.len(), 5, "expected log, trace, serialize, random, sleep");
     // Op names are namespaced with the `op_oxide_` prefix so the JS side can
     // distinguish them from deno_core built-ins.
     let names: Vec<&str> = decls.iter().map(|d| d.name).collect();
-    assert!(names.iter().any(|n| n.contains("op_oxide_log")), "{names:?}");
-    assert!(names.iter().any(|n| n.contains("op_oxide_trace")), "{names:?}");
-    assert!(names.iter().any(|n| n.contains("op_oxide_serialize")), "{names:?}");
+    for want in [
+        "op_oxide_log",
+        "op_oxide_trace",
+        "op_oxide_serialize",
+        "op_oxide_random",
+        "op_oxide_sleep",
+    ] {
+        assert!(names.iter().any(|n| n.contains(want)), "missing {want}: {names:?}");
+    }
 }
