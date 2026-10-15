@@ -124,6 +124,15 @@ pub struct BundleOptions {
     /// ESM host needs — a split CJS runtime lands in a chunk that exports the
     /// `require` wrapper, not the module's namespace.
     pub inline_dynamic_imports: bool,
+    /// §4.2 / BUG-SOLID: explicit export conditions for the resolver, tried
+    /// before the platform defaults. `None` means "use the platform's default
+    /// conditions" (browser for Client/Edge, node for Ssr). The V8 config
+    /// bundle sets `["worker","browser","import","module","default"]` so it
+    /// matches the V8 loader (`v8_loader.rs`) — `worker`-first is what gives
+    /// `@solidjs/web` its SSR build (the client build's `ssr()` returns
+    /// undefined) while still giving `react-dom/server` a browser-compatible
+    /// build with no `require('stream')`.
+    pub resolve_conditions: Option<Vec<String>>,
 }
 
 /// §6.6: a CSS transform the CLI supplies. Called with
