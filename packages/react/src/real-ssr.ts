@@ -43,11 +43,23 @@ async function load(): Promise<{ react: ReactLike; server: ReactDomServerLike } 
     const reactMod = (await import('react')) as unknown as { default?: ReactLike } & ReactLike
     const serverMod = (await import('react-dom/server')) as unknown as ReactDomServerLike
     const react = (reactMod.default ?? reactMod) as ReactLike
-    if (typeof react.createElement !== 'function') return undefined
-    if (typeof serverMod.renderToString !== 'function') return undefined
+    if (typeof react.createElement !== 'function') {
+      ;(globalThis as Record<string, unknown>).__oxideReactLoadError =
+        'react imported but createElement is ' + typeof (react as { createElement?: unknown }).createElement +
+        '; keys=' + Object.keys(reactMod as object).join(',') +
+        '; defaultKeys=' + (reactMod.default ? Object.keys(reactMod.default as object).join(',') : 'none')
+      return undefined
+    }
+    if (typeof serverMod.renderToString !== 'function') {
+      ;(globalThis as Record<string, unknown>).__oxideReactLoadError =
+        'react-dom/server imported but renderToString is ' + typeof (serverMod as { renderToString?: unknown }).renderToString
+      return undefined
+    }
     cached = { react, server: serverMod }
     return cached
-  } catch {
+  } catch (e) {
+    ;(globalThis as Record<string, unknown>).__oxideReactLoadError =
+      'import threw: ' + ((e as { message?: string })?.message ?? String(e))
     return undefined
   }
 }
