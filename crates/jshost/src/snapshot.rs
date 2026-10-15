@@ -160,7 +160,7 @@ pub fn snapshot_build(entry: &str, source: &str) -> Result<AppSnapshot> {
 /// user's string literals. Replacing each non-ASCII scalar with a `\uXXXX`
 /// escape is **semantics-preserving** for JavaScript: identical inside string,
 /// template and regex literals, and merely cosmetic inside a comment.
-fn escape_non_ascii(src: &str) -> String {
+pub(crate) fn escape_non_ascii(src: &str) -> String {
     if src.is_ascii() {
         return src.to_string();
     }
@@ -269,7 +269,12 @@ pub fn snapshot_build_bundle(
         lazy_loaded_js_files: Cow::Borrowed(&[]),
         synthetic_esm_modules: Cow::Borrowed(&[]),
         esm_entry_point: Some(leak(entry_url)),
-        ops: Cow::Borrowed(&[]),
+        // §4.5: bake the oxide ops into the snapshot. Without them a worker
+        // booting from the blob has no `Deno.core.ops.op_oxide_*` — the
+        // bootstrap's `crypto` shim (`op_oxide_random`) and `oxide.serialize`
+        // fail at call time. `create_snapshot` registers these when
+        // `skip_op_registration` is false (it is).
+        ops: Cow::Owned(crate::v8_ops::op_decls()),
         objects: Cow::Borrowed(&[]),
         external_references: Cow::Borrowed(&[]),
         global_template_middleware: None,
@@ -307,6 +312,57 @@ pub fn snapshot_build_bundle(
                 blob: Vec::new(),
                 code_cache: None,
                 entry: entry_path.to_string(),
+                source_hash,
+                warnings,
+            })
+        }
+    }
+}
+
+/// Build a V8 startup snapshot of the **oxide runtime extension** — the
+/// bootstrap (`process`, `Buffer`, Web globals, `__oxideDispatch`, the
+/// framework/loader ops) and the ops themselves (§4.4).
+///
+/// This is what makes a cold boot cheap: the blob captures V8 already
+/// initialized and the bootstrap already evaluated, so `oxide start` restores
+/// it per worker instead of re-running both. The bundle is *not* snapshotted —
+/// it is imported at runtime by `__oxideDispatch`, which lets this snapshot use
+/// a **fixed** extension name (`oxide_runtime`) that the worker's load-time
+/// extension matches exactly. (A per-entry name made the snapshot unloadable:
+/// deno_core checks extension names in order.)
+pub fn snapshot_build_runtime() -> Result<AppSnapshot> {
+    let mut warnings: Vec<String> = Vec::new();
+    // The source hash is a constant: the extension is fixed. A version tag is
+    // enough to key rebuilds; the CLI's own build fingerprint gates the write.
+    let source_hash = blake3::hash(crate::V8_BOOTSTRAP.as_bytes())
+        .to_hex()
+        .to_string();
+
+    let options = CreateSnapshotOptions {
+        cargo_manifest_dir: leak(env!("CARGO_MANIFEST_DIR").to_string()),
+        startup_snapshot: None,
+        skip_op_registration: false,
+        extensions: vec![crate::oxide_extension()],
+        extension_transpiler: None,
+        with_runtime_cb: None,
+    };
+
+    match create_snapshot(options, None) {
+        Ok(output) => Ok(AppSnapshot {
+            format: SNAPSHOT_FORMAT,
+            blob: output.output.to_vec(),
+            code_cache: None,
+            entry: "oxide:runtime".to_string(),
+            source_hash,
+            warnings,
+        }),
+        Err(e) => {
+            warnings.push(format!("runtime snapshot failed ({e})"));
+            Ok(AppSnapshot {
+                format: SNAPSHOT_FORMAT,
+                blob: Vec::new(),
+                code_cache: None,
+                entry: "oxide:runtime".to_string(),
                 source_hash,
                 warnings,
             })
