@@ -19,7 +19,7 @@ import { makeRealAdapter, type RealAdapterOptions } from '../../oxide/src/server
 import type { RenderInput, HeadTags, RenderCtx } from '../../oxide/src/types.ts'
 import { render as irRender, head as irHead, mergeHead } from './render.ts'
 import { hydrate, hydrateIsland, mount, update } from './hydrate.ts'
-import { isVueAvailable, renderVueToString } from './real-ssr.ts'
+import { isVueAvailable, renderVueToString, getLastLoadError } from './real-ssr.ts'
 
 export type { RealAdapterOptions }
 
@@ -60,6 +60,7 @@ export function createRealAdapter(opts: RealAdapterOptions) {
     irRender,
     buildHead,
     isAvailable: isVueAvailable,
+    lastError: getLastLoadError,
     renderBody: renderVueToString,
     rootAttrs: ' id="root" data-v-app=""',
     hydrate: hydrate as never,

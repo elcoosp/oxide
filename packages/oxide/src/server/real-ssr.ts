@@ -56,6 +56,10 @@ export interface RealAdapterConfig {
   buildHead: (input: RenderInput) => HeadTags
   /** True when the upstream framework deps are resolvable. */
   isAvailable: () => Promise<boolean>
+  /** Per-adapter load failure detail (BUG-09): set from the adapter's own
+   * `isAvailable()` catch — the generic helper must not read a
+   * React-specific global for all four frameworks. */
+  lastError?: () => string | undefined
   /** Real SSR body: given a component and props, produce HTML. */
   renderBody: (Component: unknown, props: Record<string, unknown>) => Promise<string>
   /** Attributes on the framework root container (e.g. ` id="root" data-reactroot=""`). */
@@ -142,12 +146,16 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
     },
     render(input: RenderInput): ReadableStream<Uint8Array> {
       const Component = cfg.opts.componentFor(input.route)
+      // BUG-09: escape anything interpolated into an HTML comment — a `why`
+      // containing `-->` would break out of the comment into live HTML.
+      const safeComment = (s: string): string =>
+        String(s).replace(/-->/g, '--\\>').replace(/</g, '&lt;')
       // Vue and other frameworks allow component OBJECTS (options API,
       // defineComponent result), not just functions. Only undefined/null
       // means "the caller has no component for this route".
       if (Component === undefined || Component === null) {
         if (strategy === 'real') {
-          return streamOf(`<!-- oxide: real SSR: no component for route ${input.route} -->`)
+          return streamOf(`<!-- oxide: real SSR: no component for route ${safeComment(input.route)} -->`)
         }
         return cfg.irRender(input)
       }
@@ -155,8 +163,14 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
       const it = (async function* (): AsyncGenerator<Uint8Array> {
         if (!(await cfg.isAvailable())) {
           if (strategy === 'real') {
-            const why = (globalThis as Record<string, unknown>).__oxideReactLoadError ?? 'isAvailable=false, no recorded error'
-            yield enc.encode(`<!-- oxide: real SSR unavailable: ${cfg.name} deps not installed; why=${why} -->`)
+            // BUG-09: per-adapter lastError (never a React-specific global),
+            // escaped; loud OX-500 page, not a comment-only blank body.
+            const why = safeComment(cfg.lastError?.() ?? 'isAvailable=false, no recorded error')
+            const head = cfg.buildHead(input)
+            yield enc.encode(`<!doctype html>\n<html lang="en"><head>${emitHead(head)}</head>`)
+            yield enc.encode(`<body><div${cfg.rootAttrs}>`)
+            yield enc.encode(`<div class='ox-error' data-ox-error='OX-500'>OX-500: ${escText(cfg.name)} SSR unavailable: ${escText(why)}</div>`)
+            yield enc.encode(`</div></body></html>`)
             return
           }
           for await (const c of cfg.irRender(input)) yield c

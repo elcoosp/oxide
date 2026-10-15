@@ -15,7 +15,7 @@ import { makeRealAdapter, type RealAdapterOptions } from '../../oxide/src/server
 import type { RenderInput, HeadTags, RenderCtx } from '../../oxide/src/types.ts'
 import { render as irRender, head as irHead, mergeHead } from './render.ts'
 import { hydrate, hydrateIsland, mount, update } from './hydrate.ts'
-import { isSolidAvailable, renderSolidToString } from './real-ssr.ts'
+import { isSolidAvailable, renderSolidToString, getLastLoadError } from './real-ssr.ts'
 
 export type { RealAdapterOptions }
 
@@ -55,6 +55,7 @@ export function createRealAdapter(opts: RealAdapterOptions) {
     irRender,
     buildHead,
     isAvailable: isSolidAvailable,
+    lastError: getLastLoadError,
     // Solid's renderer takes a zero-argument factory. Pre-invoke the
     // component OUTSIDE solid's async machinery so a synchronous throw
     // propagates immediately (otherwise renderToStringAsync hangs and

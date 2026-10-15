@@ -23,6 +23,11 @@ export interface VueServerRendererLike {
 
 let cached: { vue: VueAppLike; server: VueServerRendererLike } | undefined
 let attempted = false
+// BUG-09: per-adapter load error detail.
+let lastLoadError: string | undefined
+export function getLastLoadError(): string | undefined {
+  return lastLoadError
+}
 
 async function load(): Promise<{ vue: VueAppLike; server: VueServerRendererLike } | undefined> {
   if (cached) return cached
@@ -33,11 +38,18 @@ async function load(): Promise<{ vue: VueAppLike; server: VueServerRendererLike 
     const serverMod = (await import('@vue/server-renderer')) as unknown as { default?: VueServerRendererLike } & VueServerRendererLike
     const vue = (vueMod.default ?? vueMod) as VueAppLike
     const server = (serverMod.default ?? serverMod) as VueServerRendererLike
-    if (typeof vue.createSSRApp !== 'function') return undefined
-    if (typeof server.renderToString !== 'function') return undefined
+    if (typeof vue.createSSRApp !== 'function') {
+      lastLoadError = 'vue imported but createSSRApp is ' + typeof vue.createSSRApp
+      return undefined
+    }
+    if (typeof server.renderToString !== 'function') {
+      lastLoadError = '@vue/server-renderer imported but renderToString is ' + typeof server.renderToString
+      return undefined
+    }
     cached = { vue, server }
     return cached
-  } catch {
+  } catch (e) {
+    lastLoadError = 'import threw: ' + ((e as { message?: string })?.message ?? String(e))
     return undefined
   }
 }

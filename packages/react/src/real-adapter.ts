@@ -23,7 +23,7 @@ import type { RenderInput, HeadTags, RenderCtx } from '../../oxide/src/types.ts'
 import { render as irRender, head as irHead, mergeHead } from './render.ts'
 import { hydrate, mount, update } from './hydrate.ts'
 import { reactHydrateIsland } from './hydrate-island-real.ts'
-import { isReactAvailable, renderReactToString } from './real-ssr.ts'
+import { isReactAvailable, renderReactToString, getLastLoadError } from './real-ssr.ts'
 
 export type { RealAdapterOptions }
 
@@ -74,6 +74,7 @@ export function createRealAdapter(opts: RealAdapterOptions) {
     irRender,
     buildHead,
     isAvailable: isReactAvailable,
+    lastError: getLastLoadError,
     renderBody: renderReactToString,
     rootAttrs: ' id="root" data-reactroot=""',
     hydrate: hydrate as never,

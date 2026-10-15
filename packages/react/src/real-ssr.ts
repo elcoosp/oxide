@@ -34,6 +34,12 @@ export interface ReactDomServerLike {
 
 let cached: { react: ReactLike; server: ReactDomServerLike } | undefined
 let attempted = false
+// BUG-09: per-adapter load error (read by the shared helper via lastError).
+// The old `__oxideReactLoadError` global leaked internals across adapters.
+let lastLoadError: string | undefined
+export function getLastLoadError(): string | undefined {
+  return lastLoadError
+}
 
 async function load(): Promise<{ react: ReactLike; server: ReactDomServerLike } | undefined> {
   if (cached) return cached
@@ -44,21 +50,21 @@ async function load(): Promise<{ react: ReactLike; server: ReactDomServerLike } 
     const serverMod = (await import('react-dom/server')) as unknown as ReactDomServerLike
     const react = (reactMod.default ?? reactMod) as ReactLike
     if (typeof react.createElement !== 'function') {
-      ;(globalThis as Record<string, unknown>).__oxideReactLoadError =
+      lastLoadError =
         'react imported but createElement is ' + typeof (react as { createElement?: unknown }).createElement +
         '; keys=' + Object.keys(reactMod as object).join(',') +
         '; defaultKeys=' + (reactMod.default ? Object.keys(reactMod.default as object).join(',') : 'none')
       return undefined
     }
     if (typeof serverMod.renderToString !== 'function') {
-      ;(globalThis as Record<string, unknown>).__oxideReactLoadError =
+      lastLoadError =
         'react-dom/server imported but renderToString is ' + typeof (serverMod as { renderToString?: unknown }).renderToString
       return undefined
     }
     cached = { react, server: serverMod }
     return cached
   } catch (e) {
-    ;(globalThis as Record<string, unknown>).__oxideReactLoadError =
+    lastLoadError =
       'import threw: ' + ((e as { message?: string })?.message ?? String(e))
     return undefined
   }

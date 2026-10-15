@@ -17,6 +17,11 @@ export interface SvelteServerLike {
 
 let cached: SvelteServerLike | undefined
 let attempted = false
+// BUG-09: per-adapter load error detail.
+let lastLoadError: string | undefined
+export function getLastLoadError(): string | undefined {
+  return lastLoadError
+}
 
 async function load(): Promise<SvelteServerLike | undefined> {
   if (cached) return cached
@@ -25,10 +30,14 @@ async function load(): Promise<SvelteServerLike | undefined> {
   try {
     const mod = (await import('svelte/server')) as unknown as { default?: SvelteServerLike } & SvelteServerLike
     const server = (mod.default ?? mod) as SvelteServerLike
-    if (typeof server.render !== 'function') return undefined
+    if (typeof server.render !== 'function') {
+      lastLoadError = 'svelte/server imported but render is ' + typeof server.render
+      return undefined
+    }
     cached = server
     return cached
-  } catch {
+  } catch (e) {
+    lastLoadError = 'import threw: ' + ((e as { message?: string })?.message ?? String(e))
     return undefined
   }
 }

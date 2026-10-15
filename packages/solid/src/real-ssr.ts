@@ -39,6 +39,11 @@ interface Loaded {
 
 let cached: Loaded | undefined
 let attempted = false
+// BUG-09: per-adapter load error detail.
+let lastLoadError: string | undefined
+export function getLastLoadError(): string | undefined {
+  return lastLoadError
+}
 
 async function tryLoad(name: 'solid-js/web' | '@solidjs/web'): Promise<SolidWebLike | undefined> {
   try {
@@ -46,9 +51,13 @@ async function tryLoad(name: 'solid-js/web' | '@solidjs/web'): Promise<SolidWebL
     const hasRenderer =
       typeof mod.renderToString === 'function' ||
       typeof mod.renderToStringAsync === 'function'
-    if (!hasRenderer) return undefined
+    if (!hasRenderer) {
+      lastLoadError = `${name} imported but has no renderToString/renderToStringAsync`
+      return undefined
+    }
     return mod
-  } catch {
+  } catch (e) {
+    lastLoadError = `import ${name} threw: ` + ((e as { message?: string })?.message ?? String(e))
     return undefined
   }
 }
