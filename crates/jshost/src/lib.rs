@@ -693,6 +693,39 @@ if (typeof globalThis.TextDecoder === 'undefined') {
     }
   };
 }
+// §4.6 tier 1: `MessageChannel`/`MessagePort`. React's browser SSR scheduler
+// (react-dom/server.browser) schedules work through a MessageChannel. A
+// macrotask-based port is enough: `postMessage` queues delivery after the
+// current task, which is what the scheduler expects.
+if (typeof globalThis.MessageChannel === 'undefined') {
+  globalThis.MessagePort = class MessagePort {
+    constructor() { this.onmessage = null; this._other = null; this._closed = false; }
+    postMessage(data) {
+      if (this._closed || !this._other) return;
+      const other = this._other;
+      queueMicrotask(() => {
+        if (other._closed) return;
+        const ev = { data };
+        if (typeof other.onmessage === 'function') other.onmessage(ev);
+      });
+    }
+    start() {}
+    close() { this._closed = true; }
+    addEventListener(type, fn) { if (type === 'message') this.onmessage = fn; }
+    removeEventListener() {}
+  };
+  globalThis.MessageChannel = class MessageChannel {
+    constructor() {
+      const a = new globalThis.MessagePort();
+      const b = new globalThis.MessagePort();
+      a._other = b;
+      b._other = a;
+      this.port1 = a;
+      this.port2 = b;
+    }
+  };
+}
+
 if (typeof globalThis.queueMicrotask === 'undefined') {
   globalThis.queueMicrotask = (fn) => Promise.resolve().then(fn);
 }
@@ -862,7 +895,8 @@ globalThis.__oxideFrameworkRender = async function (configPath, renderInput) {
     return JSON.stringify({ html });
   } catch (e) {
     return JSON.stringify({
-      __oxide_error: 'framework:render failed: ' + ((e && e.message) || e),
+      __oxide_error: 'framework:render failed: ' + ((e && e.message) || e) +
+        ' [reactLoadError=' + (globalThis.__oxideReactLoadError || 'none') + ']',
     });
   }
 };
