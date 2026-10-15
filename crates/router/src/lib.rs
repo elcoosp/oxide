@@ -261,6 +261,12 @@ pub struct RateLimit {
 #[derive(Debug, Clone, Default)]
 pub struct RulesEngine {
     pub rules: Vec<NativeRule>,
+    /// SEC-01: the per-key token buckets. `Mutex` because `evaluate` takes
+    /// `&self` (rules are shared read-only; the buckets are the mutable
+    /// state). The bucket map is swept opportunistically when it grows past
+    /// [`RATE_LIMITER_MAX_KEYS`] so a unique-key flood cannot grow it without
+    /// bound.
+    pub limiter: crate::rules::TokenBuckets,
 }
 
 impl RulesEngine {
@@ -283,7 +289,14 @@ impl RulesEngine {
     /// [`RuleOutcome::Headers`] only when no terminal outcome fired. `:param` captures
     /// (and `:splat` for `*`) substitute into destinations.
     pub fn evaluate(&self, path: &str) -> RuleOutcome {
-        rules::evaluate_impl(self, path)
+        rules::evaluate_impl(self, path, "")
+    }
+
+    /// SEC-01: like [`evaluate`], but with the request's rate-limit key
+    /// material (e.g. the client IP). A `rate_limit.key` of `ip` (or an empty
+    /// key) uses `client_key`; a `:param` uses the captured route param.
+    pub fn evaluate_with_key(&self, path: &str, client_key: &str) -> RuleOutcome {
+        rules::evaluate_impl(self, path, client_key)
     }
 }
 
@@ -294,5 +307,8 @@ pub enum RuleOutcome {
     Rewrite(String),
     Headers(BTreeMap<String, String>),
     AuthRequired,
-    RateLimited,
+    /// SEC-01: the token bucket for this key is empty. `retry_after_secs` is
+    /// how long until at least one token refills (the server sends it as the
+    /// `Retry-After` header).
+    RateLimited { retry_after_secs: u64 },
 }
