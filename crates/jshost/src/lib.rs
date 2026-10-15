@@ -5,7 +5,13 @@
 //! and `NodeHost` (child workers, same op protocol) — both pass the same conformance
 //! suite (§4.2). This workspace ships `NodeHost` (real child processes over a
 //! length-prefixed JSON+binary protocol on stdio) plus `ScriptedHost` for tests;
-//! `V8Host` is stubbed with a clear diagnostic (see docs/deviations.md).
+//! `V8Host` runs a real `deno_core` isolate per worker thread: a
+//! `FsModuleLoader` resolves and reads an ESM bundle from disk, the
+//! dispatch calls a named export through a dynamic `import()` driven on
+//! the V8 event loop, and the result comes back as JSON. Its request-
+//! scoped op surface (streaming, `cache_*`, `fetch`) is still a subset of
+//! the Node worker's, so a framework whose adapter needs a Node built-in
+//! still selects `NodeHost`; the module-call path is complete.
 //!
 //! Streaming ops (§4.5): `stream_write`, `response_head`, `request_body_read`,
 //! `serialize`, `cache_get/set/tag`, `fetch`, `ws_*`, `log/trace`. Chunks cross the
@@ -548,16 +554,37 @@ globalThis.oxide = {
   trace: (name) => Deno.core.ops.op_oxide_trace(String(name)),
   serialize: (value) => Deno.core.ops.op_oxide_serialize(JSON.stringify(value)),
 };
-globalThis.__oxideDispatch = function(kind, mod, exp, payload) {
-  if (kind === 'render') {
-    const title = (payload && payload.title) || (mod + ':' + exp);
-    return JSON.stringify({ html: '<html>' + title + '</html>' });
+
+// §4.2 / §4.4: the real V8 dispatch. `moduleUrl` is a `file://` URL the
+// runtime's `FsModuleLoader` resolves; `exportName` is the export to call
+// (`default` when empty); `payload` is the JSON argument. The result is a
+// JSON envelope string: `{ok, value}` on success, `{__oxide_error}` on a
+// module-import or export-call failure. Returned as a string so the Rust
+// side reads it back without a serde_v8 dependency.
+globalThis.__oxideDispatch = async function (kind, moduleUrl, exportName, payload) {
+  let mod;
+  try {
+    mod = await import(moduleUrl);
+  } catch (e) {
+    return JSON.stringify({
+      __oxide_error: 'import failed for ' + moduleUrl + ': ' + ((e && e.message) || e),
+    });
   }
-  if (kind === 'tooling:compile') {
-    const code = (payload && payload.code) || '';
-    return JSON.stringify({ code: String(code).toUpperCase() });
+  const fn = mod[exportName];
+  if (typeof fn !== 'function') {
+    return JSON.stringify({
+      __oxide_error:
+        'module ' + moduleUrl + ' has no callable export `' + exportName + '`',
+    });
   }
-  throw new Error('worker has no handler for kind `' + kind + '`');
+  try {
+    const value = await fn(payload);
+    return JSON.stringify({ ok: true, value: value === undefined ? null : value });
+  } catch (e) {
+    return JSON.stringify({
+      __oxide_error: exportName + ' threw: ' + ((e && e.message) || e),
+    });
+  }
 };
 "#;
 
@@ -636,9 +663,17 @@ fn spawn_v8_worker() -> Result<Arc<V8WorkerHandle>> {
                     middleware_fn: None,
                     enabled: true,
                 };
+                // §4.2: a real `ModuleLoader` so the runtime can evaluate an
+                // ESM bundle. `FsModuleLoader` resolves `file://` specifiers
+                // and reads them from disk — which is exactly what a
+                // self-contained `dist/server` bundle needs. (`Rc` is fine:
+                // `JsRuntime` is `!Send` and pinned to this thread.)
+                let module_loader: std::rc::Rc<dyn deno_core::ModuleLoader> =
+                    std::rc::Rc::new(deno_core::FsModuleLoader);
                 let mut js = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     JsRuntime::new(RuntimeOptions {
                         extensions: vec![ext],
+                        module_loader: Some(module_loader),
                         ..Default::default()
                     })
                 })) {
@@ -657,7 +692,7 @@ fn spawn_v8_worker() -> Result<Arc<V8WorkerHandle>> {
                 while let Some(msg) = rx.recv().await {
                     match msg {
                         V8Msg::Call { id, entry, input } => {
-                            let res = v8_dispatch(&mut js, &entry, &input);
+                            let res = v8_dispatch(&mut js, &entry, &input).await;
                             let pending =
                                 handle_for_thread.pending.lock().unwrap().remove(&id);
                             if let Some(p) = pending {
@@ -686,9 +721,34 @@ fn spawn_v8_worker() -> Result<Arc<V8WorkerHandle>> {
     }
 }
 
-fn v8_dispatch(js: &mut JsRuntime, entry: &EntryRef, input: &CallInput) -> Result<CallStream> {
-    // Kinds the Node worker special-cases are handled Rust-side so semantics match
-    // without burdening the JS dispatch.
+/// Build a `file://` URL for a module path so the `FsModuleLoader` can resolve
+/// it. A relative path is joined onto the current directory first.
+fn v8_module_url(path: &str) -> Result<String> {
+    let p = std::path::Path::new(path);
+    let abs = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|e| err("JSH-V8", format!("cwd: {e}")))?
+            .join(p)
+    };
+    deno_core::ModuleSpecifier::from_file_path(&abs)
+        .map(|u| u.to_string())
+        .map_err(|_| err("JSH-V8", format!("not a file path: {}", abs.display())))
+}
+
+/// §4.2 / §4.4: dispatch a call into the V8 runtime. Imports `entry.module`
+/// (a real ESM bundle) via the runtime's `FsModuleLoader`, calls `entry.export`
+/// with `input.payload`, and returns the JSON result. The call is async — a
+/// dynamic `import()` and a user async function both suspend — so the worker
+/// loop drives the V8 event loop through the returned promise.
+async fn v8_dispatch(
+    js: &mut JsRuntime,
+    entry: &EntryRef,
+    input: &CallInput,
+) -> Result<CallStream> {
+    // Kinds the Node worker special-cases are handled Rust-side so semantics
+    // match without burdening the JS dispatch.
     if entry.kind == "boom" {
         return Err(err(
             "JSH-BOOM",
@@ -698,38 +758,63 @@ fn v8_dispatch(js: &mut JsRuntime, entry: &EntryRef, input: &CallInput) -> Resul
     if entry.kind == "die" {
         return Err(err("JSH-CRASH", "worker simulated crash (kind `die`)"));
     }
-    if entry.kind != "render" && entry.kind != "tooling:compile" {
+    if entry.module.is_empty() {
         return Err(err(
-            "JSH-NOKIND",
-            format!("worker has no handler for kind `{}`", entry.kind),
+            "JSH-V8",
+            format!("kind `{}` requires a `module` path", entry.kind),
         ));
     }
 
-    let kind = serde_json::to_string(&entry.kind).unwrap_or_else(|_| "\"\"".into());
-    let module = serde_json::to_string(&entry.module).unwrap_or_else(|_| "\"\"".into());
-    let export = serde_json::to_string(&entry.export).unwrap_or_else(|_| "\"\"".into());
-    let payload = serde_json::to_string(&input.payload).unwrap_or_else(|_| "null".into());
-    let script = format!(
-        "globalThis.__oxideDispatch({kind}, {module}, {export}, {payload})"
-    );
+    let module_url = v8_module_url(&entry.module)?;
+    let export_name = if entry.export.is_empty() {
+        "default"
+    } else {
+        entry.export.as_str()
+    };
 
-    let global = js
+    let kind = serde_json::to_string(&entry.kind).unwrap_or_else(|_| "\"\"".into());
+    let url = serde_json::to_string(&module_url).unwrap_or_else(|_| "\"\"".into());
+    let exp = serde_json::to_string(export_name).unwrap_or_else(|_| "\"\"".into());
+    let payload = serde_json::to_string(&input.payload).unwrap_or_else(|_| "null".into());
+    let script =
+        format!("globalThis.__oxideDispatch({kind}, {url}, {exp}, {payload})");
+
+    // `__oxideDispatch` returns a promise; drive the event loop until it
+    // settles, then read the resolved string.
+    let promise = js
         .execute_script("oxide:call", script)
         .map_err(|e| err("JSH-V8", format!("dispatch failed: {e}")))?;
+    let resolved = js
+        .resolve_value(promise)
+        .await
+        .map_err(|e| err("JSH-V8", format!("dispatch await failed: {e}")))?;
     let s = {
         deno_core::scope!(scope, js);
-        let local = deno_core::v8::Local::new(scope, global);
+        let local = deno_core::v8::Local::new(scope, resolved);
         local.to_rust_string_lossy(scope)
     };
-    Ok(CallStream::Complete(Bytes::from(s.into_bytes())))
+
+    // The envelope is `{ok, value}` or `{__oxide_error}`. A surfaced JS error
+    // is a coded dispatch failure, not a transport failure.
+    let v: serde_json::Value = serde_json::from_str(&s)
+        .map_err(|e| err("JSH-V8", format!("dispatch returned non-JSON: {e}: {s}")))?;
+    if let Some(msg) = v.get("__oxide_error").and_then(|x| x.as_str()) {
+        return Err(err("JSH-V8", msg.to_string()));
+    }
+    let out = v.get("value").cloned().unwrap_or(serde_json::Value::Null);
+    let bytes = serde_json::to_vec(&out)
+        .map_err(|e| err("JSH-V8", format!("serialize result: {e}")))?;
+    Ok(CallStream::Complete(Bytes::from(bytes)))
 }
 
 /// V8 backend (§4.2 default, via deno_core).
 ///
 /// One `JsRuntime` per worker thread, each pinned (`JsRuntime` is `!Send`);
-/// calls cross the thread boundary through an mpsc channel plus a shared pending
-/// map. Handles `render` and `tooling:compile` with the same semantics as the
-/// Node worker; also mirrors `boom` / `die`.
+/// calls cross the thread boundary through an mpsc channel plus a shared
+/// pending map. A call imports its `entry.module` through the runtime's
+/// `FsModuleLoader` and invokes `entry.export` (default `default`) with the
+/// JSON payload, awaiting the result on the V8 event loop. Mirrors the Node
+/// worker's `boom` / `die` sentinels.
 pub struct V8Host;
 
 impl V8Host {
