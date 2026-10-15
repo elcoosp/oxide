@@ -573,6 +573,164 @@ if (typeof globalThis.process === 'undefined') {
     nextTick: function (fn) { Promise.resolve().then(fn); },
   };
 }
+// §4.6 tier 1: Web globals bare V8 lacks. deno_core does not register them;
+// a bundled framework runtime (React's ESM build, the SSR adapters) uses
+// TextEncoder/TextDecoder/atob/btoa/queueMicrotask/structuredClone at module
+// scope and during render. These are minimal, spec-shaped implementations.
+// §4.6 tier 1: a minimal Web Streams `ReadableStream`. The §7 adapter
+// contract is `render(input) -> ReadableStream<Uint8Array>`, and the framework
+// host consumes it with `for await`. This covers exactly that shape: a
+// `start(controller)` producer with `enqueue`/`close`/`error`, and async
+// iteration. (The full Web Streams spec — tee, pipeThrough, backpressure — is
+// not implemented; a framework runtime that needs it selects the Node backend.)
+if (typeof globalThis.ReadableStream === 'undefined') {
+  globalThis.ReadableStream = class ReadableStream {
+    constructor(source = {}) {
+      const queue = [];
+      const waiters = [];
+      let done = false;
+      let failure = null;
+      const settle = () => {
+        while (waiters.length && (queue.length || done || failure)) {
+          const w = waiters.shift();
+          if (failure) w.reject(failure);
+          else if (queue.length) w.resolve({ value: queue.shift(), done: false });
+          else w.resolve({ value: undefined, done: true });
+        }
+      };
+      this._controller = {
+        enqueue: (chunk) => { queue.push(chunk); settle(); },
+        close: () => { done = true; settle(); },
+        error: (e) => { failure = e; settle(); },
+        get desiredSize() { return queue.length ? 1 : 0; },
+      };
+      try {
+        if (typeof source.start === 'function') source.start(this._controller);
+        if (typeof source.pull === 'function') {
+          const pull = () => {
+            if (done || failure) return;
+            Promise.resolve(source.pull(this._controller)).then(() => {
+              if (!done && !failure && queue.length === 0) pull();
+            }).catch((e) => this._controller.error(e));
+          };
+          pull();
+        }
+      } catch (e) { failure = e; }
+      this._read = () => {
+        if (failure) return Promise.reject(failure);
+        if (queue.length) return Promise.resolve({ value: queue.shift(), done: false });
+        if (done) return Promise.resolve({ value: undefined, done: true });
+        return new Promise((resolve, reject) => waiters.push({ resolve, reject }));
+      };
+    }
+    getReader() {
+      return {
+        read: () => this._read(),
+        releaseLock: () => {},
+        cancel: () => { done = true; settle?.(); return Promise.resolve(); },
+      };
+    }
+    [Symbol.asyncIterator]() {
+      return { next: () => this._read() };
+    }
+    async cancel() { this._controller.close(); }
+  };
+}
+
+if (typeof globalThis.TextEncoder === 'undefined') {
+  globalThis.TextEncoder = class TextEncoder {
+    constructor() { this.encoding = 'utf-8'; }
+    encode(str) {
+      str = String(str);
+      const out = [];
+      for (let i = 0; i < str.length; i++) {
+        let c = str.charCodeAt(i);
+        if (c < 0x80) out.push(c);
+        else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f));
+        else if (c >= 0xd800 && c <= 0xdbff && i + 1 < str.length) {
+          const c2 = str.charCodeAt(i + 1);
+          if (c2 >= 0xdc00 && c2 <= 0xdfff) {
+            const cp = 0x10000 + ((c - 0xd800) << 10) + (c2 - 0xdc00);
+            out.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3f),
+                     0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
+            i++;
+          } else out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
+        } else out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
+      }
+      return new Uint8Array(out);
+    }
+    encodeInto(str, dest) {
+      const bytes = this.encode(str);
+      const n = Math.min(bytes.length, dest.length);
+      dest.set(bytes.subarray(0, n));
+      return { read: str.length, written: n };
+    }
+  };
+}
+if (typeof globalThis.TextDecoder === 'undefined') {
+  globalThis.TextDecoder = class TextDecoder {
+    constructor(enc, opts) { this.encoding = enc || 'utf-8'; this.fatal = !!(opts && opts.fatal); }
+    decode(buf) {
+      if (buf == null) return '';
+      const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf.buffer || buf);
+      let out = '';
+      for (let i = 0; i < bytes.length;) {
+        const b = bytes[i];
+        let cp, len;
+        if (b < 0x80) { cp = b; len = 1; }
+        else if (b < 0xe0) { cp = b & 0x1f; len = 2; }
+        else if (b < 0xf0) { cp = b & 0x0f; len = 3; }
+        else { cp = b & 0x07; len = 4; }
+        if (i + len > bytes.length) break;
+        for (let j = 1; j < len; j++) cp = (cp << 6) | (bytes[i + j] & 0x3f);
+        i += len;
+        if (cp > 0xffff) {
+          cp -= 0x10000;
+          out += String.fromCharCode(0xd800 + (cp >> 10), 0xdc00 + (cp & 0x3ff));
+        } else out += String.fromCharCode(cp);
+      }
+      return out;
+    }
+  };
+}
+if (typeof globalThis.queueMicrotask === 'undefined') {
+  globalThis.queueMicrotask = (fn) => Promise.resolve().then(fn);
+}
+if (typeof globalThis.structuredClone === 'undefined') {
+  globalThis.structuredClone = (v) => JSON.parse(JSON.stringify(v));
+}
+if (typeof globalThis.atob === 'undefined') {
+  const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  globalThis.atob = function (s) {
+    s = String(s).replace(/[^A-Za-z0-9+/]/g, '');
+    let out = '';
+    for (let i = 0; i < s.length; i += 4) {
+      const n = (B64.indexOf(s[i]) << 18) | (B64.indexOf(s[i+1]) << 12)
+              | ((B64.indexOf(s[i+2]) & 63) << 6) | (B64.indexOf(s[i+3]) & 63);
+      out += String.fromCharCode((n >> 16) & 255);
+      if (i + 2 < s.length) out += String.fromCharCode((n >> 8) & 255);
+      if (i + 3 < s.length) out += String.fromCharCode(n & 255);
+    }
+    return out;
+  };
+}
+if (typeof globalThis.btoa === 'undefined') {
+  const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  globalThis.btoa = function (s) {
+    s = String(s);
+    let out = '';
+    for (let i = 0; i < s.length; i += 3) {
+      const n = (s.charCodeAt(i) << 16)
+              | ((i + 1 < s.length ? s.charCodeAt(i + 1) : 0) << 8)
+              | (i + 2 < s.length ? s.charCodeAt(i + 2) : 0);
+      out += B64[(n >> 18) & 63] + B64[(n >> 12) & 63]
+           + (i + 1 < s.length ? B64[(n >> 6) & 63] : '=')
+           + (i + 2 < s.length ? B64[n & 63] : '=');
+    }
+    return out;
+  };
+}
+
 if (typeof globalThis.Buffer === 'undefined') {
   // A narrow `Buffer` covering the two calls the bundle makes:
   // `Buffer.from(str, encoding).toString(encoding)` and `Buffer.isBuffer`.
@@ -651,6 +809,60 @@ globalThis.__oxideDispatch = async function (kind, moduleUrl, exportName, payloa
   } catch (e) {
     return JSON.stringify({
       __oxide_error: exportName + ' threw: ' + ((e && e.message) || e),
+    });
+  }
+};
+
+// framework:load — import the config (transpiled by the Rust loader), read the
+// adapter descriptor off `default.framework`. Mirrors the Node worker.
+globalThis.__oxideFrameworkLoad = async function (configPath) {
+  try {
+    const url = configPath.startsWith('file://')
+      ? configPath
+      : 'file://' + (configPath.startsWith('/') ? '' : '/') + configPath;
+    const mod = await import(url);
+    const cfg = (mod && mod.default) || mod;
+    const fw = cfg && cfg.framework;
+    if (!fw || typeof fw !== 'object') {
+      return JSON.stringify({ __oxide_error: 'config has no framework export' });
+    }
+    return JSON.stringify({
+      name: String(fw.name || ''),
+      extensions: Array.isArray(fw.extensions) ? fw.extensions.map(String) : [],
+      capabilities: fw.capabilities || {},
+    });
+  } catch (e) {
+    return JSON.stringify({
+      __oxide_error: 'framework:load failed: ' + ((e && e.message) || e),
+    });
+  }
+};
+
+// framework:render — call the adapter's `render(input)` and collect its
+// ReadableStream to a string. (Streaming is a later refinement; the collected
+// shape is what `FrameworkHost::render` returns.)
+globalThis.__oxideFrameworkRender = async function (configPath, renderInput) {
+  try {
+    const url = configPath.startsWith('file://')
+      ? configPath
+      : 'file://' + (configPath.startsWith('/') ? '' : '/') + configPath;
+    const mod = await import(url);
+    const cfg = (mod && mod.default) || mod;
+    const fw = cfg && cfg.framework;
+    if (!fw || typeof fw.render !== 'function') {
+      return JSON.stringify({ __oxide_error: 'config has no framework.render' });
+    }
+    const stream = fw.render(renderInput || {});
+    let html = '';
+    const dec = new TextDecoder();
+    for await (const chunk of stream) {
+      html += typeof chunk === 'string' ? chunk : dec.decode(chunk, { stream: true });
+    }
+    html += dec.decode();
+    return JSON.stringify({ html });
+  } catch (e) {
+    return JSON.stringify({
+      __oxide_error: 'framework:render failed: ' + ((e && e.message) || e),
     });
   }
 };
@@ -750,9 +962,15 @@ fn spawn_v8_worker(snapshot: Option<&'static [u8]>) -> Result<Arc<V8WorkerHandle
                     // (process/Buffer/oxide.*/__oxideDispatch) and its module
                     // graph. Loading it means the extension list and loader
                     // are NOT re-supplied — the heap is restored verbatim.
+                    // A snapshot restores the heap (the bootstrap and its
+                    // module graph) but NOT runtime options like the module
+                    // loader — dynamic `import()` still needs one. So set the
+                    // loader either way; only the `extensions` list differs (a
+                    // snapshot already contains them).
                     if snapshot.is_some() {
                         JsRuntime::new(RuntimeOptions {
                             startup_snapshot: snapshot,
+                            module_loader: Some(module_loader),
                             ..Default::default()
                         })
                     } else {
@@ -844,6 +1062,64 @@ async fn v8_dispatch(
     if entry.kind == "die" {
         return Err(err("JSH-CRASH", "worker simulated crash (kind `die`)"));
     }
+    // The framework ops take their module from the payload's `path`, not from
+    // `entry.module` (the Node worker's shape). Route them to their dedicated
+    // JS entry points.
+    if entry.kind == "framework:load" || entry.kind == "framework:render" {
+        let path = input
+            .payload
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if path.is_empty() {
+            return Err(err(
+                "JSH-FRAMEWORK",
+                format!("{} requires a `path` string", entry.kind),
+            ));
+        }
+        let script = if entry.kind == "framework:load" {
+            let p = serde_json::to_string(&path).unwrap_or_else(|_| "\"\"".into());
+            format!("globalThis.__oxideFrameworkLoad({p})")
+        } else {
+            let p = serde_json::to_string(&path).unwrap_or_else(|_| "\"\"".into());
+            let inp = serde_json::to_string(
+                input.payload.get("input").unwrap_or(&serde_json::Value::Null),
+            )
+            .unwrap_or_else(|_| "null".into());
+            format!("globalThis.__oxideFrameworkRender({p}, {inp})")
+        };
+        let promise = js
+            .execute_script("oxide:framework", script)
+            .map_err(|e| err("JSH-V8", format!("framework dispatch: {e}")))?;
+        let resolve = js.resolve(promise);
+        let resolved = js
+            .with_event_loop_promise(resolve, deno_core::PollEventLoopOptions::default())
+            .await
+            .map_err(|e| err("JSH-V8", format!("framework await: {e}")))?;
+        let s = {
+            deno_core::scope!(scope, js);
+            let local = deno_core::v8::Local::new(scope, resolved);
+            local.to_rust_string_lossy(scope)
+        };
+        let v: serde_json::Value = serde_json::from_str(&s)
+            .map_err(|e| err("JSH-V8", format!("framework returned non-JSON: {e}")))?;
+        if let Some(m) = v.get("__oxide_error").and_then(|x| x.as_str()) {
+            return Err(err("JSH-FRAMEWORK", m.to_string()));
+        }
+        // `framework:load` returns the descriptor object; `framework:render`
+        // returns `{html}` and the caller wants the raw HTML bytes.
+        let out = if entry.kind == "framework:render" {
+            v.get("html")
+                .and_then(|h| h.as_str())
+                .map(|h| h.as_bytes().to_vec())
+                .unwrap_or_default()
+        } else {
+            serde_json::to_vec(&v).unwrap_or_default()
+        };
+        return Ok(CallStream::Complete(Bytes::from(out)));
+    }
+
     if entry.module.is_empty() {
         return Err(err(
             "JSH-V8",
