@@ -2990,3 +2990,34 @@ on top of the earlier session-18 infrastructure commits.
 - The snapshot is built and loaded, but a before/after cold-start number on a
   *fresh process* was not captured (only the in-process delta, which does not
   measure process-cold boot). Worth a proper measurement now that V8 serves.
+
+## Session 19 — §16.6 web-vitals reporting hook (end to end)
+
+The spec's §16.6 lists a "web-vitals reporting hook" among the built-ins;
+none existed. Implemented across the stack:
+
+- **Client** (`packages/oxide/src/client/vitals.ts`): `reportWebVitals()` reads
+  LCP / CLS / INP / FCP / TTFB from the browser's own `PerformanceObserver`
+  and `performance` entries (no bundled `web-vitals` dependency), batches
+  samples, and flushes them with `navigator.sendBeacon` on `pagehide` /
+  visibility-hidden — the only reliable way to send a sample measured during
+  unload. Fully guarded: a no-op outside a browser, because `@oxide/react`
+  re-exports it and the config loader evaluates it in the Node worker.
+- **Server** (`crates/server`): `Metrics::observe_vital` aggregates samples
+  keyed `"<metric>/<route>"` and `render()` exposes
+  `oxide_web_vital_count` / `oxide_web_vital_sum`. A new
+  `POST /_oxide/vitals` endpoint parses a single sample or an array and folds
+  it into the registry. A beacon is fire-and-forget: **204, no body**, and a
+  malformed body is still 204 — a page must never see an error from a beacon.
+  Recording never enters JS.
+- **CLI** (`crates/cli`): the generated island boot entry now calls
+  `reportWebVitals()` after `boot()`.
+
+Verified: 5 client tests (no-op off-browser, FCP/TTFB read, LCP/CLS/INP flush
+on pagehide, CLS excludes recent-input shifts, metric allow-list) + 2 server
+tests (samples reach the registry; malformed → 204). Full suites green:
+oxide-server 40+59+21, oxide-cli --lib 91, packages/oxide 74, four-fixture
+gate PASS (3×).
+
+Commits: `3f54079` `86c5fb4` `ea05dae` `1296496` `38eb84b` `b8d5dbb`
+`287b499` `323b509`.
