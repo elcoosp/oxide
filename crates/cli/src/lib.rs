@@ -1606,11 +1606,13 @@ async fn write_prerender(
                 return Ok(());
             }
             Err(e) => {
+                // SEC-07: escape worker error text (HTML injection).
                 let body = format!(
                     "<!doctype html><html><body>\
                      <h1>loader error</h1><pre>{}: {}</pre>\
                      </body></html>",
-                    e.0.code, e.0.message
+                    oxide_render::escape_text(&e.0.code),
+                    oxide_render::escape_text(&e.0.message)
                 );
                 let dest = dist.join(rel);
                 if let Some(parent) = dest.parent() {
@@ -2748,7 +2750,7 @@ fn build_dispatch(
                                 metrics.observe(&label, started.elapsed(), 500);
                                 return oxide_server::OxideResponse::html(
                                     500,
-                                    format!("loader error: {}", e.0.message),
+                                    format!("loader error: {}", oxide_render::escape_text(&e.0.message)),
                                 );
                             }
                         }
@@ -2879,7 +2881,7 @@ fn build_dispatch(
                             metrics.observe(&label, started.elapsed(), 500);
                             oxide_server::OxideResponse::html(
                                 500,
-                                format!("render error: {}", e.0.message),
+                                format!("render error: {}", oxide_render::escape_text(&e.0.message)),
                             )
                         }
                     }

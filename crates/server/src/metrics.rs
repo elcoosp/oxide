@@ -36,10 +36,23 @@ impl RouteMetrics {
     }
 }
 
+/// SEC-07: escape `\`, `"` and `\n` in Prometheus label values.
+fn prom_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// The metric registry. One per server instance.
 #[derive(Debug, Default)]
-pub struct Metrics {
-    inner: RwLock<HashMap<String, RouteMetrics>>,
+pub struct Metrics {    inner: RwLock<HashMap<String, RouteMetrics>>,
     pub requests_total: AtomicU64,
     pub errors_total: AtomicU64,
     pub cache_hits_l0: AtomicU64,
@@ -133,12 +146,14 @@ impl Metrics {
                 for k in keys {
                     let (name, route) = k.split_once('/').unwrap_or((k.as_str(), ""));
                     let agg = vitals[k];
+                    let name_e = prom_escape(name);
+                    let route_e = prom_escape(route);
                     out.push_str(&format!(
-                        "oxide_web_vital_count{{metric=\"{name}\",route=\"{route}\"}} {}\n",
+                        "oxide_web_vital_count{{metric=\"{name_e}\",route=\"{route_e}\"}} {}\n",
                         agg.count
                     ));
                     out.push_str(&format!(
-                        "oxide_web_vital_sum{{metric=\"{name}\",route=\"{route}\"}} {}\n",
+                        "oxide_web_vital_sum{{metric=\"{name_e}\",route=\"{route_e}\"}} {}\n",
                         agg.sum
                     ));
                 }
@@ -150,21 +165,22 @@ impl Metrics {
         out.push_str("# TYPE oxide_request_duration_ms histogram\n");
         for (route, m) in map.iter() {
             let count = m.count.load(Ordering::Relaxed);
+            let route_e = prom_escape(route);
             for (i, bound) in BUCKET_BOUNDS_MS.iter().enumerate() {
                 out.push_str(&format!(
-                    "oxide_request_duration_ms_bucket{{route=\"{route}\",le=\"{bound}\"}} {}\n",
+                    "oxide_request_duration_ms_bucket{{route=\"{route_e}\",le=\"{bound}\"}} {}\n",
                     m.buckets[i].load(Ordering::Relaxed)
                 ));
             }
             out.push_str(&format!(
-                "oxide_request_duration_ms_bucket{{route=\"{route}\",le=\"+Inf\"}} {count}\n"
+                "oxide_request_duration_ms_bucket{{route=\"{route_e}\",le=\"+Inf\"}} {count}\n"
             ));
             out.push_str(&format!(
-                "oxide_request_duration_ms_sum{{route=\"{route}\"}} {}\n",
+                "oxide_request_duration_ms_sum{{route=\"{route_e}\"}} {}\n",
                 (m.sum_us.load(Ordering::Relaxed) as f64) / 1000.0
             ));
             out.push_str(&format!(
-                "oxide_request_duration_ms_count{{route=\"{route}\"}} {count}\n"
+                "oxide_request_duration_ms_count{{route=\"{route_e}\"}} {count}\n"
             ));
         }
         out
@@ -202,5 +218,32 @@ mod tests {
             m.observe("/x", Duration::from_millis(1), 200);
         }
         assert!(m.render().contains("route=\"/x\",le=\"+Inf\"} 5"));
+    }
+}
+
+#[cfg(test)]
+mod sec07_tests {
+    use super::*;
+
+    #[test]
+    fn prom_escape_neutralizes_injection() {
+        assert_eq!(prom_escape("a\"b\\c\nd"), "a\\\"b\\\\c\\nd");
+    }
+
+    #[test]
+    fn hostile_route_renders_inert() {
+        let m = Metrics::new();
+        m.observe("/x\",le=\"1\"} 99\n# evil", Duration::from_millis(1), 200);
+        let s = m.render();
+        // No raw newline may survive inside a label value (else the attacker
+        // injects a fake `# evil` exposition line).
+        for line in s.lines() {
+            assert!(
+                !line.starts_with("# evil"),
+                "injected exposition line must be escaped: {line}"
+            );
+        }
+        assert!(s.contains("\\n# evil"), "newline must be escaped: {s}");
+        assert!(s.contains("\\\""), "quote must be escaped");
     }
 }

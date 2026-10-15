@@ -192,7 +192,7 @@ fn meta_norm_key(key: &str) -> String {
 
 /// Escape an HTML attribute value minimally: `& < > " '`.
 /// All injected attributes are single-quoted (SEC-07), so `'` must escape.
-pub(crate) fn escape_attr(s: &str) -> String {
+pub fn escape_attr(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
@@ -208,7 +208,8 @@ pub(crate) fn escape_attr(s: &str) -> String {
 }
 
 /// Escape HTML text content minimally: `& < >`.
-fn escape_text(s: &str) -> String {
+/// SEC-07: 500 pages interpolate worker error text — escape it.
+pub fn escape_text(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
@@ -779,6 +780,17 @@ mod tests {
     fn escape_attr_and_text_minimal() {
         assert_eq!(escape_attr("a&b<c>d\"e"), "a&amp;b&lt;c&gt;d&quot;e");
         assert_eq!(escape_text("a&b<c>\"d"), "a&amp;b&lt;c&gt;\"d");
+    }
+
+    #[test]
+    fn escape_attr_covers_single_quote_and_script() {
+        // SEC-07: all injected attributes are single-quoted; `<script>`
+        // in error text must render inert.
+        assert_eq!(escape_attr("a'b"), "a&#39;b");
+        assert_eq!(
+            escape_text("<script>alert(1)</script>"),
+            "&lt;script&gt;alert(1)&lt;/script&gt;"
+        );
     }
 
     #[test]
