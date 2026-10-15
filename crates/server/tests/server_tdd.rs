@@ -1178,7 +1178,10 @@ async fn pipeline_serves_static_with_security_and_rule_headers() {
     assert_eq!(resp.status, 200);
     assert_eq!(resp.body.as_ref(), b"ZSTD-APP");
     assert_eq!(resp.header("x-content-type-options"), Some("nosniff"));
-    assert_eq!(resp.header("x-rule"), Some("y"));
+    // SEC-11: §12.1 puts static assets (step 3) BEFORE native rules (step 4),
+    // so a static file under a header-rule source is served without the rule
+    // header — the asset store answers first.
+    assert_eq!(resp.header("x-rule"), None);
     assert_eq!(
         resp.header("server-timing"),
         Some(RequestTimings_default_server_timing().as_str())
