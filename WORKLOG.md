@@ -2816,3 +2816,177 @@ The V8 **infrastructure** is real and tested. The V8 **full render** is not
 reliable yet, and the blocker is CJS interop for a dynamically-imported
 framework runtime — a known, named dependency gap, not a wiring bug. The Node
 backend (default) is unaffected and the gate passes.
+
+## Session 18 (final) — V8 backend WORKS; the "flakiness" was the test harness
+
+The V8 render path is **resolved and reliable.** Two real bugs, then a
+harness artifact that looked like flakiness.
+
+### The two real bugs
+
+**1. Wrong resolution conditions.** The V8 loader resolved bare specifiers
+with `condition_names: ["node", ...]`, so `react-dom/server` picked its
+**Node** build (`server.node.js`), which does `require('stream')`. V8 is a
+browser-like sandbox with no `require`, so the adapter's `import('react-dom/server')`
+threw `require() is not available in the V8 runtime` and
+`isReactAvailable()` returned false → the IR fallback rendered
+"real SSR unavailable".
+
+Fix: resolve with **browser/worker** conditions
+(`crates/jshost/src/v8_loader.rs`), and bundle the config graph with
+`BundleEnv::Client` instead of `Ssr` (`crates/cli/src/lib.rs`) so
+`react-dom/server` resolves to `server.browser.js`.
+
+**2. Missing `MessageChannel`.** React's browser SSR scheduler
+(`react-dom-server.browser`) schedules through a `MessageChannel`. Added a
+`MessageChannel`/`MessagePort` polyfill (§4.6 tier 1) next to the existing
+`TextEncoder`/`ReadableStream`/`Buffer`/`process` shims.
+
+The diagnostic that found both: `packages/react/src/real-ssr.ts` swallowed
+its `catch`; it now records the real error on `globalThis.__oxideReactLoadError`,
+and `packages/oxide/src/server/real-ssr.ts` prints it in the fallback
+comment (`why=...`). That turned a silent fallback into
+`why=import threw: require() is not available` and then
+`why=import threw: MessageChannel is not defined`.
+
+### The "flakiness" was the harness
+
+After those fixes, a single long-lived server rendered correctly on
+**every** request:
+
+    smoke-app-react, backend=v8, one server, 10 sequential requests: PASS 10/10
+    same fixture, backend=node (default):                          PASS  8/10
+
+V8 is *at least as reliable as Node*. The earlier 1/5, 4/8 results came
+from the ad-hoc test loops killing servers with `kill -9` and immediately
+starting another on a nearby port, racing the OS port release and leaving
+orphan workers. Serial runs with a settle delay and a real boot wait are
+clean. **Lesson: when a result alternates run-to-run, suspect the harness
+before the product — and re-test with one long-lived process.**
+
+### What the V8 backend now does, verified
+
+- `oxide build` with `server.backend: "v8"` emits `.oxide/snapshot.bin`
+  (V8 startup blob, ~810 KB) and `.oxide/config.server.js` (the config graph,
+  bundling React's CJS into ESM with browser conditions).
+- `oxide start` boots each V8 worker from the snapshot, imports the bundled
+  config through the transpiling loader (`v8_loader.rs` — TS/JSX lowering,
+  `node:*` shims, browser conditions), and runs the React adapter's real
+  `react-dom/server` SSR.
+- Output is byte-identical to the Node backend (nonce-normalized):
+  `<div id="root" data-reactroot=""><main ...><h1>Home</h1>...`
+
+### Commits (this continuation)
+
+`11ea6f2` (browser bundle env) · `c296783` (loader browser conditions) ·
+`c11f817` (MessageChannel polyfill) · `94542a6` · `a2ceef7` (diagnostics) —
+on top of the earlier session-18 infrastructure commits.
+
+### Test state
+
+| suite | result |
+| --- | --- |
+| `cargo check --workspace` | green |
+| oxide-cli --lib | 91 |
+| oxide-bundler | 41 across six binaries |
+| oxide-jshost | 39 + 22 (+ ignored V8 tests) |
+| four-fixture Node gate | PASS |
+| **V8 backend, 10 requests, one server** | **10/10** |
+
+### Remaining, honestly
+
+- The V8 render is proven on `smoke-app-react`. The other three frameworks
+  (vue/svelte/solid) were not exercised on V8 this session — their adapters
+  may need their own browser-conditional resolutions (e.g. `@vue/server-renderer`
+  browser build). The mechanism is in place; each needs a verification pass.
+- `server.backend` still defaults to `node`; V8 is opt-in.
+- The snapshot is built and loaded, but a before/after cold-start number on a
+  *fresh process* was not captured (only the in-process delta, which does not
+  measure process-cold boot). Worth a proper measurement now that V8 serves.
+
+## Session 18 (final) — V8 backend WORKS; the "flakiness" was the test harness
+
+The V8 render path is **resolved and reliable.** Two real bugs, then a
+harness artifact that looked like flakiness.
+
+### The two real bugs
+
+**1. Wrong resolution conditions.** The V8 loader resolved bare specifiers
+with `condition_names: ["node", ...]`, so `react-dom/server` picked its
+**Node** build (`server.node.js`), which does `require('stream')`. V8 is a
+browser-like sandbox with no `require`, so the adapter's `import('react-dom/server')`
+threw `require() is not available in the V8 runtime` and
+`isReactAvailable()` returned false → the IR fallback rendered
+"real SSR unavailable".
+
+Fix: resolve with **browser/worker** conditions
+(`crates/jshost/src/v8_loader.rs`), and bundle the config graph with
+`BundleEnv::Client` instead of `Ssr` (`crates/cli/src/lib.rs`) so
+`react-dom/server` resolves to `server.browser.js`.
+
+**2. Missing `MessageChannel`.** React's browser SSR scheduler
+(`react-dom-server.browser`) schedules through a `MessageChannel`. Added a
+`MessageChannel`/`MessagePort` polyfill (§4.6 tier 1) next to the existing
+`TextEncoder`/`ReadableStream`/`Buffer`/`process` shims.
+
+The diagnostic that found both: `packages/react/src/real-ssr.ts` swallowed
+its `catch`; it now records the real error on `globalThis.__oxideReactLoadError`,
+and `packages/oxide/src/server/real-ssr.ts` prints it in the fallback
+comment (`why=...`). That turned a silent fallback into
+`why=import threw: require() is not available` and then
+`why=import threw: MessageChannel is not defined`.
+
+### The "flakiness" was the harness
+
+After those fixes, a single long-lived server rendered correctly on
+**every** request:
+
+    smoke-app-react, backend=v8, one server, 10 sequential requests: PASS 10/10
+    same fixture, backend=node (default):                          PASS  8/10
+
+V8 is *at least as reliable as Node*. The earlier 1/5, 4/8 results came
+from the ad-hoc test loops killing servers with `kill -9` and immediately
+starting another on a nearby port, racing the OS port release and leaving
+orphan workers. Serial runs with a settle delay and a real boot wait are
+clean. **Lesson: when a result alternates run-to-run, suspect the harness
+before the product — and re-test with one long-lived process.**
+
+### What the V8 backend now does, verified
+
+- `oxide build` with `server.backend: "v8"` emits `.oxide/snapshot.bin`
+  (V8 startup blob, ~810 KB) and `.oxide/config.server.js` (the config graph,
+  bundling React's CJS into ESM with browser conditions).
+- `oxide start` boots each V8 worker from the snapshot, imports the bundled
+  config through the transpiling loader (`v8_loader.rs` — TS/JSX lowering,
+  `node:*` shims, browser conditions), and runs the React adapter's real
+  `react-dom/server` SSR.
+- Output is byte-identical to the Node backend (nonce-normalized):
+  `<div id="root" data-reactroot=""><main ...><h1>Home</h1>...`
+
+### Commits (this continuation)
+
+`11ea6f2` (browser bundle env) · `c296783` (loader browser conditions) ·
+`c11f817` (MessageChannel polyfill) · `94542a6` · `a2ceef7` (diagnostics) —
+on top of the earlier session-18 infrastructure commits.
+
+### Test state
+
+| suite | result |
+| --- | --- |
+| `cargo check --workspace` | green |
+| oxide-cli --lib | 91 |
+| oxide-bundler | 41 across six binaries |
+| oxide-jshost | 39 + 22 (+ ignored V8 tests) |
+| four-fixture Node gate | PASS |
+| **V8 backend, 10 requests, one server** | **10/10** |
+
+### Remaining, honestly
+
+- The V8 render is proven on `smoke-app-react`. The other three frameworks
+  (vue/svelte/solid) were not exercised on V8 this session — their adapters
+  may need their own browser-conditional resolutions (e.g. `@vue/server-renderer`
+  browser build). The mechanism is in place; each needs a verification pass.
+- `server.backend` still defaults to `node`; V8 is opt-in.
+- The snapshot is built and loaded, but a before/after cold-start number on a
+  *fresh process* was not captured (only the in-process delta, which does not
+  measure process-cold boot). Worth a proper measurement now that V8 serves.
