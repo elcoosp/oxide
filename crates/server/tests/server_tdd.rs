@@ -57,6 +57,7 @@ fn pipeline(
         image_endpoint: None,
         server_fns: None,
         actions: None,
+        tls: false,
     }
     }
 
@@ -415,7 +416,7 @@ fn security_headers_defaults_and_tls() {
 
     let h = security_headers(true, Some("n0nce"));
     let get = |k: &str| h.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
-    assert_eq!(get("Strict-Transport-Security"), Some("max-age=63072000"));
+    assert_eq!(get("Strict-Transport-Security"), Some("max-age=63072000; includeSubDomains"));
     assert_eq!(
         get("Content-Security-Policy"),
         Some(csp_header("strict", "n0nce").as_str())
@@ -775,6 +776,7 @@ async fn metrics_endpoint_renders_prometheus_text() {
         image_endpoint: None,
         server_fns: None,
         actions: None,
+        tls: false,
     };
     let d = &echo_dispatch();
     let resp = p.serve_request(req("GET", "/_oxide/metrics", &[]), d).await;
@@ -813,6 +815,7 @@ async fn vitals_endpoint_records_samples_into_metrics() {
         image_endpoint: None,
         server_fns: None,
         actions: None,
+        tls: false,
     };
     let body = br#"[{"name":"LCP","value":1234.5,"route":"/home"},{"name":"CLS","value":0.05,"route":"/home"}]"#;
     let mut r = req("POST", "/_oxide/vitals", &[]);
@@ -850,6 +853,7 @@ async fn vitals_endpoint_tolerates_a_malformed_beacon() {
         image_endpoint: None,
         server_fns: None,
         actions: None,
+        tls: false,
     };
     let mut r = req("POST", "/_oxide/vitals", &[]);
     r.body = bytes::Bytes::from_static(b"not json");
@@ -873,6 +877,7 @@ async fn metrics_endpoint_404_when_not_configured() {
         image_endpoint: None,
         server_fns: None,
         actions: None,
+        tls: false,
     };
     let d = &echo_dispatch();
     let resp = p.serve_request(req("GET", "/_oxide/metrics", &[]), d).await;
@@ -900,6 +905,7 @@ async fn pipeline_observes_native_branch_requests() {
         image_endpoint: None,
         server_fns: None,
         actions: None,
+        tls: false,
     };
     let d = &echo_dispatch();
     // Health is a native-prefix branch (_native label).
@@ -933,6 +939,7 @@ async fn with_metrics_attaches_registry() {
         image_endpoint: None,
         server_fns: None,
         actions: None,
+        tls: false,
     };
     let p = p.with_metrics(Arc::clone(&m));
     assert!(p.metrics().is_some());
@@ -976,6 +983,7 @@ fn inspector_pipeline() -> Pipeline {
         image_endpoint: None,
         server_fns: None,
         actions: None,
+        tls: false,
     }
 }
 
@@ -1615,4 +1623,38 @@ async fn serve_request_span_has_no_path_leak_into_metrics() {
         let text = m.render();
         assert!(!text.contains("arbitrary"), "path leaked into metrics: {text}");
     }
+}
+
+// SEC-02: CSPRNG request ids — two fresh nonces differ (no counter restart
+// collision); HSTS only on TLS.
+#[test]
+fn nonces_are_unpredictable_across_ids() {
+    let a = nonce_for("req-aaa");
+    let b = nonce_for("req-bbb");
+    assert_ne!(a, b, "distinct request ids must yield distinct nonces");
+    assert_eq!(a.len(), 32, "nonce is blake3-32hex");
+}
+
+#[tokio::test]
+async fn hsts_emitted_only_on_tls() {
+    let plain = Pipeline {
+        tls: false,
+        ..Default::default()
+    };
+    let tls_p = Pipeline {
+        tls: true,
+        ..Default::default()
+    };
+    let d = &echo_dispatch();
+    let r_plain = plain
+        .serve_request(req("GET", "/", &[]), d)
+        .await;
+    let r_tls = tls_p.serve_request(req("GET", "/", &[]), d).await;
+    let has_hsts = |r: &OxideResponse| {
+        r.headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("strict-transport-security"))
+    };
+    assert!(!has_hsts(&r_plain), "plain HTTP must not emit HSTS");
+    assert!(has_hsts(&r_tls), "TLS must emit HSTS");
 }

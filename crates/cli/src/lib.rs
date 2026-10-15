@@ -3421,6 +3421,8 @@ async fn start_server_inner_full(
             None
         },
         page_renderer: None,
+        // SEC-02: HSTS only on TLS (§17.1) — set where the listener is built.
+        tls: tls.is_some(),
     });
     let proxy_rules: Vec<oxide_dev::ProxyRule> = proxy_rules.clone();
     let routes_root = rootp.join(&cfg.routes.dir);

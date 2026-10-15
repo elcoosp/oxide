@@ -511,7 +511,7 @@ pub fn security_headers(tls: bool, csp_nonce: Option<&str>) -> Vec<(String, Stri
     if tls {
         h.push((
             "Strict-Transport-Security".into(),
-            "max-age=63072000".into(),
+            "max-age=63072000; includeSubDomains".into(),
         ));
     }
     if let Some(n) = csp_nonce {
@@ -941,6 +941,9 @@ pub struct Pipeline {
     /// Optional action dispatcher (§9.3). When `Some`, a form POST to an
     /// action URL routes through it. Like `server_fns`, this is a trait seam.
     pub actions: Option<Arc<dyn ActionDispatcher>>,
+    /// SEC-02: whether the listener serves TLS. Gates HSTS emission
+    /// (§17.1 "HSTS on TLS") — set where the listener is built.
+    pub tls: bool,
 }
 
 /// §9.3: the seam between the HTTP pipeline and whichever runtime runs a
@@ -1126,6 +1129,7 @@ impl Default for Pipeline {
             image_endpoint: None,
             server_fns: None,
             actions: None,
+            tls: false,
         }
     }
 }
@@ -2136,7 +2140,7 @@ impl Pipeline {
             "hash" => None, // hash policy appended explicitly below
             _ => Some(nonce.as_str()),
         };
-        for (k, v) in security_headers(false, csp_nonce) {
+        for (k, v) in security_headers(self.tls, csp_nonce) {
             r = r.with_header(k.as_str(), v);
         }
         if self.security.csp == "hash" {
@@ -2367,10 +2371,28 @@ pub struct Server {
 
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Unpredictable per-request id (SEC-02): 16 CSPRNG bytes, hex.
+/// The old counter-derived id reset every process → the same CSP nonce for
+/// request #1 after every restart (strict-dynamic bypass risk). The nonce
+/// (`nonce_for`), L0 sentinel substitution and boot-tag stamping all key off
+/// this id, so one change point fixes all three consumers. Falls back to the
+/// counter only if the OS RNG fails (never on hosted platforms).
 fn next_request_id() -> String {
+    use ring::rand::SecureRandom as _;
+    let rng = ring::rand::SystemRandom::new();
+    let mut bytes = [0u8; 16];
+    if rng.fill(&mut bytes).is_ok() {
+        let mut s = String::with_capacity(36);
+        s.push_str("req-");
+        for b in bytes {
+            s.push(char::from_digit((b >> 4) as u32, 16).unwrap());
+            s.push(char::from_digit((b & 0xf) as u32, 16).unwrap());
+        }
+        return s;
+    }
     let n = REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed);
     format!(
-        "req-{:016x}",
+        "req-c{:016x}",
         n.wrapping_mul(0x9E3779B97F4A7C15) ^ 0xA5A5_0000_0000_0000
     )
 }
@@ -2738,6 +2760,16 @@ pub mod ws {
             let bytes = encode(&Frame::Binary(vec![0; 126]), false);
             assert_eq!(bytes[1], 126);
             assert_eq!(u16::from_be_bytes([bytes[2], bytes[3]]), 126);
+        }
+
+        #[test]
+        fn request_ids_are_unique_csprng() {
+            // SEC-02: two fresh ids must differ (counter restarts made the
+            // old first-request nonce predictable across restarts).
+            let a = crate::next_request_id();
+            let b = crate::next_request_id();
+            assert_ne!(a, b);
+            assert_ne!(crate::nonce_for(&a), crate::nonce_for(&b));
         }
     }
 }
