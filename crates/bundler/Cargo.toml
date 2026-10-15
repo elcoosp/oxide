@@ -18,6 +18,7 @@ blake3 = { workspace = true }
 arcstr = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+anyhow = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 

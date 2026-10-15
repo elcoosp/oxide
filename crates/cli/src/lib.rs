@@ -1212,6 +1212,13 @@ fn emit_fonts(cfg: &oxide_config::OxideConfig, root: &Path, dist: &Path, w: Writ
 /// a user can move the work behind a lazy initializer. Advisory: it never
 /// fails the build, because the snapshot fallback (a V8 code cache) is a
 /// valid degradation.
+fn persist_diagnostics(root: &Path, diags: &[oxide_diagnostics::Diagnostic]) {
+    let dir = root.join(".oxide");
+    let _ = std::fs::create_dir_all(&dir);
+    let json = serde_json::to_string_pretty(diags).unwrap_or_else(|_| "[]".to_string());
+    let _ = std::fs::write(dir.join("last-build-diagnostics.json"), json);
+}
+
 fn emit_snapshot_lint(
     cfg: &oxide_config::OxideConfig,
     root: &Path,
@@ -1886,10 +1893,23 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         cfg.build.ssr_externals.clone(),
     );
     let rb = oxide_bundler::RolldownBundler::new(&rootp);
-    rb.bundle(&client_opts)
-        .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
-    rb.bundle(&server_opts)
-        .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+    let client_outcome = rb.bundle(&client_opts).map_err(|e| {
+        persist_diagnostics(&rootp, &[e.0.clone()]);
+        anyhow::anyhow!("{} {}", e.0.code, e.0.message)
+    })?;
+    let server_outcome = rb.bundle(&server_opts).map_err(|e| {
+        let mut diags = client_outcome.diagnostics.clone();
+        diags.push(e.0.clone());
+        persist_diagnostics(&rootp, &diags);
+        anyhow::anyhow!("{} {}", e.0.code, e.0.message)
+    })?;
+    // BUG-06: persist build diagnostics so MCP `oxide_errors` has data.
+    // Written on success too (possibly `[]`) so stale errors don't linger.
+    {
+        let mut all = client_outcome.diagnostics.clone();
+        all.extend(server_outcome.diagnostics.clone());
+        persist_diagnostics(&rootp, &all);
+    }
     // The bundler writes client.manifest.json / server.manifest.json into the out dirs.
     let client_manifest = read_json(&client_out.join("client.manifest.json"))
         .ok_or_else(|| anyhow::anyhow!("bundler did not write client.manifest.json"))?;

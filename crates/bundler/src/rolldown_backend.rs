@@ -719,6 +719,11 @@ impl Plugin for OxidePassesPlugin {
         // The passes are synchronous. Doing the work eagerly (rather than
         // inside the future) keeps this a plain fn whose return type still
         // matches the hook contract.
+        // BUG-06: the passes can fail. Carry that as a `Result` so the
+        // `Ok(None)`-by-design shape of this hook does not swallow a real
+        // failure. `replacement` is computed eagerly (the passes are sync),
+        // so the error is produced here and propagated inside the future.
+        let mut pass_error: Option<String> = None;
         let replacement: Option<String> = if self.should_transform(args.id) {
             // §15.1: run a plugin transform first. It sees the original
             // source, so a plugin's own rewriting (a macro expansion, a
@@ -757,17 +762,26 @@ impl Plugin for OxidePassesPlugin {
                 // Unchanged output: return `None` so Rolldown keeps its own
                 // copy and any downstream map it has already built.
                 Ok(_) => None,
-                // A module the pass cannot parse is left untouched and
-                // Rolldown reports its own diagnostic. Failing here would
-                // regress code that compiles today but the pass's narrow
-                // parser does not fully cover.
-                Err(_) => None,
+                // BUG-06: a pass that *fails* must not be swallowed. The
+                // passes include `'use cache'` and server-fn stub
+                // transformation — shipping the module untransformed is a
+                // correctness hole (a server-only function would leak into
+                // the client bundle). Propagate a `CMP-PASS` diagnostic and
+                // fail the build loudly.
+                Err(e) => {
+                    pass_error = Some(format!("CMP-PASS {}: {}", args.id, e.0.message));
+                    None
+                }
             }
         } else {
             None
         };
 
         async move {
+            // BUG-06: a failed pass fails the build, loudly.
+            if let Some(msg) = pass_error {
+                return Err(anyhow::anyhow!("{msg}"));
+            }
             match replacement {
                 Some(code) => Ok(Some(HookTransformOutput {
                     code: Some(code),
