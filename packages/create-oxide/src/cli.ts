@@ -38,13 +38,15 @@ export function pageComponent(framework, shape) {
   const title = shape === 'minimal' ? 'Home' : shape[0].toUpperCase() + shape.slice(1);
   if (framework === 'vue') {
     return `<script setup>
-import { data } from './page.server'
+import { computed } from 'vue'
+
+const props = defineProps<{ data: { message: string } }>()
 </script>
 
 <template>
   <main>
     <h1>${title}</h1>
-    <p>{{ data.message }}</p>
+    <p>{{ props.data.message }}</p>
   </main>
 </template>
 `;
@@ -97,7 +99,7 @@ export function pageServerTs(shape) {
           ? `export const config = { render: 'isr', revalidate: 30, tags: ['products'] }
 
 ` : '';
-  return `${extra}import { defineLoad, defineMeta, defer } from 'oxide/server'
+  return `${extra}import { defineLoad, defineAction, defineMeta, defer } from 'oxide/server'
 
 export const load = defineLoad(async ({ params }) => {
   return {
@@ -113,13 +115,13 @@ export const meta = defineMeta(({ data }) => ({ title: data.message }))
 }
 
 export function layoutComponent(framework) {
+  // BUG-10: the adapter shell owns the document — layouts render only the
+  // page subtree (no <html>/<body>).
   if (framework === 'vue') {
     return `<script setup></script>
 
 <template>
-  <html lang="en">
-    <slot />
-  </html>
+  <slot />
 </template>
 `;
   }
@@ -128,7 +130,7 @@ export function layoutComponent(framework) {
 `;
   }
   return `export default function Layout({ children }) {
-  return <html lang="en">{children}</html>
+  return <>{children}</>
 }
 `;
 }
@@ -145,7 +147,13 @@ export function packageJson(framework) {
       private: true,
       type: 'module',
       scripts,
-      dependencies: { oxide: '0.1.0', [`@oxide/${framework}`]: '0.1.0' },
+      // BUG-10: workspace protocol inside the monorepo, a published
+      // literal outside it (detected by PWD containing `packages/`).
+      dependencies: (() => {
+        const inWorkspace = (process.env.PWD ?? '').includes('packages/')
+        const v = inWorkspace ? 'workspace:*' : '0.2.0'
+        return { oxide: v, [`@oxide/${framework}`]: v }
+      })(),
     },
     null,
     2,

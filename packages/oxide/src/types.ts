@@ -44,6 +44,13 @@ export interface RenderCtx {
   locals?: Record<string, unknown>
 }
 
+/** Props for a scaffolded page component (BUG-10): the route's loader data
+ * plus its params. Per-route-typed once SPEC-09 typegen lands. */
+export type PageProps<TData = unknown> = {
+  data: TData
+  params: Record<string, string>
+}
+
 /** Input to adapter.update()/hydrate()/mount() on the client (§7). */
 export interface ClientInput {
   route: string
