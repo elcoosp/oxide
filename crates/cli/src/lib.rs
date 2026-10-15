@@ -702,6 +702,7 @@ fn bundle_env_options(
         jsx_import_source,
         transform_hook,
         css_transform: Some(css_transform),
+        inline_dynamic_imports: false,
     }
 }
 
@@ -1310,22 +1311,33 @@ fn emit_config_bundle(
     root: &Path,
     w: Writer<'_>,
 ) -> anyhow::Result<()> {
-    if !matches!(cfg.server.backend, oxide_config::JsBackend::V8) {
-        return Ok(());
-    }
+    // Always bundle the config — do NOT gate on `cfg.server.backend`. The
+    // static extractor's view of a nested `server.backend` is not reliable
+    // enough to gate a file another component needs: when extraction returned
+    // `Node` for a config that says `v8`, this returned early, no
+    // `config.server.js` was written, and the V8 prerender then failed to load
+    // it. Bundling is cheap (~30 ms) and only the V8 backend reads the result.
     let Some(config_file) = find_config_file(root).ok() else {
         return Ok(());
     };
-    let out_dir = root.join(".oxide");
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| anyhow::anyhow!("create {}: {e}", out_dir.display()))?;
+    // Bundle into a DEDICATED directory. Rolldown's `write()` may empty its
+    // output dir, and `.oxide/` holds the island boot entry + the snapshot the
+    // prerender pass reads — a shared dir raced those writes and the config
+    // bundle vanished mid-build. A private dir is never touched by another
+    // writer.
+    let bundle_dir = root.join(".oxide/config-build");
+    if bundle_dir.exists() {
+        let _ = std::fs::remove_dir_all(&bundle_dir);
+    }
+    std::fs::create_dir_all(&bundle_dir)
+        .map_err(|e| anyhow::anyhow!("create {}: {e}", bundle_dir.display()))?;
 
     let mut entries: BTreeMap<String, PathBuf> = BTreeMap::new();
     entries.insert("config".to_string(), config_file.clone());
     let opts = oxide_bundler::BundleOptions {
         env: oxide_bundler::BundleEnv::Ssr,
         entries,
-        out_dir: out_dir.clone(),
+        out_dir: bundle_dir.clone(),
         minify: false,
         sourcemap: false,
         externals: Vec::new(),
@@ -1336,6 +1348,11 @@ fn emit_config_bundle(
         jsx_import_source: None,
         transform_hook: None,
         css_transform: None,
+        // §4.2: one self-contained file. A code-split bundle needs its sibling
+        // chunks copied alongside and its `__toESM` dynamic-import wrappers
+        // resolved by the loader; a single inlined file is simpler and what the
+        // bare V8 host wants.
+        inline_dynamic_imports: true,
     };
     use oxide_bundler::Bundler as _;
     let backend = oxide_bundler::RolldownBundler::new(root);
@@ -1354,14 +1371,33 @@ fn emit_config_bundle(
                 .map(|c| c.file.clone());
             match entry_file {
                 Some(file) => {
-                    let from = out_dir.join(&file);
-                    let to = out_dir.join("config.server.js");
+                    // The bundle is a small graph: the entry chunk imports
+                    // sibling chunks (`react-*.js`, …). Copy ALL of them into
+                    // `.oxide/` so the entry's relative imports resolve, then
+                    // rename the entry to the stable name the V8 loader opens.
+                    let mut copied = 0usize;
+                    if let Ok(rd) = std::fs::read_dir(&bundle_dir) {
+                        for e in rd.flatten() {
+                            let src = e.path();
+                            if src.extension().is_some_and(|x| x == "js") {
+                                if let Some(name) = src.file_name() {
+                                    let dst = root.join(".oxide").join(name);
+                                    std::fs::copy(&src, &dst).map_err(|err| {
+                                        anyhow::anyhow!("copy {} -> {}: {err}", src.display(), dst.display())
+                                    })?;
+                                    copied += 1;
+                                }
+                            }
+                        }
+                    }
+                    let from = root.join(".oxide").join(&file);
+                    let to = root.join(".oxide/config.server.js");
                     if from != to {
                         std::fs::copy(&from, &to).map_err(|e| {
                             anyhow::anyhow!("copy {} -> config.server.js: {e}", from.display())
                         })?;
                     }
-                    outln!(w, "config bundle: .oxide/config.server.js");
+                    outln!(w, "config bundle: .oxide/config.server.js (+{} chunks)", copied.saturating_sub(1));
                 }
                 None => {
                     outln!(w, "config bundle: no entry chunk produced; V8 will load the raw config");
