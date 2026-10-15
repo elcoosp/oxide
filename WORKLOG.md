@@ -3549,3 +3549,59 @@ Ported the Node worker's envelope-semantic kinds to the V8 bootstrap + Rust arms
 - Note: concurrent uncommitted SEC-01/SEC-11 work (router/server) from another agent left untouched in the tree.
 
 Proof: `cargo test -p oxide-jshost` green; `check-v8.sh` PASS (10/10 GETs, 2 generate-params prerenders, action POST ok); V8-vs-Node POST bodies byte-identical (`{"hello":"Ada"}` both); V8 build now prerenders 2 routes (was 1 pre-fix — runtime generateParams silently skipped).
+
+## SEC-01 — rate limiting end-to-end
+
+The token bucket existed but was never consulted: `evaluate_impl` returned
+`RuleOutcome::RateLimited` **unconditionally** for any `ratelimit` rule, so
+one configured rule 429'd its path forever (`RateLimiter` in the server crate
+was a dead field).
+
+Fixed:
+- `RulesEngine` now owns the buckets (`limiter: TokenBuckets`); `evaluate`
+  keeps the old signature and `evaluate_with_key(path, client_key)` threads the
+  client IP.
+- `evaluate_impl` consults `TokenBuckets::take(key, max, window_secs)`; the
+  bucket decides. A rate-limit rule is now **non-terminal** when it allows
+  (later rewrite/redirect/header rules still apply).
+- `RuleOutcome::RateLimited { retry_after_secs }` carries the seconds until a
+  token refills; the server sends `Retry-After`.
+- The bucket map sweeps full buckets when it exceeds 10 000 keys (bounds a
+  unique-key flood).
+- The server passes `X-Forwarded-For` (first hop) as the client key, falling
+  back to `local`; both the native-rules path and the server-fn path honour a
+  429.
+
+Verified: `cargo test -p oxide-router` (55+6) and `-p oxide-server` (43+21+63)
+green; the server test now asserts the first `/api` call is 200 and the second
+(with `max: 1`) is 429 with `Retry-After`.
+
+Commits: `c655a61` `7919ff9` `83ff797` `0989fb4` `333e23c`.
+
+## SEC-01 — rate limiting end-to-end
+
+The token bucket existed but was never consulted: `evaluate_impl` returned
+`RuleOutcome::RateLimited` **unconditionally** for any `ratelimit` rule, so
+one configured rule 429'd its path forever (`RateLimiter` in the server crate
+was a dead field).
+
+Fixed:
+- `RulesEngine` now owns the buckets (`limiter: TokenBuckets`); `evaluate`
+  keeps the old signature and `evaluate_with_key(path, client_key)` threads the
+  client IP.
+- `evaluate_impl` consults `TokenBuckets::take(key, max, window_secs)`; the
+  bucket decides. A rate-limit rule is now **non-terminal** when it allows
+  (later rewrite/redirect/header rules still apply).
+- `RuleOutcome::RateLimited { retry_after_secs }` carries the seconds until a
+  token refills; the server sends `Retry-After`.
+- The bucket map sweeps full buckets when it exceeds 10 000 keys (bounds a
+  unique-key flood).
+- The server passes `X-Forwarded-For` (first hop) as the client key, falling
+  back to `local`; both the native-rules path and the server-fn path honour a
+  429.
+
+Verified: `cargo test -p oxide-router` (55+6) and `-p oxide-server` (43+21+63)
+green; the server test now asserts the first `/api` call is 200 and the second
+(with `max: 1`) is 429 with `Retry-After`.
+
+Commits: `c655a61` `7919ff9` `83ff797` `0989fb4` `333e23c`.
