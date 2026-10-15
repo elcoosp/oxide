@@ -784,8 +784,12 @@ async fn v8_dispatch(
     let promise = js
         .execute_script("oxide:call", script)
         .map_err(|e| err("JSH-V8", format!("dispatch failed: {e}")))?;
+    // Drive the event loop until the dispatch promise settles — the same
+    // two-statement shape deno_core's own `resolve_value` uses (a nested
+    // `js.with_event_loop_promise(js.resolve(..), ..)` borrows `js` twice).
+    let resolve = js.resolve(promise);
     let resolved = js
-        .resolve_value(promise)
+        .with_event_loop_promise(resolve, deno_core::PollEventLoopOptions::default())
         .await
         .map_err(|e| err("JSH-V8", format!("dispatch await failed: {e}")))?;
     let s = {
