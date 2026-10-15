@@ -41,18 +41,39 @@ impl TranspileLoader {
     /// Resolve a specifier seen from `referrer` (a `file://` URL) to a file
     /// path. Returns `None` if it cannot be resolved.
     fn resolve_to_path(&self, specifier: &str, referrer: &str) -> Option<PathBuf> {
+        // A `file://` specifier (the framework ops import the config that way)
+        // is already an absolute path — use it directly. Falling through to
+        // oxc_resolver here is a race: it resolves inconsistently against a
+        // base directory. An absolute path is the same case.
+        // A `file://` specifier is already absolute — return it without an
+        // `is_file` gate (a concurrent build write or a pool worker racing the
+        // first render made the stat flaky). `load` reports a real read error.
+        if let Some(path) = specifier.strip_prefix("file://") {
+            return Some(PathBuf::from(path));
+        }
+        // A bare absolute path likewise.
+        let as_path = Path::new(specifier);
+        if as_path.is_absolute() {
+            return Some(as_path.to_path_buf());
+        }
+
         // The referrer is a `file://` URL; its directory is the resolution base.
-        let base_dir = referrer
+        // Canonicalize it: a referrer like `<manifest>/../../project/.oxide/x.js`
+        // leaves `..` segments that break a raw `join` probe on macOS, where
+        // `/var` is a symlink to `/private/var` and a `..`-laden path can point
+        // at a different file than its canonical form.
+        let base_raw = referrer
             .strip_prefix("file://")
             .map(PathBuf::from)
             .and_then(|p| p.parent().map(Path::to_path_buf))
             .unwrap_or_else(|| self.root.clone());
+        let base_dir = std::fs::canonicalize(&base_raw).unwrap_or(base_raw);
 
         // A relative import with an explicit extension we can probe directly.
         if Self::is_relative(specifier) {
             let joined = base_dir.join(specifier);
             if let Some(found) = probe_extensions(&joined) {
-                return Some(found);
+                return Some(std::fs::canonicalize(&found).unwrap_or(found));
             }
         }
 
