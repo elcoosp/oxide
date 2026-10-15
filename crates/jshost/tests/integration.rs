@@ -455,44 +455,67 @@ fn v8_cfg(size: usize) -> PoolConfig {
     }
 }
 
+/// Write a one-file ESM module into `dir` and return its absolute path. The
+/// V8 host loads modules from disk through `FsModuleLoader`, so each test
+/// gets a real file rather than the old hardcoded `routes/index`.
+fn v8_module(dir: &std::path::Path, name: &str, source: &str) -> String {
+    let p = dir.join(name);
+    std::fs::write(&p, source).unwrap();
+    p.to_string_lossy().to_string()
+}
+
+/// An `EntryRef` pointing at a real module file.
+fn v8_entry(module: &str, export: &str) -> EntryRef {
+    EntryRef {
+        kind: "render".into(),
+        module: module.into(),
+        export: export.into(),
+    }
+}
+
 #[tokio::test]
-async fn v8_host_render_and_tooling_compile() {
+async fn v8_host_runs_a_module_export() {
+    let dir = tempfile::tempdir().unwrap();
+    let module = v8_module(
+        dir.path(),
+        "mod.mjs",
+        "export function echo(p) { return { html: '<html>' + p.title + '</html>' }; }\n",
+    );
+
     let host = V8Host;
     assert_eq!(host.backend_name(), "v8");
     let pool = host.render_pool(v8_cfg(1)).unwrap();
     let mut s = pool
-        .call(entry("render"), input(json!({"title": "Hi"})))
+        .call(v8_entry(&module, "echo"), input(json!({"title": "Hi"})))
         .await
         .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&s.collect().await.unwrap()).unwrap();
     assert_eq!(v["html"], "<html>Hi</html>");
 
-    let mut s2 = pool
-        .call(
-            entry("tooling:compile"),
-            input(json!({"code": "export const a = 1"})),
-        )
-        .await
-        .unwrap();
-    let v2: serde_json::Value = serde_json::from_slice(&s2.collect().await.unwrap()).unwrap();
-    assert_eq!(v2["code"], "EXPORT CONST A = 1");
-
     let st = pool.stats();
-    assert_eq!(st.completed, 2);
+    assert_eq!(st.completed, 1);
     assert_eq!(st.failed, 0);
     assert_eq!(st.workers, 1);
 }
 
 #[tokio::test]
-async fn v8_host_boom_and_unknown_kind_report_errors() {
+async fn v8_host_boom_and_missing_module_report_errors() {
     let host = V8Host;
     let pool = host.tooling_pool(v8_cfg(1)).unwrap();
 
+    // `boom` is a Rust-side sentinel the pool mirrors from the Node worker.
     let e = err_of(pool.call(entry("boom"), input(json!({}))).await);
     assert_eq!(e.0.code, "JSH-BOOM");
 
-    let e2 = err_of(pool.call(entry("unknown-kind"), input(json!({}))).await);
-    assert_eq!(e2.0.code, "JSH-NOKIND");
+    // An entry with no module cannot be dispatched.
+    let e2 = err_of(
+        pool.call(
+            EntryRef { kind: "render".into(), module: String::new(), export: "x".into() },
+            input(json!({})),
+        )
+        .await,
+    );
+    assert_eq!(e2.0.code, "JSH-V8");
 
     let st = pool.stats();
     assert_eq!(st.failed, 2);
@@ -501,17 +524,23 @@ async fn v8_host_boom_and_unknown_kind_report_errors() {
 
 #[tokio::test]
 async fn v8_host_multiple_workers_dispatch_and_drain() {
+    let dir = tempfile::tempdir().unwrap();
+    let module = v8_module(
+        dir.path(),
+        "mod.mjs",
+        "export function echo(p) { return { html: '<html>' + p.title + '</html>' }; }\n",
+    );
+
     let host = V8Host;
     let pool = host.render_pool(v8_cfg(2)).unwrap();
     assert_eq!(pool.stats().workers, 2);
 
-    // Two calls hit least-loaded dispatch (both succeed).
     let mut a = pool
-        .call(entry("render"), input(json!({"title": "A"})))
+        .call(v8_entry(&module, "echo"), input(json!({"title": "A"})))
         .await
         .unwrap();
     let mut b = pool
-        .call(entry("render"), input(json!({"title": "B"})))
+        .call(v8_entry(&module, "echo"), input(json!({"title": "B"})))
         .await
         .unwrap();
     let va: serde_json::Value = serde_json::from_slice(&a.collect().await.unwrap()).unwrap();
@@ -521,34 +550,43 @@ async fn v8_host_multiple_workers_dispatch_and_drain() {
 
     // Drain: rejects new calls (§12.2).
     pool.drain().await;
-    let e = err_of(pool.call(entry("render"), input(json!({}))).await);
+    let e = err_of(pool.call(v8_entry(&module, "echo"), input(json!({}))).await);
     assert_eq!(e.0.code, "JSH-DRAIN");
 }
 
 #[tokio::test]
 async fn v8_host_abort_request_resolves_pending_call() {
-    // V8 has no `sleep` handler; we exercise abort via a pending call that never
-    // reaches the worker reply path — abort_request must resolve it JSH-ABORT.
+    let dir = tempfile::tempdir().unwrap();
+    let module = v8_module(
+        dir.path(),
+        "mod.mjs",
+        "export function echo(p) { return { html: '<html>' + p.title + '</html>' }; }\n",
+    );
+
     let host = V8Host;
     let pool = host.render_pool(v8_cfg(1)).unwrap();
-    // Give the worker a moment to be ready.
     tokio::time::sleep(Duration::from_millis(20)).await;
     pool.abort_request("req-not-in-flight"); // no-op on unknown id
-    // Confirm a real call works after the no-op abort.
     let mut s = pool
-        .call(entry("render"), input(json!({"title": "post-abort"})))
+        .call(v8_entry(&module, "echo"), input(json!({"title": "post-abort"})))
         .await
         .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&s.collect().await.unwrap()).unwrap();
     assert_eq!(v["html"], "<html>post-abort</html>");
 }
 
-
 #[tokio::test]
 async fn v8_pool_recycles_warm() {
     // §4.3 lifecycle: a worker is replaced after `recycle_after_requests`
     // successful calls. The replacement is warm — a fresh worker is spawned
     // before the old one is signalled to exit.
+    let dir = tempfile::tempdir().unwrap();
+    let module = v8_module(
+        dir.path(),
+        "mod.mjs",
+        "export function echo() { return { ok: true }; }\n",
+    );
+
     let host = V8Host;
     let cfg = PoolConfig {
         size: 1,
@@ -558,18 +596,14 @@ async fn v8_pool_recycles_warm() {
     let pool = host.render_pool(cfg).unwrap();
     assert_eq!(pool.stats().recycles, 0);
 
-    // Three successful calls: the second crossing the threshold triggers
-    // exactly one recycle. The third call goes to the fresh worker.
     for _ in 0..3 {
         let mut s = pool
-            .call(entry("render"), input(json!({"title": "x"})))
+            .call(v8_entry(&module, "echo"), input(json!({})))
             .await
             .unwrap();
         let _ = s.collect().await.unwrap();
     }
 
-    // Give the spawned replacement task a moment to complete (generous
-    // budget for parallel load; success returns on the first observation).
     for _ in 0..200 {
         if pool.stats().recycles >= 1 {
             break;
@@ -577,39 +611,37 @@ async fn v8_pool_recycles_warm() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     let st = pool.stats();
-    assert!(
-        st.recycles >= 1,
-        "expected at least one recycle, got {}",
-        st.recycles
-    );
+    assert!(st.recycles >= 1, "expected at least one recycle, got {}", st.recycles);
     assert_eq!(st.failed, 0, "recycle must not fail any call");
     assert_eq!(st.completed, 3);
 }
 
-
 // ------------------------------------------------------- §4.5 V8 ops
 
 /// The op namespace is exposed on `globalThis.oxide` and dispatches to the
-/// Rust op functions. A JS caller reads back the values.
-///
-/// These tests use the `V8Host` pool's own dispatch mechanism with a custom
-/// `kind` the bootstrap forwards through `oxide.trace` / `oxide.serialize`.
+/// Rust op functions. A module calls `oxide.trace` and returns the value, so
+/// the round-trip through a real op is asserted.
 #[tokio::test]
 async fn v8_ops_are_registered_and_callable() {
+    let dir = tempfile::tempdir().unwrap();
+    let module = v8_module(
+        dir.path(),
+        "ops.mjs",
+        "export function probe() {\n           const id = globalThis.oxide.trace('hello');\n           return { id };\n         }\n",
+    );
+
     let host = V8Host;
     let pool = host.render_pool(PoolConfig { size: 1, ..Default::default() }).unwrap();
-    // The V8 bootstrap does not currently expose op dispatch through the
-    // public `call()` path — ops are consumed by user code running in the
-    // isolate. This test confirms the pool is built with the extension in
-    // place and does not fail on initialization (which it would if the
-    // extension's op declarations were malformed).
     let mut s = pool
-        .call(entry("render"), input(json!({"title": "ops"})))
+        .call(v8_entry(&module, "probe"), input(json!({})))
         .await
         .unwrap();
     let body = s.collect().await.unwrap();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(v["html"], "<html>ops</html>");
+    // `op_oxide_trace` returns `trace-<16 hex>` for a deterministic name.
+    let id = v["id"].as_str().expect("id string");
+    assert!(id.starts_with("trace-"), "got {id}");
+    assert_eq!(id.len(), "trace-".len() + 16, "got {id}");
 }
 
 #[test]
