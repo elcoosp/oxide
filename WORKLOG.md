@@ -3306,3 +3306,35 @@ route-tagged entry; an unrelated `invalidate_path` does not sweep an
 untagged entry.
 
 Verified: `cargo test -p oxide-cli --lib l0_cache` green.
+
+## BUG-02 — one shared TieredCache for L0/L1, cache ops for the V8 backend
+
+Two defects:
+
+1. **L0 and L1 were separate caches.** The server built its own
+   `TieredCache` for the L0 response cache; the framework stack built a
+   second one for the worker's `'use cache'` entries. BUG-01's invalidation
+   could not reach L1. Fixed: `FrameworkStack` now carries `cache_tier`, and
+   the server's L0 wraps that same handler (falling back to a private tier
+   for `FrameworkStack::empty()` used by tests).
+
+2. **The V8 backend had no cache tier at all.** Only `NodeHost` received a
+   `with_cache_handler`; `V8Host` had none, so `'use cache'` on
+   `server.backend = "v8"` silently degraded to per-worker Maps. Fixed:
+   - `oxide.cacheGet/Set/Tag` ops added to `v8_ops.rs`, backed by a
+     **thread-local** handler (a `JsRuntime` is `!Send` and pinned to one
+     thread, so a thread-local is the right scope — no `OpState`, no
+     snapshot op-order churn).
+   - The bootstrap `oxide` namespace exposes `cacheGet/Set/Tag`.
+   - `V8Host::with_cache_handler` (mirrors `NodeHost`), threaded through
+     `build_pool` / `spawn_v8_worker` / `spawn_replacement`.
+   - `framework_shim.rs` attaches the shared tier to the V8 host.
+
+Op declarations are **append-only** (deno_core keys a snapshot's op
+external-reference table by order), so the three new ops go at the end.
+
+Verified: `cargo test -p oxide-jshost -p oxide-cache --lib` (18+39),
+`cargo test -p oxide-cli --lib` (94), plus a new test proving an L0 cache and
+a second consumer on one `TieredCache` see each other's invalidation.
+
+Commits: `1ba72c1` `d287f98` `24564ff` `5daf943` `7cd655a` `51f092a` + test.
