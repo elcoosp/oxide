@@ -2091,6 +2091,32 @@ fn render_stream_to_body_stream(
 
 
 #[allow(clippy::too_many_arguments)]
+/// §9.3: parse an `application/x-www-form-urlencoded` body into the
+/// `[key, value]` entry list the worker's `action:run` op accepts. Percent
+/// decoding handles `+` as space. A malformed pair is skipped, not fatal.
+fn parse_form_urlencoded(body: &[u8]) -> Vec<(String, String)> {
+    let s = String::from_utf8_lossy(body);
+    s.split('&')
+        .filter(|p| !p.is_empty())
+        .map(|pair| {
+            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+            (oxide_server::percent_decode(&k.replace('+', " ")), oxide_server::percent_decode(&v.replace('+', " ")))
+        })
+        .collect()
+}
+
+/// §9.3: the action name from a form-action query. `?/comment` → `comment`.
+/// The SvelteKit convention: a query that begins with `/` names an action.
+fn action_from_query(url: &str) -> Option<String> {
+    let q = url.split_once('?')?.1;
+    let q = q.split('#').next().unwrap_or(q);
+    let rest = q.strip_prefix('/')?;
+    if rest.is_empty() || rest.contains('/') {
+        return None;
+    }
+    Some(oxide_server::percent_decode(rest))
+}
+
 fn build_dispatch(
     tree: std::sync::Arc<oxide_router::RouteTree>,
     metrics: std::sync::Arc<oxide_server::Metrics>,
@@ -2100,10 +2126,12 @@ fn build_dispatch(
     routes_root: std::path::PathBuf,
     boot_script_url: Option<String>,
     l0: Option<std::sync::Arc<l0_cache::L0Cache>>,
+    actions: Option<std::sync::Arc<dyn oxide_server::ActionDispatcher>>,
 ) -> std::sync::Arc<
     dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
 > {
     let boot_script_url_for_render = boot_script_url.clone();
+    let actions_for_dispatch = actions.clone();
     std::sync::Arc::new(move |req: oxide_server::OxideRequest| {
             let started = std::time::Instant::now();
             let raw = req.url.split(['?', '#']).next().unwrap_or("/").to_string();
@@ -2198,6 +2226,22 @@ fn build_dispatch(
                 .as_deref()
                 .map(|s| s.strip_suffix("/page").unwrap_or(s).to_string());
 
+            // §9.3: a form POST to `?/<name>` is an action invocation. Only a
+            // POST with a named action on a route that has a server module is
+            // eligible; everything else falls through to the loader/render path.
+            let action_name: Option<String> =
+                if req.method.eq_ignore_ascii_case("POST") {
+                    action_from_query(&req.url)
+                } else {
+                    None
+                };
+            let action_dispatcher = actions_for_dispatch.clone();
+            let action_params: serde_json::Map<String, serde_json::Value> = params
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                .collect();
+            let action_route = route_id_for_render.clone().unwrap_or_default();
+
             let page_renderer = page_renderer.clone();
             let loader_runner = loader_runner.clone();
             let metrics = std::sync::Arc::clone(&metrics);
@@ -2227,6 +2271,52 @@ fn build_dispatch(
             let l0_vary = l0_cache::vary_of(&req_owned.headers);
 
             Box::pin(async move {
+                // §9.3: a form action POST runs the route's `actions[name]`
+                // and returns its result. This precedes the loader phase — an
+                // action is its own request, not a page render.
+                if let (Some(action), Some(module_path)) =
+                    (action_name.as_deref(), module_path.as_deref())
+                {
+                    if let Some(dispatcher) = action_dispatcher.as_deref() {
+                        let form_json = {
+                            let entries = parse_form_urlencoded(&req_owned.body);
+                            serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string())
+                        };
+                        let resp = oxide_server::run_action(
+                            Some(dispatcher),
+                            &module_path.to_string_lossy(),
+                            &action_route,
+                            action,
+                            &form_json,
+                            &action_params,
+                            &req_owned.url,
+                            &req_owned.method,
+                            &req_owned.headers,
+                        )
+                        .await;
+                        // §11.3: apply any tag/path invalidations the action
+                        // asked for, then return the response.
+                        if let Some(rev) = resp.header("x-oxide-revalidate") {
+                            let events: Vec<(String, String)> = rev
+                                .split(',')
+                                .filter_map(|e| {
+                                    e.split_once(':')
+                                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                                })
+                                .collect();
+                            if let Some(cache) = l0.as_ref() {
+                                for (kind, value) in &events {
+                                    if kind == "path" {
+                                        cache.invalidate_tag(value, true).await;
+                                    }
+                                }
+                            }
+                        }
+                        metrics.observe(&label, started.elapsed(), resp.status);
+                        return resp;
+                    }
+                }
+
                 // §11.1 L0: a cache hit serves the stored response with the
                 // live request's CSP nonce substituted in, no JS on the path.
                 if l0_eligible {
@@ -2714,6 +2804,68 @@ fn build_server_fn_dispatcher(
     }))
 }
 
+/// §9.3: a `LoaderRunner`-shaped bridge to the worker's `action:run` op.
+struct ActionDispatcherImpl {
+    host: oxide_jshost::ActionHost,
+}
+
+#[async_trait::async_trait]
+impl oxide_server::ActionDispatcher for ActionDispatcherImpl {
+    async fn dispatch(
+        &self,
+        module_path: &str,
+        action: &str,
+        form_json: &str,
+        params: &serde_json::Map<String, serde_json::Value>,
+        url: &str,
+        method: &str,
+        headers: &[(String, String)],
+    ) -> std::result::Result<oxide_server::ActionRunResult, oxide_server::DispatchError> {
+        match self
+            .host
+            .run(module_path, action, form_json, params, url, method, headers)
+            .await
+        {
+            Ok(out) => Ok(oxide_server::ActionRunResult {
+                status: out.status,
+                location: out.location,
+                data: out.data,
+                set_cookies: out.set_cookies,
+                headers: out.headers,
+                revalidate: out
+                    .revalidate
+                    .into_iter()
+                    .map(|ev| match ev {
+                        oxide_jshost::RevalidateEvent::Tag { tag } => ("tag".to_string(), tag),
+                        oxide_jshost::RevalidateEvent::Path { path } => {
+                            ("path".to_string(), path)
+                        }
+                    })
+                    .collect(),
+            }),
+            Err(e) => {
+                let code = e.0.code.to_string();
+                let status = if code.contains("NOT-FOUND") { 404 } else { 500 };
+                Err(oxide_server::DispatchError {
+                    status,
+                    code: code.replace("JSH-ACTION", "ACT"),
+                    message: e.0.message.to_string(),
+                })
+            }
+        }
+    }
+}
+
+/// §9.3: build the action dispatcher when a pool is present.
+fn build_action_dispatcher(
+    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
+) -> Option<std::sync::Arc<dyn oxide_server::ActionDispatcher>> {
+    let pool = pool?;
+    Some(std::sync::Arc::new(ActionDispatcherImpl {
+        host: oxide_jshost::ActionHost::new(std::sync::Arc::clone(pool)),
+    }))
+}
+
 /// §15.1 kind 2: load the WASM component plugin the config declares, if
 /// any, and wrap its `transform` hook as a closure the bundler can call.
 ///
@@ -2865,7 +3017,10 @@ async fn start_server_inner_full(
     proxy_rules: Vec<oxide_dev::ProxyRule>,
     stack: crate::framework_shim::FrameworkStack,
 ) -> anyhow::Result<StartedServer> {
-    let rootp = PathBuf::from(root);
+    // Canonicalize so every path derived here (route modules, the SSR entry,
+    // the client manifest) is absolute — the worker resolves a module path
+    // against its own cwd, so a relative root breaks `action:run` / `loader:run`.
+    let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
     let cfg = load_config_or_default(&rootp, "production");
     // §10.1: refine inferred render modes from the AST, exactly as `oxide build`
     // does — otherwise the live server sees the scanner's line-oriented guess
@@ -2896,11 +3051,13 @@ async fn start_server_inner_full(
     let assets = load_client_assets(&rootp);
     let image_endpoint = build_image_endpoint(&rootp, &cfg);
     let server_fns = build_server_fn_dispatcher(&rootp, stack.pool.as_ref());
+    let actions = build_action_dispatcher(stack.pool.as_ref());
     let pipeline = std::sync::Arc::new(oxide_server::Pipeline {
         rules,
         assets,
         image_endpoint,
         server_fns,
+        actions: actions.clone(),
         limits: oxide_server::Limits::default(),
         security: oxide_server::SecuritySettings {
             csp: cfg.security.csp.clone(),
@@ -2964,6 +3121,7 @@ async fn start_server_inner_full(
         routes_root,
         boot_script_url,
         l0,
+        actions,
     );
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (tx, rx) = tokio::sync::watch::channel(false);
