@@ -46,6 +46,18 @@ pub struct Metrics {
     pub cache_misses_l0: AtomicU64,
     pub isolates_recycled: AtomicU64,
     pub isolates_crashed: AtomicU64,
+    /// §16.6 / §20: Core Web Vitals reported by browsers, keyed by
+    /// `"<metric>/<route>"` (e.g. `"LCP//home"`). A count plus a sum of the
+    /// raw value (milliseconds for the time metrics, unitless for CLS) — the
+    /// `render` output exposes `_count` and `_sum` for a Prometheus summary.
+    pub web_vitals: RwLock<HashMap<String, VitalAgg>>,
+}
+
+/// A reported web-vital aggregate: how many samples, and their summed value.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct VitalAgg {
+    pub count: u64,
+    pub sum: f64,
 }
 
 impl Metrics {
@@ -71,6 +83,20 @@ impl Metrics {
             .observe(latency);
     }
 
+    /// §16.6: record one browser web-vital sample. `name` is the metric
+    /// (`LCP`/`CLS`/`INP`/`FCP`/`TTFB`), `route` the page it was measured on,
+    /// `value` the raw number (ms for timing metrics, unitless for CLS).
+    pub fn observe_vital(&self, name: &str, route: &str, value: f64) {
+        if !value.is_finite() {
+            return;
+        }
+        let key = format!("{name}/{route}");
+        let mut map = self.web_vitals.write().expect("vitals lock");
+        let agg = map.entry(key).or_default();
+        agg.count = agg.count.saturating_add(1);
+        agg.sum += value;
+    }
+
     pub fn render(&self) -> String {
         let mut out = String::with_capacity(1024);
         out.push_str("# HELP oxide_requests_total Total requests served\n");
@@ -94,6 +120,30 @@ impl Metrics {
         out.push_str("# HELP oxide_isolates_crashed_total Isolate crash events\n");
         out.push_str("# TYPE oxide_isolates_crashed_total counter\n");
         out.push_str(&format!("oxide_isolates_crashed_total {}\n", self.isolates_crashed.load(Ordering::Relaxed)));
+
+        {
+            let vitals = self.web_vitals.read().expect("vitals lock");
+            if !vitals.is_empty() {
+                out.push_str("# HELP oxide_web_vital_count Web-vital samples by metric and route\n");
+                out.push_str("# TYPE oxide_web_vital_count counter\n");
+                out.push_str("# HELP oxide_web_vital_sum Summed web-vital values\n");
+                out.push_str("# TYPE oxide_web_vital_sum counter\n");
+                let mut keys: Vec<&String> = vitals.keys().collect();
+                keys.sort();
+                for k in keys {
+                    let (name, route) = k.split_once('/').unwrap_or((k.as_str(), ""));
+                    let agg = vitals[k];
+                    out.push_str(&format!(
+                        "oxide_web_vital_count{{metric=\"{name}\",route=\"{route}\"}} {}\n",
+                        agg.count
+                    ));
+                    out.push_str(&format!(
+                        "oxide_web_vital_sum{{metric=\"{name}\",route=\"{route}\"}} {}\n",
+                        agg.sum
+                    ));
+                }
+            }
+        }
 
         let map = self.inner.read().expect("metrics lock");
         out.push_str("# HELP oxide_request_duration_ms Request latency by route\n");
