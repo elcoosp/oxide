@@ -11,3 +11,7 @@ crates/jshost/tests/.tmp-e2e/
 examples/*/dist/
 examples/*/.oxide/
 /.oxide/
+=== patch check-v8.sh: place the temp copy under examples/ ===
+
+=== ensure examples/.v8-gate-* is gitignored ===
+examples/.v8-gate-*/
