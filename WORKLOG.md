@@ -3796,3 +3796,28 @@ Verified: `cargo test --workspace` **883 passed / 0 failed**, including a
 new `is_secret_like` unit test and the updated 64-hex signature tests.
 
 Commits: (below).
+
+## SEC-08 — secrets guard + image-signature hardening
+
+1. **Image signatures were a 64-bit prefix.** `sign_image_url` /
+   `verify_image_signature` (assets) and `verify_image_sig` (server) used
+   `blake3(url‖secret)[..16]` — a 64-bit digest, forgeable by birthday
+   search — and compared with a short-circuiting byte compare. Fixed: the
+   **full 64-hex** digest, compared constant-time (`constant_time_eq_hex`
+   / a fold-based compare). The assets test that pinned `len() == 16` now
+   asserts 64.
+2. **The image endpoint was unsigned by default.** The CLI only enabled
+   signing when `OXIDE_IMAGE_SECRET` was set. Now it defaults to the
+   project's build secret (`.oxide/secret`, deterministic) unless
+   `OXIDE_IMAGE_SECRET` overrides or `OXIDE_IMAGE_UNSIGNED` opts out.
+3. **No guard against secrets in the client bundle.** Added
+   `scan_client_secrets` (bundler): a textual `process.env.NAME` scan where
+   NAME matches `SECRET|KEY|TOKEN|PASSWORD|PRIVATE` (allow-listing
+   `PUBLIC_*`/`NX_*`/`npm_*`/`NODE_ENV`). `cmd_build` runs it on the client
+   chunks and **fails the build** with `CMP-SECRET` naming the module and
+   var; the diagnostics persist for MCP.
+
+Verified: `cargo test --workspace` **883 passed / 0 failed**, including a
+new `is_secret_like` unit test and the updated 64-hex signature tests.
+
+Commits: (below).
