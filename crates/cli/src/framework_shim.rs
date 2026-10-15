@@ -264,9 +264,22 @@ pub async fn build_framework_stack(
             // §4.4 / §21: do NOT evaluate the config here — it costs ~325 ms
             // and blocks the bind. Build a renderer that loads on first render.
             let peeked = peek_framework_name(path).unwrap_or_else(|| "react".to_string());
+            // §4.2: the V8 backend cannot import a `.ts` config that pulls in a
+            // CJS framework runtime (React) — bare V8 ESM has no CJS interop.
+            // `oxide build` bundles the config graph to `.oxide/config.server.js`
+            // (rolldown resolves CJS); point the V8 renderer at that.
+            let config_path = if matches!(backend, JsBackend::V8) {
+                path.parent()
+                    .map(|root| root.join(".oxide/config.server.js"))
+                    .filter(|p| p.is_file())
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.to_string_lossy().to_string())
+            } else {
+                path.to_string_lossy().to_string()
+            };
             let lazy = LazyFrameworkRenderer {
                 pool: Arc::clone(&pool),
-                config_path: path.to_string_lossy().to_string(),
+                config_path,
                 name: peeked,
                 inner: tokio::sync::OnceCell::new(),
             };
