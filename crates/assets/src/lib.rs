@@ -471,7 +471,23 @@ impl FontBackend for DefaultFontBackend {
                 css.push_str(&format!("  font-style: {style};\n"));
                 if !files.is_empty() {
                     let (name, _) = &files[face % files.len()];
-                    css.push_str(&format!("  src: url(/fonts/{name}) format('woff2');\n"));
+                    // The `format()` hint must match the real container — a
+                    // `.ttf` emitted with `format('woff2')` makes the browser
+                    // skip the face. Derive it from the file extension and
+                    // fall back to `woff2` (the spec's preferred container).
+                    let fmt = match std::path::Path::new(name)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.to_ascii_lowercase())
+                        .as_deref()
+                    {
+                        Some("woff2") => "woff2",
+                        Some("woff") => "woff",
+                        Some("ttf") => "truetype",
+                        Some("otf") => "opentype",
+                        _ => "woff2",
+                    };
+                    css.push_str(&format!("  src: url(/fonts/{name}) format('{fmt}');\n"));
                 }
                 css.push_str("  font-display: swap;\n");
                 css.push_str("}\n");
