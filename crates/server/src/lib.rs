@@ -2692,9 +2692,21 @@ impl Server {
             .map_err(|e| err("SRV-BIND", format!("cannot bind {addr}: {e}")))?;
         let tls_acceptor = tls.map(tokio_rustls::TlsAcceptor::from);
         let mut shutdown = shutdown;
-        let builder =
+        // SEC-06: enforce the header-read timeout so a slowloris (a client
+        // that drips headers) is dropped instead of holding a connection.
+        // `header_read_timeout` needs a `Timer` — configure both once.
+        let mut builder =
             hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new());
+        let header_timeout =
+            std::time::Duration::from_millis(pipeline.limits.slow_request_timeout_ms);
+        builder
+            .http1()
+            .timer(hyper_util::rt::TokioTimer::new())
+            .header_read_timeout(Some(header_timeout));
         let graceful = hyper_util::server::graceful::GracefulShutdown::new();
+        // Bound on a TLS handshake: a peer that opens a socket and never
+        // completes the handshake must not pin a task forever.
+        const ACCEPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
         loop {
             tokio::select! {
@@ -2726,23 +2738,38 @@ impl Server {
 
                     match &tls_acceptor {
                         Some(acceptor) => {
-                            // Handshake inside the accept loop so the resulting
-                            // (Send) TLS stream can be moved into the connection
-                            // task. A failed handshake logs and continues; the
-                            // connection never reaches the pipeline.
-                            let tls_stream = match acceptor.accept(stream).await {
-                                Ok(s) => s,
-                                Err(e) => {
-                                    tracing::debug!(error = %e, "TLS handshake failed");
-                                    continue;
-                                }
-                            };
-                            let conn = builder.serve_connection_with_upgrades(
-                                hyper_util::rt::TokioIo::new(tls_stream),
-                                service,
-                            );
-                            let guard = graceful.watch(conn.into_owned());
+                            // SEC-06: the handshake runs in a spawned task with
+                            // a timeout, so a stuck handshake does NOT block the
+                            // accept loop (the pre-fix code awaited it inline).
+                            let acceptor = acceptor.clone();
+                            let builder = builder.clone();
+                            // `Watcher` takes `self` in `watch` (a deliberate
+                            // footgun-guard); `graceful.watcher()` yields a fresh
+                            // owned, `Send` handle each call, so we mint one per
+                            // connection and move it into the task.
+                            let watcher = graceful.watcher();
                             tokio::spawn(async move {
+                                let tls_stream = match tokio::time::timeout(
+                                    ACCEPT_TIMEOUT,
+                                    acceptor.accept(stream),
+                                )
+                                .await
+                                {
+                                    Ok(Ok(s)) => s,
+                                    Ok(Err(e)) => {
+                                        tracing::debug!(error = %e, "TLS handshake failed");
+                                        return;
+                                    }
+                                    Err(_) => {
+                                        tracing::debug!("TLS handshake timed out");
+                                        return;
+                                    }
+                                };
+                                let conn = builder.serve_connection_with_upgrades(
+                                    hyper_util::rt::TokioIo::new(tls_stream),
+                                    service,
+                                );
+                                let guard = watcher.watch(conn.into_owned());
                                 let _ = guard.await;
                             });
                         }
