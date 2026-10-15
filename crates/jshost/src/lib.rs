@@ -544,10 +544,77 @@ impl JsHost for ScriptedHost {
 
 use deno_core::{JsRuntime, RuntimeOptions};
 
-/// Bootstrap script executed once per V8 runtime. Mirrors the Node worker's
-/// dispatch: `render` → `{html}`, `tooling:compile` → `{code: uppercase}`.
-/// `boom`/`die` are handled Rust-side before dispatch; unknown kinds throw.
+/// Bootstrap script executed once per V8 runtime.
+///
+/// Provides (a) the §4.6 tier-2 Node-compat globals a bundled SSR chunk
+/// references (`process`, `Buffer`), (b) the `oxide.*` op namespace, and
+/// (c) `__oxideDispatch`, which imports a module by `file://` URL and calls
+/// its named export with the JSON payload, returning a `{ok, value}` /
+/// `{__oxide_error}` envelope. `boom`/`die` are handled Rust-side before
+/// dispatch.
 const V8_BOOTSTRAP: &str = r#"
+// §4.6 tier 2: the minimal Node-compat globals a self-contained bundle needs.
+// A bundled SSR chunk references `process.env.NODE_ENV` (React's dev/prod
+// switch), `process.emit` (a library's existence check), and `Buffer`
+// (base64/UTF-8 helpers). Bare V8 has none of these; without the prelude an
+// `import()` of the real bundle fails with `process is not defined`.
+// The full `deno_node` surface is a later tier; this covers what the emitted
+// bundles actually touch.
+if (typeof globalThis.process === 'undefined') {
+  globalThis.process = {
+    env: { NODE_ENV: 'production' },
+    // `process.emit` is probed by some libraries; a no-op keeps the check
+    // truthy without pretending to be Node's event emitter.
+    emit: function () {},
+    // `process.cwd` / `process.platform` show up in a few polyfills.
+    cwd: function () { return '/'; },
+    platform: 'oxide',
+    nextTick: function (fn) { Promise.resolve().then(fn); },
+  };
+}
+if (typeof globalThis.Buffer === 'undefined') {
+  // A narrow `Buffer` covering the two calls the bundle makes:
+  // `Buffer.from(str, encoding).toString(encoding)` and `Buffer.isBuffer`.
+  // It is a subclass of Uint8Array so `instanceof` checks and byte access
+  // behave; the encodings handled are utf8 and base64 (base64 via the
+  // global `atob`, which deno_core provides).
+  class OxideBuffer extends Uint8Array {
+    static from(input, encoding) {
+      if (typeof input === 'string') {
+        if (encoding === 'base64') {
+          const bin = globalThis.atob(input);
+          const out = new OxideBuffer(bin.length);
+          for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+          return out;
+        }
+        // utf8 (default) and latin1-ish fallback.
+        const bytes = new TextEncoder().encode(input);
+        const out = new OxideBuffer(bytes.length);
+        out.set(bytes);
+        return out;
+      }
+      if (input instanceof Uint8Array) {
+        const out = new OxideBuffer(input.length);
+        out.set(input);
+        return out;
+      }
+      return new OxideBuffer(0);
+    }
+    static isBuffer(v) {
+      return v instanceof OxideBuffer;
+    }
+    toString(encoding) {
+      if (encoding === 'base64') {
+        let s = '';
+        for (let i = 0; i < this.length; i++) s += String.fromCharCode(this[i]);
+        return globalThis.btoa(s);
+      }
+      return new TextDecoder().decode(this);
+    }
+  }
+  globalThis.Buffer = OxideBuffer;
+}
+
 // §4.5 op namespace. deno_core exposes ops as `Deno.core.ops.op_oxide_*`.
 globalThis.oxide = {
   log: (msg) => Deno.core.ops.op_oxide_log(String(msg)),
