@@ -155,7 +155,8 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
       const it = (async function* (): AsyncGenerator<Uint8Array> {
         if (!(await cfg.isAvailable())) {
           if (strategy === 'real') {
-            yield enc.encode(`<!-- oxide: real SSR unavailable: ${cfg.name} deps not installed -->`)
+            const why = (globalThis as Record<string, unknown>).__oxideReactLoadError ?? 'isAvailable=false, no recorded error'
+            yield enc.encode(`<!-- oxide: real SSR unavailable: ${cfg.name} deps not installed; why=${why} -->`)
             return
           }
           for await (const c of cfg.irRender(input)) yield c
