@@ -2433,6 +2433,12 @@ fn build_dispatch(
             } else {
                 raw
             };
+            // §11.3 / BUG-01: remember the request path. The L0 entry for
+            // this request is tagged `path:<req_path>` so a `revalidate.path`
+            // event (which reaches the dispatch via `x-oxide-revalidate`)
+            // actually invalidates it. Without this, entries are tagged with
+            // the *route id* only, and path events match nothing.
+            let req_path = normalized.clone();
             let candidates = if normalized == "/" {
                 vec!["/".to_string(), "/index".to_string()]
             } else {
@@ -2527,6 +2533,9 @@ fn build_dispatch(
                     .join("&")
             };
             let l0_vary = l0_cache::vary_of(&req_owned.headers);
+            // BUG-01: the path tag the L0 put site stamps alongside the route
+            // tag, so `revalidate.path` can invalidate it.
+            let l0_path = req_path;
 
             Box::pin(async move {
                 // §9.3: a form action POST runs the route's `actions[name]`
@@ -2563,9 +2572,19 @@ fn build_dispatch(
                                 })
                                 .collect();
                             if let Some(cache) = l0.as_ref() {
+                                // BUG-01: before this fix, `tag` events were
+                                // dropped and `path` events were passed to
+                                // `invalidate_tag` raw (no `path:` prefix), so
+                                // neither ever matched a cached entry.
                                 for (kind, value) in &events {
-                                    if kind == "path" {
-                                        cache.invalidate_tag(value, true).await;
+                                    match kind.as_str() {
+                                        "tag" => {
+                                            cache.invalidate_tag(value, true).await;
+                                        }
+                                        "path" => {
+                                            cache.invalidate_path(value, true).await;
+                                        }
+                                        _ => {}
                                     }
                                 }
                             }
@@ -2759,7 +2778,14 @@ fn build_dispatch(
                                             200,
                                             store_headers,
                                             sentineled,
-                                            vec![l0_route.clone()],
+                                            // BUG-01: tag with both the route id
+                                            // and the request path, so a
+                                            // `revalidate.tag(route)` or
+                                            // `revalidate.path('/x')` hits.
+                                            vec![
+                                                l0_route.clone(),
+                                                format!("path:{}", l0_path),
+                                            ],
                                         )
                                         .await;
                                     let mut resp = oxide_server::OxideResponse::new(200, collected)
