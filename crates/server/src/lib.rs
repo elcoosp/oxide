@@ -2074,9 +2074,21 @@ impl Pipeline {
             let id = percent_decode(id);
             // Merge rule headers so a matching header rule still applies.
             let mut rule_headers: Vec<(String, String)> = Vec::new();
-            match self.rules.evaluate(&path) {
+            let fn_client_key = req
+                .header("x-forwarded-for")
+                .and_then(|v| v.split(',').next())
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|| "local".to_string());
+            match self.rules.evaluate_with_key(&path, &fn_client_key) {
                 oxide_router::RuleOutcome::Headers(map) => {
                     rule_headers = map.into_iter().collect();
+                }
+                // SEC-11 (partial): a rate-limited server-fn 429s too.
+                oxide_router::RuleOutcome::RateLimited { retry_after_secs } => {
+                    return NativePrefix::Raw(
+                        OxideResponse::new(429, "too many requests")
+                            .with_header("retry-after", retry_after_secs.to_string()),
+                    );
                 }
                 _ => {}
             }
@@ -2086,7 +2098,16 @@ impl Pipeline {
 
         // (4) native rules (§12.1 step 4).
         let mut rule_headers: Vec<(String, String)> = Vec::new();
-        match self.rules.evaluate(&path) {
+        // SEC-01: pass the client key so `rate_limit.key = "ip"` buckets per
+        // client. `X-Forwarded-For` is only trusted behind a proxy (SEC-05);
+        // here we use it if present, else a constant loopback key (the socket
+        // peer is not plumbed into `OxideRequest` yet).
+        let client_key = req
+            .header("x-forwarded-for")
+            .and_then(|v| v.split(',').next())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "local".to_string());
+        match self.rules.evaluate_with_key(&path, &client_key) {
             oxide_router::RuleOutcome::Redirect {
                 destination,
                 status,
@@ -2108,8 +2129,12 @@ impl Pipeline {
                         .with_header("WWW-Authenticate", "Basic realm=\"oxide\""),
                 );
             }
-            oxide_router::RuleOutcome::RateLimited => {
-                return NativePrefix::Raw(OxideResponse::new(429, "too many requests"));
+            oxide_router::RuleOutcome::RateLimited { retry_after_secs } => {
+                // SEC-01: a 429 with the seconds until a token refills.
+                return NativePrefix::Raw(
+                    OxideResponse::new(429, "too many requests")
+                        .with_header("retry-after", retry_after_secs.to_string()),
+                );
             }
             oxide_router::RuleOutcome::None => {}
         }
