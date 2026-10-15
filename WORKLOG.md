@@ -3410,3 +3410,12 @@ CSS is a server side-effect import: resolves, then evaluates to an empty module 
 - `v8_loader.rs::load`: `.css` paths return the empty ESM source without touching oxc transforms.
 
 Proof: `cargo check/test -p oxide-jshost` green (41 passed); `node --check` on both edited workers.
+
+## Task BUG-09 — real-SSR fallback hardening (escape, per-adapter lastError, loud 500)
+
+- Escape: `safeComment` (`-->` → `--\>`, `<` → `&lt;`) applied to `why` and route in every fallback comment; error page uses existing `escText`.
+- Per-adapter error: `RealAdapterConfig.lastError?: () => string | undefined`; react/vue/svelte/solid `real-ssr.ts` each track `lastLoadError` (shape failures + import throws) exposed via `getLastLoadError`, wired through their `real-adapter.ts`. The `__oxideReactLoadError` global is gone (no readers remain).
+- Loud failure: `ssr:'real'` with unavailable deps now yields a full OX-500 diagnostic page, not a comment-only blank body.
+- Deviation: CLI status mapping (OX-500 marker → 500 status) deferred — no `OX-` sentinel mapping exists in `build_dispatch` today; the page carries the `data-ox-error='OX-500'` marker so the mapping can land later without changing adapters.
+
+Proof: `pnpm --filter oxide test` 84/84; react/vue/svelte/solid adapter suites green (svelte 29/29 shown).
