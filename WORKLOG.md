@@ -3669,3 +3669,29 @@ Adapted to current code (it evolved since c00d6b5 — anchor drift noted, semant
 - Deviation: no fixture-title change in check-v8.sh (smoke title is ASCII; altering it risks check.sh byte compares) — the isolate test drives the identical chunked-decode path instead.
 
 Proof: `cargo test -p oxide-jshost` green (43 lib + 22 integration); rebuilt CLI + `check-v8.sh` PASS (10/10, prerenders, action POST — React scheduler healthy on the macrotask port).
+
+## SEC-05 — trusted proxy + config-driven allow-lists
+
+`SecuritySettings.host_allow_list`, `ssrf_allow_list`, and `cookie_keys` were
+never populated from config — a configured allow-list silently did nothing.
+
+Fixed:
+- `SecurityConfig` gains `hostAllowList`, `ssrfAllowList`, `trustedProxies`,
+  `cookieKeys` (camelCase, defaulted).
+- The CLI populates `SecuritySettings` from them (cookie keys → bytes).
+- `peer_is_trusted` / `effective_client` (pure, tested): a peer inside a
+  `trustedProxies` CIDR has `X-Forwarded-For` (leftmost), `-Proto`, `-Host`
+  honoured; an **untrusted peer has them ignored entirely** and only the real
+  `Host` used. `parse_cidr` handles v4/v6, bare IP = /32 or /128.
+
+The Host allow-list enforcement (421) already existed and now receives a
+populated list. Wiring `effective_client` into the live request path (the
+peer IP is not yet plumbed into `OxideRequest`) and using the derived host for
+the Host check is a follow-up noted in WORKLOG — the resolver + config path
+are the testable core.
+
+Verified: `cargo test -p oxide-server -p oxide-config` green, including a new
+test (trusted peer's XFF/proto/host honoured; untrusted peer's ignored) and a
+config round-trip for the new keys.
+
+Commits: (below).
