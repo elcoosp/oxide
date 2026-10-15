@@ -3363,3 +3363,24 @@ Verified: `cargo test -p oxide-jshost --lib bug03` (two unit tests: the
 pointer is stable across calls; a snapshot-less host stays `None`). The
 dead-worker recovery path reuses the `v8_pool_recycles_warm` machinery
 (integration test `v8_pool_recycles_warm`, run with `--ignored`).
+
+## BUG-05 — deterministic build secret
+
+The server-fn id is `blake3(file, export, secret)` (§9.4). The secret was
+`blake3(now ⊕ /dev/urandom)` — new on every build — so every build produced
+different fn ids and the manifests could never be byte-stable (§6.4); chunk
+caching was structurally impossible.
+
+Fixed: a **per-project** secret at `<root>/.oxide/secret` (64 hex chars,
+32 bytes of OS entropy, blake3-folded). Created once; every subsequent build
+reads the same value. A malformed file is a hard error (silently regenerating
+would churn every fn id). New `oxide secrets rotate` deletes the file (next
+build mints a fresh one); `oxide doctor` reports the secret's presence.
+
+**Verified (this is the payoff):**
+- `oxide build smoke-app-react` twice → `client.manifest.json` and
+  `server.manifest.json` **byte-identical** (`diff` empty).
+- `OXIDE_FORCE_BUILD=1` rebuild → still identical.
+- `examples/smoke-app-react/.oxide/secret` = 64 hex chars after the first build.
+
+`.oxide/` is gitignored (per-checkout state, not per-commit).
