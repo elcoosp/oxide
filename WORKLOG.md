@@ -3284,3 +3284,25 @@ Two additions to CI, both landed here:
 removes; the ignore is a safety net for an interrupted run).
 
 Commits: `check-v8.sh`, `gate.sh`, `ci.yml`, `.gitignore`.
+
+## BUG-01 — revalidate invalidation end-to-end
+
+Three defects, all fixed:
+
+1. **`tag` events were dropped.** The consumer loop only handled `path`
+   events. Now `match kind.as_str()` handles both.
+2. **`path` events called `invalidate_tag(raw)`** — no `path:` prefix, so
+   nothing matched. Now routed to `L0Cache::invalidate_path`, which delegates
+   through the handler with `oxide_cache::tiers::path_tag(path)`.
+3. **L0 entries were tagged with the route id only.** Now tagged with both
+   the route id and `path:<req_path>`. `req_path` is the normalized request
+   path, captured alongside `normalized` in the dispatch closure.
+
+`L0Cache::invalidate_path` is new (delegates to the handler's
+`invalidate_tag` with the `path:` prefix — the same convention the cache tier
+uses). Three tests in `crates/cli/src/l0_cache.rs` pin the semantics:
+`invalidate_path` sweeps a `path:`-tagged entry; `invalidate_tag` sweeps a
+route-tagged entry; an unrelated `invalidate_path` does not sweep an
+untagged entry.
+
+Verified: `cargo test -p oxide-cli --lib l0_cache` green.
