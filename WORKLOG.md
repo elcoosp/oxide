@@ -3419,3 +3419,13 @@ Proof: `cargo check/test -p oxide-jshost` green (41 passed); `node --check` on b
 - Deviation: CLI status mapping (OX-500 marker → 500 status) deferred — no `OX-` sentinel mapping exists in `build_dispatch` today; the page carries the `data-ox-error='OX-500'` marker so the mapping can land later without changing adapters.
 
 Proof: `pnpm --filter oxide test` 84/84; react/vue/svelte/solid adapter suites green (svelte 29/29 shown).
+
+## Task BUG-10 — create-oxide template fixes
+
+- Dashboard `page.server.ts` now imports `defineAction` (was ReferenceError on first import).
+- Vue page uses `defineProps<{ data }>` + `props.data.…` (was `import { data } from './page.server'`).
+- Deps: `workspace:*` inside the monorepo (PWD contains `packages/`), literal `0.2.0` outside.
+- Layouts render only the page subtree (no `<html>`; svelte already did).
+- Added `PageProps<TData>` to `packages/oxide/src/types.ts` (via `export *`).
+
+Proof: `pnpm --filter create-oxide test` 5/5; all 16 scaffolds generated to /tmp/scaff; every `.ts` passes `node --check`; greps clean (no `<html` in layouts, no `./page.server` value import, `defineAction` imported where used).
