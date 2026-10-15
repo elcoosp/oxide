@@ -3338,3 +3338,28 @@ Verified: `cargo test -p oxide-jshost -p oxide-cache --lib` (18+39),
 a second consumer on one `TieredCache` see each other's invalidation.
 
 Commits: `1ba72c1` `d287f98` `24564ff` `5daf943` `7cd655a` `51f092a` + test.
+
+## BUG-03 — V8Pool failure isolation + snapshot leak
+
+Two defects, both in `crates/jshost/src/lib.rs`:
+
+1. **A dead worker poisoned the pool forever.** On a `tx.send` failure the
+   worker stayed in the set with `in_flight = 0`; `choose_worker` kept
+   selecting it; every subsequent call returned `JSH-CRASH "worker channel
+   closed"`. Fixed: `V8WorkerHandle` gains a `dead: AtomicBool`; the load map
+   treats a dead worker like a retiring one (`u64::MAX`); the failing call
+   CASes `dead` and spawns a warm replacement (reusing `spawn_replacement`,
+   which now also carries the BUG-02 cache handler). If *every* worker is
+   dead/retiring, the call returns a distinct `JSH-POOL` error instead of
+   dispatching into a dead channel.
+
+2. **Unbounded snapshot leak.** `static_snapshot()` leaked a fresh
+   `Box::leak(...)` copy on *every* call — `render_pool` + `tooling_pool` +
+   each warm replacement, growing across pool rebuilds. Fixed with a
+   `OnceLock<Option<&'static [u8]>>` on `V8Host`: the `&'static` view is
+   computed once and shared.
+
+Verified: `cargo test -p oxide-jshost --lib bug03` (two unit tests: the
+pointer is stable across calls; a snapshot-less host stays `None`). The
+dead-worker recovery path reuses the `v8_pool_recycles_warm` machinery
+(integration test `v8_pool_recycles_warm`, run with `--ignored`).
