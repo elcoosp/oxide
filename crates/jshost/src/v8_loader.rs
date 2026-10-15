@@ -94,9 +94,15 @@ impl TranspileLoader {
             // resolve with browser/worker conditions. `node` would pick a
             // framework's Node build (e.g. react-dom/server.node.js →
             // require('stream')), which V8 cannot run.
+            // `worker` FIRST: it is the condition the two SSR runtimes agree on.
+            //   react-dom/server: worker → server.browser.js (no Node built-ins)
+            //   @solidjs/web:     worker → dist/server.js (the SSR renderer)
+            // `browser` would give @solidjs/web its CLIENT build, whose `ssr`
+            // template returns undefined. `node` gives react-dom its Node build
+            // (`require('stream')`).
             condition_names: vec![
-                "browser".into(),
                 "worker".into(),
+                "browser".into(),
                 "import".into(),
                 "module".into(),
                 "default".into(),
