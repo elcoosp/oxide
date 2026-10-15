@@ -9,6 +9,7 @@ description = "JsHost trait, NodeHost, ops, pools (spec 4, D2)"
 [dependencies]
 oxide-diagnostics = { workspace = true }
 oxide-compiler = { workspace = true }
+oxc_resolver = { workspace = true }
 oxide-cache = { workspace = true }
 tracing = { workspace = true }
 oxide-odf = { workspace = true }
@@ -21,6 +22,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 deno_core = { workspace = true }
+deno_error = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

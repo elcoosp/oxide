@@ -110,6 +110,7 @@ tokio-test = "0.4.6"
 # Added so the stub-replacement passes in the following scripts can flip each
 # trait's default engine to the spec's exact external choice (spec Appendix A).
 deno_core = { version = "0.412.0" }
+deno_error = { version = "0.7.1" }
 deno_ast = { version = "0.53.3" }
 moka = { version = "0.12.16", features = ["future", "sync"] }
 oxc = { version = "0.153.0", features = ["full"] }
