@@ -379,12 +379,21 @@ pub struct BuildConfig {
     pub target: String,
     /// `hidden` default (§17.1)
     pub sourcemap: String,
+    /// §6.1 / §21: module specifiers to leave **external** in the SSR bundle
+    /// (never bundled). Empty — the default — produces a self-contained server
+    /// bundle, which is what the `binary` adapter needs. A Node-target
+    /// deployment that ships `node_modules` sets this to its framework
+    /// runtimes (e.g. `["vue", "@vue/server-renderer"]`) to shrink the bundle
+    /// from ~950 KB to a few KB. Externals are matched exactly on the
+    /// specifier, so subpaths (`vue/server-renderer`) must be listed too.
+    pub ssr_externals: Vec<String>,
 }
 impl Default for BuildConfig {
     fn default() -> Self {
         Self {
             target: "baseline-widely-available".into(),
             sourcemap: "hidden".into(),
+            ssr_externals: Vec::new(),
         }
     }
 }
@@ -492,5 +501,26 @@ pub mod native_rule {
         pub key: String,
         pub max: u32,
         pub window_secs: u64,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ssr_externals_default_is_empty() {
+        assert!(BuildConfig::default().ssr_externals.is_empty());
+    }
+
+    #[test]
+    fn ssr_externals_roundtrip_camel_case() {
+        // The TS key is `ssrExternals`; serde's rename_all = "camelCase" must
+        // accept it from a JS config object.
+        let json = r#"{"target":"baseline-widely-available","sourcemap":"hidden","ssrExternals":["vue","@vue/server-renderer"]}"#;
+        let b: BuildConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(b.ssr_externals, vec!["vue", "@vue/server-renderer"]);
+        let out = serde_json::to_string(&b).unwrap();
+        assert!(out.contains("ssrExternals"));
     }
 }
