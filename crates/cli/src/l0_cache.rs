@@ -409,6 +409,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn l0_and_a_second_consumer_share_one_handler() {
+        // BUG-02: the L0 response cache and the worker's `'use cache'`
+        // entries must live on the *same* handler, or invalidation on one
+        // cannot reach the other. Two L0 caches over one TieredCache stand
+        // in for "the L0 cache and the worker tier".
+        let tier = Arc::new(TieredCache::new(1 << 20));
+        let l0 = L0Cache::new(Arc::clone(&tier) as Arc<dyn CacheHandler>, "b", Duration::from_secs(60));
+        // A second writer on the same handler (the worker's cache_set).
+        tier.set(
+            "worker-entry",
+            oxide_cache::Entry {
+                body: b"W".to_vec(),
+                status: 200,
+                headers: vec![],
+                tags: vec!["path:/worker".into()],
+                policy: oxide_cache::Policy::default(),
+                stored_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64,
+                etag: String::new(),
+            },
+        )
+        .await
+        .unwrap();
+        // Invalidating through the L0 cache's handler reaches the worker's
+        // entry: they are one tier.
+        let n = l0.invalidate_path("/worker", true).await;
+        assert!(n >= 1, "invalidation reaches the shared tier, got {n}");
+        assert!(tier.get("worker-entry").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
     async fn invalidate_path_does_not_match_an_untagged_path() {
         // Before BUG-01 the put site tagged with the route id only; a path
         // event then matched nothing. This pins that an entry *without* the
