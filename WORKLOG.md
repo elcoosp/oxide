@@ -3202,3 +3202,85 @@ Notable gaps the later tasks address:
 `benchmarks/report.md` was **not** edited by this task — its regeneration is a
 PERF/PH0-02 deliverable (the harness needs the p95/p99 numbers PH0-02 adds
 before the report is honest).
+
+## PH0-03 — CI regression gate + V8 e2e fixture gate
+
+Two additions to CI, both landed here:
+
+1. **`tests/fixtures/check-v8.sh`** — the four-fixture gate (`check.sh`) with
+   `server.backend = 'v8'`. The fixture is copied to a temp root *under
+   `examples/`* (not `/tmp`: the workspace `@oxide/react` symlink must resolve,
+   and it is app-local, not root-local). The copy symlinks the fixture's
+   `node_modules` in. Build must emit `.oxide/snapshot.bin`; then ONE
+   long-lived server must serve the page marker on **10 sequential GETs**
+   (session-18 lesson: kill/restart races the redb CAS lock). Verified locally:
+   build ok, snapshot 736510 bytes, **10/10 sequential 200s**.
+
+   Two bugs the gate exposed in the process (both fixed in the fixture, not
+   the product):
+   - A `/tmp` copy loses the workspace walk-up → `JSH-FRAMEWORK cannot resolve
+     @oxide/react`. Fixed by placing the copy under `examples/`.
+   - The copy also needs the app's `node_modules` (pnpm puts the workspace
+     symlinks there, not at the repo root). Fixed with a symlink to the
+     source dir.
+   The build log also confirms a **known, pre-existing** V8 gap now pinned by
+   the fixture: `generate-params:run response missing 'params' array` →
+   the blog route is skipped at prerender. That is BUG-04's territory.
+
+2. **`benchmarks/gate.sh`** — compares a fresh `run.sh` table against the
+   committed `benchmarks/report.md` and fails on any tracked metric
+   regressing >5% (§21's stated gate). Tracked: cold, warm, client, server,
+   start, rss, ttfb. Pages is not tracked (a fixture adding a route is not a
+   regression). Verified: PASS against the report itself; FAIL against a
+   synthetic row where cold jumped to 99999 ms.
+
+3. **`.github/workflows/ci.yml`** — two new jobs, `fixtures-v8` and
+   `bench-gate`, both on `macos-latest` (the V8 host is exercised there; the
+   linux row is a follow-up — see WORKLOG "Observations"). Both install
+   pnpm deps and build the CLI first.
+
+`examples/.v8-gate-*/` is gitignored (temp roots the gate creates and
+removes; the ignore is a safety net for an interrupted run).
+
+Commits: `check-v8.sh`, `gate.sh`, `ci.yml`, `.gitignore`.
+
+## PH0-03 — CI regression gate + V8 e2e fixture gate
+
+Two additions to CI, both landed here:
+
+1. **`tests/fixtures/check-v8.sh`** — the four-fixture gate (`check.sh`) with
+   `server.backend = 'v8'`. The fixture is copied to a temp root *under
+   `examples/`* (not `/tmp`: the workspace `@oxide/react` symlink must resolve,
+   and it is app-local, not root-local). The copy symlinks the fixture's
+   `node_modules` in. Build must emit `.oxide/snapshot.bin`; then ONE
+   long-lived server must serve the page marker on **10 sequential GETs**
+   (session-18 lesson: kill/restart races the redb CAS lock). Verified locally:
+   build ok, snapshot 736510 bytes, **10/10 sequential 200s**.
+
+   Two bugs the gate exposed in the process (both fixed in the fixture, not
+   the product):
+   - A `/tmp` copy loses the workspace walk-up → `JSH-FRAMEWORK cannot resolve
+     @oxide/react`. Fixed by placing the copy under `examples/`.
+   - The copy also needs the app's `node_modules` (pnpm puts the workspace
+     symlinks there, not at the repo root). Fixed with a symlink to the
+     source dir.
+   The build log also confirms a **known, pre-existing** V8 gap now pinned by
+   the fixture: `generate-params:run response missing 'params' array` →
+   the blog route is skipped at prerender. That is BUG-04's territory.
+
+2. **`benchmarks/gate.sh`** — compares a fresh `run.sh` table against the
+   committed `benchmarks/report.md` and fails on any tracked metric
+   regressing >5% (§21's stated gate). Tracked: cold, warm, client, server,
+   start, rss, ttfb. Pages is not tracked (a fixture adding a route is not a
+   regression). Verified: PASS against the report itself; FAIL against a
+   synthetic row where cold jumped to 99999 ms.
+
+3. **`.github/workflows/ci.yml`** — two new jobs, `fixtures-v8` and
+   `bench-gate`, both on `macos-latest` (the V8 host is exercised there; the
+   linux row is a follow-up — see WORKLOG "Observations"). Both install
+   pnpm deps and build the CLI first.
+
+`examples/.v8-gate-*/` is gitignored (temp roots the gate creates and
+removes; the ignore is a safety net for an interrupted run).
+
+Commits: `check-v8.sh`, `gate.sh`, `ci.yml`, `.gitignore`.
