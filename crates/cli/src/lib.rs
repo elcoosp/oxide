@@ -1914,6 +1914,19 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         persist_diagnostics(&rootp, &[e.0.clone()]);
         anyhow::anyhow!("{} {}", e.0.code, e.0.message)
     })?;
+    // SEC-08: fail the build if a secret-looking `process.env.*` read shipped
+    // into the client bundle.
+    let secret_hits = oxide_bundler::scan_client_secrets(&client_outcome.chunks);
+    if !secret_hits.is_empty() {
+        for d in &secret_hits {
+            outln!(w, "error {}: {}", d.code, d.message);
+        }
+        persist_diagnostics(&rootp, &secret_hits);
+        anyhow::bail!(
+            "{} client secret(s) would leak to the browser (CMP-SECRET)",
+            secret_hits.len()
+        );
+    }
     let server_outcome = rb.bundle(&server_opts).map_err(|e| {
         let mut diags = client_outcome.diagnostics.clone();
         diags.push(e.0.clone());
@@ -3048,7 +3061,15 @@ fn build_image_endpoint(
     // the check on; without it the endpoint is open, which is the right
     // default for a dev server and for a project that serves its own
     // images. Production deployments that proxy third-party URLs set it.
-    let signing_secret = std::env::var("OXIDE_IMAGE_SECRET").ok().filter(|s| !s.is_empty());
+    // SEC-08: the image-signing secret defaults to the project's build
+    // secret (deterministic, `.oxide/secret`) unless `OXIDE_IMAGE_SECRET`
+    // overrides it or the operator explicitly disables signing. Before this
+    // the endpoint was unsigned by default.
+    let signing_secret = std::env::var("OXIDE_IMAGE_SECRET")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::env::var("OXIDE_IMAGE_UNSIGNED").is_ok().then(|| String::new()))
+        .or_else(|| build_secret(&rootp).ok());
     let _ = &cfg.images; // reserved: remotePatterns gating lands with the fetch path
 
     // §16.1: remote sources are gated by `config.images.remotePatterns`.
