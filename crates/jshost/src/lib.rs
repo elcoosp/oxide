@@ -673,10 +673,26 @@ if (typeof globalThis.TextEncoder === 'undefined') {
 }
 if (typeof globalThis.TextDecoder === 'undefined') {
   globalThis.TextDecoder = class TextDecoder {
-    constructor(enc, opts) { this.encoding = enc || 'utf-8'; this.fatal = !!(opts && opts.fatal); }
-    decode(buf) {
-      if (buf == null) return '';
-      const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf.buffer || buf);
+    constructor(enc, opts) { this.encoding = enc || 'utf-8'; this.fatal = !!(opts && opts.fatal); this._buf = []; }
+    decode(buf, opts) {
+      // BUG-07: `{stream:true}` keeps an incomplete trailing multi-byte
+      // sequence buffered for the next chunk instead of dropping it (the
+      // old code `break`ed and discarded it — mojibake whenever a split
+      // character crossed a stream chunk, e.g. in __oxideFrameworkRender).
+      const streaming = !!(opts && opts.stream);
+      let bytes;
+      if (buf == null) {
+        bytes = new Uint8Array(this._buf);
+        this._buf = [];
+      } else {
+        const fresh = buf instanceof Uint8Array ? buf : new Uint8Array(buf.buffer || buf);
+        if (this._buf.length) {
+          bytes = new Uint8Array(this._buf.length + fresh.length);
+          bytes.set(this._buf, 0);
+          bytes.set(fresh, this._buf.length);
+          this._buf = [];
+        } else bytes = fresh;
+      }
       let out = '';
       for (let i = 0; i < bytes.length;) {
         const b = bytes[i];
@@ -685,7 +701,11 @@ if (typeof globalThis.TextDecoder === 'undefined') {
         else if (b < 0xe0) { cp = b & 0x1f; len = 2; }
         else if (b < 0xf0) { cp = b & 0x0f; len = 3; }
         else { cp = b & 0x07; len = 4; }
-        if (i + len > bytes.length) break;
+        if (i + len > bytes.length) {
+          if (streaming) { this._buf = Array.from(bytes.slice(i)); break; }
+          out += '�';
+          break;
+        }
         for (let j = 1; j < len; j++) cp = (cp << 6) | (bytes[i + j] & 0x3f);
         i += len;
         if (cp > 0xffff) {
@@ -693,14 +713,51 @@ if (typeof globalThis.TextDecoder === 'undefined') {
           out += String.fromCharCode(0xd800 + (cp >> 10), 0xdc00 + (cp & 0x3ff));
         } else out += String.fromCharCode(cp);
       }
+      if (!streaming) this._buf = [];
       return out;
     }
   };
 }
 // §4.6 tier 1: `MessageChannel`/`MessagePort`. React's browser SSR scheduler
-// (react-dom/server.browser) schedules work through a MessageChannel. A
-// macrotask-based port is enough: `postMessage` queues delivery after the
-// current task, which is what the scheduler expects.
+// (react-dom/server.browser) schedules work through a MessageChannel, which
+// expects macrotask delivery: `postMessage` runs after the current task AND
+// after pending microtasks, yielding to I/O. Microtask delivery
+// (queueMicrotask) can starve I/O when the scheduler reposts every tick —
+// so delivery goes through `op_oxide_sleep(0)` (a real tokio timer), with a
+// queueMicrotask fallback only if the op is unavailable.
+// BUG-07: the old code delivered via queueMicrotask despite this comment.
+if (typeof globalThis.MessageChannel === 'undefined') {
+  globalThis.MessagePort = class MessagePort {
+    constructor() { this.onmessage = null; this._other = null; this._closed = false; }
+    postMessage(data) {
+      if (this._closed || !this._other) return;
+      const other = this._other;
+      const deliver = () => {
+        if (other._closed) return;
+        if (typeof other.onmessage === 'function') other.onmessage({ data });
+      };
+      try {
+        Deno.core.ops.op_oxide_sleep(0).then(deliver);
+      } catch (e) {
+        queueMicrotask(deliver);
+      }
+    }
+    start() {}
+    close() { this._closed = true; }
+    addEventListener(type, fn) { if (type === 'message') this.onmessage = fn; }
+    removeEventListener() {}
+  };
+  globalThis.MessageChannel = class MessageChannel {
+    constructor() {
+      const a = new globalThis.MessagePort();
+      const b = new globalThis.MessagePort();
+      a._other = b;
+      b._other = a;
+      this.port1 = a;
+      this.port2 = b;
+    }
+  };
+}
 // §4.6 tier 1: Web Crypto's `crypto.getRandomValues` / `randomUUID`, backed
 // by REAL OS entropy through the `op_oxide_random` op (ring's SystemRandom).
 //
@@ -712,6 +769,9 @@ if (typeof globalThis.TextDecoder === 'undefined') {
 // backed by the `op_oxide_sleep` op (a real tokio timer the event loop polls).
 // A framework's async SSR scheduler (Solid's `renderToString`) flushes through
 // a `setTimeout(…, 0)`; without this it never resolves and the render is empty.
+// BUG-07: interval callbacks are error-tolerant (log-and-continue via
+// `oxide.log` — a throwing interval must not break the chain or crash the
+// worker with an uncaught exception); clearing cancels the pending sleep.
 if (typeof globalThis.setTimeout === 'undefined') {
   const timers = new Map();
   let nextId = 1;
@@ -723,7 +783,7 @@ if (typeof globalThis.setTimeout === 'undefined') {
       Deno.core.ops.op_oxide_sleep(handle.ms).then(() => {
         if (handle.cancelled) return;
         if (handle.interval) {
-          try { fn(...args); } catch (e) { queueMicrotask(() => { throw e; }); }
+          try { fn(...args); } catch (e) { try { globalThis.oxide.log('interval-error ' + ((e && e.message) || e)); } catch (_) {} }
           run();
         } else {
           timers.delete(id);
