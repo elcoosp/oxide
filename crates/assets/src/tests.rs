@@ -510,3 +510,56 @@ fn image_signature_appends_with_question_or_ampersand() {
     assert!(crate::sign_image_url("/a.png", secret).starts_with("/a.png?s="));
     assert!(crate::sign_image_url("/a.png?w=1", secret).starts_with("/a.png?w=1&s="));
 }
+
+
+// ----------------------------------------------------------- §16.2 fonts
+
+#[test]
+fn font_format_hint_matches_the_file_container() {
+    // A `.ttf` face must carry `format('truetype')`, not `format('woff2')` —
+    // a mismatched hint makes the browser skip the face.
+    let dir = tempfile::tempdir().unwrap();
+    let ttf = dir.path().join("Face.ttf");
+    // A minimal valid TTF: the backend copies bytes verbatim and only parses
+    // for metrics (a parse failure falls back to a neutral face, not an error).
+    std::fs::write(&ttf, b"\x00\x01\x00\x00not-a-real-font").unwrap();
+
+    let spec = FontSpec {
+        family: "Face".into(),
+        provider: "local".into(),
+        weights: vec![400],
+        styles: vec!["normal".into()],
+        subset: vec![],
+        local_paths: vec![ttf],
+    };
+    let bundle = DefaultFontBackend.bundle(&spec).unwrap();
+    assert!(
+        bundle.css.contains("format('truetype')"),
+        "ttf face must hint truetype:\n{}",
+        bundle.css
+    );
+    assert!(
+        !bundle.css.contains("url(/fonts/Face.ttf) format('woff2')"),
+        "must not mislabel a ttf as woff2"
+    );
+}
+
+#[test]
+fn font_fallback_face_is_emitted_with_a_metric_override() {
+    let dir = tempfile::tempdir().unwrap();
+    let ttf = dir.path().join("Face.ttf");
+    std::fs::write(&ttf, b"not-a-real-font").unwrap();
+    let spec = FontSpec {
+        family: "Face".into(),
+        provider: "local".into(),
+        weights: vec![],
+        styles: vec![],
+        subset: vec![],
+        local_paths: vec![ttf],
+    };
+    let bundle = DefaultFontBackend.bundle(&spec).unwrap();
+    // A fallback face always exists; with unparseable input it keeps the
+    // neutral 100% size-adjust.
+    assert!(bundle.css.contains("font-family: 'Face-fallback'"));
+    assert!(bundle.css.contains("size-adjust:"));
+}
