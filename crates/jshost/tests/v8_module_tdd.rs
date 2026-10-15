@@ -28,7 +28,7 @@ async fn v8_runs_a_real_module_export() {
     )
     .unwrap();
 
-    let pool = V8Host.render_pool(PoolConfig::default()).unwrap();
+    let pool = V8Host::new().render_pool(PoolConfig::default()).unwrap();
 
     // Named export.
     let mut s = pool
@@ -70,7 +70,7 @@ async fn v8_surfaces_a_missing_export() {
     let module = dir.path().join("mod.mjs");
     std::fs::write(&module, "export const x = 1;\n").unwrap();
 
-    let pool = V8Host.render_pool(PoolConfig::default()).unwrap();
+    let pool = V8Host::new().render_pool(PoolConfig::default()).unwrap();
     let err = match pool
         .call(
             EntryRef {
@@ -96,7 +96,7 @@ async fn v8_surfaces_a_throwing_export() {
     let module = dir.path().join("mod.mjs");
     std::fs::write(&module, "export function boom() { throw new Error('kaboom'); }\n").unwrap();
 
-    let pool = V8Host.render_pool(PoolConfig::default()).unwrap();
+    let pool = V8Host::new().render_pool(PoolConfig::default()).unwrap();
     let err = match pool
         .call(
             EntryRef {
@@ -129,7 +129,7 @@ async fn v8_imports_a_transitive_module() {
     )
     .unwrap();
 
-    let pool = V8Host.render_pool(PoolConfig::default()).unwrap();
+    let pool = V8Host::new().render_pool(PoolConfig::default()).unwrap();
     let mut s = pool
         .call(
             EntryRef {
