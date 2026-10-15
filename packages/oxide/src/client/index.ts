@@ -13,3 +13,4 @@ export {
 export { enhance, type EnhanceForm, type EnhanceOptions, type EnhanceSubmitEvent } from './enhance.ts'
 export { decodeOdf, decodeOdfToJson, OdfError, MAX_BYTES, MAX_DEPTH, MAX_REFS } from './odf-decode.ts'
 export { reportWebVitals, type VitalSample, type VitalsOptions } from './vitals.ts'
+export { scheduleScript, loadScripts, type ScriptStrategy, type ScriptOptions } from './scripts.ts'
