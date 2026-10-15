@@ -36,6 +36,7 @@ use tokio::task::JoinHandle;
 pub mod tooling;
 pub mod v8_ops;
 pub mod snapshot;
+pub mod v8_loader;
 pub use snapshot::{lint_top_level_side_effects, loader_options, snapshot_build, snapshot_build_bundle, AppSnapshot, SideEffect, SNAPSHOT_FORMAT};
 pub mod tooling_pool;
 pub mod framework_host;
@@ -735,8 +736,15 @@ fn spawn_v8_worker(snapshot: Option<&'static [u8]>) -> Result<Arc<V8WorkerHandle
                 // and reads them from disk — which is exactly what a
                 // self-contained `dist/server` bundle needs. (`Rc` is fine:
                 // `JsRuntime` is `!Send` and pinned to this thread.)
+                // §4.2: a transpiling loader — reads `.ts`/`.tsx`, runs the
+                // Oxc type-strip + JSX lowering, resolves bare specifiers
+                // against node_modules. `FsModuleLoader` alone cannot parse a
+                // `.ts` config; this can.
                 let module_loader: std::rc::Rc<dyn deno_core::ModuleLoader> =
-                    std::rc::Rc::new(deno_core::FsModuleLoader);
+                    std::rc::Rc::new(crate::v8_loader::TranspileLoader::new(
+                        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+                        None,
+                    ));
                 let mut js = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     // §4.4: a snapshot already holds the evaluated bootstrap
                     // (process/Buffer/oxide.*/__oxideDispatch) and its module
