@@ -3536,3 +3536,16 @@ browser-env rationale survives and the config bundle stays self-contained.
 long-standing "Solid on V8 renders shell-only" item.
 
 Commits: `bbbac05` `4cb5073` `7f7b479` `68b2de3` `b2dcba2`.
+
+## Task BUG-04 — V8 dispatch parity for actions/server-fns/generate-params/invalidate
+
+Ported the Node worker's envelope-semantic kinds to the V8 bootstrap + Rust arms (the generic `mod[export](payload)` arm silently mis-executed all of them on `backend: "v8"`):
+
+- Bootstrap (`crates/jshost/src/lib.rs` `V8_BOOTSTRAP`): `__oxideActionRun` (cookies, Standard-Schema validation, revalidate collectors, error/redirect sentinels, `{ok,status,location,data,setCookies,headers,revalidate}`), `__oxideServerFnRun` (SSR-entry import → `__oxide_fn_registry` lookup → `{value}`), `__oxideGenerateParamsRun` (`{params:[...]}` — never `{ok,value}`, the JSH-PARAMS mismatch), `__oxideFrameworkInvalidate` (generation bump). Coded errors cross as `{__oxide_error, __oxide_code}` so NOT-FOUND vs THREW survives for the pipeline's 404 mapping. FormData/cookie-jar shims included (bare V8 lacks FormData).
+- Generation-scoped module cache: `__oxideVersioned` (?v=N) on every bootstrap import; `TranspileLoader::resolve` preserves/re-propagates the query (nested imports inherit the referrer's) and `load` strips it for file reads — the whole graph re-evaluates on invalidate, mirroring Node's versioned() tagger.
+- Rust (`v8_dispatch`): `exec_v8_json` helper + 4 arms; `tooling:module` refuses loudly with `JSH-V8KIND` (SFC compilers stay on the Node tooling pool by design — no silent mis-execution). No `JSH-V8KIND` refusal for the four real kinds: the verify below passes, so the transition gate is unnecessary.
+- Tests: new `v8_dispatch_tdd.rs` (5 ignored isolate tests: action envelope+cookies+revalidate+NOT-FOUND code, server-fn value/NOT-FOUND/THREW codes, generate-params envelope + cached→invalidate→fresh round-trip, tooling refusal) — 5/5. `check-v8.sh` extended: blog generateParams prerenders asserted + live POST `?/greet` → `{"hello":"Ada"}`.
+- Drive-by repairs (both failures pre-exist on clean HEAD, verified via stash): `op_decls` test expected 5 ops, BUG-02 made it 8 (updated to the 8-op surface); `v8_pool_recycles_warm` raced the async warm replacement (restructured: 2 calls → await recycle → 3rd call; asserts unchanged). jshost full suite green (43 lib + 22 integration).
+- Note: concurrent uncommitted SEC-01/SEC-11 work (router/server) from another agent left untouched in the tree.
+
+Proof: `cargo test -p oxide-jshost` green; `check-v8.sh` PASS (10/10 GETs, 2 generate-params prerenders, action POST ok); V8-vs-Node POST bodies byte-identical (`{"hello":"Ada"}` both); V8 build now prerenders 2 routes (was 1 pre-fix — runtime generateParams silently skipped).
