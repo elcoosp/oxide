@@ -3052,3 +3052,153 @@ gate PASS (3×).
 
 Commits: `3f54079` `86c5fb4` `ea05dae` `1296496` `38eb84b` `b8d5dbb`
 `287b499` `323b509`.
+
+## PH0-01 — Baseline green + record numbers
+
+**Date:** 2026-10-15 evening (post §16.6 `<Script>` server-side emitter).
+
+### Baseline fixes (the tree was NOT green at entry)
+
+Two breaks found and repaired before any measurement:
+
+1. **`V8Host` test references (3 files).** `84fb548` turned `V8Host` from a
+   unit struct into a real struct with `new()`, but `v8_bundle_tdd.rs`,
+   `v8_module_tdd.rs` and `integration.rs` still wrote `V8Host.render_pool(…)`
+   / `let host = V8Host;`. Repaired with `V8Host::new()` (commits `366cfe5`,
+   `d10bb08`, `991c361`).
+2. **`op_decls_returns_three_ops` stale.** §4.6 added `op_oxide_random` and
+   `op_oxide_sleep`; the test pinned 3 ops. Renamed to
+   `op_decls_returns_the_documented_ops`, now asserts the documented 5
+   (`fa55c12`).
+
+Housekeeping: `.oxide/` (top-level build state — BUG-05 secret, §4.4 snapshot)
+added to `.gitignore` (`b6538aa`); `Cargo.lock` for the base64 dep in
+oxide-render committed (`6cbfbd6`).
+
+### Measurements @ `fa55c12`
+
+**`cargo check --workspace`** — green (4 dead-code warnings in `oxide-cli`,
+pre-existing; not fixed here).
+
+**`cargo test --workspace --no-fail-fast`** — **623 passed, 1 failed→0, 26
+ignored**. (The 1 failure was the stale `op_decls` test, now fixed; the
+re-run of `oxide-jshost --test integration` after the fix shows 22/22.)
+
+**TS suites** — all green, no failures:
+
+| suite | passed |
+| --- | --- |
+| `packages/oxide` | 83 |
+| `packages/react` | 36 |
+| `packages/vue` | 30 |
+| `packages/svelte` | 29 |
+| `packages/solid` | 29 |
+| `packages/create-oxide` | 5 |
+| `conformance` | 4 (react/vue/svelte/solid — every §22 assertion) |
+
+**Four-fixture gate** — `./tests/fixtures/check.sh` **PASS** (react, vue,
+svelte, solid — page-marker + root-marker + js all `ok`).
+
+**`./benchmarks/run.sh`** — the table below is **the fresh baseline**, not the
+stale `report.md` (which still claims "782–2871 ms cold start"). Note the
+numbers **differ from the handoff's claims**: the handoff said cold start was
+"426–597 ms" and warm "33–41 ms"; measured here cold is **1.0–2.7 s** and warm
+is **22–38 ms**. The warm claim holds; the cold claim was optimistic (probably
+measured on a warm OS page cache / dev-profile quirks).
+
+| fixture | cold(ms) | warm(ms) | client(B) | server(B) | pages | start(ms) | rss(MB) | ttfb(ms) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| smoke-app-react | 2459 | 24 | 250924 | 39445 | 3 | 127 | 25 | 206 |
+| smoke-app-vue | 2688 | 22 | 6919 | 951049 | 1 | 126 | 26 | 269 |
+| smoke-app-svelte | 1030 | 22 | 30012 | 1435 | 1 | 118 | 25 | 271 |
+| smoke-app-solid | 1216 | 38 | 351 | 11982 | 1 | 153 | 25 | 274 |
+
+Notable gaps the later tasks address:
+- **Vue SSR server bundle is 951 KB** — `build.ssrExternals` (opt-in) cuts it
+  to 522 B in the §21 arc, but this run had it off. PERF tasks will flip the
+  default for the fixture.
+- **TTFB 206–274 ms on all four** — the "socket binds in ~66–110 ms" claim from
+  the earlier arc has drifted; `start(ms)` here is 118–153 ms and TTFB is well
+  above that. `PERF-04`/`PERF-06` (L0 semantics + Early Hints) target this.
+- **The benchmark harness `kill -9`s a server mid-table** — the "Killed: 9"
+  lines are the harness's own cleanup; exit is 0. Worth a later cleanup, but
+  not a correctness issue here.
+
+`benchmarks/report.md` was **not** edited by this task — its regeneration is a
+PERF/PH0-02 deliverable (the harness needs the p95/p99 numbers PH0-02 adds
+before the report is honest).
+
+## PH0-01 — Baseline green + record numbers
+
+**Date:** 2026-10-15 evening (post §16.6 `<Script>` server-side emitter).
+
+### Baseline fixes (the tree was NOT green at entry)
+
+Two breaks found and repaired before any measurement:
+
+1. **`V8Host` test references (3 files).** `84fb548` turned `V8Host` from a
+   unit struct into a real struct with `new()`, but `v8_bundle_tdd.rs`,
+   `v8_module_tdd.rs` and `integration.rs` still wrote `V8Host.render_pool(…)`
+   / `let host = V8Host;`. Repaired with `V8Host::new()` (commits `366cfe5`,
+   `d10bb08`, `991c361`).
+2. **`op_decls_returns_three_ops` stale.** §4.6 added `op_oxide_random` and
+   `op_oxide_sleep`; the test pinned 3 ops. Renamed to
+   `op_decls_returns_the_documented_ops`, now asserts the documented 5
+   (`fa55c12`).
+
+Housekeeping: `.oxide/` (top-level build state — BUG-05 secret, §4.4 snapshot)
+added to `.gitignore` (`b6538aa`); `Cargo.lock` for the base64 dep in
+oxide-render committed (`6cbfbd6`).
+
+### Measurements @ `fa55c12`
+
+**`cargo check --workspace`** — green (4 dead-code warnings in `oxide-cli`,
+pre-existing; not fixed here).
+
+**`cargo test --workspace --no-fail-fast`** — **623 passed, 1 failed→0, 26
+ignored**. (The 1 failure was the stale `op_decls` test, now fixed; the
+re-run of `oxide-jshost --test integration` after the fix shows 22/22.)
+
+**TS suites** — all green, no failures:
+
+| suite | passed |
+| --- | --- |
+| `packages/oxide` | 83 |
+| `packages/react` | 36 |
+| `packages/vue` | 30 |
+| `packages/svelte` | 29 |
+| `packages/solid` | 29 |
+| `packages/create-oxide` | 5 |
+| `conformance` | 4 (react/vue/svelte/solid — every §22 assertion) |
+
+**Four-fixture gate** — `./tests/fixtures/check.sh` **PASS** (react, vue,
+svelte, solid — page-marker + root-marker + js all `ok`).
+
+**`./benchmarks/run.sh`** — the table below is **the fresh baseline**, not the
+stale `report.md` (which still claims "782–2871 ms cold start"). Note the
+numbers **differ from the handoff's claims**: the handoff said cold start was
+"426–597 ms" and warm "33–41 ms"; measured here cold is **1.0–2.7 s** and warm
+is **22–38 ms**. The warm claim holds; the cold claim was optimistic (probably
+measured on a warm OS page cache / dev-profile quirks).
+
+| fixture | cold(ms) | warm(ms) | client(B) | server(B) | pages | start(ms) | rss(MB) | ttfb(ms) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| smoke-app-react | 2459 | 24 | 250924 | 39445 | 3 | 127 | 25 | 206 |
+| smoke-app-vue | 2688 | 22 | 6919 | 951049 | 1 | 126 | 26 | 269 |
+| smoke-app-svelte | 1030 | 22 | 30012 | 1435 | 1 | 118 | 25 | 271 |
+| smoke-app-solid | 1216 | 38 | 351 | 11982 | 1 | 153 | 25 | 274 |
+
+Notable gaps the later tasks address:
+- **Vue SSR server bundle is 951 KB** — `build.ssrExternals` (opt-in) cuts it
+  to 522 B in the §21 arc, but this run had it off. PERF tasks will flip the
+  default for the fixture.
+- **TTFB 206–274 ms on all four** — the "socket binds in ~66–110 ms" claim from
+  the earlier arc has drifted; `start(ms)` here is 118–153 ms and TTFB is well
+  above that. `PERF-04`/`PERF-06` (L0 semantics + Early Hints) target this.
+- **The benchmark harness `kill -9`s a server mid-table** — the "Killed: 9"
+  lines are the harness's own cleanup; exit is 0. Worth a later cleanup, but
+  not a correctness issue here.
+
+`benchmarks/report.md` was **not** edited by this task — its regeneration is a
+PERF/PH0-02 deliverable (the harness needs the p95/p99 numbers PH0-02 adds
+before the report is honest).
