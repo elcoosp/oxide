@@ -104,6 +104,34 @@ fn probe_extensions(p: &Path) -> Option<PathBuf> {
     None
 }
 
+/// The source of a `node:*` shim (§4.6 tier 2). Covers the built-ins a
+/// framework runtime references without depending on Node behavior: a no-op
+/// `createRequire`, and minimal `path`/`fs`/`url` surfaces. Anything else
+/// returns an empty module so an unused import does not fail the load.
+fn node_shim(specifier: &str) -> String {
+    // `specifier` is the URL path, e.g. `/shim/module`.
+    let name = specifier.rsplit('/').next().unwrap_or("");
+    match name {
+        "module" => "export function createRequire() {\n\
+             return function () { throw new Error('require() is not available in the V8 runtime'); };\n\
+           }\n\
+           export default { createRequire };\n"
+            .to_string(),
+        "path" => "export function join(...p) { return p.join('/').replace(/\\/+/g, '/'); }\n\
+           export function resolve(...p) { return join(...p); }\n\
+           export function dirname(p) { return p.replace(/\\/[^/]*$/, '') || '/'; }\n\
+           export function basename(p) { return p.replace(/.*\\//, ''); }\n\
+           export const sep = '/';\n\
+           export default { join, resolve, dirname, basename, sep };\n"
+            .to_string(),
+        "url" => "export function fileURLToPath(u) { return String(u).replace(/^file:\\/\\//, '/'); }\n\
+           export function pathToFileURL(p) { return new URL('file://' + (String(p).startsWith('/') ? '' : '/') + p); }\n\
+           export default { fileURLToPath, pathToFileURL };\n"
+            .to_string(),
+        _ => "export default {};\n".to_string(),
+    }
+}
+
 /// Pick the `lang` tag `lower_to_js` expects from a path's extension.
 fn lang_of(path: &Path) -> &'static str {
     match path.extension().and_then(|e| e.to_str()) {
@@ -123,6 +151,18 @@ impl ModuleLoader for TranspileLoader {
         referrer: &str,
         _kind: ResolutionKind,
     ) -> ModuleResolveResponse {
+        // §4.6 tier 2: a `node:*` specifier resolves to an in-memory shim, not
+        // a file. V8 has no Node built-ins; the shim covers the handful a
+        // framework runtime touches (a no-op `createRequire`, an empty
+        // `path`/`fs`). Without this, bundling React's ESM build — which
+        // imports `node:module` for a dev-only warning — fails at load.
+        if let Some(builtin) = specifier.strip_prefix("node:") {
+            // Drop the colon: `oxide:shim/module`, so the shim's path is a
+            // clean `/shim/<name>` with no second `:` to confuse URL parsing.
+            let url = deno_core::ModuleSpecifier::parse(&format!("oxide:shim/{builtin}"))
+                .map_err(|_| deno_error::JsErrorBox::generic("bad node: specifier"))?;
+            return Ok(url);
+        }
         let Some(path) = self.resolve_to_path(specifier, referrer) else {
             return Err(deno_error::JsErrorBox::generic(format!(
                 "cannot resolve `{specifier}` from `{referrer}`"
@@ -139,6 +179,17 @@ impl ModuleLoader for TranspileLoader {
         _maybe_referrer: Option<&ModuleLoadReferrer>,
         _options: ModuleLoadOptions,
     ) -> ModuleLoadResponse {
+        // A `node:*` shim: return the in-memory source.
+        if module_specifier.scheme() == "oxide" {
+            let spec = module_specifier.clone();
+            let src = node_shim(module_specifier.path());
+            return ModuleLoadResponse::Sync(Ok(ModuleSource::new(
+                ModuleType::JavaScript,
+                deno_core::ModuleSourceCode::String(src.into()),
+                &spec,
+                None,
+            )));
+        }
         let path = match module_specifier.to_file_path() {
             Ok(p) => p,
             Err(_) => {
