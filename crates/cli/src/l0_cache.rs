@@ -274,10 +274,52 @@ mod tests {
 
     #[tokio::test]
     async fn stale_entry_is_a_miss() {
-        // TTL 0 → immediately stale.
-        let c = cache(0);
-        c.put("r", "", "", 200, vec![], b"x".to_vec(), vec![]).await;
-        assert!(c.get("r", "", "").await.is_none(), "a stale entry is not served");
+        // An entry past its TTL is not served. TTL 0 means `fresh_until ==
+        // stored_at`, and `is_fresh` is `now <= stored_at` (the cache crate
+        // pins this boundary), so a same-millisecond read is still fresh —
+        // the test stores an entry that is unambiguously in the past.
+        use oxide_cache::{CacheHandler as _, Entry, Policy};
+        let tier = Arc::new(TieredCache::new(1 << 20));
+        let c = L0Cache::new(tier.clone(), "build-x", Duration::from_secs(60));
+        let key = {
+            use oxide_cache::{CacheKey, Layer};
+            CacheKey {
+                layer: Layer::L0,
+                route: "r".into(),
+                params: String::new(),
+                vary: String::new(),
+                build_id: "build-x".into(),
+            }
+            .canonical()
+        };
+        let past = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+            - 10_000;
+        tier.set(
+            &key,
+            Entry {
+                body: b"x".to_vec(),
+                status: 200,
+                headers: vec![],
+                tags: vec![],
+                policy: Policy {
+                    ttl: Duration::from_secs(1),
+                    swr: None,
+                    stale_if_error: None,
+                    soft_tags: true,
+                },
+                stored_at: past,
+                etag: String::new(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            c.get("r", "", "").await.is_none(),
+            "an entry whose TTL has elapsed is not served"
+        );
     }
 
     #[tokio::test]
