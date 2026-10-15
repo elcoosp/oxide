@@ -94,18 +94,24 @@ impl PageRenderer for AdapterPageRenderer {
 pub struct FrameworkStack {
     pub page_renderer: Option<Arc<dyn PageRenderer>>,
     pub loader_runner: Option<Arc<dyn LoaderRunner>>,
-    /// The shared Node worker pool backing both the renderer and the loader.
-    /// Kept here (as a second Arc reference) so callers that need to send
-    /// out-of-band ops to the worker — `cmd_dev`'s watcher calling
-    /// `FrameworkHost::invalidate()` on file change (§13.3) — still have a
-    /// handle after the renderer/loader have been moved into the pipeline.
+    /// The render/loader pool for the selected backend. V8 when
+    /// `server.backend = "v8"`, Node otherwise. Kept here (as a second Arc
+    /// reference) so callers that need out-of-band ops — `cmd_dev`'s watcher
+    /// calling `FrameworkHost::invalidate()` (§13.3) — still have a handle
+    /// after the renderer/loader move into the pipeline.
     pub pool: Option<Arc<dyn oxide_jshost::Pool>>,
+    /// §4.7: the tooling pool for the JS compilers (Vue/Svelte/Solid). **Always
+    /// Node**, regardless of `server.backend` — those compilers are npm
+    /// packages that need Node built-ins, which the V8 sandbox does not have.
+    /// Used by the §6.3 precompile pass at build time. `None` only when no
+    /// pool could be built.
+    pub tooling_pool: Option<Arc<dyn oxide_jshost::Pool>>,
 }
 
 impl FrameworkStack {
     /// No renderer, no loader. Every render falls back to the IR placeholder.
     pub fn empty() -> Self {
-        Self { page_renderer: None, loader_runner: None, pool: None }
+        Self { page_renderer: None, loader_runner: None, pool: None, tooling_pool: None }
     }
     /// The attached renderer's name, if any (for the `framework renderer:`
     /// log line).
@@ -248,6 +254,30 @@ pub async fn build_framework_stack(
         }
     };
 
+    // §4.7: the JS compilers (Vue/Svelte/Solid) are npm packages that need
+    // Node built-ins, so they always run on a **Node** pool — even when the
+    // render backend is V8. Building this unconditionally is cheap next to a
+    // compile failure: a Vue fixture with `backend: "v8"` otherwise sends
+    // `tooling:vue-compile` to the V8 pool, which has no such op.
+    let tooling_pool: Arc<dyn oxide_jshost::Pool> = if matches!(backend, JsBackend::V8) {
+        match NodeHost::new(NodeHost::worker_script_default())
+            .with_cache_handler(Arc::clone(&cache_tier))
+            .tooling_pool(PoolConfig::default())
+        {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!(
+                    "warn: tooling pool unavailable (node): {} {}",
+                    e.0.code, e.0.message
+                );
+                Arc::clone(&pool)
+            }
+        }
+    } else {
+        // The Node backend's render pool IS a Node tooling pool.
+        Arc::clone(&pool)
+    };
+
     // The loader runner needs only the pool — it resolves modules per request.
     let loader_runner: Arc<dyn LoaderRunner> = crate::loader_shim::build_loader_runner(
         Arc::clone(&pool),
@@ -272,18 +302,18 @@ pub async fn build_framework_stack(
             // backend imports the raw `.ts` (its tsx-loader transforms it and
             // it has CJS interop). Pick by backend — the Node worker cannot
             // load the V8-targeted bundle.
-            let config_path = if matches!(backend, JsBackend::V8) {
+            // The raw config; `bundled_path` above is preferred at resolve time.
+            let config_path = path.to_string_lossy().to_string();
+            let bundled_path = if matches!(backend, JsBackend::V8) {
                 path.parent()
-                    .map(|root| root.join(".oxide/config.server.js"))
-                    .filter(|p| p.is_file())
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_else(|| path.to_string_lossy().to_string())
+                    .map(|root| root.join(".oxide/config.server.js").to_string_lossy().to_string())
             } else {
-                path.to_string_lossy().to_string()
+                None
             };
             let lazy = LazyFrameworkRenderer {
                 pool: Arc::clone(&pool),
                 config_path,
+                bundled_path,
                 name: peeked,
                 inner: tokio::sync::OnceCell::new(),
             };
@@ -296,6 +326,7 @@ pub async fn build_framework_stack(
         page_renderer,
         loader_runner: Some(loader_runner),
         pool: Some(pool_for_stack),
+        tooling_pool: Some(tooling_pool),
     }
 }
 
@@ -310,7 +341,13 @@ pub async fn build_framework_stack(
 /// anyway, because `FrameworkHost::render` re-imports the config per call.
 pub struct LazyFrameworkRenderer {
     pool: Arc<dyn oxide_jshost::Pool>,
+    /// The raw config (`.ts`/`.mjs`) — what the Node backend imports.
     config_path: String,
+    /// The pre-bundled config (`.oxide/config.server.js`) — what the V8
+    /// backend imports. Resolved at `resolve()` time, not construction: the
+    /// bundle is written by `oxide build` *after* the framework stack is
+    /// built, so at construction it may not exist yet.
+    bundled_path: Option<String>,
     /// Peeked from the config source at construction: the descriptor's own
     /// name is only known after the load this type defers.
     name: String,
@@ -322,11 +359,14 @@ impl LazyFrameworkRenderer {
         let v = self
             .inner
             .get_or_try_init(|| async {
-                let hr = FrameworkHostRenderer::new(
-                    Arc::clone(&self.pool),
-                    self.config_path.clone(),
-                )
-                .await?;
+                // Prefer the pre-bundled config when present — the V8 backend
+                // requires it and the bundle is written by the time a render
+                // happens.
+                let path = match &self.bundled_path {
+                    Some(b) if std::path::Path::new(b).is_file() => b.clone(),
+                    _ => self.config_path.clone(),
+                };
+                let hr = FrameworkHostRenderer::new(Arc::clone(&self.pool), path).await?;
                 Ok::<Arc<dyn FrameworkRenderer>, oxide_diagnostics::OxideError>(Arc::new(hr))
             })
             .await?;
