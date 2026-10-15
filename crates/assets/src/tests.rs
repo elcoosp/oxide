@@ -184,7 +184,8 @@ fn sign_image_url_appends_s_param() {
     assert!(with_q.starts_with("/i.png?w=640&s="));
     assert!(without_q.starts_with("/i.png?s="));
     let sig = &with_q["/i.png?w=640&s=".len()..];
-    assert_eq!(sig.len(), 16);
+    // SEC-08: the full 256-bit digest (64 hex), not the old 64-bit prefix.
+    assert_eq!(sig.len(), 64);
 }
 
 // ---------------- Fonts (§16.2) ----------------
