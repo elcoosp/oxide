@@ -106,12 +106,25 @@ pub struct FrameworkStack {
     /// Used by the §6.3 precompile pass at build time. `None` only when no
     /// pool could be built.
     pub tooling_pool: Option<Arc<dyn oxide_jshost::Pool>>,
+    /// §11 / BUG-02: the **one** cache tier the framework stack built. The
+    /// server's L0 response cache wraps this same handler, so an
+    /// invalidation (BUG-01's tag/path path) reaches both L0 (the response
+    /// cache) and L1 (the worker's `'use cache'` entries). Before this field
+    /// the server built its own `TieredCache` and the worker had a second
+    /// one, so they could not see each other's invalidations.
+    pub cache_tier: Option<Arc<dyn oxide_cache::CacheHandler>>,
 }
 
 impl FrameworkStack {
     /// No renderer, no loader. Every render falls back to the IR placeholder.
     pub fn empty() -> Self {
-        Self { page_renderer: None, loader_runner: None, pool: None, tooling_pool: None }
+        Self {
+            page_renderer: None,
+            loader_runner: None,
+            pool: None,
+            tooling_pool: None,
+            cache_tier: None,
+        }
     }
     /// The attached renderer's name, if any (for the `framework renderer:`
     /// log line).
@@ -327,6 +340,9 @@ pub async fn build_framework_stack(
         loader_runner: Some(loader_runner),
         pool: Some(pool_for_stack),
         tooling_pool: Some(tooling_pool),
+        // BUG-02: hand the shared cache tier back to the caller so the L0
+        // response cache wraps the *same* handler the worker uses.
+        cache_tier: Some(Arc::clone(&cache_tier)),
     }
 }
 
