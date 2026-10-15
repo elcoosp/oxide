@@ -98,6 +98,7 @@ pub fn prebundle(opts: &PrebundleOptions) -> Result<PrebundleManifest> {
         jsx_import_source: None,
         transform_hook: None,
         css_transform: None,
+        inline_dynamic_imports: false,
     };
     options.entries.insert("_prebundle".into(), synthetic.clone());
 
