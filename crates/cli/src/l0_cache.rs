@@ -140,6 +140,17 @@ impl L0Cache {
             .await
             .unwrap_or(0)
     }
+
+    /// `revalidate.path('/blog/a')` — same tag convention the cache tier
+    /// uses (`path:<path>`), so entries tagged at put time with
+    /// `path:<req_path>` are invalidated. Delegates through the
+    /// `CacheHandler` so the L1/handler path is honoured too (BUG-01).
+    pub async fn invalidate_path(&self, path: &str, soft: bool) -> usize {
+        self.handler
+            .invalidate_tag(&oxide_cache::tiers::path_tag(path), soft)
+            .await
+            .unwrap_or(0)
+    }
 }
 
 /// A cached response ready to serve, with the nonce still a sentinel.
