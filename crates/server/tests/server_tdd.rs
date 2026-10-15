@@ -1053,6 +1053,7 @@ async fn pipeline_rule_outcomes() {
     let mut headers = BTreeMap::new();
     headers.insert("x-rule".to_string(), "1".to_string());
     let rules = RulesEngine {
+        limiter: Default::default(),
         rules: vec![
             NativeRule {
                 source: "/old/*".into(),
@@ -1113,8 +1114,13 @@ async fn pipeline_rule_outcomes() {
         Some("Basic realm=\"oxide\"")
     );
 
+    // SEC-01: `max: 1` allows the first call; the second is rate-limited
+    // (before the fix the rule 429'd the very first call, unconditionally).
     let resp = p.serve_request(req("GET", "/api", &[]), d).await;
-    assert_eq!(resp.status, 429);
+    assert_eq!(resp.status, 200, "first call is within the token budget");
+    let resp = p.serve_request(req("GET", "/api", &[]), d).await;
+    assert_eq!(resp.status, 429, "second call exceeds `max: 1`");
+    assert!(resp.header("retry-after").is_some(), "429 carries Retry-After");
 }
 
 #[tokio::test]
@@ -1122,6 +1128,7 @@ async fn pipeline_serves_static_with_security_and_rule_headers() {
     let mut headers = BTreeMap::new();
     headers.insert("x-rule".to_string(), "y".to_string());
     let rules = RulesEngine {
+        limiter: Default::default(),
         rules: vec![NativeRule {
             source: "/*".into(),
             headers: Some(headers),
