@@ -1606,3 +1606,221 @@ expectation was the wrong one, not the wiring.
 - §21 findings 1–3 from the prior handoff remain open: warm build ≥ cold
   (graph engine + CAS not on the build path), 951 KB Vue SSR bundle
   (externals), and cold start vs snapshots (§4.4).
+
+## Session 15 — §9.2/§16.6 cookies+sessions, §5.4 precompile CAS, §16.2 fonts, §21 warm build
+
+This session closed four spec gaps and, in doing so, re-measured and
+corrected the §21 findings. Every slice was verified against a real build
+or a real HTTP response, not just `cargo check`.
+
+### §5.1 build early cutoff (the §21 "warm ≥ cold" finding, corrected)
+
+The prior handoff's finding 1 was mis-scoped. Measured warm vs cold on the
+current binary: there is no "warm slower than cold" — that was first-run
+noise. The real observation is **warm ≈ cold**: `oxide build` re-ran
+precompile plus both bundler environments every time.
+
+Profiling `cmd_build` (env-gated `Instant::now()` around each phase) showed
+the split for `smoke-app-react`:
+
+    config+routes        ~0 ms
+    precompile          ~790 ms
+    bundle client        ~700 ms
+    bundle server       ~1.6 s
+    prerender            ~200 ms
+
+Two fixes:
+
+1. **`crates/cli/src/build_cache.rs`** — a blake3 project fingerprint over
+   the running binary, mode, `--static`, and every project file outside
+   output/vendor dirs. When it matches and both manifests exist,
+   `cmd_build` returns immediately. `OXIDE_FORCE_BUILD=1` bypasses it.
+   **Warm build: ~3.3 s → ~90 ms** (spec target ≤ 500 ms).
+2. **`crates/cli/src/precompile_cache.rs`** — a Tier-B CAS cache for the
+   §6.3 precompile pass, keyed by `blake3(path ‖ source) ‖ framework ‖
+   mode ‖ compiler version`. An unchanged SFC is not recompiled. Verified:
+   a config-only change re-runs the build but reuses both cache entries.
+
+### §9.2 / §16.6 cookies and sessions (end-to-end)
+
+Three bugs / gaps:
+
+1. **`crates/server/src/session.rs`** — §16.6 asks for **signed and
+   encrypted** cookies. The existing `sign_cookie` only signs (payload in
+   the clear). New `SessionCodec` seals with ChaCha20-Poly1305 (`ring`),
+   `base64url(nonce ‖ ciphertext‖tag)`, and `open` tries every key so key
+   rotation is seamless. `Session` round-trips a JSON map. 10 tests.
+2. **The worker built a `LoadEvent` with no `cookies`.** `load({ cookies })`
+   crashed. The worker now builds a real `CookieStore` over the request's
+   `cookie` header, with `set`/`delete` collected as `Set-Cookie` values,
+   plus `setHeaders` and `parent`.
+3. **`LoaderOutput` had no way to carry side effects.** It now has
+   `set_cookies` and `headers`; the CLI applies them to the response on
+   both the short-circuit (redirect + set-cookie) and success paths.
+
+**Verified end-to-end:** a load that does `cookies.set('visits', …)` +
+`setHeaders(...)` on `/` produced:
+
+    set-cookie: visits=42; Path=/; HttpOnly; SameSite=Lax
+    x-oxide-visits: 42
+
+### §16.2 fonts build wiring
+
+`FontBackend` / `DefaultFontBackend` existed but had **zero call sites** —
+dead code, the same class of gap as §6.6. Now:
+
+- `FontsConfig.families: Vec<FontFamilyConfig>` (family, provider, weights,
+  styles, localPaths).
+- `emit_fonts` in `cmd_build` writes `dist/fonts/<file>` + `dist/fonts.css`
+  with `@font-face` rules and the metric-override fallback face.
+- **Fixed a latent bug:** the `@font-face` `format()` hint was hard-coded to
+  `'woff2'`; a `.ttf` face labelled `woff2` is skipped by the browser. The
+  hint now derives from the file extension.
+
+**Verified:** Symbol.ttf → `size-adjust: 285.80%` (real skrifa metrics),
+`format('truetype')`.
+
+### Commits (32 this session)
+
+§9.2/§16.6: `42b3819` `cb79f11` `702fe92` `10c6f70` `179e968` `6372288`
+`44b13b4`; sessions: `db33088` `98e5beb` `49ab938` `e15b83f` `fe090b4`;
+precompile CAS: `1f62c38` `76d58bb` `c2aadac`; fonts: `88c2628` `300be26`
+`8cf9644` `879eac9`.
+
+### Test state
+
+| suite | result |
+| --- | --- |
+| `cargo check --workspace` | green |
+| oxide-server | 40 + 57 + 21 |
+| oxide-cli --lib | 81 |
+| oxide-assets | 98 + 11 + 9 |
+| oxide-bundler | 47 across six binaries |
+| four-fixture CLI gate | PASS, ~13 s |
+
+### Known loose ends / next
+
+- **§11 L0 response cache is still absent from the request path.** The
+  pipeline has no cache field; §21's "L0 hit p99 < 1 ms" is unimplementable
+  until it does. `serve_request` + the CLI dispatch delegate are the seams;
+  `oxide_cache::CacheHandler` + `CacheKey` + `Entry` are ready. This is the
+  next slice.
+- **§9.3 actions are not dispatched server-side.** `enhance.ts` exists on
+  the client; there is no `POST /_oxide/action/<id>` handler.
+- **§16.6 web-vitals, `<Script>`, PWA/service-worker** are unimplemented.
+- **§4.4 snapshots** are built (`snapshot_build`) but never called from
+  `cmd_build`/`cmd_serve`.
+- **§16.2 font subsetting + WOFF2 compression** — the backend copies files
+  verbatim; `write-fonts` is a dep but no subsetter is wired. Providers
+  (`google`) fetch nothing yet.
+- The `warn: framework renderer not wired … Unknown file extension ".css"`
+  from session 14 is still open (worker loader refuses `.css`).
+
+## Session 15 — §9.2/§16.6 cookies+sessions, §5.4 precompile CAS, §16.2 fonts, §21 warm build
+
+This session closed four spec gaps and, in doing so, re-measured and
+corrected the §21 findings. Every slice was verified against a real build
+or a real HTTP response, not just `cargo check`.
+
+### §5.1 build early cutoff (the §21 "warm ≥ cold" finding, corrected)
+
+The prior handoff's finding 1 was mis-scoped. Measured warm vs cold on the
+current binary: there is no "warm slower than cold" — that was first-run
+noise. The real observation is **warm ≈ cold**: `oxide build` re-ran
+precompile plus both bundler environments every time.
+
+Profiling `cmd_build` (env-gated `Instant::now()` around each phase) showed
+the split for `smoke-app-react`:
+
+    config+routes        ~0 ms
+    precompile          ~790 ms
+    bundle client        ~700 ms
+    bundle server       ~1.6 s
+    prerender            ~200 ms
+
+Two fixes:
+
+1. **`crates/cli/src/build_cache.rs`** — a blake3 project fingerprint over
+   the running binary, mode, `--static`, and every project file outside
+   output/vendor dirs. When it matches and both manifests exist,
+   `cmd_build` returns immediately. `OXIDE_FORCE_BUILD=1` bypasses it.
+   **Warm build: ~3.3 s → ~90 ms** (spec target ≤ 500 ms).
+2. **`crates/cli/src/precompile_cache.rs`** — a Tier-B CAS cache for the
+   §6.3 precompile pass, keyed by `blake3(path ‖ source) ‖ framework ‖
+   mode ‖ compiler version`. An unchanged SFC is not recompiled. Verified:
+   a config-only change re-runs the build but reuses both cache entries.
+
+### §9.2 / §16.6 cookies and sessions (end-to-end)
+
+Three bugs / gaps:
+
+1. **`crates/server/src/session.rs`** — §16.6 asks for **signed and
+   encrypted** cookies. The existing `sign_cookie` only signs (payload in
+   the clear). New `SessionCodec` seals with ChaCha20-Poly1305 (`ring`),
+   `base64url(nonce ‖ ciphertext‖tag)`, and `open` tries every key so key
+   rotation is seamless. `Session` round-trips a JSON map. 10 tests.
+2. **The worker built a `LoadEvent` with no `cookies`.** `load({ cookies })`
+   crashed. The worker now builds a real `CookieStore` over the request's
+   `cookie` header, with `set`/`delete` collected as `Set-Cookie` values,
+   plus `setHeaders` and `parent`.
+3. **`LoaderOutput` had no way to carry side effects.** It now has
+   `set_cookies` and `headers`; the CLI applies them to the response on
+   both the short-circuit (redirect + set-cookie) and success paths.
+
+**Verified end-to-end:** a load that does `cookies.set('visits', …)` +
+`setHeaders(...)` on `/` produced:
+
+    set-cookie: visits=42; Path=/; HttpOnly; SameSite=Lax
+    x-oxide-visits: 42
+
+### §16.2 fonts build wiring
+
+`FontBackend` / `DefaultFontBackend` existed but had **zero call sites** —
+dead code, the same class of gap as §6.6. Now:
+
+- `FontsConfig.families: Vec<FontFamilyConfig>` (family, provider, weights,
+  styles, localPaths).
+- `emit_fonts` in `cmd_build` writes `dist/fonts/<file>` + `dist/fonts.css`
+  with `@font-face` rules and the metric-override fallback face.
+- **Fixed a latent bug:** the `@font-face` `format()` hint was hard-coded to
+  `'woff2'`; a `.ttf` face labelled `woff2` is skipped by the browser. The
+  hint now derives from the file extension.
+
+**Verified:** Symbol.ttf → `size-adjust: 285.80%` (real skrifa metrics),
+`format('truetype')`.
+
+### Commits (32 this session)
+
+§9.2/§16.6: `42b3819` `cb79f11` `702fe92` `10c6f70` `179e968` `6372288`
+`44b13b4`; sessions: `db33088` `98e5beb` `49ab938` `e15b83f` `fe090b4`;
+precompile CAS: `1f62c38` `76d58bb` `c2aadac`; fonts: `88c2628` `300be26`
+`8cf9644` `879eac9`.
+
+### Test state
+
+| suite | result |
+| --- | --- |
+| `cargo check --workspace` | green |
+| oxide-server | 40 + 57 + 21 |
+| oxide-cli --lib | 81 |
+| oxide-assets | 98 + 11 + 9 |
+| oxide-bundler | 47 across six binaries |
+| four-fixture CLI gate | PASS, ~13 s |
+
+### Known loose ends / next
+
+- **§11 L0 response cache is still absent from the request path.** The
+  pipeline has no cache field; §21's "L0 hit p99 < 1 ms" is unimplementable
+  until it does. `serve_request` + the CLI dispatch delegate are the seams;
+  `oxide_cache::CacheHandler` + `CacheKey` + `Entry` are ready. This is the
+  next slice.
+- **§9.3 actions are not dispatched server-side.** `enhance.ts` exists on
+  the client; there is no `POST /_oxide/action/<id>` handler.
+- **§16.6 web-vitals, `<Script>`, PWA/service-worker** are unimplemented.
+- **§4.4 snapshots** are built (`snapshot_build`) but never called from
+  `cmd_build`/`cmd_serve`.
+- **§16.2 font subsetting + WOFF2 compression** — the backend copies files
+  verbatim; `write-fonts` is a dep but no subsetter is wired. Providers
+  (`google`) fetch nothing yet.
+- The `warn: framework renderer not wired … Unknown file extension ".css"`
+  from session 14 is still open (worker loader refuses `.css`).
