@@ -1096,6 +1096,75 @@ fn emit_sitemap_and_robots(
 /// `start_url` defaults to `/`. `name` defaults to `shortName` (and vice
 /// versa), because a manifest with neither is rejected by some browsers.
 /// An icon `type` is inferred from the extension when omitted.
+/// §16.2: bundle every configured font family, emit the face files under
+/// `dist/fonts/`, and write a `dist/fonts.css` carrying the `@font-face`
+/// rules (including the metric-override fallback faces that eliminate
+/// font-swap layout shift). A family whose files cannot be read is reported
+/// and skipped; fonts are never load-bearing for a build.
+fn emit_fonts(cfg: &oxide_config::OxideConfig, root: &Path, dist: &Path, w: Writer<'_>) -> anyhow::Result<()> {
+    use oxide_assets::{DefaultFontBackend, FontBackend as _, FontSpec};
+
+    if cfg.fonts.families.is_empty() {
+        return Ok(());
+    }
+    let fonts_dir = dist.join("fonts");
+    std::fs::create_dir_all(&fonts_dir)
+        .map_err(|e| anyhow::anyhow!("create {}: {e}", fonts_dir.display()))?;
+
+    let mut all_css = String::new();
+    let mut emitted = 0usize;
+    for fam in &cfg.fonts.families {
+        let local_paths: Vec<std::path::PathBuf> = fam
+            .local_paths
+            .iter()
+            .map(|p| {
+                let pb = std::path::PathBuf::from(p);
+                if pb.is_absolute() {
+                    pb
+                } else {
+                    root.join(pb)
+                }
+            })
+            .collect();
+        let spec = FontSpec {
+            family: fam.family.clone(),
+            provider: fam.provider.clone(),
+            weights: fam.weights.clone(),
+            styles: fam.styles.clone(),
+            subset: if fam.provider.is_empty() {
+                cfg.fonts.subset.clone()
+            } else {
+                cfg.fonts.subset.clone()
+            },
+            local_paths,
+        };
+        match DefaultFontBackend.bundle(&spec) {
+            Ok(bundle) => {
+                for (name, bytes) in &bundle.files {
+                    std::fs::write(fonts_dir.join(name), bytes)
+                        .map_err(|e| anyhow::anyhow!("write font {name}: {e}"))?;
+                    emitted += 1;
+                }
+                all_css.push_str(&bundle.css);
+                all_css.push('\n');
+            }
+            Err(e) => {
+                eprintln!(
+                    "warn: font family '{}' skipped: {} {}",
+                    fam.family, e.0.code, e.0.message
+                );
+            }
+        }
+    }
+    if emitted == 0 && all_css.is_empty() {
+        return Ok(());
+    }
+    std::fs::write(dist.join("fonts.css"), &all_css)
+        .map_err(|e| anyhow::anyhow!("write fonts.css: {e}"))?;
+    outln!(w, "fonts: {emitted} file(s), dist/fonts.css");
+    Ok(())
+}
+
 fn emit_web_manifest(
     cfg: &oxide_config::OxideConfig,
     dist: &Path,
@@ -1861,6 +1930,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     emit_sitemap_and_robots(&cfg, &tree, &dist, w)?;
     // §16.3: manifest.webmanifest, when a `manifest` block is configured.
     emit_web_manifest(&cfg, &dist, w)?;
+    // §16.2: bundle configured font families into dist/fonts + fonts.css.
+    emit_fonts(&cfg, &rootp, &dist, w)?;
     outln!(
         w,
         "build ok — {} routes, {} prerendered, {} deploy file(s) for `{}` in dist/deploy",
