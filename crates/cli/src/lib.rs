@@ -17,6 +17,13 @@ mod l0_cache;
 pub mod precompile;
 mod framework_shim;
 pub mod loader_shim;
+/// `oxide secrets <op>` (§9.4 / BUG-05).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum SecretsOp {
+    /// Delete `.oxide/secret`; the next build generates a new one.
+    Rotate,
+}
+
 /// Oxide CLI (spec §19.1).
 #[derive(Debug, Parser)]
 #[command(
@@ -107,6 +114,15 @@ pub enum Command {
     Doctor {
         #[arg(long, default_value = ".")]
         root: String,
+    },
+    /// Manage the per-project build secret (§9.4 / BUG-05): `rotate` deletes
+    /// `.oxide/secret` so the next build mints a fresh one (server-fn ids
+    /// change — every cached client bundle referencing an old id is stale).
+    Secrets {
+        #[arg(long, default_value = ".")]
+        root: String,
+        #[arg(value_enum)]
+        op: SecretsOp,
     },
     /// Install a module (§15.4).
     Add {
@@ -350,6 +366,7 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
         Command::Check { root } => cmd_check(&root, w).await,
         Command::Why { root, module } => cmd_why(&root, &module, w).await,
         Command::Doctor { root } => cmd_doctor(&root, w).await,
+        Command::Secrets { root, op } => cmd_secrets(&root, op, w).await,
         Command::Add { root, module } => cmd_add(&root, &module, w).await,
         Command::Generate { root, kind, path } => cmd_generate(&root, &kind, &path, w).await,
         Command::Cache { root, op } => cmd_cache(&root, op, w).await,
@@ -3707,7 +3724,35 @@ async fn cmd_doctor(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
         writable
     };
     check(w, cache_ok, "cache directory writable (.oxide/cache)")?;
+    // §9.4 / BUG-05: the build secret makes server-fn ids stable across
+    // builds. A missing file is fine (the next build creates it); this is
+    // an informational check, not a failure.
+    let secret_file = rootp.join(".oxide/secret");
+    let secret_state = match std::fs::read_to_string(&secret_file) {
+        Ok(s) if s.trim().len() == 64 => "present (stable server-fn ids)".to_string(),
+        Ok(_) => "malformed (delete it or run `oxide secrets rotate`)".to_string(),
+        Err(_) => "absent (next build creates it)".to_string(),
+    };
+    outln!(w, "[--] build secret (.oxide/secret): {secret_state}");
     Ok(if all_ok { 0 } else { 1 })
+}
+
+/// `oxide secrets rotate` (§9.4 / BUG-05): delete `.oxide/secret`.
+async fn cmd_secrets(root: &str, op: SecretsOp, w: Writer<'_>) -> anyhow::Result<i32> {
+    let rootp = PathBuf::from(root);
+    match op {
+        SecretsOp::Rotate => {
+            let f = rootp.join(".oxide/secret");
+            match std::fs::remove_file(&f) {
+                Ok(()) => outln!(w, "[ok] removed {} — next build mints a new secret", f.display()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    outln!(w, "[--] no secret at {} (nothing to rotate)", f.display())
+                }
+                Err(e) => anyhow::bail!("cannot remove {}: {e}", f.display()),
+            }
+        }
+    }
+    Ok(0)
 }
 
 /// `oxide add <module>` (§15.4): records the module in `.oxide/modules.json` and
