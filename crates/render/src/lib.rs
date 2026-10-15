@@ -190,7 +190,8 @@ fn meta_norm_key(key: &str) -> String {
     format!("{kind}:{ident}")
 }
 
-/// Escape an HTML attribute value minimally: `& < > "`.
+/// Escape an HTML attribute value minimally: `& < > " '`.
+/// All injected attributes are single-quoted (SEC-07), so `'` must escape.
 pub(crate) fn escape_attr(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -199,6 +200,7 @@ pub(crate) fn escape_attr(s: &str) -> String {
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
             _ => out.push(c),
         }
     }

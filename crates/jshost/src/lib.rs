@@ -266,13 +266,17 @@ pub fn frame(msg: &WorkerMsg) -> Result<Bytes> {
             format!("failed to serialize worker message: {e}"),
         )
     })?;
-    let len = json.len() as u32;
-    if len > MAX_FRAME_LEN {
+    // BUG-16: check before casting — `as u32` would wrap a >4GiB len.
+    if json.len() > MAX_FRAME_LEN as usize {
         return Err(err(
             "JSH-FRAME",
-            format!("frame of {len} bytes exceeds the 64 MiB protocol limit (§4.2)"),
+            format!(
+                "frame of {} bytes exceeds the 64 MiB protocol limit (§4.2)",
+                json.len()
+            ),
         ));
     }
+    let len = json.len() as u32;
     let mut out = Vec::with_capacity(4 + json.len());
     out.extend_from_slice(&len.to_le_bytes());
     out.extend_from_slice(&json);

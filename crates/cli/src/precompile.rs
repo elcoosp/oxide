@@ -51,34 +51,15 @@ fn resolve_relative(from_file: &Path, spec: &str) -> Option<PathBuf> {
     None
 }
 
-/// Best-effort static import scan: literal `import ... from "..."` and
-/// `export ... from "..."`. Enough to find SFC dependencies; the bundler
-/// re-scans with the real scanner.
+/// Import scan via the compiler's byte-span scanner (BUG-13): the old
+/// line-based scan missed multi-line `import {\n A,\n} from 'x'` forms,
+/// leaving the import graph incomplete. The bundler re-scans with the same
+/// real scanner, so the CAS key is unchanged.
 fn scan_import_specs(src: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for line in src.lines() {
-        let t = line.trim_start();
-        if let Some(rest) = t.strip_prefix("import ") {
-            if let Some(idx) = rest.find(" from ") {
-                if let Some(open) = rest[idx + 6..].find('"') {
-                    let after = &rest[idx + 6 + open + 1..];
-                    if let Some(close) = after.find('"') {
-                        out.push(after[..close].to_string());
-                    }
-                }
-            }
-        } else if let Some(rest) = t.strip_prefix("export ") {
-            if let Some(idx) = rest.find(" from ") {
-                if let Some(open) = rest[idx + 6..].find('"') {
-                    let after = &rest[idx + 6 + open + 1..];
-                    if let Some(close) = after.find('"') {
-                        out.push(after[..close].to_string());
-                    }
-                }
-            }
-        }
-    }
-    out
+    oxide_compiler::scan_import_spans(src)
+        .into_iter()
+        .map(|sp| sp.specifier)
+        .collect()
 }
 
 async fn call_pool(pool: &Arc<dyn Pool>, kind: &str, payload: serde_json::Value) -> anyhow::Result<serde_json::Value> {

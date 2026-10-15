@@ -651,11 +651,14 @@ fn generate_island_boot_entry(
 /// descriptor with a jsxImportSource, prefer that; today the CLI resolves
 /// it from the framework name.
 fn jsx_import_source_for(framework: &str) -> Option<String> {
-    // Vue, Svelte and Solid entries arrive precompiled from the tooling
-    // pool, so their JSX never reaches Oxc's lowering. Only React uses the
-    // Oxc default runtime (`react/jsx-runtime`), which is what `None` means.
-    let _ = framework;
-    None
+    // BUG-13: honour the adapter's `jsxImportSource` (contract §7,
+    // `packages/oxide/src/types.ts`). React uses the Oxc default runtime
+    // (`react/jsx-runtime`), which is what `None` means. Solid's renderer
+    // lives in `@solidjs/web`, not the React factory.
+    match framework {
+        "solid" => Some("@solidjs/web".to_string()),
+        _ => None,
+    }
 }
 
 fn bundle_env_options(

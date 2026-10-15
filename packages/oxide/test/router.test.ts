@@ -253,3 +253,16 @@ test('router: goto() rejects on non-2xx /__data responses', async () => {
   })
   await assert.rejects(() => router.goto('/about'))
 })
+
+test('router: dataCache bounded at 64 entries, oldest evicted (BUG-15)', async () => {
+  const { router, calls } = setup()
+  router.attach()
+  for (let i = 0; i < 70; i++) {
+    await router.goto(`/p${i}`)
+  }
+  assert.equal(calls.length, 70, 'each fresh path fetched once')
+  await router.goto('/p69')
+  assert.equal(calls.length, 70, 'most-recent entry still cached (no refetch)')
+  await router.goto('/p0')
+  assert.equal(calls.length, 71, 'oldest entry evicted (refetched)')
+})

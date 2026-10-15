@@ -109,6 +109,15 @@ export function createRouter(opts: RouterOptions): Router {
   }
 
   const dataCache = new Map<string, ClientInput>()
+  // BUG-15: bound the client data cache (insertion-order eviction).
+  const DATA_CACHE_MAX = 64
+  function dataCachePut(k: string, v: ClientInput): void {
+    dataCache.set(k, v)
+    if (dataCache.size > DATA_CACHE_MAX) {
+      const oldest = dataCache.keys().next().value as string | undefined
+      if (oldest !== undefined) dataCache.delete(oldest)
+    }
+  }
   const inFlight = new Map<string, AbortController>()
   let navSeq = 0
   let disposed = false
@@ -169,7 +178,7 @@ export function createRouter(opts: RouterOptions): Router {
     inFlight.set(path, ac)
     fetchRouteData(path, ac.signal)
       .then((decoded) => {
-        dataCache.set(path, normalizeInput(decoded, path))
+        dataCachePut(path, normalizeInput(decoded, path))
       })
       .catch(() => {
         // prefetch failures are silent — a real goto retries over the wire
@@ -187,7 +196,7 @@ export function createRouter(opts: RouterOptions): Router {
       const decoded = await fetchRouteData(path)
       if (navId !== navSeq) return // a newer navigation superseded this one
       input = normalizeInput(decoded, path)
-      dataCache.set(path, input)
+      dataCachePut(path, input)
     }
     if (navId !== navSeq) return
     // save the departure scroll into the entry we are leaving (§8.4)

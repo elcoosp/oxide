@@ -5,8 +5,9 @@
 //! - WebP uses the `image` crate's **lossless-only** encoder. If a future/alternate
 //!   build rejects an encode, we fall back to PNG, set `result.format` to the actual
 //!   output format (PNG) and append a warning diagnostic with code `AST-WEBP`.
-//! - AVIF encode is feature-gated: `?format=avif` returns `AST-AVIF` pointing at the
-//!   libvips `ImageBackend` (ravif/oxipng land with the lightningcss/dav1d toolchain).
+//! - AVIF encode is real: `?format=avif` encodes via `ravif` (pure Rust).
+//!   The stale "returns AST-AVIF" note was removed in BUG-14; failures
+//!   surface as `AST-AVIF` diagnostics with the ravif error.
 //! - Placeholder pipeline: resize to 16px wide (aspect preserved), JPEG; `Blur` adds
 //!   two extra blur passes (`imageops::blur`, σ=2) — the classic LQIP look.
 //! - `fast_image_resize`, `ravif`, `webp`, `oxipng` per §16.1 are backend-swap items,
