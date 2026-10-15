@@ -1335,7 +1335,11 @@ fn emit_config_bundle(
     let mut entries: BTreeMap<String, PathBuf> = BTreeMap::new();
     entries.insert("config".to_string(), config_file.clone());
     let opts = oxide_bundler::BundleOptions {
-        env: oxide_bundler::BundleEnv::Ssr,
+        // §4.6: the V8 sandbox is browser-like (Web globals, no Node built-ins).
+        // Resolve with BROWSER conditions so `react-dom/server` picks
+        // `server.browser.js` — the `server.node.js` build `require('stream')`
+        // and fails with "require() is not available in the V8 runtime".
+        env: oxide_bundler::BundleEnv::Client,
         entries,
         out_dir: bundle_dir.clone(),
         minify: false,
