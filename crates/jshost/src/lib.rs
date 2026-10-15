@@ -680,7 +680,7 @@ struct V8WorkerHandle {
     retiring: AtomicBool,
 }
 
-fn spawn_v8_worker() -> Result<Arc<V8WorkerHandle>> {
+fn spawn_v8_worker(snapshot: Option<&'static [u8]>) -> Result<Arc<V8WorkerHandle>> {
     let (tx, mut rx) = mpsc::channel::<V8Msg>(64);
     let (init_tx, init_rx) = std::sync::mpsc::channel::<Result<()>>();
     let handle = Arc::new(V8WorkerHandle {
@@ -738,11 +738,22 @@ fn spawn_v8_worker() -> Result<Arc<V8WorkerHandle>> {
                 let module_loader: std::rc::Rc<dyn deno_core::ModuleLoader> =
                     std::rc::Rc::new(deno_core::FsModuleLoader);
                 let mut js = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    JsRuntime::new(RuntimeOptions {
-                        extensions: vec![ext],
-                        module_loader: Some(module_loader),
-                        ..Default::default()
-                    })
+                    // §4.4: a snapshot already holds the evaluated bootstrap
+                    // (process/Buffer/oxide.*/__oxideDispatch) and its module
+                    // graph. Loading it means the extension list and loader
+                    // are NOT re-supplied — the heap is restored verbatim.
+                    if snapshot.is_some() {
+                        JsRuntime::new(RuntimeOptions {
+                            startup_snapshot: snapshot,
+                            ..Default::default()
+                        })
+                    } else {
+                        JsRuntime::new(RuntimeOptions {
+                            extensions: vec![ext],
+                            module_loader: Some(module_loader),
+                            ..Default::default()
+                        })
+                    }
                 })) {
                     Ok(r) => r,
                     Err(_) => {
@@ -886,13 +897,57 @@ async fn v8_dispatch(
 /// `FsModuleLoader` and invokes `entry.export` (default `default`) with the
 /// JSON payload, awaiting the result on the V8 event loop. Mirrors the Node
 /// worker's `boom` / `die` sentinels.
-pub struct V8Host;
+pub struct V8Host {
+    /// §4.4: an optional V8 startup snapshot blob. When set, each worker
+    /// restores this heap instead of evaluating the bootstrap — skipping V8
+    /// init, the bootstrap script, and the module graph's evaluation. Built by
+    /// `oxide build` (`snapshot_build_bundle`) and read from disk at start.
+    snapshot: Option<std::sync::Arc<Vec<u8>>>,
+}
+
+impl Default for V8Host {
+    fn default() -> Self {
+        Self { snapshot: None }
+    }
+}
 
 impl V8Host {
-    fn build_pool(cfg: PoolConfig) -> Result<Arc<V8Pool>> {
+    /// A host with no snapshot — each worker evaluates the bootstrap fresh.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// A host that restores `blob` in every worker (§4.4). The bytes are
+    /// leaked once (they must outlive every worker thread, which V8 requires
+    /// be `&'static`).
+    pub fn with_snapshot(blob: Vec<u8>) -> Self {
+        Self {
+            snapshot: Some(std::sync::Arc::new(blob)),
+        }
+    }
+
+    /// Read a snapshot blob from `path` and build a host around it. A missing
+    /// or empty file yields a snapshot-less host — the caller still works.
+    pub fn from_snapshot_file(path: &std::path::Path) -> Self {
+        match std::fs::read(path) {
+            Ok(b) if !b.is_empty() => Self::with_snapshot(b),
+            _ => Self::default(),
+        }
+    }
+
+    /// The `&'static` view of the snapshot, if any. Leaks the bytes on first
+    /// call; a host is built once per process, so this is bounded.
+    fn static_snapshot(&self) -> Option<&'static [u8]> {
+        self.snapshot.as_ref().map(|b| {
+            let leaked: &'static [u8] = Box::leak(b.as_slice().to_vec().into_boxed_slice());
+            leaked
+        })
+    }
+
+    fn build_pool(cfg: PoolConfig, snapshot: Option<&'static [u8]>) -> Result<Arc<V8Pool>> {
         let mut workers = Vec::with_capacity(cfg.size.max(1));
         for _ in 0..cfg.size.max(1) {
-            workers.push(spawn_v8_worker()?);
+            workers.push(spawn_v8_worker(snapshot)?);
         }
         Ok(Arc::new(V8Pool {
             cfg,
@@ -901,16 +956,17 @@ impl V8Host {
             counters: Arc::new(PoolCounters::default()),
             queue_waits: Mutex::new(VecDeque::new()),
             draining: AtomicBool::new(false),
+            snapshot,
         }))
     }
 }
 
 impl JsHost for V8Host {
     fn render_pool(&self, cfg: PoolConfig) -> Result<Arc<dyn Pool>> {
-        Self::build_pool(cfg).map(|p| p as Arc<dyn Pool>)
+        Self::build_pool(cfg, self.static_snapshot()).map(|p| p as Arc<dyn Pool>)
     }
     fn tooling_pool(&self, cfg: PoolConfig) -> Result<Arc<dyn Pool>> {
-        Self::build_pool(cfg).map(|p| p as Arc<dyn Pool>)
+        Self::build_pool(cfg, self.static_snapshot()).map(|p| p as Arc<dyn Pool>)
     }
     fn backend_name(&self) -> &'static str {
         "v8"
@@ -928,6 +984,9 @@ pub struct V8Pool {
     counters: Arc<PoolCounters>,
     queue_waits: Mutex<VecDeque<f64>>,
     draining: AtomicBool,
+    /// §4.4: the startup snapshot every worker (and each warm replacement)
+    /// restores. `None` means each worker evaluates the bootstrap fresh.
+    snapshot: Option<&'static [u8]>,
 }
 
 impl V8Pool {
@@ -951,6 +1010,7 @@ impl V8Pool {
         workers: Arc<std::sync::RwLock<Vec<Arc<V8WorkerHandle>>>>,
         counters: Arc<PoolCounters>,
         idx: usize,
+        snapshot: Option<&'static [u8]>,
     ) {
         let old = {
             let guard = workers.read().unwrap_or_else(|p| p.into_inner());
@@ -968,7 +1028,7 @@ impl V8Pool {
         }
 
         // Spawn fresh worker BEFORE signalling the old one (§4.3).
-        let fresh = match spawn_v8_worker() {
+        let fresh = match spawn_v8_worker(snapshot) {
             Ok(w) => w,
             Err(_) => {
                 // Could not replace — clear the retire flag so the pool can
@@ -1091,8 +1151,9 @@ impl Pool for V8Pool {
                 {
                     let workers = Arc::clone(&self.workers);
                     let counters = Arc::clone(&self.counters);
+                    let snapshot = self.snapshot; // Copy (&'static [u8])
                     tokio::spawn(async move {
-                        V8Pool::spawn_replacement(workers, counters, worker_idx).await
+                        V8Pool::spawn_replacement(workers, counters, worker_idx, snapshot).await
                     });
                 }
                 Ok(stream)
