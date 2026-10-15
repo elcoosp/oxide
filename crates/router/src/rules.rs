@@ -48,10 +48,78 @@ pub(crate) fn compile_impl(rules: Vec<NativeRule>) -> Result<RulesEngine> {
             r.rule_type = Some("ratelimit".to_string());
         }
     }
-    Ok(RulesEngine { rules })
+    Ok(RulesEngine {
+        rules,
+        limiter: TokenBuckets::default(),
+    })
 }
 
-pub(crate) fn evaluate_impl(engine: &RulesEngine, path: &str) -> RuleOutcome {
+/// SEC-01: how many distinct keys the bucket map may hold before a sweep
+/// evicts refilled (full) buckets. Bounds a unique-key flood.
+pub const RATE_LIMITER_MAX_KEYS: usize = 10_000;
+
+/// SEC-01: the shared per-key token buckets. Capacity/refill come from the
+/// rule (`max`, `window_secs`); the bucket starts full. A bucket whose token
+/// count has refilled to capacity is evictable (it holds no state a fresh
+/// bucket would not).
+#[derive(Debug, Default)]
+pub struct TokenBuckets {
+    map: std::sync::Arc<
+        std::sync::Mutex<std::collections::BTreeMap<String, (f64, std::time::Instant, u32, u64)>>,
+    >,
+}
+
+impl Clone for TokenBuckets {
+    /// Share the bucket map: a cloned engine must see the same counters (a
+    /// per-clone copy would reset the limit).
+    fn clone(&self) -> Self {
+        Self { map: std::sync::Arc::clone(&self.map) }
+    }
+}
+
+impl TokenBuckets {
+    /// Consume one token for `key`. Returns `Ok(())` when allowed, or
+    /// `Err(retry_after_secs)` when the bucket is empty.
+    pub fn take(&self, key: &str, max: u32, window_secs: u64) -> std::result::Result<(), u64> {
+        let mut map = self.map.lock().unwrap_or_else(|p| p.into_inner());
+        if map.len() > RATE_LIMITER_MAX_KEYS {
+            // Sweep full buckets (no pending state).
+            map.retain(|_, (tokens, _, m, _)| *tokens < *m as f64 - 0.001);
+        }
+        let now = std::time::Instant::now();
+        let rate = max as f64 / window_secs.max(1) as f64;
+        let entry = map
+            .entry(key.to_string())
+            .or_insert((max as f64, now, max, window_secs));
+        let elapsed = now.duration_since(entry.1).as_secs_f64();
+        entry.0 = (entry.0 + elapsed * rate).min(max as f64);
+        entry.1 = now;
+        if entry.0 >= 1.0 {
+            entry.0 -= 1.0;
+            Ok(())
+        } else {
+            // Seconds until one token refills.
+            let deficit = 1.0 - entry.0;
+            Err((deficit / rate).ceil().max(1.0) as u64)
+        }
+    }
+}
+
+/// Resolve a rule's `rate_limit.key` against the captured params and the
+/// request's key material. `ip`/empty → `client_key`; `:name` → the captured
+/// param (`client_key` when absent); anything else is a literal.
+fn resolve_bucket_key(rule_key: &str, params: &std::collections::BTreeMap<String, String>, client_key: &str) -> String {
+    if rule_key.is_empty() || rule_key == "ip" {
+        return format!("ip:{client_key}");
+    }
+    if let Some(name) = rule_key.strip_prefix(':') {
+        let v = params.get(name).map(String::as_str).unwrap_or(client_key);
+        return format!("{name}:{v}");
+    }
+    format!("lit:{rule_key}")
+}
+
+pub(crate) fn evaluate_impl(engine: &RulesEngine, path: &str, client_key: &str) -> RuleOutcome {
     let url = split_path(path);
     let mut merged: BTreeMap<String, String> = BTreeMap::new();
     let mut any_headers = false;
@@ -61,7 +129,20 @@ pub(crate) fn evaluate_impl(engine: &RulesEngine, path: &str) -> RuleOutcome {
         };
         // Terminal outcomes in priority order: rate limit > auth > rewrite > redirect.
         if rule.rule_type.as_deref() == Some("ratelimit") {
-            return RuleOutcome::RateLimited;
+            // SEC-01: consult the token bucket. Before this fix the rule
+            // returned `RateLimited` unconditionally (the bucket was never
+            // consulted), so one configured rule 429'd the path forever.
+            if let Some(rl) = &rule.rate_limit {
+                let bucket_key = resolve_bucket_key(&rl.key, &params, client_key);
+                if let Err(retry_after_secs) = engine.limiter.take(&bucket_key, rl.max, rl.window_secs)
+                {
+                    return RuleOutcome::RateLimited { retry_after_secs };
+                }
+                // Allowed: a rate-limit rule is non-terminal (keep scanning
+                // so a later rewrite/redirect/header rule can still apply).
+                continue;
+            }
+            return RuleOutcome::RateLimited { retry_after_secs: 1 };
         }
         if rule.basic_auth.is_some() {
             return RuleOutcome::AuthRequired;
@@ -313,15 +394,23 @@ mod tests {
             max: 100,
             window_secs: 60,
         });
+        // SEC-01: with max=100 the first 100 calls are allowed; the 101st is
+        // rate-limited. (Before this fix the rule 429'd unconditionally.)
         let e = RulesEngine::compile(vec![r.clone()]).unwrap();
-        assert_eq!(e.evaluate("/api/data"), RuleOutcome::RateLimited);
+        for _ in 0..100 {
+            assert_ne!(e.evaluate("/api/data"), RuleOutcome::RateLimited { retry_after_secs: 0 },
+                "within budget is allowed");
+        }
+        match e.evaluate("/api/data") {
+            RuleOutcome::RateLimited { retry_after_secs } => assert!(retry_after_secs >= 1),
+            other => panic!("expected RateLimited, got {other:?}"),
+        }
         // A rate_limit field without an explicit type is normalized at compile.
         let mut r2 = rule("/v2/*");
         r2.rate_limit = r.rate_limit.clone();
         let e = RulesEngine::compile(vec![r2]).unwrap();
         assert_eq!(e.rules[0].rule_type.as_deref(), Some("ratelimit"));
-        assert_eq!(e.evaluate("/v2/x"), RuleOutcome::RateLimited);
-        // The token-bucket decision itself lives in the server crate.
+        assert_ne!(e.evaluate("/v2/x"), RuleOutcome::RateLimited { retry_after_secs: 0 });
     }
 
     #[test]
