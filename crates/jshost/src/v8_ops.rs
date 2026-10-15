@@ -14,6 +14,28 @@
 //! streaming layer is not wired. See `docs/deviations.md` if kept.
 
 use deno_core::op2;
+use std::cell::RefCell;
+use std::sync::Arc;
+
+thread_local! {
+    /// The cache handler this worker thread's `JsRuntime` uses for
+    /// `oxide.cacheGet/Set/Tag`. Set once at worker spawn (BUG-02) from the
+    /// `V8Host`'s handler. A `JsRuntime` is `!Send` and pinned to one thread,
+    /// so a thread-local is exactly the right scope — no `OpState`, no
+    /// snapshot op-order churn.
+    static CACHE_HANDLER: RefCell<Option<Arc<dyn oxide_cache::CacheHandler>>> =
+        const { RefCell::new(None) };
+}
+
+/// Install the cache handler for the current V8 worker thread. Called once by
+/// `spawn_v8_worker` before the runtime evaluates any user module.
+pub fn set_cache_handler(handler: Option<Arc<dyn oxide_cache::CacheHandler>>) {
+    CACHE_HANDLER.with(|c| *c.borrow_mut() = handler);
+}
+
+fn cache_handler() -> Option<Arc<dyn oxide_cache::CacheHandler>> {
+    CACHE_HANDLER.with(|c| c.borrow().clone())
+}
 
 /// `oxide.log(msg)` — structured log line into Rust.
 #[op2(fast)]
@@ -80,7 +102,95 @@ pub fn op_oxide_random(len: u32) -> Vec<u8> {
     }
 }
 
+/// `oxide.cacheGet(key)` — read a cache entry (§9.3/§11) as a JSON string
+/// (`null` on a miss). Backs a `'use cache'` function in the V8 backend,
+/// which otherwise had no cache tier at all (BUG-02).
+#[op2]
+#[string]
+pub async fn op_oxide_cache_get(#[string] key: String) -> String {
+    let Some(h) = cache_handler() else {
+        return "null".to_string();
+    };
+    match h.get(&key).await {
+        Ok(Some(entry)) => serde_json::json!({
+            "status": entry.status,
+            "body_b64": base64_encode(&entry.body),
+        })
+        .to_string(),
+        _ => "null".to_string(),
+    }
+}
+
+/// `oxide.cacheSet(key, status, bodyB64, tagsCsv)` — write a cache entry.
+/// Returns the JSON string `"true"` / `"false"` (op2 string returns are the
+/// portable form; a bare `bool` needs a fastcall signature async ops cannot
+/// use). No handler → `false` (the honest "uncached" signal a caller can
+/// branch on).
+#[op2]
+#[string]
+pub async fn op_oxide_cache_set(
+    #[string] key: String,
+    status: u32,
+    #[string] body_b64: String,
+    #[string] tags_csv: String,
+) -> String {
+    let Some(h) = cache_handler() else {
+        return "false".to_string();
+    };
+    let Some(body) = base64_decode(&body_b64) else {
+        return "false".to_string();
+    };
+    let tags: Vec<String> = tags_csv
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+    let entry = oxide_cache::Entry {
+        body,
+        status: status as u16,
+        headers: Vec::new(),
+        tags,
+        policy: oxide_cache::Policy::default(),
+        stored_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+        etag: String::new(),
+    };
+    if h.set(&key, entry).await.is_ok() {
+        "true".to_string()
+    } else {
+        "false".to_string()
+    }
+}
+
+/// `oxide.cacheTag(tag)` — invalidate by tag (§11.3). Returns the number of
+/// entries removed, as a JSON string.
+#[op2]
+#[string]
+pub async fn op_oxide_cache_tag(#[string] tag: String) -> String {
+    let Some(h) = cache_handler() else {
+        return "0".to_string();
+    };
+    h.invalidate_tag(&tag, true).await.unwrap_or(0).to_string()
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.decode(s).ok()
+}
+
 /// The op declarations attached to the V8 extension.
+///
+/// **Append-only.** deno_core keys a snapshot's op external-reference table by
+/// this order, so a new op goes at the end (a snapshot built before the op
+/// still restores; the new op simply has no baked reference until the next
+/// `oxide build` regenerates the blob).
 pub fn op_decls() -> Vec<deno_core::OpDecl> {
     vec![
         op_oxide_log(),
@@ -88,5 +198,8 @@ pub fn op_decls() -> Vec<deno_core::OpDecl> {
         op_oxide_serialize(),
         op_oxide_random(),
         op_oxide_sleep(),
+        op_oxide_cache_get(),
+        op_oxide_cache_set(),
+        op_oxide_cache_tag(),
     ]
 }
