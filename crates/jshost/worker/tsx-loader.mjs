@@ -128,6 +128,11 @@ function compileSvelte(source, path) {
 }
 
 export async function load(url, context, nextLoad) {
+  // BUG-08: CSS is a server side-effect import — evaluate to an empty
+  // module (SSR never applies styles; the client bundle handles real CSS).
+  if (url.endsWith('.css')) {
+    return { format: 'module', shortCircuit: true, source: 'export default "";' }
+  }
   const isTsx = url.endsWith('.tsx') || url.endsWith('.jsx')
   const isVue = url.endsWith('.vue')
   const isSvelte = url.endsWith('.svelte')

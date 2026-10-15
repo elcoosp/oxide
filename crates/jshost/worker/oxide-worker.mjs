@@ -441,6 +441,7 @@ async function resolveRelative(fromPath, spec, pathMod) {
     base + ".tsx",
     base + ".js",
     base + ".mjs",
+    base + ".css",
     pathMod.join(base, "index.ts"),
     pathMod.join(base, "index.tsx"),
   ];
@@ -485,6 +486,14 @@ async function compileServerModule(entryPath) {
   const tempOf = new Map();
   for (const path of order) {
     const { source } = modules.get(path);
+    // BUG-08: CSS is a server side-effect import — empty module, no compile.
+    // NOTE: tmpPath must be a NEW temp file, never the original .css path
+    // (the loop below writes every tmpPath to disk).
+    if (path.endsWith(".css")) {
+      const cssTmp = path + ".oxide.css.mjs";
+      tempOf.set(path, { tmpPath: cssTmp, tmpUrl: pathToFileURL(cssTmp).href, content: 'export default "";', hash: "css" });
+      continue;
+    }
     const hash = crypto
       .createHash("sha256")
       .update(source)

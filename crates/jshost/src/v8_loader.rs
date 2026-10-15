@@ -240,6 +240,21 @@ impl ModuleLoader for TranspileLoader {
         let fut = async move {
             let src = std::fs::read_to_string(&path)
                 .map_err(|e| deno_error::JsErrorBox::generic(format!("read {}: {e}", path.display())))?;
+            // BUG-08: CSS is a server side-effect import — resolve to an
+            // empty module (SSR never applies styles; the client bundle's
+            // CssPlugin handles the real CSS).
+            if path.extension().and_then(|e| e.to_str())
+                == Some("css")
+            {
+                return Ok(ModuleSource::new(
+                    ModuleType::JavaScript,
+                    deno_core::ModuleSourceCode::String(
+                        "export default \"\";".to_string().into(),
+                    ),
+                    &spec,
+                    None,
+                ));
+            }
             // JSON modules are passed through; V8 handles the `with { type }`.
             if path.extension().and_then(|e| e.to_str()) == Some("json") {
                 return Ok(ModuleSource::new(
