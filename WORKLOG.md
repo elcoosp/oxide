@@ -1966,3 +1966,191 @@ resolves against its own cwd) reported `ENOENT`.
     POST /?/missing                → 404 ACT-NOT-FOUND
 
 Commits: `c15b645` `d139f7e` `f18755c` `d3bf1a5` `af9fc1b`.
+
+## Session 16 — §4.4 snapshot lint; the §21 cold-start number was stale
+
+Continuing from session 15. Three things landed, and one measurement in
+`benchmarks/report.md` was found to be wrong.
+
+### §4.4 — build-time snapshot side-effect lint
+
+The spec's §4.4 constraint is: *"`oxide build` lints top-level side effects and
+reports them with source locations."* `lint_top_level_side_effects` existed in
+`crates/jshost/src/snapshot.rs` but had **no caller**. It is now wired into
+`cmd_build` via `emit_snapshot_lint`: every route's `page.server.ts` is scanned
+for `setTimeout` / `setInterval` / `new WebSocket` / `new EventSource` at module
+scope, and each hit prints `warn: snapshot side effect at <file>:<line> — …`.
+Advisory only — a snapshot-hostile dependency degrades to a V8 code cache, so
+the lint never fails the build.
+
+Verified: a `const t = setTimeout(...)` at module top level in the fixture's
+`page.server.ts` produced the warning with the right file:line; a clean module
+produced none; exit 0 either way.
+
+**Not done:** the snapshot itself. §4.4's *"boots the server bundle inside a V8
+snapshot builder"* needs the render path to run on `V8Host`, and `V8Host`'s
+`__oxideDispatch` is a toy (two hardcoded kinds: `render` → a stub HTML string,
+`tooling:compile` → uppercases the input) versus the Node worker's 14 real
+kinds. Closing that means a `deno_core::ModuleLoader` over the bundle, which
+needs `deno_node` module loading — the same dependency D2 lists as "not landed".
+That is the multi-session item; the lint is the piece §4.4 can have today.
+
+### §21 — cold start is ~450–600 ms, not 782–2871 ms
+
+`benchmarks/report.md` (written sessions ago) claims cold start is
+**782 ms (React) to 2871 ms (Solid)**. Re-measured on the current binary, best
+of three, time to first `/_oxide/health`:
+
+| fixture | report | re-measured |
+| --- | ---: | ---: |
+| smoke-app-react | 782 ms | **426–597 ms** |
+
+Health is a **native** branch — it does not touch the worker — so ~430 ms is
+spent before the server binds: the framework-stack boot (`build_framework_stack`
+spawns the Node pool, `FrameworkHostRenderer::new` eagerly imports and evaluates
+the config, then the pool is moved into the pipeline). The report's number is
+stale; the real gap to §21's ≤ 50 ms target is the V8 snapshot, per above, not
+a Node worker that boots in ~60 ms.
+
+### A real bug: build temp files invalidated the §5.1 fingerprint
+
+The §5.1 warm-build early cutoff from session 15 skipped a build only when a
+blake3 project fingerprint was unchanged. But the worker writes a compiled
+server-module temp file **into the source tree** — `<name>.<hash>.oxide.ts`
+next to `page.server.ts` — and `build_cache::collect_files` counted it as an
+input. So a build that wrote a temp file changed the next build's fingerprint,
+which forced a full rebuild. Measured warm builds alternating between **~38 ms
+and ~3800 ms** depending on whether a temp file appeared or changed between
+runs.
+
+Fix: `collect_files` skips any `*.oxide.ts` name — a build artifact, never an
+input. Regression test added. After the fix, six consecutive warm builds with a
+temp file present: **32–50 ms** each.
+
+### Commits
+
+| Commit | Scope |
+| --- | --- |
+| `483c56e` | §4.4 snapshot side-effect lint at build |
+| `ace46e3` | §5.1 exclude `*.oxide.ts` temp files from the fingerprint |
+| `c16acc0` | `build_dispatch` test fixtures carry the L0 + action args |
+| `0899a4c` | deterministic L0 stale-entry test |
+
+The last two repair test fallout from session 15's `build_dispatch` signature
+change (the `l0` and `actions` arguments were added but the in-crate test
+fixtures not updated) and from a same-millisecond race in a new L0 test.
+
+### Test state
+
+| suite | result |
+| --- | --- |
+| `cargo check --workspace` | green |
+| oxide-cli --lib | 91 |
+| oxide-cache | 18 + 26 |
+| oxide-jshost | 22 + 39 |
+| oxide-server | 40 + 57 + 21 |
+| four-fixture CLI gate | PASS |
+
+### Next
+
+1. **§4.4 proper** — a `ModuleLoader` for `V8Host` so the render path runs on
+   V8, then `snapshot_build` at build + `loader_options` at start. Blocked on
+   `deno_node` module loading; the largest single item on the board.
+2. **Re-measure the rest of `benchmarks/report.md`.** Cold start was stale;
+   the Vue 951 KB SSR bundle and the client-JS columns are unverified against
+   the current binary.
+3. §21 finding 2 (Vue SSR externals) — still needs the deploy-policy decision.
+
+## Session 16 — §4.4 snapshot lint; the §21 cold-start number was stale
+
+Continuing from session 15. Three things landed, and one measurement in
+`benchmarks/report.md` was found to be wrong.
+
+### §4.4 — build-time snapshot side-effect lint
+
+The spec's §4.4 constraint is: *"`oxide build` lints top-level side effects and
+reports them with source locations."* `lint_top_level_side_effects` existed in
+`crates/jshost/src/snapshot.rs` but had **no caller**. It is now wired into
+`cmd_build` via `emit_snapshot_lint`: every route's `page.server.ts` is scanned
+for `setTimeout` / `setInterval` / `new WebSocket` / `new EventSource` at module
+scope, and each hit prints `warn: snapshot side effect at <file>:<line> — …`.
+Advisory only — a snapshot-hostile dependency degrades to a V8 code cache, so
+the lint never fails the build.
+
+Verified: a `const t = setTimeout(...)` at module top level in the fixture's
+`page.server.ts` produced the warning with the right file:line; a clean module
+produced none; exit 0 either way.
+
+**Not done:** the snapshot itself. §4.4's *"boots the server bundle inside a V8
+snapshot builder"* needs the render path to run on `V8Host`, and `V8Host`'s
+`__oxideDispatch` is a toy (two hardcoded kinds: `render` → a stub HTML string,
+`tooling:compile` → uppercases the input) versus the Node worker's 14 real
+kinds. Closing that means a `deno_core::ModuleLoader` over the bundle, which
+needs `deno_node` module loading — the same dependency D2 lists as "not landed".
+That is the multi-session item; the lint is the piece §4.4 can have today.
+
+### §21 — cold start is ~450–600 ms, not 782–2871 ms
+
+`benchmarks/report.md` (written sessions ago) claims cold start is
+**782 ms (React) to 2871 ms (Solid)**. Re-measured on the current binary, best
+of three, time to first `/_oxide/health`:
+
+| fixture | report | re-measured |
+| --- | ---: | ---: |
+| smoke-app-react | 782 ms | **426–597 ms** |
+
+Health is a **native** branch — it does not touch the worker — so ~430 ms is
+spent before the server binds: the framework-stack boot (`build_framework_stack`
+spawns the Node pool, `FrameworkHostRenderer::new` eagerly imports and evaluates
+the config, then the pool is moved into the pipeline). The report's number is
+stale; the real gap to §21's ≤ 50 ms target is the V8 snapshot, per above, not
+a Node worker that boots in ~60 ms.
+
+### A real bug: build temp files invalidated the §5.1 fingerprint
+
+The §5.1 warm-build early cutoff from session 15 skipped a build only when a
+blake3 project fingerprint was unchanged. But the worker writes a compiled
+server-module temp file **into the source tree** — `<name>.<hash>.oxide.ts`
+next to `page.server.ts` — and `build_cache::collect_files` counted it as an
+input. So a build that wrote a temp file changed the next build's fingerprint,
+which forced a full rebuild. Measured warm builds alternating between **~38 ms
+and ~3800 ms** depending on whether a temp file appeared or changed between
+runs.
+
+Fix: `collect_files` skips any `*.oxide.ts` name — a build artifact, never an
+input. Regression test added. After the fix, six consecutive warm builds with a
+temp file present: **32–50 ms** each.
+
+### Commits
+
+| Commit | Scope |
+| --- | --- |
+| `483c56e` | §4.4 snapshot side-effect lint at build |
+| `ace46e3` | §5.1 exclude `*.oxide.ts` temp files from the fingerprint |
+| `c16acc0` | `build_dispatch` test fixtures carry the L0 + action args |
+| `0899a4c` | deterministic L0 stale-entry test |
+
+The last two repair test fallout from session 15's `build_dispatch` signature
+change (the `l0` and `actions` arguments were added but the in-crate test
+fixtures not updated) and from a same-millisecond race in a new L0 test.
+
+### Test state
+
+| suite | result |
+| --- | --- |
+| `cargo check --workspace` | green |
+| oxide-cli --lib | 91 |
+| oxide-cache | 18 + 26 |
+| oxide-jshost | 22 + 39 |
+| oxide-server | 40 + 57 + 21 |
+| four-fixture CLI gate | PASS |
+
+### Next
+
+1. **§4.4 proper** — a `ModuleLoader` for `V8Host` so the render path runs on
+   V8, then `snapshot_build` at build + `loader_options` at start. Blocked on
+   `deno_node` module loading; the largest single item on the board.
+2. **Re-measure the rest of `benchmarks/report.md`.** Cold start was stale;
+   the Vue 951 KB SSR bundle and the client-JS columns are unverified against
+   the current binary.
+3. §21 finding 2 (Vue SSR externals) — still needs the deploy-policy decision.
