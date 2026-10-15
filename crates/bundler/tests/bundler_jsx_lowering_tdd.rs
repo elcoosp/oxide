@@ -37,6 +37,7 @@ fn opts(root: &Path, env: BundleEnv, entries: &[(&str, &str)]) -> BundleOptions 
         transform_hook: None,
         css_transform: None,
         inline_dynamic_imports: false,
+        resolve_conditions: None,
     }
 }
 
