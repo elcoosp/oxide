@@ -3422,7 +3422,16 @@ async fn start_server_inner_full(
         security: oxide_server::SecuritySettings {
             csp: cfg.security.csp.clone(),
             csrf: cfg.security.csrf.clone(),
-            ..Default::default()
+            // SEC-05: populate the allow-lists from config — they were never
+            // read, so a configured Host/SSRF list silently did nothing.
+            host_allow_list: cfg.security.host_allow_list.clone(),
+            ssrf_allow_list: cfg.security.ssrf_allow_list.clone(),
+            cookie_keys: cfg
+                .security
+                .cookie_keys
+                .iter()
+                .map(|k| k.as_bytes().to_vec())
+                .collect(),
         },
         rate_limiter: std::sync::Arc::new(oxide_server::RateLimiter::default()),
         health_path: "/_oxide/health".to_string(),
