@@ -62,6 +62,11 @@ export function createRealAdapter(opts: RealAdapterOptions) {
     // back to solid as a stable value.
     renderBody: async (Component, props) => {
       if (typeof Component !== 'function') return String(Component ?? '')
+      // Solid's renderer takes a zero-argument factory. Pre-invoke the
+      // component OUTSIDE solid's async machinery so a synchronous throw
+      // propagates immediately (otherwise renderToStringAsync hangs and
+      // reports "renderToString timed out"). The built tree is then handed
+      // back to solid as a stable value.
       const tree = (Component as (p: Record<string, unknown>) => unknown)(props)
       return renderSolidToString(() => tree)
     },
