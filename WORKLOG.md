@@ -3684,3 +3684,73 @@ Remaining PERF-09: `analyze` summing all chunks reachable from a route (not
 just the entry) and `why` printing importers + chunks from this map.
 
 Commits: (below).
+
+## PERF-09 (slice 2) — route-true byte accounting
+
+The client manifest's `js_bytes` was the **entry chunk only**, under-reporting
+every route that shares code. It now walks the chunk import graph and sums
+every transitively-reachable chunk. On the react fixture `routes/index/page`
+reports 12 585 bytes (entry + the shared island chunk) instead of the entry's
+own size; `__boot__` reports 38 611.
+
+`oxide analyze` reads the same number, so budgets are now honest.
+
+Verified: bundler tests green; manifest shows distinct per-route totals.
+
+Commits: (below).
+
+## PERF-09 (slice 2) — route-true byte accounting
+
+The client manifest's `js_bytes` was the **entry chunk only**, under-reporting
+every route that shares code. It now walks the chunk import graph and sums
+every transitively-reachable chunk. On the react fixture `routes/index/page`
+reports 12 585 bytes (entry + the shared island chunk) instead of the entry's
+own size; `__boot__` reports 38 611.
+
+`oxide analyze` reads the same number, so budgets are now honest.
+
+Verified: bundler tests green; manifest shows distinct per-route totals.
+
+Commits: (below).
+
+## PERF-09 (slice 2) — route-true byte accounting
+
+The client manifest's `js_bytes` was the **entry chunk only**, under-reporting
+every route that shares code. It now walks the chunk import graph and sums
+every transitively-reachable chunk. On the react fixture `routes/index/page`
+reports 12 585 bytes (entry + the shared island chunk) instead of the entry's
+own size; `__boot__` reports 38 611.
+
+`oxide analyze` reads the same number, so budgets are now honest.
+
+Verified: bundler tests green; manifest shows distinct per-route totals.
+
+Commits: (below).
+
+## PERF-09 (slice 2) — route-true byte accounting
+
+The client manifest's `js_bytes` was the **entry chunk only**, under-reporting
+every route that shares code. It now walks the chunk import graph and sums
+every transitively-reachable chunk. On the react fixture `routes/index/page`
+reports 12 585 bytes (entry + the shared island chunk) instead of the entry's
+own size; `__boot__` reports 38 611.
+
+`oxide analyze` reads the same number, so budgets are now honest.
+
+Verified: bundler tests green; manifest shows distinct per-route totals.
+
+Commits: (below).
+
+## PERF-09 (slice 2) — route-true byte accounting
+
+The client manifest's `js_bytes` was the **entry chunk only**, under-reporting
+every route that shares code. It now walks the chunk import graph and sums
+every transitively-reachable chunk. On the react fixture `routes/index/page`
+reports 12 585 bytes (entry + the shared island chunk) instead of the entry's
+own size; `__boot__` reports 38 611.
+
+`oxide analyze` reads the same number, so budgets are now honest.
+
+Verified: bundler tests green; manifest shows distinct per-route totals.
+
+Commits: (below).
