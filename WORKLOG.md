@@ -3621,3 +3621,60 @@ clean.
 
 Commits: (below).
 
+
+## PERF-06 (slice 3) — per-stage Server-Timing, complete
+
+The render paths (`/`'s L0-miss and the streaming bypass) now emit real
+`Server-Timing` with `load;dur` and `render;dur` measured at the stage
+boundaries, replacing the single `total;dur`. (`total` remains for the
+dispatch arm that has no distinct stages.)
+
+Also hardened `start_serves_health_endpoint_then_shuts_down` — its second
+connect now retries like the first (it flaked under full-workspace parallel
+load).
+
+Early Hints (103) needs a hyper-util informational-response API that is not
+exposed in 0.1.21; documented as deferred.
+
+Verified: `oxide-cli --lib` 98; a real `GET /` with the seed removed reports
+`Server-Timing` with per-stage durations.
+
+Commits: (below).
+
+## PERF-06 (slice 3) — per-stage Server-Timing, complete
+
+The render paths (`/`'s L0-miss and the streaming bypass) now emit real
+`Server-Timing` with `load;dur` and `render;dur` measured at the stage
+boundaries, replacing the single `total;dur`. (`total` remains for the
+dispatch arm that has no distinct stages.)
+
+Also hardened `start_serves_health_endpoint_then_shuts_down` — its second
+connect now retries like the first (it flaked under full-workspace parallel
+load).
+
+Early Hints (103) needs a hyper-util informational-response API that is not
+exposed in 0.1.21; documented as deferred.
+
+Verified: `oxide-cli --lib` 98; a real `GET /` with the seed removed reports
+`Server-Timing` with per-stage durations.
+
+Commits: (below).
+
+## PERF-06 (slice 3) — per-stage Server-Timing, complete
+
+The render paths (`/`'s L0-miss and the streaming bypass) now emit real
+`Server-Timing` with `load;dur` and `render;dur` measured at the stage
+boundaries, replacing the single `total;dur`. (`total` remains for the
+dispatch arm that has no distinct stages.)
+
+Also hardened `start_serves_health_endpoint_then_shuts_down` — its second
+connect now retries like the first (it flaked under full-workspace parallel
+load).
+
+Early Hints (103) needs a hyper-util informational-response API that is not
+exposed in 0.1.21; documented as deferred.
+
+Verified: `oxide-cli --lib` 98; a real `GET /` with the seed removed reports
+`Server-Timing` with per-stage durations.
+
+Commits: (below).
