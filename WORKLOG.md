@@ -3684,3 +3684,83 @@ delivery timing — the content-hash logic is covered by the poll tests);
 Idle pre-warm (the other half of PERF-11) is deferred.
 
 Commits: (below).
+
+## PERF-05 (slice 2) — the `fetch()` shim (Node + V8), complete
+
+- **Node worker**: `globalThis.fetch` is replaced with one that routes through
+  the `fetch` op (host SSRF check). On a missing handler it warns once and
+  falls back to Node's native `fetch` — never breaks a project.
+- **V8**: `op_oxide_fetch` (async, thread-local handler) + a `globalThis.fetch`
+  in the bootstrap that calls `oxide.fetch`. `V8Host::with_fetch_handler`
+  threads the handler through the pool + warm replacements.
+
+So user-code `fetch()` goes through `ssrf_safe_fetch` on both backends.
+
+Verified: `oxide-jshost --lib` 50, `oxide-cli --lib` 98; worker `node --check`
+clean.
+
+Commits: (below).
+
+## PERF-05 (slice 2) — the `fetch()` shim (Node + V8), complete
+
+- **Node worker**: `globalThis.fetch` is replaced with one that routes through
+  the `fetch` op (host SSRF check). On a missing handler it warns once and
+  falls back to Node's native `fetch` — never breaks a project.
+- **V8**: `op_oxide_fetch` (async, thread-local handler) + a `globalThis.fetch`
+  in the bootstrap that calls `oxide.fetch`. `V8Host::with_fetch_handler`
+  threads the handler through the pool + warm replacements.
+
+So user-code `fetch()` goes through `ssrf_safe_fetch` on both backends.
+
+Verified: `oxide-jshost --lib` 50, `oxide-cli --lib` 98; worker `node --check`
+clean.
+
+Commits: (below).
+
+## PERF-05 (slice 2) — the `fetch()` shim (Node + V8), complete
+
+- **Node worker**: `globalThis.fetch` is replaced with one that routes through
+  the `fetch` op (host SSRF check). On a missing handler it warns once and
+  falls back to Node's native `fetch` — never breaks a project.
+- **V8**: `op_oxide_fetch` (async, thread-local handler) + a `globalThis.fetch`
+  in the bootstrap that calls `oxide.fetch`. `V8Host::with_fetch_handler`
+  threads the handler through the pool + warm replacements.
+
+So user-code `fetch()` goes through `ssrf_safe_fetch` on both backends.
+
+Verified: `oxide-jshost --lib` 50, `oxide-cli --lib` 98; worker `node --check`
+clean.
+
+Commits: (below).
+
+## PERF-05 (slice 2) — the `fetch()` shim (Node + V8), complete
+
+- **Node worker**: `globalThis.fetch` is replaced with one that routes through
+  the `fetch` op (host SSRF check). On a missing handler it warns once and
+  falls back to Node's native `fetch` — never breaks a project.
+- **V8**: `op_oxide_fetch` (async, thread-local handler) + a `globalThis.fetch`
+  in the bootstrap that calls `oxide.fetch`. `V8Host::with_fetch_handler`
+  threads the handler through the pool + warm replacements.
+
+So user-code `fetch()` goes through `ssrf_safe_fetch` on both backends.
+
+Verified: `oxide-jshost --lib` 50, `oxide-cli --lib` 98; worker `node --check`
+clean.
+
+Commits: (below).
+
+## PERF-05 (slice 2) — the `fetch()` shim (Node + V8), complete
+
+- **Node worker**: `globalThis.fetch` is replaced with one that routes through
+  the `fetch` op (host SSRF check). On a missing handler it warns once and
+  falls back to Node's native `fetch` — never breaks a project.
+- **V8**: `op_oxide_fetch` (async, thread-local handler) + a `globalThis.fetch`
+  in the bootstrap that calls `oxide.fetch`. `V8Host::with_fetch_handler`
+  threads the handler through the pool + warm replacements.
+
+So user-code `fetch()` goes through `ssrf_safe_fetch` on both backends.
+
+Verified: `oxide-jshost --lib` 50, `oxide-cli --lib` 98; worker `node --check`
+clean.
+
+Commits: (below).
