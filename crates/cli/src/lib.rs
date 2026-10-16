@@ -883,7 +883,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         }
     }
 
-    let watcher = oxide_dev::Watcher::new(vec![rootp.clone()]);
+    let watcher = oxide_dev::Watcher::with_notify(vec![rootp.clone()]);
     let mut seen = std::collections::BTreeSet::new();
 
     // §13.3: on any file-change event, bump the worker's module generation
