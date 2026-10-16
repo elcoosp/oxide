@@ -18,6 +18,16 @@ use oxide_config::JsBackend;
 use oxide_server::{LoaderRunner, PageRenderInput, PageRenderer};
 use std::sync::Arc;
 
+/// PERF-02: the render/loader pool size — the machine's available
+/// parallelism, floored at 2 so a single-core box still has a spare worker
+/// for a concurrent render + loader.
+fn render_pool_size() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2)
+        .max(2)
+}
+
 /// Wraps any `FrameworkRenderer` as an `oxide_server::PageRenderer`.
 ///
 /// The only translation is input-shape: `PageRenderInput.params` is a typed
@@ -257,7 +267,11 @@ pub async fn build_framework_stack(
             Arc::new(host.with_cache_handler(Arc::clone(&cache_tier)))
         }
     };
-    let pool = match host.tooling_pool(PoolConfig::default()) {
+    // PERF-02: size the render/loader pool by the machine's parallelism, not
+    // a hardcoded 2. Under load a 2-worker pool throttles TTFB; the spec
+    // calls for "physical cores" (min 2, so a single-core CI box still works).
+    let pool_size = render_pool_size();
+    let pool = match host.tooling_pool(PoolConfig { size: pool_size, ..Default::default() }) {
         Ok(p) => p,
         Err(e) => {
             eprintln!(
@@ -278,7 +292,7 @@ pub async fn build_framework_stack(
     let tooling_pool: Arc<dyn oxide_jshost::Pool> = if matches!(backend, JsBackend::V8) {
         match NodeHost::new(NodeHost::worker_script_default())
             .with_cache_handler(Arc::clone(&cache_tier))
-            .tooling_pool(PoolConfig::default())
+            .tooling_pool(PoolConfig { size: pool_size, ..Default::default() })
         {
             Ok(p) => p,
             Err(e) => {
