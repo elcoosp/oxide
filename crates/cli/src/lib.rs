@@ -3496,12 +3496,32 @@ async fn start_server_inner_full(
             // read, so a configured Host/SSRF list silently did nothing.
             host_allow_list: cfg.security.host_allow_list.clone(),
             ssrf_allow_list: cfg.security.ssrf_allow_list.clone(),
-            cookie_keys: cfg
-                .security
-                .cookie_keys
-                .iter()
-                .map(|k| k.as_bytes().to_vec())
-                .collect(),
+            cookie_keys: {
+                // SEC-10: an empty `security.cookieKeys` must not leave
+                // cookies signed with the empty key. Derive from the project
+                // secret (`.oxide/secret`, BUG-05), with a warn so a multi-node
+                // deployment knows to set explicit keys.
+                let configured: Vec<Vec<u8>> = cfg
+                    .security
+                    .cookie_keys
+                    .iter()
+                    .map(|k| k.as_bytes().to_vec())
+                    .collect();
+                if configured.is_empty() {
+                    match build_secret(&rootp) {
+                        Ok(s) => {
+                            eprintln!(
+                                "warn: security.cookieKeys is empty; signing cookies with \
+                                 the project secret. Set security.cookieKeys for multi-node."
+                            );
+                            vec![s.into_bytes()]
+                        }
+                        Err(_) => Vec::new(),
+                    }
+                } else {
+                    configured
+                }
+            },
         },
         rate_limiter: std::sync::Arc::new(oxide_server::RateLimiter::default()),
         health_path: "/_oxide/health".to_string(),
@@ -3869,6 +3889,23 @@ async fn cmd_doctor(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
         Err(_) => "absent (next build creates it)".to_string(),
     };
     outln!(w, "[--] build secret (.oxide/secret): {secret_state}");
+    // SEC-10: cookie keys must be ≥ 32 bytes (the AEAD uses the first 32).
+    let weak: Vec<usize> = cfg
+        .security
+        .cookie_keys
+        .iter()
+        .enumerate()
+        .filter(|(_, k)| k.len() < 32)
+        .map(|(i, k)| i * 0 + k.len())
+        .collect();
+    if cfg.security.cookie_keys.is_empty() {
+        outln!(w, "[--] cookie keys: none set (derived from .oxide/secret)");
+    } else if weak.is_empty() {
+        outln!(w, "[ok] cookie keys: {} key(s), all ≥ 32 bytes", cfg.security.cookie_keys.len());
+    } else {
+        outln!(w, "[fail] cookie keys: {} key(s) shorter than 32 bytes", weak.len());
+        all_ok = false;
+    }
     Ok(if all_ok { 0 } else { 1 })
 }
 
