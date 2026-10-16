@@ -4065,3 +4065,27 @@ Verified: `cargo test -p oxide-server` green; new tests cover token
 admission (query + header + wrong) and the dev-host check.
 
 Commits: (below).
+
+## SEC-10 — cookie keys required + strength check
+
+An empty `security.cookieKeys` left cookies signed with the **empty key**
+(`sign_cookie` falls back to `&[]`), which any client can forge.
+
+Fixed (bounded; the full loader-path `SessionCodec` wiring is the larger
+follow-up):
+- The CLI derives cookie keys from the project secret (`.oxide/secret`,
+  BUG-05) when `security.cookieKeys` is empty, with a warn telling a
+  multi-node deployment to set explicit keys.
+- `oxide doctor` reports cookie-key state: `none set (derived)`, `all ≥ 32
+  bytes` (ok), or a `fail` when any configured key is shorter than 32 bytes
+  (the AEAD uses the first 32).
+
+`SessionCodec` (AEAD seal/open, rotation across keys) already exists and is
+tested in `crates/server/src/session.rs`; exposing `event.session.get/set`
+on the loader path — threading the codec through `loader:run` — is the
+remaining piece, noted for a later task.
+
+Verified: `oxide doctor` output shows the new lines; `cargo test
+--workspace` green; `oxide-cli --lib` 95.
+
+Commits: (below).
