@@ -3745,3 +3745,43 @@ request, and `/…/metrics` exposes `oxide_pool_workers`,
 
 PERF-02 complete: core-sized pools, route affinity, and observable pool
 health.
+
+## PERF-02 (slice 2) — pool gauges in metrics, complete
+
+`Pool::stats()` (workers, in-flight, queue-wait p50/p99, recycles, crashes)
+was never surfaced. The dispatch now calls `metrics.observe_pool(...)` each
+request, and `/…/metrics` exposes `oxide_pool_workers`,
+`oxide_pool_in_flight`, `oxide_pool_queue_wait_p99_us` gauges.
+
+PERF-02 complete: core-sized pools, route affinity, and observable pool
+health.
+
+## PERF-02 (slice 2) — pool gauges in metrics, complete
+
+`Pool::stats()` (workers, in-flight, queue-wait p50/p99, recycles, crashes)
+was never surfaced. The dispatch now calls `metrics.observe_pool(...)` each
+request, and `/…/metrics` exposes `oxide_pool_workers`,
+`oxide_pool_in_flight`, `oxide_pool_queue_wait_p99_us` gauges.
+
+PERF-02 complete: core-sized pools, route affinity, and observable pool
+health.
+
+## PERF-02 (slice 2) — pool gauges in metrics, complete
+
+`Pool::stats()` (workers, in-flight, queue-wait p50/p99, recycles, crashes)
+was never surfaced. The dispatch now calls `metrics.observe_pool(...)` each
+request, and `/…/metrics` exposes `oxide_pool_workers`,
+`oxide_pool_in_flight`, `oxide_pool_queue_wait_p99_us` gauges.
+
+PERF-02 complete: core-sized pools, route affinity, and observable pool
+health.
+
+## PERF-02 (slice 2) — pool gauges in metrics, complete
+
+`Pool::stats()` (workers, in-flight, queue-wait p50/p99, recycles, crashes)
+was never surfaced. The dispatch now calls `metrics.observe_pool(...)` each
+request, and `/…/metrics` exposes `oxide_pool_workers`,
+`oxide_pool_in_flight`, `oxide_pool_queue_wait_p99_us` gauges.
+
+PERF-02 complete: core-sized pools, route affinity, and observable pool
+health.
