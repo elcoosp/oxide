@@ -3756,3 +3756,93 @@ With that fixed, both gates pass deterministically.
 Verified: `oxide-jshost` integration (frame roundtrip incl. `CallChunkBin`,
 protocol errors, binary roundtrip); four-fixture gate PASS; V8 gate PASS
 (10/10, generateParams x2, action).
+
+## PERF-03 (slice 1) — streaming ops (host side)
+
+`StreamWrite`/`ResponseHead`/`RequestBodyRead` were "not implemented". Now:
+- `Worker.streams` is a shared `Arc<Mutex<HashMap<call_id, Sender>>>` the
+  reader and any spawned op task both reach.
+- `Op::StreamWrite { call_id, data_b64 }` pushes a chunk to that call's
+  sender (false when the consumer is gone); `ResponseHead`/`RequestBodyRead`
+  are accepted (the status rides the final envelope; request-body read is a
+  no-op on this host).
+- V8: `op_oxide_stream_write` + a thread-local `STREAM_SINK`, exposed as
+  `oxide.streamWrite` in the bootstrap.
+
+Verified: `oxide-jshost` 22 integration tests + 50 lib; four-fixture gate
+PASS; V8 gate PASS.
+
+Remaining PERF-03: drive the V8 `__oxideFrameworkRender` through
+`oxide.streamWrite` (it still buffers) and the V8 worker-loop interleave.
+
+## PERF-03 (slice 1) — streaming ops (host side)
+
+`StreamWrite`/`ResponseHead`/`RequestBodyRead` were "not implemented". Now:
+- `Worker.streams` is a shared `Arc<Mutex<HashMap<call_id, Sender>>>` the
+  reader and any spawned op task both reach.
+- `Op::StreamWrite { call_id, data_b64 }` pushes a chunk to that call's
+  sender (false when the consumer is gone); `ResponseHead`/`RequestBodyRead`
+  are accepted (the status rides the final envelope; request-body read is a
+  no-op on this host).
+- V8: `op_oxide_stream_write` + a thread-local `STREAM_SINK`, exposed as
+  `oxide.streamWrite` in the bootstrap.
+
+Verified: `oxide-jshost` 22 integration tests + 50 lib; four-fixture gate
+PASS; V8 gate PASS.
+
+Remaining PERF-03: drive the V8 `__oxideFrameworkRender` through
+`oxide.streamWrite` (it still buffers) and the V8 worker-loop interleave.
+
+## PERF-03 (slice 1) — streaming ops (host side)
+
+`StreamWrite`/`ResponseHead`/`RequestBodyRead` were "not implemented". Now:
+- `Worker.streams` is a shared `Arc<Mutex<HashMap<call_id, Sender>>>` the
+  reader and any spawned op task both reach.
+- `Op::StreamWrite { call_id, data_b64 }` pushes a chunk to that call's
+  sender (false when the consumer is gone); `ResponseHead`/`RequestBodyRead`
+  are accepted (the status rides the final envelope; request-body read is a
+  no-op on this host).
+- V8: `op_oxide_stream_write` + a thread-local `STREAM_SINK`, exposed as
+  `oxide.streamWrite` in the bootstrap.
+
+Verified: `oxide-jshost` 22 integration tests + 50 lib; four-fixture gate
+PASS; V8 gate PASS.
+
+Remaining PERF-03: drive the V8 `__oxideFrameworkRender` through
+`oxide.streamWrite` (it still buffers) and the V8 worker-loop interleave.
+
+## PERF-03 (slice 1) — streaming ops (host side)
+
+`StreamWrite`/`ResponseHead`/`RequestBodyRead` were "not implemented". Now:
+- `Worker.streams` is a shared `Arc<Mutex<HashMap<call_id, Sender>>>` the
+  reader and any spawned op task both reach.
+- `Op::StreamWrite { call_id, data_b64 }` pushes a chunk to that call's
+  sender (false when the consumer is gone); `ResponseHead`/`RequestBodyRead`
+  are accepted (the status rides the final envelope; request-body read is a
+  no-op on this host).
+- V8: `op_oxide_stream_write` + a thread-local `STREAM_SINK`, exposed as
+  `oxide.streamWrite` in the bootstrap.
+
+Verified: `oxide-jshost` 22 integration tests + 50 lib; four-fixture gate
+PASS; V8 gate PASS.
+
+Remaining PERF-03: drive the V8 `__oxideFrameworkRender` through
+`oxide.streamWrite` (it still buffers) and the V8 worker-loop interleave.
+
+## PERF-03 (slice 1) — streaming ops (host side)
+
+`StreamWrite`/`ResponseHead`/`RequestBodyRead` were "not implemented". Now:
+- `Worker.streams` is a shared `Arc<Mutex<HashMap<call_id, Sender>>>` the
+  reader and any spawned op task both reach.
+- `Op::StreamWrite { call_id, data_b64 }` pushes a chunk to that call's
+  sender (false when the consumer is gone); `ResponseHead`/`RequestBodyRead`
+  are accepted (the status rides the final envelope; request-body read is a
+  no-op on this host).
+- V8: `op_oxide_stream_write` + a thread-local `STREAM_SINK`, exposed as
+  `oxide.streamWrite` in the bootstrap.
+
+Verified: `oxide-jshost` 22 integration tests + 50 lib; four-fixture gate
+PASS; V8 gate PASS.
+
+Remaining PERF-03: drive the V8 `__oxideFrameworkRender` through
+`oxide.streamWrite` (it still buffers) and the V8 worker-loop interleave.
