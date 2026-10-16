@@ -27,6 +27,19 @@ pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
 pub struct Watcher {
     pub roots: Vec<PathBuf>,
     pub debounce: Duration,
+    /// PERF-11: the OS-native watcher backend. When `Some`, `poll` drains its
+    /// event buffer (debounced) and content-hashes only the touched paths,
+    /// instead of re-walking + re-hashing the whole tree every tick. `None`
+    /// (notify failed to start, or a headless environment) falls back to the
+    /// full-walk poll.
+    backend: Option<NotifyBackend>,
+}
+
+/// PERF-11: a `notify` watcher plus the path buffer its callback fills.
+struct NotifyBackend {
+    /// Held to keep the OS watch alive for the `Watcher`'s lifetime.
+    _watcher: notify::RecommendedWatcher,
+    rx: std::sync::mpsc::Receiver<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,7 +54,44 @@ impl Watcher {
         Self {
             roots,
             debounce: Duration::from_millis(30),
+            backend: None,
         }
+    }
+
+    /// PERF-11: a `Watcher` backed by the OS-native `notify` watcher. Falls
+    /// back to the poll backend (with a warning) when the watcher cannot be
+    /// created — inotify limits, a network filesystem, a headless CI box.
+    pub fn with_notify(roots: Vec<PathBuf>) -> Self {
+        match Self::try_notify(&roots) {
+            Ok(backend) => Self {
+                roots,
+                debounce: Duration::from_millis(30),
+                backend: Some(backend),
+            },
+            Err(e) => {
+                eprintln!("warn: notify watcher unavailable ({e}); using the poll backend");
+                Self::new(roots)
+            }
+        }
+    }
+
+    fn try_notify(roots: &[PathBuf]) -> Result<NotifyBackend> {
+        use notify::{RecursiveMode, Watcher as _};
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+            if let Ok(ev) = res {
+                for p in ev.paths {
+                    let _ = tx.send(p);
+                }
+            }
+        })
+        .map_err(|e| crate::err("DEV-NOTIFY", format!("create watcher: {e}")))?;
+        for root in roots {
+            watcher
+                .watch(root, RecursiveMode::Recursive)
+                .map_err(|e| crate::err("DEV-NOTIFY", format!("watch {}: {e}", root.display())))?;
+        }
+        Ok(NotifyBackend { _watcher: watcher, rx })
     }
 
     /// Poll-based snapshot diffing (notify backend slots in behind this API).
@@ -55,6 +105,12 @@ impl Watcher {
     /// interval (`self.debounce` documents the intended gap); the debounced notify
     /// loop lives with the dev server runtime.
     pub fn poll(&self, seen: &mut BTreeSet<(PathBuf, String)>) -> Result<Vec<FileEvent>> {
+        // PERF-11: with the notify backend, only the touched paths are
+        // re-hashed. The callback buffer is drained (debounced), the changed
+        // set is content-hashed, and events emitted only for real changes.
+        if let Some(backend) = &self.backend {
+            return self.poll_notify(backend, seen);
+        }
         let mut current: BTreeMap<PathBuf, String> = BTreeMap::new();
         for root in &self.roots {
             walk_root(root, &mut current);
@@ -85,6 +141,54 @@ impl Watcher {
                 .cmp(&rank(b))
                 .then_with(|| path_of(a).cmp(path_of(b)))
         });
+        Ok(events)
+    }
+
+    /// PERF-11: drain the notify buffer, hash only the touched paths, and
+    /// diff against `seen`. A touched path that does not exist is a removal.
+    fn poll_notify(
+        &self,
+        backend: &NotifyBackend,
+        seen: &mut BTreeSet<(PathBuf, String)>,
+    ) -> Result<Vec<FileEvent>> {
+        // Debounce: give the filesystem a moment to settle, then drain
+        // everything queued (editors write in bursts — save, temp, rename).
+        std::thread::sleep(self.debounce);
+        let mut touched: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+        while let Ok(p) = backend.rx.try_recv() {
+            touched.insert(p);
+        }
+        if touched.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut events = Vec::new();
+        for path in touched {
+            // Skip editor temp files / directories.
+            if path.is_dir() {
+                continue;
+            }
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name.ends_with('~') || name.starts_with('.') && name.ends_with(".swp") {
+                continue;
+            }
+            let old = seen.iter().find(|(p, _)| p == &path).cloned();
+            match (old, hash_file(&path)) {
+                (Some((_, old_hash)), Some(new_hash)) if old_hash != new_hash => {
+                    seen.remove(&(path.clone(), old_hash.clone()));
+                    seen.insert((path.clone(), new_hash));
+                    events.push(FileEvent::Modified(path));
+                }
+                (None, Some(new_hash)) => {
+                    seen.insert((path.clone(), new_hash));
+                    events.push(FileEvent::Created(path));
+                }
+                (Some((_, old_hash)), None) => {
+                    seen.remove(&(path.clone(), old_hash));
+                    events.push(FileEvent::Removed(path));
+                }
+                _ => {}
+            }
+        }
         Ok(events)
     }
 }
