@@ -1690,6 +1690,47 @@ async fn build_static_refuses_dynamic_route() {
 
 // -------------------------------------------------------------- start/preview
 
+/// PERF-01: `/__data?route=` returns the ODF-encoded route-data envelope the
+/// client router decodes (`normalizeInput` expects route/url/params/data).
+#[tokio::test]
+async fn data_endpoint_returns_odf_envelope() {
+    let (_d, root) = fixture_project();
+    let started = start_server(
+        root.to_str().unwrap(),
+        Some(0),
+        crate::framework_shim::FrameworkStack::default(),
+    )
+    .await
+    .unwrap();
+    wait_ready(started.addr).await;
+
+    // Raw GET so we read the binary body as bytes.
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::TcpStream::connect(started.addr).await.unwrap();
+    stream
+        .write_all(
+            b"GET /__data?route=/blog HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        )
+        .await
+        .unwrap();
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).await.unwrap();
+    let text = String::from_utf8_lossy(&buf);
+    assert!(text.contains("200"), "status 200: {text}");
+    assert!(
+        text.contains("application/oxide+odf"),
+        "ODF content type: {text}"
+    );
+    // The ODF wire magic `ODF1` appears right after the header block.
+    let body_off = buf
+        .windows(4)
+        .position(|w| w == b"ODF1")
+        .expect("ODF magic in body");
+    assert!(body_off > 0);
+
+    let _ = started.shutdown.send(true);
+}
+
 #[tokio::test]
 async fn start_serves_health_endpoint_then_shuts_down() {
     let (_d, root) = fixture_project();
