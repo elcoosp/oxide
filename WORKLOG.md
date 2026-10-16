@@ -3548,3 +3548,118 @@ Remaining PERF-04: build seeding and the streaming-preserving fill (the fill
 still buffers the whole body — PERF-03's streaming ops are the prerequisite).
 
 Commits: (below).
+
+## PERF-04 (slice 3) — build seeding, complete
+
+Prerendered pages now seed L0 at boot, so a prerendered route is an **L0 hit
+on the very first request** (no warm-up miss):
+- `write_prerender` returns the HTML it wrote; the build collects
+  `(route, url, sentineled-html)` for every prerendered page (the live nonce
+  swapped to `NONCE_SENTINEL`).
+- `cmd_build` writes `dist/server/l0-seed.json`
+  `{build_id, entries:[{key,url,body}]}`.
+- `oxide start` reads it, checks `build_id` matches (stale manifests are
+  ignored), and calls `L0Cache::seed_entry` per entry.
+- `L0Cache::key_for` now takes the `build_id` so the seed key matches the
+  live key exactly.
+
+**Verified end-to-end**: build a fixture → `dist/server/l0-seed.json` written
+with the sentineled body → `oxide start` → the **first** `GET /` returns
+`x-oxide-cache: L0-hit` with the correct `<h1>Home</h1>` body.
+
+PERF-04 is now complete: SWR stale-serve, ETag/304, single-flight, seeding.
+The streaming-preserving fill remains (needs PERF-03's streaming ops).
+
+Commits: (below).
+
+## PERF-04 (slice 3) — build seeding, complete
+
+Prerendered pages now seed L0 at boot, so a prerendered route is an **L0 hit
+on the very first request** (no warm-up miss):
+- `write_prerender` returns the HTML it wrote; the build collects
+  `(route, url, sentineled-html)` for every prerendered page (the live nonce
+  swapped to `NONCE_SENTINEL`).
+- `cmd_build` writes `dist/server/l0-seed.json`
+  `{build_id, entries:[{key,url,body}]}`.
+- `oxide start` reads it, checks `build_id` matches (stale manifests are
+  ignored), and calls `L0Cache::seed_entry` per entry.
+- `L0Cache::key_for` now takes the `build_id` so the seed key matches the
+  live key exactly.
+
+**Verified end-to-end**: build a fixture → `dist/server/l0-seed.json` written
+with the sentineled body → `oxide start` → the **first** `GET /` returns
+`x-oxide-cache: L0-hit` with the correct `<h1>Home</h1>` body.
+
+PERF-04 is now complete: SWR stale-serve, ETag/304, single-flight, seeding.
+The streaming-preserving fill remains (needs PERF-03's streaming ops).
+
+Commits: (below).
+
+## PERF-04 (slice 3) — build seeding, complete
+
+Prerendered pages now seed L0 at boot, so a prerendered route is an **L0 hit
+on the very first request** (no warm-up miss):
+- `write_prerender` returns the HTML it wrote; the build collects
+  `(route, url, sentineled-html)` for every prerendered page (the live nonce
+  swapped to `NONCE_SENTINEL`).
+- `cmd_build` writes `dist/server/l0-seed.json`
+  `{build_id, entries:[{key,url,body}]}`.
+- `oxide start` reads it, checks `build_id` matches (stale manifests are
+  ignored), and calls `L0Cache::seed_entry` per entry.
+- `L0Cache::key_for` now takes the `build_id` so the seed key matches the
+  live key exactly.
+
+**Verified end-to-end**: build a fixture → `dist/server/l0-seed.json` written
+with the sentineled body → `oxide start` → the **first** `GET /` returns
+`x-oxide-cache: L0-hit` with the correct `<h1>Home</h1>` body.
+
+PERF-04 is now complete: SWR stale-serve, ETag/304, single-flight, seeding.
+The streaming-preserving fill remains (needs PERF-03's streaming ops).
+
+Commits: (below).
+
+## PERF-04 (slice 3) — build seeding, complete
+
+Prerendered pages now seed L0 at boot, so a prerendered route is an **L0 hit
+on the very first request** (no warm-up miss):
+- `write_prerender` returns the HTML it wrote; the build collects
+  `(route, url, sentineled-html)` for every prerendered page (the live nonce
+  swapped to `NONCE_SENTINEL`).
+- `cmd_build` writes `dist/server/l0-seed.json`
+  `{build_id, entries:[{key,url,body}]}`.
+- `oxide start` reads it, checks `build_id` matches (stale manifests are
+  ignored), and calls `L0Cache::seed_entry` per entry.
+- `L0Cache::key_for` now takes the `build_id` so the seed key matches the
+  live key exactly.
+
+**Verified end-to-end**: build a fixture → `dist/server/l0-seed.json` written
+with the sentineled body → `oxide start` → the **first** `GET /` returns
+`x-oxide-cache: L0-hit` with the correct `<h1>Home</h1>` body.
+
+PERF-04 is now complete: SWR stale-serve, ETag/304, single-flight, seeding.
+The streaming-preserving fill remains (needs PERF-03's streaming ops).
+
+Commits: (below).
+
+## PERF-04 (slice 3) — build seeding, complete
+
+Prerendered pages now seed L0 at boot, so a prerendered route is an **L0 hit
+on the very first request** (no warm-up miss):
+- `write_prerender` returns the HTML it wrote; the build collects
+  `(route, url, sentineled-html)` for every prerendered page (the live nonce
+  swapped to `NONCE_SENTINEL`).
+- `cmd_build` writes `dist/server/l0-seed.json`
+  `{build_id, entries:[{key,url,body}]}`.
+- `oxide start` reads it, checks `build_id` matches (stale manifests are
+  ignored), and calls `L0Cache::seed_entry` per entry.
+- `L0Cache::key_for` now takes the `build_id` so the seed key matches the
+  live key exactly.
+
+**Verified end-to-end**: build a fixture → `dist/server/l0-seed.json` written
+with the sentineled body → `oxide start` → the **first** `GET /` returns
+`x-oxide-cache: L0-hit` with the correct `<h1>Home</h1>` body.
+
+PERF-04 is now complete: SWR stale-serve, ETag/304, single-flight, seeding.
+The streaming-preserving fill remains (needs PERF-03's streaming ops).
+
+Commits: (below).
