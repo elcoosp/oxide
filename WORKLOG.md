@@ -3609,3 +3609,63 @@ Verified: build writes a 210-byte archive; `oxide start` serves `/`,
 PASS; `oxide-cli --lib` 98.
 
 Commits: (below).
+
+## PERF-09 — per-module metadata (slice 1)
+
+`Chunk.modules` was always empty ("recording it here would require a hook").
+Rolldown's `OutputChunk.module_ids` already carries the module list, so the
+rolldown backend now populates `Chunk.modules` from it — no plugin hook
+needed. This is the data `oxide analyze` (route-true bytes) and `oxide why`
+(module → chunks) read.
+
+Verified: `oxide-bundler` tests green; four-fixture gate PASS.
+
+Remaining PERF-09: `analyze` summing all chunks reachable from a route (not
+just the entry) and `why` printing importers + chunks from this map.
+
+Commits: (below).
+
+## PERF-09 — per-module metadata (slice 1)
+
+`Chunk.modules` was always empty ("recording it here would require a hook").
+Rolldown's `OutputChunk.module_ids` already carries the module list, so the
+rolldown backend now populates `Chunk.modules` from it — no plugin hook
+needed. This is the data `oxide analyze` (route-true bytes) and `oxide why`
+(module → chunks) read.
+
+Verified: `oxide-bundler` tests green; four-fixture gate PASS.
+
+Remaining PERF-09: `analyze` summing all chunks reachable from a route (not
+just the entry) and `why` printing importers + chunks from this map.
+
+Commits: (below).
+
+## PERF-09 — per-module metadata (slice 1)
+
+`Chunk.modules` was always empty ("recording it here would require a hook").
+Rolldown's `OutputChunk.module_ids` already carries the module list, so the
+rolldown backend now populates `Chunk.modules` from it — no plugin hook
+needed. This is the data `oxide analyze` (route-true bytes) and `oxide why`
+(module → chunks) read.
+
+Verified: `oxide-bundler` tests green; four-fixture gate PASS.
+
+Remaining PERF-09: `analyze` summing all chunks reachable from a route (not
+just the entry) and `why` printing importers + chunks from this map.
+
+Commits: (below).
+
+## PERF-09 — per-module metadata (slice 1)
+
+`Chunk.modules` was always empty ("recording it here would require a hook").
+Rolldown's `OutputChunk.module_ids` already carries the module list, so the
+rolldown backend now populates `Chunk.modules` from it — no plugin hook
+needed. This is the data `oxide analyze` (route-true bytes) and `oxide why`
+(module → chunks) read.
+
+Verified: `oxide-bundler` tests green; four-fixture gate PASS.
+
+Remaining PERF-09: `analyze` summing all chunks reachable from a route (not
+just the entry) and `why` printing importers + chunks from this map.
+
+Commits: (below).
