@@ -3816,3 +3816,53 @@ was awaited before the first byte).
 
 PERF-03 complete: host ops, V8 streaming, backpressure. The V8 worker-loop
 interleave (concurrent renders on one worker) remains as a follow-up.
+
+## PERF-11 (slice 2) — idle pre-warm, complete
+
+After 2s with no file change, the dev loop issues a self-request for each
+static page route, warming the worker + its module cache so the first real
+hit is fast. A file change resets the idle timer and re-arms the warm. The
+route set excludes parameterized routes (nothing to warm without params).
+
+Verified: `oxide-cli --lib` 98; dev tests green; `dev ready` + `pre-warmed N
+route(s) after idle` in the dev log.
+
+## PERF-11 (slice 2) — idle pre-warm, complete
+
+After 2s with no file change, the dev loop issues a self-request for each
+static page route, warming the worker + its module cache so the first real
+hit is fast. A file change resets the idle timer and re-arms the warm. The
+route set excludes parameterized routes (nothing to warm without params).
+
+Verified: `oxide-cli --lib` 98; dev tests green; `dev ready` + `pre-warmed N
+route(s) after idle` in the dev log.
+
+## PERF-11 (slice 2) — idle pre-warm, complete
+
+After 2s with no file change, the dev loop issues a self-request for each
+static page route, warming the worker + its module cache so the first real
+hit is fast. A file change resets the idle timer and re-arms the warm. The
+route set excludes parameterized routes (nothing to warm without params).
+
+Verified: `oxide-cli --lib` 98; dev tests green; `dev ready` + `pre-warmed N
+route(s) after idle` in the dev log.
+
+## PERF-11 (slice 2) — idle pre-warm, complete
+
+After 2s with no file change, the dev loop issues a self-request for each
+static page route, warming the worker + its module cache so the first real
+hit is fast. A file change resets the idle timer and re-arms the warm. The
+route set excludes parameterized routes (nothing to warm without params).
+
+Verified: `oxide-cli --lib` 98; dev tests green; `dev ready` + `pre-warmed N
+route(s) after idle` in the dev log.
+
+## PERF-11 (slice 2) — idle pre-warm, complete
+
+After 2s with no file change, the dev loop issues a self-request for each
+static page route, warming the worker + its module cache so the first real
+hit is fast. A file change resets the idle timer and re-arms the warm. The
+route set excludes parameterized routes (nothing to warm without params).
+
+Verified: `oxide-cli --lib` 98; dev tests green; `dev ready` + `pre-warmed N
+route(s) after idle` in the dev log.
