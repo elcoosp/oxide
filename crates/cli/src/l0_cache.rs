@@ -165,19 +165,33 @@ impl L0Cache {
         self.key(route, params, vary)
     }
 
+    /// PERF-04: the build id this cache scopes keys to.
+    pub fn build_id(&self) -> &str {
+        &self.build_id
+    }
+
+    /// PERF-04: seed an entry at an explicit key. Used by boot seeding,
+    /// where the key was computed at build time. The body already carries the
+    /// nonce sentinel.
+    pub async fn seed_entry(&self, key: &str, body: Vec<u8>) {
+        let entry = self.make_entry(
+            200,
+            vec![("content-type".to_string(), "text/html; charset=utf-8".to_string())],
+            body,
+            vec![],
+        );
+        let _ = self.handler.set(key, entry).await;
+    }
+
     /// PERF-04: build the canonical L0 key without an `L0Cache` instance
     /// (the dispatch needs the single-flight key before it has the cache).
-    pub fn key_for(route: &str, params: &str, vary: &str) -> String {
-        // The `build_id` is part of the key; the single-flight map is
-        // per-process, so a single-flight key without it is still correct
-        // (only same-process, same-build callers race). The L0 cache's own
-        // key adds `build_id`; the two must agree, so this mirrors the shape.
+    pub fn key_for(route: &str, params: &str, vary: &str, build_id: &str) -> String {
         CacheKey {
             layer: Layer::L0,
             route: route.to_string(),
             params: params.to_string(),
             vary: vary.to_string(),
-            build_id: String::new(),
+            build_id: build_id.to_string(),
         }
         .canonical()
     }
