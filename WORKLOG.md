@@ -3990,3 +3990,78 @@ Verified: `cargo test --workspace` **884 passed / 0 failed**; config suite
 20+26 incl. the new drift test.
 
 Commits: (below).
+
+## SEC-09 — dev-server host/origin checks + inspector guard
+
+The dev inspector (`/__oxide`, `/__oxide/state`) was reachable by anyone who
+could reach the port — including over a shared LAN when dev is bound to a
+non-loopback IP.
+
+Fixed:
+- `Pipeline.dev_token` gates the inspector: a request needs the token via
+  `?token=` or the `x-oxide-dev-token` header, compared constant-time. No
+  token → 403.
+- The CLI mints the token when the inspector is attached (dev only),
+  exposes it on `StartedServer.dev_token`, and prints
+  `inspector: http://…/__oxide?token=…` in the dev banner.
+- `dev_host_allowed(host, bind_ip)` (pure, tested): a dev server accepts
+  `localhost`/loopback/the bind IP; any other Host (a DNS-rebinding attempt)
+  is refused.
+
+The HMR/inspector **WebSocket** Origin restriction belongs with SPEC-14 (the
+HMR socket is not wired yet); noted there.
+
+Verified: `cargo test -p oxide-server` green; new tests cover token
+admission (query + header + wrong) and the dev-host check.
+
+Commits: (below).
+
+## SEC-09 — dev-server host/origin checks + inspector guard
+
+The dev inspector (`/__oxide`, `/__oxide/state`) was reachable by anyone who
+could reach the port — including over a shared LAN when dev is bound to a
+non-loopback IP.
+
+Fixed:
+- `Pipeline.dev_token` gates the inspector: a request needs the token via
+  `?token=` or the `x-oxide-dev-token` header, compared constant-time. No
+  token → 403.
+- The CLI mints the token when the inspector is attached (dev only),
+  exposes it on `StartedServer.dev_token`, and prints
+  `inspector: http://…/__oxide?token=…` in the dev banner.
+- `dev_host_allowed(host, bind_ip)` (pure, tested): a dev server accepts
+  `localhost`/loopback/the bind IP; any other Host (a DNS-rebinding attempt)
+  is refused.
+
+The HMR/inspector **WebSocket** Origin restriction belongs with SPEC-14 (the
+HMR socket is not wired yet); noted there.
+
+Verified: `cargo test -p oxide-server` green; new tests cover token
+admission (query + header + wrong) and the dev-host check.
+
+Commits: (below).
+
+## SEC-09 — dev-server host/origin checks + inspector guard
+
+The dev inspector (`/__oxide`, `/__oxide/state`) was reachable by anyone who
+could reach the port — including over a shared LAN when dev is bound to a
+non-loopback IP.
+
+Fixed:
+- `Pipeline.dev_token` gates the inspector: a request needs the token via
+  `?token=` or the `x-oxide-dev-token` header, compared constant-time. No
+  token → 403.
+- The CLI mints the token when the inspector is attached (dev only),
+  exposes it on `StartedServer.dev_token`, and prints
+  `inspector: http://…/__oxide?token=…` in the dev banner.
+- `dev_host_allowed(host, bind_ip)` (pure, tested): a dev server accepts
+  `localhost`/loopback/the bind IP; any other Host (a DNS-rebinding attempt)
+  is refused.
+
+The HMR/inspector **WebSocket** Origin restriction belongs with SPEC-14 (the
+HMR socket is not wired yet); noted there.
+
+Verified: `cargo test -p oxide-server` green; new tests cover token
+admission (query + header + wrong) and the dev-host check.
+
+Commits: (below).
