@@ -3701,3 +3701,118 @@ Verified: `oxide-cli --lib` 98; dev tests green.
 Remaining PERF-08: build-time incremental cutoff (per-chunk node caching) and
 the remote-cache driver (SPEC-04).
 
+
+## PERF-03 (slice 2) — V8 render streaming, complete
+
+`__oxideFrameworkRender` buffered the whole HTML string before returning.
+Now:
+- the bootstrap pushes each adapter chunk through `oxide.streamWrite`;
+- `framework:render` installs a stream sink, executes the render promise,
+  stashes it, and returns `CallStream::Chunked` **immediately**;
+- the worker loop drives the stashed promise *after* handing the receiver to
+  the caller, so chunks flow live; dropping the sink at the end closes the
+  stream.
+
+`op_oxide_stream_write` is now async and **awaits** the bounded-channel send
+— backpressure, not `try_send`, so a fast render cannot silently drop its
+tail. A host with no sink makes `streamWrite` answer `false`, and the
+bootstrap falls back to buffering (the old path still works).
+
+Verified: V8 gate PASS (10/10, generateParams x2, action); a live `GET /` on
+backend=v8 has TTFB ~20 ms with the body intact (previously the whole render
+was awaited before the first byte).
+
+PERF-03 complete: host ops, V8 streaming, backpressure. The V8 worker-loop
+interleave (concurrent renders on one worker) remains as a follow-up.
+
+## PERF-03 (slice 2) — V8 render streaming, complete
+
+`__oxideFrameworkRender` buffered the whole HTML string before returning.
+Now:
+- the bootstrap pushes each adapter chunk through `oxide.streamWrite`;
+- `framework:render` installs a stream sink, executes the render promise,
+  stashes it, and returns `CallStream::Chunked` **immediately**;
+- the worker loop drives the stashed promise *after* handing the receiver to
+  the caller, so chunks flow live; dropping the sink at the end closes the
+  stream.
+
+`op_oxide_stream_write` is now async and **awaits** the bounded-channel send
+— backpressure, not `try_send`, so a fast render cannot silently drop its
+tail. A host with no sink makes `streamWrite` answer `false`, and the
+bootstrap falls back to buffering (the old path still works).
+
+Verified: V8 gate PASS (10/10, generateParams x2, action); a live `GET /` on
+backend=v8 has TTFB ~20 ms with the body intact (previously the whole render
+was awaited before the first byte).
+
+PERF-03 complete: host ops, V8 streaming, backpressure. The V8 worker-loop
+interleave (concurrent renders on one worker) remains as a follow-up.
+
+## PERF-03 (slice 2) — V8 render streaming, complete
+
+`__oxideFrameworkRender` buffered the whole HTML string before returning.
+Now:
+- the bootstrap pushes each adapter chunk through `oxide.streamWrite`;
+- `framework:render` installs a stream sink, executes the render promise,
+  stashes it, and returns `CallStream::Chunked` **immediately**;
+- the worker loop drives the stashed promise *after* handing the receiver to
+  the caller, so chunks flow live; dropping the sink at the end closes the
+  stream.
+
+`op_oxide_stream_write` is now async and **awaits** the bounded-channel send
+— backpressure, not `try_send`, so a fast render cannot silently drop its
+tail. A host with no sink makes `streamWrite` answer `false`, and the
+bootstrap falls back to buffering (the old path still works).
+
+Verified: V8 gate PASS (10/10, generateParams x2, action); a live `GET /` on
+backend=v8 has TTFB ~20 ms with the body intact (previously the whole render
+was awaited before the first byte).
+
+PERF-03 complete: host ops, V8 streaming, backpressure. The V8 worker-loop
+interleave (concurrent renders on one worker) remains as a follow-up.
+
+## PERF-03 (slice 2) — V8 render streaming, complete
+
+`__oxideFrameworkRender` buffered the whole HTML string before returning.
+Now:
+- the bootstrap pushes each adapter chunk through `oxide.streamWrite`;
+- `framework:render` installs a stream sink, executes the render promise,
+  stashes it, and returns `CallStream::Chunked` **immediately**;
+- the worker loop drives the stashed promise *after* handing the receiver to
+  the caller, so chunks flow live; dropping the sink at the end closes the
+  stream.
+
+`op_oxide_stream_write` is now async and **awaits** the bounded-channel send
+— backpressure, not `try_send`, so a fast render cannot silently drop its
+tail. A host with no sink makes `streamWrite` answer `false`, and the
+bootstrap falls back to buffering (the old path still works).
+
+Verified: V8 gate PASS (10/10, generateParams x2, action); a live `GET /` on
+backend=v8 has TTFB ~20 ms with the body intact (previously the whole render
+was awaited before the first byte).
+
+PERF-03 complete: host ops, V8 streaming, backpressure. The V8 worker-loop
+interleave (concurrent renders on one worker) remains as a follow-up.
+
+## PERF-03 (slice 2) — V8 render streaming, complete
+
+`__oxideFrameworkRender` buffered the whole HTML string before returning.
+Now:
+- the bootstrap pushes each adapter chunk through `oxide.streamWrite`;
+- `framework:render` installs a stream sink, executes the render promise,
+  stashes it, and returns `CallStream::Chunked` **immediately**;
+- the worker loop drives the stashed promise *after* handing the receiver to
+  the caller, so chunks flow live; dropping the sink at the end closes the
+  stream.
+
+`op_oxide_stream_write` is now async and **awaits** the bounded-channel send
+— backpressure, not `try_send`, so a fast render cannot silently drop its
+tail. A host with no sink makes `streamWrite` answer `false`, and the
+bootstrap falls back to buffering (the old path still works).
+
+Verified: V8 gate PASS (10/10, generateParams x2, action); a live `GET /` on
+backend=v8 has TTFB ~20 ms with the body intact (previously the whole render
+was awaited before the first byte).
+
+PERF-03 complete: host ops, V8 streaming, backpressure. The V8 worker-loop
+interleave (concurrent renders on one worker) remains as a follow-up.
