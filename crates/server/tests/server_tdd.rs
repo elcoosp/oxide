@@ -1244,14 +1244,13 @@ async fn pipeline_dispatch_appends_security_headers_and_timing_once() {
     );
     assert_eq!(resp.header("x-frame-options"), Some("DENY"));
 
-    // no dispatch timing → placeholder emitted
+    // no dispatch timing → PERF-06 emits a real `total;dur=` (not the old
+    // all-zero default).
     let resp = p
         .serve_request(req("GET", "/page", &[]), &echo_dispatch())
         .await;
-    assert_eq!(
-        resp.header("server-timing"),
-        Some(RequestTimings_default_server_timing().as_str())
-    );
+    let st = resp.header("server-timing").expect("timing present");
+    assert!(st.starts_with("total;dur="), "real total: {st}");
 }
 
 #[tokio::test]
