@@ -398,9 +398,26 @@ macro_rules! outln {
 /// falls back to defaults so `routes`/`doctor` still work on fresh projects.
 fn load_config_or_default(root: &Path, mode: &str) -> OxideConfig {
     match oxide_config::load(root, mode, BTreeMap::new()) {
-        Ok(loaded) => loaded.config,
+        Ok(loaded) => {
+            // BUG-11: a dynamic `oxide.config.ts` (one the static extractor
+            // cannot read) means the CLI is running on a static-extracted
+            // subset — the JS eval fallback is not wired here yet. Say so
+            // loudly instead of silently serving a partial config. The
+            // supported remedy is a literal config or a `oxide.config.json`.
+            if loaded.used_dynamic_eval {
+                eprintln!(
+                    "warn: oxide.config.ts needed dynamic evaluation; the CLI is \
+                     running on the static-extracted subset. Make the config a \
+                     literal object, or provide oxide.config.json (CFG-DYNAMIC)."
+                );
+            }
+            loaded.config
+        }
         Err(e) => {
-            tracing::debug!(code = %e.0.code, "config load failed; using defaults");
+            // A present-but-broken config is not the same as no config. Surface
+            // the code so a user sees `CFG-SCHEMA`/`CFG-IO` rather than silent
+            // defaults (the debug log alone hides it in a normal run).
+            eprintln!("warn: config load failed ({}): {}", e.0.code, e.0.message);
             OxideConfig::default()
         }
     }
@@ -674,6 +691,8 @@ fn bundle_env_options(
     // (a browser bundle cannot resolve a bare import) and for the default
     // self-contained server bundle; populated from `build.ssrExternals`.
     ssr_externals: Vec<String>,
+    // BUG-11: `build.sourcemap` (`off` | `file` | `hidden`). `off` → no maps.
+    sourcemap_on: bool,
 ) -> oxide_bundler::BundleOptions {
     // §6.1: `process.env.NODE_ENV` drives React's dev-vs-production
     // bundle selection. Setting it at the CLI level (rather than in the
@@ -708,10 +727,10 @@ fn bundle_env_options(
         // Production builds minify. The dev server has its own bundling
         // path (`dev::prebundle`) and never goes through this helper, so
         // turning minify on here only affects `oxide build` output.
-        // Sourcemaps stay off until the Rust sourcemap chain is wired
-        // through `RolldownBundler` — a bare `.map` URL would 404.
         minify: true,
-        sourcemap: false,
+        // BUG-11: honour `build.sourcemap`. `RolldownBundler` supports
+        // `SourceMapType::File`; `off` emits no map.
+        sourcemap: sourcemap_on,
         // §21: externals only apply to the server bundle; a browser bundle
         // must inline everything.
         externals: match env {
@@ -1897,6 +1916,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         transform_hook.clone(),
         css_transform.clone(),
         Vec::new(),
+        cfg.build.sourcemap != "off",
     );
     let server_opts = bundle_env_options(
         oxide_bundler::BundleEnv::Ssr,
@@ -1908,6 +1928,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         transform_hook,
         css_transform,
         cfg.build.ssr_externals.clone(),
+        cfg.build.sourcemap != "off",
     );
     let rb = oxide_bundler::RolldownBundler::new(&rootp);
     let client_outcome = rb.bundle(&client_opts).map_err(|e| {
@@ -3390,6 +3411,26 @@ fn load_client_assets(rootp: &Path) -> Option<oxide_server::StaticAssets> {
     oxide_server::StaticAssets::scan(dist).ok()
 }
 
+/// BUG-11: turn `server.host` into a bind IP. `localhost` (and `""`) → the
+/// loopback v4 address; an IP literal → itself; `0.0.0.0`/`::` → unspecified
+/// (all interfaces). A hostname that is not an IP literal is a config error a
+/// operator should see, but binding must still work — we warn and fall back to
+/// loopback rather than fail to start.
+fn resolve_bind_host(host: &str) -> std::net::IpAddr {
+    let h = host.trim();
+    if h.is_empty() || h.eq_ignore_ascii_case("localhost") {
+        return std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+    }
+    if let Ok(ip) = h.parse::<std::net::IpAddr>() {
+        return ip;
+    }
+    tracing::warn!(
+        host = h,
+        "server.host is not an IP literal; binding loopback (use an IP like 0.0.0.0 to expose)"
+    );
+    std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+}
+
 async fn start_server_inner_full(
     root: &str,
     bind: Option<(std::net::IpAddr, u16)>,
@@ -3416,10 +3457,7 @@ async fn start_server_inner_full(
         // A caller-supplied port is honoured verbatim — including 0, which
         // means "ephemeral, OS chooses" (the test and CI convention).
         Some((ip, p)) => (ip, p),
-        None => (
-            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-            cfg.server.port,
-        ),
+        None => (resolve_bind_host(&cfg.server.host), cfg.server.port),
     };
     let port = resolve_port(requested_port).await;
     let rules = oxide_router::RulesEngine::compile(config_rules_to_router(&cfg.rules))
@@ -3503,10 +3541,20 @@ async fn start_server_inner_full(
     // worker's `'use cache'` entries and the L0 response cache now share one
     // handler, so BUG-01's invalidation reaches both. A stack built without a
     // cache (tests, `FrameworkStack::empty()`) gets a private tier.
+    // BUG-11: honour `cache.l0MaxSize` (parsed: "512mb" | "64kb" | bytes).
+    // A malformed value falls back to 512 MiB with a warning rather than
+    // refusing to start.
+    let l0_bytes = oxide_config::parse_size(&cfg.cache.l0_max_size).unwrap_or_else(|_| {
+        tracing::warn!(
+            value = %cfg.cache.l0_max_size,
+            "cache.l0MaxSize is malformed; using 512mb"
+        );
+        512 * 1024 * 1024
+    });
     let l0_tier: std::sync::Arc<dyn oxide_cache::CacheHandler> = stack
         .cache_tier
         .clone()
-        .unwrap_or_else(|| std::sync::Arc::new(oxide_cache::TieredCache::new(512 * 1024 * 1024)));
+        .unwrap_or_else(|| std::sync::Arc::new(oxide_cache::TieredCache::new(l0_bytes)));
     let l0 = Some(std::sync::Arc::new(l0_cache::L0Cache::new(
         l0_tier,
         build_id,
