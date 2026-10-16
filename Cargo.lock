@@ -4510,6 +4510,7 @@ dependencies = [
  "blake3",
  "bytes",
  "clap",
+ "dashmap 6.2.1",
  "futures",
  "opentelemetry",
  "opentelemetry-otlp",
