@@ -302,7 +302,10 @@ pub async fn build_framework_stack(
             };
             // BUG-02: give the V8 backend the same cache tier as Node — it
             // had none, so `'use cache'` silently degraded to per-worker Maps.
-            Arc::new(host.with_cache_handler(Arc::clone(&cache_tier)))
+            Arc::new(
+                host.with_cache_handler(Arc::clone(&cache_tier))
+                    .with_fetch_handler(Arc::clone(&fetch_handler)),
+            )
         }
     };
     // PERF-02: size the render/loader pool by the machine's parallelism, not

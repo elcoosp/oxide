@@ -1009,7 +1009,35 @@ globalThis.oxide = {
     Deno.core.ops.op_oxide_cache_set(
       String(key), Number(status) | 0, String(bodyB64), String(tagsCsv)),
   cacheTag: (tag) => Deno.core.ops.op_oxide_cache_tag(String(tag)),
+  // PERF-05: the V8 fetch op (SSRF-hardened, host-provided).
+  fetch: (method, url, headersJson, bodyB64) =>
+    Deno.core.ops.op_oxide_fetch(String(method), String(url), String(headersJson), String(bodyB64)),
 };
+
+// PERF-05: a `fetch()` for user code, routed through the op.
+if (typeof globalThis.fetch === 'undefined') {
+  globalThis.fetch = async function (input, init = {}) {
+    const url = typeof input === 'string' ? input : (input && input.url) || String(input);
+    const method = (init.method || (input && input.method) || 'GET').toUpperCase();
+    const hdrs = init.headers || (input && input.headers) || {};
+    const headersJson = JSON.stringify(
+      hdrs && typeof hdrs.forEach === 'function'
+        ? (() => { const o = {}; hdrs.forEach((v, k) => { o[k] = v; }); return o; })()
+        : hdrs,
+    );
+    let bodyB64 = '';
+    if (init.body != null) {
+      const s = typeof init.body === 'string' ? init.body : String(init.body);
+      bodyB64 = btoa(unescape(encodeURIComponent(s)));
+    }
+    const resJson = await globalThis.oxide.fetch(method, url, headersJson, bodyB64);
+    const res = JSON.parse(resJson);
+    const bin = atob(res.body_b64 || '');
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Response(bytes, { status: res.status, headers: new Headers(res.headers || []) });
+  };
+}
 
 // Sec.4.2 / Sec.4.4: the real V8 dispatch. `moduleUrl` is a `file://` URL the
 // runtime's `FsModuleLoader` resolves; `exportName` is the export to call
@@ -1465,6 +1493,7 @@ struct V8WorkerHandle {
 fn spawn_v8_worker(
     snapshot: Option<&'static [u8]>,
     cache: Option<Arc<dyn oxide_cache::CacheHandler>>,
+    fetch_handler: Option<Arc<dyn FetchHandler>>,
 ) -> Result<Arc<V8WorkerHandle>> {
     let (tx, mut rx) = mpsc::channel::<V8Msg>(64);
     let (init_tx, init_rx) = std::sync::mpsc::channel::<Result<()>>();
@@ -1495,6 +1524,7 @@ fn spawn_v8_worker(
             // runtime evaluates any user module, so `oxide.cacheGet/Set/Tag`
             // see it. Thread-local because a `JsRuntime` is `!Send`.
             crate::v8_ops::set_cache_handler(cache);
+            crate::v8_ops::set_fetch_handler(fetch_handler);
             let local = tokio::task::LocalSet::new();
             local.block_on(&rt, async move {
                 // The one shared extension: bootstrap js_file + oxide ops.
@@ -1906,6 +1936,8 @@ pub struct V8Host {
     /// "no cache" (a miss / a no-op write) — honest, and the pre-BUG-02
     /// behavior.
     cache_handler: Option<std::sync::Arc<dyn oxide_cache::CacheHandler>>,
+    /// PERF-05: the fetch handler each worker installs for the `fetch` op.
+    fetch_handler: Option<std::sync::Arc<dyn FetchHandler>>,
     /// §4.4 / BUG-03: the leaked `&'static` view of `snapshot`, computed
     /// **once**. Before this, `static_snapshot()` leaked a fresh copy on every
     /// call (`render_pool` + `tooling_pool` + each pool rebuild), an unbounded
@@ -1918,6 +1950,7 @@ impl Default for V8Host {
         Self {
             snapshot: None,
             cache_handler: None,
+            fetch_handler: None,
             leaked: std::sync::OnceLock::new(),
         }
     }
@@ -1936,6 +1969,7 @@ impl V8Host {
         Self {
             snapshot: Some(std::sync::Arc::new(blob)),
             cache_handler: None,
+            fetch_handler: None,
             leaked: std::sync::OnceLock::new(),
         }
     }
@@ -1948,6 +1982,15 @@ impl V8Host {
         handler: std::sync::Arc<dyn oxide_cache::CacheHandler>,
     ) -> Self {
         self.cache_handler = Some(handler);
+        self
+    }
+
+    /// PERF-05: attach the fetch handler each worker installs for the `fetch` op.
+    pub fn with_fetch_handler(
+        mut self,
+        handler: std::sync::Arc<dyn FetchHandler>,
+    ) -> Self {
+        self.fetch_handler = Some(handler);
         self
     }
 
@@ -2033,10 +2076,11 @@ impl V8Host {
         cfg: PoolConfig,
         snapshot: Option<&'static [u8]>,
         cache: Option<std::sync::Arc<dyn oxide_cache::CacheHandler>>,
+        fetch_handler: Option<std::sync::Arc<dyn FetchHandler>>,
     ) -> Result<Arc<V8Pool>> {
         let mut workers = Vec::with_capacity(cfg.size.max(1));
         for _ in 0..cfg.size.max(1) {
-            workers.push(spawn_v8_worker(snapshot, cache.clone())?);
+            workers.push(spawn_v8_worker(snapshot, cache.clone(), fetch_handler.clone())?);
         }
         Ok(Arc::new(V8Pool {
             cfg,
@@ -2047,17 +2091,18 @@ impl V8Host {
             draining: AtomicBool::new(false),
             snapshot,
             cache_handler: cache,
+            fetch_handler,
         }))
     }
 }
 
 impl JsHost for V8Host {
     fn render_pool(&self, cfg: PoolConfig) -> Result<Arc<dyn Pool>> {
-        Self::build_pool(cfg, self.static_snapshot(), self.cache_handler.clone())
+        Self::build_pool(cfg, self.static_snapshot(), self.cache_handler.clone(), self.fetch_handler.clone())
             .map(|p| p as Arc<dyn Pool>)
     }
     fn tooling_pool(&self, cfg: PoolConfig) -> Result<Arc<dyn Pool>> {
-        Self::build_pool(cfg, self.static_snapshot(), self.cache_handler.clone())
+        Self::build_pool(cfg, self.static_snapshot(), self.cache_handler.clone(), self.fetch_handler.clone())
             .map(|p| p as Arc<dyn Pool>)
     }
     fn backend_name(&self) -> &'static str {
@@ -2081,6 +2126,8 @@ pub struct V8Pool {
     snapshot: Option<&'static [u8]>,
     /// BUG-02: the cache tier every worker (and each replacement) installs.
     cache_handler: Option<std::sync::Arc<dyn oxide_cache::CacheHandler>>,
+    /// PERF-05: the fetch handler every worker (and each replacement) installs.
+    fetch_handler: Option<std::sync::Arc<dyn FetchHandler>>,
 }
 
 impl V8Pool {
@@ -2106,6 +2153,7 @@ impl V8Pool {
         idx: usize,
         snapshot: Option<&'static [u8]>,
         cache: Option<std::sync::Arc<dyn oxide_cache::CacheHandler>>,
+        fetch_handler: Option<std::sync::Arc<dyn FetchHandler>>,
     ) {
         let old = {
             let guard = workers.read().unwrap_or_else(|p| p.into_inner());
@@ -2123,7 +2171,7 @@ impl V8Pool {
         }
 
         // Spawn fresh worker BEFORE signalling the old one (§4.3).
-        let fresh = match spawn_v8_worker(snapshot, cache) {
+        let fresh = match spawn_v8_worker(snapshot, cache, fetch_handler) {
             Ok(w) => w,
             Err(_) => {
                 // Could not replace — clear the retire flag so the pool can
@@ -2226,8 +2274,9 @@ impl Pool for V8Pool {
                 let counters = Arc::clone(&self.counters);
                 let snapshot = self.snapshot;
                 let cache = self.cache_handler.clone();
+                let fetch = self.fetch_handler.clone();
                 tokio::spawn(async move {
-                    V8Pool::spawn_replacement(workers, counters, worker_idx, snapshot, cache)
+                    V8Pool::spawn_replacement(workers, counters, worker_idx, snapshot, cache, fetch)
                         .await
                 });
             }
@@ -2277,8 +2326,9 @@ impl Pool for V8Pool {
                     let counters = Arc::clone(&self.counters);
                     let snapshot = self.snapshot; // Copy (&'static [u8])
                     let cache = self.cache_handler.clone();
+                    let fetch = self.fetch_handler.clone();
                     tokio::spawn(async move {
-                        V8Pool::spawn_replacement(workers, counters, worker_idx, snapshot, cache)
+                        V8Pool::spawn_replacement(workers, counters, worker_idx, snapshot, cache, fetch)
                             .await
                     });
                 }

@@ -37,6 +37,58 @@ fn cache_handler() -> Option<Arc<dyn oxide_cache::CacheHandler>> {
     CACHE_HANDLER.with(|c| c.borrow().clone())
 }
 
+thread_local! {
+    /// PERF-05: the fetch handler this V8 worker's `fetch` op delegates to.
+    static FETCH_HANDLER: RefCell<Option<Arc<dyn crate::FetchHandler>>> =
+        const { RefCell::new(None) };
+}
+
+/// Install the fetch handler for the current V8 worker thread.
+pub fn set_fetch_handler(handler: Option<Arc<dyn crate::FetchHandler>>) {
+    FETCH_HANDLER.with(|c| *c.borrow_mut() = handler);
+}
+
+fn fetch_handler() -> Option<Arc<dyn crate::FetchHandler>> {
+    FETCH_HANDLER.with(|c| c.borrow().clone())
+}
+
+/// `oxide.fetch(method, url, headersJson, bodyB64)` — the V8 `fetch` op.
+/// Returns a JSON string `{status, headers, body_b64}` or throws. Backed by
+/// the same SSRF-hardened handler as the Node worker's `fetch` shim.
+#[op2]
+#[string]
+pub async fn op_oxide_fetch(
+    #[string] method: String,
+    #[string] url: String,
+    #[string] headers_json: String,
+    #[string] body_b64: String,
+) -> Result<String, deno_error::JsErrorBox> {
+    let Some(h) = fetch_handler() else {
+        return Err(deno_error::JsErrorBox::generic(
+            "fetch op unavailable: no FetchHandler wired",
+        ));
+    };
+    let headers: Vec<(String, String)> = serde_json::from_str(&headers_json).unwrap_or_default();
+    use base64::Engine as _;
+    let body = base64::engine::general_purpose::STANDARD
+        .decode(&body_b64)
+        .unwrap_or_default();
+    match h.fetch(&method, &url, &headers, &body).await {
+        Ok(resp) => {
+            let out = serde_json::json!({
+                "status": resp.status,
+                "headers": resp.headers,
+                "body_b64": base64::engine::general_purpose::STANDARD.encode(&resp.body),
+            });
+            Ok(out.to_string())
+        }
+        Err(e) => Err(deno_error::JsErrorBox::generic(format!(
+            "{}: {}",
+            e.0.code, e.0.message
+        ))),
+    }
+}
+
 /// `oxide.log(msg)` — structured log line into Rust.
 #[op2(fast)]
 pub fn op_oxide_log(#[string] msg: String) {
@@ -201,5 +253,6 @@ pub fn op_decls() -> Vec<deno_core::OpDecl> {
         op_oxide_cache_get(),
         op_oxide_cache_set(),
         op_oxide_cache_tag(),
+        op_oxide_fetch(),
     ]
 }

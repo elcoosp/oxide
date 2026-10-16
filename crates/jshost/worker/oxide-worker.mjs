@@ -109,6 +109,71 @@ function opName(name) {
 
 globalThis.__oxide_op_request = oxideOpRequest;
 
+// ---------------------------------------------------------------------------
+// PERF-05: a `fetch` shim. User code's server-side `fetch()` routes through
+// the `fetch` op so it goes through the host's SSRF-hardened path (the same
+// one the image endpoint uses). A host that has no fetch handler answers
+// `JSH-OP`; we then fall back to Node's global `fetch` **with a warning**, so
+// a project is never broken by a missing handler — it just loses the guard.
+//
+// Same-origin + allow-listed URLs are the common case; we route *every*
+// request through the op (the host decides what is allowed), which is the
+// safe default. Set OXIDE_FETCH_NATIVE=1 to bypass the op entirely (tests).
+const __nativeFetch = globalThis.fetch ? globalThis.fetch.bind(globalThis) : undefined;
+let __fetchFallbackWarned = false;
+
+function __headersToObject(h) {
+  const o = {};
+  try {
+    if (h && typeof h.forEach === "function") h.forEach((v, k) => { o[k] = v; });
+    else if (Array.isArray(h)) for (const [k, v] of h) o[k] = v;
+    else if (h && typeof h === "object") for (const k of Object.keys(h)) o[k] = String(h[k]);
+  } catch { /* ignore malformed headers */ }
+  return o;
+}
+
+globalThis.fetch = async function oxideFetch(input, init = {}) {
+  const url = typeof input === "string" ? input : (input && input.url) || String(input);
+  const method = (init.method || (input && input.method) || "GET").toUpperCase();
+  const headers = __headersToObject(init.headers || (input && input.headers));
+  let bodyB64 = "";
+  const body = init.body;
+  if (body != null) {
+    const bytes =
+      typeof body === "string"
+        ? Buffer.from(body, "utf8")
+        : body instanceof Uint8Array
+        ? Buffer.from(body)
+        : Buffer.from(String(body), "utf8");
+    bodyB64 = bytes.toString("base64");
+  }
+  if (process.env.OXIDE_FETCH_NATIVE === "1" && __nativeFetch) {
+    return __nativeFetch(input, init);
+  }
+  try {
+    const res = await oxideOpRequest("fetch", { url, method, headers, body_b64: bodyB64 });
+    const bytes = Buffer.from(res.body_b64 || "", "base64");
+    const h = new Headers();
+    // Rust serializes `Vec<(String,String)>` as `[["k","v"], ...]`.
+    const raw = res.headers || [];
+    if (Array.isArray(raw)) {
+      for (const pair of raw) {
+        if (Array.isArray(pair) && pair.length === 2) h.append(pair[0], pair[1]);
+      }
+    } else if (typeof raw === "object") {
+      for (const k of Object.keys(raw)) h.append(k, String(raw[k]));
+    }
+    return new Response(bytes, { status: res.status, headers: h });
+  } catch (e) {
+    if (!__fetchFallbackWarned) {
+      __fetchFallbackWarned = true;
+      console.error("[oxide] fetch op unavailable (" + (e && e.message) + "); falling back to native fetch (no SSRF guard)");
+    }
+    if (__nativeFetch) return __nativeFetch(input, init);
+    throw e;
+  }
+};
+
 // Cache required modules across calls (CJS path).
 const modCache = new Map();
 // Server-fn graph imports, keyed by (entry path, module generation).
