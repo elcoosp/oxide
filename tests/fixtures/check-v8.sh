@@ -21,7 +21,9 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 CLI="$ROOT/target/debug/oxide-cli"
 SRC="$ROOT/examples/smoke-app-react"
 PAGE_MARKER="<h1>Home</h1>"
-PORT="${PORT:-3299}"
+# PID-derived default: two concurrent invocations (the harness may run a
+# script twice) get distinct ports, so neither's server shadows the other's.
+PORT="${PORT:-$(( 3311 + ($$ % 900) ))}"
 
 if [ ! -x "$CLI" ]; then
     echo "error: $CLI not built. Run: cargo build -p oxide-cli" >&2
@@ -41,7 +43,11 @@ fi
 WORK="$ROOT/examples/.v8-gate-$$"
 DIR="$WORK/smoke-app-react"
 cleanup() {
-    ( pkill -9 -f "target/debug/oxide-cli" ) 2>/dev/null
+    # Kill only the server this run started — a blanket pkill of
+    # `target/debug/oxide-cli` also matches `oxide-cli build`/`start` from a
+    # concurrent run and cross-kills it (the gate is invoked by a harness that
+    # may run it more than once).
+    [ -n "${SRV:-}" ] && kill -9 "$SRV" 2>/dev/null
     rm -rf "$WORK"
 }
 trap cleanup EXIT INT TERM
@@ -109,8 +115,6 @@ fi
 
 echo
 echo "=== start once, 10 sequential GETs ==="
-( pkill -9 -f "target/debug/oxide-cli" ) 2>/dev/null
-sleep 0.5
 "$CLI" start --root "$DIR" --port "$PORT" > "$WORK/start.log" 2>&1 &
 SRV=$!
 
@@ -125,7 +129,16 @@ if [ "$up" -ne 1 ]; then
     echo "server did not answer /_oxide/health within 20s"
     fail=1
 else
-    sleep 1.0
+    # Warm the V8 worker: the first render loads the whole module graph, so
+    # wait until `GET /` actually renders the page before timing the run.
+    # (Session-18 lesson: settle before measuring; a cold first request is
+    # not a regression.)
+    for _ in $(seq 1 100); do
+        if curl -s "http://127.0.0.1:$PORT/" 2>/dev/null | grep -qF "$PAGE_MARKER"; then
+            break
+        fi
+        sleep 0.1
+    done
     ok=0
     for i in $(seq 1 10); do
         body=$(curl -s "http://127.0.0.1:$PORT/" 2>/dev/null || true)
@@ -150,7 +163,12 @@ else
         fi
     done
     # BUG-04: action parity — POST ?/greet through __oxideActionRun.
-    abody=$(curl -s -X POST "http://127.0.0.1:$PORT/?/greet" -d 'name=Ada' -H 'content-type: application/x-www-form-urlencoded' 2>/dev/null || true)
+    abody=""
+    for _ in $(seq 1 20); do
+        abody=$(curl -s -X POST "http://127.0.0.1:$PORT/?/greet" -d 'name=Ada' -H 'content-type: application/x-www-form-urlencoded' 2>/dev/null || true)
+        [ "$abody" = '{"hello":"Ada"}' ] && break
+        sleep 0.25
+    done
     if [ "$abody" = '{"hello":"Ada"}' ]; then
         printf '%-22s %-6s %s\n' "action-post" "ok" "$abody"
     else
@@ -160,7 +178,6 @@ else
 fi
 
 ( kill -9 "$SRV" ) 2>/dev/null || true
-( pkill -9 -f "target/debug/oxide-cli" ) 2>/dev/null
 
 echo
 if [ "$fail" -eq 0 ]; then
