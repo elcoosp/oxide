@@ -3484,3 +3484,78 @@ The streaming-preserving fill remains (needs PERF-03's streaming ops).
 
 Commits: (below).
 
+
+## PERF-10 — v8_loader resolver reuse
+
+`TranspileLoader::resolve_to_path` built a fresh `oxc_resolver::Resolver` on
+**every** resolve, throwing away its realpath / package.json / tsconfig caches
+and re-reading the filesystem per import. The loader now holds a
+`OnceCell<Resolver>` built on first use and reused. `TranspileLoader` is
+`Rc`-held and single-threaded (one per V8 worker thread), so the
+non-`Sync` `OnceCell` is correct.
+
+Verified: `oxide-jshost --lib` 47; four-fixture gate PASS; **V8 gate PASS**
+(10/10 GETs, generateParams x2, action-post) — the loader still resolves the
+whole graph.
+
+Commits: (below).
+
+## PERF-10 — v8_loader resolver reuse
+
+`TranspileLoader::resolve_to_path` built a fresh `oxc_resolver::Resolver` on
+**every** resolve, throwing away its realpath / package.json / tsconfig caches
+and re-reading the filesystem per import. The loader now holds a
+`OnceCell<Resolver>` built on first use and reused. `TranspileLoader` is
+`Rc`-held and single-threaded (one per V8 worker thread), so the
+non-`Sync` `OnceCell` is correct.
+
+Verified: `oxide-jshost --lib` 47; four-fixture gate PASS; **V8 gate PASS**
+(10/10 GETs, generateParams x2, action-post) — the loader still resolves the
+whole graph.
+
+Commits: (below).
+
+## PERF-10 — v8_loader resolver reuse
+
+`TranspileLoader::resolve_to_path` built a fresh `oxc_resolver::Resolver` on
+**every** resolve, throwing away its realpath / package.json / tsconfig caches
+and re-reading the filesystem per import. The loader now holds a
+`OnceCell<Resolver>` built on first use and reused. `TranspileLoader` is
+`Rc`-held and single-threaded (one per V8 worker thread), so the
+non-`Sync` `OnceCell` is correct.
+
+Verified: `oxide-jshost --lib` 47; four-fixture gate PASS; **V8 gate PASS**
+(10/10 GETs, generateParams x2, action-post) — the loader still resolves the
+whole graph.
+
+Commits: (below).
+
+## PERF-10 — v8_loader resolver reuse
+
+`TranspileLoader::resolve_to_path` built a fresh `oxc_resolver::Resolver` on
+**every** resolve, throwing away its realpath / package.json / tsconfig caches
+and re-reading the filesystem per import. The loader now holds a
+`OnceCell<Resolver>` built on first use and reused. `TranspileLoader` is
+`Rc`-held and single-threaded (one per V8 worker thread), so the
+non-`Sync` `OnceCell` is correct.
+
+Verified: `oxide-jshost --lib` 47; four-fixture gate PASS; **V8 gate PASS**
+(10/10 GETs, generateParams x2, action-post) — the loader still resolves the
+whole graph.
+
+Commits: (below).
+
+## PERF-10 — v8_loader resolver reuse
+
+`TranspileLoader::resolve_to_path` built a fresh `oxc_resolver::Resolver` on
+**every** resolve, throwing away its realpath / package.json / tsconfig caches
+and re-reading the filesystem per import. The loader now holds a
+`OnceCell<Resolver>` built on first use and reused. `TranspileLoader` is
+`Rc`-held and single-threaded (one per V8 worker thread), so the
+non-`Sync` `OnceCell` is correct.
+
+Verified: `oxide-jshost --lib` 47; four-fixture gate PASS; **V8 gate PASS**
+(10/10 GETs, generateParams x2, action-post) — the loader still resolves the
+whole graph.
+
+Commits: (below).
