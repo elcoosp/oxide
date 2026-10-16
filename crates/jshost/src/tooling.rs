@@ -98,6 +98,7 @@ mod tests {
             headers: Default::default(),
             has_body: false,
             request_id: "batch".into(),
+            route: None,
         }
     }
     fn entry() -> EntryRef {

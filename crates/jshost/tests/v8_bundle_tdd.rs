@@ -38,6 +38,7 @@ async fn v8_evaluates_a_real_bundle_route_module() {
                 headers: Default::default(),
                 has_body: false,
                 request_id: "v8-bundle-test".into(),
+                route: None,
             },
         )
         .await

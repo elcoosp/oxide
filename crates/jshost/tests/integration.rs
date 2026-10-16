@@ -32,6 +32,7 @@ fn input(payload: serde_json::Value) -> CallInput {
         headers: Default::default(),
         has_body: false,
         request_id: "req-1".into(),
+        route: None,
     }
 }
 

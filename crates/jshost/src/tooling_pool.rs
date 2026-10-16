@@ -47,6 +47,7 @@ impl ToolingModules {
             headers: Default::default(),
             has_body: false,
             request_id: format!("tooling:{}:{}", call.module, call.export),
+            route: None,
         };
         let entry = EntryRef {
             kind: "tooling:module".into(),

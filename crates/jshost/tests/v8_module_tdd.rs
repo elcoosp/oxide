@@ -13,6 +13,7 @@ fn input(payload: serde_json::Value) -> CallInput {
         headers: Default::default(),
         has_body: false,
         request_id: "v8-test".into(),
+        route: None,
     }
 }
 
