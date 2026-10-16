@@ -3438,3 +3438,113 @@ test updated to assert the real `total;dur=` (see PERF-06 slice 2).
 
 Commits: (below).
 
+
+## PERF-04 (slice 2) — single-flight coalescing
+
+`SingleFlight` (cache crate) existed and was tested but had no production
+caller. Wired into the dispatch:
+- A shared `DashMap` flight map lives in `build_dispatch`.
+- On a cacheable L0 miss, `SingleFlight::acquire` runs. The **Owner** carries
+  its broadcast `tx` to the L0 fill site; a **Follower** awaits the owner's
+  entry (10 s cap) and serves it directly with `x-oxide-cache: L0-coalesced`.
+- At the fill, `make_entry` builds the `Entry` once, `store_entry` persists
+  it, and `publish_and_cleanup` broadcasts the same `Arc<Entry>` to followers.
+
+`L0Cache` gained `make_entry` / `store_entry` / `key_for` so the owner can
+build-store-broadcast one entry. A follower that times out (owner failed)
+falls through to a normal render.
+
+Verified: `oxide-cli --lib` 98; four-fixture gate PASS.
+
+Remaining PERF-04: build seeding and the streaming-preserving fill (the fill
+still buffers the whole body — PERF-03's streaming ops are the prerequisite).
+
+Commits: (below).
+
+## PERF-04 (slice 2) — single-flight coalescing
+
+`SingleFlight` (cache crate) existed and was tested but had no production
+caller. Wired into the dispatch:
+- A shared `DashMap` flight map lives in `build_dispatch`.
+- On a cacheable L0 miss, `SingleFlight::acquire` runs. The **Owner** carries
+  its broadcast `tx` to the L0 fill site; a **Follower** awaits the owner's
+  entry (10 s cap) and serves it directly with `x-oxide-cache: L0-coalesced`.
+- At the fill, `make_entry` builds the `Entry` once, `store_entry` persists
+  it, and `publish_and_cleanup` broadcasts the same `Arc<Entry>` to followers.
+
+`L0Cache` gained `make_entry` / `store_entry` / `key_for` so the owner can
+build-store-broadcast one entry. A follower that times out (owner failed)
+falls through to a normal render.
+
+Verified: `oxide-cli --lib` 98; four-fixture gate PASS.
+
+Remaining PERF-04: build seeding and the streaming-preserving fill (the fill
+still buffers the whole body — PERF-03's streaming ops are the prerequisite).
+
+Commits: (below).
+
+## PERF-04 (slice 2) — single-flight coalescing
+
+`SingleFlight` (cache crate) existed and was tested but had no production
+caller. Wired into the dispatch:
+- A shared `DashMap` flight map lives in `build_dispatch`.
+- On a cacheable L0 miss, `SingleFlight::acquire` runs. The **Owner** carries
+  its broadcast `tx` to the L0 fill site; a **Follower** awaits the owner's
+  entry (10 s cap) and serves it directly with `x-oxide-cache: L0-coalesced`.
+- At the fill, `make_entry` builds the `Entry` once, `store_entry` persists
+  it, and `publish_and_cleanup` broadcasts the same `Arc<Entry>` to followers.
+
+`L0Cache` gained `make_entry` / `store_entry` / `key_for` so the owner can
+build-store-broadcast one entry. A follower that times out (owner failed)
+falls through to a normal render.
+
+Verified: `oxide-cli --lib` 98; four-fixture gate PASS.
+
+Remaining PERF-04: build seeding and the streaming-preserving fill (the fill
+still buffers the whole body — PERF-03's streaming ops are the prerequisite).
+
+Commits: (below).
+
+## PERF-04 (slice 2) — single-flight coalescing
+
+`SingleFlight` (cache crate) existed and was tested but had no production
+caller. Wired into the dispatch:
+- A shared `DashMap` flight map lives in `build_dispatch`.
+- On a cacheable L0 miss, `SingleFlight::acquire` runs. The **Owner** carries
+  its broadcast `tx` to the L0 fill site; a **Follower** awaits the owner's
+  entry (10 s cap) and serves it directly with `x-oxide-cache: L0-coalesced`.
+- At the fill, `make_entry` builds the `Entry` once, `store_entry` persists
+  it, and `publish_and_cleanup` broadcasts the same `Arc<Entry>` to followers.
+
+`L0Cache` gained `make_entry` / `store_entry` / `key_for` so the owner can
+build-store-broadcast one entry. A follower that times out (owner failed)
+falls through to a normal render.
+
+Verified: `oxide-cli --lib` 98; four-fixture gate PASS.
+
+Remaining PERF-04: build seeding and the streaming-preserving fill (the fill
+still buffers the whole body — PERF-03's streaming ops are the prerequisite).
+
+Commits: (below).
+
+## PERF-04 (slice 2) — single-flight coalescing
+
+`SingleFlight` (cache crate) existed and was tested but had no production
+caller. Wired into the dispatch:
+- A shared `DashMap` flight map lives in `build_dispatch`.
+- On a cacheable L0 miss, `SingleFlight::acquire` runs. The **Owner** carries
+  its broadcast `tx` to the L0 fill site; a **Follower** awaits the owner's
+  entry (10 s cap) and serves it directly with `x-oxide-cache: L0-coalesced`.
+- At the fill, `make_entry` builds the `Entry` once, `store_entry` persists
+  it, and `publish_and_cleanup` broadcasts the same `Arc<Entry>` to followers.
+
+`L0Cache` gained `make_entry` / `store_entry` / `key_for` so the owner can
+build-store-broadcast one entry. A follower that times out (owner failed)
+falls through to a normal render.
+
+Verified: `oxide-cli --lib` 98; four-fixture gate PASS.
+
+Remaining PERF-04: build seeding and the streaming-preserving fill (the fill
+still buffers the whole body — PERF-03's streaming ops are the prerequisite).
+
+Commits: (below).
