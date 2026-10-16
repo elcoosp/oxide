@@ -18,6 +18,7 @@ oxide-bundler = { workspace = true }
 blake3 = { workspace = true }
 oxide-jshost = { workspace = true }
 oxide-cache = { workspace = true }
+dashmap = { workspace = true }
 oxide-render = { workspace = true }
 oxide-server = { workspace = true }
 tokio-rustls = { workspace = true }
