@@ -1599,7 +1599,7 @@ async fn write_prerender(
     loader_runner: Option<&std::sync::Arc<dyn oxide_server::LoaderRunner>>,
     module_path: Option<&Path>,
     boot_script_url: Option<&str>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<String> {
     // §9.1: run the loader for this route (if the module exists and a
     // loader runner is attached) to obtain the data the render phase
     // receives. Prerendered static pages previously always wrote `{}`
@@ -1637,8 +1637,8 @@ async fn write_prerender(
                 if let Some(parent) = dest.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                std::fs::write(&dest, body)?;
-                return Ok(());
+                std::fs::write(&dest, &body)?;
+                return Ok(body);
             }
             Err(e) => {
                 // SEC-07: escape worker error text (HTML injection).
@@ -1653,8 +1653,8 @@ async fn write_prerender(
                 if let Some(parent) = dest.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                std::fs::write(&dest, body)?;
-                return Ok(());
+                std::fs::write(&dest, &body)?;
+                return Ok(body);
             }
         }
     }
@@ -1721,8 +1721,10 @@ async fn write_prerender(
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(&dest, html)?;
-    Ok(())
+    std::fs::write(&dest, &html)?;
+    // PERF-04: return the HTML so the caller can build an L0 seed manifest
+    // (with the nonce swapped to the sentinel).
+    Ok(html)
 }
 
 /// PERF-01 / §8.4: answer a `/__data?route=<path>` request. Runs the
@@ -2073,6 +2075,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // a JS worker (post-MLP) and is skipped with a printed notice.
     let nonce = oxide_bundler::ChunkBundler::content_hash(&[build_id.as_bytes()]);
     let mut prerendered: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // PERF-04: (route_id, url_path, sentineled html) for the L0 seed manifest.
+    let mut seed_bodies: Vec<(String, String, String)> = Vec::new();
     // Routes with literal generateParams are effectively static regardless of
     // whether they also have a server module.
     let mut static_override: std::collections::BTreeSet<String> =
@@ -2127,7 +2131,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     } else {
                         format!("prerendered/{}.html", segs.join("/"))
                     };
-                    write_prerender(
+                    let html = write_prerender(
                         &dist,
                         &rel,
                         &route_id,
@@ -2141,6 +2145,11 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                         boot_script_url.as_deref(),
                     )
                     .await?;
+                    seed_bodies.push((
+                        route_id.clone(),
+                        url_path_from_rel(&rel),
+                        html.replace(&nonce, l0_cache::NONCE_SENTINEL),
+                    ));
                     outs.push(rel);
                 }
                 if !outs.is_empty() {
@@ -2199,7 +2208,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                             } else {
                                 format!("prerendered/{}.html", segs.join("/"))
                             };
-                            write_prerender(
+                            let html = write_prerender(
                                 &dist,
                                 &rel,
                                 &route_id,
@@ -2213,6 +2222,11 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                                 boot_script_url.as_deref(),
                             )
                             .await?;
+                            seed_bodies.push((
+                                route_id.clone(),
+                                url_path_from_rel(&rel),
+                                html.replace(&nonce, l0_cache::NONCE_SENTINEL),
+                            ));
                             outs.push(rel);
                         }
                         if !outs.is_empty() {
@@ -2274,7 +2288,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     format!("prerendered/{}.html", e.segments.join("/"))
                 };
                 let empty_params: BTreeMap<String, String> = BTreeMap::new();
-                write_prerender(
+                let html = write_prerender(
                     &dist,
                     &rel,
                     &route_id,
@@ -2288,8 +2302,39 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     boot_script_url.as_deref(),
                 )
                 .await?;
+                seed_bodies.push((
+                    route_id.clone(),
+                    url_path_from_rel(&rel),
+                    html.replace(&nonce, l0_cache::NONCE_SENTINEL),
+                ));
                 prerendered.insert(e.id.0.clone(), vec![rel]);
             }
+        }
+    }
+
+    // PERF-04: write the L0 seed manifest. Each prerendered page's sentineled
+    // HTML is stored so `oxide start` can insert it into L0 at boot — a
+    // seeded route is an L0 hit on the very first request (no warm-up miss).
+    if !seed_bodies.is_empty() {
+        let mut entries = Vec::with_capacity(seed_bodies.len());
+        for (rid, url, sentineled) in &seed_bodies {
+            // The key matches what the live server computes: route id
+            // (no `/page` suffix), no params, vary `lang=` (empty).
+            let rid = rid.strip_suffix("/page").unwrap_or(rid);
+            let key = l0_cache::L0Cache::key_for(rid, "", "lang=", &build_id);
+            entries.push(serde_json::json!({
+                "key": key,
+                "url": url,
+                "body": sentineled,
+            }));
+        }
+        let seed = serde_json::json!({ "build_id": build_id, "entries": entries });
+        let path = dist.join("server/l0-seed.json");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if let Ok(bytes) = serde_json::to_vec_pretty(&seed) {
+            let _ = std::fs::write(&path, bytes);
         }
     }
 
@@ -2748,7 +2793,12 @@ fn build_dispatch(
                 req.method.eq_ignore_ascii_case("GET") && l0_path == "/__data";
             // PERF-04: the single-flight key (matches the L0 key shape) and the
             // shared map handle.
-            let flight_key = l0_cache::L0Cache::key_for(&l0_route, &l0_params, &l0_vary);
+            let flight_key = match l0.as_ref() {
+                Some(c) => l0_cache::L0Cache::key_for(
+                    &l0_route, &l0_params, &l0_vary, c.build_id(),
+                ),
+                None => String::new(),
+            };
             let flight_map = std::sync::Arc::clone(&flight_map);
 
             Box::pin(async move {
@@ -3765,9 +3815,33 @@ async fn start_server_inner_full(
         .unwrap_or_else(|| std::sync::Arc::new(oxide_cache::TieredCache::new(l0_bytes)));
     let l0 = Some(std::sync::Arc::new(l0_cache::L0Cache::new(
         l0_tier,
-        build_id,
+        build_id.clone(),
         std::time::Duration::from_secs(60),
     )));
+    // PERF-04: seed L0 from the build manifest so a prerendered route is an
+    // L0 hit on the very first request (no warm-up miss). A missing manifest
+    // (dev, or a build with no prerendered pages) is a no-op.
+    if let Some(cache) = l0.as_ref() {
+        let seed_path = rootp.join("dist/server/l0-seed.json");
+        if let Ok(bytes) = std::fs::read(&seed_path) {
+            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                // Only seed a manifest from THIS build.
+                let same_build =
+                    v.get("build_id").and_then(|b| b.as_str()) == Some(build_id.as_str());
+                if same_build {
+                    if let Some(entries) = v.get("entries").and_then(|e| e.as_array()) {
+                        for e in entries {
+                            let key = e.get("key").and_then(|k| k.as_str()).unwrap_or("");
+                            let body = e.get("body").and_then(|b| b.as_str()).unwrap_or("");
+                            if !key.is_empty() && !body.is_empty() {
+                                cache.seed_entry(key, body.as_bytes().to_vec()).await;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     let dispatch = build_dispatch(
         std::sync::Arc::clone(&tree),
         std::sync::Arc::clone(&metrics),
