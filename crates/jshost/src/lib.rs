@@ -157,6 +157,32 @@ pub trait JsHost: Send + Sync {
     fn backend_name(&self) -> &'static str;
 }
 
+/// PERF-05: the HTTP fetch the `fetch` op delegates to. `oxide-jshost` has no
+/// HTTP client of its own; the CLI wires an implementation backed by
+/// `oxide-server`'s SSRF-hardened fetch (SEC-03), so a server-side `fetch()`
+/// in user code goes through the same validated path as the image endpoint —
+/// no separate, unguarded client.
+#[async_trait::async_trait]
+pub trait FetchHandler: Send + Sync {
+    /// Perform an HTTP request. `body` is the raw request body (empty for GET).
+    /// Returns the response status, headers, and body bytes.
+    async fn fetch(
+        &self,
+        method: &str,
+        url: &str,
+        headers: &[(String, String)],
+        body: &[u8],
+    ) -> Result<FetchResponse>;
+}
+
+/// The result of a [`FetchHandler::fetch`].
+#[derive(Debug, Clone)]
+pub struct FetchResponse {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
 /// Op codes over the wire (§4.5). Both V8 and Node backends speak the same table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u16)]
@@ -2345,6 +2371,8 @@ struct Worker {
     /// workers before the caller attaches a handler; the read happens once
     /// per op request, not on the hot path.
     cache: Mutex<Option<Arc<dyn oxide_cache::CacheHandler>>>,
+    /// PERF-05: the fetch handler this worker's `fetch` op delegates to.
+    fetch: Mutex<Option<Arc<dyn FetchHandler>>>,
 }
 
 /// Spawn `node <worker_script>` with piped stdio; returns (child, stdin, stdout).
@@ -2413,6 +2441,14 @@ impl NodePool {
         // `replace_worker` swaps a worker's *pipes*, not the `Worker`
         // struct, so the handler on each worker survives a recycle without
         // any extra bookkeeping.
+    }
+
+    /// PERF-05: attach the fetch handler the worker's `fetch` op delegates to.
+    /// Mirrors [`Self::with_cache_handler`].
+    pub fn with_fetch_handler(self: &Arc<Self>, handler: Arc<dyn FetchHandler>) {
+        for w in &self.workers {
+            *w.fetch.lock().unwrap() = Some(Arc::clone(&handler));
+        }
     }
 }
 
@@ -2494,6 +2530,7 @@ impl NodePool {
             pid: Mutex::new(None),
             recycle_lock: tokio::sync::Mutex::new(()),
             cache: Mutex::new(None),
+            fetch: Mutex::new(None),
         });
         let reader = spawn_reader(stdout, Arc::clone(&worker), counters);
         *worker.reader_handle.lock().unwrap() = Some(reader);
@@ -2705,6 +2742,8 @@ pub struct NodeHost {
     /// §9.3: the Rust cache tier a worker's `op_request` frames dispatch to.
     /// `None` means the runtime's in-process Map is the only cache.
     pub cache_handler: Option<Arc<dyn oxide_cache::CacheHandler>>,
+    /// PERF-05: the fetch handler a worker's `fetch` op dispatches to.
+    pub fetch_handler: Option<Arc<dyn FetchHandler>>,
 }
 
 impl NodeHost {
@@ -2714,7 +2753,14 @@ impl NodeHost {
             worker_script: worker_script.into(),
             request_counter: AtomicU64::new(0),
             cache_handler: None,
+            fetch_handler: None,
         }
+    }
+
+    /// PERF-05: attach the `fetch` op handler.
+    pub fn with_fetch_handler(mut self, handler: Arc<dyn FetchHandler>) -> Self {
+        self.fetch_handler = Some(handler);
+        self
     }
 
     /// §9.3: attach a cache tier. Workers spawned by this host dispatch
@@ -2738,12 +2784,18 @@ impl JsHost for NodeHost {
         if let Some(h) = &self.cache_handler {
             p.with_cache_handler(Arc::clone(h));
         }
+        if let Some(h) = &self.fetch_handler {
+            p.with_fetch_handler(Arc::clone(h));
+        }
         Ok(p as Arc<dyn Pool>)
     }
     fn tooling_pool(&self, cfg: PoolConfig) -> Result<Arc<dyn Pool>> {
         let p = NodePool::spawn(&self.node_bin, self.worker_script.clone(), cfg)?;
         if let Some(h) = &self.cache_handler {
             p.with_cache_handler(Arc::clone(h));
+        }
+        if let Some(h) = &self.fetch_handler {
+            p.with_fetch_handler(Arc::clone(h));
         }
         Ok(p as Arc<dyn Pool>)
     }
@@ -2851,6 +2903,8 @@ fn stream_sender(
 /// an op failure and can fall back on.
 async fn op_dispatch(
     cache: Option<&dyn oxide_cache::CacheHandler>,
+    fetch: Option<&dyn FetchHandler>,
+    memo: Option<&oxide_cache::FetchMemo>,
     op: Op,
     args: &serde_json::Value,
 ) -> Result<serde_json::Value> {
@@ -2987,6 +3041,65 @@ async fn op_dispatch(
             let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
             Ok(serde_json::json!({ "b64": b64 }))
         }
+        // PERF-05: `fetch` from user code. Delegates to the host's
+        // SSRF-hardened handler; memoized per request when a `FetchMemo` is
+        // wired (idempotent GETs dedupe).
+        Op::Fetch => {
+            let Some(handler) = fetch else {
+                return Err(err(
+                    "JSH-OP",
+                    "fetch is unavailable: no FetchHandler is wired on this host",
+                ));
+            };
+            let method = args
+                .get("method")
+                .and_then(|v| v.as_str())
+                .unwrap_or("GET")
+                .to_uppercase();
+            let url = args
+                .get("url")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| err("JSH-OP", "fetch requires a string `url`"))?;
+            let body = args
+                .get("body_b64")
+                .and_then(|v| v.as_str())
+                .and_then(|s| {
+                    use base64::Engine as _;
+                    base64::engine::general_purpose::STANDARD.decode(s).ok()
+                })
+                .unwrap_or_default();
+            let headers: Vec<(String, String)> = args
+                .get("headers")
+                .and_then(|v| v.as_object())
+                .map(|m| {
+                    m.iter()
+                        .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            // Memoize GETs only (a POST with a body is already keyed by the
+            // body hash, but a side-effecting request should not be replayed).
+            let memo_key = (method == "GET")
+                .then(|| oxide_cache::memo_key(&method, url, &body));
+            if let (Some(m), Some(k)) = (memo, memo_key.as_deref()) {
+                if let Some(hit) = m.get(k) {
+                    let v: serde_json::Value = serde_json::from_slice(&hit)
+                        .unwrap_or(serde_json::Value::Null);
+                    return Ok(v);
+                }
+            }
+            let resp = handler.fetch(&method, url, &headers, &body).await?;
+            use base64::Engine as _;
+            let out = serde_json::json!({
+                "status": resp.status,
+                "headers": resp.headers,
+                "body_b64": base64::engine::general_purpose::STANDARD.encode(&resp.body),
+            });
+            if let (Some(m), Some(k)) = (memo, memo_key.as_deref()) {
+                m.insert(k, bytes::Bytes::from(serde_json::to_vec(&out).unwrap_or_default()));
+            }
+            Ok(out)
+        }
         _ => Err(err(
             "JSH-OP",
             format!("worker op `{}` is not implemented on this host", op_name(op)),
@@ -3055,9 +3168,18 @@ fn handle_worker_msg(
         // the runtime's in-process fallback runs.
         WorkerMsg::OpRequest { id, op, args } => {
             let cache = worker.cache.lock().unwrap().clone();
+            let fetch = worker.fetch.lock().unwrap().clone();
             let worker = Arc::clone(worker);
             tokio::spawn(async move {
-                let (ok, data) = match op_dispatch(cache.as_deref(), op, &args).await {
+                let (ok, data) = match op_dispatch(
+                    cache.as_deref(),
+                    fetch.as_deref(),
+                    None,
+                    op,
+                    &args,
+                )
+                .await
+                {
                     Ok(v) => (true, v),
                     Err(e) => (
                         false,
@@ -3179,7 +3301,7 @@ mod perf01_tests {
     #[tokio::test]
     async fn serialize_op_encodes_odf() {
         let args = serde_json::json!({ "value": { "a": 1, "b": [true, null] } });
-        let out = op_dispatch(None, Op::Serialize, &args).await.expect("serialize ok");
+        let out = op_dispatch(None, None, None, Op::Serialize, &args).await.expect("serialize ok");
         let b64 = out["b64"].as_str().expect("b64 field");
         let bytes = base64::Engine::decode(
             &base64::engine::general_purpose::STANDARD,
@@ -3194,8 +3316,64 @@ mod perf01_tests {
 
     #[tokio::test]
     async fn serialize_op_requires_a_value() {
-        let out = op_dispatch(None, Op::Serialize, &serde_json::json!({})).await;
+        let out = op_dispatch(None, None, None, Op::Serialize, &serde_json::json!({})).await;
         assert!(out.is_err(), "missing value is an error");
+    }
+}
+
+mod perf05_tests {
+    use super::*;
+    use async_trait::async_trait;
+
+    struct Echo;
+    #[async_trait]
+    impl FetchHandler for Echo {
+        async fn fetch(
+            &self,
+            method: &str,
+            url: &str,
+            _h: &[(String, String)],
+            _b: &[u8],
+        ) -> Result<FetchResponse> {
+            Ok(FetchResponse {
+                status: 200,
+                headers: vec![("x-method".into(), method.into())],
+                body: url.as_bytes().to_vec(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn fetch_op_delegates_to_the_handler() {
+        let h = Echo;
+        let args = serde_json::json!({ "url": "https://x.test/p", "method": "get" });
+        let out = op_dispatch(None, Some(&h), None, Op::Fetch, &args)
+            .await
+            .expect("fetch ok");
+        assert_eq!(out["status"], 200);
+        assert_eq!(out["headers"][0][1], "GET");
+        use base64::Engine as _;
+        let body = base64::engine::general_purpose::STANDARD
+            .decode(out["body_b64"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(body, b"https://x.test/p");
+    }
+
+    #[tokio::test]
+    async fn fetch_op_without_a_handler_errors() {
+        let args = serde_json::json!({ "url": "https://x.test/" });
+        assert!(op_dispatch(None, None, None, Op::Fetch, &args).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn fetch_op_memoizes_get() {
+        let h = Echo;
+        let memo = oxide_cache::FetchMemo::default();
+        let args = serde_json::json!({ "url": "https://x.test/memo", "method": "GET" });
+        let _ = op_dispatch(None, Some(&h), Some(&memo), Op::Fetch, &args).await.unwrap();
+        // A second call for the same GET hits the memo (same body).
+        let out = op_dispatch(None, Some(&h), Some(&memo), Op::Fetch, &args).await.unwrap();
+        assert_eq!(out["status"], 200);
     }
 }
 

@@ -1769,6 +1769,108 @@ pub fn first_blocked_addr(
 /// SSRF range at every hop. This is what the doc comment always claimed;
 /// before this fix the code was a plain GET with default redirect-following
 /// and zero re-checks.
+/// PERF-05: a general SSRF-safe HTTP fetch for the `fetch` op (user code's
+/// server-side `fetch()`). Unlike [`fetch_remote_checked`] (image endpoint,
+/// GET-only, host-pattern-gated), this supports any method + headers + body
+/// and is gated only by the SSRF block ranges. Returns
+/// `(status, headers, body)`.
+pub async fn ssrf_safe_fetch(
+    method: &str,
+    url: &str,
+    headers: &[(String, String)],
+    body: &[u8],
+    ssrf_allow_list: &[String],
+) -> std::result::Result<(u16, Vec<(String, String)>, Vec<u8>), String> {
+    use http_body_util::{BodyExt, Full};
+    use hyper_util::client::legacy::Client;
+    use hyper_util::rt::TokioExecutor;
+    use std::sync::OnceLock;
+
+    static CLIENT: OnceLock<
+        Client<hyper_util::client::legacy::connect::HttpConnector, Full<Bytes>>,
+    > = OnceLock::new();
+    let client = CLIENT.get_or_init(|| Client::builder(TokioExecutor::new()).build_http());
+
+    let current = url::Url::parse(url).map_err(|e| format!("invalid URL: {e}"))?;
+    let scheme = current.scheme().to_string();
+    if scheme != "http" && scheme != "https" {
+        return Err(format!("scheme {scheme} not allowed"));
+    }
+    let host = current
+        .host_str()
+        .ok_or_else(|| "no host".to_string())?
+        .to_string();
+    let port = current
+        .port_or_known_default()
+        .ok_or_else(|| "no port".to_string())?;
+
+    // Validate every resolved address before connecting (connect-by-IP).
+    let addrs: Vec<std::net::IpAddr> = tokio::net::lookup_host((host.as_str(), port))
+        .await
+        .map_err(|e| format!("dns: {e}"))?
+        .map(|s| s.ip())
+        .collect();
+    if addrs.is_empty() {
+        return Err("dns: no addresses".into());
+    }
+    if let Some(bad) = first_blocked_addr(&addrs, ssrf_allow_list) {
+        return Err(format!("resolves to a blocked address {bad}"));
+    }
+    let ip = addrs[0];
+    let ip_lit = if ip.is_ipv6() {
+        format!("[{ip}]")
+    } else {
+        ip.to_string()
+    };
+    let path = if current.path().is_empty() { "/" } else { current.path() };
+    let query = current.query().map(|q| format!("?{q}")).unwrap_or_default();
+    let connect_url = format!("{scheme}://{ip_lit}:{port}{path}{query}");
+    let host_header = if (scheme == "http" && port == 80) || (scheme == "https" && port == 443) {
+        host.clone()
+    } else {
+        format!("{host}:{port}")
+    };
+
+    let mut builder = hyper::Request::builder()
+        .method(method)
+        .uri(&connect_url)
+        .header("host", host_header);
+    for (k, v) in headers {
+        // Skip a caller-supplied Host (we set it) and hop-by-hop headers.
+        if k.eq_ignore_ascii_case("host") || k.eq_ignore_ascii_case("connection") {
+            continue;
+        }
+        builder = builder.header(k, v);
+    }
+    let req = builder
+        .body(Full::new(Bytes::copy_from_slice(body)))
+        .map_err(|e| format!("build request: {e}"))?;
+    let resp = client
+        .request(req)
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+    let status = resp.status().as_u16();
+    let resp_headers: Vec<(String, String)> = resp
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+        .collect();
+    // Cap the body so a hostile upstream cannot exhaust memory.
+    const MAX: usize = 8 * 1024 * 1024;
+    let mut out: Vec<u8> = Vec::new();
+    let mut b = resp.into_body();
+    while let Some(frame) = b.frame().await {
+        let frame = frame.map_err(|e| format!("body read failed: {e}"))?;
+        if let Ok(chunk) = frame.into_data() {
+            if out.len() + chunk.len() > MAX {
+                return Err(format!("body exceeds the {MAX}-byte ceiling"));
+            }
+            out.extend_from_slice(&chunk);
+        }
+    }
+    Ok((status, resp_headers, out))
+}
+
 async fn fetch_remote_checked(
     url: &str,
     max: usize,

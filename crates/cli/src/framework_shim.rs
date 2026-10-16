@@ -18,6 +18,38 @@ use oxide_config::JsBackend;
 use oxide_server::{LoaderRunner, PageRenderInput, PageRenderer};
 use std::sync::Arc;
 
+/// PERF-05: the `fetch` op handler. Delegates to `oxide-server`'s
+/// SSRF-hardened fetch, so a server-side `fetch()` in user code goes through
+/// the same validated path as the image endpoint.
+struct CliFetchHandler {
+    ssrf_allow_list: Vec<String>,
+}
+
+#[async_trait::async_trait]
+impl oxide_jshost::FetchHandler for CliFetchHandler {
+    async fn fetch(
+        &self,
+        method: &str,
+        url: &str,
+        headers: &[(String, String)],
+        body: &[u8],
+    ) -> oxide_diagnostics::Result<oxide_jshost::FetchResponse> {
+        match oxide_server::ssrf_safe_fetch(method, url, headers, body, &self.ssrf_allow_list)
+            .await
+        {
+            Ok((status, headers, body)) => Ok(oxide_jshost::FetchResponse {
+                status,
+                headers,
+                body,
+            }),
+            Err(e) => Err(oxide_diagnostics::OxideError(
+                oxide_diagnostics::Diagnostic::error("JSH-FETCH", e),
+            )),
+        }
+    }
+}
+
+
 /// PERF-02: the render/loader pool size — the machine's available
 /// parallelism, floored at 2 so a single-core box still has a spare worker
 /// for a concurrent render + loader.
@@ -248,10 +280,16 @@ pub async fn build_framework_stack(
         }
     };
 
+    // PERF-05: the `fetch` op handler (SSRF-hardened, backed by oxide-server).
+    let fetch_handler: Arc<dyn oxide_jshost::FetchHandler> = Arc::new(CliFetchHandler {
+        ssrf_allow_list: Vec::new(),
+    });
+
     let host: Arc<dyn JsHost> = match backend {
         JsBackend::Node => Arc::new(
             NodeHost::new(NodeHost::worker_script_default())
-                .with_cache_handler(Arc::clone(&cache_tier)),
+                .with_cache_handler(Arc::clone(&cache_tier))
+                .with_fetch_handler(Arc::clone(&fetch_handler)),
         ),
         JsBackend::V8 => {
             // §4.4: if `oxide build` wrote a snapshot, boot from it.
@@ -292,6 +330,7 @@ pub async fn build_framework_stack(
     let tooling_pool: Arc<dyn oxide_jshost::Pool> = if matches!(backend, JsBackend::V8) {
         match NodeHost::new(NodeHost::worker_script_default())
             .with_cache_handler(Arc::clone(&cache_tier))
+            .with_fetch_handler(Arc::clone(&fetch_handler))
             .tooling_pool(PoolConfig { size: pool_size, ..Default::default() })
         {
             Ok(p) => p,

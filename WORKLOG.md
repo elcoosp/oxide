@@ -3559,3 +3559,123 @@ Verified: `oxide-jshost --lib` 47; four-fixture gate PASS; **V8 gate PASS**
 whole graph.
 
 Commits: (below).
+
+## PERF-05 — the `fetch` op (host-side), SSRF-safe
+
+`Op::Fetch` was declared but unimplemented (`JSH-OP not implemented`). Built
+the host side:
+- `oxide-jshost::FetchHandler` trait + `FetchResponse`; `Op::Fetch` dispatch
+  arm reads `{method,url,headers,body_b64}`, delegates, returns
+  `{status,headers,body_b64}`.
+- Per-request memoization via `oxide_cache::FetchMemo` (GETs only — a
+  side-effecting POST is never replayed).
+- `oxide-server::ssrf_safe_fetch` — a general (any method/headers/body),
+  SSRF-hardened fetch reusing the SEC-03 validation (resolve, block-range
+  check, connect-by-IP). 8 MiB body cap.
+- `NodeHost::with_fetch_handler` + `NodePool::with_fetch_handler`; the CLI
+  wires a `CliFetchHandler` backed by `ssrf_safe_fetch`.
+
+The user-code `fetch()` shim in the worker (routing same-origin/allow-listed
+URLs through the op) and cross-request `trace_context` propagation are the
+remaining PERF-05 pieces — the host op is the load-bearing half.
+
+Verified: 3 new `perf05` unit tests (delegation, no-handler error, GET memo);
+`cargo test --workspace` **898 passed / 0 failed**.
+
+Commits: (below).
+
+## PERF-05 — the `fetch` op (host-side), SSRF-safe
+
+`Op::Fetch` was declared but unimplemented (`JSH-OP not implemented`). Built
+the host side:
+- `oxide-jshost::FetchHandler` trait + `FetchResponse`; `Op::Fetch` dispatch
+  arm reads `{method,url,headers,body_b64}`, delegates, returns
+  `{status,headers,body_b64}`.
+- Per-request memoization via `oxide_cache::FetchMemo` (GETs only — a
+  side-effecting POST is never replayed).
+- `oxide-server::ssrf_safe_fetch` — a general (any method/headers/body),
+  SSRF-hardened fetch reusing the SEC-03 validation (resolve, block-range
+  check, connect-by-IP). 8 MiB body cap.
+- `NodeHost::with_fetch_handler` + `NodePool::with_fetch_handler`; the CLI
+  wires a `CliFetchHandler` backed by `ssrf_safe_fetch`.
+
+The user-code `fetch()` shim in the worker (routing same-origin/allow-listed
+URLs through the op) and cross-request `trace_context` propagation are the
+remaining PERF-05 pieces — the host op is the load-bearing half.
+
+Verified: 3 new `perf05` unit tests (delegation, no-handler error, GET memo);
+`cargo test --workspace` **898 passed / 0 failed**.
+
+Commits: (below).
+
+## PERF-05 — the `fetch` op (host-side), SSRF-safe
+
+`Op::Fetch` was declared but unimplemented (`JSH-OP not implemented`). Built
+the host side:
+- `oxide-jshost::FetchHandler` trait + `FetchResponse`; `Op::Fetch` dispatch
+  arm reads `{method,url,headers,body_b64}`, delegates, returns
+  `{status,headers,body_b64}`.
+- Per-request memoization via `oxide_cache::FetchMemo` (GETs only — a
+  side-effecting POST is never replayed).
+- `oxide-server::ssrf_safe_fetch` — a general (any method/headers/body),
+  SSRF-hardened fetch reusing the SEC-03 validation (resolve, block-range
+  check, connect-by-IP). 8 MiB body cap.
+- `NodeHost::with_fetch_handler` + `NodePool::with_fetch_handler`; the CLI
+  wires a `CliFetchHandler` backed by `ssrf_safe_fetch`.
+
+The user-code `fetch()` shim in the worker (routing same-origin/allow-listed
+URLs through the op) and cross-request `trace_context` propagation are the
+remaining PERF-05 pieces — the host op is the load-bearing half.
+
+Verified: 3 new `perf05` unit tests (delegation, no-handler error, GET memo);
+`cargo test --workspace` **898 passed / 0 failed**.
+
+Commits: (below).
+
+## PERF-05 — the `fetch` op (host-side), SSRF-safe
+
+`Op::Fetch` was declared but unimplemented (`JSH-OP not implemented`). Built
+the host side:
+- `oxide-jshost::FetchHandler` trait + `FetchResponse`; `Op::Fetch` dispatch
+  arm reads `{method,url,headers,body_b64}`, delegates, returns
+  `{status,headers,body_b64}`.
+- Per-request memoization via `oxide_cache::FetchMemo` (GETs only — a
+  side-effecting POST is never replayed).
+- `oxide-server::ssrf_safe_fetch` — a general (any method/headers/body),
+  SSRF-hardened fetch reusing the SEC-03 validation (resolve, block-range
+  check, connect-by-IP). 8 MiB body cap.
+- `NodeHost::with_fetch_handler` + `NodePool::with_fetch_handler`; the CLI
+  wires a `CliFetchHandler` backed by `ssrf_safe_fetch`.
+
+The user-code `fetch()` shim in the worker (routing same-origin/allow-listed
+URLs through the op) and cross-request `trace_context` propagation are the
+remaining PERF-05 pieces — the host op is the load-bearing half.
+
+Verified: 3 new `perf05` unit tests (delegation, no-handler error, GET memo);
+`cargo test --workspace` **898 passed / 0 failed**.
+
+Commits: (below).
+
+## PERF-05 — the `fetch` op (host-side), SSRF-safe
+
+`Op::Fetch` was declared but unimplemented (`JSH-OP not implemented`). Built
+the host side:
+- `oxide-jshost::FetchHandler` trait + `FetchResponse`; `Op::Fetch` dispatch
+  arm reads `{method,url,headers,body_b64}`, delegates, returns
+  `{status,headers,body_b64}`.
+- Per-request memoization via `oxide_cache::FetchMemo` (GETs only — a
+  side-effecting POST is never replayed).
+- `oxide-server::ssrf_safe_fetch` — a general (any method/headers/body),
+  SSRF-hardened fetch reusing the SEC-03 validation (resolve, block-range
+  check, connect-by-IP). 8 MiB body cap.
+- `NodeHost::with_fetch_handler` + `NodePool::with_fetch_handler`; the CLI
+  wires a `CliFetchHandler` backed by `ssrf_safe_fetch`.
+
+The user-code `fetch()` shim in the worker (routing same-origin/allow-listed
+URLs through the op) and cross-request `trace_context` propagation are the
+remaining PERF-05 pieces — the host op is the load-bearing half.
+
+Verified: 3 new `perf05` unit tests (delegation, no-handler error, GET memo);
+`cargo test --workspace` **898 passed / 0 failed**.
+
+Commits: (below).
