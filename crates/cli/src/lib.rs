@@ -1672,7 +1672,7 @@ async fn write_prerender(
         for (k, v) in params {
             input.params.insert(k.clone(), v.clone());
         }
-        input.data = data;
+        input.data = data.clone();
         renderer
             .render(input)
             .await
@@ -1693,11 +1693,27 @@ async fn write_prerender(
         shell = inject_island_boot_script(&shell, url, nonce);
     }
 
-    let injector = oxide_render::Injector::new(
+    let mut injector = oxide_render::Injector::new(
         oxide_render::HeadTags::default(),
         nonce.to_string(),
         route_id.to_string(),
     );
+    // PERF-01 / §9.5: embed the page's loader data as an ODF payload so the
+    // client's hydration bootstrap has it without a second request. Empty
+    // data still encodes (an empty object), matching the live path.
+    {
+        let payload = serde_json::json!({
+            "route": route_id.strip_suffix("/page").unwrap_or(route_id),
+            "url": url_path,
+            "params": params,
+            "data": data,
+        });
+        let odf = oxide_odf::encode_to_bytes(&oxide_odf::Value::from_json(&payload))
+            .unwrap_or_default();
+        use base64::Engine as _;
+        injector.odf_payload_b64 =
+            Some(base64::engine::general_purpose::STANDARD.encode(&odf));
+    }
     let html = injector
         .inject_into_html(&shell)
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
@@ -1707,6 +1723,67 @@ async fn write_prerender(
     }
     std::fs::write(&dest, html)?;
     Ok(())
+}
+
+/// PERF-01 / §8.4: answer a `/__data?route=<path>` request. Runs the
+/// matched route's loader (when one is attached) and returns the ODF-encoded
+/// `{route, url, params, data}` envelope the client router's
+/// `normalizeInput` expects. Always 200 with `application/oxide+odf` — a
+/// route with no loader returns empty data, not a 404 (the client treats a
+/// non-ok response as a navigation failure).
+#[allow(clippy::too_many_arguments)]
+async fn route_data_response(
+    req: &oxide_server::OxideRequest,
+    loader_runner: Option<&std::sync::Arc<dyn oxide_server::LoaderRunner>>,
+    module_path: Option<&std::path::Path>,
+    route_id: Option<&str>,
+    params: &std::collections::BTreeMap<String, String>,
+    metrics: &std::sync::Arc<oxide_server::Metrics>,
+    started: std::time::Instant,
+) -> oxide_server::OxideResponse {
+    // `?route=<percent-encoded path>` (default `/`).
+    let route_q = req
+        .url
+        .split_once('?')
+        .map(|(_, q)| q)
+        .and_then(|q| {
+            q.split('&')
+                .find_map(|kv| kv.strip_prefix("route=").map(oxide_server::percent_decode))
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "/".to_string());
+
+    let mut data = serde_json::Value::Object(Default::default());
+    if let (Some(runner), Some(mp), Some(rid)) = (loader_runner, module_path, route_id) {
+        let route_for_loader = rid.strip_suffix("/page").unwrap_or(rid).to_string();
+        let mut input = oxide_server::LoaderRunInput::new(
+            mp.to_string_lossy().to_string(),
+            route_for_loader,
+            &route_q,
+        );
+        input.params = params.clone();
+        if let Ok(out) = runner.run(input).await {
+            if out.status == 200 {
+                data = out.data;
+            }
+        }
+    }
+
+    let route_label = route_id
+        .map(|r| r.strip_suffix("/page").unwrap_or(r).to_string())
+        .unwrap_or_else(|| route_q.clone());
+    let payload = serde_json::json!({
+        "route": route_label,
+        "url": route_q,
+        "params": params,
+        "data": data,
+    });
+    // §9.5 / D11: encode as ODF, the wire format the client decodes.
+    let body = oxide_odf::encode_to_bytes(&oxide_odf::Value::from_json(&payload))
+        .unwrap_or_default();
+    metrics.observe("_data", started.elapsed(), 200);
+    oxide_server::OxideResponse::new(200, body)
+        .with_header("content-type", "application/oxide+odf")
 }
 
 /// §9.4 / BUG-05: read (or create) the per-project build secret.
@@ -2653,8 +2730,25 @@ fn build_dispatch(
             // BUG-01: the path tag the L0 put site stamps alongside the route
             // tag, so `revalidate.path` can invalidate it.
             let l0_path = req_path;
+            // PERF-01: `/__data` is the client router's route-data endpoint
+            // (§8.4). It is answered natively (loader + ODF encode) and never
+            // reaches the framework render path. `GET` only.
+            let is_data_request =
+                req.method.eq_ignore_ascii_case("GET") && l0_path == "/__data";
 
             Box::pin(async move {
+                if is_data_request {
+                    return route_data_response(
+                        &req_owned,
+                        loader_runner.as_ref(),
+                        module_path.as_deref(),
+                        route_id.as_deref(),
+                        &params,
+                        &metrics,
+                        started,
+                    )
+                    .await;
+                }
                 // §9.3: a form action POST runs the route's `actions[name]`
                 // and returns its result. This precedes the loader phase — an
                 // action is its own request, not a page render.
