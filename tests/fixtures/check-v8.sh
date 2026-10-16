@@ -17,6 +17,33 @@
 # failure. Prints a table.
 set -uo pipefail
 
+# Concurrency guard: the harness (watchexec) may restart this script while a
+# previous run's children are still alive. A portable mkdir-lock (works on
+# macOS, which has no flock) means only one gate runs at a time; a second
+# invocation waits up to 120s, then proceeds. Belt to the justfile's
+# `--wrap-process=session --stop-signal=SIGKILL` suspenders.
+GATE_LOCK="/tmp/oxide-gate-$(basename "$0").lock"
+_gate_locked=0
+for _ in $(seq 1 240); do
+    if mkdir "$GATE_LOCK" 2>/dev/null; then
+        _gate_locked=1
+        echo $$ > "$GATE_LOCK/pid"
+        trap 'rm -rf "$GATE_LOCK"' EXIT INT TERM
+        break
+    fi
+    # Steal a stale lock whose owner is gone.
+    _owner=$(cat "$GATE_LOCK/pid" 2>/dev/null || echo "")
+    if [ -n "$_owner" ] && ! kill -0 "$_owner" 2>/dev/null; then
+        rm -rf "$GATE_LOCK" 2>/dev/null || true
+        continue
+    fi
+    sleep 0.5
+done
+if [ "$_gate_locked" -ne 1 ]; then
+    echo "gate: could not acquire $GATE_LOCK within 120s" >&2
+    exit 1
+fi
+
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 CLI="$ROOT/target/debug/oxide-cli"
 SRC="$ROOT/examples/smoke-app-react"
