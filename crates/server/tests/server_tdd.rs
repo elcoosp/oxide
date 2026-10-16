@@ -1974,3 +1974,25 @@ async fn perf06_dynamic_compression() {
     assert!(resp.header("content-encoding").is_none(), "no AE -> identity");
     assert_eq!(resp.body.len(), body.len());
 }
+
+/// PERF-06: the framework dispatch path emits a real `Server-Timing` total
+/// (not the previous all-zero `RequestTimings::default()`).
+#[tokio::test]
+async fn perf06_dispatch_emits_real_server_timing_total() {
+    let p = pipeline(
+        RulesEngine::default(),
+        None,
+        Limits::default(),
+        SecuritySettings::default(),
+    );
+    let d = echo_dispatch();
+    // A routed page path (not a native prefix) so the Dispatch arm runs.
+    let resp = p.serve_request(req("GET", "/blog", &[]), &d).await;
+    let st = resp
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("server-timing"))
+        .map(|(_, v)| v.clone())
+        .expect("Server-Timing present");
+    assert!(st.starts_with("total;dur="), "real total: {st}");
+}
