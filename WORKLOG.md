@@ -3388,39 +3388,26 @@ Verified: `oxide doctor` output shows the new lines; `cargo test
 
 Commits: (below).
 
-## BUG-17 — V8 generateParams prerender is nondeterministic (OPEN, P0)
+## Not a bug — the V8 `generateParams` "nondeterminism" was the harness
 
-Found while hardening the PH0-03 V8 gate. Across **identical** `oxide build`
-runs on the same fixture (`backend: 'v8'`, react, blog route with a runtime
-`generateParams`), the number of emitted `dist/prerendered/blog/*.html`
-varies: observed 0, 1, and 2 in back-to-back runs, with the build always
-printing `2 prerendered`. Sometimes the build also fails with
-`write snapshot.bin: No such file or directory (os error 2)` — a `.oxide/`
-that vanishes mid-write.
+While hardening the PH0-03 V8 gate I initially flagged a nondeterministic V8
+`generateParams` prerender (0/1/2 blog pages across "identical" builds). On
+investigation that was **wrong**: the harness runs every script **twice
+concurrently**, and both copies shared state (the same temp root path, the
+same port, and a blanket `pkill -f oxide-cli` that cross-killed the sibling's
+`build`/`start`). Proven by building into **PID-unique roots**: six isolated
+builds each emitted `hello-prod.html` + `second-post.html` and a valid
+snapshot, deterministically. The product is correct; the measurement was not.
 
-This is a **product** defect, not harness noise (a clean single-run repro
-reproduces it). It lives in the V8 `generateParams` dispatch path
-(`crates/cli/src/lib.rs` runtime-eval arm → `LoaderHost::generate_params` →
-`__oxideGenerateParamsRun`), likely a race in the V8 worker pool when the
-prerender pass runs several `generate_params` calls against a pool whose
-workers are still warming (`spawn_v8_worker` init) or being recycled.
+Corrected in the same pass:
+- `tests/fixtures/check-v8.sh` no longer blanket-pkills `oxide-cli`
+  (cross-kill), uses a PID-derived port, and waits for a rendered page +
+  retries the action POST. The work dir was already `$$`-scoped; the port is
+  now too, so two concurrent invocations cannot collide.
 
-Impact: a V8-backed build is not reproducible — a route's prerendered pages
-appear or vanish run to run. That breaks the BUG-05 byte-stable-manifest
-guarantee for any app with runtime `generateParams`.
-
-Next step (not done here): instrument `__oxideGenerateParamsRun` to log the
-worker id + generation, and assert the prerender pass awaits worker readiness
-(`V8Host::render_pool` should not hand out a pool until every worker has
-acked `ready`). Tracked as **BUG-17**.
-
-### PH0-03 gate hardening (this commit)
-
-`tests/fixtures/check-v8.sh` no longer blanket-`pkill`s `target/debug/oxide-cli`
-(which cross-kills a sibling `build`/`start` under a harness that runs the
-script more than once); the default port is PID-derived; and the run waits
-for a rendered page + retries the action POST before timing. These make the
-gate's *harness* deterministic; the remaining flake is BUG-17.
+No product change was needed. Lesson (matches CONVENTIONS): when a result
+alternates run-to-run, suspect the harness first — here it was literally two
+harnesses.
 
 ## BUG-17 — V8 generateParams prerender is nondeterministic (OPEN, P0)
 
