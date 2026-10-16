@@ -284,13 +284,19 @@ fn convert(
                 let hash = std::fs::read(out_dir.join(&file))
                     .map(|b| blake3::hash(&b).to_hex().to_string()[..12].to_string())
                     .unwrap_or_default();
+                // PERF-09: record the modules in this chunk (the resolver's
+                // canonical ids). Lets `oxide analyze`/`why` attribute bytes
+                // per module and per chunk instead of guessing.
+                let modules: Vec<std::path::PathBuf> = c
+                    .module_ids
+                    .iter()
+                    .map(|id| std::path::PathBuf::from(id.to_string()))
+                    .collect();
                 chunks.push(Chunk {
                     name,
                     file,
                     hash,
-                    // Per-module metadata is exposed via Rolldown's plugin hooks;
-                    // recording it here would require a hook, see deviations.md.
-                    modules: Vec::new(),
+                    modules,
                     imports,
                     css: Vec::new(),
                     kind,
