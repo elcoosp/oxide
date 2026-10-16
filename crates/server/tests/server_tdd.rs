@@ -58,6 +58,7 @@ fn pipeline(
         server_fns: None,
         actions: None,
         tls: false,
+        dev_token: None,
     }
     }
 
@@ -807,6 +808,7 @@ async fn metrics_endpoint_renders_prometheus_text() {
         server_fns: None,
         actions: None,
         tls: false,
+        dev_token: None,
     };
     let d = &echo_dispatch();
     let resp = p.serve_request(req("GET", "/_oxide/metrics", &[]), d).await;
@@ -846,6 +848,7 @@ async fn vitals_endpoint_records_samples_into_metrics() {
         server_fns: None,
         actions: None,
         tls: false,
+        dev_token: None,
     };
     let body = br#"[{"name":"LCP","value":1234.5,"route":"/home"},{"name":"CLS","value":0.05,"route":"/home"}]"#;
     let mut r = req("POST", "/_oxide/vitals", &[]);
@@ -884,6 +887,7 @@ async fn vitals_endpoint_tolerates_a_malformed_beacon() {
         server_fns: None,
         actions: None,
         tls: false,
+        dev_token: None,
     };
     let mut r = req("POST", "/_oxide/vitals", &[]);
     r.body = bytes::Bytes::from_static(b"not json");
@@ -908,6 +912,7 @@ async fn metrics_endpoint_404_when_not_configured() {
         server_fns: None,
         actions: None,
         tls: false,
+        dev_token: None,
     };
     let d = &echo_dispatch();
     let resp = p.serve_request(req("GET", "/_oxide/metrics", &[]), d).await;
@@ -936,6 +941,7 @@ async fn pipeline_observes_native_branch_requests() {
         server_fns: None,
         actions: None,
         tls: false,
+        dev_token: None,
     };
     let d = &echo_dispatch();
     // Health is a native-prefix branch (_native label).
@@ -970,6 +976,7 @@ async fn with_metrics_attaches_registry() {
         server_fns: None,
         actions: None,
         tls: false,
+        dev_token: None,
     };
     let p = p.with_metrics(Arc::clone(&m));
     assert!(p.metrics().is_some());
@@ -1014,6 +1021,7 @@ fn inspector_pipeline() -> Pipeline {
         server_fns: None,
         actions: None,
         tls: false,
+        dev_token: None,
     }
 }
 
@@ -1679,10 +1687,12 @@ fn nonces_are_unpredictable_across_ids() {
 async fn hsts_emitted_only_on_tls() {
     let plain = Pipeline {
         tls: false,
+        dev_token: None,
         ..Default::default()
     };
     let tls_p = Pipeline {
         tls: true,
+        dev_token: None,
         ..Default::default()
     };
     let d = &echo_dispatch();
@@ -1858,4 +1868,64 @@ async fn sec06_slow_header_drip_is_dropped() {
 
     tx.send(true).unwrap();
     let _ = tokio::time::timeout(Duration::from_secs(10), server).await;
+}
+
+/// SEC-09: the dev inspector is gated on a session token; a request without
+/// it is 403, with it (query or header) is served.
+#[tokio::test]
+async fn sec09_inspector_requires_the_dev_token() {
+    use oxide_server::InspectorSnapshot;
+    #[derive(Debug)]
+    struct FakeInsp;
+    impl InspectorSnapshot for FakeInsp {
+        fn state_json(&self) -> serde_json::Value { serde_json::json!({}) }
+    }
+    let mut p = pipeline(
+        RulesEngine::default(),
+        None,
+        Limits::default(),
+        SecuritySettings::default(),
+    );
+    p.inspector = Some(Arc::new(FakeInsp));
+    p.dev_token = Some("secret-token".into());
+    let d = &echo_dispatch();
+
+    // No token → 403.
+    let resp = p
+        .serve_request(req("GET", "/__oxide/state", &[]), d)
+        .await;
+    assert_eq!(resp.status, 403, "inspector without token is refused");
+
+    // Query token → 200.
+    let resp = p
+        .serve_request(req("GET", "/__oxide/state?token=secret-token", &[]), d)
+        .await;
+    assert_eq!(resp.status, 200, "query token admits");
+
+    // Header token → 200.
+    let resp = p
+        .serve_request(
+            req("GET", "/__oxide/state", &[("x-oxide-dev-token", "secret-token")]),
+            d,
+        )
+        .await;
+    assert_eq!(resp.status, 200, "header token admits");
+
+    // Wrong token → 403.
+    let resp = p
+        .serve_request(req("GET", "/__oxide/state?token=nope", &[]), d)
+        .await;
+    assert_eq!(resp.status, 403, "wrong token refused");
+}
+
+/// SEC-09: the dev-host check rejects a non-local Host (DNS rebinding).
+#[test]
+fn sec09_dev_host_allowed() {
+    use oxide_server::dev_host_allowed;
+    use std::net::IpAddr;
+    let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+    assert!(dev_host_allowed("localhost:3000", ip("127.0.0.1")));
+    assert!(dev_host_allowed("127.0.0.1", ip("127.0.0.1")));
+    assert!(dev_host_allowed("127.0.0.1", ip("0.0.0.0")));
+    assert!(!dev_host_allowed("evil.example", ip("127.0.0.1")));
 }
