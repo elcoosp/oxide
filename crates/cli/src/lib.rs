@@ -861,7 +861,10 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     .await?;
     let local = oxide_dev::local_url(started.addr.port(), flags.https);
     outln!(w, "dev server listening on {local}");
-    outln!(w, "inspector: {local}/__oxide");
+    match &started.dev_token {
+        Some(t) => outln!(w, "inspector: {local}/__oxide?token={t}"),
+        None => outln!(w, "inspector: {local}/__oxide"),
+    }
     if let Some(net) = oxide_dev::network_url(started.addr.port(), flags.https) {
         if flags.host {
             outln!(w, "network: {net}");
@@ -2363,6 +2366,10 @@ pub struct StartedServer {
     /// Metrics registry (§20) shared with the pipeline and the dispatch
     /// delegate; exposed so tests and observability tooling can read it.
     pub metrics: std::sync::Arc<oxide_server::Metrics>,
+    /// SEC-09: the dev inspector token, when the inspector is attached (dev
+    /// only). The dev banner prints it so the developer can open
+    /// `/__oxide?token=…`; `None` in production.
+    pub dev_token: Option<String>,
 }
 
 /// Boxed dispatch future. Structurally identical to `futures::future::BoxFuture<_,
@@ -3471,6 +3478,10 @@ async fn start_server_inner_full(
     let image_endpoint = build_image_endpoint(&rootp, &cfg);
     let server_fns = build_server_fn_dispatcher(&rootp, stack.pool.as_ref());
     let actions = build_action_dispatcher(stack.pool.as_ref());
+    // SEC-09: mint the dev inspector token when the inspector is attached
+    // (dev only). `serve` (production) never sets an inspector, so this is
+    // `None` there.
+    let dev_token: Option<String> = with_inspector.then(oxide_server::dev_token);
     let pipeline = std::sync::Arc::new(oxide_server::Pipeline {
         rules,
         assets,
@@ -3506,6 +3517,8 @@ async fn start_server_inner_full(
         page_renderer: None,
         // SEC-02: HSTS only on TLS (§17.1) — set where the listener is built.
         tls: tls.is_some(),
+        // SEC-09: the dev inspector token (see below).
+        dev_token: dev_token.clone(),
     });
     let proxy_rules: Vec<oxide_dev::ProxyRule> = proxy_rules.clone();
     let routes_root = rootp.join(&cfg.routes.dir);
@@ -3581,7 +3594,12 @@ async fn start_server_inner_full(
             tracing::error!(code = %e.0.code, "server stopped with error");
         }
     });
-    Ok(StartedServer { addr, shutdown: tx, metrics })
+    Ok(StartedServer {
+        addr,
+        shutdown: tx,
+        metrics,
+        dev_token,
+    })
 }
 
 /// The server binds inside `Server::serve`, so a requested port of `0` is resolved
