@@ -86,6 +86,10 @@ fn frame_unframe_roundtrip_over_all_message_kinds() {
             id: 3,
             data_b64: "YWJj".into(),
         },
+        WorkerMsg::CallChunkBin {
+            id: 30,
+            data: b"\x00\x01\x02raw bytes".to_vec(),
+        },
         WorkerMsg::CallEnd { id: 4 },
         WorkerMsg::CallErr {
             id: 5,
@@ -147,13 +151,28 @@ fn unframe_protocol_errors() {
     let mut buf = (70u32 * 1024 * 1024).to_le_bytes().to_vec();
     buf.extend_from_slice(b"{}");
     assert_eq!(unframe(&buf).unwrap_err().0.code, "JSH-FRAME");
-    // complete frame whose payload is not protocol JSON → JSH-JSON
+
+    // complete frame (kind 0) whose payload is not protocol JSON → JSH-JSON
     let payload = b"not json at all";
-    let mut buf2 = (payload.len() as u32).to_le_bytes().to_vec();
+    let mut buf2 = ((payload.len() + 1) as u32).to_le_bytes().to_vec();
+    buf2.push(0); // kind byte
     buf2.extend_from_slice(payload);
     let e = unframe(&buf2).unwrap_err();
     assert_eq!(e.0.code, "JSH-JSON");
     assert!(e.0.message.contains("not valid protocol JSON"));
+
+    // unknown kind → JSH-FRAME
+    let mut buf3 = 2u32.to_le_bytes().to_vec();
+    buf3.push(9); // unknown kind
+    buf3.push(0);
+    assert_eq!(unframe(&buf3).unwrap_err().0.code, "JSH-FRAME");
+
+    // a binary chunk frame round-trips (kind 1).
+    let mut buf4 = 9u32.to_le_bytes().to_vec(); // len = kind(1) + id(8)
+    buf4.push(1);
+    buf4.extend_from_slice(&7u64.to_le_bytes());
+    let (msgs, _) = unframe(&buf4).unwrap();
+    assert!(matches!(msgs[0], WorkerMsg::CallChunkBin { id: 7, ref data } if data.is_empty()));
 }
 
 // ------------------------------------------------------------- dispatch -----
@@ -664,7 +683,7 @@ fn op_decls_returns_the_documented_ops() {
     // the §4.6 tier-1 prelude installs, so they live in the ops table rather
     // than in the JS bootstrap.
     let decls = oxide_jshost::v8_ops::op_decls();
-    assert_eq!(decls.len(), 8, "expected log, trace, serialize, random, sleep + 3 cache ops (BUG-02)");
+    assert_eq!(decls.len(), 9, "expected log/trace/serialize/random/sleep + 3 cache ops + fetch");
     // Op names are namespaced with the `op_oxide_` prefix so the JS side can
     // distinguish them from deno_core built-ins.
     let names: Vec<&str> = decls.iter().map(|d| d.name).collect();
@@ -677,6 +696,7 @@ fn op_decls_returns_the_documented_ops() {
         "op_oxide_cache_get",
         "op_oxide_cache_set",
         "op_oxide_cache_tag",
+        "op_oxide_fetch",
     ] {
         assert!(names.iter().any(|n| n.contains(want)), "missing {want}: {names:?}");
     }

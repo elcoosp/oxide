@@ -50,11 +50,25 @@ function versioned(url) {
   const sep = url.includes("?") ? "&" : "?";
   return `${url}${sep}v=${moduleGeneration}`;
 }
+// PERF-12: frame = [4-byte len LE][1-byte kind][payload]. len covers
+// kind+payload. kind 0 = JSON, kind 1 = binary chunk ([8-byte id LE][raw]).
 const out = (obj) => {
   const body = Buffer.from(JSON.stringify(obj), "utf8");
-  const head = Buffer.alloc(4);
-  head.writeUInt32LE(body.length, 0);
+  const head = Buffer.alloc(5);
+  head.writeUInt32LE(body.length + 1, 0);
+  head.writeUInt8(0, 4); // kind 0 = JSON
   process.stdout.write(Buffer.concat([head, body]), (e) => e && process.exit(0));
+};
+
+/// PERF-12: write a raw chunk as a binary frame (no base64, no JSON wrapper).
+const outBinChunk = (id, buf) => {
+  const payloadLen = 8 + buf.length;
+  const head = Buffer.alloc(5);
+  head.writeUInt32LE(payloadLen + 1, 0);
+  head.writeUInt8(1, 4); // kind 1 = binary chunk
+  const idBuf = Buffer.alloc(8);
+  idBuf.writeBigUInt64LE(BigInt(id), 0);
+  process.stdout.write(Buffer.concat([head, idBuf, buf]), (e) => e && process.exit(0));
 };
 const diagnostic = (code, message) => ({
   code, severity: "error", message, location: null, code_frame: null, causes: [], fix: null,
@@ -451,7 +465,8 @@ async function dispatchFrameworkRender(id, input) {
     // (FrameworkHost::render) still gets identical bytes after concatenation.
     for await (const chunk of stream) {
       const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      out({ t: "call_chunk", id, data_b64: b64(buf) });
+      // PERF-12: raw bytes ride a binary frame (no base64 overhead).
+      outBinChunk(id, Buffer.from(buf));
     }
     out({ t: "call_end", id });
   } catch (e) {
@@ -1160,8 +1175,17 @@ process.stdin.on("data", (chunk) => {
   for (;;) {
     if (buf.length < 4) return;
     const len = buf.readUInt32LE(0);
+    // PERF-12: frame = [4-byte len][1-byte kind][payload]; len covers
+    // kind+payload. Host→worker frames are always kind 0 (JSON).
+    if (buf.length < 5 || len === 0) return;
     if (buf.length < 4 + len) return;
-    const msg = JSON.parse(buf.subarray(4, 4 + len).toString("utf8"));
+    const kind = buf.readUInt8(4);
+    if (kind !== 0) {
+      // The host never sends a binary frame to the worker; drop and resync.
+      buf = buf.subarray(4 + len);
+      return;
+    }
+    const msg = JSON.parse(buf.subarray(5, 4 + len).toString("utf8"));
     buf = buf.subarray(4 + len);
     if (msg.t === "op_response") {
       // §4.5: a reply to an op the worker sent. Resolve the pending

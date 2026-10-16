@@ -263,6 +263,12 @@ pub enum WorkerMsg {
         id: u64,
         data_b64: String,
     },
+    /// PERF-12: a chunk carried as a binary frame (no base64). The JS side
+    /// writes `[len][kind=1][8-byte id][raw bytes]` for a `Uint8Array` body.
+    CallChunkBin {
+        id: u64,
+        data: Vec<u8>,
+    },
     CallEnd {
         id: u64,
     },
@@ -300,7 +306,7 @@ pub fn frame(msg: &WorkerMsg) -> Result<Bytes> {
         )
     })?;
     // BUG-16: check before casting — `as u32` would wrap a >4GiB len.
-    if json.len() > MAX_FRAME_LEN as usize {
+    if json.len() + 1 > MAX_FRAME_LEN as usize {
         return Err(err(
             "JSH-FRAME",
             format!(
@@ -309,9 +315,13 @@ pub fn frame(msg: &WorkerMsg) -> Result<Bytes> {
             ),
         ));
     }
-    let len = json.len() as u32;
-    let mut out = Vec::with_capacity(4 + json.len());
+    // PERF-12: `[4-byte len][1-byte kind][payload]`, len covers kind+payload.
+    // Host→worker frames are always JSON (kind 0); the worker→host direction
+    // may use kind 1 for raw chunk bytes.
+    let len = (json.len() + 1) as u32;
+    let mut out = Vec::with_capacity(5 + json.len());
     out.extend_from_slice(&len.to_le_bytes());
+    out.push(0); // kind 0 = JSON
     out.extend_from_slice(&json);
     Ok(Bytes::from(out))
 }
@@ -325,7 +335,7 @@ pub fn unframe(buf: &[u8]) -> Result<(Vec<WorkerMsg>, usize)> {
     let mut msgs = Vec::new();
     let mut pos = 0usize;
     loop {
-        if buf.len() - pos < 4 {
+        if buf.len() - pos < 5 {
             break;
         }
         let len = u32::from_le_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]]) as usize;
@@ -335,16 +345,42 @@ pub fn unframe(buf: &[u8]) -> Result<(Vec<WorkerMsg>, usize)> {
                 format!("declared frame length {len} exceeds the 64 MiB protocol limit (§4.2)"),
             ));
         }
+        if len == 0 {
+            return Err(err("JSH-FRAME", "frame length 0 (no kind byte)"));
+        }
         if buf.len() - pos < 4 + len {
             break; // partial frame: wait for more bytes
         }
-        let msg: WorkerMsg = serde_json::from_slice(&buf[pos + 4..pos + 4 + len]).map_err(|e| {
-            err(
-                "JSH-JSON",
-                format!("worker message is not valid protocol JSON: {e}"),
-            )
-        })?;
-        msgs.push(msg);
+        let kind = buf[pos + 4];
+        let payload = &buf[pos + 5..pos + 4 + len];
+        match kind {
+            0 => {
+                let msg: WorkerMsg = serde_json::from_slice(payload).map_err(|e| {
+                    err(
+                        "JSH-JSON",
+                        format!("worker message is not valid protocol JSON: {e}"),
+                    )
+                })?;
+                msgs.push(msg);
+            }
+            1 => {
+                // PERF-12: `[8-byte id LE][raw bytes]`.
+                if payload.len() < 8 {
+                    return Err(err("JSH-FRAME", "binary chunk shorter than its id header"));
+                }
+                let id = u64::from_le_bytes(payload[..8].try_into().unwrap());
+                msgs.push(WorkerMsg::CallChunkBin {
+                    id,
+                    data: payload[8..].to_vec(),
+                });
+            }
+            other => {
+                return Err(err(
+                    "JSH-FRAME",
+                    format!("unknown frame kind {other} (expected 0=json, 1=binary)"),
+                ));
+            }
+        }
         pos += 4 + len;
     }
     Ok((msgs, pos))
@@ -3188,6 +3224,13 @@ fn handle_worker_msg(
             } else if let Some(tx) = stream_sender(worker, streams, id) {
                 if tx.try_send(Ok(Bytes::from(body))).is_err() {
                     streams.remove(&id); // collector gone
+                }
+            }
+        }
+        WorkerMsg::CallChunkBin { id, data } => {
+            if let Some(tx) = stream_sender(worker, streams, id) {
+                if tx.try_send(Ok(Bytes::from(data))).is_err() {
+                    streams.remove(&id);
                 }
             }
         }
