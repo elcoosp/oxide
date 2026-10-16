@@ -94,6 +94,13 @@ pub struct CallInput {
     pub has_body: bool,
     /// request id for tracing (§20)
     pub request_id: String,
+    /// PERF-02: the route label this call belongs to, when known. The pool
+    /// uses it for affinity: calls for the same route land on the same
+    /// worker, so that worker's module cache stays warm for that route
+    /// instead of every worker loading every route. `None` = no affinity
+    /// (least-loaded dispatch, the pre-PERF-02 behavior).
+    #[serde(default)]
+    pub route: Option<String>,
 }
 
 /// A streaming result from a JS call.
@@ -322,6 +329,23 @@ pub fn unframe(buf: &[u8]) -> Result<(Vec<WorkerMsg>, usize)> {
 /// Returns the index of the worker with the smallest load (ties → lowest index).
 /// If `affinity` names an in-bounds worker whose load is at most `min + 1`, that
 /// worker is preferred to keep JIT and module caches warm for hot routes.
+/// PERF-02: map a route label to a stable worker index. The same route
+/// always prefers the same worker, so that worker's module cache stays warm
+/// for it. FNV-1a over the route bytes → `% n`. `None` route or `n == 0`
+/// yields no affinity (least-loaded dispatch).
+pub fn route_affinity(route: Option<&str>, n: usize) -> Option<usize> {
+    if n == 0 {
+        return None;
+    }
+    let route = route?;
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in route.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    Some((h % n as u64) as usize)
+}
+
 pub fn choose_worker(loads: &[u64], affinity: Option<usize>) -> usize {
     if loads.is_empty() {
         return 0;
@@ -2128,7 +2152,8 @@ impl Pool for V8Pool {
                     }
                 })
                 .collect();
-            let idx = choose_worker(&loads, None);
+            let affinity = route_affinity(req.route.as_deref(), loads.len());
+            let idx = choose_worker(&loads, affinity);
             if loads[idx] == u64::MAX {
                 // BUG-03: every worker is retiring or dead; a warm
                 // replacement is in flight. Fail this call honestly rather
@@ -2547,13 +2572,15 @@ impl Pool for NodePool {
             ));
         }
         let start = Instant::now();
-        // Least-loaded dispatch; no route-affinity for child workers (§4.3).
+        // PERF-02: least-loaded dispatch with route affinity — calls for the
+        // same route prefer the same worker so its module cache stays warm.
         let loads: Vec<u64> = self
             .workers
             .iter()
             .map(|w| w.in_flight.load(Ordering::Relaxed))
             .collect();
-        let worker = Arc::clone(&self.workers[choose_worker(&loads, None)]);
+        let affinity = route_affinity(req.route.as_deref(), loads.len());
+        let worker = Arc::clone(&self.workers[choose_worker(&loads, affinity)]);
         self.ensure_ready(&worker).await?;
 
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
@@ -3169,6 +3196,30 @@ mod perf01_tests {
     async fn serialize_op_requires_a_value() {
         let out = op_dispatch(None, Op::Serialize, &serde_json::json!({})).await;
         assert!(out.is_err(), "missing value is an error");
+    }
+}
+
+mod perf02_tests {
+    use super::*;
+
+    /// PERF-02: the same route always maps to the same worker index.
+    #[test]
+    fn route_affinity_is_stable_and_bounded() {
+        let a1 = route_affinity(Some("routes/blog/[slug]"), 4);
+        let a2 = route_affinity(Some("routes/blog/[slug]"), 4);
+        assert_eq!(a1, a2, "stable across calls");
+        assert!(a1.unwrap() < 4, "in bounds");
+        // Distinct routes generally differ (not a guarantee, but a sanity
+        // check that the hash spreads).
+        let b = route_affinity(Some("routes/index"), 4);
+        let c = route_affinity(Some("routes/about"), 4);
+        assert!(b != c || a1 != b, "hash spreads across routes");
+    }
+
+    #[test]
+    fn route_affinity_none_and_zero() {
+        assert_eq!(route_affinity(None, 4), None);
+        assert_eq!(route_affinity(Some("x"), 0), None);
     }
 }
 
