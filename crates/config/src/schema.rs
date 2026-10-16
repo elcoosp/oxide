@@ -55,7 +55,8 @@ pub fn config_schema() -> Value {
                         "type": "array",
                         "items": { "type": "string", "enum": ["zstd", "br", "gzip"] }
                     },
-                    "http3": { "type": "boolean", "default": false }
+                    "http3": { "type": "boolean", "default": false },
+                    "backend": { "type": "string", "enum": ["node", "v8"], "default": "node" }
                 }
             },
             "render": {
@@ -78,12 +79,7 @@ pub fn config_schema() -> Value {
                             "type": { "type": "string", "enum": ["memory", "disk", "redis", "s3", "http"] }
                         }
                     },
-                    "l0": {
-                        "type": "object",
-                        "properties": {
-                            "maxSize": { "type": "string", "pattern": "^[0-9]+(kb|mb|gb)$" }
-                        }
-                    }
+                    "l0MaxSize": { "type": "string", "pattern": "^[0-9]+(kb|mb|gb)$", "default": "512mb" }
                 }
             },
             "images": {
@@ -129,7 +125,11 @@ pub fn config_schema() -> Value {
                 "additionalProperties": false,
                 "properties": {
                     "csp": { "type": "string", "enum": ["strict", "hash", "off"] },
-                    "csrf": { "type": "string", "enum": ["origin", "token", "off"] }
+                    "csrf": { "type": "string", "enum": ["origin", "token", "off"] },
+                    "hostAllowList": { "type": "array", "items": { "type": "string" } },
+                    "ssrfAllowList": { "type": "array", "items": { "type": "string" } },
+                    "trustedProxies": { "type": "array", "items": { "type": "string" } },
+                    "cookieKeys": { "type": "array", "items": { "type": "string" } }
                 }
             },
             "rules": {
@@ -158,7 +158,8 @@ pub fn config_schema() -> Value {
                 "additionalProperties": false,
                 "properties": {
                     "target": { "type": "string" },
-                    "sourcemap": { "type": "string", "enum": ["hidden", "inline", "external", "off"] }
+                    "sourcemap": { "type": "string", "enum": ["hidden", "inline", "external", "off"] },
+                    "ssrExternals": { "type": "array", "items": { "type": "string" } }
                 }
             },
             "adapter": {
@@ -243,6 +244,35 @@ mod tests {
         ] {
             assert!(props.contains_key(expected), "missing {expected}");
         }
+    }
+
+    /// BUG-11: guard against schema drift — the keys the typed config
+    /// actually deserializes must appear in the schema, or editor tooling
+    /// silently rejects a valid config.
+    #[test]
+    fn schema_declares_the_security_and_cache_keys() {
+        let v = config_schema();
+        let sec = &v["properties"]["security"]["properties"];
+        for k in ["hostAllowList", "ssrfAllowList", "trustedProxies", "cookieKeys"] {
+            assert!(sec.get(k).is_some(), "security.{k} missing from schema");
+        }
+        // `cache.l0MaxSize` is a top-level key on `cache`, not a nested `l0`.
+        assert!(
+            v["properties"]["cache"]["properties"]
+                .get("l0MaxSize")
+                .is_some(),
+            "cache.l0MaxSize missing"
+        );
+        assert!(
+            v["properties"]["server"]["properties"].get("backend").is_some(),
+            "server.backend missing"
+        );
+        assert!(
+            v["properties"]["build"]["properties"]
+                .get("ssrExternals")
+                .is_some(),
+            "build.ssrExternals missing"
+        );
     }
 
     #[test]
