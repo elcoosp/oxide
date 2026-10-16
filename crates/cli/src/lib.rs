@@ -980,6 +980,27 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     }
     // Real dev loop (§13): poll, report, Ctrl-C to stop. Not exercised in tests.
     outln!(w, "dev ready — watching for changes (Ctrl-C to stop)");
+    // PERF-11: idle pre-warm (§13.1). After `IDLE_WARM` with no change, issue
+    // a request for each page route so the first real hit is warm. The set is
+    // warmed once per quiet period; a change resets the timer.
+    const IDLE_WARM: std::time::Duration = std::time::Duration::from_secs(2);
+    let dev_addr = started.addr;
+    let page_routes: Vec<String> = tree
+        .entries
+        .iter()
+        .filter(|e| matches!(e.kind, oxide_router::RouteKind::Page))
+        .filter(|e| e.segments.iter().all(|s| !s.contains(':') && !s.contains('*')))
+        .map(|e| {
+            let path = if e.segments.is_empty() {
+                "/".to_string()
+            } else {
+                format!("/{}", e.segments.join("/"))
+            };
+            path
+        })
+        .collect();
+    let mut idle_since = std::time::Instant::now();
+    let mut warmed = true; // nothing to do until the first quiet period
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         let events = watcher
@@ -987,10 +1008,32 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
         if !events.is_empty() {
             invalidate_framework_modules(&hmr_pool).await;
+            idle_since = std::time::Instant::now();
+            warmed = false;
         }
         for ev in events {
             tracing::info!(?ev, "file change");
             outln!(w, "change: {ev:?}");
+        }
+        if !warmed && idle_since.elapsed() >= IDLE_WARM {
+            warmed = true;
+            for path in &page_routes {
+                // A minimal GET; the response is discarded — the point is to
+                // run the render path once so its worker + module cache warm.
+                if let Ok(mut s) = tokio::net::TcpStream::connect(dev_addr).await {
+                    use tokio::io::AsyncWriteExt as _;
+                    let req = format!(
+                        "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+                    );
+                    let _ = s.write_all(req.as_bytes()).await;
+                    let mut buf = [0u8; 512];
+                    use tokio::io::AsyncReadExt as _;
+                    let _ = s.read(&mut buf).await;
+                }
+            }
+            if !page_routes.is_empty() {
+                outln!(w, "pre-warmed {} route(s) after idle", page_routes.len());
+            }
         }
     }
 }
