@@ -1929,3 +1929,48 @@ fn sec09_dev_host_allowed() {
     assert!(dev_host_allowed("127.0.0.1", ip("0.0.0.0")));
     assert!(!dev_host_allowed("evil.example", ip("127.0.0.1")));
 }
+
+/// PERF-06: a compressible HTML response is compressed when the client offers
+/// an encoding; a non-compressible one is left alone.
+#[tokio::test]
+async fn perf06_dynamic_compression() {
+    let p = pipeline(
+        RulesEngine::default(),
+        None,
+        Limits::default(),
+        SecuritySettings::default(),
+    );
+    // A dispatch returning a large compressible HTML body.
+    let body = "<html><body>".to_string() + &"hello oxide ".repeat(200) + "</body></html>";
+    let d = {
+        let body = body.clone();
+        move |_r: OxideRequest| {
+            let body = body.clone();
+            Box::pin(async move {
+                OxideResponse::new(200, body)
+                    .with_header("content-type", "text/html; charset=utf-8")
+            }) as BoxFuture<'static, OxideResponse>
+        }
+    };
+
+    // With `accept-encoding: gzip` the response carries Content-Encoding: gzip.
+    let resp = p
+        .serve_request(
+            req("GET", "/", &[("accept-encoding", "gzip")]),
+            &d,
+        )
+        .await;
+    assert_eq!(resp.status, 200);
+    assert_eq!(
+        resp.header("content-encoding"),
+        Some("gzip"),
+        "compressed when offered"
+    );
+    assert!(resp.body.len() < body.len(), "body shrank");
+    assert!(resp.header("vary").is_some(), "Vary: Accept-Encoding set");
+
+    // Without accept-encoding the body is uncompressed.
+    let resp = p.serve_request(req("GET", "/", &[]), &d).await;
+    assert!(resp.header("content-encoding").is_none(), "no AE -> identity");
+    assert_eq!(resp.body.len(), body.len());
+}
