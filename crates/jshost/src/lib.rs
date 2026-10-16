@@ -2945,6 +2945,21 @@ async fn op_dispatch(
                 )),
             }
         }
+        // §9.5 / PERF-01: encode a JSON value to ODF bytes, base64 for the
+        // JSON op protocol. The worker's `oxide.serializeProps` uses this so
+        // island props ride the ODF wire format (the client decodes ODF,
+        // falling back to JSON for older bundles).
+        Op::Serialize => {
+            let Some(value) = args.get("value") else {
+                return Err(err("JSH-OP", "serialize requires a `value` field"));
+            };
+            let odf = oxide_odf::Value::from_json(value);
+            let bytes = oxide_odf::encode(&odf)
+                .map_err(|e| err("JSH-OP", format!("serialize: {}", e.0.message)))?;
+            use base64::Engine as _;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            Ok(serde_json::json!({ "b64": b64 }))
+        }
         _ => Err(err(
             "JSH-OP",
             format!("worker op `{}` is not implemented on this host", op_name(op)),
@@ -3129,6 +3144,34 @@ mod bug12_tests {
 }
 
 #[cfg(test)]
+mod perf01_tests {
+    use super::*;
+
+    /// PERF-01: the `serialize` op encodes a JSON value to ODF and returns
+    /// it base64-encoded; the bytes start with the ODF magic.
+    #[tokio::test]
+    async fn serialize_op_encodes_odf() {
+        let args = serde_json::json!({ "value": { "a": 1, "b": [true, null] } });
+        let out = op_dispatch(None, Op::Serialize, &args).await.expect("serialize ok");
+        let b64 = out["b64"].as_str().expect("b64 field");
+        let bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            b64,
+        )
+        .expect("valid base64");
+        assert_eq!(&bytes[..4], b"ODF1", "ODF magic present");
+        // Round-trip through the decoder to prove it is real ODF.
+        let decoded = oxide_odf::decode(&bytes).expect("decodes");
+        assert_eq!(decoded.to_json(), serde_json::json!({ "a": 1, "b": [true, null] }));
+    }
+
+    #[tokio::test]
+    async fn serialize_op_requires_a_value() {
+        let out = op_dispatch(None, Op::Serialize, &serde_json::json!({})).await;
+        assert!(out.is_err(), "missing value is an error");
+    }
+}
+
 mod bug03_tests {
     use super::*;
 
