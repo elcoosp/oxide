@@ -24,6 +24,12 @@ pub struct TranspileLoader {
     /// The JSX runtime to lower `.tsx`/`.jsx` against (`react` → the Oxc
     /// default; `@solidjs/web` for Solid).
     jsx_import_source: Option<String>,
+    /// PERF-10: the resolver, built **once** and reused. `oxc_resolver`'s
+    /// `Resolver` holds caches (realpath, package.json, tsconfig); building it
+    /// per resolve threw those away and re-read the filesystem every import.
+    /// `OnceCell` because the loader is constructed before the process cwd is
+    /// guaranteed stable.
+    resolver: std::cell::OnceCell<oxc_resolver::Resolver>,
 }
 
 impl TranspileLoader {
@@ -31,7 +37,38 @@ impl TranspileLoader {
         Self {
             root: root.into(),
             jsx_import_source,
+            resolver: std::cell::OnceCell::new(),
         }
+    }
+
+    /// PERF-10: the resolver, built on first use and reused thereafter.
+    fn resolver(&self) -> &oxc_resolver::Resolver {
+        self.resolver.get_or_init(|| {
+            let options = oxc_resolver::ResolveOptions {
+                extensions: vec![
+                    ".ts".into(),
+                    ".tsx".into(),
+                    ".js".into(),
+                    ".jsx".into(),
+                    ".mjs".into(),
+                    ".cjs".into(),
+                    ".json".into(),
+                ],
+                // §4.6: the V8 runtime is browser-like. `worker` FIRST (see
+                // the long note that used to live here): react-dom/server →
+                // server.browser.js, @solidjs/web → dist/server.js.
+                condition_names: vec![
+                    "worker".into(),
+                    "browser".into(),
+                    "import".into(),
+                    "module".into(),
+                    "default".into(),
+                ],
+                main_fields: vec!["module".into(), "main".into()],
+                ..Default::default()
+            };
+            oxc_resolver::Resolver::new(options)
+        })
     }
 
     fn is_relative(spec: &str) -> bool {
@@ -77,41 +114,9 @@ impl TranspileLoader {
             }
         }
 
-        // Everything else goes through oxc_resolver (tsconfig paths, package
-        // `exports`, conditions, node_modules). The same defaults the bundler
-        // uses for the SSR environment.
-        let options = oxc_resolver::ResolveOptions {
-            extensions: vec![
-                ".ts".into(),
-                ".tsx".into(),
-                ".js".into(),
-                ".jsx".into(),
-                ".mjs".into(),
-                ".cjs".into(),
-                ".json".into(),
-            ],
-            // §4.6: the V8 runtime is browser-like (no Node built-ins), so
-            // resolve with browser/worker conditions. `node` would pick a
-            // framework's Node build (e.g. react-dom/server.node.js →
-            // require('stream')), which V8 cannot run.
-            // `worker` FIRST: it is the condition the two SSR runtimes agree on.
-            //   react-dom/server: worker → server.browser.js (no Node built-ins)
-            //   @solidjs/web:     worker → dist/server.js (the SSR renderer)
-            // `browser` would give @solidjs/web its CLIENT build, whose `ssr`
-            // template returns undefined. `node` gives react-dom its Node build
-            // (`require('stream')`).
-            condition_names: vec![
-                "worker".into(),
-                "browser".into(),
-                "import".into(),
-                "module".into(),
-                "default".into(),
-            ],
-            main_fields: vec!["module".into(), "main".into()],
-            ..Default::default()
-        };
-        let resolver = oxc_resolver::Resolver::new(options);
-        resolver
+        // Everything else goes through the reused resolver (tsconfig paths,
+        // package `exports`, conditions, node_modules) — PERF-10.
+        self.resolver()
             .resolve(&base_dir, specifier)
             .ok()
             .map(|r| r.full_path().to_path_buf())
