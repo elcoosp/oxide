@@ -2978,6 +2978,11 @@ fn build_dispatch(
                 // render phase produces (stream or error).
                 let mut loader_set_cookies: Vec<String> = Vec::new();
                 let mut loader_headers: Vec<(String, String)> = Vec::new();
+                // PERF-06: per-stage timing marks. `started` is the request
+                // entry; these bracket load / render so `Server-Timing` can
+                // report real per-stage durations instead of all-zeros.
+                let stage_load_start = std::time::Instant::now();
+                let mut load_ms = 0.0f64;
 
                 if has_server_module {
                     if let (Some(runner), Some(module_path), Some(route_id)) =
@@ -3047,6 +3052,10 @@ fn build_dispatch(
                 }
 
                 // §7: render phase. Attached renderer wins; otherwise IR placeholder.
+                // PERF-06: the loader phase is done; record its duration.
+                load_ms = stage_load_start.elapsed().as_secs_f64() * 1000.0;
+                let stage_render_start = std::time::Instant::now();
+
                 if let Some(renderer) = page_renderer.as_ref() {
                     // Route ID — the framework adapter's `componentFor`
                     // receives this, not the URL pattern.
@@ -3148,6 +3157,17 @@ fn build_dispatch(
                                     let mut resp = oxide_server::OxideResponse::new(200, collected)
                                         .with_header("content-type", "text/html; charset=utf-8")
                                         .with_header("x-oxide-cache", "L0-miss");
+                                    // PERF-06: real per-stage Server-Timing.
+                                    let render_ms =
+                                        stage_render_start.elapsed().as_secs_f64() * 1000.0;
+                                    let t = oxide_render::RequestTimings {
+                                        middleware_ms: 0.0,
+                                        cache_ms: 0.0,
+                                        load_ms,
+                                        render_ms,
+                                        inject_ms: 0.0,
+                                    };
+                                    resp = resp.with_header("Server-Timing", t.server_timing());
                                     for (k, v) in &loader_headers {
                                         resp = resp.with_header(k, v.clone());
                                     }
@@ -3157,6 +3177,17 @@ fn build_dispatch(
                             let mut resp = oxide_server::OxideResponse::stream(200, body)
                                 .with_header("content-type", "text/html; charset=utf-8")
                                 .with_header("x-oxide-cache", "bypass");
+                            // PERF-06: real per-stage Server-Timing.
+                            let render_ms =
+                                stage_render_start.elapsed().as_secs_f64() * 1000.0;
+                            let t = oxide_render::RequestTimings {
+                                middleware_ms: 0.0,
+                                cache_ms: 0.0,
+                                load_ms,
+                                render_ms,
+                                inject_ms: 0.0,
+                            };
+                            resp = resp.with_header("Server-Timing", t.server_timing());
                             for c in &loader_set_cookies {
                                 resp = resp.with_header("set-cookie", c.clone());
                             }

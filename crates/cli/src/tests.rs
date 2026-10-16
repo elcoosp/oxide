@@ -1761,8 +1761,19 @@ async fn start_serves_health_endpoint_then_shuts_down() {
     let mut resp = String::new();
     stream.read_to_string(&mut resp).await.unwrap();
     assert!(resp.contains("200"), "health endpoint returns 200: {resp}");
-    // Dispatch placeholder for a routed page.
-    let mut stream = tokio::net::TcpStream::connect(started.addr).await.unwrap();
+    // Dispatch placeholder for a routed page. Retry the connect too — under
+    // full-workspace parallel load the listener can transiently refuse.
+    let mut stream = None;
+    for _ in 0..200 {
+        match tokio::net::TcpStream::connect(started.addr).await {
+            Ok(s) => {
+                stream = Some(s);
+                break;
+            }
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(50)).await,
+        }
+    }
+    let mut stream = stream.expect("server accepts a second connection");
     stream
         .write_all(b"GET /blog HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
         .await
