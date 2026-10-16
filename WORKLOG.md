@@ -3928,3 +3928,51 @@ Remaining PERF-06: real per-stage Server-Timing (still `RequestTimings::default(
 zeros) and Early Hints (103) — both scoped, not done.
 
 Commits: (below).
+
+## PERF-06 (slice 1) — dynamic compression
+
+`compress_body` existed but was **dead** — only tests called it. Wired it into
+the response path: `finish_response_full` (the Dispatch arm passes the
+request's `Accept-Encoding`) compresses a non-streaming body when
+- the client offers an encoding (`negotiate_encoding` picks zstd > gzip),
+- the content type is compressible (`is_compressible`: text/*, JSON, JS,
+  ODF, SVG, +json/+xml — not images/fonts/wasm),
+- the response has no existing `Content-Encoding` (a pre-compressed static
+  asset is left alone), and
+- the compressed form is actually smaller.
+
+Sets `Content-Encoding` and `Vary: Accept-Encoding`, and drops the stale
+`Content-Length`. `br` is not compiled in (documented in `compress_body`), so
+the negotiation list is `["zstd", "gzip"]`.
+
+Verified: new test `perf06_dynamic_compression` (gzip offered → encoded +
+shrunken + Vary; no AE → identity); `oxide-server` 43+21+69.
+
+Remaining PERF-06: real per-stage Server-Timing (still `RequestTimings::default()`
+zeros) and Early Hints (103) — both scoped, not done.
+
+Commits: (below).
+
+## PERF-06 (slice 1) — dynamic compression
+
+`compress_body` existed but was **dead** — only tests called it. Wired it into
+the response path: `finish_response_full` (the Dispatch arm passes the
+request's `Accept-Encoding`) compresses a non-streaming body when
+- the client offers an encoding (`negotiate_encoding` picks zstd > gzip),
+- the content type is compressible (`is_compressible`: text/*, JSON, JS,
+  ODF, SVG, +json/+xml — not images/fonts/wasm),
+- the response has no existing `Content-Encoding` (a pre-compressed static
+  asset is left alone), and
+- the compressed form is actually smaller.
+
+Sets `Content-Encoding` and `Vary: Accept-Encoding`, and drops the stale
+`Content-Length`. `br` is not compiled in (documented in `compress_body`), so
+the negotiation list is `["zstd", "gzip"]`.
+
+Verified: new test `perf06_dynamic_compression` (gzip offered → encoded +
+shrunken + Vary; no AE → identity); `oxide-server` 43+21+69.
+
+Remaining PERF-06: real per-stage Server-Timing (still `RequestTimings::default()`
+zeros) and Early Hints (103) — both scoped, not done.
+
+Commits: (below).
