@@ -3754,3 +3754,68 @@ own size; `__boot__` reports 38 611.
 Verified: bundler tests green; manifest shows distinct per-route totals.
 
 Commits: (below).
+
+## PERF-09 (slice 3) — `oxide why` from module metadata
+
+`RouteBundle` now carries the route's reachable source modules (populated by
+both bundler paths). `oxide why <module>` matches against that list first,
+falling back to the old substring scan. Verified on the react fixture:
+`why counter.tsx` → chunks `__boot__.js`, `routes/index/page.js`; importers
+`__boot__`, `routes/index/page`.
+
+PERF-09 complete: per-chunk module ids, route-true bytes, and a metadata-backed
+`why`.
+
+Commits: (below).
+
+## PERF-09 (slice 3) — `oxide why` from module metadata
+
+`RouteBundle` now carries the route's reachable source modules (populated by
+both bundler paths). `oxide why <module>` matches against that list first,
+falling back to the old substring scan. Verified on the react fixture:
+`why counter.tsx` → chunks `__boot__.js`, `routes/index/page.js`; importers
+`__boot__`, `routes/index/page`.
+
+PERF-09 complete: per-chunk module ids, route-true bytes, and a metadata-backed
+`why`.
+
+Commits: (below).
+
+## PERF-09 (slice 3) — `oxide why` from module metadata
+
+`RouteBundle` now carries the route's reachable source modules (populated by
+both bundler paths). `oxide why <module>` matches against that list first,
+falling back to the old substring scan. Verified on the react fixture:
+`why counter.tsx` → chunks `__boot__.js`, `routes/index/page.js`; importers
+`__boot__`, `routes/index/page`.
+
+PERF-09 complete: per-chunk module ids, route-true bytes, and a metadata-backed
+`why`.
+
+Commits: (below).
+
+## PERF-09 (slice 3) — `oxide why` from module metadata
+
+`RouteBundle` now carries the route's reachable source modules (populated by
+both bundler paths). `oxide why <module>` matches against that list first,
+falling back to the old substring scan. Verified on the react fixture:
+`why counter.tsx` → chunks `__boot__.js`, `routes/index/page.js`; importers
+`__boot__`, `routes/index/page`.
+
+PERF-09 complete: per-chunk module ids, route-true bytes, and a metadata-backed
+`why`.
+
+Commits: (below).
+
+## PERF-09 (slice 3) — `oxide why` from module metadata
+
+`RouteBundle` now carries the route's reachable source modules (populated by
+both bundler paths). `oxide why <module>` matches against that list first,
+falling back to the old substring scan. Verified on the react fixture:
+`why counter.tsx` → chunks `__boot__.js`, `routes/index/page.js`; importers
+`__boot__`, `routes/index/page`.
+
+PERF-09 complete: per-chunk module ids, route-true bytes, and a metadata-backed
+`why`.
+
+Commits: (below).
