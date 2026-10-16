@@ -3906,3 +3906,87 @@ asserts a static file under a header-rule source is served without the rule
 header (the spec order).
 
 Commits: (below).
+
+## Task BUG-11 — config truth: dead keys + loud dynamic + schema drift
+
+Bounded fixes (the full dynamic-eval host is a follow-up):
+
+1. **`server.host` was dead** (the CLI hardcoded loopback). Now
+   `resolve_bind_host` maps it: `localhost`/empty → loopback, an IP literal →
+   itself, `0.0.0.0`/`::` → all interfaces; a non-IP hostname warns and falls
+   back to loopback.
+2. **`cache.l0MaxSize` was dead** (the L0 tier was hardcoded 512 MiB). Now
+   parsed via `oxide_config::parse_size`; a malformed value warns and uses
+   512mb.
+3. **`build.sourcemap` was dead** (always off). Now `sourcemap != "off"`
+   flips `BundleOptions.sourcemap` for both client and server bundles
+   (`RolldownBundler` supports `SourceMapType::File`).
+4. **Dynamic `oxide.config.ts` silently defaulted.** `load_config_or_default`
+   now warns loudly (`CFG-DYNAMIC`) when `used_dynamic_eval` is set, naming
+   the remedy (a literal config or `oxide.config.json`); a load *error* now
+   surfaces its code (`CFG-SCHEMA`/`CFG-IO`) instead of only a debug log.
+5. **Schema drift.** `schema.rs` was missing `server.backend`,
+   `build.ssrExternals`, the four `security.*` allow-list keys, and modelled
+   `cache.l0.maxSize` while the typed key is `cache.l0MaxSize`. Fixed, plus a
+   drift-guard test asserting the typed keys appear in the schema.
+
+Verified: `cargo test --workspace` **884 passed / 0 failed**; config suite
+20+26 incl. the new drift test.
+
+Commits: (below).
+
+## Task BUG-11 — config truth: dead keys + loud dynamic + schema drift
+
+Bounded fixes (the full dynamic-eval host is a follow-up):
+
+1. **`server.host` was dead** (the CLI hardcoded loopback). Now
+   `resolve_bind_host` maps it: `localhost`/empty → loopback, an IP literal →
+   itself, `0.0.0.0`/`::` → all interfaces; a non-IP hostname warns and falls
+   back to loopback.
+2. **`cache.l0MaxSize` was dead** (the L0 tier was hardcoded 512 MiB). Now
+   parsed via `oxide_config::parse_size`; a malformed value warns and uses
+   512mb.
+3. **`build.sourcemap` was dead** (always off). Now `sourcemap != "off"`
+   flips `BundleOptions.sourcemap` for both client and server bundles
+   (`RolldownBundler` supports `SourceMapType::File`).
+4. **Dynamic `oxide.config.ts` silently defaulted.** `load_config_or_default`
+   now warns loudly (`CFG-DYNAMIC`) when `used_dynamic_eval` is set, naming
+   the remedy (a literal config or `oxide.config.json`); a load *error* now
+   surfaces its code (`CFG-SCHEMA`/`CFG-IO`) instead of only a debug log.
+5. **Schema drift.** `schema.rs` was missing `server.backend`,
+   `build.ssrExternals`, the four `security.*` allow-list keys, and modelled
+   `cache.l0.maxSize` while the typed key is `cache.l0MaxSize`. Fixed, plus a
+   drift-guard test asserting the typed keys appear in the schema.
+
+Verified: `cargo test --workspace` **884 passed / 0 failed**; config suite
+20+26 incl. the new drift test.
+
+Commits: (below).
+
+## Task BUG-11 — config truth: dead keys + loud dynamic + schema drift
+
+Bounded fixes (the full dynamic-eval host is a follow-up):
+
+1. **`server.host` was dead** (the CLI hardcoded loopback). Now
+   `resolve_bind_host` maps it: `localhost`/empty → loopback, an IP literal →
+   itself, `0.0.0.0`/`::` → all interfaces; a non-IP hostname warns and falls
+   back to loopback.
+2. **`cache.l0MaxSize` was dead** (the L0 tier was hardcoded 512 MiB). Now
+   parsed via `oxide_config::parse_size`; a malformed value warns and uses
+   512mb.
+3. **`build.sourcemap` was dead** (always off). Now `sourcemap != "off"`
+   flips `BundleOptions.sourcemap` for both client and server bundles
+   (`RolldownBundler` supports `SourceMapType::File`).
+4. **Dynamic `oxide.config.ts` silently defaulted.** `load_config_or_default`
+   now warns loudly (`CFG-DYNAMIC`) when `used_dynamic_eval` is set, naming
+   the remedy (a literal config or `oxide.config.json`); a load *error* now
+   surfaces its code (`CFG-SCHEMA`/`CFG-IO`) instead of only a debug log.
+5. **Schema drift.** `schema.rs` was missing `server.backend`,
+   `build.ssrExternals`, the four `security.*` allow-list keys, and modelled
+   `cache.l0.maxSize` while the typed key is `cache.l0MaxSize`. Fixed, plus a
+   drift-guard test asserting the typed keys appear in the schema.
+
+Verified: `cargo test --workspace` **884 passed / 0 failed**; config suite
+20+26 incl. the new drift test.
+
+Commits: (below).
