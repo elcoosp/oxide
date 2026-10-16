@@ -2312,6 +2312,16 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         }
     }
 
+    // PERF-07: serialize the route tree to the rkyv archive so `oxide start`
+    // can mmap it instead of re-scanning the routes directory.
+    {
+        let archive_path = rootp.join(".oxide/routes.manifest");
+        if let Some(parent) = archive_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = tree.archive_to(&archive_path);
+    }
+
     // PERF-04: write the L0 seed manifest. Each prerendered page's sentineled
     // HTML is stored so `oxide start` can insert it into L0 at boot — a
     // seeded route is an L0 hit on the very first request (no warm-up miss).
@@ -2624,6 +2634,9 @@ fn build_dispatch(
     boot_script_url: Option<String>,
     l0: Option<std::sync::Arc<l0_cache::L0Cache>>,
     actions: Option<std::sync::Arc<dyn oxide_server::ActionDispatcher>>,
+    // PERF-07: when `Some`, route matching reads the mmap'd rkyv archive
+    // instead of the in-memory tree. Tests pass `None`.
+    archived: Option<std::sync::Arc<oxide_router::ArchivedTree>>,
 ) -> std::sync::Arc<
     dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
 > {
@@ -2694,8 +2707,10 @@ fn build_dispatch(
             } else {
                 vec![normalized]
             };
-            let matched: Option<oxide_router::MatchResult> =
-                candidates.iter().find_map(|p| tree.match_path(p));
+            let matched: Option<oxide_router::MatchResult> = match &archived {
+                Some(a) => candidates.iter().find_map(|p| a.match_path(p)),
+                None => candidates.iter().find_map(|p| tree.match_path(p)),
+            };
             let (status, label) = match &matched {
                 Some(m) => (200u16, pattern_of(&m.route.segments)),
                 None => (404u16, "_unmatched".to_string()),
@@ -3842,6 +3857,18 @@ async fn start_server_inner_full(
             }
         }
     }
+    // PERF-07: prefer the mmap'd rkyv route archive when the build wrote one.
+    // A missing/stale archive falls back to the in-memory tree (dev, or a
+    // build with no archive).
+    let archived = rootp
+        .join(".oxide/routes.manifest")
+        .exists()
+        .then(|| {
+            oxide_router::ArchivedTree::load_archived(&rootp.join(".oxide/routes.manifest"))
+                .ok()
+                .map(std::sync::Arc::new)
+        })
+        .flatten();
     let dispatch = build_dispatch(
         std::sync::Arc::clone(&tree),
         std::sync::Arc::clone(&metrics),
@@ -3852,6 +3879,7 @@ async fn start_server_inner_full(
         boot_script_url,
         l0,
         actions,
+        archived,
     );
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (tx, rx) = tokio::sync::watch::channel(false);
