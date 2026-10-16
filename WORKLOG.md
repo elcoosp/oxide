@@ -3708,3 +3708,119 @@ change is backward-compatible: an ODF payload hydrates and an old JSON payload
 still hydrates.
 
 Commits: (below).
+
+## PERF-01 (slice 3) — island props ride ODF (complete)
+
+A synchronous JSON-subset ODF encoder (`packages/oxide/src/odf-encode.ts`)
+plus `encodePropsB64(props)`:
+- ODF when `props` is inside the JSON subset (null/undefined/bool/number/
+  string/array/plain-object, no cycles) — the common case;
+- base64(JSON) otherwise (Date/Map/Set/BigInt/typed arrays/cycles).
+
+`encodePropsB64` is wired into all 5 emit sites (`react/island.ts`,
+`{react,vue,svelte,solid}/render.ts`). The client's `decodeIslandProps`
+already sniffs the `ODF1` magic and falls back to JSON, so the wire change is
+backward-compatible.
+
+**Proven byte-identical to the Rust encoder**: the TS encoding of
+`{a:1,b:[true,null,"x"]}` is `4f444631000a02016103000000000000f03f01620903020100050178`
+— exactly the Rust `oxide_odf::encode` output. The encoder test caught a real
+bug in the first draft (counting reserved keys that were then skipped —
+object count desynced from the written pairs); fixed by filtering before
+counting.
+
+Verification: encoder tests 5/5; TS suites green (oxide 89, react 36, vue 30,
+svelte 29, solid 29); **conformance 20/20** (the props assertions now decode
+via `decodeIslandProps`).
+
+This completes PERF-01: ODF is now the wire format for `/__data`, the
+embedded hydration payload, and island props.
+
+Commits: (below).
+
+## PERF-01 (slice 3) — island props ride ODF (complete)
+
+A synchronous JSON-subset ODF encoder (`packages/oxide/src/odf-encode.ts`)
+plus `encodePropsB64(props)`:
+- ODF when `props` is inside the JSON subset (null/undefined/bool/number/
+  string/array/plain-object, no cycles) — the common case;
+- base64(JSON) otherwise (Date/Map/Set/BigInt/typed arrays/cycles).
+
+`encodePropsB64` is wired into all 5 emit sites (`react/island.ts`,
+`{react,vue,svelte,solid}/render.ts`). The client's `decodeIslandProps`
+already sniffs the `ODF1` magic and falls back to JSON, so the wire change is
+backward-compatible.
+
+**Proven byte-identical to the Rust encoder**: the TS encoding of
+`{a:1,b:[true,null,"x"]}` is `4f444631000a02016103000000000000f03f01620903020100050178`
+— exactly the Rust `oxide_odf::encode` output. The encoder test caught a real
+bug in the first draft (counting reserved keys that were then skipped —
+object count desynced from the written pairs); fixed by filtering before
+counting.
+
+Verification: encoder tests 5/5; TS suites green (oxide 89, react 36, vue 30,
+svelte 29, solid 29); **conformance 20/20** (the props assertions now decode
+via `decodeIslandProps`).
+
+This completes PERF-01: ODF is now the wire format for `/__data`, the
+embedded hydration payload, and island props.
+
+Commits: (below).
+
+## PERF-01 (slice 3) — island props ride ODF (complete)
+
+A synchronous JSON-subset ODF encoder (`packages/oxide/src/odf-encode.ts`)
+plus `encodePropsB64(props)`:
+- ODF when `props` is inside the JSON subset (null/undefined/bool/number/
+  string/array/plain-object, no cycles) — the common case;
+- base64(JSON) otherwise (Date/Map/Set/BigInt/typed arrays/cycles).
+
+`encodePropsB64` is wired into all 5 emit sites (`react/island.ts`,
+`{react,vue,svelte,solid}/render.ts`). The client's `decodeIslandProps`
+already sniffs the `ODF1` magic and falls back to JSON, so the wire change is
+backward-compatible.
+
+**Proven byte-identical to the Rust encoder**: the TS encoding of
+`{a:1,b:[true,null,"x"]}` is `4f444631000a02016103000000000000f03f01620903020100050178`
+— exactly the Rust `oxide_odf::encode` output. The encoder test caught a real
+bug in the first draft (counting reserved keys that were then skipped —
+object count desynced from the written pairs); fixed by filtering before
+counting.
+
+Verification: encoder tests 5/5; TS suites green (oxide 89, react 36, vue 30,
+svelte 29, solid 29); **conformance 20/20** (the props assertions now decode
+via `decodeIslandProps`).
+
+This completes PERF-01: ODF is now the wire format for `/__data`, the
+embedded hydration payload, and island props.
+
+Commits: (below).
+
+## PERF-01 (slice 3) — island props ride ODF (complete)
+
+A synchronous JSON-subset ODF encoder (`packages/oxide/src/odf-encode.ts`)
+plus `encodePropsB64(props)`:
+- ODF when `props` is inside the JSON subset (null/undefined/bool/number/
+  string/array/plain-object, no cycles) — the common case;
+- base64(JSON) otherwise (Date/Map/Set/BigInt/typed arrays/cycles).
+
+`encodePropsB64` is wired into all 5 emit sites (`react/island.ts`,
+`{react,vue,svelte,solid}/render.ts`). The client's `decodeIslandProps`
+already sniffs the `ODF1` magic and falls back to JSON, so the wire change is
+backward-compatible.
+
+**Proven byte-identical to the Rust encoder**: the TS encoding of
+`{a:1,b:[true,null,"x"]}` is `4f444631000a02016103000000000000f03f01620903020100050178`
+— exactly the Rust `oxide_odf::encode` output. The encoder test caught a real
+bug in the first draft (counting reserved keys that were then skipped —
+object count desynced from the written pairs); fixed by filtering before
+counting.
+
+Verification: encoder tests 5/5; TS suites green (oxide 89, react 36, vue 30,
+svelte 29, solid 29); **conformance 20/20** (the props assertions now decode
+via `decodeIslandProps`).
+
+This completes PERF-01: ODF is now the wire format for `/__data`, the
+embedded hydration payload, and island props.
+
+Commits: (below).
