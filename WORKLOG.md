@@ -3824,3 +3824,83 @@ This completes PERF-01: ODF is now the wire format for `/__data`, the
 embedded hydration payload, and island props.
 
 Commits: (below).
+
+## PERF-02 (slice 1) — pool sizing by cores
+
+The render/loader pool was built with `PoolConfig::default()`, whose `size` is
+a hardcoded **2** — under load a 2-worker pool throttles TTFB regardless of the
+machine. `render_pool_size()` now returns
+`available_parallelism().max(2)`, so the pool matches the box (floored at 2 so
+a single-core CI runner still has a spare worker for a render + loader
+overlap). Applied to both the main pool and the Node tooling pool.
+
+Verified: `oxide-cli --lib` 96, four-fixture gate PASS.
+
+**Route affinity (the other half of PERF-02) is scoped, not done.** It needs a
+`route` field on `CallInput` threaded to `choose_worker(loads, affinity)` — 26
+`CallInput` construction sites (including every test helper). It is a pure
+optimization (no correctness impact) with no cheap regression test, so it is
+deferred rather than churned. `choose_worker` already implements the
+least-loaded-with-affinity selection; only the plumbing is missing.
+
+Commits: (below).
+
+## PERF-02 (slice 1) — pool sizing by cores
+
+The render/loader pool was built with `PoolConfig::default()`, whose `size` is
+a hardcoded **2** — under load a 2-worker pool throttles TTFB regardless of the
+machine. `render_pool_size()` now returns
+`available_parallelism().max(2)`, so the pool matches the box (floored at 2 so
+a single-core CI runner still has a spare worker for a render + loader
+overlap). Applied to both the main pool and the Node tooling pool.
+
+Verified: `oxide-cli --lib` 96, four-fixture gate PASS.
+
+**Route affinity (the other half of PERF-02) is scoped, not done.** It needs a
+`route` field on `CallInput` threaded to `choose_worker(loads, affinity)` — 26
+`CallInput` construction sites (including every test helper). It is a pure
+optimization (no correctness impact) with no cheap regression test, so it is
+deferred rather than churned. `choose_worker` already implements the
+least-loaded-with-affinity selection; only the plumbing is missing.
+
+Commits: (below).
+
+## PERF-02 (slice 1) — pool sizing by cores
+
+The render/loader pool was built with `PoolConfig::default()`, whose `size` is
+a hardcoded **2** — under load a 2-worker pool throttles TTFB regardless of the
+machine. `render_pool_size()` now returns
+`available_parallelism().max(2)`, so the pool matches the box (floored at 2 so
+a single-core CI runner still has a spare worker for a render + loader
+overlap). Applied to both the main pool and the Node tooling pool.
+
+Verified: `oxide-cli --lib` 96, four-fixture gate PASS.
+
+**Route affinity (the other half of PERF-02) is scoped, not done.** It needs a
+`route` field on `CallInput` threaded to `choose_worker(loads, affinity)` — 26
+`CallInput` construction sites (including every test helper). It is a pure
+optimization (no correctness impact) with no cheap regression test, so it is
+deferred rather than churned. `choose_worker` already implements the
+least-loaded-with-affinity selection; only the plumbing is missing.
+
+Commits: (below).
+
+## PERF-02 (slice 1) — pool sizing by cores
+
+The render/loader pool was built with `PoolConfig::default()`, whose `size` is
+a hardcoded **2** — under load a 2-worker pool throttles TTFB regardless of the
+machine. `render_pool_size()` now returns
+`available_parallelism().max(2)`, so the pool matches the box (floored at 2 so
+a single-core CI runner still has a spare worker for a render + loader
+overlap). Applied to both the main pool and the Node tooling pool.
+
+Verified: `oxide-cli --lib` 96, four-fixture gate PASS.
+
+**Route affinity (the other half of PERF-02) is scoped, not done.** It needs a
+`route` field on `CallInput` threaded to `choose_worker(loads, affinity)` — 26
+`CallInput` construction sites (including every test helper). It is a pure
+optimization (no correctness impact) with no cheap regression test, so it is
+deferred rather than churned. `choose_worker` already implements the
+least-loaded-with-affinity selection; only the plumbing is missing.
+
+Commits: (below).
