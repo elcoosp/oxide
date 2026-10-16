@@ -9,6 +9,7 @@
 // ../src/island.ts), so no JSX is required anywhere in this file.
 
 import { test } from 'node:test'
+import { encodePropsB64 } from '../../oxide/src/odf-encode.ts'
 import assert from 'node:assert/strict'
 import { createElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -36,7 +37,9 @@ test('Island emits the render-crate ox-island shape', () => {
   assert.match(html, /data-ox-island="Counter"/)
   assert.match(html, /data-ox-chunk="\/islands\/counter\.js"/)
   assert.match(html, /data-ox-strategy="load"/)
-  assert.match(html, new RegExp(`data-ox-props="${toBase64('{"initial":3}')}"`))
+  // PERF-01: props ride ODF now; compare against the encoder's output.
+  const want = encodePropsB64({ initial: 3 }).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  assert.match(html, new RegExp(`data-ox-props="${want}"`))
   assert.match(html, /<button><span>3<\/span><\/button>/)
 })
 

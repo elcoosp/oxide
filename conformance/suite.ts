@@ -17,6 +17,7 @@
 import nodeAssert from 'node:assert/strict'
 import type { FrameworkAdapter } from '../packages/oxide/src/types.ts'
 import { createRouter } from '../packages/oxide/src/client/router.ts'
+import { decodeIslandProps } from '../packages/oxide/src/client/islands.ts'
 import { enhance } from '../packages/oxide/src/client/enhance.ts'
 import { hydrateIslands } from '../packages/oxide/src/client/islands.ts'
 import { serverFn, getServerFn, revalidate, _revalidateLog } from '../packages/oxide/src/server/index.ts'
@@ -264,7 +265,9 @@ export async function runSuite(adapter: Adapter, opts: SuiteOptions = {}): Promi
     assert(html.includes(expect.islands.strategy), 'strategy directive')
     const m = /data-ox-props='([^']+)'/.exec(html)
     assert(m, 'props attribute present')
-    const props = JSON.parse(Buffer.from(m![1], 'base64').toString('utf8'))
+    // PERF-01: props ride ODF (JSON fallback for the non-subset);
+    // decodeIslandProps sniffs and handles both.
+    const props = decodeIslandProps(m![1])
     deepEqual(props, expect.islands.props, 'props round-trip')
     assert(html.includes(expect.islands.ssr), 'SSR content inside the island')
     return 'markup + props ok'

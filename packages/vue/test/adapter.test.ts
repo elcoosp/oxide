@@ -7,6 +7,7 @@ import { adapter, render, renderToString, renderShellToString, head, mergeHead, 
 import { hydrate, hydrateIsland, mount, update } from '../src/hydrate.ts'
 import { createFakeDom, simulateSwap } from './helpers/fake-dom.ts'
 import type { RenderInput, HeadTags } from '../../oxide/src/types.ts'
+import { decodeIslandProps } from '../../oxide/src/client/islands.ts'
 
 const input = (overrides: Partial<RenderInput> = {}): RenderInput => ({
   route: 'routes/index',
@@ -132,7 +133,9 @@ test('islands: ox-island markup matches the render-crate shape (§10.3)', async 
   assert.ok(html.includes("data-ox-strategy='load'"), 'strategy')
   const m = /data-ox-props='([^']+)'/.exec(html)
   assert.ok(m, 'props attribute present')
-  const props = JSON.parse(Buffer.from(m![1], 'base64').toString('utf8'))
+  // PERF-01: props now ride ODF (falling back to JSON for the non-subset);
+  // decodeIslandProps handles both.
+  const props = decodeIslandProps(m![1])
   assert.deepEqual(props, { initialCount: 3 })
   assert.ok(html.includes('>3</span>'), 'SSR island content rendered')
   assert.ok(islandModules['/islands/counter.ts'], 'island chunk map exposes the module')
