@@ -408,6 +408,26 @@ fn content_type_for(file_name: &str) -> &'static str {
 /// Parses q-values (`br;q=0.8, gzip`); returns the first available encoding (in server
 /// preference order) whose client q-value > 0 (exact token wins over `*`, which carries
 /// a default q of 1). Returns `None` for identity-only clients.
+/// PERF-06: is a content type worth compressing? Text-ish types (HTML, CSS,
+/// JS, JSON, SVG, XML) shrink well; already-compressed types (images, fonts,
+/// video, wasm) do not, and compressing them wastes CPU for no gain.
+fn is_compressible(content_type: &str) -> bool {
+    let ct = content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    ct.starts_with("text/")
+        || ct == "application/json"
+        || ct == "application/javascript"
+        || ct == "application/oxide+odf"
+        || ct == "application/xml"
+        || ct == "image/svg+xml"
+        || ct.ends_with("+json")
+        || ct.ends_with("+xml")
+}
+
 pub fn negotiate_encoding(accept_encoding: &str, available: &[&str]) -> Option<String> {
     let mut entries: Vec<(String, f64)> = Vec::new();
     for part in accept_encoding.split(',') {
@@ -2157,11 +2177,19 @@ impl Pipeline {
                 let request_id = req.request_id.clone();
                 let method = req.method.clone();
                 let cookie = req.header("cookie").map(str::to_string);
+                let accept_encoding = req.header("accept-encoding").map(str::to_string);
                 // Call dispatch synchronously; only the (Send) boxed future crosses the await.
                 let fut = dispatch(req);
                 Box::pin(async move {
                     let resp = fut.await;
-                    self.finish_response_with_request(resp, &rule_headers, &request_id, Some(&method), cookie.as_deref())
+                    self.finish_response_full(
+                        resp,
+                        &rule_headers,
+                        &request_id,
+                        Some(&method),
+                        cookie.as_deref(),
+                        accept_encoding.as_deref(),
+                    )
                 })
             }
         }
@@ -2446,6 +2474,75 @@ impl Pipeline {
     /// are `None` on paths where the request is no longer available (all
     /// current call sites pass them; `None` skips issuance, never fails).
     fn finish_response_with_request(
+        &self,
+        resp: OxideResponse,
+        rule_headers: &[(String, String)],
+        request_id: &str,
+        method: Option<&str>,
+        cookie_header: Option<&str>,
+    ) -> OxideResponse {
+        self.finish_response_full(resp, rule_headers, request_id, method, cookie_header, None)
+    }
+
+    /// PERF-06: `finish_response_with_request` plus dynamic compression when
+    /// the caller passes the request's `Accept-Encoding`. Kept separate so the
+    /// many existing call sites (which have no body worth compressing, or a
+    /// pre-compressed static asset) do not need the extra argument.
+    fn finish_response_full(
+        &self,
+        resp: OxideResponse,
+        rule_headers: &[(String, String)],
+        request_id: &str,
+        method: Option<&str>,
+        cookie_header: Option<&str>,
+        accept_encoding: Option<&str>,
+    ) -> OxideResponse {
+        // PERF-06: dynamic compression (§12.1 step 8). Only a non-streaming
+        // body with a compressible content type and no existing encoding is
+        // compressed; a static asset already carries its precompressed
+        // encoding and arrives with a `Content-Encoding` header.
+        let mut resp = resp;
+        if let Some(ae) = accept_encoding {
+            if resp.stream.is_none()
+                && !resp.body.is_empty()
+                && !resp
+                    .headers
+                    .iter()
+                    .any(|(k, _)| k.eq_ignore_ascii_case("content-encoding"))
+            {
+                let ct = resp
+                    .headers
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+                    .map(|(_, v)| v.as_str())
+                    .unwrap_or("");
+                if is_compressible(ct) {
+                    if let Some(enc) = negotiate_encoding(ae, &["zstd", "gzip"]) {
+                        if let Ok(compressed) = compress_body(&enc, &resp.body, 3) {
+                            // Only worth it if it actually shrank.
+                            if compressed.len() < resp.body.len() {
+                                resp.body = compressed;
+                                resp.headers.retain(|(k, _)| {
+                                    !k.eq_ignore_ascii_case("content-length")
+                                });
+                                resp.headers.push((
+                                    "Content-Encoding".to_string(),
+                                    enc.clone(),
+                                ));
+                                resp.headers.push((
+                                    "Vary".to_string(),
+                                    "Accept-Encoding".to_string(),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.finish_response_inner(resp, rule_headers, request_id, method, cookie_header)
+    }
+
+    fn finish_response_inner(
         &self,
         resp: OxideResponse,
         rule_headers: &[(String, String)],
