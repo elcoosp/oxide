@@ -116,12 +116,26 @@ impl L0Cache {
         tags: Vec<String>,
     ) {
         let key = self.key(route, params, vary);
+        let entry = self.make_entry(status, headers, body, tags);
+        let _ = self.handler.set(&key, entry).await;
+    }
+
+    /// PERF-04: build the cache `Entry` without storing it. The single-flight
+    /// owner builds it once, stores it, and broadcasts the same `Arc` to
+    /// followers.
+    pub fn make_entry(
+        &self,
+        status: u16,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+        tags: Vec<String>,
+    ) -> Entry {
         let etag = {
             let mut h = blake3::Hasher::new();
             h.update(&body);
             h.finalize().to_hex()[..16].to_string()
         };
-        let entry = Entry {
+        Entry {
             body,
             status,
             headers: headers
@@ -131,17 +145,24 @@ impl L0Cache {
             tags,
             policy: Policy {
                 ttl: self.ttl,
-                // PERF-04: serve stale for `swr` past the TTL while the entry
-                // regenerates in the background (SWR). 5x the TTL, floored at
-                // 60 s, so a short-TTL route still gets a useful window.
                 swr: Some(self.ttl.saturating_mul(5).max(std::time::Duration::from_secs(60))),
                 stale_if_error: None,
                 soft_tags: true,
             },
             stored_at: now_ms(),
             etag,
-        };
-        let _ = self.handler.set(&key, entry).await;
+        }
+    }
+
+    /// PERF-04: store a pre-built entry under its canonical key.
+    pub async fn store_entry(&self, key: &str, entry: Entry) {
+        let _ = self.handler.set(key, entry).await;
+    }
+
+    /// PERF-04: the canonical L0 key for a (route, params, vary) triple — the
+    /// single-flight key must match it exactly.
+    pub fn key_of(&self, route: &str, params: &str, vary: &str) -> String {
+        self.key(route, params, vary)
     }
 
     /// Invalidate one route's cached responses by tag (§11.3).
