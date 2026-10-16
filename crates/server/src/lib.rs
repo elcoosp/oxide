@@ -748,6 +748,68 @@ pub fn effective_client<'a>(
     }
 }
 
+/// SEC-09: mint a dev session token — 16 bytes from the OS CSPRNG, hex. The
+/// CLI prints it in the dev banner; the pipeline requires it for `/__oxide`.
+pub fn dev_token() -> String {
+    use ring::rand::SecureRandom as _;
+    let rng = ring::rand::SystemRandom::new();
+    let mut bytes = [0u8; 16];
+    if rng.fill(&mut bytes).is_ok() {
+        let mut s = String::with_capacity(32);
+        for b in bytes {
+            s.push(char::from_digit((b >> 4) as u32, 16).unwrap());
+            s.push(char::from_digit((b & 0xf) as u32, 16).unwrap());
+        }
+        return s;
+    }
+    // Fallback (never on hosted platforms): the request-id counter path.
+    format!("{:016x}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0))
+}
+
+/// SEC-09: does the request carry the dev session token? Accepts it as a
+/// `token=` query parameter or the `x-oxide-dev-token` header. Constant-time
+/// compare (the token is a secret).
+fn dev_token_ok(req: &OxideRequest, want: &str) -> bool {
+    let from_header = req.header("x-oxide-dev-token");
+    let from_query = req
+        .url
+        .split_once('?')
+        .map(|(_, q)| q)
+        .and_then(|q| {
+            q.split('&')
+                .find_map(|kv| kv.strip_prefix("token=").map(|v| v.to_string()))
+        });
+    let given = from_header.map(str::to_string).or(from_query);
+    match given {
+        Some(g) => {
+            let a = g.as_bytes();
+            let b = want.as_bytes();
+            a.len() == b.len()
+                && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+        }
+        None => false,
+    }
+}
+
+/// SEC-09: is `host` acceptable for a dev server bound to `bind_ip`? Dev
+/// accepts `localhost`, the loopback literals, and the bind IP itself. A
+/// request for any other Host (a DNS-rebinding attempt against a dev server)
+/// is rejected.
+pub fn dev_host_allowed(host_header: &str, bind_ip: std::net::IpAddr) -> bool {
+    let host = host_authority(host_header);
+    if host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]" {
+        return true;
+    }
+    if let Ok(ip) = strip_port(host_header.trim()).parse::<std::net::IpAddr>() {
+        return ip == bind_ip;
+    }
+    // A non-local hostname is only acceptable when it is the bind IP's text.
+    host == bind_ip.to_string()
+}
+
 /// Host validation (§17.1): Host allow-list + trusted-proxy + X-Forwarded-* handling.
 /// An empty allow-list allows everything; entries match exactly (any case, port
 /// stripped) or as leading-dot suffixes (`.example.com` matches `sub.example.com`).
@@ -1006,6 +1068,12 @@ pub struct Pipeline {
     /// SEC-02: whether the listener serves TLS. Gates HSTS emission
     /// (§17.1 "HSTS on TLS") — set where the listener is built.
     pub tls: bool,
+    /// SEC-09: a dev-only session token. When `Some`, the `/__oxide`
+    /// inspector endpoints require it (via `?token=` or the
+    /// `x-oxide-dev-token` header). A dev server on a shared LAN must not
+    /// expose its inspector to anyone who can reach the port. `None`
+    /// disables the guard (production never sets an inspector at all).
+    pub dev_token: Option<String>,
 }
 
 /// §9.3: the seam between the HTTP pipeline and whichever runtime runs a
@@ -1192,6 +1260,7 @@ impl Default for Pipeline {
             server_fns: None,
             actions: None,
             tls: false,
+            dev_token: None,
         }
     }
 }
@@ -2178,13 +2247,25 @@ impl Pipeline {
 
         // (3a.2) inspector endpoints (§13.4) — only when configured (dev only).
         if let Some(insp) = &self.inspector {
-            if req.method.eq_ignore_ascii_case("GET") && path == "/__oxide" {
-                return NativePrefix::Raw(
-                    OxideResponse::new(200, insp.render_html())
-                        .with_header("content-type", "text/html; charset=utf-8"),
-                );
-            }
-            if req.method.eq_ignore_ascii_case("GET") && path == "/__oxide/state" {
+            let is_inspector = (req.method.eq_ignore_ascii_case("GET")
+                && path == "/__oxide")
+                || (req.method.eq_ignore_ascii_case("GET") && path == "/__oxide/state");
+            if is_inspector {
+                // SEC-09: gate on the dev session token when one is set.
+                if let Some(want) = &self.dev_token {
+                    if !dev_token_ok(req, want) {
+                        return NativePrefix::Raw(
+                            OxideResponse::new(403, "inspector requires the dev token")
+                                .with_header("content-type", "text/plain; charset=utf-8"),
+                        );
+                    }
+                }
+                if path == "/__oxide" {
+                    return NativePrefix::Raw(
+                        OxideResponse::new(200, insp.render_html())
+                            .with_header("content-type", "text/html; charset=utf-8"),
+                    );
+                }
                 return NativePrefix::Raw(OxideResponse::json(200, insp.state_json()));
             }
         }
