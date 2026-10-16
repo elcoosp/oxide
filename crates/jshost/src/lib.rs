@@ -1050,9 +1050,12 @@ globalThis.oxide = {
     Deno.core.ops.op_oxide_fetch(String(method), String(url), String(headersJson), String(bodyB64)),
   // PERF-03: push a render chunk to the host mid-render. Returns "true" when
   // accepted, "false" when the consumer is gone (stop rendering).
-  streamWrite: (bytes) =>
-    Deno.core.ops.op_oxide_stream_write(
-      bytes instanceof Uint8Array ? bytes : new TextEncoder().encode(String(bytes))),
+  streamWrite: (bytes) => {
+    const u8 = bytes instanceof Uint8Array ? bytes : new TextEncoder().encode(String(bytes));
+    let bin = '';
+    for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
+    return Deno.core.ops.op_oxide_stream_write(btoa(bin));
+  },
 };
 
 // PERF-05: a `fetch()` for user code, routed through the op.
@@ -1225,13 +1228,27 @@ globalThis.__oxideFrameworkRender = async function (configPath, renderInput) {
       return JSON.stringify({ __oxide_error: 'config has no framework.render' });
     }
     const stream = fw.render(renderInput || {});
+    // PERF-03: push each chunk to the host via `oxide.streamWrite`. When the
+    // host is not streaming this call (no sink), streamWrite answers "false"
+    // and we accumulate instead, so the buffered path still works.
+    const enc = new TextEncoder();
     let html = '';
-    const dec = new TextDecoder();
+    let streamed = false;
     for await (const chunk of stream) {
-      html += typeof chunk === 'string' ? chunk : dec.decode(chunk, { stream: true });
+      const s = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk, { stream: true });
+      const accepted = globalThis.oxide.streamWrite
+        ? (await globalThis.oxide.streamWrite(enc.encode(s))) === 'true'
+        : false;
+      if (accepted) {
+        streamed = true;
+      } else {
+        html += s;
+      }
     }
-    html += dec.decode();
-    return JSON.stringify({ html });
+    if (!streamed) {
+      return JSON.stringify({ html });
+    }
+    return JSON.stringify({ streamed: true });
   } catch (e) {
     return JSON.stringify({
       __oxide_error: 'framework:render failed: ' + ((e && e.message) || e) +
@@ -1617,10 +1634,26 @@ fn spawn_v8_worker(
                     match msg {
                         V8Msg::Call { id, entry, input } => {
                             let res = v8_dispatch(&mut js, &entry, &input).await;
+                            // PERF-03: if this call opened a streaming render,
+                            // hand the receiver to the caller FIRST, then drive
+                            // the stashed promise so chunks flow while it runs.
+                            let streaming = crate::v8_ops::PENDING_STREAM
+                                .with(|s| s.borrow_mut().take());
                             let pending =
                                 handle_for_thread.pending.lock().unwrap().remove(&id);
                             if let Some(p) = pending {
                                 let _ = p.tx.send(res);
+                            }
+                            if let Some(promise) = streaming {
+                                let resolve = js.resolve(promise);
+                                let _ = js
+                                    .with_event_loop_promise(
+                                        resolve,
+                                        deno_core::PollEventLoopOptions::default(),
+                                    )
+                                    .await;
+                                // Drop the sink: closes the chunk stream.
+                                crate::v8_ops::set_stream_sink(None);
                             }
                         }
                         V8Msg::Shutdown => {
@@ -1785,6 +1818,23 @@ async fn v8_dispatch(
             .unwrap_or_else(|_| "null".into());
             format!("globalThis.__oxideFrameworkRender({p}, {inp})")
         };
+        // PERF-03: `framework:render` streams. Install a sink, execute the
+        // render (which returns a promise), stash that promise, and return a
+        // `Chunked` stream NOW — the worker loop drives the promise to
+        // completion *after* the caller has the receiver, so chunks flow live.
+        // `framework:load` stays buffered (a small descriptor).
+        if entry.kind == "framework:render" {
+            let promise = js
+                .execute_script("oxide:framework", script)
+                .map_err(|e| err("JSH-V8", format!("framework dispatch: {e}")))?;
+            let (tx, rx) = mpsc::channel::<Result<Bytes>>(16);
+            crate::v8_ops::set_stream_sink(Some(tx));
+            crate::v8_ops::PENDING_STREAM.with(|slot| {
+                *slot.borrow_mut() = Some(promise);
+            });
+            return Ok(CallStream::Chunked(rx));
+        }
+
         let promise = js
             .execute_script("oxide:framework", script)
             .map_err(|e| err("JSH-V8", format!("framework dispatch: {e}")))?;
@@ -1803,16 +1853,7 @@ async fn v8_dispatch(
         if let Some(m) = v.get("__oxide_error").and_then(|x| x.as_str()) {
             return Err(err("JSH-FRAMEWORK", m.to_string()));
         }
-        // `framework:load` returns the descriptor object; `framework:render`
-        // returns `{html}` and the caller wants the raw HTML bytes.
-        let out = if entry.kind == "framework:render" {
-            v.get("html")
-                .and_then(|h| h.as_str())
-                .map(|h| h.as_bytes().to_vec())
-                .unwrap_or_default()
-        } else {
-            serde_json::to_vec(&v).unwrap_or_default()
-        };
+        let out = serde_json::to_vec(&v).unwrap_or_default();
         return Ok(CallStream::Complete(Bytes::from(out)));
     }
 

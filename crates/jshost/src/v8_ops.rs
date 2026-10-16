@@ -53,6 +53,13 @@ fn fetch_handler() -> Option<Arc<dyn crate::FetchHandler>> {
 }
 
 thread_local! {
+    /// PERF-03: the in-flight streaming render's promise, stashed by
+    /// `v8_dispatch` and driven by the worker loop after the `Chunked` stream
+    /// has been handed to the caller. `None` when no stream render is running.
+    pub(crate) static PENDING_STREAM: RefCell<
+        Option<deno_core::v8::Global<deno_core::v8::Value>>,
+    > = const { RefCell::new(None) };
+
     /// PERF-03: the sink a streaming V8 render pushes chunks into, keyed by
     /// the call id. Set by the worker thread before driving a streaming
     /// render; the `stream_write` op reads it. One thread = one V8 runtime, so
@@ -72,19 +79,26 @@ pub fn set_stream_sink(
 /// `oxide.streamWrite(id, bytes)` — push one render chunk to the host. Returns
 /// `true` when accepted, `false` when the consumer is gone (the render should
 /// stop). PERF-03.
+/// `oxide.streamWrite(bytes)` as base64 (owned across the await; an async op
+/// cannot borrow a `&[u8]` from the JS scope).
 #[op2]
 #[string]
-pub fn op_oxide_stream_write(#[buffer] data: &[u8]) -> String {
-    let ok = STREAM_SINK.with(|s| {
-        let borrow = s.borrow();
-        match borrow.as_ref() {
-            Some(tx) => tx
-                .try_send(Ok(bytes::Bytes::copy_from_slice(data)))
-                .is_ok(),
-            None => false,
-        }
-    });
-    if ok { "true".to_string() } else { "false".to_string() }
+pub async fn op_oxide_stream_write(#[string] data_b64: String) -> String {
+    let tx = STREAM_SINK.with(|s| s.borrow().clone());
+    let Some(tx) = tx else {
+        return "false".to_string();
+    };
+    use base64::Engine as _;
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(&data_b64)
+        .unwrap_or_default();
+    // AWAIT the send: backpressure. A `try_send` would DROP the tail of a fast
+    // render when the consumer is momentarily behind — silent data loss.
+    if tx.send(Ok(bytes::Bytes::from(data))).await.is_ok() {
+        "true".to_string()
+    } else {
+        "false".to_string()
+    }
 }
 
 /// `oxide.fetch(method, url, headersJson, bodyB64)` — the V8 `fetch` op.
