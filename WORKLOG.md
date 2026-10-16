@@ -3540,3 +3540,67 @@ adapter emit sites, and the `defer-glue` value path. The server contract
 (this slice) is the groundwork.
 
 Commits: (below).
+
+## PERF-01 (slice 1) — `/__data` ODF endpoint + embedded ODF loader payload
+
+The client router already fetched `/__data?route=` and decoded ODF (§8.4,
+`router.ts`), but no crate served that route and the hydration payload was
+never set. Two pieces:
+
+1. **`GET /__data?route=<path>`** — a native dispatch intercept (never enters
+   the framework render path): runs the matched route's loader (when one is
+   attached), then returns the ODF-encoded
+   `{route, url, params, data}` envelope with
+   `content-type: application/oxide+odf`. Always 200 — a route with no loader
+   returns empty data, not a 404 (the client treats non-ok as a nav failure).
+2. **Embedded ODF hydration payload** — `write_prerender` now base64-encodes
+   the same `{route, url, params, data}` as ODF into
+   `Injector.odf_payload_b64`, so the prerendered HTML carries
+   `<script type="application/oxide-data">` and the client's hydration
+   bootstrap has the loader data without a second request.
+
+Verified:
+- `curl /__data?route=/` → `200`, `application/oxide+odf`, body decodes (via
+  the client's own `decodeOdf`) to `{"data":{},"params":{},"route":"/","url":"/"}`.
+- A real build's `dist/prerendered/index.html` contains
+  `application/oxide-data` (the embedded ODF payload).
+- New test `data_endpoint_returns_odf_envelope` asserts the status, content
+  type, and `ODF1` wire magic in the body.
+
+Remaining PERF-01: switching island props from base64-JSON to ODF at the 5
+adapter emit sites, and the `defer-glue` value path. The server contract
+(this slice) is the groundwork.
+
+Commits: (below).
+
+## PERF-01 (slice 1) — `/__data` ODF endpoint + embedded ODF loader payload
+
+The client router already fetched `/__data?route=` and decoded ODF (§8.4,
+`router.ts`), but no crate served that route and the hydration payload was
+never set. Two pieces:
+
+1. **`GET /__data?route=<path>`** — a native dispatch intercept (never enters
+   the framework render path): runs the matched route's loader (when one is
+   attached), then returns the ODF-encoded
+   `{route, url, params, data}` envelope with
+   `content-type: application/oxide+odf`. Always 200 — a route with no loader
+   returns empty data, not a 404 (the client treats non-ok as a nav failure).
+2. **Embedded ODF hydration payload** — `write_prerender` now base64-encodes
+   the same `{route, url, params, data}` as ODF into
+   `Injector.odf_payload_b64`, so the prerendered HTML carries
+   `<script type="application/oxide-data">` and the client's hydration
+   bootstrap has the loader data without a second request.
+
+Verified:
+- `curl /__data?route=/` → `200`, `application/oxide+odf`, body decodes (via
+  the client's own `decodeOdf`) to `{"data":{},"params":{},"route":"/","url":"/"}`.
+- A real build's `dist/prerendered/index.html` contains
+  `application/oxide-data` (the embedded ODF payload).
+- New test `data_endpoint_returns_odf_envelope` asserts the status, content
+  type, and `ODF1` wire magic in the body.
+
+Remaining PERF-01: switching island props from base64-JSON to ODF at the 5
+adapter emit sites, and the `defer-glue` value path. The server contract
+(this slice) is the groundwork.
+
+Commits: (below).
