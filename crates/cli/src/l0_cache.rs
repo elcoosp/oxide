@@ -165,6 +165,23 @@ impl L0Cache {
         self.key(route, params, vary)
     }
 
+    /// PERF-04: build the canonical L0 key without an `L0Cache` instance
+    /// (the dispatch needs the single-flight key before it has the cache).
+    pub fn key_for(route: &str, params: &str, vary: &str) -> String {
+        // The `build_id` is part of the key; the single-flight map is
+        // per-process, so a single-flight key without it is still correct
+        // (only same-process, same-build callers race). The L0 cache's own
+        // key adds `build_id`; the two must agree, so this mirrors the shape.
+        CacheKey {
+            layer: Layer::L0,
+            route: route.to_string(),
+            params: params.to_string(),
+            vary: vary.to_string(),
+            build_id: String::new(),
+        }
+        .canonical()
+    }
+
     /// Invalidate one route's cached responses by tag (§11.3).
     pub async fn invalidate_tag(&self, tag: &str, soft: bool) -> usize {
         self.handler
