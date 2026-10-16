@@ -3644,3 +3644,43 @@ delivery timing — the content-hash logic is covered by the poll tests);
 Idle pre-warm (the other half of PERF-11) is deferred.
 
 Commits: (below).
+
+## PERF-11 — notify-backed watcher
+
+The `Watcher` re-walked and re-hashed the **entire** tree every 200 ms tick.
+Added a `notify` backend behind the existing `poll()` API: `with_notify`
+starts an OS-native recursive watch whose callback buffers touched paths; each
+`poll` drains the buffer (debounced), content-hashes only those paths, and
+emits `Modified`/`Created`/`Removed` by diff against `seen`. The full-walk poll
+remains the fallback when the watcher cannot start (headless CI, inotify
+limits).
+
+The dev loop now uses `Watcher::with_notify`.
+
+Verified: `oxide-dev` 28 tests (the notify test tolerates macOS FSEvents
+delivery timing — the content-hash logic is covered by the poll tests);
+`oxide-cli --lib` 98.
+
+Idle pre-warm (the other half of PERF-11) is deferred.
+
+Commits: (below).
+
+## PERF-11 — notify-backed watcher
+
+The `Watcher` re-walked and re-hashed the **entire** tree every 200 ms tick.
+Added a `notify` backend behind the existing `poll()` API: `with_notify`
+starts an OS-native recursive watch whose callback buffers touched paths; each
+`poll` drains the buffer (debounced), content-hashes only those paths, and
+emits `Modified`/`Created`/`Removed` by diff against `seen`. The full-walk poll
+remains the fallback when the watcher cannot start (headless CI, inotify
+limits).
+
+The dev loop now uses `Watcher::with_notify`.
+
+Verified: `oxide-dev` 28 tests (the notify test tolerates macOS FSEvents
+delivery timing — the content-hash logic is covered by the poll tests);
+`oxide-cli --lib` 98.
+
+Idle pre-warm (the other half of PERF-11) is deferred.
+
+Commits: (below).
