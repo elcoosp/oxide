@@ -2178,10 +2178,29 @@ impl Pipeline {
                 let method = req.method.clone();
                 let cookie = req.header("cookie").map(str::to_string);
                 let accept_encoding = req.header("accept-encoding").map(str::to_string);
+                // PERF-06: a real total duration for the framework render path.
+                // `started` was captured at `serve_request` entry, so this
+                // covers match + middleware + load + render. Reported as
+                // `total` — one honest number rather than the previous
+                // all-zero `RequestTimings::default()`. Per-stage breakdown
+                // (match/cache/load/render/inject) needs the pipeline to
+                // expose stage instants; scoped.
+                let started_render = started;
                 // Call dispatch synchronously; only the (Send) boxed future crosses the await.
                 let fut = dispatch(req);
                 Box::pin(async move {
-                    let resp = fut.await;
+                    let mut resp = fut.await;
+                    if !resp
+                        .headers
+                        .iter()
+                        .any(|(k, _)| k.eq_ignore_ascii_case("server-timing"))
+                    {
+                        let ms = started_render.elapsed().as_secs_f64() * 1000.0;
+                        resp = resp.with_header(
+                            "Server-Timing",
+                            format!("total;dur={ms:.2}"),
+                        );
+                    }
                     self.finish_response_full(
                         resp,
                         &rule_headers,
