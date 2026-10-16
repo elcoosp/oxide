@@ -3604,3 +3604,107 @@ adapter emit sites, and the `defer-glue` value path. The server contract
 (this slice) is the groundwork.
 
 Commits: (below).
+
+## PERF-01 (slice 2) — the `serialize` op; island-props ODF scoped
+
+The `Op::Serialize` op existed in the enum (and `opName("serialize")` mapped
+it) but had **no `op_dispatch` arm** — it fell to "not implemented on this
+host". Implemented: `{value: <json>}` → `{b64: <ODF bytes, base64>}` using
+`oxide_odf::encode`. Unit-tested: encodes to real ODF (the `ODF1` magic and a
+round-trip through `oxide_odf::decode` back to the input), and rejects a
+missing `value`.
+
+**Island-props ODF (the remaining PERF-01 piece) is scoped, not done.** The 4
+adapter packages emit `data-ox-props` as `base64(JSON)` at a **synchronous**
+SSR point (`island.ts` / `render.ts`). The `serialize` op is **async**
+(worker round-trip), so it cannot be called from there. Switching the adapters
+to ODF needs a **synchronous TS ODF encoder** — the counterpart to the
+existing 394-line `odf-decode.ts` (which documents the wire format byte-
+exactly against 16 golden fixtures). That encoder is a self-contained task
+(fixture-tested against the Rust encoder for byte-identity) and is the right
+next step for the last PERF-01 slice; it was not written here because a
+partial encoder risks emitting bytes the decoder rejects.
+
+The client already decodes ODF-or-JSON (`decodeIslandProps`), so the wire
+change is backward-compatible: an ODF payload hydrates and an old JSON payload
+still hydrates.
+
+Commits: (below).
+
+## PERF-01 (slice 2) — the `serialize` op; island-props ODF scoped
+
+The `Op::Serialize` op existed in the enum (and `opName("serialize")` mapped
+it) but had **no `op_dispatch` arm** — it fell to "not implemented on this
+host". Implemented: `{value: <json>}` → `{b64: <ODF bytes, base64>}` using
+`oxide_odf::encode`. Unit-tested: encodes to real ODF (the `ODF1` magic and a
+round-trip through `oxide_odf::decode` back to the input), and rejects a
+missing `value`.
+
+**Island-props ODF (the remaining PERF-01 piece) is scoped, not done.** The 4
+adapter packages emit `data-ox-props` as `base64(JSON)` at a **synchronous**
+SSR point (`island.ts` / `render.ts`). The `serialize` op is **async**
+(worker round-trip), so it cannot be called from there. Switching the adapters
+to ODF needs a **synchronous TS ODF encoder** — the counterpart to the
+existing 394-line `odf-decode.ts` (which documents the wire format byte-
+exactly against 16 golden fixtures). That encoder is a self-contained task
+(fixture-tested against the Rust encoder for byte-identity) and is the right
+next step for the last PERF-01 slice; it was not written here because a
+partial encoder risks emitting bytes the decoder rejects.
+
+The client already decodes ODF-or-JSON (`decodeIslandProps`), so the wire
+change is backward-compatible: an ODF payload hydrates and an old JSON payload
+still hydrates.
+
+Commits: (below).
+
+## PERF-01 (slice 2) — the `serialize` op; island-props ODF scoped
+
+The `Op::Serialize` op existed in the enum (and `opName("serialize")` mapped
+it) but had **no `op_dispatch` arm** — it fell to "not implemented on this
+host". Implemented: `{value: <json>}` → `{b64: <ODF bytes, base64>}` using
+`oxide_odf::encode`. Unit-tested: encodes to real ODF (the `ODF1` magic and a
+round-trip through `oxide_odf::decode` back to the input), and rejects a
+missing `value`.
+
+**Island-props ODF (the remaining PERF-01 piece) is scoped, not done.** The 4
+adapter packages emit `data-ox-props` as `base64(JSON)` at a **synchronous**
+SSR point (`island.ts` / `render.ts`). The `serialize` op is **async**
+(worker round-trip), so it cannot be called from there. Switching the adapters
+to ODF needs a **synchronous TS ODF encoder** — the counterpart to the
+existing 394-line `odf-decode.ts` (which documents the wire format byte-
+exactly against 16 golden fixtures). That encoder is a self-contained task
+(fixture-tested against the Rust encoder for byte-identity) and is the right
+next step for the last PERF-01 slice; it was not written here because a
+partial encoder risks emitting bytes the decoder rejects.
+
+The client already decodes ODF-or-JSON (`decodeIslandProps`), so the wire
+change is backward-compatible: an ODF payload hydrates and an old JSON payload
+still hydrates.
+
+Commits: (below).
+
+## PERF-01 (slice 2) — the `serialize` op; island-props ODF scoped
+
+The `Op::Serialize` op existed in the enum (and `opName("serialize")` mapped
+it) but had **no `op_dispatch` arm** — it fell to "not implemented on this
+host". Implemented: `{value: <json>}` → `{b64: <ODF bytes, base64>}` using
+`oxide_odf::encode`. Unit-tested: encodes to real ODF (the `ODF1` magic and a
+round-trip through `oxide_odf::decode` back to the input), and rejects a
+missing `value`.
+
+**Island-props ODF (the remaining PERF-01 piece) is scoped, not done.** The 4
+adapter packages emit `data-ox-props` as `base64(JSON)` at a **synchronous**
+SSR point (`island.ts` / `render.ts`). The `serialize` op is **async**
+(worker round-trip), so it cannot be called from there. Switching the adapters
+to ODF needs a **synchronous TS ODF encoder** — the counterpart to the
+existing 394-line `odf-decode.ts` (which documents the wire format byte-
+exactly against 16 golden fixtures). That encoder is a self-contained task
+(fixture-tested against the Rust encoder for byte-identity) and is the right
+next step for the last PERF-01 slice; it was not written here because a
+partial encoder risks emitting bytes the decoder rejects.
+
+The client already decodes ODF-or-JSON (`decodeIslandProps`), so the wire
+change is backward-compatible: an ODF payload hydrates and an old JSON payload
+still hydrates.
+
+Commits: (below).
