@@ -35,11 +35,18 @@ impl LoaderHost {
             "method": input.get("method").cloned().unwrap_or(Value::String("GET".into())),
             "headers": input.get("headers").cloned().unwrap_or(Value::Array(vec![])),
         });
+        // PERF-02: affinity key = the route the loader serves (read before
+        // `payload` moves into the CallInput).
+        let route = payload
+            .get("route")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
         let call_input = CallInput {
             payload,
             headers: Default::default(),
             has_body: false,
             request_id: format!("loader:run:{module_path}"),
+            route,
         };
         let entry = EntryRef {
             kind: "loader:run".into(),
@@ -75,6 +82,7 @@ impl LoaderHost {
             headers: Default::default(),
             has_body: false,
             request_id: format!("generate-params:run:{module_path}"),
+            route: None,
         };
         let entry = EntryRef {
             kind: "generate-params:run".into(),
@@ -281,6 +289,7 @@ impl ServerFnHost {
             headers: Default::default(),
             has_body: false,
             request_id: format!("server-fn:run:{fn_id}"),
+            route: None,
         };
         let entry = EntryRef {
             kind: "server-fn:run".into(),
@@ -362,6 +371,7 @@ impl ActionHost {
             headers: Default::default(),
             has_body: false,
             request_id: format!("action:run:{action}"),
+            route: None,
         };
         let entry = EntryRef {
             kind: "action:run".into(),

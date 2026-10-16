@@ -68,6 +68,7 @@ async fn call_pool(pool: &Arc<dyn Pool>, kind: &str, payload: serde_json::Value)
         headers: Default::default(),
         has_body: false,
         request_id: format!("precompile:{kind}"),
+        route: None,
     };
     let entry = EntryRef {
         kind: kind.to_string(),

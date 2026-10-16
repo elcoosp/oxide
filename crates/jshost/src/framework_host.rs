@@ -68,6 +68,7 @@ impl FrameworkHost {
             headers: Default::default(),
             has_body: false,
             request_id: format!("framework:load:{config_path}"),
+            route: None,
         };
         let entry = EntryRef {
             kind: "framework:load".into(),
@@ -110,6 +111,8 @@ impl FrameworkHost {
             headers: Default::default(),
             has_body: false,
             request_id: format!("framework:render:{config_path}"),
+            // PERF-02: affinity key = the route being rendered.
+            route: input.get("route").and_then(|v| v.as_str()).map(str::to_string),
         };
         let entry = EntryRef {
             kind: "framework:render".into(),
@@ -158,6 +161,8 @@ impl FrameworkHost {
             headers: Default::default(),
             has_body: false,
             request_id: format!("framework:render:{config_path}"),
+            // PERF-02: affinity key = the route being rendered.
+            route: input.get("route").and_then(|v| v.as_str()).map(str::to_string),
         };
         let entry = EntryRef {
             kind: "framework:render".into(),
@@ -180,6 +185,7 @@ impl FrameworkHost {
             headers: Default::default(),
             has_body: false,
             request_id: "framework:invalidate".to_string(),
+            route: None,
         };
         let entry = EntryRef {
             kind: "framework:invalidate".into(),
