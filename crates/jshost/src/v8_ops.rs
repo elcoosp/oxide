@@ -52,6 +52,41 @@ fn fetch_handler() -> Option<Arc<dyn crate::FetchHandler>> {
     FETCH_HANDLER.with(|c| c.borrow().clone())
 }
 
+thread_local! {
+    /// PERF-03: the sink a streaming V8 render pushes chunks into, keyed by
+    /// the call id. Set by the worker thread before driving a streaming
+    /// render; the `stream_write` op reads it. One thread = one V8 runtime, so
+    /// a thread-local (not a map) is the right scope.
+    static STREAM_SINK: RefCell<Option<tokio::sync::mpsc::Sender<Result<bytes::Bytes, oxide_diagnostics::OxideError>>>> =
+        const { RefCell::new(None) };
+}
+
+/// Install the stream sink for the current V8 worker thread's in-flight
+/// streaming render.
+pub fn set_stream_sink(
+    sink: Option<tokio::sync::mpsc::Sender<Result<bytes::Bytes, oxide_diagnostics::OxideError>>>,
+) {
+    STREAM_SINK.with(|s| *s.borrow_mut() = sink);
+}
+
+/// `oxide.streamWrite(id, bytes)` — push one render chunk to the host. Returns
+/// `true` when accepted, `false` when the consumer is gone (the render should
+/// stop). PERF-03.
+#[op2]
+#[string]
+pub fn op_oxide_stream_write(#[buffer] data: &[u8]) -> String {
+    let ok = STREAM_SINK.with(|s| {
+        let borrow = s.borrow();
+        match borrow.as_ref() {
+            Some(tx) => tx
+                .try_send(Ok(bytes::Bytes::copy_from_slice(data)))
+                .is_ok(),
+            None => false,
+        }
+    });
+    if ok { "true".to_string() } else { "false".to_string() }
+}
+
 /// `oxide.fetch(method, url, headersJson, bodyB64)` — the V8 `fetch` op.
 /// Returns a JSON string `{status, headers, body_b64}` or throws. Backed by
 /// the same SSRF-hardened handler as the Node worker's `fetch` shim.
@@ -254,5 +289,6 @@ pub fn op_decls() -> Vec<deno_core::OpDecl> {
         op_oxide_cache_set(),
         op_oxide_cache_tag(),
         op_oxide_fetch(),
+        op_oxide_stream_write(),
     ]
 }

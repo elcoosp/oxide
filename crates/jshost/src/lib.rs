@@ -1048,6 +1048,11 @@ globalThis.oxide = {
   // PERF-05: the V8 fetch op (SSRF-hardened, host-provided).
   fetch: (method, url, headersJson, bodyB64) =>
     Deno.core.ops.op_oxide_fetch(String(method), String(url), String(headersJson), String(bodyB64)),
+  // PERF-03: push a render chunk to the host mid-render. Returns "true" when
+  // accepted, "false" when the consumer is gone (stop rendering).
+  streamWrite: (bytes) =>
+    Deno.core.ops.op_oxide_stream_write(
+      bytes instanceof Uint8Array ? bytes : new TextEncoder().encode(String(bytes))),
 };
 
 // PERF-05: a `fetch()` for user code, routed through the op.
@@ -2437,6 +2442,10 @@ struct Pending {
 /// its pipes are swapped in place when the worker is recycled or replaced, so
 /// dispatch tables and pending maps survive across generations.
 struct Worker {
+    /// PERF-03: in-flight streaming senders, keyed by call id. Shared between
+    /// the stdout reader (which feeds chunks) and any spawned op task (a
+    /// user `stream_write` pushes into the matching call's sender).
+    streams: Arc<std::sync::Mutex<HashMap<u64, mpsc::Sender<Result<Bytes>>>>>,
     stdin: tokio::sync::Mutex<ChildStdin>,
     child: tokio::sync::Mutex<Child>,
     /// Reader task for the current process generation; aborted on replacement.
@@ -2614,6 +2623,7 @@ impl NodePool {
             served: AtomicU64::new(0),
             dead: AtomicBool::new(false),
             pid: Mutex::new(None),
+            streams: Arc::new(std::sync::Mutex::new(HashMap::new())),
             recycle_lock: tokio::sync::Mutex::new(()),
             cache: Mutex::new(None),
             fetch: Mutex::new(None),
@@ -2908,7 +2918,6 @@ fn spawn_reader(
     tokio::spawn(async move {
         let mut buf: Vec<u8> = Vec::with_capacity(8192);
         let mut chunk = [0u8; 8192];
-        let mut streams: HashMap<u64, mpsc::Sender<Result<Bytes>>> = HashMap::new();
         loop {
             let (msgs, consumed) = match unframe(&buf) {
                 Ok(x) => x,
@@ -2916,20 +2925,19 @@ fn spawn_reader(
                     worker.dead.store(true, Ordering::Relaxed);
                     let code = e.0.code.clone();
                     let message = e.0.message.clone();
-                    fail_all(&worker, &mut streams, code, message);
+                    fail_all(&worker, code, message);
                     return;
                 }
             };
             buf.drain(..consumed);
             for m in msgs {
-                handle_worker_msg(m, &worker, &mut streams);
+                handle_worker_msg(m, &worker);
             }
             match stdout.read(&mut chunk).await {
                 Ok(0) | Err(_) => {
                     worker.dead.store(true, Ordering::Relaxed);
                     fail_all(
                         &worker,
-                        &mut streams,
                         "JSH-CRASH".to_string(),
                         "worker process exited before responding (§4.3 failure isolation)"
                             .to_string(),
@@ -2947,11 +2955,10 @@ fn spawn_reader(
 /// dropped, which closes any chunked collector's stream.
 fn fail_all(
     worker: &Worker,
-    streams: &mut HashMap<u64, mpsc::Sender<Result<Bytes>>>,
     code: String,
     message: String,
 ) {
-    streams.clear();
+    worker.streams.lock().unwrap().clear();
     let mut pending = worker.pending.lock().unwrap();
     for (_, p) in pending.drain() {
         let _ = p.tx.send(Err(OxideError(Diagnostic::error(
@@ -2969,18 +2976,21 @@ fn resolve(worker: &Worker, id: u64, res: Result<CallStream>) {
 
 /// Open (or reuse) the chunked stream for `id`, resolving the pending call on
 /// first use so bytes flow while the worker is still sending.
-fn stream_sender(
-    worker: &Worker,
-    streams: &mut HashMap<u64, mpsc::Sender<Result<Bytes>>>,
-    id: u64,
-) -> Option<mpsc::Sender<Result<Bytes>>> {
-    if let Some(tx) = streams.get(&id) {
+fn stream_sender(worker: &Worker, id: u64) -> Option<mpsc::Sender<Result<Bytes>>> {
+    let mut guard = worker.streams.lock().unwrap();
+    if let Some(tx) = guard.get(&id) {
         return Some(tx.clone());
     }
     let (tx, rx) = mpsc::channel(16);
-    streams.insert(id, tx.clone());
+    guard.insert(id, tx.clone());
+    drop(guard);
     resolve(worker, id, Ok(CallStream::Chunked(rx)));
     Some(tx)
+}
+
+/// PERF-03: drop a call's stream sender (consumer gone or call ended).
+fn drop_stream(worker: &Worker, id: u64) {
+    worker.streams.lock().unwrap().remove(&id);
 }
 
 /// §4.5: run a worker-originated op against the host. Only the three cache
@@ -2991,6 +3001,7 @@ async fn op_dispatch(
     cache: Option<&dyn oxide_cache::CacheHandler>,
     fetch: Option<&dyn FetchHandler>,
     memo: Option<&oxide_cache::FetchMemo>,
+    streams: Option<Arc<std::sync::Mutex<HashMap<u64, mpsc::Sender<Result<Bytes>>>>>>,
     op: Op,
     args: &serde_json::Value,
 ) -> Result<serde_json::Value> {
@@ -3186,6 +3197,44 @@ async fn op_dispatch(
             }
             Ok(out)
         }
+        // PERF-03: user-code streaming. `stream_write` pushes a chunk to the
+        // in-flight call whose id the args name; the reader's `streams` map
+        // holds that call's sender. `response_head` is accepted and ignored on
+        // this host (the status is set when the call resolves).
+        Op::StreamWrite => {
+            let Some(streams) = streams else {
+                return Err(err("JSH-OP", "stream_write is only valid during a call"));
+            };
+            let call_id = args
+                .get("call_id")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| err("JSH-OP", "stream_write requires a numeric `call_id`"))?;
+            let data = args
+                .get("data_b64")
+                .and_then(|v| v.as_str())
+                .and_then(|s| {
+                    use base64::Engine as _;
+                    base64::engine::general_purpose::STANDARD.decode(s).ok()
+                })
+                .unwrap_or_default();
+            let mut guard = streams.lock().unwrap_or_else(|p| p.into_inner());
+            match guard.get(&call_id) {
+                Some(tx) => {
+                    if tx.try_send(Ok(Bytes::from(data))).is_err() {
+                        guard.remove(&call_id); // consumer gone
+                        return Ok(serde_json::json!({ "written": false }));
+                    }
+                    Ok(serde_json::json!({ "written": true }))
+                }
+                None => Ok(serde_json::json!({ "written": false })),
+            }
+        }
+        Op::ResponseHead => {
+            // The status/headers ride the final response envelope; accept the
+            // op so a user streaming API can announce the head early.
+            Ok(serde_json::json!({ "accepted": true }))
+        }
+        Op::RequestBodyRead => Ok(serde_json::json!({ "done": true })),
         _ => Err(err(
             "JSH-OP",
             format!("worker op `{}` is not implemented on this host", op_name(op)),
@@ -3193,11 +3242,7 @@ async fn op_dispatch(
     }
 }
 
-fn handle_worker_msg(
-    msg: WorkerMsg,
-    worker: &Arc<Worker>,
-    streams: &mut HashMap<u64, mpsc::Sender<Result<Bytes>>>,
-) {
+fn handle_worker_msg(msg: WorkerMsg, worker: &Arc<Worker>) {
     match msg {
         WorkerMsg::Ready { pid } => {
             *worker.pid.lock().unwrap() = Some(pid);
@@ -3212,46 +3257,46 @@ fn handle_worker_msg(
                 match b64_decode(c) {
                     Ok(b) => body.extend_from_slice(&b),
                     Err(e) => {
-                        streams.remove(&id);
+                        drop_stream(worker, id);
                         resolve(worker, id, Err(e));
                         return;
                     }
                 }
             }
             if complete {
-                streams.remove(&id);
+                drop_stream(worker, id);
                 resolve(worker, id, Ok(CallStream::Complete(Bytes::from(body))));
-            } else if let Some(tx) = stream_sender(worker, streams, id) {
+            } else if let Some(tx) = stream_sender(worker, id) {
                 if tx.try_send(Ok(Bytes::from(body))).is_err() {
-                    streams.remove(&id); // collector gone
+                    drop_stream(worker, id); // collector gone
                 }
             }
         }
         WorkerMsg::CallChunkBin { id, data } => {
-            if let Some(tx) = stream_sender(worker, streams, id) {
+            if let Some(tx) = stream_sender(worker, id) {
                 if tx.try_send(Ok(Bytes::from(data))).is_err() {
-                    streams.remove(&id);
+                    drop_stream(worker, id);
                 }
             }
         }
         WorkerMsg::CallChunk { id, data_b64 } => match b64_decode(&data_b64) {
             Ok(bytes) => {
-                if let Some(tx) = stream_sender(worker, streams, id) {
+                if let Some(tx) = stream_sender(worker, id) {
                     if tx.try_send(Ok(Bytes::from(bytes))).is_err() {
-                        streams.remove(&id); // collector gone: stop buffering
+                        drop_stream(worker, id); // collector gone: stop buffering
                     }
                 }
             }
             Err(e) => {
-                streams.remove(&id);
+                drop_stream(worker, id);
                 resolve(worker, id, Err(e));
             }
         },
         WorkerMsg::CallEnd { id } => {
-            streams.remove(&id); // dropping the sender closes the collector's stream
+            drop_stream(worker, id); // dropping the sender closes the collector's stream
         }
         WorkerMsg::CallErr { id, diagnostic } => {
-            streams.remove(&id);
+            drop_stream(worker, id);
             resolve(worker, id, Err(OxideError(diagnostic)));
         }
         // §4.5 / §9.3: a `cache_get` / `cache_set` / `cache_tag` request
@@ -3262,12 +3307,14 @@ fn handle_worker_msg(
         WorkerMsg::OpRequest { id, op, args } => {
             let cache = worker.cache.lock().unwrap().clone();
             let fetch = worker.fetch.lock().unwrap().clone();
+            let streams = Arc::clone(&worker.streams);
             let worker = Arc::clone(worker);
             tokio::spawn(async move {
                 let (ok, data) = match op_dispatch(
                     cache.as_deref(),
                     fetch.as_deref(),
                     None,
+                    Some(Arc::clone(&streams)),
                     op,
                     &args,
                 )
@@ -3394,7 +3441,7 @@ mod perf01_tests {
     #[tokio::test]
     async fn serialize_op_encodes_odf() {
         let args = serde_json::json!({ "value": { "a": 1, "b": [true, null] } });
-        let out = op_dispatch(None, None, None, Op::Serialize, &args).await.expect("serialize ok");
+        let out = op_dispatch(None, None, None, None, Op::Serialize, &args).await.expect("serialize ok");
         let b64 = out["b64"].as_str().expect("b64 field");
         let bytes = base64::Engine::decode(
             &base64::engine::general_purpose::STANDARD,
@@ -3409,7 +3456,7 @@ mod perf01_tests {
 
     #[tokio::test]
     async fn serialize_op_requires_a_value() {
-        let out = op_dispatch(None, None, None, Op::Serialize, &serde_json::json!({})).await;
+        let out = op_dispatch(None, None, None, None, Op::Serialize, &serde_json::json!({})).await;
         assert!(out.is_err(), "missing value is an error");
     }
 }
@@ -3440,7 +3487,7 @@ mod perf05_tests {
     async fn fetch_op_delegates_to_the_handler() {
         let h = Echo;
         let args = serde_json::json!({ "url": "https://x.test/p", "method": "get" });
-        let out = op_dispatch(None, Some(&h), None, Op::Fetch, &args)
+        let out = op_dispatch(None, Some(&h), None, None, Op::Fetch, &args)
             .await
             .expect("fetch ok");
         assert_eq!(out["status"], 200);
@@ -3455,7 +3502,7 @@ mod perf05_tests {
     #[tokio::test]
     async fn fetch_op_without_a_handler_errors() {
         let args = serde_json::json!({ "url": "https://x.test/" });
-        assert!(op_dispatch(None, None, None, Op::Fetch, &args).await.is_err());
+        assert!(op_dispatch(None, None, None, None, Op::Fetch, &args).await.is_err());
     }
 
     #[tokio::test]
@@ -3463,9 +3510,9 @@ mod perf05_tests {
         let h = Echo;
         let memo = oxide_cache::FetchMemo::default();
         let args = serde_json::json!({ "url": "https://x.test/memo", "method": "GET" });
-        let _ = op_dispatch(None, Some(&h), Some(&memo), Op::Fetch, &args).await.unwrap();
+        let _ = op_dispatch(None, Some(&h), Some(&memo), None, Op::Fetch, &args).await.unwrap();
         // A second call for the same GET hits the memo (same body).
-        let out = op_dispatch(None, Some(&h), Some(&memo), Op::Fetch, &args).await.unwrap();
+        let out = op_dispatch(None, Some(&h), Some(&memo), None, Op::Fetch, &args).await.unwrap();
         assert_eq!(out["status"], 200);
     }
 }

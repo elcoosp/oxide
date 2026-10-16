@@ -683,7 +683,7 @@ fn op_decls_returns_the_documented_ops() {
     // the §4.6 tier-1 prelude installs, so they live in the ops table rather
     // than in the JS bootstrap.
     let decls = oxide_jshost::v8_ops::op_decls();
-    assert_eq!(decls.len(), 9, "expected log/trace/serialize/random/sleep + 3 cache ops + fetch");
+    assert_eq!(decls.len(), 10, "expected log/trace/serialize/random/sleep + 3 cache ops + fetch + stream_write");
     // Op names are namespaced with the `op_oxide_` prefix so the JS side can
     // distinguish them from deno_core built-ins.
     let names: Vec<&str> = decls.iter().map(|d| d.name).collect();
@@ -697,6 +697,7 @@ fn op_decls_returns_the_documented_ops() {
         "op_oxide_cache_set",
         "op_oxide_cache_tag",
         "op_oxide_fetch",
+        "op_oxide_stream_write",
     ] {
         assert!(names.iter().any(|n| n.contains(want)), "missing {want}: {names:?}");
     }
