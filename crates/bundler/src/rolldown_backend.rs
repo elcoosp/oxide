@@ -371,6 +371,28 @@ fn convert(
         let mut routes = BTreeMap::new();
         for c in chunks.iter().filter(|c| c.kind == ChunkKind::Entry) {
             let js_bytes = reachable_bytes(&c.name);
+            // PERF-09: the reachable module list (same walk as the byte sum).
+            let mut mods: Vec<PathBuf> = Vec::new();
+            {
+                let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+                let mut stack = vec![c.name.clone()];
+                while let Some(n) = stack.pop() {
+                    if !seen.insert(n.clone()) {
+                        continue;
+                    }
+                    if let Some(ch) = chunks.iter().find(|ch| ch.name == n) {
+                        mods.extend(ch.modules.iter().cloned());
+                        for i in ch.imports.iter() {
+                            let child = file_of
+                                .iter()
+                                .find(|(_, f)| f.as_str() == i.as_str())
+                                .map(|(name, _)| name.clone())
+                                .unwrap_or_else(|| i.clone());
+                            stack.push(child);
+                        }
+                    }
+                }
+            }
             routes.insert(
                 c.name.clone(),
                 RouteBundle {
@@ -378,6 +400,7 @@ fn convert(
                     preload: vec![c.file.clone()],
                     css: c.css.clone(),
                     js_bytes,
+                    modules: mods,
                 },
             );
         }

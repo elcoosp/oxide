@@ -258,6 +258,10 @@ pub struct RouteBundle {
     pub css: Vec<String>,
     /// Estimated JS bytes on the wire (minified) for budget checks (§21).
     pub js_bytes: u64,
+    /// PERF-09: the source modules reachable from this route's entry — the
+    /// data `oxide why` uses to attribute a module to a route.
+    #[serde(default)]
+    pub modules: Vec<PathBuf>,
 }
 
 /// Server manifest (§6.4): route → server module, adapter entry.
@@ -930,6 +934,12 @@ impl ChunkBundler {
                     &mut css,
                 );
                 let js_bytes: u64 = seen_c.iter().map(|n| js_size_of[n]).sum();
+                // PERF-09: the source modules in the reachable chunks.
+                let modules: Vec<PathBuf> = chunk_of
+                    .iter()
+                    .filter(|(_, chunk)| seen_c.contains(chunk.as_str()))
+                    .map(|(m, _)| m.clone())
+                    .collect();
                 routes.insert(
                     route.clone(),
                     RouteBundle {
@@ -937,6 +947,7 @@ impl ChunkBundler {
                         preload,
                         css,
                         js_bytes,
+                        modules,
                     },
                 );
             }

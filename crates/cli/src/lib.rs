@@ -4091,9 +4091,24 @@ async fn cmd_why(root: &str, module: &str, w: Writer<'_>) -> anyhow::Result<i32>
             if chunk.is_empty() {
                 continue;
             }
-            let references = std::fs::read_to_string(client_dir.join(chunk))
-                .map(|body| body.contains(module))
+            // PERF-09: prefer the recorded module list (precise); fall back to
+            // a textual substring scan for a manifest built before the field
+            // existed.
+            let recorded = row
+                .get("modules")
+                .and_then(|m| m.as_array())
+                .map(|arr| {
+                    arr.iter().any(|v| {
+                        v.as_str()
+                            .map(|s| s.contains(module))
+                            .unwrap_or(false)
+                    })
+                })
                 .unwrap_or(false);
+            let references = recorded
+                || std::fs::read_to_string(client_dir.join(chunk))
+                    .map(|body| body.contains(module))
+                    .unwrap_or(false);
             if references {
                 hits.push((route.clone(), chunk.to_string()));
             }
