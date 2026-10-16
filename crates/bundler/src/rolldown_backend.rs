@@ -328,11 +328,49 @@ fn convert(
     let build_id = blake3::hash(joined.as_bytes()).to_hex().to_string()[..16].to_string();
 
     let client_manifest = if env == BundleEnv::Client {
+        // PERF-09: route-true byte accounting. A route's real cost is its
+        // entry chunk PLUS every chunk transitively reachable through the
+        // import graph (shared chunks the route actually loads). The old
+        // entry-only number under-reported every route that shares code.
+        let size_of = |file: &str| -> u64 {
+            std::fs::metadata(out_dir.join(file)).map(|m| m.len()).unwrap_or(0)
+        };
+        // file name → (imports as file names, own bytes)
+        let by_name: std::collections::HashMap<String, (&Vec<String>, u64)> = chunks
+            .iter()
+            .map(|c| (c.name.clone(), (&c.imports, size_of(&c.file))))
+            .collect();
+        // A chunk's imports are chunk *names*; map name → file for the walk.
+        let file_of: std::collections::HashMap<String, String> = chunks
+            .iter()
+            .map(|c| (c.name.clone(), c.file.clone()))
+            .collect();
+        let reachable_bytes = |entry_name: &str| -> u64 {
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut stack = vec![entry_name.to_string()];
+            let mut total = 0u64;
+            while let Some(n) = stack.pop() {
+                if !seen.insert(n.clone()) {
+                    continue;
+                }
+                if let Some((imports, bytes)) = by_name.get(&n) {
+                    total += bytes;
+                    for i in imports.iter() {
+                        // Imports may be a name or a file; normalize via file_of.
+                        let child = file_of
+                            .iter()
+                            .find(|(_, f)| f.as_str() == i.as_str())
+                            .map(|(name, _)| name.clone())
+                            .unwrap_or_else(|| i.clone());
+                        stack.push(child);
+                    }
+                }
+            }
+            total
+        };
         let mut routes = BTreeMap::new();
         for c in chunks.iter().filter(|c| c.kind == ChunkKind::Entry) {
-            let js_bytes = std::fs::metadata(out_dir.join(&c.file))
-                .map(|m| m.len())
-                .unwrap_or(0);
+            let js_bytes = reachable_bytes(&c.name);
             routes.insert(
                 c.name.clone(),
                 RouteBundle {
