@@ -59,6 +59,11 @@ pub struct Metrics {    inner: RwLock<HashMap<String, RouteMetrics>>,
     pub cache_misses_l0: AtomicU64,
     pub isolates_recycled: AtomicU64,
     pub isolates_crashed: AtomicU64,
+    /// §20 / PERF-02: the JS pool's live gauges. Updated by the dispatch
+    /// delegate from `Pool::stats()`; a gauge, not a counter.
+    pub pool_workers: AtomicU64,
+    pub pool_in_flight: AtomicU64,
+    pub pool_queue_wait_p99_us: AtomicU64,
     /// §16.6 / §20: Core Web Vitals reported by browsers, keyed by
     /// `"<metric>/<route>"` (e.g. `"LCP//home"`). A count plus a sum of the
     /// raw value (milliseconds for the time metrics, unitless for CLS) — the
@@ -96,6 +101,15 @@ impl Metrics {
             .observe(latency);
     }
 
+    /// PERF-02: record the pool's current gauges (worker count, in-flight,
+    /// queue-wait p99). Called from the dispatch delegate each request.
+    pub fn observe_pool(&self, workers: usize, in_flight: u64, queue_wait_p99_ms: f64) {
+        self.pool_workers.store(workers as u64, Ordering::Relaxed);
+        self.pool_in_flight.store(in_flight, Ordering::Relaxed);
+        self.pool_queue_wait_p99_us
+            .store((queue_wait_p99_ms.max(0.0) * 1000.0) as u64, Ordering::Relaxed);
+    }
+
     /// §16.6: record one browser web-vital sample. `name` is the metric
     /// (`LCP`/`CLS`/`INP`/`FCP`/`TTFB`), `route` the page it was measured on,
     /// `value` the raw number (ms for timing metrics, unitless for CLS).
@@ -126,6 +140,16 @@ impl Metrics {
         out.push_str("# HELP oxide_cache_l0_misses_total L0 cache misses\n");
         out.push_str("# TYPE oxide_cache_l0_misses_total counter\n");
         out.push_str(&format!("oxide_cache_l0_misses_total {}\n", self.cache_misses_l0.load(Ordering::Relaxed)));
+
+        out.push_str("# HELP oxide_pool_workers Live worker count in the JS pool\n");
+        out.push_str("# TYPE oxide_pool_workers gauge\n");
+        out.push_str(&format!("oxide_pool_workers {}\n", self.pool_workers.load(Ordering::Relaxed)));
+        out.push_str("# HELP oxide_pool_in_flight In-flight calls in the JS pool\n");
+        out.push_str("# TYPE oxide_pool_in_flight gauge\n");
+        out.push_str(&format!("oxide_pool_in_flight {}\n", self.pool_in_flight.load(Ordering::Relaxed)));
+        out.push_str("# HELP oxide_pool_queue_wait_p99_us Pool queue-wait p99 (microseconds)\n");
+        out.push_str("# TYPE oxide_pool_queue_wait_p99_us gauge\n");
+        out.push_str(&format!("oxide_pool_queue_wait_p99_us {}\n", self.pool_queue_wait_p99_us.load(Ordering::Relaxed)));
 
         out.push_str("# HELP oxide_isolates_recycled_total Isolate recycle events\n");
         out.push_str("# TYPE oxide_isolates_recycled_total counter\n");

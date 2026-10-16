@@ -2742,6 +2742,9 @@ fn build_dispatch(
     // PERF-07: when `Some`, route matching reads the mmap'd rkyv archive
     // instead of the in-memory tree. Tests pass `None`.
     archived: Option<std::sync::Arc<oxide_router::ArchivedTree>>,
+    // PERF-02: the render/loader pool, so the dispatch can surface its live
+    // gauges into metrics. Tests pass `None`.
+    pool: Option<std::sync::Arc<dyn oxide_jshost::Pool>>,
 ) -> std::sync::Arc<
     dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
 > {
@@ -2760,6 +2763,11 @@ fn build_dispatch(
     > = std::sync::Arc::new(dashmap::DashMap::new());
     std::sync::Arc::new(move |req: oxide_server::OxideRequest| {
             let started = std::time::Instant::now();
+            // PERF-02: surface the pool's live gauges into the metrics registry.
+            if let Some(p) = pool.as_ref() {
+                let s = p.stats();
+                metrics.observe_pool(s.workers, s.in_flight, s.queue_wait_ms_p99);
+            }
             let raw = req.url.split(['?', '#']).next().unwrap_or("/").to_string();
 
             // §13.5 proxy: if the request matches a rule, forward upstream and
@@ -4016,6 +4024,7 @@ async fn start_server_inner_full(
         l0,
         actions,
         archived,
+        stack.pool.clone(),
     );
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (tx, rx) = tokio::sync::watch::channel(false);

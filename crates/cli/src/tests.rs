@@ -212,7 +212,7 @@ async fn dispatch_routes_through_page_renderer_when_attached() {
         calls: calls.clone(),
     }));
 
-    let dispatch = build_dispatch(tree, metrics, Vec::new(), renderer, None, std::path::PathBuf::new(), None, None, None, None);
+    let dispatch = build_dispatch(tree, metrics, Vec::new(), renderer, None, std::path::PathBuf::new(), None, None, None, None, None);
     let resp = dispatch(test_request("GET", "/")).await;
 
     assert_eq!(resp.status, 200, "renderer branch returns 200");
@@ -231,7 +231,7 @@ async fn dispatch_uses_ir_placeholder_when_no_renderer() {
 
     let tree = empty_tree();
     let metrics = Arc::new(oxide_server::Metrics::new());
-    let dispatch = build_dispatch(tree, metrics, Vec::new(), None, None, std::path::PathBuf::new(), None, None, None, None);
+    let dispatch = build_dispatch(tree, metrics, Vec::new(), None, None, std::path::PathBuf::new(), None, None, None, None, None);
 
     let resp = dispatch(test_request("GET", "/some/page")).await;
 
@@ -256,7 +256,7 @@ async fn dispatch_propagates_renderer_error_as_500() {
     let metrics = Arc::new(oxide_server::Metrics::new());
     let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(FailingRenderer));
 
-    let dispatch = build_dispatch(tree, metrics, Vec::new(), renderer, None, std::path::PathBuf::new(), None, None, None, None);
+    let dispatch = build_dispatch(tree, metrics, Vec::new(), renderer, None, std::path::PathBuf::new(), None, None, None, None, None);
     let resp = dispatch(test_request("GET", "/")).await;
 
     assert_eq!(resp.status, 500, "renderer error → 500");
@@ -405,6 +405,7 @@ async fn loader_feeds_data_to_renderer() {
         None,
         None,
         None,
+        None,
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -436,6 +437,7 @@ async fn loader_404_short_circuits_render() {
         None,
         None,
         None,
+        None,
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -464,6 +466,7 @@ async fn loader_redirect_short_circuits_with_location() {
 
     let dispatch = build_dispatch(
         tree, metrics, Vec::new(), page_renderer, loader_runner, routes_root(), None,
+        None,
         None,
         None,
         None,
@@ -507,6 +510,7 @@ async fn no_server_module_skips_loader() {
 
     let dispatch = build_dispatch(
         tree, metrics, Vec::new(), page_renderer, loader_runner, routes_root(), None,
+        None,
         None,
         None,
         None,
