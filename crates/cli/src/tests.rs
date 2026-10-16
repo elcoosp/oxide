@@ -1969,15 +1969,23 @@ async fn dev_server_serves_inspector_endpoint() {
         .expect("start_dev_server");
     wait_ready(started.addr).await;
 
-    // JSON state endpoint.
-    let state_url = format!("http://{}/__oxide/state", started.addr);
+    // SEC-09: the inspector is gated on the dev token the server minted.
+    let token = started.dev_token.clone().expect("dev token minted");
+
+    // A request without the token is refused.
+    let no_token = format!("http://{}/__oxide/state", started.addr);
+    let resp = simple_get(&no_token).await.expect("GET /__oxide/state");
+    assert!(resp.contains("403"), "inspector without token is 403: {resp}");
+
+    // JSON state endpoint (token via query).
+    let state_url = format!("http://{}/__oxide/state?token={token}", started.addr);
     let resp = simple_get(&state_url).await.expect("GET /__oxide/state");
     assert!(resp.contains("HTTP/1.1 200"), "{resp}");
     assert!(resp.contains("application/json"), "{resp}");
     assert!(resp.contains("/blog/:slug"), "{resp}");
 
     // HTML endpoint.
-    let html_url = format!("http://{}/__oxide", started.addr);
+    let html_url = format!("http://{}/__oxide?token={token}", started.addr);
     let resp = simple_get(&html_url).await.expect("GET /__oxide");
     assert!(resp.contains("HTTP/1.1 200"), "{resp}");
     assert!(resp.contains("text/html"), "{resp}");
