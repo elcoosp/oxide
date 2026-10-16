@@ -3683,3 +3683,88 @@ PASS; V8 gate PASS.
 Remaining PERF-03: drive the V8 `__oxideFrameworkRender` through
 `oxide.streamWrite` (it still buffers) and the V8 worker-loop interleave.
 
+
+## PERF-08 (slice 1) — DemandGraph in the dev loop
+
+The `DemandGraph` (epochs, early cutoff, tracked inputs — 35 tests) had zero
+production callers; the dev loop bumped the worker generation on **every**
+file event.
+
+Wired: the dev loop owns a `DemandGraph`. Each changed file registers a node
+whose compute reads it (recording `Input::File`); `invalidate` returns the
+set of nodes that actually recomputed. The worker generation is bumped only
+when that set is non-empty — a no-op touch or a change to an unrelated file
+leaves the framework module graph alone (early cutoff).
+
+Verified: `oxide-cli --lib` 98; dev tests green.
+
+Remaining PERF-08: build-time incremental cutoff (per-chunk node caching) and
+the remote-cache driver (SPEC-04).
+
+## PERF-08 (slice 1) — DemandGraph in the dev loop
+
+The `DemandGraph` (epochs, early cutoff, tracked inputs — 35 tests) had zero
+production callers; the dev loop bumped the worker generation on **every**
+file event.
+
+Wired: the dev loop owns a `DemandGraph`. Each changed file registers a node
+whose compute reads it (recording `Input::File`); `invalidate` returns the
+set of nodes that actually recomputed. The worker generation is bumped only
+when that set is non-empty — a no-op touch or a change to an unrelated file
+leaves the framework module graph alone (early cutoff).
+
+Verified: `oxide-cli --lib` 98; dev tests green.
+
+Remaining PERF-08: build-time incremental cutoff (per-chunk node caching) and
+the remote-cache driver (SPEC-04).
+
+## PERF-08 (slice 1) — DemandGraph in the dev loop
+
+The `DemandGraph` (epochs, early cutoff, tracked inputs — 35 tests) had zero
+production callers; the dev loop bumped the worker generation on **every**
+file event.
+
+Wired: the dev loop owns a `DemandGraph`. Each changed file registers a node
+whose compute reads it (recording `Input::File`); `invalidate` returns the
+set of nodes that actually recomputed. The worker generation is bumped only
+when that set is non-empty — a no-op touch or a change to an unrelated file
+leaves the framework module graph alone (early cutoff).
+
+Verified: `oxide-cli --lib` 98; dev tests green.
+
+Remaining PERF-08: build-time incremental cutoff (per-chunk node caching) and
+the remote-cache driver (SPEC-04).
+
+## PERF-08 (slice 1) — DemandGraph in the dev loop
+
+The `DemandGraph` (epochs, early cutoff, tracked inputs — 35 tests) had zero
+production callers; the dev loop bumped the worker generation on **every**
+file event.
+
+Wired: the dev loop owns a `DemandGraph`. Each changed file registers a node
+whose compute reads it (recording `Input::File`); `invalidate` returns the
+set of nodes that actually recomputed. The worker generation is bumped only
+when that set is non-empty — a no-op touch or a change to an unrelated file
+leaves the framework module graph alone (early cutoff).
+
+Verified: `oxide-cli --lib` 98; dev tests green.
+
+Remaining PERF-08: build-time incremental cutoff (per-chunk node caching) and
+the remote-cache driver (SPEC-04).
+
+## PERF-08 (slice 1) — DemandGraph in the dev loop
+
+The `DemandGraph` (epochs, early cutoff, tracked inputs — 35 tests) had zero
+production callers; the dev loop bumped the worker generation on **every**
+file event.
+
+Wired: the dev loop owns a `DemandGraph`. Each changed file registers a node
+whose compute reads it (recording `Input::File`); `invalidate` returns the
+set of nodes that actually recomputed. The worker generation is bumped only
+when that set is non-empty — a no-op touch or a change to an unrelated file
+leaves the framework module graph alone (early cutoff).
+
+Verified: `oxide-cli --lib` 98; dev tests green.
+
+Remaining PERF-08: build-time incremental cutoff (per-chunk node caching) and
+the remote-cache driver (SPEC-04).

@@ -886,6 +886,33 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     let watcher = oxide_dev::Watcher::with_notify(vec![rootp.clone()]);
     let mut seen = std::collections::BTreeSet::new();
 
+    // PERF-08: a `DemandGraph` over the watched modules. A node per source
+    // file whose compute reads that file; a change invalidates only the nodes
+    // that observed the changed input (early cutoff spares the rest). The dev
+    // loop bumps the worker generation only when a node actually recomputed,
+    // so a no-op touch (or a change to an unrelated file) does not churn the
+    // framework module graph.
+    let dev_graph = std::sync::Arc::new(oxide_graph::DemandGraph::new());
+
+    /// A compute that reads one file, recording the `Input::File` edge. Its
+    /// output hash is the file content hash — an unchanged re-read is a
+    /// Survivor (early cutoff), so dependents are not re-run.
+    struct FileCompute(std::path::PathBuf);
+    impl oxide_graph::Compute for FileCompute {
+        fn compute(
+            &self,
+            ctx: &mut oxide_graph::ComputeCtx,
+        ) -> oxide_diagnostics::Result<oxide_graph::NodeOutput> {
+            let bytes = ctx.fs.read_file(&self.0)?;
+            let hash = blake3::hash(&bytes);
+            Ok(oxide_graph::NodeOutput {
+                hash,
+                artifact: None,
+                deps: Default::default(),
+            })
+        }
+    }
+
     // §13.3: on any file-change event, bump the worker's module generation
     // so the next render/load sees fresh code. Best-effort: log a warning
     // if the worker is unavailable; never fails the dev loop.
@@ -905,11 +932,46 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         }
     }
 
+    // PERF-08: register a graph node per changed file and invalidate it. The
+    // returned set is non-empty only when a node actually recomputed (early
+    // cutoff spares unchanged content), so the worker generation bumps only
+    // when there is real new code to see.
+    fn graph_invalidated(dev_graph: &oxide_graph::DemandGraph, ev: &oxide_dev::FileEvent) -> bool {
+        let path = match ev {
+            oxide_dev::FileEvent::Modified(p)
+            | oxide_dev::FileEvent::Created(p)
+            | oxide_dev::FileEvent::Removed(p) => p.clone(),
+        };
+        let key = oxide_graph::NodeKey::new(path.to_string_lossy().as_ref());
+        // (Re)register a compute that reads the file.
+        struct FileCompute(std::path::PathBuf);
+        impl oxide_graph::Compute for FileCompute {
+            fn compute(
+                &self,
+                ctx: &mut oxide_graph::ComputeCtx,
+            ) -> oxide_diagnostics::Result<oxide_graph::NodeOutput> {
+                let bytes = ctx.fs.read_file(&self.0).unwrap_or_default();
+                Ok(oxide_graph::NodeOutput {
+                    hash: blake3::hash(&bytes),
+                    artifact: None,
+                    deps: Default::default(),
+                })
+            }
+        }
+        dev_graph.register(key.clone(), std::sync::Arc::new(FileCompute(path.clone())));
+        // Seed the node and, on a re-read, let early cutoff decide.
+        let _ = dev_graph.get(key.clone(), &FileCompute(path.clone()));
+        !dev_graph
+            .invalidate(&[oxide_graph::Input::Node(key, blake3::hash(&[]))])
+            .is_empty()
+    }
+
     if once {
         let events = watcher
             .poll(&mut seen)
             .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
-        if !events.is_empty() {
+        let any = events.iter().any(|e| graph_invalidated(&dev_graph, e));
+        if any {
             invalidate_framework_modules(&hmr_pool).await;
         }
         outln!(w, "dev ready — {} change(s) in first poll", events.len());
