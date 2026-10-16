@@ -3524,3 +3524,88 @@ Verified: 3 new `perf05` unit tests (delegation, no-handler error, GET memo);
 
 Commits: (below).
 
+
+## PERF-07 — rkyv route archive on serve
+
+`RouteTree::archive_to` / `ArchivedTree::load_archived` existed and were
+tested but had no production caller: `oxide start` re-scanned the routes
+directory every boot. Wired:
+- `cmd_build` writes `.oxide/routes.manifest` (the rkyv archive).
+- `start_server_inner_full` loads it and passes `Option<Arc<ArchivedTree>>`
+  to `build_dispatch`.
+- The dispatch matches against the archive (`arch_match_impl`, zero-copy from
+  the mmap) when present, else the in-memory tree.
+
+Verified: build writes a 210-byte archive; `oxide start` serves `/`,
+`/blog/hello-prod`, `/blog/second-post` all 200 through it; four-fixture gate
+PASS; `oxide-cli --lib` 98.
+
+Commits: (below).
+
+## PERF-07 — rkyv route archive on serve
+
+`RouteTree::archive_to` / `ArchivedTree::load_archived` existed and were
+tested but had no production caller: `oxide start` re-scanned the routes
+directory every boot. Wired:
+- `cmd_build` writes `.oxide/routes.manifest` (the rkyv archive).
+- `start_server_inner_full` loads it and passes `Option<Arc<ArchivedTree>>`
+  to `build_dispatch`.
+- The dispatch matches against the archive (`arch_match_impl`, zero-copy from
+  the mmap) when present, else the in-memory tree.
+
+Verified: build writes a 210-byte archive; `oxide start` serves `/`,
+`/blog/hello-prod`, `/blog/second-post` all 200 through it; four-fixture gate
+PASS; `oxide-cli --lib` 98.
+
+Commits: (below).
+
+## PERF-07 — rkyv route archive on serve
+
+`RouteTree::archive_to` / `ArchivedTree::load_archived` existed and were
+tested but had no production caller: `oxide start` re-scanned the routes
+directory every boot. Wired:
+- `cmd_build` writes `.oxide/routes.manifest` (the rkyv archive).
+- `start_server_inner_full` loads it and passes `Option<Arc<ArchivedTree>>`
+  to `build_dispatch`.
+- The dispatch matches against the archive (`arch_match_impl`, zero-copy from
+  the mmap) when present, else the in-memory tree.
+
+Verified: build writes a 210-byte archive; `oxide start` serves `/`,
+`/blog/hello-prod`, `/blog/second-post` all 200 through it; four-fixture gate
+PASS; `oxide-cli --lib` 98.
+
+Commits: (below).
+
+## PERF-07 — rkyv route archive on serve
+
+`RouteTree::archive_to` / `ArchivedTree::load_archived` existed and were
+tested but had no production caller: `oxide start` re-scanned the routes
+directory every boot. Wired:
+- `cmd_build` writes `.oxide/routes.manifest` (the rkyv archive).
+- `start_server_inner_full` loads it and passes `Option<Arc<ArchivedTree>>`
+  to `build_dispatch`.
+- The dispatch matches against the archive (`arch_match_impl`, zero-copy from
+  the mmap) when present, else the in-memory tree.
+
+Verified: build writes a 210-byte archive; `oxide start` serves `/`,
+`/blog/hello-prod`, `/blog/second-post` all 200 through it; four-fixture gate
+PASS; `oxide-cli --lib` 98.
+
+Commits: (below).
+
+## PERF-07 — rkyv route archive on serve
+
+`RouteTree::archive_to` / `ArchivedTree::load_archived` existed and were
+tested but had no production caller: `oxide start` re-scanned the routes
+directory every boot. Wired:
+- `cmd_build` writes `.oxide/routes.manifest` (the rkyv archive).
+- `start_server_inner_full` loads it and passes `Option<Arc<ArchivedTree>>`
+  to `build_dispatch`.
+- The dispatch matches against the archive (`arch_match_impl`, zero-copy from
+  the mmap) when present, else the in-memory tree.
+
+Verified: build writes a 210-byte archive; `oxide start` serves `/`,
+`/blog/hello-prod`, `/blog/second-post` all 200 through it; four-fixture gate
+PASS; `oxide-cli --lib` 98.
+
+Commits: (below).
