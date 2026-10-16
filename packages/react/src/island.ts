@@ -20,6 +20,7 @@
 
 import { createElement, type ReactNode } from 'react'
 import { toBase64 } from '../../oxide/src/bytes.ts'
+import { encodePropsB64 } from '../../oxide/src/odf-encode.ts'
 
 /** Hydration timing (§10.3): `load` (immediate), `idle`, `visible`, or
  *  `{ media: '(...)' }` for a CSS media query. */
@@ -60,7 +61,7 @@ export function Island({
   props = {},
   children,
 }: IslandProps): ReactNode {
-  const propsB64 = toBase64(JSON.stringify(props))
+  const propsB64 = encodePropsB64(props)
   return createElement(
     'ox-island',
     {

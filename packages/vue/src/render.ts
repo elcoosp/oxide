@@ -15,6 +15,7 @@
 // conformance suite renders these routes through every adapter.
 
 import type { RenderInput, RenderCtx, HeadTags } from '../../oxide/src/types.ts'
+import { encodePropsB64 } from '../../oxide/src/odf-encode.ts'
 import {
   el, t, raw, frag, deferred, island, deferPromise, escapeText, escapeAttr, hash6, toBase64,
   type Node, type ComponentFn, type DeferSource,
@@ -137,7 +138,7 @@ function walk(node: Node, state: RenderState, depth: number, flavorAttrs: boolea
             component: node.component,
             chunk: node.chunk,
             strategy: node.strategy,
-            propsB64: toBase64(JSON.stringify(node.props ?? {})),
+            propsB64: encodePropsB64(node.props ?? {}),
           },
           ssr,
         ),
