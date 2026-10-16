@@ -73,6 +73,10 @@ impl L0Cache {
 
     /// Look up a fresh cached response for `route`. Returns `None` on a miss
     /// or a stale entry (stale-serving is a follow-up).
+    /// Look up a cached response. PERF-04: returns a fresh hit, or a **stale**
+    /// hit within the SWR window (the caller serves it and revalidates in the
+    /// background). Past the SWR window the entry is a miss. The ETag is
+    /// surfaced so the caller can answer a conditional request with 304.
     pub async fn get(
         &self,
         route: &str,
@@ -81,9 +85,11 @@ impl L0Cache {
     ) -> Option<CachedResponse> {
         let key = self.key(route, params, vary);
         let entry = self.handler.get(&key).await.ok()??;
-        if !entry.is_fresh(now_ms()) {
-            return None;
+        let now = now_ms();
+        if now > entry.stale_until() {
+            return None; // beyond TTL + SWR
         }
+        let stale = !entry.is_fresh(now);
         Some(CachedResponse {
             status: entry.status,
             headers: entry
@@ -92,6 +98,8 @@ impl L0Cache {
                 .filter(|(k, _)| !k.eq_ignore_ascii_case("content-security-policy"))
                 .collect(),
             body: entry.body,
+            etag: entry.etag,
+            stale,
         })
     }
 
@@ -123,7 +131,10 @@ impl L0Cache {
             tags,
             policy: Policy {
                 ttl: self.ttl,
-                swr: None,
+                // PERF-04: serve stale for `swr` past the TTL while the entry
+                // regenerates in the background (SWR). 5x the TTL, floored at
+                // 60 s, so a short-TTL route still gets a useful window.
+                swr: Some(self.ttl.saturating_mul(5).max(std::time::Duration::from_secs(60))),
                 stale_if_error: None,
                 soft_tags: true,
             },
@@ -159,6 +170,11 @@ pub struct CachedResponse {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+    /// PERF-04: the stored ETag, for a conditional-request 304.
+    pub etag: String,
+    /// PERF-04: true when served within the SWR window past the TTL — the
+    /// caller should trigger a background revalidation.
+    pub stale: bool,
 }
 
 impl CachedResponse {
@@ -351,6 +367,83 @@ mod tests {
         assert_ne!(en, fr);
         assert_eq!(none, "lang=");
         assert_eq!(en, "lang=en-us");
+    }
+
+    /// PERF-04: an entry past its TTL but within the SWR window is served as
+    /// a *stale* hit; past the window it is a miss.
+    #[tokio::test]
+    async fn swr_window_serves_stale_then_expires() {
+        use oxide_cache::{CacheHandler as _, CacheKey, Entry, Layer, Policy};
+        let tier = Arc::new(TieredCache::new(1 << 20));
+        let c = L0Cache::new(tier.clone(), "b", Duration::from_secs(1));
+        let key = CacheKey {
+            layer: Layer::L0,
+            route: "r".into(),
+            params: String::new(),
+            vary: String::new(),
+            build_id: "b".into(),
+        }
+        .canonical();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        // Stored 5 s ago, TTL 1 s, SWR 3600 s → stale but servable.
+        tier.set(
+            &key,
+            Entry {
+                body: b"BODY".to_vec(),
+                status: 200,
+                headers: vec![],
+                tags: vec![],
+                policy: Policy {
+                    ttl: Duration::from_secs(1),
+                    swr: Some(Duration::from_secs(3600)),
+                    stale_if_error: None,
+                    soft_tags: true,
+                },
+                stored_at: now.saturating_sub(5_000),
+                etag: "abc".into(),
+            },
+        )
+        .await
+        .unwrap();
+        let hit = c.get("r", "", "").await.expect("stale hit within SWR");
+        assert!(hit.stale, "flagged stale");
+        assert_eq!(hit.body, b"BODY");
+        assert_eq!(hit.etag, "abc");
+
+        // Stored 10 000 s ago → past TTL + SWR → miss.
+        tier.set(
+            &key,
+            Entry {
+                body: b"OLD".to_vec(),
+                status: 200,
+                headers: vec![],
+                tags: vec![],
+                policy: Policy {
+                    ttl: Duration::from_secs(1),
+                    swr: Some(Duration::from_secs(60)),
+                    stale_if_error: None,
+                    soft_tags: true,
+                },
+                stored_at: now.saturating_sub(10_000_000),
+                etag: String::new(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(c.get("r", "", "").await.is_none(), "expired");
+    }
+
+    /// PERF-04: a fresh put exposes a non-empty ETag for a 304.
+    #[tokio::test]
+    async fn fresh_hit_exposes_etag() {
+        let c = cache(60);
+        c.put("r", "", "", 200, vec![], b"BODY".to_vec(), vec![]).await;
+        let hit = c.get("r", "", "").await.unwrap();
+        assert!(!hit.etag.is_empty(), "etag present");
+        assert!(!hit.stale, "fresh");
     }
 
     #[test]

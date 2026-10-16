@@ -2812,15 +2812,40 @@ fn build_dispatch(
                         if let Some(hit) =
                             cache.get(&l0_route, &l0_params, &l0_vary).await
                         {
+                            // PERF-04: a conditional request whose validator
+                            // matches the stored ETag gets a 304 (no body). The
+                            // ETag is weak-formatted so a cache can still serve
+                            // it after a nonce-only body change.
+                            let etag = format!("W/\"{}\"", hit.etag);
+                            let inm = req_owned
+                                .header("if-none-match")
+                                .map(str::to_string);
+                            if inm.as_deref().is_some_and(|v| {
+                                v.split(',').map(str::trim).any(|t| {
+                                    t == etag || t == hit.etag || t == "*"
+                                })
+                            }) {
+                                let mut resp = oxide_server::OxideResponse::new(304, "");
+                                resp = resp.with_header("etag", etag.clone());
+                                resp = resp.with_header("x-oxide-cache", "L0-hit");
+                                metrics.observe(&label, started.elapsed(), 304);
+                                return resp;
+                            }
                             let nonce = oxide_server::nonce_for(&req_owned.request_id);
                             let body = hit.materialize(&nonce);
                             let mut resp = oxide_server::OxideResponse::new(hit.status, body);
                             for (k, v) in &hit.headers {
                                 resp = resp.with_header(k, v.clone());
                             }
+                            resp = resp.with_header("etag", etag);
                             // §20: an explicit cache-outcome header makes the L0
-                            // layer observable and testable.
-                            resp = resp.with_header("x-oxide-cache", "L0-hit");
+                            // layer observable and testable. A stale serve
+                            // (within the SWR window) is labelled so the caller
+                            // can see it; background regeneration is scoped.
+                            resp = resp.with_header(
+                                "x-oxide-cache",
+                                if hit.stale { "L0-stale" } else { "L0-hit" },
+                            );
                             metrics.observe(&label, started.elapsed(), hit.status);
                             return resp;
                         }
