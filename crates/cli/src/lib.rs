@@ -2584,6 +2584,17 @@ fn build_dispatch(
 > {
     let boot_script_url_for_render = boot_script_url.clone();
     let actions_for_dispatch = actions.clone();
+    // PERF-04: single-flight coalescing. Concurrent misses for the same L0
+    // key run one render; the rest await the owner's entry. One map per
+    // process, shared across every dispatch call.
+    let flight_map: std::sync::Arc<
+        dashmap::DashMap<
+            String,
+            std::sync::Arc<
+                tokio::sync::broadcast::Sender<std::sync::Arc<oxide_cache::Entry>>,
+            >,
+        >,
+    > = std::sync::Arc::new(dashmap::DashMap::new());
     std::sync::Arc::new(move |req: oxide_server::OxideRequest| {
             let started = std::time::Instant::now();
             let raw = req.url.split(['?', '#']).next().unwrap_or("/").to_string();
@@ -2735,6 +2746,10 @@ fn build_dispatch(
             // reaches the framework render path. `GET` only.
             let is_data_request =
                 req.method.eq_ignore_ascii_case("GET") && l0_path == "/__data";
+            // PERF-04: the single-flight key (matches the L0 key shape) and the
+            // shared map handle.
+            let flight_key = l0_cache::L0Cache::key_for(&l0_route, &l0_params, &l0_vary);
+            let flight_map = std::sync::Arc::clone(&flight_map);
 
             Box::pin(async move {
                 if is_data_request {
@@ -2849,6 +2864,42 @@ fn build_dispatch(
                             metrics.observe(&label, started.elapsed(), hit.status);
                             return resp;
                         }
+                    }
+                }
+
+                // PERF-04: single-flight. A concurrent miss for the same L0
+                // key awaits the in-flight owner instead of rendering again.
+                let mut flight_owner: Option<
+                    tokio::sync::broadcast::Sender<std::sync::Arc<oxide_cache::Entry>>,
+                > = None;
+                if l0_eligible && l0.is_some() {
+                    use oxide_cache::FlightSlot;
+                    match oxide_cache::SingleFlight::new()
+                        .acquire(&flight_map, &flight_key)
+                        .await
+                    {
+                        FlightSlot::Follower(mut rx) => {
+                            if let Ok(Ok(entry)) = tokio::time::timeout(
+                                std::time::Duration::from_secs(10),
+                                rx.recv(),
+                            )
+                            .await
+                            {
+                                let nonce = oxide_server::nonce_for(&req_owned.request_id);
+                                let body = String::from_utf8_lossy(&entry.body)
+                                    .replace(l0_cache::NONCE_SENTINEL, &nonce)
+                                    .into_bytes();
+                                let mut resp =
+                                    oxide_server::OxideResponse::new(entry.status, body);
+                                for (k, v) in &entry.headers {
+                                    resp = resp.with_header(k, v.clone());
+                                }
+                                resp = resp.with_header("x-oxide-cache", "L0-coalesced");
+                                metrics.observe(&label, started.elapsed(), entry.status);
+                                return resp;
+                            }
+                        }
+                        FlightSlot::Owner(tx) => flight_owner = Some(tx),
                     }
                 }
 
@@ -3006,24 +3057,29 @@ fn build_dispatch(
                                     for (k, v) in &loader_headers {
                                         store_headers.push((k.clone(), v.clone()));
                                     }
-                                    cache
-                                        .put(
-                                            &l0_route,
-                                            &l0_params,
-                                            &l0_vary,
-                                            200,
-                                            store_headers,
-                                            sentineled,
-                                            // BUG-01: tag with both the route id
-                                            // and the request path, so a
-                                            // `revalidate.tag(route)` or
-                                            // `revalidate.path('/x')` hits.
-                                            vec![
-                                                l0_route.clone(),
-                                                format!("path:{}", l0_path),
-                                            ],
-                                        )
-                                        .await;
+                                    // BUG-01: tag with both the route id and
+                                    // the request path so `revalidate.tag` /
+                                    // `revalidate.path` hit.
+                                    let entry = cache.make_entry(
+                                        200,
+                                        store_headers,
+                                        sentineled,
+                                        vec![l0_route.clone(), format!("path:{}", l0_path)],
+                                    );
+                                    let key =
+                                        cache.key_of(&l0_route, &l0_params, &l0_vary);
+                                    cache.store_entry(&key, entry.clone()).await;
+                                    // PERF-04: wake followers awaiting this key.
+                                    if let Some(tx) = flight_owner.take() {
+                                        let _ = oxide_cache::SingleFlight::new()
+                                            .publish_and_cleanup(
+                                                &flight_map,
+                                                &flight_key,
+                                                oxide_cache::FlightSlot::Owner(tx),
+                                                Some(std::sync::Arc::new(entry)),
+                                            )
+                                            .await;
+                                    }
                                     let mut resp = oxide_server::OxideResponse::new(200, collected)
                                         .with_header("content-type", "text/html; charset=utf-8")
                                         .with_header("x-oxide-cache", "L0-miss");
