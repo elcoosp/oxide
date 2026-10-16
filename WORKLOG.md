@@ -3641,3 +3641,26 @@ Verified: `oxide-cli --lib` 98; a real `GET /` with the seed removed reports
 
 Commits: (below).
 
+
+## PERF-12 — binary frame kind (no base64 on the hot path)
+
+The worker protocol was `[4-byte len][JSON]`; every streamed chunk rode
+base64 inside JSON (~33% overhead + two copies). The frame is now
+`[4-byte len][1-byte kind][payload]` (len covers kind+payload):
+- kind 0 = JSON (host↔worker control messages),
+- kind 1 = binary chunk `[8-byte id LE][raw bytes]` (worker→host only).
+
+`unframe` dispatches on the kind; a new `WorkerMsg::CallChunkBin` carries the
+raw `Vec<u8>`. The worker's streamed `call_chunk` now uses `outBinChunk`
+(no base64); the Node worker's stdin reader skips the kind byte. Unknown
+kinds are `JSH-FRAME`.
+
+**This required fixing the harness first** (commit `aa8bb82`): watchexec's
+`-r` restarted the script but bash orphaned the backgrounded `oxide-cli
+start` + `cargo`, so two runs overlapped and corrupted the git index. Fixed
+with `--wrap-process=session --stop-signal=SIGKILL` + a portable gate lock.
+With that fixed, both gates pass deterministically.
+
+Verified: `oxide-jshost` integration (frame roundtrip incl. `CallChunkBin`,
+protocol errors, binary roundtrip); four-fixture gate PASS; V8 gate PASS
+(10/10, generateParams x2, action).
