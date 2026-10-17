@@ -215,10 +215,14 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
           }
         }
         const headWarnings: string[] = []
+        // §10.2 step 5: `props` is referenced by both the try (page render)
+        // and the catch (error.tsx render). Declaring it here keeps it in
+        // scope after the try frame unwinds — a `const` inside the try
+        // would be `ReferenceError` in the catch handler.
+        const props: Record<string, unknown> = {
+          route: input.route, url: input.url, params: input.params, data: input.data,
+        }
         try {
-          const props: Record<string, unknown> = {
-            route: input.route, url: input.url, params: input.params, data: input.data,
-          }
           // Build the innermost descriptor = the page itself.
           let descriptor: { Component: unknown; props: Record<string, unknown> } = {
             Component, props,
