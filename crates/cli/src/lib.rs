@@ -4388,33 +4388,67 @@ async fn cmd_analyze(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
             })
             .collect()
     };
-    let budget_src = cfg
-        .budgets
-        .route_js
-        .as_deref()
-        .or(cfg.budgets.client_js.as_deref());
-    let budget = match budget_src {
-        Some(s) => Some((
-            s,
+    // SPEC-25: enforce BOTH budgets independently — `routeJs` per route and
+    // `clientJs` on the total client payload (the sum across routes). A
+    // single fallback chain treated them as one number.
+    let route_budget: Option<u64> = match cfg.budgets.route_js.as_deref() {
+        Some(s) => Some(
             oxide_config::parse_size(s)
                 .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?,
-        )),
+        ),
         None => None,
     };
+    let total_budget: Option<u64> = match cfg.budgets.client_js.as_deref() {
+        Some(s) => Some(
+            oxide_config::parse_size(s)
+                .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?,
+        ),
+        None => None,
+    };
+    // A route's own JS plus its shared preload is what it costs; the sum over
+    // routes overcounts shared chunks, so the total is the union of every
+    // emitted client .js file.
+    let client_dir = rootp.join("dist/client");
+    let mut total_bytes: u64 = 0;
+    {
+        let mut stack = vec![client_dir.clone()];
+        while let Some(d) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&d) else { continue };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().and_then(|x| x.to_str()) == Some("js") {
+                    total_bytes += std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+                }
+            }
+        }
+    }
     outln!(w, "ROUTE | JS BYTES | BUDGET | OK");
     let mut any_over = false;
-    for (route, bytes) in rows {
-        let (budget_str, limit) = match &budget {
-            // The budget column shows the parsed byte count (e.g. 150kb → 153600).
-            Some((_, b)) => (b.to_string(), Some(*b)),
+    for (route, bytes) in &rows {
+        let (budget_str, limit) = match route_budget {
+            Some(b) => (b.to_string(), Some(b)),
             None => ("-".to_string(), None),
         };
-        let ok = limit.is_none_or(|l| bytes <= l);
+        let ok = limit.is_none_or(|l| *bytes <= l);
         if !ok {
             any_over = true;
         }
         let status = if ok { "ok" } else { "OVER" };
         outln!(w, "{route} | {bytes} | {budget_str} | {status}");
+    }
+    if let Some(limit) = total_budget {
+        let ok = total_bytes <= limit;
+        if !ok {
+            any_over = true;
+        }
+        outln!(w, "--");
+        outln!(
+            w,
+            "total client JS | {total_bytes} | {limit} | {}",
+            if ok { "ok" } else { "OVER" }
+        );
     }
     Ok(if any_over { 1 } else { 0 })
 }
