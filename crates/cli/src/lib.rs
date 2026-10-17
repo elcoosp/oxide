@@ -3307,12 +3307,16 @@ fn build_dispatch(
     // `None` means no `route.ts` execution is possible (a project without
     // a worker pool, or a build-time call site).
     endpoint_dispatcher: Option<std::sync::Arc<dyn oxide_server::EndpointDispatcher>>,
+    // §8.1 middleware.ts / §8.5: dispatch a route's middleware before the
+    // loader/render phase. `None` means middleware is not executed.
+    middleware_dispatcher: Option<std::sync::Arc<dyn oxide_server::MiddlewareDispatcher>>,
 ) -> std::sync::Arc<
     dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
 > {
     let boot_script_url_for_render = boot_script_url.clone();
     let actions_for_dispatch = actions.clone();
     let endpoint_for_dispatch = endpoint_dispatcher.clone();
+    let middleware_for_dispatch = middleware_dispatcher.clone();
     // PERF-04: single-flight coalescing. Concurrent misses for the same L0
     // key run one render; the rest await the owner's entry. One map per
     // process, shared across every dispatch call.
@@ -3440,6 +3444,46 @@ fn build_dispatch(
                     Some(routes_root.join(&m.route.file))
                 }
                 _ => None,
+            };
+
+            // §8.1 middleware.ts / §8.5: resolve the NEAREST ancestor
+            // middleware for the matched route. Like error.tsx, the
+            // middleware's directory is the scoping key; the deepest
+            // matching ancestor wraps the route (a `routes/blog/middleware`
+            // shadows `routes/middleware`). Scope to a bounded slice:
+            // middleware is executed once, before the loader/render; a
+            // rewrite is logged but not re-matched (documented gap).
+            let middleware_module_path: Option<std::path::PathBuf> = {
+                let route_id_for_mw = route_id.as_deref().unwrap_or("");
+                let mut best: Option<(std::path::PathBuf, usize)> = None;
+                for candidate in &tree.entries {
+                    if !matches!(candidate.kind, oxide_router::RouteKind::Middleware) {
+                        continue;
+                    }
+                    let base = candidate
+                        .id
+                        .0
+                        .strip_suffix("/middleware")
+                        .unwrap_or(&candidate.id.0);
+                    let wraps = if base == "routes" || base.is_empty() {
+                        true
+                    } else {
+                        route_id_for_mw.starts_with(&format!("{base}/"))
+                    };
+                    if !wraps {
+                        continue;
+                    }
+                    let len = base.len();
+                    match &best {
+                        Some((_, prev)) if *prev >= len => {}
+                        _ => {
+                            // `candidate.file` is the middleware file itself,
+                            // not its sibling — no `with_file_name` needed.
+                            best = Some((routes_root.join(&candidate.file), len));
+                        }
+                    }
+                }
+                best.map(|(p, _)| p)
             };
             let endpoint_params_json: serde_json::Map<String, serde_json::Value> = params
                 .iter()
@@ -3601,6 +3645,8 @@ fn build_dispatch(
             // §8.1 route.ts / §10.2 step 7: same pattern for the endpoint
             // dispatcher — the async block below moves this per-call clone.
             let endpoint_for_dispatch = endpoint_for_dispatch.clone();
+            // §8.1 middleware.ts / §8.5: same shadow for middleware.
+            let middleware_for_dispatch = middleware_for_dispatch.clone();
             // §11 L0: only a GET on a static/isr route is a cache candidate.
             let l0 = l0.clone();
             // A route with a server module may read request state the L0 key
@@ -3906,6 +3952,78 @@ fn build_dispatch(
                                 resp = resp.with_header(k, v.clone());
                             }
                             return resp;
+                        }
+                        Err(e) => {
+                            metrics.observe(&label, started.elapsed(), e.status);
+                            return oxide_server::OxideResponse::json(
+                                e.status,
+                                serde_json::json!({"error": {
+                                    "code": e.code,
+                                    "message": e.message,
+                                    "route": label,
+                                }}),
+                            );
+                        }
+                    }
+                }
+
+                // §8.1 middleware.ts / §8.5: run the route's nearest ancestor
+                // middleware BEFORE the loader/render phase. It can:
+                //   * short-circuit with a `Response` or `{ redirect }`;
+                //   * inject `locals` (delivered to the loader via
+                //     `LoaderRunInput.locals`);
+                //   * add response headers.
+                // A `{ rewrite }` is logged but not re-matched in this slice
+                // (documented gap). An error surfaces as a 500 with a
+                // `MIDDLEWARE`-coded envelope.
+                let mut middleware_locals: serde_json::Value = serde_json::json!({});
+                let mut middleware_headers: Vec<(String, String)> = Vec::new();
+                if let (Some(dispatcher), Some(mp)) =
+                    (middleware_for_dispatch.as_deref(), middleware_module_path.as_ref())
+                {
+                    let module_path_s = mp.to_string_lossy().to_string();
+                    // Pass the full request (headers + body) so an auth /
+                    // upload middleware sees what it needs.
+                    let mw_res = dispatcher
+                        .dispatch(
+                            &module_path_s,
+                            &req_owned.method,
+                            &req_owned.url,
+                            &endpoint_params_json,
+                            &endpoint_headers,
+                            endpoint_body.as_ref(),
+                            None,
+                        )
+                        .await;
+                    match mw_res {
+                        Ok(out) => {
+                            if out.short {
+                                metrics.observe(&label, started.elapsed(), out.status);
+                                let mut resp = oxide_server::OxideResponse::new(
+                                    out.status,
+                                    bytes::Bytes::from(out.body),
+                                );
+                                for (k, v) in &out.headers {
+                                    resp = resp.with_header(k, v.clone());
+                                }
+                                return resp;
+                            }
+                            // Non-short-circuit: accumulate headers and locals.
+                            for (k, v) in &out.headers {
+                                middleware_headers.push((k.clone(), v.clone()));
+                            }
+                            if let Some(l) = out.locals {
+                                if l.is_object() {
+                                    middleware_locals = l;
+                                }
+                            }
+                            if let Some(rw) = out.rewrite.as_deref() {
+                                tracing::warn!(
+                                    route = %label,
+                                    rewrite = %rw,
+                                    "middleware rewrite is not re-matched in this slice (§8.5)",
+                                );
+                            }
                         }
                         Err(e) => {
                             metrics.observe(&label, started.elapsed(), e.status);
@@ -4528,6 +4646,52 @@ fn build_endpoint_dispatcher(
     }))
 }
 
+/// §8.1 middleware.ts / §8.5: a bridge to the worker's `middleware:run` op.
+struct MiddlewareDispatcherImpl {
+    host: oxide_jshost::MiddlewareHost,
+}
+
+#[async_trait::async_trait]
+impl oxide_server::MiddlewareDispatcher for MiddlewareDispatcherImpl {
+    async fn dispatch(
+        &self,
+        module_path: &str,
+        method: &str,
+        url: &str,
+        params: &serde_json::Map<String, serde_json::Value>,
+        headers: &[(String, String)],
+        body: &[u8],
+        locals: Option<&serde_json::Value>,
+    ) -> std::result::Result<oxide_server::MiddlewareRunResult, oxide_server::MiddlewareRunError> {
+        match self.host.run(module_path, method, url, params, headers, body, locals).await {
+            Ok(out) => Ok(oxide_server::MiddlewareRunResult {
+                short: out.short,
+                status: out.status,
+                headers: out.headers,
+                body: out.body,
+                redirect: out.redirect,
+                rewrite: out.rewrite,
+                locals: out.locals,
+            }),
+            Err(e) => Err(oxide_server::MiddlewareRunError {
+                status: 500,
+                code: e.0.code.to_string().replace("JSH-MIDDLEWARE", "MIDDLEWARE"),
+                message: e.0.message.to_string(),
+            }),
+        }
+    }
+}
+
+/// §8.1 middleware.ts / §8.5: build the middleware dispatcher when a pool is present.
+fn build_middleware_dispatcher(
+    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
+) -> Option<std::sync::Arc<dyn oxide_server::MiddlewareDispatcher>> {
+    let pool = pool?;
+    Some(std::sync::Arc::new(MiddlewareDispatcherImpl {
+        host: oxide_jshost::MiddlewareHost::new(std::sync::Arc::clone(pool)),
+    }))
+}
+
 /// §15.1 kind 2: load the WASM component plugin the config declares, if
 /// any, and wrap its `transform` hook as a closure the bundler can call.
 ///
@@ -4863,6 +5027,7 @@ async fn start_server_inner_full(
     let server_fns = build_server_fn_dispatcher(&rootp, stack.pool.as_ref());
     let actions = build_action_dispatcher(stack.pool.as_ref());
     let endpoint_dispatcher = build_endpoint_dispatcher(stack.pool.as_ref());
+    let middleware_dispatcher = build_middleware_dispatcher(stack.pool.as_ref());
     // SEC-09: mint the dev inspector token when the inspector is attached
     // (dev only). `serve` (production) never sets an inspector, so this is
     // `None` there.
@@ -5046,6 +5211,7 @@ async fn start_server_inner_full(
             })
         },
         endpoint_dispatcher,
+        middleware_dispatcher,
     );
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (tx, rx) = tokio::sync::watch::channel(false);
