@@ -801,6 +801,7 @@ async fn dev_server_serves_smoke_app_over_http() {
         None,
         Vec::new(),
         stack,
+        None,
     )
     .await
     .expect("start_dev_server_full");
