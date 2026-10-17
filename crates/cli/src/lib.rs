@@ -919,7 +919,31 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         }
     }
 
-    let watcher = oxide_dev::Watcher::with_notify(vec![rootp.clone()]);
+    // SPEC-16: watch the app AND any linked workspace packages, so an edit in
+    // `packages/ui` (a `file:` dependency) invalidates the app.
+    let mut watch_roots: Vec<std::path::PathBuf> = vec![rootp.clone()];
+    if let Some(ws) = oxide_config::detect_workspace_root(&rootp) {
+        // Watch each workspace package that is not the app itself.
+        if let Ok(rd) = std::fs::read_dir(&ws) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if !p.is_dir() {
+                    continue;
+                }
+                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if matches!(name, "node_modules" | "target" | ".git" | ".oxide" | "dist") {
+                    continue;
+                }
+                // A package has a package.json or Cargo.toml at its root.
+                if p.join("package.json").is_file() || p.join("Cargo.toml").is_file() {
+                    if p != rootp && !watch_roots.contains(&p) {
+                        watch_roots.push(p);
+                    }
+                }
+            }
+        }
+    }
+    let watcher = oxide_dev::Watcher::with_notify(watch_roots);
     let mut seen = std::collections::BTreeSet::new();
 
     // PERF-08: a `DemandGraph` over the watched modules. A node per source

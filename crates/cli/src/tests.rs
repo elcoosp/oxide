@@ -2075,7 +2075,18 @@ async fn production_server_does_not_serve_inspector() {
     wait_ready(started.addr).await;
 
     let url = format!("http://{}/__oxide/state", started.addr);
-    let resp = simple_get(&url).await.expect("GET");
+    // Retry the GET: under full-workspace parallel load the listener can
+    // transiently reset a connection right after `wait_ready` returns.
+    let mut resp = String::new();
+    for _ in 0..50 {
+        match simple_get(&url).await {
+            Ok(r) => {
+                resp = r;
+                break;
+            }
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(50)).await,
+        }
+    }
     // Not the inspector — falls through to the route dispatcher → 404.
     assert!(
         !resp.contains("application/json"),
