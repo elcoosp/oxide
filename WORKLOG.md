@@ -3959,3 +3959,18 @@ the shell, it still aborts.
 
 Verified: new test (shell preserved + `ox-error` + the diagnostic code
 present in the body); `oxide-cli --lib` 99.
+
+## SPEC-11 — §10.2.5 mid-stream error recovery on live streams
+
+`render::stream_error_recovery` existed with zero callers: a render error
+after the shell had already streamed aborted the connection (truncated page).
+
+Wired via `render_stream_with_recovery`: when the shell has committed
+(≥1 chunk sent) and the render errors, the bridge appends the recovery
+boundary (`ox-error` div inside a `data-ox-c` template + the self-contained
+swapper that replaces the matching `data-ox-b` placeholder) and closes
+cleanly — status stays 200, the client recovers the failed boundary. Before
+the shell, it still aborts.
+
+Verified: new test (shell preserved + `ox-error` + the diagnostic code
+present in the body); `oxide-cli --lib` 99.
