@@ -3303,11 +3303,16 @@ fn build_dispatch(
     // SPEC-10: the i18n config, when the project declares locales. `None`
     // disables locale resolution (every loader sees `locale = ""`).
     i18n_cfg: Option<oxide_assets::i18n::I18nConfig>,
+    // §8.1 route.ts / §10.2 step 7: dispatch a matched Endpoint route.
+    // `None` means no `route.ts` execution is possible (a project without
+    // a worker pool, or a build-time call site).
+    endpoint_dispatcher: Option<std::sync::Arc<dyn oxide_server::EndpointDispatcher>>,
 ) -> std::sync::Arc<
     dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
 > {
     let boot_script_url_for_render = boot_script_url.clone();
     let actions_for_dispatch = actions.clone();
+    let endpoint_for_dispatch = endpoint_dispatcher.clone();
     // PERF-04: single-flight coalescing. Concurrent misses for the same L0
     // key run one render; the rest await the owner's entry. One map per
     // process, shared across every dispatch call.
@@ -3425,6 +3430,25 @@ fn build_dispatch(
                 ),
                 None => (None, None, std::collections::BTreeMap::new(), false, None),
             };
+
+            // §8.1 route.ts / §10.2 step 7: pre-compute whether this is an
+            // Endpoint route and, if so, the on-disk path to its `route.ts`.
+            // Endpoints bypass the loader/render phases entirely: a `route.ts`
+            // returns a Web `Response` directly.
+            let endpoint_module_path: Option<std::path::PathBuf> = match &matched {
+                Some(m) if matches!(m.route.kind, oxide_router::RouteKind::Endpoint) => {
+                    Some(routes_root.join(&m.route.file))
+                }
+                _ => None,
+            };
+            let endpoint_params_json: serde_json::Map<String, serde_json::Value> = params
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                .collect();
+            let endpoint_headers: Vec<(String, String)> = req.headers.clone();
+            let endpoint_body: bytes::Bytes = req.body.clone();
+            let endpoint_method_for_dispatch: String = req.method.clone();
+            let endpoint_url_for_dispatch: String = req.url.clone();
 
             // §10.2 step 5 / §8.3: an unmatched URL gets a 404 status (the
             // `status` label above). To render a user-visible 404 page the
@@ -3574,6 +3598,9 @@ fn build_dispatch(
             // the outer closure's captured value (which would be E0507 —
             // an `Fn` closure cannot surrender a captured variable).
             let boot_script_url_for_render = boot_script_url_for_render.clone();
+            // §8.1 route.ts / §10.2 step 7: same pattern for the endpoint
+            // dispatcher — the async block below moves this per-call clone.
+            let endpoint_for_dispatch = endpoint_for_dispatch.clone();
             // §11 L0: only a GET on a static/isr route is a cache candidate.
             let l0 = l0.clone();
             // A route with a server module may read request state the L0 key
@@ -3844,6 +3871,52 @@ fn build_dispatch(
                                     format!("loader error: {}", oxide_render::escape_text(&e.0.message)),
                                 );
                             }
+                        }
+                    }
+                }
+
+                // §8.1 route.ts / §10.2 step 7: an Endpoint route returns a
+                // Web `Response` directly, bypassing the loader + render
+                // phases. The dispatcher is a worker op (`endpoint:run`),
+                // async but bounded; the response bytes are the raw body
+                // from the `Response` (a `route.ts` can serve a download).
+                let endpoint_for_dispatch_inner = endpoint_for_dispatch.clone();
+                if let (Some(dispatcher), Some(mp)) =
+                    (endpoint_for_dispatch_inner.as_deref(), endpoint_module_path.as_ref())
+                {
+                    let module_path_s = mp.to_string_lossy().to_string();
+                    match dispatcher
+                        .dispatch(
+                            &module_path_s,
+                            &endpoint_method_for_dispatch,
+                            &endpoint_url_for_dispatch,
+                            &endpoint_params_json,
+                            &endpoint_headers,
+                            endpoint_body.as_ref(),
+                        )
+                        .await
+                    {
+                        Ok(out) => {
+                            metrics.observe(&label, started.elapsed(), out.status);
+                            let mut resp = oxide_server::OxideResponse::new(
+                                out.status,
+                                bytes::Bytes::from(out.body),
+                            );
+                            for (k, v) in &out.headers {
+                                resp = resp.with_header(k, v.clone());
+                            }
+                            return resp;
+                        }
+                        Err(e) => {
+                            metrics.observe(&label, started.elapsed(), e.status);
+                            return oxide_server::OxideResponse::json(
+                                e.status,
+                                serde_json::json!({"error": {
+                                    "code": e.code,
+                                    "message": e.message,
+                                    "route": label,
+                                }}),
+                            );
                         }
                     }
                 }
@@ -4414,6 +4487,47 @@ fn build_action_dispatcher(
     }))
 }
 
+/// §8.1 route.ts / §10.2 step 7: a bridge to the worker's `endpoint:run` op.
+struct EndpointDispatcherImpl {
+    host: oxide_jshost::EndpointHost,
+}
+
+#[async_trait::async_trait]
+impl oxide_server::EndpointDispatcher for EndpointDispatcherImpl {
+    async fn dispatch(
+        &self,
+        module_path: &str,
+        method: &str,
+        url: &str,
+        params: &serde_json::Map<String, serde_json::Value>,
+        headers: &[(String, String)],
+        body: &[u8],
+    ) -> std::result::Result<oxide_server::EndpointRunResult, oxide_server::EndpointRunError> {
+        match self.host.run(module_path, method, url, params, headers, body).await {
+            Ok(out) => Ok(oxide_server::EndpointRunResult {
+                status: out.status,
+                headers: out.headers,
+                body: out.body,
+            }),
+            Err(e) => Err(oxide_server::EndpointRunError {
+                status: 500,
+                code: e.0.code.to_string().replace("JSH-ENDPOINT", "ENDPOINT"),
+                message: e.0.message.to_string(),
+            }),
+        }
+    }
+}
+
+/// §8.1 route.ts / §10.2 step 7: build the endpoint dispatcher when a pool is present.
+fn build_endpoint_dispatcher(
+    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
+) -> Option<std::sync::Arc<dyn oxide_server::EndpointDispatcher>> {
+    let pool = pool?;
+    Some(std::sync::Arc::new(EndpointDispatcherImpl {
+        host: oxide_jshost::EndpointHost::new(std::sync::Arc::clone(pool)),
+    }))
+}
+
 /// §15.1 kind 2: load the WASM component plugin the config declares, if
 /// any, and wrap its `transform` hook as a closure the bundler can call.
 ///
@@ -4748,6 +4862,7 @@ async fn start_server_inner_full(
     let image_endpoint = build_image_endpoint(&rootp, &cfg);
     let server_fns = build_server_fn_dispatcher(&rootp, stack.pool.as_ref());
     let actions = build_action_dispatcher(stack.pool.as_ref());
+    let endpoint_dispatcher = build_endpoint_dispatcher(stack.pool.as_ref());
     // SEC-09: mint the dev inspector token when the inspector is attached
     // (dev only). `serve` (production) never sets an inspector, so this is
     // `None` there.
@@ -4930,6 +5045,7 @@ async fn start_server_inner_full(
                 strategy: c.strategy.clone(),
             })
         },
+        endpoint_dispatcher,
     );
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (tx, rx) = tokio::sync::watch::channel(false);
