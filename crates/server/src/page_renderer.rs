@@ -270,3 +270,49 @@ pub struct EndpointRunError {
     pub message: String,
 }
 
+
+// ---------------------------------------------------------------------------
+// Middleware dispatch (§8.1 middleware.ts, §8.5 rewrites)
+// ---------------------------------------------------------------------------
+
+/// The seam between the HTTP pipeline and whichever runtime executes a
+/// route's `middleware.ts`. The middleware runs **before** route match,
+/// loader, and render, and can short-circuit, rewrite, add headers, or inject
+/// `locals`.
+#[async_trait::async_trait]
+pub trait MiddlewareDispatcher: Send + Sync {
+    /// Dispatch `middleware.ts` for a request. `module_path` is the on-disk
+    /// path; `locals` is the request-scoped state accumulated so far (an
+    /// outer middleware's locals, if any). The result carries the directive.
+    async fn dispatch(
+        &self,
+        module_path: &str,
+        method: &str,
+        url: &str,
+        params: &serde_json::Map<String, serde_json::Value>,
+        headers: &[(String, String)],
+        body: &[u8],
+        locals: Option<&serde_json::Value>,
+    ) -> std::result::Result<MiddlewareRunResult, MiddlewareRunError>;
+}
+
+/// The result of a `middleware.ts` run.
+#[derive(Debug, Clone, Default)]
+pub struct MiddlewareRunResult {
+    pub short: bool,
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+    pub redirect: Option<String>,
+    pub rewrite: Option<String>,
+    pub locals: Option<serde_json::Value>,
+}
+
+/// A middleware dispatch failure mapped to an HTTP status.
+#[derive(Debug, Clone)]
+pub struct MiddlewareRunError {
+    pub status: u16,
+    pub code: String,
+    pub message: String,
+}
+
