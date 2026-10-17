@@ -217,10 +217,16 @@ fn load_preset(
     let candidates: Vec<PathBuf> = if direct.extension().is_some() {
         vec![direct]
     } else {
-        vec![
+        let mut v = vec![
             dir.join(format!("{spec}.ts")),
             dir.join(format!("{spec}.json")),
-        ]
+        ];
+        // SPEC-16: a bare package spec resolves from the workspace root's
+        // node_modules when `dir` is inside one.
+        if let Some(ws) = crate::resolve_workspace_preset(dir, spec) {
+            v.push(ws);
+        }
+        v
     };
     for path in candidates {
         if !path.is_file() {

@@ -423,6 +423,58 @@ pub struct DevConfig {
     pub proxy: BTreeMap<String, String>,
 }
 
+/// SPEC-16 / §14.2: detect the nearest monorepo workspace root above `dir`.
+///
+/// Recognized markers (first found walking up, nearest wins):
+/// - `pnpm-workspace.yaml`
+/// - `package.json` with a `workspaces` field
+/// - `Cargo.toml` with a `[workspace]` section
+///
+/// Returns the workspace directory, or `None` when `dir` is not inside one.
+/// Used by `extends` resolution (a preset can name a workspace package) and
+/// by the dev watcher (linked packages are watched too).
+pub fn detect_workspace_root(dir: &Path) -> Option<PathBuf> {
+    let mut cur = Some(dir);
+    while let Some(d) = cur {
+        if d.join("pnpm-workspace.yaml").is_file() {
+            return Some(d.to_path_buf());
+        }
+        if let Ok(pkg) = std::fs::read_to_string(d.join("package.json")) {
+            if pkg.contains("\"workspaces\"") || pkg.contains("'workspaces'") {
+                return Some(d.to_path_buf());
+            }
+        }
+        if let Ok(cargo) = std::fs::read_to_string(d.join("Cargo.toml")) {
+            if cargo.contains("[workspace]") {
+                return Some(d.to_path_buf());
+            }
+        }
+        cur = d.parent();
+    }
+    None
+}
+
+/// SPEC-16: resolve an `extends` spec against the workspace. A bare package
+/// spec (`@scope/oxide-preset`) is looked up in the workspace's `node_modules`
+/// when `dir` is inside one, so a shared preset installs once at the root.
+pub fn resolve_workspace_preset(dir: &Path, spec: &str) -> Option<PathBuf> {
+    if spec.starts_with('.') || spec.starts_with('/') {
+        return None; // relative/absolute — the normal resolver handles it
+    }
+    let ws = detect_workspace_root(dir)?;
+    let base = ws.join("node_modules").join(spec);
+    for cand in [
+        base.join("oxide.preset.ts"),
+        base.join("oxide.preset.json"),
+        base.clone(),
+    ] {
+        if cand.is_file() {
+            return Some(cand);
+        }
+    }
+    None
+}
+
 /// Size parser: "512mb" | "64kb" | "1gb" | plain bytes → u64.
 /// Binary units (kb = 1024). Invalid input → `CFG-SIZE`.
 pub fn parse_size(s: &str) -> Result<u64> {
@@ -518,6 +570,58 @@ pub mod native_rule {
         pub key: String,
         pub max: u32,
         pub window_secs: u64,
+    }
+}
+
+#[cfg(test)]
+mod spec16_tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    /// SPEC-16: a pnpm workspace root is detected from a nested app dir.
+    #[test]
+    fn detects_pnpm_workspace_root() {
+        let ws = tempdir().unwrap();
+        fs::write(ws.path().join("pnpm-workspace.yaml"), "packages:\n  - apps/*\n").unwrap();
+        let app = ws.path().join("apps/web");
+        fs::create_dir_all(&app).unwrap();
+        assert_eq!(detect_workspace_root(&app), Some(ws.path().to_path_buf()));
+        // A dir outside any workspace → None.
+        let solo = tempdir().unwrap();
+        assert_eq!(detect_workspace_root(solo.path()), None);
+    }
+
+    #[test]
+    fn detects_package_workspaces_and_cargo() {
+        let ws = tempdir().unwrap();
+        fs::write(ws.path().join("package.json"), r#"{"workspaces":["packages/*"]}"#).unwrap();
+        let app = ws.path().join("packages/a");
+        fs::create_dir_all(&app).unwrap();
+        assert_eq!(detect_workspace_root(&app), Some(ws.path().to_path_buf()));
+
+        let cws = tempdir().unwrap();
+        fs::write(cws.path().join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
+        assert_eq!(detect_workspace_root(cws.path()), Some(cws.path().to_path_buf()));
+    }
+
+    /// SPEC-16: a bare `extends` package resolves from the workspace root's
+    /// node_modules.
+    #[test]
+    fn resolves_workspace_preset() {
+        let ws = tempdir().unwrap();
+        fs::write(ws.path().join("pnpm-workspace.yaml"), "packages:\n  - apps/*\n").unwrap();
+        let app = ws.path().join("apps/web");
+        fs::create_dir_all(&app).unwrap();
+        let preset = ws.path().join("node_modules/@scope/oxide-preset");
+        fs::create_dir_all(&preset).unwrap();
+        fs::write(preset.join("oxide.preset.json"), "{}").unwrap();
+        assert_eq!(
+            resolve_workspace_preset(&app, "@scope/oxide-preset"),
+            Some(preset.join("oxide.preset.json"))
+        );
+        // A relative spec is left to the normal resolver.
+        assert_eq!(resolve_workspace_preset(&app, "./local.ts"), None);
     }
 }
 
