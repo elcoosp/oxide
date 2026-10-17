@@ -3906,3 +3906,135 @@ every row, so the two budgets were one number. Now:
 Both failures set the non-zero exit. Verified: with `routeJs: '1kb'` every
 route is OVER and `analyze` exits 1; a generous budget exits 0. The CI gate
 (`benchmarks/gate.sh` + `analyze`) already runs on the four fixtures.
+
+## SPEC-10 — i18n locale routing (native rule)
+
+`assets::i18n` had `negotiate`/`strip_locale_prefix`/`locale_prefix` with no
+router integration, and `LoaderRunInput` had no locale.
+
+Implemented:
+- `oxide_server::I18nPolicy { locales, default, strategy }` on `Pipeline`
+  (built from `config.i18n` by the CLI). `prefix-except-default` (default),
+  `prefix-always`, `prefix-never`.
+- Locale routing in `native_prefix`: a known prefix selects the locale and is
+  **stripped** (the route table is locale-free); a missing prefix on a
+  non-default `Accept-Language` returns `307` to the prefixed URL; the
+  resolved locale rides `Content-Language` on the page response.
+- `LoaderRunInput.locale` — the CLI resolves it (path prefix → `Accept-Language`
+  → default) and passes it to every `load()`.
+
+Verified on a 2-locale fixture:
+- `GET /` + `Accept-Language: fr` → `307`, `location: /fr`, `content-language: fr`;
+- `GET /fr` → `200` with the page body + `content-language: fr`;
+- `GET /` + `en` (default) → `200` un-prefixed, `content-language: en`;
+- four fixtures still PASS.
+
+## SPEC-10 — i18n locale routing (native rule)
+
+`assets::i18n` had `negotiate`/`strip_locale_prefix`/`locale_prefix` with no
+router integration, and `LoaderRunInput` had no locale.
+
+Implemented:
+- `oxide_server::I18nPolicy { locales, default, strategy }` on `Pipeline`
+  (built from `config.i18n` by the CLI). `prefix-except-default` (default),
+  `prefix-always`, `prefix-never`.
+- Locale routing in `native_prefix`: a known prefix selects the locale and is
+  **stripped** (the route table is locale-free); a missing prefix on a
+  non-default `Accept-Language` returns `307` to the prefixed URL; the
+  resolved locale rides `Content-Language` on the page response.
+- `LoaderRunInput.locale` — the CLI resolves it (path prefix → `Accept-Language`
+  → default) and passes it to every `load()`.
+
+Verified on a 2-locale fixture:
+- `GET /` + `Accept-Language: fr` → `307`, `location: /fr`, `content-language: fr`;
+- `GET /fr` → `200` with the page body + `content-language: fr`;
+- `GET /` + `en` (default) → `200` un-prefixed, `content-language: en`;
+- four fixtures still PASS.
+
+## SPEC-10 — i18n locale routing (native rule)
+
+`assets::i18n` had `negotiate`/`strip_locale_prefix`/`locale_prefix` with no
+router integration, and `LoaderRunInput` had no locale.
+
+Implemented:
+- `oxide_server::I18nPolicy { locales, default, strategy }` on `Pipeline`
+  (built from `config.i18n` by the CLI). `prefix-except-default` (default),
+  `prefix-always`, `prefix-never`.
+- Locale routing in `native_prefix`: a known prefix selects the locale and is
+  **stripped** (the route table is locale-free); a missing prefix on a
+  non-default `Accept-Language` returns `307` to the prefixed URL; the
+  resolved locale rides `Content-Language` on the page response.
+- `LoaderRunInput.locale` — the CLI resolves it (path prefix → `Accept-Language`
+  → default) and passes it to every `load()`.
+
+Verified on a 2-locale fixture:
+- `GET /` + `Accept-Language: fr` → `307`, `location: /fr`, `content-language: fr`;
+- `GET /fr` → `200` with the page body + `content-language: fr`;
+- `GET /` + `en` (default) → `200` un-prefixed, `content-language: en`;
+- four fixtures still PASS.
+
+## SPEC-10 — i18n locale routing (native rule)
+
+`assets::i18n` had `negotiate`/`strip_locale_prefix`/`locale_prefix` with no
+router integration, and `LoaderRunInput` had no locale.
+
+Implemented:
+- `oxide_server::I18nPolicy { locales, default, strategy }` on `Pipeline`
+  (built from `config.i18n` by the CLI). `prefix-except-default` (default),
+  `prefix-always`, `prefix-never`.
+- Locale routing in `native_prefix`: a known prefix selects the locale and is
+  **stripped** (the route table is locale-free); a missing prefix on a
+  non-default `Accept-Language` returns `307` to the prefixed URL; the
+  resolved locale rides `Content-Language` on the page response.
+- `LoaderRunInput.locale` — the CLI resolves it (path prefix → `Accept-Language`
+  → default) and passes it to every `load()`.
+
+Verified on a 2-locale fixture:
+- `GET /` + `Accept-Language: fr` → `307`, `location: /fr`, `content-language: fr`;
+- `GET /fr` → `200` with the page body + `content-language: fr`;
+- `GET /` + `en` (default) → `200` un-prefixed, `content-language: en`;
+- four fixtures still PASS.
+
+## SPEC-10 — i18n locale routing (native rule)
+
+`assets::i18n` had `negotiate`/`strip_locale_prefix`/`locale_prefix` with no
+router integration, and `LoaderRunInput` had no locale.
+
+Implemented:
+- `oxide_server::I18nPolicy { locales, default, strategy }` on `Pipeline`
+  (built from `config.i18n` by the CLI). `prefix-except-default` (default),
+  `prefix-always`, `prefix-never`.
+- Locale routing in `native_prefix`: a known prefix selects the locale and is
+  **stripped** (the route table is locale-free); a missing prefix on a
+  non-default `Accept-Language` returns `307` to the prefixed URL; the
+  resolved locale rides `Content-Language` on the page response.
+- `LoaderRunInput.locale` — the CLI resolves it (path prefix → `Accept-Language`
+  → default) and passes it to every `load()`.
+
+Verified on a 2-locale fixture:
+- `GET /` + `Accept-Language: fr` → `307`, `location: /fr`, `content-language: fr`;
+- `GET /fr` → `200` with the page body + `content-language: fr`;
+- `GET /` + `en` (default) → `200` un-prefixed, `content-language: en`;
+- four fixtures still PASS.
+
+## SPEC-10 — i18n locale routing (native rule)
+
+`assets::i18n` had `negotiate`/`strip_locale_prefix`/`locale_prefix` with no
+router integration, and `LoaderRunInput` had no locale.
+
+Implemented:
+- `oxide_server::I18nPolicy { locales, default, strategy }` on `Pipeline`
+  (built from `config.i18n` by the CLI). `prefix-except-default` (default),
+  `prefix-always`, `prefix-never`.
+- Locale routing in `native_prefix`: a known prefix selects the locale and is
+  **stripped** (the route table is locale-free); a missing prefix on a
+  non-default `Accept-Language` returns `307` to the prefixed URL; the
+  resolved locale rides `Content-Language` on the page response.
+- `LoaderRunInput.locale` — the CLI resolves it (path prefix → `Accept-Language`
+  → default) and passes it to every `load()`.
+
+Verified on a 2-locale fixture:
+- `GET /` + `Accept-Language: fr` → `307`, `location: /fr`, `content-language: fr`;
+- `GET /fr` → `200` with the page body + `content-language: fr`;
+- `GET /` + `en` (default) → `200` un-prefixed, `content-language: en`;
+- four fixtures still PASS.
