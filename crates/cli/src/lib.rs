@@ -237,40 +237,42 @@ fn init_tracing() {
     use tracing_subscriber::layer::SubscriberExt;
 
     let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok();
+    // SPEC-24 / §20: `OXIDE_LOG=json` selects structured JSON log lines; the
+    // default is human-readable. Each formatter is a distinct concrete layer
+    // type, so the whole subscriber is built per branch (boxed as a
+    // `Subscriber`).
+    let json = std::env::var("OXIDE_LOG")
+        .map(|v| v.eq_ignore_ascii_case("json"))
+        .unwrap_or(false);
 
-    // Two independent subscriber shapes must be constructed, because each
-    // layer's type parameter is fixed by the first `.with()` call. Boxing
-    // every layer into `Box<dyn Layer<Registry>>` would also work; building
-    // in each branch keeps the dispatch overhead zero in the common no-OTLP
-    // case.
+    macro_rules! build {
+        ($otel:expr) => {{
+            let base = tracing_subscriber::registry().with($otel).with(env_filter());
+            if json {
+                Box::new(base.with(
+                    tracing_subscriber::fmt::layer()
+                        .with_target(false)
+                        .json()
+                        .flatten_event(true),
+                )) as Box<dyn tracing::Subscriber + Send + Sync>
+            } else {
+                Box::new(base.with(tracing_subscriber::fmt::layer().with_target(false)))
+                    as Box<dyn tracing::Subscriber + Send + Sync>
+            }
+        }};
+    }
+
     let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = match endpoint {
         Some(ep) => match build_otel_layer(&ep) {
-            Ok(otel_layer) => {
-                // tracing-opentelemetry's layer impls `Layer<Registry>`; it
-                // goes innermost. Filter and format layers stack on top.
-                Box::new(
-                    tracing_subscriber::registry()
-                        .with(otel_layer)
-                        .with(env_filter())
-                        .with(fmt_layer()),
-                )
-            }
+            Ok(otel_layer) => build!(otel_layer),
             Err(e) => {
                 eprintln!(
                     "oxide: OTLP export disabled ({e}); continuing with console logging only"
                 );
-                Box::new(
-                    tracing_subscriber::registry()
-                        .with(env_filter())
-                        .with(fmt_layer()),
-                )
+                build!(tracing_subscriber::layer::Identity::new())
             }
         },
-        None => Box::new(
-            tracing_subscriber::registry()
-                .with(env_filter())
-                .with(fmt_layer()),
-        ),
+        None => build!(tracing_subscriber::layer::Identity::new()),
     };
 
     let _ = tracing::subscriber::set_global_default(subscriber);
@@ -281,11 +283,45 @@ fn env_filter() -> tracing_subscriber::EnvFilter {
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
 }
 
-fn fmt_layer<S>() -> tracing_subscriber::fmt::Layer<S>
-where
-    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
-{
-    tracing_subscriber::fmt::layer().with_target(false)
+/// SPEC-24 / §20: redact secret-bearing fields before they reach a log line.
+/// A field key matching `cookie`/`authorization`/`set-cookie`/dev-token, or
+/// containing `secret`/`token`/`password`/`api_key`, is replaced with
+/// `[redacted]`. (Applied at the request-log call sites — the formatter emits
+/// whatever it is given, so the redaction happens before the event.)
+fn is_secret_key(k: &str) -> bool {
+    let k = k.to_ascii_lowercase();
+    matches!(
+        k.as_str(),
+        "cookie" | "authorization" | "set-cookie" | "x-oxide-dev-token"
+    ) || k.contains("secret")
+        || k.contains("token")
+        || k.contains("password")
+        || k.contains("api_key")
+}
+
+/// SPEC-24 / §20: emit one structured request log line (JSON under
+/// `OXIDE_LOG=json`) with every secret-bearing header redacted. Called from
+/// the CLI's response finisher.
+fn log_request(
+    request_id: &str,
+    method: &str,
+    path: &str,
+    status: u16,
+    headers: &[(String, String)],
+) {
+    let mut fields = String::new();
+    for (k, v) in headers {
+        let val = if is_secret_key(k) { "[redacted]" } else { v.as_str() };
+        fields.push_str(&format!("{k}={val} "));
+    }
+    tracing::info!(
+        request_id = request_id,
+        method = method,
+        path = path,
+        status = status,
+        headers = fields.trim_end(),
+        "request"
+    );
 }
 
 /// Build the `tracing-opentelemetry` layer for the given OTLP endpoint.

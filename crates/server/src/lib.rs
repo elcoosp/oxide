@@ -61,6 +61,41 @@ impl OxideRequest {
     }
 }
 
+/// SPEC-24 / §20: a header key that must never reach a log line.
+pub fn is_secret_key(k: &str) -> bool {
+    let k = k.to_ascii_lowercase();
+    matches!(
+        k.as_str(),
+        "cookie" | "authorization" | "set-cookie" | "x-oxide-dev-token"
+    ) || k.contains("secret")
+        || k.contains("token")
+        || k.contains("password")
+        || k.contains("api_key")
+}
+
+/// SPEC-24 / §20: one structured request log line with secret headers
+/// redacted. Emitted by the response finisher; under `OXIDE_LOG=json` the
+/// formatter renders it as a JSON object.
+fn log_request(
+    request_id: &str,
+    method: &str,
+    status: u16,
+    headers: &[(String, String)],
+) {
+    let mut redacted = String::new();
+    for (k, v) in headers {
+        let val = if is_secret_key(k) { "[redacted]" } else { v.as_str() };
+        redacted.push_str(&format!("{k}={val} "));
+    }
+    tracing::info!(
+        request_id = request_id,
+        method = method,
+        status = status,
+        headers = redacted.trim_end(),
+        "request"
+    );
+}
+
 /// A chunked response body stream. Each item is either a chunk of bytes
 /// or an I/O error that aborts the response (hyper closes the
 /// connection — a truncated 200 is never silently delivered).
@@ -2289,7 +2324,13 @@ impl Pipeline {
         let started = std::time::Instant::now();
         let metrics = self.metrics.clone();
 
-        match self.native_prefix(&mut req) {
+        // SPEC-24: stage spans. `match` covers routing + native rules; the
+        // render/load happen inside the dispatch delegate (which emits its own
+        // `total`); these spans make the native stages observable.
+        let _match = tracing::info_span!("oxide.match").entered();
+        let native = self.native_prefix(&mut req);
+        drop(_match);
+        match native {
             NativePrefix::Raw(resp) => {
                 if let Some(m) = &metrics {
                     m.observe("_native", started.elapsed(), resp.status);
@@ -2800,6 +2841,8 @@ impl Pipeline {
         // SEC-04 issuer: token mode needs a token to exist. Issue on safe
         // methods only; the double-submit check compares this cookie against
         // the `x-oxide-csrf` header on unsafe methods.
+        // SPEC-24: one redacted request log line per finished response.
+        log_request(request_id, method.unwrap_or(""), r.status, &r.headers);
         if self.security.csrf.eq_ignore_ascii_case("token")
             && matches!(method.map(|m| m.to_ascii_uppercase()).as_deref(), Some("GET") | Some("HEAD"))
             && cookie_value(cookie_header.unwrap_or(""), "oxide_csrf").is_none()
