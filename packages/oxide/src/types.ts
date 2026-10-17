@@ -33,6 +33,15 @@ export interface RenderInput {
   /** Serialized ODF payload for `<script type='application/oxide-data'>`. */
   odf?: Uint8Array
   locals?: Record<string, unknown>
+  /**
+   * §8.2 / §16.3 layout chain for this route, **outermost → innermost**.
+   * Each entry is a route module id like `routes/layout` or
+   * `routes/blog/layout`. The adapter resolves each via the caller's
+   * `componentFor(layoutId)` and nests the page inside them (outermost
+   * wraps everything). Absent on the client — layouts are a server-render
+   * concept here. See `packages/oxide/src/server/real-ssr.ts`.
+   */
+  layouts?: string[]
 }
 
 /** Context for adapter.head() — framework head model → neutral model. */
