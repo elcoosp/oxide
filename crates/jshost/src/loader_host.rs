@@ -34,6 +34,10 @@ impl LoaderHost {
             "url": input.get("url").cloned().unwrap_or(Value::Null),
             "method": input.get("method").cloned().unwrap_or(Value::String("GET".into())),
             "headers": input.get("headers").cloned().unwrap_or(Value::Array(vec![])),
+            // §8.1 middleware.ts / §9.1: request-scoped locals injected by
+            // middleware. The loader's `event.locals` reads this. Defaults to
+            // `{}` so a project without middleware still sees a (empty) object.
+            "locals": input.get("locals").cloned().unwrap_or(serde_json::json!({})),
         });
         // PERF-02: affinity key = the route the loader serves (read before
         // `payload` moves into the CallInput).

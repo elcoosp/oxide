@@ -47,6 +47,10 @@ pub struct LoaderRunInput {
     /// Empty when the project has no `i18n` config.
     #[serde(default)]
     pub locale: String,
+    /// §8.1 middleware.ts / §9.1: request-scoped locals injected by
+    /// middleware. Absent when no middleware runs (the loader sees `{}`).
+    #[serde(default)]
+    pub locals: serde_json::Value,
 }
 
 impl LoaderRunInput {
@@ -65,6 +69,7 @@ impl LoaderRunInput {
             params: BTreeMap::new(),
             headers: Vec::new(),
             locale: String::new(),
+            locals: serde_json::json!({}),
         }
     }
 }
