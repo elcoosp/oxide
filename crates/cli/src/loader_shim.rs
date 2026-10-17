@@ -23,6 +23,11 @@ pub fn input_to_payload(input: &LoaderRunInput) -> Value {
         "url": input.url,
         "method": input.method,
         "headers": input.headers,
+        // §8.1 middleware.ts / §9.1: request-scoped locals injected by
+        // middleware. The worker forwards this as `event.locals`.
+        "locals": input.locals,
+        // SPEC-10: resolved locale — the worker's loader event sees it.
+        "locale": input.locale,
     })
 }
 
@@ -134,6 +139,21 @@ mod tests {
         assert_eq!(v["method"], "GET");
         assert_eq!(v["params"]["slug"], "hi");
         assert_eq!(v["headers"][0][0], "cookie");
+        // §8.1 / §9.1: locals + locale must survive the shim. Regression
+        // guard — the shim used to drop both.
+        assert_eq!(v["locals"], serde_json::json!({}), "empty locals default");
+        assert_eq!(v["locale"], "", "empty locale default");
+    }
+
+    #[test]
+    fn input_to_payload_forwards_middleware_locals() {
+        let mut input = LoaderRunInput::new("/x/page.server.ts", "routes/x", "/x");
+        input.locals = serde_json::json!({ "user": "ada", "role": "admin" });
+        input.locale = "en".into();
+        let v = input_to_payload(&input);
+        assert_eq!(v["locals"]["user"], "ada");
+        assert_eq!(v["locals"]["role"], "admin");
+        assert_eq!(v["locale"], "en");
     }
 
     #[test]
