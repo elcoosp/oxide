@@ -3438,6 +3438,42 @@ fn build_dispatch(
                     None => (None, Vec::new()),
                 }
             };
+
+            // §10.2 step 5: resolve the NEAREST ancestor `error.tsx` for the
+            // matched route (innermost boundary wins — a `routes/blog/error`
+            // shadows `routes/error`). Precomputed here so the async render
+            // block can pass it as `input.error_route_id`. The adapter
+            // renders this component when the page throws.
+            let error_route_id: Option<String> = {
+                let route_id_for_err = route_id.as_deref().unwrap_or("");
+                let mut best: Option<(String, usize)> = None;
+                for candidate in &tree.entries {
+                    if !matches!(candidate.kind, oxide_router::RouteKind::Error) {
+                        continue;
+                    }
+                    // `routes/<dir>/error` wraps any route at or under
+                    // `routes/<dir>/`. The root `routes/error` wraps everything.
+                    let base = candidate
+                        .id
+                        .0
+                        .strip_suffix("/error")
+                        .unwrap_or(&candidate.id.0);
+                    let wraps = if base == "routes" || base.is_empty() {
+                        true
+                    } else {
+                        route_id_for_err.starts_with(&format!("{base}/"))
+                    };
+                    if !wraps {
+                        continue;
+                    }
+                    let len = base.len();
+                    match &best {
+                        Some((_, prev)) if *prev >= len => {}
+                        _ => best = Some((candidate.id.0.clone(), len)),
+                    }
+                }
+                best.map(|(id, _)| id)
+            };
             // The URL pattern (`pattern_of(segments)`) is for metrics labels;
             // the ROUTE ID is what the framework adapter's `componentFor`
             // expects. Two conventions to reconcile here:
@@ -3799,6 +3835,9 @@ fn build_dispatch(
                     // nest the page. The adapter renders
                     // `L1( L2( ...( page ) ) )` using `componentFor(layoutId)`.
                     input.layouts = effective_layouts;
+                    // §10.2 step 5: nearest ancestor `error.tsx` — the adapter
+                    // renders it on an SSR throw instead of the generic 500.
+                    input.error_route_id = error_route_id.clone();
                     match renderer.render_streaming(input).await {
                         Ok(render_stream) => {
                             metrics.observe(&label, started.elapsed(), 200);
