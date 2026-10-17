@@ -268,11 +268,21 @@ pub fn boundary_fallback(id: u32, fallback_html: &str) -> String {
 }
 
 /// The single source of truth for the swapper logic (§7.1): a JS function expression
-/// parameterized by the boundary id. ~300 bytes, CSP-safe (no eval, DOM APIs only):
+/// parameterized by the boundary id. ~350 bytes, CSP-safe (no eval, DOM APIs only):
 /// finds `template[data-ox-c='<id>']`, moves its content over the matching
 /// `template[data-ox-b='<id>']` placeholder via `replaceWith`, then dispatches the
-/// `ox:swap` CustomEvent (`detail: {id}`) that triggers adapter hydration.
-pub const SWAPPER_SRC: &str = r#"function(id){var t=document.querySelector("template[data-ox-c='"+id+"']"),p=document.querySelector("template[data-ox-b='"+id+"']");if(t&&p){var d=document.createElement("div");d.innerHTML=t.innerHTML;p.replaceWith.apply(p,d.childNodes);document.dispatchEvent(new CustomEvent("ox:swap",{detail:{id:id}}))}}"#;
+/// `ox:swap` CustomEvent (`detail: {id, value}`) that triggers adapter hydration.
+///
+/// `detail.value` is the resolved boundary's content (the `innerHTML` of the
+/// content template — the HTML the server streamed). Before this carried a
+/// value, `attachDeferGlue`'s `ox:swap` handler resolved every deferred slot to
+/// `undefined` because the event only had `{id}`. Consumers that wait on a
+/// `DeferredClient` now receive the server-streamed content, not an opaque
+/// undefined — the data-level value still needs the richer protocol (§9.2
+/// `defer()` returns a placeholder; the server streams the *rendered* boundary,
+/// not the raw data value), but at least the swap event now carries what it
+/// swapped in.
+pub const SWAPPER_SRC: &str = r#"function(id){var t=document.querySelector("template[data-ox-c='"+id+"']"),p=document.querySelector("template[data-ox-b='"+id+"']");if(t&&p){var d=document.createElement("div");d.innerHTML=t.innerHTML;p.replaceWith.apply(p,d.childNodes);document.dispatchEvent(new CustomEvent("ox:swap",{detail:{id:id,value:t.innerHTML}}))}}"#;
 
 /// Streamed boundary resolution (§7.1): the content template plus a self-contained
 /// swapper IIFE with `id` baked in. The script does not depend on `window.__oxSwap`
