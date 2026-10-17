@@ -4125,3 +4125,37 @@ Verified: a `tokio::test` against an in-process HTTP server round-trips an
 
 Remaining SPEC-12: a `cache.handler = { type: 'http', url }` config key wired
 into `build_framework_stack`'s `TieredCache::with_remote`.
+
+## SPEC-09 — §8.3 typegen completion + build hook
+
+- **Per-route data types**: typegen now emits `RouteData` (pattern → the route's
+  `export type LoaderData = …` when the `page.server.ts` declares one, else
+  `unknown`) and `PageProps<R>` = `{ data: RouteData[R]; params: RouteParams[R] }`,
+  plus a `Data<R>` alias under `declare module "oxide"`.
+- **Build hook**: `cmd_build` calls `tree.typegen(&rootp)` after the route tree
+  is final, so `routes.d.ts` stays in sync without a separate `oxide routes` run
+  (a typegen failure warns, never fails the build).
+
+Verified: a fixture build writes `.oxide/types/routes.d.ts` (746 B) containing
+`RouteData`, `PageProps`, and the module augmentation. The per-route
+`LoaderData` extraction is wired but missed on the blog fixture (falls back to
+`unknown`) — the annotation path works, the entry lookup needs a follow-up.
+`href()` already covered params; `searchParams` extraction from a
+`searchSchema` export is the remaining SPEC-09 piece.
+
+## SPEC-09 — §8.3 typegen completion + build hook
+
+- **Per-route data types**: typegen now emits `RouteData` (pattern → the route's
+  `export type LoaderData = …` when the `page.server.ts` declares one, else
+  `unknown`) and `PageProps<R>` = `{ data: RouteData[R]; params: RouteParams[R] }`,
+  plus a `Data<R>` alias under `declare module "oxide"`.
+- **Build hook**: `cmd_build` calls `tree.typegen(&rootp)` after the route tree
+  is final, so `routes.d.ts` stays in sync without a separate `oxide routes` run
+  (a typegen failure warns, never fails the build).
+
+Verified: a fixture build writes `.oxide/types/routes.d.ts` (746 B) containing
+`RouteData`, `PageProps`, and the module augmentation. The per-route
+`LoaderData` extraction is wired but missed on the blog fixture (falls back to
+`unknown`) — the annotation path works, the entry lookup needs a follow-up.
+`href()` already covered params; `searchParams` extraction from a
+`searchSchema` export is the remaining SPEC-09 piece.
