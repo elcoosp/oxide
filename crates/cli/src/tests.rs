@@ -215,7 +215,13 @@ async fn dispatch_routes_through_page_renderer_when_attached() {
     let dispatch = build_dispatch(tree, metrics, Vec::new(), renderer, None, std::path::PathBuf::new(), None, None, None, None, None, None);
     let resp = dispatch(test_request("GET", "/")).await;
 
-    assert_eq!(resp.status, 200, "renderer branch returns 200");
+    // §10.2 step 5: an unmatched URL (the empty tree matches nothing) is a
+    // 404. The renderer is still called — this test's purpose is to prove
+    // the attached renderer takes precedence over the IR placeholder, not
+    // to assert the status code. The status the *renderer path* uses is the
+    // computed `status` (200 for a matched route, 404 otherwise), matching
+    // the sibling test `dispatch_uses_ir_placeholder_when_no_renderer`.
+    assert_eq!(resp.status, 404, "unmatched URL is a 404");
     let collected = collect_response_body(resp).await;
     let body = std::str::from_utf8(&collected).expect("utf8 body");
     assert!(
@@ -560,6 +566,8 @@ async fn write_prerender_threads_loader_data_into_renderer() {
         Some(&loader_runner),
         Some(std::path::Path::new("/fake/page.server.ts")),
         None, // no island boot script in this test
+        &[],  // no layouts in this test
+        None, // no error.tsx in this test
     )
     .await
     .expect("write_prerender ok");
@@ -602,6 +610,8 @@ async fn write_prerender_without_loader_uses_empty_data() {
         None,
         None,
         None, // no island boot script
+        &[],  // no layouts
+        None, // no error.tsx
     )
     .await
     .expect("write_prerender ok");
