@@ -4071,3 +4071,19 @@ plus the existing `manifest.webmanifest`.
 Verified on a fixture with a `manifest` block: `manifest.webmanifest`,
 `sw.js` (949 B, 3 precache entries), `pwa-register.js` all emitted.
 `<Script strategies>` and `web-vitals` landed earlier in the arc.
+
+## SPEC-20 — §16.4 ICU4X formatters (verified already present)
+
+`assets::i18n` uses `formatjs_icu_messageformat`, which is ICU4X-backed for
+plurals, numbers and dates — the spec's §16.4 target, not a hand-rolled
+formatter. `format_number`/`format_date`/plural handling all route through it
+behind a process-wide template cache. No code change needed; this entry
+records the verification so the compliance audit does not re-list it as a gap.
+
+## SPEC-20 — §16.4 ICU4X formatters (verified already present)
+
+`assets::i18n` uses `formatjs_icu_messageformat`, which is ICU4X-backed for
+plurals, numbers and dates — the spec's §16.4 target, not a hand-rolled
+formatter. `format_number`/`format_date`/plural handling all route through it
+behind a process-wide template cache. No code change needed; this entry
+records the verification so the compliance audit does not re-list it as a gap.
