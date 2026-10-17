@@ -3836,6 +3836,78 @@ fn build_dispatch(
                     }
                 }
 
+                // §8.1 middleware.ts / §8.5: run the route's nearest ancestor
+                // middleware BEFORE the loader/render phase. It can:
+                //   * short-circuit with a `Response` or `{ redirect }`;
+                //   * inject `locals` (delivered to the loader via
+                //     `LoaderRunInput.locals`);
+                //   * add response headers.
+                // A `{ rewrite }` is logged but not re-matched in this slice
+                // (documented gap). An error surfaces as a 500 with a
+                // `MIDDLEWARE`-coded envelope.
+                let mut middleware_locals: serde_json::Value = serde_json::json!({});
+                let mut middleware_headers: Vec<(String, String)> = Vec::new();
+                if let (Some(dispatcher), Some(mp)) =
+                    (middleware_for_dispatch.as_deref(), middleware_module_path.as_ref())
+                {
+                    let module_path_s = mp.to_string_lossy().to_string();
+                    // Pass the full request (headers + body) so an auth /
+                    // upload middleware sees what it needs.
+                    let mw_res = dispatcher
+                        .dispatch(
+                            &module_path_s,
+                            &req_owned.method,
+                            &req_owned.url,
+                            &endpoint_params_json,
+                            &endpoint_headers,
+                            endpoint_body.as_ref(),
+                            None,
+                        )
+                        .await;
+                    match mw_res {
+                        Ok(out) => {
+                            if out.short {
+                                metrics.observe(&label, started.elapsed(), out.status);
+                                let mut resp = oxide_server::OxideResponse::new(
+                                    out.status,
+                                    bytes::Bytes::from(out.body),
+                                );
+                                for (k, v) in &out.headers {
+                                    resp = resp.with_header(k, v.clone());
+                                }
+                                return resp;
+                            }
+                            // Non-short-circuit: accumulate headers and locals.
+                            for (k, v) in &out.headers {
+                                middleware_headers.push((k.clone(), v.clone()));
+                            }
+                            if let Some(l) = out.locals {
+                                if l.is_object() {
+                                    middleware_locals = l;
+                                }
+                            }
+                            if let Some(rw) = out.rewrite.as_deref() {
+                                tracing::warn!(
+                                    route = %label,
+                                    rewrite = %rw,
+                                    "middleware rewrite is not re-matched in this slice (§8.5)",
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            metrics.observe(&label, started.elapsed(), e.status);
+                            return oxide_server::OxideResponse::json(
+                                e.status,
+                                serde_json::json!({"error": {
+                                    "code": e.code,
+                                    "message": e.message,
+                                    "route": label,
+                                }}),
+                            );
+                        }
+                    }
+                }
+
                 // §9.1: loader phase. When the matched route declares a server
                 // module and a LoaderRunner is attached, run it. A non-200
                 // output (error(...) or redirect(...)) short-circuits the
@@ -3871,6 +3943,10 @@ fn build_dispatch(
                         input.method = req_owned.method.clone();
                         input.headers = req_owned.headers.clone();
                         input.params = params.clone();
+                        // §8.1 middleware.ts / §9.1: request-scoped locals
+                        // injected by the middleware that just ran. `{}` when
+                        // no middleware executed.
+                        input.locals = middleware_locals.clone();
                         // SPEC-10: expose the resolved locale to `load()`.
                         input.locale = resolved_locale.clone();
 
@@ -3952,78 +4028,6 @@ fn build_dispatch(
                                 resp = resp.with_header(k, v.clone());
                             }
                             return resp;
-                        }
-                        Err(e) => {
-                            metrics.observe(&label, started.elapsed(), e.status);
-                            return oxide_server::OxideResponse::json(
-                                e.status,
-                                serde_json::json!({"error": {
-                                    "code": e.code,
-                                    "message": e.message,
-                                    "route": label,
-                                }}),
-                            );
-                        }
-                    }
-                }
-
-                // §8.1 middleware.ts / §8.5: run the route's nearest ancestor
-                // middleware BEFORE the loader/render phase. It can:
-                //   * short-circuit with a `Response` or `{ redirect }`;
-                //   * inject `locals` (delivered to the loader via
-                //     `LoaderRunInput.locals`);
-                //   * add response headers.
-                // A `{ rewrite }` is logged but not re-matched in this slice
-                // (documented gap). An error surfaces as a 500 with a
-                // `MIDDLEWARE`-coded envelope.
-                let mut middleware_locals: serde_json::Value = serde_json::json!({});
-                let mut middleware_headers: Vec<(String, String)> = Vec::new();
-                if let (Some(dispatcher), Some(mp)) =
-                    (middleware_for_dispatch.as_deref(), middleware_module_path.as_ref())
-                {
-                    let module_path_s = mp.to_string_lossy().to_string();
-                    // Pass the full request (headers + body) so an auth /
-                    // upload middleware sees what it needs.
-                    let mw_res = dispatcher
-                        .dispatch(
-                            &module_path_s,
-                            &req_owned.method,
-                            &req_owned.url,
-                            &endpoint_params_json,
-                            &endpoint_headers,
-                            endpoint_body.as_ref(),
-                            None,
-                        )
-                        .await;
-                    match mw_res {
-                        Ok(out) => {
-                            if out.short {
-                                metrics.observe(&label, started.elapsed(), out.status);
-                                let mut resp = oxide_server::OxideResponse::new(
-                                    out.status,
-                                    bytes::Bytes::from(out.body),
-                                );
-                                for (k, v) in &out.headers {
-                                    resp = resp.with_header(k, v.clone());
-                                }
-                                return resp;
-                            }
-                            // Non-short-circuit: accumulate headers and locals.
-                            for (k, v) in &out.headers {
-                                middleware_headers.push((k.clone(), v.clone()));
-                            }
-                            if let Some(l) = out.locals {
-                                if l.is_object() {
-                                    middleware_locals = l;
-                                }
-                            }
-                            if let Some(rw) = out.rewrite.as_deref() {
-                                tracing::warn!(
-                                    route = %label,
-                                    rewrite = %rw,
-                                    "middleware rewrite is not re-matched in this slice (§8.5)",
-                                );
-                            }
                         }
                         Err(e) => {
                             metrics.observe(&label, started.elapsed(), e.status);
