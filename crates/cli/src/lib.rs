@@ -2184,9 +2184,11 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                             || after.contains("=> {");
                         if !is_fn && ident.len() >= 3 {
                             // The emitted chunk may inline the value, so look
-                            // for BOTH the identifier and any string literal
-                            // in the RHS (a base URL, a secret, a table).
-                            server_exports.push((p.clone(), ident.clone()));
+                            // for any string literal in the RHS (a base URL, a
+                            // secret). The bare identifier is NOT pushed: an
+                            // object/array export (`actions`, `config`, a route
+                            // table) has a common name that appears in every
+                            // chunk — only its literal *contents* leak.
                             let rhs = after.splitn(2, '=').nth(1).unwrap_or("");
                             let mut in_str = false;
                             let mut lit = String::new();
