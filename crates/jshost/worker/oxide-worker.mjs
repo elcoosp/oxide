@@ -407,6 +407,59 @@ async function dispatchToolingModule(id, input) {
 // The config module is dynamic-imported fresh on every call so dev edits
 // take effect immediately (HMR-lite). Caching by mtime is a follow-up.
 
+// ---------------------------------------------------------------------------
+// SPEC-17 / §15.1: the JS plugin bridge. A plugin module exports hook
+// functions (by camelCase name). `plugin:load` imports it and records which
+// hooks exist; `plugin:call` invokes one with the given args and returns its
+// result (or an error envelope).
+const pluginCache = new Map(); // modulePath -> { mod, hooks: Set<string> }
+
+async function dispatchPluginLoad(id, input) {
+  const path = String(input?.payload?.path ?? "");
+  if (!path) {
+    callErr(id, "PLG-LOAD", "plugin:load requires a `path`");
+    return;
+  }
+  try {
+    const url = pathToFileURL(path).href;
+    const mod = await import(versioned(url));
+    const plugin = mod.default ?? mod;
+    const hooks = Object.keys(plugin).filter((k) => typeof plugin[k] === "function");
+    pluginCache.set(path, { mod: plugin, hooks: new Set(hooks) });
+    callOk(id, { hooks, name: plugin.name ?? null });
+  } catch (e) {
+    callErr(id, "PLG-LOAD", `plugin import failed for ${path}: ${e?.message ?? e}`);
+  }
+}
+
+async function dispatchPluginCall(id, input) {
+  const path = String(input?.payload?.path ?? "");
+  const hook = String(input?.payload?.hook ?? "");
+  const args = input?.payload?.args ?? {};
+  const entry = pluginCache.get(path);
+  if (!entry) {
+    callErr(id, "PLG-LOAD", `plugin not loaded: ${path} (call plugin:load first)`);
+    return;
+  }
+  const fn = entry.mod[hook];
+  if (typeof fn !== "function") {
+    callErr(id, "PLG-HOOK", `plugin ${path} has no \`${hook}\` hook`);
+    return;
+  }
+  try {
+    // Vite-style hook context: a minimal object the common hooks read.
+    const ctx = {
+      warn: (m) => console.error("[plugin]", m),
+      error: (m) => { throw new Error(String(m)); },
+      resolve: async (spec) => spec,
+    };
+    const out = await fn.call(ctx, args);
+    callOk(id, out === undefined ? null : out);
+  } catch (e) {
+    callErr(id, "PLG-CALL", `plugin hook ${hook} threw: ${e?.message ?? e}`);
+  }
+}
+
 async function dispatchFrameworkLoad(id, input) {
   const { path } = input.payload ?? {};
   if (typeof path !== "string" || path.length === 0) {
@@ -1137,6 +1190,8 @@ async function handleCall(msg) {
   if (entry.kind === "tooling:vue-compile") { await dispatchVueCompile(id, input); return; }
   if (entry.kind === "tooling:svelte-compile") { await dispatchSvelteCompile(id, input); return; }
   if (entry.kind === "tooling:solid-compile") { await dispatchSolidCompile(id, input); return; }
+  if (entry.kind === "plugin:load") { await dispatchPluginLoad(id, input); return; }
+  if (entry.kind === "plugin:call") { await dispatchPluginCall(id, input); return; }
   if (entry.kind === "framework:load") { await dispatchFrameworkLoad(id, input); return; }
   if (entry.kind === "framework:render") { await dispatchFrameworkRender(id, input); return; }
   if (entry.kind === "loader:run") { await dispatchLoaderRun(id, input); return; }

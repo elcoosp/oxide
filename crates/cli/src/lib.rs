@@ -2274,7 +2274,19 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
 
     // §15.1: a WASM component plugin's transform hook, if the config
     // declares one. Built once, shared by both envs.
-    let transform_hook = build_transform_hook(&rootp, &cfg);
+    // SPEC-17: the JS plugin bridge (kind: js) composes with the WASM hook
+    // (kind: wasm). JS runs first (it sees original source), then WASM.
+    let wasm_hook = build_transform_hook(&rootp, &cfg);
+    let js_hook = build_js_plugin_hook(&rootp, &cfg, stack.tooling_pool.as_ref());
+    let transform_hook: Option<oxide_bundler::TransformHook> = match (js_hook, wasm_hook) {
+        (Some(js), Some(wasm)) => Some(oxide_bundler::TransformHook::new(move |id, src| {
+            let after_js = js.call(id, src)?;
+            wasm.call(id, &after_js)
+        })),
+        (Some(js), None) => Some(js),
+        (None, Some(wasm)) => Some(wasm),
+        (None, None) => None,
+    };
     // §6.6: Lightning CSS for every emitted stylesheet.
     let css_transform = build_css_transform_hook(&cfg);
 
@@ -4224,6 +4236,136 @@ fn build_css_transform_hook(cfg: &OxideConfig) -> oxide_bundler::CssTransformHoo
                 )
             })
     })
+}
+
+/// SPEC-17 / §15.1: run the JS plugins' `transform` hook through the tooling
+/// worker bridge. Each `kind: js` plugin is imported once (`plugin:load`),
+/// then its `transform(code, id)` runs per module. A plugin that does not
+/// export `transform` is skipped for that hook.
+fn build_js_plugin_hook(
+    root: &Path,
+    cfg: &OxideConfig,
+    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
+) -> Option<oxide_bundler::TransformHook> {
+    let pool = pool?;
+    let mut plugins: Vec<String> = Vec::new();
+    for p in &cfg.plugins {
+        if p.get("kind").and_then(|v| v.as_str()) != Some("js") {
+            continue;
+        }
+        let Some(rel) = p.get("path").and_then(|v| v.as_str()) else { continue };
+        let abs = if Path::new(rel).is_absolute() {
+            PathBuf::from(rel)
+        } else {
+            root.join(rel)
+        };
+        if !abs.is_file() {
+            eprintln!("warn: js plugin {} not found; skipping", abs.display());
+            continue;
+        }
+        plugins.push(abs.to_string_lossy().to_string());
+    }
+    if plugins.is_empty() {
+        return None;
+    }
+    let pool = std::sync::Arc::clone(pool);
+    let loaded = std::sync::Arc::new(std::sync::Mutex::new(false));
+
+    // The hook is sync; the bundler calls it from inside its own tokio
+    // runtime. Calling `Runtime::block_on` there deadlocks the worker (the
+    // outer runtime never polls). Run the bridge on a scoped thread instead —
+    // the same pattern `emit_snapshot_blob` uses.
+    Some(oxide_bundler::TransformHook::new(move |id, source| {
+        let pool = std::sync::Arc::clone(&pool);
+        let loaded = std::sync::Arc::clone(&loaded);
+        let plugins = plugins.clone();
+        let id = id.to_string();
+        let source = source.to_string();
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| -> oxide_diagnostics::Result<String> {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|e| {
+                            oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
+                                "PLG-BRIDGE",
+                                format!("bridge runtime: {e}"),
+                            ))
+                        })?;
+                    rt.block_on(async move {
+                        let need_load = {
+                            let mut g = loaded.lock().unwrap();
+                            if *g {
+                                false
+                            } else {
+                                *g = true;
+                                true
+                            }
+                        };
+                        let mut code = source;
+                        for path in &plugins {
+                            if need_load {
+                                let load = oxide_jshost::CallInput {
+                                    payload: serde_json::json!({ "path": path }),
+                                    headers: Default::default(),
+                                    has_body: false,
+                                    request_id: format!("plugin:load:{path}"),
+                                    route: None,
+                                };
+                                let entry = oxide_jshost::EntryRef {
+                                    kind: "plugin:load".into(),
+                                    module: path.clone(),
+                                    export: "default".into(),
+                                };
+                                let _ = pool.call(entry, load).await;
+                            }
+                            let call = oxide_jshost::CallInput {
+                                payload: serde_json::json!({
+                                    "path": path,
+                                    "hook": "transform",
+                                    "args": { "code": code, "id": id },
+                                }),
+                                headers: Default::default(),
+                                has_body: false,
+                                request_id: format!("plugin:call:{path}:transform"),
+                                route: None,
+                            };
+                            let entry = oxide_jshost::EntryRef {
+                                kind: "plugin:call".into(),
+                                module: path.clone(),
+                                export: "transform".into(),
+                            };
+                            let mut stream = pool.call(entry, call).await.map_err(|e| {
+                                oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
+                                    "PLG-CALL",
+                                    format!("plugin transform failed: {}", e.0.message),
+                                ))
+                            })?;
+                            let bytes = stream.collect().await.map_err(|e| {
+                                oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
+                                    "PLG-CALL",
+                                    format!("plugin transform read failed: {}", e.0.message),
+                                ))
+                            })?;
+                            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                                if let Some(s) = v.get("code").and_then(|c| c.as_str()) {
+                                    code = s.to_string();
+                                }
+                            }
+                        }
+                        Ok(code)
+                    })
+                })
+                .join()
+                .unwrap_or_else(|_| {
+                    Err(oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
+                        "PLG-BRIDGE",
+                        "plugin bridge thread panicked",
+                    )))
+                })
+        })
+    }))
 }
 
 fn build_transform_hook(root: &Path, cfg: &OxideConfig) -> Option<oxide_bundler::TransformHook> {
