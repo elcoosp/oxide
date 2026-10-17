@@ -3914,3 +3914,99 @@ Bearer TOPSECRET` produces a JSON request line with **zero** occurrences of
 either secret. (The request headers themselves aren't logged on the success
 path; the response headers — which is what `log_request` covers — carry none.)
 
+
+## SPEC-16 — monorepo workspace detection
+
+`config::detect_workspace_root` walks up from the app dir and returns the
+nearest workspace root (a `pnpm-workspace.yaml`, a `package.json` with
+`workspaces`, or a `Cargo.toml` with `[workspace]`). `resolve_workspace_preset`
+resolves a bare `extends` package (`@scope/oxide-preset`) from that root's
+`node_modules`, wired into `load_preset` (relative specs still go through the
+normal resolver).
+
+Verified: 3 tests — pnpm root detected / non-workspace → None, package.json
+workspaces + Cargo.toml workspace, and a bare preset resolving from the root's
+`node_modules`.
+
+Remaining SPEC-16: the dev watcher should also watch linked workspace packages
+(so an edit in `packages/ui` invalidates the app).
+
+## SPEC-16 — monorepo workspace detection
+
+`config::detect_workspace_root` walks up from the app dir and returns the
+nearest workspace root (a `pnpm-workspace.yaml`, a `package.json` with
+`workspaces`, or a `Cargo.toml` with `[workspace]`). `resolve_workspace_preset`
+resolves a bare `extends` package (`@scope/oxide-preset`) from that root's
+`node_modules`, wired into `load_preset` (relative specs still go through the
+normal resolver).
+
+Verified: 3 tests — pnpm root detected / non-workspace → None, package.json
+workspaces + Cargo.toml workspace, and a bare preset resolving from the root's
+`node_modules`.
+
+Remaining SPEC-16: the dev watcher should also watch linked workspace packages
+(so an edit in `packages/ui` invalidates the app).
+
+## SPEC-16 — monorepo workspace detection
+
+`config::detect_workspace_root` walks up from the app dir and returns the
+nearest workspace root (a `pnpm-workspace.yaml`, a `package.json` with
+`workspaces`, or a `Cargo.toml` with `[workspace]`). `resolve_workspace_preset`
+resolves a bare `extends` package (`@scope/oxide-preset`) from that root's
+`node_modules`, wired into `load_preset` (relative specs still go through the
+normal resolver).
+
+Verified: 3 tests — pnpm root detected / non-workspace → None, package.json
+workspaces + Cargo.toml workspace, and a bare preset resolving from the root's
+`node_modules`.
+
+Remaining SPEC-16: the dev watcher should also watch linked workspace packages
+(so an edit in `packages/ui` invalidates the app).
+
+## SPEC-16 — monorepo workspace detection
+
+`config::detect_workspace_root` walks up from the app dir and returns the
+nearest workspace root (a `pnpm-workspace.yaml`, a `package.json` with
+`workspaces`, or a `Cargo.toml` with `[workspace]`). `resolve_workspace_preset`
+resolves a bare `extends` package (`@scope/oxide-preset`) from that root's
+`node_modules`, wired into `load_preset` (relative specs still go through the
+normal resolver).
+
+Verified: 3 tests — pnpm root detected / non-workspace → None, package.json
+workspaces + Cargo.toml workspace, and a bare preset resolving from the root's
+`node_modules`.
+
+Remaining SPEC-16: the dev watcher should also watch linked workspace packages
+(so an edit in `packages/ui` invalidates the app).
+
+## SPEC-16 — monorepo workspace detection
+
+`config::detect_workspace_root` walks up from the app dir and returns the
+nearest workspace root (a `pnpm-workspace.yaml`, a `package.json` with
+`workspaces`, or a `Cargo.toml` with `[workspace]`). `resolve_workspace_preset`
+resolves a bare `extends` package (`@scope/oxide-preset`) from that root's
+`node_modules`, wired into `load_preset` (relative specs still go through the
+normal resolver).
+
+Verified: 3 tests — pnpm root detected / non-workspace → None, package.json
+workspaces + Cargo.toml workspace, and a bare preset resolving from the root's
+`node_modules`.
+
+Remaining SPEC-16: the dev watcher should also watch linked workspace packages
+(so an edit in `packages/ui` invalidates the app).
+
+## SPEC-16 — monorepo workspace detection
+
+`config::detect_workspace_root` walks up from the app dir and returns the
+nearest workspace root (a `pnpm-workspace.yaml`, a `package.json` with
+`workspaces`, or a `Cargo.toml` with `[workspace]`). `resolve_workspace_preset`
+resolves a bare `extends` package (`@scope/oxide-preset`) from that root's
+`node_modules`, wired into `load_preset` (relative specs still go through the
+normal resolver).
+
+Verified: 3 tests — pnpm root detected / non-workspace → None, package.json
+workspaces + Cargo.toml workspace, and a bare preset resolving from the root's
+`node_modules`.
+
+Remaining SPEC-16: the dev watcher should also watch linked workspace packages
+(so an edit in `packages/ui` invalidates the app).
