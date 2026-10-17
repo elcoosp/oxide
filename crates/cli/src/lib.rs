@@ -2217,6 +2217,67 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         persist_diagnostics(&rootp, &[e.0.clone()]);
         anyhow::anyhow!("{} {}", e.0.code, e.0.message)
     })?;
+    // SPEC-02 / §4.6.3: a V8 build whose server modules need Node (a `.node`
+    // addon or an unshimmed `node:` builtin) must fail loudly. The bundler
+    // externalizes `node:` specifiers, so scanning the emitted JS misses them;
+    // scan the source server modules instead.
+    if matches!(cfg.server.backend, oxide_config::JsBackend::V8) {
+        let mut needs: Vec<String> = Vec::new();
+        let mut stack = vec![rootp.clone()];
+        while let Some(dir) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    let n = p.file_name().and_then(|x| x.to_str()).unwrap_or("");
+                    if !matches!(n, "node_modules" | "dist" | ".oxide" | "target" | ".git") {
+                        stack.push(p);
+                    }
+                    continue;
+                }
+                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if !(name.ends_with(".ts") || name.ends_with(".tsx") || name.ends_with(".js")) {
+                    continue;
+                }
+                let Ok(code) = std::fs::read_to_string(&p) else { continue };
+                for quote in ['\'', '"'] {
+                    let pat = format!("{quote}node:");
+                    let mut rest = code.as_str();
+                    while let Some(i) = rest.find(&pat) {
+                        let after = &rest[i + pat.len()..];
+                        let bname: String = after
+                            .chars()
+                            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                            .collect();
+                        if let Some(reason) = oxide_jshost::v8_loader::requires_node_backend(
+                            &format!("node:{bname}"),
+                        ) {
+                            needs.push(reason);
+                        }
+                        rest = &after[bname.len().min(after.len())..];
+                    }
+                }
+                for ext in [".node\"", ".node'"] {
+                    if code.contains(ext) {
+                        needs.push("a .node native addon".to_string());
+                    }
+                }
+            }
+        }
+        needs.sort();
+        needs.dedup();
+        if !needs.is_empty() {
+            let msg = format!(
+                "server.backend = v8, but the server code needs Node: {}. Set server.backend to node.",
+                needs.join(", ")
+            );
+            outln!(w, "error JSH-V8KIND: {msg}");
+            let d = oxide_diagnostics::Diagnostic::error("JSH-V8KIND", msg);
+            persist_diagnostics(&rootp, &[d]);
+            anyhow::bail!("V8 backend incompatible with the server code (JSH-V8KIND)");
+        }
+    }
+
     // SPEC-05 / §6.4: the forbidden-import guard. A `*.server.ts` module must
     // never ship its real body into the client bundle. A legitimate import
     // goes through the compiler's server-fn stub (a `serverFn(...)` export

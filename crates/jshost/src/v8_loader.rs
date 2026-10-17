@@ -178,8 +178,35 @@ fn node_shim(specifier: &str) -> String {
            export function pathToFileURL(p) { return new URL('file://' + (String(p).startsWith('/') ? '' : '/') + p); }\n\
            export default { fileURLToPath, pathToFileURL };\n"
             .to_string(),
-        _ => "export default {};\n".to_string(),
+        // SPEC-02 / §4.6.3: an unsupported Node builtin is LOUD. A silent
+        // `export default {}` makes `import fs from 'node:fs'; fs.readFile(…)`
+        // fail at the call site with a confusing "not a function" far from
+        // the cause. Throwing on import names the builtin and the remedy.
+        other => format!(
+            "throw new Error('JSH-NODESHIM: node:{other} is not available in the V8 runtime; set server.backend to node or avoid this import (§4.6)');\n"
+        ),
     }
+}
+
+/// SPEC-02 / §4.6.3: does this module specifier require the Node backend?
+///
+/// - a `.node` native addon — V8 cannot load it at all;
+/// - a `node:` builtin outside the shim set (`fs`, `crypto`, `child_process`,
+///   `net`, `worker_threads`, …).
+///
+/// When true and `server.backend` is `auto`/`v8`, the build switches to Node
+/// and prints why.
+pub fn requires_node_backend(specifier: &str) -> Option<String> {
+    if specifier.ends_with(".node") {
+        return Some(format!("native addon `{specifier}`"));
+    }
+    if let Some(name) = specifier.strip_prefix("node:") {
+        let shimmed = matches!(name, "module" | "path" | "url" | "buffer" | "events" | "util" | "stream");
+        if !shimmed {
+            return Some(format!("node:{name} builtin"));
+        }
+    }
+    None
 }
 
 /// Pick the `lang` tag `lower_to_js` expects from a path's extension.
