@@ -15,9 +15,16 @@ import Post from './src/routes/blog/[slug]/page.tsx'
 /** Route id → React component. Route ids are the route *directories*
  *  (no trailing `/page`), matching what the pipeline normalizes to before
  *  handing the id to `componentFor`. */
+// §8.2: layout components nest the page. The adapter resolves each layout id
+// (from the router's layout_chain, e.g. `routes/layout`) via this same
+// `componentFor` lookup, then wraps the page: RootLayout(Page).
+// @ts-expect-error - .tsx module resolved at runtime by the worker's loader
+import RootLayout from './src/routes/layout.tsx'
+
 const components: Record<string, unknown> = {
   'routes/index': Home,
   'routes/blog/[slug]': Post,
+  'routes/layout': RootLayout,
 }
 
 export default defineConfig({
