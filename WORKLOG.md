@@ -4106,3 +4106,22 @@ Verified: a `tokio::test` against an in-process HTTP server round-trips an
 
 Remaining SPEC-12: a `cache.handler = { type: 'http', url }` config key wired
 into `build_framework_stack`'s `TieredCache::with_remote`.
+
+## SPEC-12 — §11.2 distributed invalidation: HTTP CacheHandler
+
+`CacheHandler::publish_invalidation` existed with only the in-memory/no-op
+impls. Added `HttpCacheHandler` — a `CacheHandler` over HTTP/1.1 (a minimal
+tokio client; the protocol is a handful of verbs on a URL):
+- `GET/PUT/DELETE {base}/entry/{key}` (JSON `Entry`),
+- `GET {base}/tag/{tag}` → key list,
+- `POST {base}/invalidate/{tag}` → `{count}` — the invalidate POST *is* the
+  publish, so peer nodes sharing the service converge.
+
+A network error degrades to a miss / no-op (the remote is an optimization; the
+local tier keeps serving).
+
+Verified: a `tokio::test` against an in-process HTTP server round-trips an
+`Entry` and reports the tag invalidation count.
+
+Remaining SPEC-12: a `cache.handler = { type: 'http', url }` config key wired
+into `build_framework_stack`'s `TieredCache::with_remote`.
