@@ -4041,3 +4041,33 @@ Two changes:
 Verified both directions: a V8 build importing `node:child_process` exits 1
 with `JSH-V8KIND`; the V8 gate (shimmed `node:module` only) still PASSes, and
 the four-fixture gate PASSes.
+
+## SPEC-21 — §16.6 PWA module (web-vitals + `<Script>` already landed)
+
+When a `manifest` block is configured, `oxide build` now emits:
+- `dist/sw.js` — a service worker precaching every client asset named in
+  `client.manifest.json` (entry + preload + css + assets) under a
+  build-scoped cache name, cache-first for assets, network-first with an
+  offline fallback for navigations;
+- `dist/pwa-register.js` — the `navigator.serviceWorker.register('/sw.js')`
+  snippet;
+plus the existing `manifest.webmanifest`.
+
+Verified on a fixture with a `manifest` block: `manifest.webmanifest`,
+`sw.js` (949 B, 3 precache entries), `pwa-register.js` all emitted.
+`<Script strategies>` and `web-vitals` landed earlier in the arc.
+
+## SPEC-21 — §16.6 PWA module (web-vitals + `<Script>` already landed)
+
+When a `manifest` block is configured, `oxide build` now emits:
+- `dist/sw.js` — a service worker precaching every client asset named in
+  `client.manifest.json` (entry + preload + css + assets) under a
+  build-scoped cache name, cache-first for assets, network-first with an
+  offline fallback for navigations;
+- `dist/pwa-register.js` — the `navigator.serviceWorker.register('/sw.js')`
+  snippet;
+plus the existing `manifest.webmanifest`.
+
+Verified on a fixture with a `manifest` block: `manifest.webmanifest`,
+`sw.js` (949 B, 3 precache entries), `pwa-register.js` all emitted.
+`<Script strategies>` and `web-vitals` landed earlier in the arc.
