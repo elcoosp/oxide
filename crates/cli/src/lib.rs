@@ -3400,12 +3400,13 @@ fn build_dispatch(
                     .find(|e| matches!(e.kind, oxide_router::RouteKind::NotFound));
                 match not_found_entry {
                     Some(e) => {
-                        let not_found_id = e
-                            .id
-                            .0
-                            .strip_suffix("/not-found")
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| e.id.0.clone());
+                        // The adapter's `componentFor` is keyed on the route
+                        // *directory* id, which for a not-found file is
+                        // `routes/not-found` (or `routes/blog/not-found`,
+                        // etc.). That id is exactly what the scanner emits —
+                        // no stripping needed. Stripping `/not-found` would
+                        // collapse it to `routes`, which no user registers.
+                        let not_found_id = e.id.0.clone();
                         // The layout chain that wraps the not-found route.
                         // Same rule as the page `layout_ids` above: any layout
                         // whose base directory is a prefix of the route id.

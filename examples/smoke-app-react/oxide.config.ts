@@ -20,11 +20,15 @@ import Post from './src/routes/blog/[slug]/page.tsx'
 // `componentFor` lookup, then wraps the page: RootLayout(Page).
 // @ts-expect-error - .tsx module resolved at runtime by the worker's loader
 import RootLayout from './src/routes/layout.tsx'
+// §10.2 step 5: unmatched URLs render this page with a 404 status.
+// @ts-expect-error
+import NotFound from './src/routes/not-found.tsx'
 
 const components: Record<string, unknown> = {
   'routes/index': Home,
   'routes/blog/[slug]': Post,
   'routes/layout': RootLayout,
+  'routes/not-found': NotFound,
 }
 
 export default defineConfig({
