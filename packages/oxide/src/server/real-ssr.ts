@@ -177,16 +177,71 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
           return
         }
         const head = cfg.buildHead(input)
+        // §8.2 / §16.3: nest the page inside the route's layout chain,
+        // outermost first. `input.layouts` (populated by the pipeline from
+        // the router's `layout_chain`) is the authoritative source; the
+        // legacy single-layer `layoutFor(route)` remains a fallback so
+        // configs that predate `input.layouts` keep working.
+        //
+        // The `children: { Component, props }` descriptor is the contract a
+        // layout already implements (see the `layoutFor` path below): a
+        // layout renders `props.children.Component` with `props.children.props`.
+        // Chaining the descriptors bottom-up means each layout sees the
+        // next-outer tree as its `children`, so a 3-layout chain renders as
+        // L1( L2( L3( page ) ) ) with no new adapter plumbing.
+        const layoutIds: string[] = Array.isArray(input.layouts) ? input.layouts : []
+        const layoutParts: Array<{ id: string; Component: unknown }> = []
+        for (const id of layoutIds) {
+          const L = cfg.opts.componentFor(id)
+          if (L === undefined || L === null) {
+            // `auto`: silently skip an unresolved layout (keeps existing
+            // single-layer flows working when a route declares a layout
+            // without supplying a component). `real`: emit a loud comment
+            // so a missing registration is visible in the response.
+            if (strategy === 'real') {
+              layoutParts.push({ id, Component: undefined })
+            }
+            continue
+          }
+          layoutParts.push({ id, Component: L })
+        }
+        if (layoutParts.length === 0) {
+          const single = cfg.opts.layoutFor?.(input.route)
+          if (typeof single === 'function') {
+            layoutParts.push({ id: `layoutFor(${input.route})`, Component: single })
+          }
+        }
+        const headWarnings: string[] = []
         try {
           const props: Record<string, unknown> = {
             route: input.route, url: input.url, params: input.params, data: input.data,
           }
-          const layout = cfg.opts.layoutFor?.(input.route)
-          const body = typeof layout === 'function'
-            ? await cfg.renderBody(layout, { ...props, children: { Component, props } })
-            : await cfg.renderBody(Component, props)
+          // Build the innermost descriptor = the page itself.
+          let descriptor: { Component: unknown; props: Record<string, unknown> } = {
+            Component, props,
+          }
+          // Wrap from innermost → outermost so the final `descriptor` is
+          // the outermost layout; rendering it yields L1(L2(...(page))).
+          for (const layer of layoutParts) {
+            if (layer.Component === undefined) {
+              headWarnings.push(
+                `<!-- oxide: layout ${safeComment(layer.id)} declared but componentFor returned undefined; skipped -->`,
+              )
+              continue
+            }
+            descriptor = {
+              Component: layer.Component,
+              props: { ...props, children: descriptor },
+            }
+          }
+          const body = await cfg.renderBody(descriptor.Component, descriptor.props)
           yield enc.encode(`<!doctype html>\n<html lang="en"><head>${emitHead(head)}</head>`)
-          yield enc.encode(`<body><div${cfg.rootAttrs}>${body}</div></body></html>`)
+          if (headWarnings.length > 0) {
+            yield enc.encode(`<body>${headWarnings.join('')}<div${cfg.rootAttrs}>`)
+          } else {
+            yield enc.encode(`<body><div${cfg.rootAttrs}>`)
+          }
+          yield enc.encode(`${body}</div></body></html>`)
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
           yield enc.encode(`<!doctype html>\n<html lang="en"><head>${emitHead(head)}</head>`)
