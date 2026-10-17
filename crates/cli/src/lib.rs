@@ -1907,6 +1907,11 @@ async fn write_prerender(
     // caller from `MatchInfo.layout_chain`; the adapter nests the page
     // inside them. Empty means "no layouts wrap this page".
     layouts: &[String],
+    // §10.2 step 5: nearest ancestor `error.tsx` route id, if any. The
+    // adapter renders it on an SSR throw. Mirrors the live-dispatch
+    // resolution — an error thrown while prerendering has the same
+    // fallback path.
+    error_route_id: Option<&str>,
 ) -> anyhow::Result<String> {
     // §9.1: run the loader for this route (if the module exists and a
     // loader runner is attached) to obtain the data the render phase
@@ -1985,6 +1990,9 @@ async fn write_prerender(
         // The prerender path is separate from the live-dispatch path; both
         // populate this field from the same `MatchInfo.layout_chain`.
         input.layouts = layouts.to_vec();
+        // §10.2 step 5: mirror the live-dispatch resolution on the prerender
+        // path so a throw in `page.tsx` renders the project's `error.tsx`.
+        input.error_route_id = error_route_id.map(str::to_string);
         renderer
             .render(input)
             .await
@@ -2664,6 +2672,35 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             chain.sort_by_key(|(_, len)| *len);
             chain.into_iter().map(|(id, _)| id).collect()
         };
+        // §10.2 step 5: nearest ancestor error.tsx for this route.
+        // Innermost wins — a `routes/blog/error` shadows `routes/error`.
+        let prerender_error_route_id: Option<String> = {
+            let mut best: Option<(String, usize)> = None;
+            for candidate in &tree.entries {
+                if !matches!(candidate.kind, oxide_router::RouteKind::Error) {
+                    continue;
+                }
+                let base = candidate
+                    .id
+                    .0
+                    .strip_suffix("/error")
+                    .unwrap_or(&candidate.id.0);
+                let wraps = if base == "routes" || base.is_empty() {
+                    true
+                } else {
+                    route_id.starts_with(&format!("{base}/"))
+                };
+                if !wraps {
+                    continue;
+                }
+                let len = base.len();
+                match &best {
+                    Some((_, prev)) if *prev >= len => {}
+                    _ => best = Some((candidate.id.0.clone(), len)),
+                }
+            }
+            best.map(|(id, _)| id)
+        };
         // §9.1: if the route declares a server module, resolve its path so
         // the loader can run during prerender. Uses the same
         // `page.server.ts` sibling convention as build_dispatch.
@@ -2708,6 +2745,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                         module_path.as_deref(),
                         boot_script_url.as_deref(),
                         &layout_ids,
+                        prerender_error_route_id.as_deref(),
                     )
                     .await?;
                     seed_bodies.push((
@@ -2786,6 +2824,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                                 module_path.as_deref(),
                                 boot_script_url.as_deref(),
                                 &layout_ids,
+                                prerender_error_route_id.as_deref(),
                             )
                             .await?;
                             seed_bodies.push((
@@ -2867,6 +2906,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     module_path.as_deref(),
                     boot_script_url.as_deref(),
                     &layout_ids,
+                    prerender_error_route_id.as_deref(),
                 )
                 .await?;
                 seed_bodies.push((
