@@ -4038,3 +4038,57 @@ Verified on a 2-locale fixture:
 - `GET /fr` → `200` with the page body + `content-language: fr`;
 - `GET /` + `en` (default) → `200` un-prefixed, `content-language: en`;
 - four fixtures still PASS.
+
+## SPEC-13 (slice 1) — mimalloc global allocator
+
+`#[global_allocator] mimalloc::MiMalloc` on the CLI. Verified linked (696
+`mi_` symbols — statically linked, so absent from `otool -L`), and the server
+idles at ~31 MB RSS with it.
+
+Remaining SPEC-13: embedded assets (`adapter: 'binary', embed: true`) and
+zero-downtime reload (listener-fd handoff) — both larger, scoped.
+
+## SPEC-13 (slice 1) — mimalloc global allocator
+
+`#[global_allocator] mimalloc::MiMalloc` on the CLI. Verified linked (696
+`mi_` symbols — statically linked, so absent from `otool -L`), and the server
+idles at ~31 MB RSS with it.
+
+Remaining SPEC-13: embedded assets (`adapter: 'binary', embed: true`) and
+zero-downtime reload (listener-fd handoff) — both larger, scoped.
+
+## SPEC-13 (slice 1) — mimalloc global allocator
+
+`#[global_allocator] mimalloc::MiMalloc` on the CLI. Verified linked (696
+`mi_` symbols — statically linked, so absent from `otool -L`), and the server
+idles at ~31 MB RSS with it.
+
+Remaining SPEC-13: embedded assets (`adapter: 'binary', embed: true`) and
+zero-downtime reload (listener-fd handoff) — both larger, scoped.
+
+## SPEC-13 (slice 1) — mimalloc global allocator
+
+`#[global_allocator] mimalloc::MiMalloc` on the CLI. Verified linked (696
+`mi_` symbols — statically linked, so absent from `otool -L`), and the server
+idles at ~31 MB RSS with it.
+
+Remaining SPEC-13: embedded assets (`adapter: 'binary', embed: true`) and
+zero-downtime reload (listener-fd handoff) — both larger, scoped.
+
+## SPEC-13 (slice 1) — mimalloc global allocator
+
+`#[global_allocator] mimalloc::MiMalloc` on the CLI. Verified linked (696
+`mi_` symbols — statically linked, so absent from `otool -L`), and the server
+idles at ~31 MB RSS with it.
+
+Remaining SPEC-13: embedded assets (`adapter: 'binary', embed: true`) and
+zero-downtime reload (listener-fd handoff) — both larger, scoped.
+
+## SPEC-13 (slice 1) — mimalloc global allocator
+
+`#[global_allocator] mimalloc::MiMalloc` on the CLI. Verified linked (696
+`mi_` symbols — statically linked, so absent from `otool -L`), and the server
+idles at ~31 MB RSS with it.
+
+Remaining SPEC-13: embedded assets (`adapter: 'binary', embed: true`) and
+zero-downtime reload (listener-fd handoff) — both larger, scoped.
