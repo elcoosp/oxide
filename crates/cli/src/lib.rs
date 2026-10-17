@@ -4433,7 +4433,12 @@ async fn cmd_analyze(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     // SPEC-25: enforce BOTH budgets independently — `routeJs` per route and
     // `clientJs` on the total client payload (the sum across routes). A
     // single fallback chain treated them as one number.
-    let route_budget: Option<u64> = match cfg.budgets.route_js.as_deref() {
+    // Per-route budget: `routeJs` if set, else fall back to `clientJs` (a
+    // project that names only a total budget still gets every route checked
+    // against it). The total check below is separate and always uses
+    // `clientJs`.
+    let route_src = cfg.budgets.route_js.as_deref().or(cfg.budgets.client_js.as_deref());
+    let route_budget: Option<u64> = match route_src {
         Some(s) => Some(
             oxide_config::parse_size(s)
                 .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?,
