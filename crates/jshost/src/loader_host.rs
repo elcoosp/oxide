@@ -529,3 +529,125 @@ impl EndpointHost {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Middleware host (§8.1 middleware.ts, §8.5 rewrites)
+// ---------------------------------------------------------------------------
+
+/// A host for `middleware:run`. Loads the middleware module, calls the
+/// user's function, and surfaces the directive as a structured outcome.
+pub struct MiddlewareHost {
+    pool: Arc<dyn Pool>,
+}
+
+/// The result of a middleware invocation, mirroring the worker op reply.
+/// Field meanings:
+///   `short`      — short-circuit: the pipeline returns `status + headers + body`.
+///   `status`     — HTTP status (200 when not short-circuiting).
+///   `headers`    — response headers the middleware wants added (both paths).
+///   `body`       — the body bytes (short-circuit path).
+///   `redirect`   — a short-circuit Location (mirrors `headers` `location`).
+///   `rewrite`    — the request URL should be rewritten server-side.
+///   `locals`     — request-scoped state passed to the loader.
+#[derive(Debug, Clone, Default)]
+pub struct MiddlewareOutcome {
+    pub short: bool,
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+    pub redirect: Option<String>,
+    pub rewrite: Option<String>,
+    pub locals: Option<serde_json::Value>,
+}
+
+impl MiddlewareHost {
+    pub fn new(pool: Arc<dyn Pool>) -> Self {
+        Self { pool }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run(
+        &self,
+        module_path: &str,
+        method: &str,
+        url: &str,
+        params: &serde_json::Map<String, Value>,
+        headers: &[(String, String)],
+        body: &[u8],
+        locals: Option<&serde_json::Value>,
+    ) -> Result<MiddlewareOutcome> {
+        use base64::Engine as _;
+        let body_b64 = if body.is_empty() {
+            String::new()
+        } else {
+            base64::engine::general_purpose::STANDARD.encode(body)
+        };
+        let payload = serde_json::json!({
+            "module_path": module_path,
+            "method": method,
+            "url": url,
+            "params": params,
+            "headers": headers,
+            "body_b64": body_b64,
+            "locals": locals.cloned().unwrap_or(serde_json::json!({})),
+        });
+        let call_input = CallInput {
+            payload,
+            headers: Default::default(),
+            has_body: !body.is_empty(),
+            request_id: format!("middleware:run:{method}"),
+            route: None,
+        };
+        let entry = EntryRef {
+            kind: "middleware:run".into(),
+            module: module_path.to_string(),
+            export: "middleware".into(),
+        };
+        let mut stream = self.pool.call(entry, call_input).await?;
+        let bytes = stream.collect().await?;
+        let v: Value = serde_json::from_slice(&bytes).map_err(|e| {
+            crate::err("JSH-MIDDLEWARE", format!("middleware:run returned invalid JSON: {e}"))
+        })?;
+        if let Some(err_msg) = v.get("__oxide_error").and_then(|x| x.as_str()) {
+            return Err(crate::err("JSH-MIDDLEWARE", err_msg.to_string()));
+        }
+        let short = v.get("short").and_then(|x| x.as_bool()).unwrap_or(false);
+        let status = v.get("status").and_then(|x| x.as_u64()).unwrap_or(200) as u16;
+        let headers_out: Vec<(String, String)> = v
+            .get("headers")
+            .and_then(|x| x.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|pair| {
+                        let p = pair.as_array()?;
+                        let k = p.first()?.as_str()?.to_string();
+                        let val = p.get(1)?.as_str()?.to_string();
+                        Some((k, val))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let body_b64_out = v.get("body_b64").and_then(|x| x.as_str()).unwrap_or("");
+        let body = if body_b64_out.is_empty() {
+            Vec::new()
+        } else {
+            base64::engine::general_purpose::STANDARD
+                .decode(body_b64_out)
+                .map_err(|e| {
+                    crate::err("JSH-MIDDLEWARE", format!("middleware body_b64 invalid: {e}"))
+                })?
+        };
+        let redirect = v.get("redirect").and_then(|x| x.as_str()).map(str::to_string);
+        let rewrite = v.get("rewrite").and_then(|x| x.as_str()).map(str::to_string);
+        let locals = v.get("locals").cloned().filter(|x| !x.is_null());
+        Ok(MiddlewareOutcome {
+            short,
+            status,
+            headers: headers_out,
+            body,
+            redirect,
+            rewrite,
+            locals,
+        })
+    }
+}
+
