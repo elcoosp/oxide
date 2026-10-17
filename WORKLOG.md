@@ -4082,3 +4082,101 @@ Also hardened `production_server_does_not_serve_inspector` — a GET right after
 
 SPEC-16 complete: workspace detection, workspace-relative `extends`, and
 linked-package watching.
+
+## SPEC-04 — §5.4 HTTP remote cache driver
+
+`RemoteCache` had only an in-memory impl. Added `HttpRemoteCache(base)` — a
+minimal HTTP/1.1 client over tokio (the protocol is `GET`/`PUT` on
+`{base}/{key-hex}.bin`, so hyper is overkill). A non-200 GET or a network
+error is a **miss** (read-through degrades to a local compute); a failed PUT
+is an error the caller logs.
+
+Verified: a `tokio::test` against an in-process HTTP server — miss before
+store, `store` puts, `fetch` returns the exact bytes.
+
+Remaining SPEC-04: wire it into `oxide build` (read-through on the precompile
+CAS, write on `--write-remote`).
+
+## SPEC-04 — §5.4 HTTP remote cache driver
+
+`RemoteCache` had only an in-memory impl. Added `HttpRemoteCache(base)` — a
+minimal HTTP/1.1 client over tokio (the protocol is `GET`/`PUT` on
+`{base}/{key-hex}.bin`, so hyper is overkill). A non-200 GET or a network
+error is a **miss** (read-through degrades to a local compute); a failed PUT
+is an error the caller logs.
+
+Verified: a `tokio::test` against an in-process HTTP server — miss before
+store, `store` puts, `fetch` returns the exact bytes.
+
+Remaining SPEC-04: wire it into `oxide build` (read-through on the precompile
+CAS, write on `--write-remote`).
+
+## SPEC-04 — §5.4 HTTP remote cache driver
+
+`RemoteCache` had only an in-memory impl. Added `HttpRemoteCache(base)` — a
+minimal HTTP/1.1 client over tokio (the protocol is `GET`/`PUT` on
+`{base}/{key-hex}.bin`, so hyper is overkill). A non-200 GET or a network
+error is a **miss** (read-through degrades to a local compute); a failed PUT
+is an error the caller logs.
+
+Verified: a `tokio::test` against an in-process HTTP server — miss before
+store, `store` puts, `fetch` returns the exact bytes.
+
+Remaining SPEC-04: wire it into `oxide build` (read-through on the precompile
+CAS, write on `--write-remote`).
+
+## SPEC-04 — §5.4 HTTP remote cache driver
+
+`RemoteCache` had only an in-memory impl. Added `HttpRemoteCache(base)` — a
+minimal HTTP/1.1 client over tokio (the protocol is `GET`/`PUT` on
+`{base}/{key-hex}.bin`, so hyper is overkill). A non-200 GET or a network
+error is a **miss** (read-through degrades to a local compute); a failed PUT
+is an error the caller logs.
+
+Verified: a `tokio::test` against an in-process HTTP server — miss before
+store, `store` puts, `fetch` returns the exact bytes.
+
+Remaining SPEC-04: wire it into `oxide build` (read-through on the precompile
+CAS, write on `--write-remote`).
+
+## SPEC-04 — §5.4 HTTP remote cache driver
+
+`RemoteCache` had only an in-memory impl. Added `HttpRemoteCache(base)` — a
+minimal HTTP/1.1 client over tokio (the protocol is `GET`/`PUT` on
+`{base}/{key-hex}.bin`, so hyper is overkill). A non-200 GET or a network
+error is a **miss** (read-through degrades to a local compute); a failed PUT
+is an error the caller logs.
+
+Verified: a `tokio::test` against an in-process HTTP server — miss before
+store, `store` puts, `fetch` returns the exact bytes.
+
+Remaining SPEC-04: wire it into `oxide build` (read-through on the precompile
+CAS, write on `--write-remote`).
+
+## SPEC-04 — §5.4 HTTP remote cache driver
+
+`RemoteCache` had only an in-memory impl. Added `HttpRemoteCache(base)` — a
+minimal HTTP/1.1 client over tokio (the protocol is `GET`/`PUT` on
+`{base}/{key-hex}.bin`, so hyper is overkill). A non-200 GET or a network
+error is a **miss** (read-through degrades to a local compute); a failed PUT
+is an error the caller logs.
+
+Verified: a `tokio::test` against an in-process HTTP server — miss before
+store, `store` puts, `fetch` returns the exact bytes.
+
+Remaining SPEC-04: wire it into `oxide build` (read-through on the precompile
+CAS, write on `--write-remote`).
+
+## SPEC-04 — §5.4 HTTP remote cache driver
+
+`RemoteCache` had only an in-memory impl. Added `HttpRemoteCache(base)` — a
+minimal HTTP/1.1 client over tokio (the protocol is `GET`/`PUT` on
+`{base}/{key-hex}.bin`, so hyper is overkill). A non-200 GET or a network
+error is a **miss** (read-through degrades to a local compute); a failed PUT
+is an error the caller logs.
+
+Verified: a `tokio::test` against an in-process HTTP server — miss before
+store, `store` puts, `fetch` returns the exact bytes.
+
+Remaining SPEC-04: wire it into `oxide build` (read-through on the precompile
+CAS, write on `--write-remote`).
