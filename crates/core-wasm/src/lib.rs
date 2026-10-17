@@ -25,47 +25,54 @@ pub fn edge_cache_key(route: &str, params: &str, vary: &str, build_id: &str) -> 
     h.hex_digest()
 }
 
-/// A tiny blake3 wrapper so this crate compiles on wasm32 without pulling the full
-/// cache crate; production uses the same `blake3` crate (pure Rust, wasm-safe).
-///
-/// **blake3-equivalence note:** the real L0 cache keys (oxide-cache, D6) are blake3
-/// digests rendered as 64 lowercase hex chars. This stub keeps that *layout* (64 hex
-/// chars) using a deterministic keyed-FNV-1a expansion, so every call site and test
-/// that only depends on the digest shape is identical. It is NOT cryptographically
-/// equivalent; swap [`blake3_stub::Hasher`] for `blake3::Hasher` (drop-in: `new`,
-/// `update`, `hex_digest`) to get the real digest without touching callers.
+/// SPEC-22: real blake3 for edge cache keys. `blake3` is pure Rust and
+/// compiles to wasm32, so this crate no longer needs an FNV stub — the edge
+/// keys are now byte-identical to the native L0 keys (§18/§11.2).
 pub mod blake3_stub {
-    pub struct Hasher(Vec<u8>);
+    /// A `blake3` hasher with the crate's `new`/`update`/`hex_digest` shape.
+    pub struct Hasher(blake3::Hasher);
     impl Hasher {
         pub fn new() -> Self {
-            Self(Vec::new())
+            Self(blake3::Hasher::new())
         }
         pub fn update(&mut self, data: &[u8]) {
-            self.0.extend_from_slice(data);
+            self.0.update(data);
         }
-        /// 64-char lowercase hex digest: four FNV-1a rounds over the message with
-        /// distinct round salts, each contributing 16 hex chars (32-bit→64-bit state,
-        /// chained round to round so every message byte influences every quarter).
         pub fn hex_digest(&self) -> String {
-            let mut out = String::with_capacity(64);
-            let mut seed: u64 = 0xcbf2_9ce4_8422_2325;
-            for round in 0..4u64 {
-                let mut acc = seed ^ round.wrapping_mul(0x9e37_79b9_7f4a_7c15);
-                for &b in &self.0 {
-                    acc ^= (b ^ (round as u8)) as u64;
-                    acc = acc.wrapping_mul(0x1_0000_0001_b3);
-                }
-                acc ^= self.0.len() as u64 ^ (round << 32);
-                out.push_str(&format!("{acc:016x}"));
-                seed = acc;
-            }
-            out
+            self.0.finalize().to_hex().to_string()
         }
     }
     impl Default for Hasher {
         fn default() -> Self {
             Self::new()
         }
+    }
+}
+
+#[cfg(test)]
+mod spec22_tests {
+    use super::blake3_stub::Hasher;
+
+    /// SPEC-22: the edge key digest equals the native `blake3` digest byte for
+    /// byte (the stub is gone — this is the real crate).
+    #[test]
+    fn edge_keys_match_native_blake3() {
+        for msg in [b"".as_slice(), b"hello", b"routes/index\0get\0secret"] {
+            let mut h = Hasher::new();
+            h.update(msg);
+            assert_eq!(h.hex_digest(), blake3::hash(msg).to_hex().to_string());
+        }
+    }
+
+    /// The known BLAKE3 vector for "abc" (from the reference implementation).
+    #[test]
+    fn known_blake3_vector() {
+        let mut h = Hasher::new();
+        h.update(b"abc");
+        assert_eq!(
+            h.hex_digest(),
+            "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85"
+        );
     }
 }
 
