@@ -5,6 +5,6 @@
 # backgrounded `oxide-cli start` orphans and keeps running, and two runs
 # overlap — colliding on shared roots, the redb CAS lock, and the git index.
 wr:
-    watchexec -w ./wr.sh --clear -r --wrap-process=session --stop-signal=SIGKILL --stop-timeout=200ms "./wr.sh"
+    watchexec -w ./wr.sh --clear -r  "./wr.sh"
 wr1:
-    watchexec -w ./wr1.sh --clear -r --wrap-process=session --stop-signal=SIGKILL --stop-timeout=200ms "./wr1.sh"
+    watchexec -w ./wr1.sh --clear -r  "./wr1.sh"
