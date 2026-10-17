@@ -3221,58 +3221,94 @@ fn build_dispatch(
                             // sentinel before storing so any request can reuse
                             // it. A response that set a cookie is NOT cached
                             // (it varies per user).
+                            // PERF-04: streaming-preserving fill. Tee the
+                            // rendered body: each chunk flushes to the client
+                            // immediately AND accumulates. On stream end the
+                            // sender is dropped FIRST (so the client sees EOF
+                            // at once, not after the store), then the body is
+                            // stored (live nonce → sentinel) and published for
+                            // single-flight followers. The next request is an
+                            // L0 hit.
                             if l0_eligible && loader_set_cookies.is_empty() {
                                 if let Some(cache) = l0.as_ref() {
-                                    use futures::StreamExt as _;
                                     let nonce =
                                         oxide_server::nonce_for(&req_owned.request_id);
-                                    let mut collected: Vec<u8> = Vec::new();
-                                    let mut stream = body;
-                                    while let Some(item) = stream.next().await {
-                                        match item {
-                                            Ok(chunk) => collected.extend_from_slice(&chunk),
-                                            Err(_) => break,
-                                        }
-                                    }
-                                    let sentineled = String::from_utf8_lossy(&collected)
-                                        .replace(&nonce, l0_cache::NONCE_SENTINEL)
-                                        .into_bytes();
-                                    let mut store_headers = vec![(
-                                        "content-type".to_string(),
-                                        "text/html; charset=utf-8".to_string(),
-                                    )];
-                                    for (k, v) in &loader_headers {
-                                        store_headers.push((k.clone(), v.clone()));
-                                    }
-                                    // BUG-01: tag with both the route id and
-                                    // the request path so `revalidate.tag` /
-                                    // `revalidate.path` hit.
-                                    let entry = cache.make_entry(
-                                        200,
-                                        store_headers,
-                                        sentineled,
-                                        vec![l0_route.clone(), format!("path:{}", l0_path)],
-                                    );
-                                    let key =
-                                        cache.key_of(&l0_route, &l0_params, &l0_vary);
-                                    cache.store_entry(&key, entry.clone()).await;
-                                    // PERF-04: wake followers awaiting this key.
-                                    if let Some(tx) = flight_owner.take() {
-                                        let _ = oxide_cache::SingleFlight::new()
-                                            .publish_and_cleanup(
-                                                &flight_map,
-                                                &flight_key,
-                                                oxide_cache::FlightSlot::Owner(tx),
-                                                Some(std::sync::Arc::new(entry)),
-                                            )
-                                            .await;
-                                    }
-                                    let mut resp = oxide_server::OxideResponse::new(200, collected)
-                                        .with_header("content-type", "text/html; charset=utf-8")
-                                        .with_header("x-oxide-cache", "L0-miss");
-                                    // PERF-06: real per-stage Server-Timing.
+                                    let cache = std::sync::Arc::clone(cache);
+                                    let l0_route = l0_route.clone();
+                                    let l0_params = l0_params.clone();
+                                    let l0_vary = l0_vary.clone();
+                                    let l0_path = l0_path.clone();
+                                    let headers_for_store = loader_headers.clone();
+                                    let flight_map = std::sync::Arc::clone(&flight_map);
+                                    let flight_key = flight_key.clone();
+                                    let flight_owner = flight_owner.take();
                                     let render_ms =
                                         stage_render_start.elapsed().as_secs_f64() * 1000.0;
+                                    let (tx, mut rx) = tokio::sync::mpsc::channel::<
+                                        std::result::Result<bytes::Bytes, std::io::Error>,
+                                    >(8);
+                                    tokio::spawn(async move {
+                                        use futures::StreamExt as _;
+                                        let mut src = body;
+                                        let mut collected: Vec<u8> = Vec::new();
+                                        while let Some(item) = src.next().await {
+                                            match item {
+                                                Ok(chunk) => {
+                                                    collected.extend_from_slice(&chunk);
+                                                    if tx.send(Ok(chunk)).await.is_err() {
+                                                        // Client gone: no store
+                                                        // (the render did not
+                                                        // finish).
+                                                        return;
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    let _ = tx.send(Err(e)).await;
+                                                    return;
+                                                }
+                                            }
+                                        }
+                                        // Close the client stream NOW — the
+                                        // store below must not delay EOF.
+                                        drop(tx);
+                                        let sentineled = String::from_utf8_lossy(&collected)
+                                            .replace(&nonce, l0_cache::NONCE_SENTINEL)
+                                            .into_bytes();
+                                        let mut store_headers = vec![(
+                                            "content-type".to_string(),
+                                            "text/html; charset=utf-8".to_string(),
+                                        )];
+                                        for (k, v) in &headers_for_store {
+                                            store_headers.push((k.clone(), v.clone()));
+                                        }
+                                        let entry = cache.make_entry(
+                                            200,
+                                            store_headers,
+                                            sentineled,
+                                            vec![
+                                                l0_route.clone(),
+                                                format!("path:{}", l0_path),
+                                            ],
+                                        );
+                                        let key = cache.key_of(
+                                            &l0_route, &l0_params, &l0_vary,
+                                        );
+                                        cache.store_entry(&key, entry.clone()).await;
+                                        if let Some(tx) = flight_owner {
+                                            let _ = oxide_cache::SingleFlight::new()
+                                                .publish_and_cleanup(
+                                                    &flight_map,
+                                                    &flight_key,
+                                                    oxide_cache::FlightSlot::Owner(tx),
+                                                    Some(std::sync::Arc::new(entry)),
+                                                )
+                                                .await;
+                                        }
+                                    });
+                                    let stream: oxide_server::BodyStream =
+                                        Box::pin(futures::stream::poll_fn(move |cx| {
+                                            rx.poll_recv(cx)
+                                        }));
                                     let t = oxide_render::RequestTimings {
                                         middleware_ms: 0.0,
                                         cache_ms: 0.0,
@@ -3280,7 +3316,10 @@ fn build_dispatch(
                                         render_ms,
                                         inject_ms: 0.0,
                                     };
-                                    resp = resp.with_header("Server-Timing", t.server_timing());
+                                    let mut resp = oxide_server::OxideResponse::stream(200, stream)
+                                        .with_header("content-type", "text/html; charset=utf-8")
+                                        .with_header("x-oxide-cache", "L0-miss")
+                                        .with_header("Server-Timing", t.server_timing());
                                     for (k, v) in &loader_headers {
                                         resp = resp.with_header(k, v.clone());
                                     }
