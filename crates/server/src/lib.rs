@@ -1158,6 +1158,11 @@ pub struct Pipeline {
     /// Optional inspector provider (§13.4). When `Some`, `/__oxide` and
     /// `/__oxide/state` return the inspector snapshot. Never set in production.
     pub inspector: Option<Arc<dyn InspectorSnapshot>>,
+    /// SPEC-14 / §13.3: the dev HMR message source. `Some` only in dev; the
+    /// `/_oxide/hmr` WebSocket subscribes to it. `oxide-server` does not
+    /// depend on `oxide-dev`, so this is a broadcast of pre-serialized JSON
+    /// strings the CLI wires from its `HmrHub`.
+    pub hmr: Option<Arc<tokio::sync::broadcast::Sender<String>>>,
     /// Optional page renderer (§7). When `Some`, `serve_request` dispatches
     /// page renders to it instead of the neutral-IR path. Attached via
     /// `Pipeline::with_page_renderer` (see the CLI wiring). `None` preserves
@@ -1371,6 +1376,7 @@ impl Default for Pipeline {
             metrics_path: String::new(),
             metrics: None,
             inspector: None,
+            hmr: None,
             page_renderer: None,
             image_endpoint: None,
             server_fns: None,
@@ -3192,11 +3198,23 @@ impl Server {
                         let pipeline = Arc::clone(&pipeline_for_service);
                         let dispatch = Arc::clone(&dispatch_for_service);
                         async move {
+                            // SPEC-14: the `/_oxide/hmr` WebSocket upgrade.
+                            // Handled here (not in `native_prefix`) because the
+                            // `hyper::upgrade::OnUpgrade` handle lives on the
+                            // hyper request. Dev only (`pipeline.hmr` is None in
+                            // production).
+                            if let Some(hub) = pipeline.hmr.as_ref() {
+                                if req.uri().path() == "/_oxide/hmr" {
+                                    return Ok::<_, std::io::Error>(
+                                        crate::ws_hmr_upgrade(req, Arc::clone(hub)),
+                                    );
+                                }
+                            }
                             let request_id = next_request_id();
                             match from_hyper_request(req, request_id, &pipeline.limits).await {
                                 Ok(oreq) => {
                                     let resp = pipeline.serve_request(oreq, dispatch.as_ref()).await;
-                                    Ok::<_, std::io::Error>(to_hyper_response(resp))
+                                    Ok(to_hyper_response(resp))
                                 }
                                 Err(e) => Ok(to_hyper_response(OxideResponse::new(413, e.0.message))),
                             }
@@ -3292,6 +3310,175 @@ impl Server {
             .with_single_cert(certs, key)
             .map_err(|e| err("SRV-TLS", format!("rustls config failed: {e}")))?;
         Ok(Arc::new(config))
+    }
+}
+
+/// SPEC-14 / §13.3: accept a `/_oxide/hmr` WebSocket upgrade and pump HMR
+/// messages to the client. The 101 handshake is built by hand (the ws codec
+/// in this module owns framing); each broadcast message becomes one text
+/// frame. Dev only — the caller checks `pipeline.hmr` is `Some`.
+fn ws_hmr_upgrade(
+    mut req: HyperRequest<hyper::body::Incoming>,
+    hub: Arc<tokio::sync::broadcast::Sender<String>>,
+) -> HyperResponse<BoxBody<Bytes, std::io::Error>> {
+    use http_body_util::Full;
+    // The client's `Sec-WebSocket-Key` is echoed back as
+    // base64(sha1(key + GUID)) per RFC6455 §4.2.2.
+    let key = req
+        .headers()
+        .get("sec-websocket-key")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let accept = {
+        use base64::Engine as _;
+        let mut h = <sha1_shim::Sha1>::new();
+        h.update(key.as_bytes());
+        h.update(b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+        base64::engine::general_purpose::STANDARD.encode(h.finalize())
+    };
+    let on_upgrade = hyper::upgrade::on(&mut req);
+    tokio::spawn(async move {
+        let Ok(upgraded) = on_upgrade.await else { return };
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let io = hyper_util::rt::TokioIo::new(upgraded);
+        let (mut rd, mut wr) = tokio::io::split(io);
+        let mut rx = hub.subscribe();
+        // The first message tells the client it is connected.
+        let hello = format!("{{\"type\":\"connected\",\"build_id\":\"{}\"}}", "");
+        let _ = wr.write_all(&crate::ws::encode(&crate::ws::Frame::Text(hello), false)).await;
+        let mut buf = [0u8; 4096];
+        loop {
+            tokio::select! {
+                msg = rx.recv() => {
+                    match msg {
+                        Ok(json) => {
+                            if wr.write_all(&crate::ws::encode(&crate::ws::Frame::Text(json), false)).await.is_err() {
+                                return;
+                            }
+                        }
+                        Err(_) => return,
+                    }
+                }
+                n = rd.read(&mut buf) => {
+                    // Client frames (ping/close) — answer a close.
+                    match n {
+                        Ok(0) | Err(_) => return,
+                        Ok(len) => {
+                            if let Ok((frames, _)) = crate::ws::decode(&buf[..len]) {
+                                for f in frames {
+                                    if matches!(f, crate::ws::Frame::Close(_)) {
+                                        let _ = wr.write_all(&crate::ws::encode(&crate::ws::Frame::Close(Some(1000)), false)).await;
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+    let mut resp = HyperResponse::new(
+        BodyExt::boxed(Full::new(Bytes::new()).map_err(|never| match never {})),
+    );
+    *resp.status_mut() = hyper::StatusCode::SWITCHING_PROTOCOLS;
+    let h = resp.headers_mut();
+    h.insert(
+        hyper::header::CONNECTION,
+        hyper::header::HeaderValue::from_static("Upgrade"),
+    );
+    h.insert(
+        hyper::header::UPGRADE,
+        hyper::header::HeaderValue::from_static("websocket"),
+    );
+    if let Ok(v) = hyper::header::HeaderValue::from_str(&accept) {
+        h.insert(
+            hyper::header::HeaderName::from_static("sec-websocket-accept"),
+            v,
+        );
+    }
+    resp
+}
+
+/// Minimal SHA-1 for the WebSocket handshake (RFC6455 requires it; SHA-1 is
+/// not a security primitive here — it is a fixed protocol constant).
+mod sha1_shim {
+    pub struct Sha1 {
+        h: [u32; 5],
+        buf: Vec<u8>,
+        len: u64,
+    }
+    impl Sha1 {
+        pub fn new() -> Self {
+            Self {
+                h: [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0],
+                buf: Vec::new(),
+                len: 0,
+            }
+        }
+        pub fn update(&mut self, data: &[u8]) {
+            self.len += data.len() as u64;
+            self.buf.extend_from_slice(data);
+        }
+        pub fn finalize(mut self) -> Vec<u8> {
+            let bit_len = self.len * 8;
+            self.buf.push(0x80);
+            while self.buf.len() % 64 != 56 {
+                self.buf.push(0);
+            }
+            self.buf.extend_from_slice(&bit_len.to_be_bytes());
+            let blocks: Vec<[u8; 64]> = self
+                .buf
+                .chunks_exact(64)
+                .map(|c| {
+                    let mut b = [0u8; 64];
+                    b.copy_from_slice(c);
+                    b
+                })
+                .collect();
+            for block in blocks {
+                let mut w = [0u32; 80];
+                for i in 0..16 {
+                    w[i] = u32::from_be_bytes([
+                        block[i * 4],
+                        block[i * 4 + 1],
+                        block[i * 4 + 2],
+                        block[i * 4 + 3],
+                    ]);
+                }
+                for i in 16..80 {
+                    w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+                }
+                let (mut a, mut b, mut c, mut d, mut e) =
+                    (self.h[0], self.h[1], self.h[2], self.h[3], self.h[4]);
+                for i in 0..80 {
+                    let (f, k) = match i {
+                        0..=19 => ((b & c) | ((!b) & d), 0x5A827999),
+                        20..=39 => (b ^ c ^ d, 0x6ED9EBA1),
+                        40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1BBCDC),
+                        _ => (b ^ c ^ d, 0xCA62C1D6),
+                    };
+                    let temp = a
+                        .rotate_left(5)
+                        .wrapping_add(f)
+                        .wrapping_add(e)
+                        .wrapping_add(k)
+                        .wrapping_add(w[i]);
+                    e = d;
+                    d = c;
+                    c = b.rotate_left(30);
+                    b = a;
+                    a = temp;
+                }
+                self.h[0] = self.h[0].wrapping_add(a);
+                self.h[1] = self.h[1].wrapping_add(b);
+                self.h[2] = self.h[2].wrapping_add(c);
+                self.h[3] = self.h[3].wrapping_add(d);
+                self.h[4] = self.h[4].wrapping_add(e);
+            }
+            self.h.iter().flat_map(|x| x.to_be_bytes()).collect()
+        }
     }
 }
 

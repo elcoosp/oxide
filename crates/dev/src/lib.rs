@@ -245,6 +245,29 @@ pub enum ChangeKind {
     ConfigOrRoutes,
 }
 
+/// SPEC-14: classify a changed file path into the §13.3 change kind, which
+/// selects the HMR behavior (and thus the `HmrMessage` the dev loop emits).
+pub fn classify_path(path: &str) -> ChangeKind {
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".css") || lower.ends_with(".scss") || lower.ends_with(".sass") {
+        ChangeKind::Css
+    } else if lower.ends_with(".server.ts") || lower.ends_with(".server.tsx") {
+        // A server module: a loader change is data-only; anything else is a
+        // swap. We cannot tell the export apart from the path alone, so the
+        // safe default is ServerModule (full reload) unless it is a page
+        // server module (data).
+        if lower.ends_with("page.server.ts") {
+            ChangeKind::ServerLoader
+        } else {
+            ChangeKind::ServerModule
+        }
+    } else if lower.contains("oxide.config") || lower.contains("routes/") {
+        ChangeKind::ConfigOrRoutes
+    } else {
+        ChangeKind::Component
+    }
+}
+
 pub fn hmr_behavior(kind: ChangeKind) -> HmrBehavior {
     match kind {
         ChangeKind::Component => HmrBehavior::AdapterHmr,
@@ -367,6 +390,12 @@ impl HmrHub {
     /// Serialize and broadcast; dropped when no receiver is listening (OK by design).
     pub fn publish(&self, msg: HmrMessage) {
         let _ = self.tx.send(msg.to_json());
+    }
+
+    /// The underlying broadcast sender (the server's `/_oxide/hmr` endpoint
+    /// subscribes to it). Cloneable, `Send + Sync`.
+    pub fn sender(&self) -> std::sync::Arc<tokio::sync::broadcast::Sender<String>> {
+        std::sync::Arc::new(self.tx.clone())
     }
 
     pub fn subscriber_count(&self) -> usize {

@@ -886,6 +886,9 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // edited module instead of serving the cached one.
     let hmr_pool: Option<std::sync::Arc<dyn oxide_jshost::Pool>> = stack.pool.clone();
 
+    // SPEC-14: the HMR hub. Created here, published to by the dev loop below,
+    // and subscribed to by `/_oxide/hmr`.
+    let hmr_hub = std::sync::Arc::new(oxide_dev::HmrHub::new());
     let started = start_dev_server_full(
         root,
         flags.port,
@@ -893,6 +896,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         tls_config,
         proxy_rules,
         stack,
+        Some(std::sync::Arc::clone(&hmr_hub)),
     )
     .await?;
     let local = oxide_dev::local_url(started.addr.port(), flags.https);
@@ -1074,6 +1078,37 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         for ev in events {
             tracing::info!(?ev, "file change");
             outln!(w, "change: {ev:?}");
+            // SPEC-14: emit the HMR message for this change.
+            if let Some(hub) = started.hmr.as_ref() {
+                use oxide_dev::{HmrBehavior, HmrMessage};
+                let path = match &ev {
+                    oxide_dev::FileEvent::Modified(p)
+                    | oxide_dev::FileEvent::Created(p)
+                    | oxide_dev::FileEvent::Removed(p) => p,
+                };
+                let pstr = path.to_string_lossy().to_string();
+                let kind = oxide_dev::classify_path(&pstr);
+                match oxide_dev::hmr_behavior(kind) {
+                    HmrBehavior::StyleSwap => {
+                        hub.publish(HmrMessage::CssUpdate { path: pstr, code: String::new() })
+                    }
+                    HmrBehavior::ReloadData => hub.publish(HmrMessage::RouteDataUpdate {
+                        route: pstr,
+                        odf_b64: String::new(),
+                    }),
+                    HmrBehavior::AdapterHmr => hub.publish(HmrMessage::ModuleUpdate {
+                        path: pstr,
+                        boundary: String::new(),
+                        code: String::new(),
+                    }),
+                    HmrBehavior::ServerSwap => {
+                        hub.publish(HmrMessage::ServerModuleSwap { path: pstr })
+                    }
+                    HmrBehavior::RestartSubsystems => hub.publish(HmrMessage::FullReload {
+                        reason: format!("{pstr} changed"),
+                    }),
+                }
+            }
         }
         if !warmed && idle_since.elapsed() >= IDLE_WARM {
             warmed = true;
@@ -2809,6 +2844,9 @@ pub struct StartedServer {
     /// only). The dev banner prints it so the developer can open
     /// `/__oxide?token=…`; `None` in production.
     pub dev_token: Option<String>,
+    /// SPEC-14: the dev HMR hub, when dev. The dev loop publishes file
+    /// changes to it; `/_oxide/hmr` subscribers receive them.
+    pub hmr: Option<std::sync::Arc<oxide_dev::HmrHub>>,
 }
 
 /// Boxed dispatch future. Structurally identical to `futures::future::BoxFuture<_,
@@ -2846,7 +2884,7 @@ pub async fn start_server(
     stack: crate::framework_shim::FrameworkStack,
 ) -> anyhow::Result<StartedServer> {
     let bind = port.map(|p| (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), p));
-    start_server_inner_full(root, bind, false, None, Vec::new(), stack).await
+    start_server_inner_full(root, bind, false, None, Vec::new(), stack, None).await
 }
 
 /// Dev server entry (§13): identical pipeline but with the `/__oxide`
@@ -3658,6 +3696,7 @@ pub async fn start_dev_server_full(
     tls: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>,
     proxy_rules: Vec<oxide_dev::ProxyRule>,
     stack: crate::framework_shim::FrameworkStack,
+    hmr: Option<std::sync::Arc<oxide_dev::HmrHub>>,
 ) -> anyhow::Result<StartedServer> {
     start_server_inner_full(
         root,
@@ -3666,6 +3705,7 @@ pub async fn start_dev_server_full(
         tls,
         proxy_rules,
         stack,
+        hmr,
     )
     .await
 }
@@ -3687,6 +3727,7 @@ async fn start_server_inner(
         None,
         Vec::new(),
         crate::framework_shim::FrameworkStack::default(),
+        None,
     )
     .await
 }
@@ -4143,6 +4184,7 @@ async fn start_server_inner_full(
     tls: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>,
     proxy_rules: Vec<oxide_dev::ProxyRule>,
     stack: crate::framework_shim::FrameworkStack,
+    hmr: Option<std::sync::Arc<oxide_dev::HmrHub>>,
 ) -> anyhow::Result<StartedServer> {
     // Canonicalize so every path derived here (route modules, the SSR entry,
     // the client manifest) is absolute — the worker resolves a module path
@@ -4242,6 +4284,8 @@ async fn start_server_inner_full(
             None
         },
         page_renderer: None,
+        // SPEC-14: the HMR hub's broadcast sender, dev only.
+        hmr: hmr.as_ref().map(|h| h.sender()),
         // SEC-02: HSTS only on TLS (§17.1) — set where the listener is built.
         tls: tls.is_some(),
         // SEC-09: the dev inspector token (see below).
@@ -4372,6 +4416,7 @@ async fn start_server_inner_full(
         shutdown: tx,
         metrics,
         dev_token,
+        hmr,
     })
 }
 
