@@ -2812,24 +2812,64 @@ pub async fn start_server(
 fn render_stream_to_body_stream(
     src: oxide_server::RenderStream,
 ) -> oxide_server::BodyStream {
+    render_stream_with_recovery(src, None, None, String::new())
+}
+
+/// SPEC-11 / §10.2.5: the streaming bridge with mid-stream recovery.
+///
+/// If the shell already committed (we have sent ≥1 chunk) and the render
+/// errors, emitting nothing more would truncate the response — the browser
+/// shows a half page. Instead we append the `ox-error` recovery boundary (a
+/// `data-ox-c` template + self-contained swapper that replaces the matching
+/// `data-ox-b` placeholder), then close cleanly. The status stays 200: the
+/// shell is valid; only a boundary failed, and the client recovers it.
+///
+/// `boundary_id`/`nonce` are `Some` for a streamed page; `None` (the
+/// `render_stream_to_body_stream` shim) keeps the old abort behaviour for
+/// callers that have no boundary context.
+fn render_stream_with_recovery(
+    src: oxide_server::RenderStream,
+    boundary_id: Option<String>,
+    nonce: Option<String>,
+    route_id: String,
+) -> oxide_server::BodyStream {
     let (tx, mut rx) =
         tokio::sync::mpsc::channel::<std::result::Result<bytes::Bytes, std::io::Error>>(8);
     tokio::spawn(async move {
         use futures::StreamExt as _;
         let mut src = src;
+        let mut sent_any = false;
         while let Some(item) = src.next().await {
-            let mapped = item.map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("{}: {}", e.0.code, e.0.message),
-                )
-            });
-            if tx.send(mapped).await.is_err() {
-                // Receiver dropped — client disconnected. Stop pumping;
-                // dropping `src` will notify the upstream worker.
-                return;
+            match item {
+                Ok(chunk) => {
+                    sent_any = true;
+                    if tx.send(Ok(chunk)).await.is_err() {
+                        // Receiver dropped — client disconnected.
+                        return;
+                    }
+                }
+                Err(e) => {
+                    if let (true, Some(id), Some(n)) =
+                        (sent_any, boundary_id.as_deref(), nonce.as_deref())
+                    {
+                        // Shell committed: emit the recovery boundary, then
+                        // close cleanly (no io::Error → no connection reset).
+                        let html = oxide_render::stream_error_recovery(id, &e.0, n);
+                        let _ = tx.send(Ok(bytes::Bytes::from(html))).await;
+                        return;
+                    }
+                    // No shell yet (or no boundary context): the old abort.
+                    let _ = tx
+                        .send(Err(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            format!("{}: {}", e.0.code, e.0.message),
+                        )))
+                        .await;
+                    return;
+                }
             }
         }
+        let _ = route_id;
         // `tx` drops here, closing the stream cleanly.
     });
     Box::pin(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)))
@@ -3332,7 +3372,15 @@ fn build_dispatch(
                             // at most `len("</body>") - 1` bytes so a tag
                             // split across chunks still lands in the right
                             // place and every other chunk flushes untouched.
-                            let bridged = render_stream_to_body_stream(render_stream);
+                            // SPEC-11: pass boundary + nonce so a mid-stream
+                            // error emits the recovery boundary instead of
+                            // truncating the response.
+                            let bridged = render_stream_with_recovery(
+                                render_stream,
+                                Some(label.clone()),
+                                Some(oxide_server::nonce_for(&req_owned.request_id)),
+                                label.clone(),
+                            );
                             let body = match boot_script_url_for_render.as_deref() {
                                 Some(url) => {
                                     // §17.1: the response's CSP is `strict-

@@ -2674,7 +2674,45 @@ async fn smoke_app_emits_island_markup_and_boot_script() {
     assert!(has_boot, "no __boot__ chunk in dist/client/");
 }
 
+/// SPEC-11 / §10.2.5: a mid-stream render error AFTER the shell committed
+/// appends the `ox-error` recovery boundary (so the response is not
+/// truncated); before the shell it still aborts.
+#[tokio::test]
+async fn stream_error_recovery_after_shell_emits_boundary() {
+    use futures::channel::mpsc as fmpsc;
+    use futures::StreamExt as _;
 
+    // Build a RenderStream that yields one chunk then an error.
+    let (mut tx, rx) = fmpsc::channel::<oxide_diagnostics::Result<bytes::Bytes>>(8);
+    tokio::spawn(async move {
+        use futures::SinkExt as _;
+        let _ = tx.send(Ok(bytes::Bytes::from_static(b"<html>shell</html>"))).await;
+        let _ = tx
+            .send(Err(oxide_diagnostics::OxideError(
+                oxide_diagnostics::Diagnostic::error("RND-TEST", "mid-stream boom"),
+            )))
+            .await;
+    });
+    // `oxide_server::RenderStream` is a boxed item stream.
+    let src: oxide_server::RenderStream = Box::pin(rx);
 
-
-
+    let body = crate::render_stream_with_recovery(
+        src,
+        Some("b1".to_string()),
+        Some("n0nce".to_string()),
+        "/".to_string(),
+    );
+    let collected: Vec<u8> = {
+        use futures::StreamExt as _;
+        let mut s = body;
+        let mut out = Vec::new();
+        while let Some(item) = s.next().await {
+            out.extend_from_slice(&item.expect("recovery boundary is not an io error"));
+        }
+        out
+    };
+    let text = String::from_utf8_lossy(&collected);
+    assert!(text.contains("shell"), "shell preserved: {text}");
+    assert!(text.contains("ox-error"), "recovery boundary emitted: {text}");
+    assert!(text.contains("RND-TEST"), "diagnostic code named: {text}");
+}
