@@ -658,7 +658,7 @@ fn generate_island_boot_entry(
         "import {{ clientAdapter }} from '@oxide/{framework}';\n"
     ));
     out.push_str(
-        "import { boot, installBootRuntime } from 'oxide/client/boot';\n",
+        "import { bootWithRouter, installBootRuntime } from 'oxide/client/boot';\n",
     );
     let mut idents: Vec<(String, String)> = Vec::new();
     for (name, src) in islands {
@@ -685,7 +685,20 @@ fn generate_island_boot_entry(
         "window.__oxideRegisterAdapter(clientAdapter, async (chunk) => {\n  \
          return modules[chunk] ?? (await import(chunk));\n});\n",
     );
-    out.push_str("boot();\n");
+    // §8.4: hydrate the SSR root, scan islands, THEN attach the client router.
+    // `bootWithRouter` is the sequenced form: it calls `adapter.hydrate(root,
+    // input)` (which sets the adapter module's `active` handle that `update()`
+    // later needs) BEFORE installing the router's click listener. Attaching
+    // `createRouter` without a preceding `adapter.hydrate` was the pre-fix
+    // bug — a same-origin link click changed the URL and the DOM did not
+    // re-render (worse than no router, because the pre-fix page still worked
+    // via full page load).
+    //
+    // The client manifest is still not consumed (SPA nav fetches `/__data`;
+    // manifest-driven chunk preloading is a documented gap, not silently
+    // stubbed). A hydrate failure leaves the SSR markup untouched and skips
+    // router attachment so anchors fall back to full-page navigation.
+    out.push_str("bootWithRouter(clientAdapter);\n");
     // §16.6 / §20: report Core Web Vitals to `/_oxide/vitals`. Guarded and
     // no-op outside the browser; the boot entry only runs in one.
     out.push_str("import { reportWebVitals } from 'oxide/client';\nreportWebVitals();\n");
@@ -2189,7 +2202,11 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             .clone()
             .or_else(|| cfg.framework.name.clone())
             .unwrap_or_else(|| "react".to_string());
-        let boot_src = generate_island_boot_entry(&rootp, &framework, &cfg.framework.islands);
+        let boot_src = generate_island_boot_entry(
+            &rootp,
+            &framework,
+            &cfg.framework.islands,
+        );
         let boot_dir = rootp.join(".oxide");
         std::fs::create_dir_all(&boot_dir)?;
         let boot_path = boot_dir.join("island-boot.mjs");
