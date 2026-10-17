@@ -3765,3 +3765,21 @@ four-fixture gate PASS.
 PERF-04 is now complete: SWR stale-serve, ETag/304, single-flight, seeding,
 and a streaming fill.
 
+
+## PERF-03 — final status (honest scope)
+
+Streaming is complete for what deno_core's API permits:
+- host ops (`stream_write`/`response_head`/`request_body_read`),
+- V8 render streams via `oxide.streamWrite` with backpressure,
+- Node render already streams per chunk.
+
+**Intra-worker interleaving is architecturally blocked**: `v8_dispatch`
+takes `&mut JsRuntime` and awaits the event loop, so one runtime serves one
+call at a time by construction. Concurrency is therefore **pool-level** — N
+worker threads (sized to cores, PERF-02) serve N concurrent renders — which
+the `v8_host_multiple_workers_dispatch_and_drain` test proves. True
+single-worker interleaving would need deno_core to expose a re-entrant
+dispatch API it does not have.
+
+This is a documented limitation, not a TODO: the streaming path that matters
+(TTFB before the render completes) works.
