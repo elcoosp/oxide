@@ -4010,3 +4010,63 @@ workspaces + Cargo.toml workspace, and a bare preset resolving from the root's
 
 Remaining SPEC-16: the dev watcher should also watch linked workspace packages
 (so an edit in `packages/ui` invalidates the app).
+
+## SPEC-16 (slice 2) — dev watcher covers linked workspace packages
+
+The dev watcher watched only the app root. It now also watches each workspace
+package (`detect_workspace_root` + a scan for sibling dirs with a
+`package.json`/`Cargo.toml`), so an edit in `packages/ui` invalidates the app.
+
+Also hardened `production_server_does_not_serve_inspector` — a GET right after
+`wait_ready` can transiently reset under parallel load; it now retries.
+
+SPEC-16 complete: workspace detection, workspace-relative `extends`, and
+linked-package watching.
+
+## SPEC-16 (slice 2) — dev watcher covers linked workspace packages
+
+The dev watcher watched only the app root. It now also watches each workspace
+package (`detect_workspace_root` + a scan for sibling dirs with a
+`package.json`/`Cargo.toml`), so an edit in `packages/ui` invalidates the app.
+
+Also hardened `production_server_does_not_serve_inspector` — a GET right after
+`wait_ready` can transiently reset under parallel load; it now retries.
+
+SPEC-16 complete: workspace detection, workspace-relative `extends`, and
+linked-package watching.
+
+## SPEC-16 (slice 2) — dev watcher covers linked workspace packages
+
+The dev watcher watched only the app root. It now also watches each workspace
+package (`detect_workspace_root` + a scan for sibling dirs with a
+`package.json`/`Cargo.toml`), so an edit in `packages/ui` invalidates the app.
+
+Also hardened `production_server_does_not_serve_inspector` — a GET right after
+`wait_ready` can transiently reset under parallel load; it now retries.
+
+SPEC-16 complete: workspace detection, workspace-relative `extends`, and
+linked-package watching.
+
+## SPEC-16 (slice 2) — dev watcher covers linked workspace packages
+
+The dev watcher watched only the app root. It now also watches each workspace
+package (`detect_workspace_root` + a scan for sibling dirs with a
+`package.json`/`Cargo.toml`), so an edit in `packages/ui` invalidates the app.
+
+Also hardened `production_server_does_not_serve_inspector` — a GET right after
+`wait_ready` can transiently reset under parallel load; it now retries.
+
+SPEC-16 complete: workspace detection, workspace-relative `extends`, and
+linked-package watching.
+
+## SPEC-16 (slice 2) — dev watcher covers linked workspace packages
+
+The dev watcher watched only the app root. It now also watches each workspace
+package (`detect_workspace_root` + a scan for sibling dirs with a
+`package.json`/`Cargo.toml`), so an edit in `packages/ui` invalidates the app.
+
+Also hardened `production_server_does_not_serve_inspector` — a GET right after
+`wait_ready` can transiently reset under parallel load; it now retries.
+
+SPEC-16 complete: workspace detection, workspace-relative `extends`, and
+linked-package watching.
