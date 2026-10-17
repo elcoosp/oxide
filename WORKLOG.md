@@ -3783,3 +3783,4 @@ dispatch API it does not have.
 
 This is a documented limitation, not a TODO: the streaming path that matters
 (TTFB before the render completes) works.
+
