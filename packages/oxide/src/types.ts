@@ -42,6 +42,13 @@ export interface RenderInput {
    * concept here. See `packages/oxide/src/server/real-ssr.ts`.
    */
   layouts?: string[]
+  /**
+   * §10.2 step 5: route id of the nearest `error.tsx` ancestor, if any.
+   * The adapter renders this component when the page throws during SSR,
+   * instead of a generic 500 page. `undefined` means no boundary was
+   * registered for this route.
+   */
+  errorRoute?: string
 }
 
 /** Context for adapter.head() — framework head model → neutral model. */

@@ -248,7 +248,36 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
           }
           yield enc.encode(`${body}</div></body></html>`)
         } catch (err) {
+          // §10.2 step 5: prefer the project's error.tsx over the generic
+          // OX-500 placeholder. The pipeline hands `input.errorRoute` (nearest
+          // `error.tsx` ancestor id) and the adapter tries that component
+          // first; if it also throws, or none is registered, fall through to
+          // the generic text.
           const msg = err instanceof Error ? err.message : String(err)
+          const errId = input.errorRoute
+          if (typeof errId === 'string' && errId.length > 0) {
+            const ErrComp = cfg.opts.componentFor(errId)
+            if (ErrComp !== undefined && ErrComp !== null) {
+              try {
+                const errProps: Record<string, unknown> = {
+                  ...props,
+                  error: {
+                    message: msg,
+                    route: input.route,
+                    status: 500,
+                  },
+                }
+                const body = await cfg.renderBody(ErrComp, errProps)
+                yield enc.encode(`<!doctype html>\n<html lang="en"><head>${emitHead(head)}</head>`)
+                yield enc.encode(`<body><div${cfg.rootAttrs}>${body}</div></body></html>`)
+                return
+              } catch {
+                // The error page itself threw — fall through to the generic
+                // OX-500 text below, so a broken error.tsx does not blank
+                // the response.
+              }
+            }
+          }
           yield enc.encode(`<!doctype html>\n<html lang="en"><head>${emitHead(head)}</head>`)
           yield enc.encode(`<body><div${cfg.rootAttrs}>`)
           yield enc.encode(`<div class='ox-error' data-ox-error='OX-500'>OX-500: ${escText(msg)}</div>`)
