@@ -94,3 +94,17 @@ test('wireDeferreds: keeps non-deferred structure, handles cycles and nested map
   assert.equal(await ([...data.set][0] as Promise<unknown>), 'v6')
   glue.dispose()
 })
+
+test('defer glue: ox:swap now carries the streamed HTML as detail.value', async () => {
+  // §7.1 regression: before this pass `SWAPPER_SRC` dispatched `{id}` only,
+  // so every `DeferredClient` resolved to `undefined`. The swapper now
+  // includes the boundary's streamed `innerHTML` as `detail.value`.
+  const doc = fakeDoc()
+  const glue = attachDeferGlue({ doc: doc as unknown as Document })
+  const data = { html: { __deferred: 42 } }
+  wireDeferreds(data, glue)
+  doc.dispatch('ox:swap', { detail: { id: 42, value: '<p class="done">ok</p>' } })
+  assert.equal(await (data.html as Promise<unknown>), '<p class="done">ok</p>', 'value flows through')
+  glue.dispose()
+})
+

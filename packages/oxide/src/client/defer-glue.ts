@@ -13,7 +13,18 @@
 
 export interface SwapDetail {
   id: number
-  value?: unknown
+  /**
+   * The **streamed HTML content** of the boundary — the `innerHTML` of the
+   * `<template data-ox-c='<id>'>` the server emitted. `render::SWAPPER_SRC`
+   * sends this as `detail.value` on every `ox:swap` (before this was
+   * `undefined`, so any `DeferredClient` awaiting a loader data slot resolved
+   * to nothing). This is HTML, not the raw data payload: a `defer()`ed value
+   * in the loader data stream is currently delivered as rendered markup, not
+   * as the structured `Value` §9.2 calls for. Carrying the ODF-encoded data
+   * alongside (so `DeferredClient` resolves to the decoded value) is a
+   * remaining gap — see WORKLOG.
+   */
+  value?: string
   error?: unknown
 }
 
