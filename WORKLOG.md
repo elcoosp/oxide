@@ -4092,3 +4092,15 @@ idles at ~31 MB RSS with it.
 
 Remaining SPEC-13: embedded assets (`adapter: 'binary', embed: true`) and
 zero-downtime reload (listener-fd handoff) — both larger, scoped.
+
+## SPEC-05 (refinement) — guard false-positive fixed
+
+The first literal-scan also pushed the bare identifier, so an object export
+like `actions` (the V8 gate's `page.server.ts`) appeared in every chunk and
+failed a legitimate build. The guard now pushes **only the RHS string
+literals** — an object/array export's common name is not a leak; its *contents*
+are what must not reach the browser.
+
+Verified: V8 gate PASS (build 0, 10/10, generateParams ×2, action), four
+fixtures PASS, and a real `API_BASE = 'https://internal.example'` import still
+fails the build (exit 1).
