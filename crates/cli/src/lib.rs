@@ -3893,7 +3893,15 @@ fn build_dispatch(
                                     return resp;
                                 }
                             }
-                            let mut resp = oxide_server::OxideResponse::stream(200, body)
+                            // §10.2 step 5 / §8.3: the framework render path
+                            // always used to emit a hardcoded 200 regardless of
+                            // the computed `status`. That made an unmatched URL
+                            // return `HTTP 200` with a page body, breaking both
+                            // the status code and any client HTTP check
+                            // (curl, monitoring, browser dev tools). Use the
+                            // same `status` the metrics label already carries:
+                            // 200 for a matched route, 404 for `_unmatched`.
+                            let mut resp = oxide_server::OxideResponse::stream(status, body)
                                 .with_header("content-type", "text/html; charset=utf-8")
                                 .with_header("x-oxide-cache", "bypass");
                             // PERF-06: real per-stage Server-Timing.
