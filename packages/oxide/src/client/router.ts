@@ -60,7 +60,9 @@ interface OxideHistoryState {
 
 export interface RouterOptions {
   adapter: Pick<FrameworkAdapter, 'update'>
-  manifest: ClientManifest
+  /** Unused today (SPA nav fetches `/__data`). Reserved for manifest-driven
+   *  chunk preloading (§6.4); see WORKLOG. */
+  manifest?: ClientManifest
   doc?: RouterDoc
   history?: HistoryLike
   location?: LocationLike
