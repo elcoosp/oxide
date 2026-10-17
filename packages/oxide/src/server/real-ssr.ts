@@ -207,7 +207,10 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
         }
         if (layoutParts.length === 0) {
           const single = cfg.opts.layoutFor?.(input.route)
-          if (typeof single === 'function') {
+          // Accept any component shape (function OR object): Vue's
+          // `defineComponent` result is an object; the caller's
+          // `layoutFor` contract is `unknown` for exactly this reason.
+          if (single !== undefined && single !== null) {
             layoutParts.push({ id: `layoutFor(${input.route})`, Component: single })
           }
         }
@@ -220,9 +223,11 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
           let descriptor: { Component: unknown; props: Record<string, unknown> } = {
             Component, props,
           }
-          // Wrap from innermost → outermost so the final `descriptor` is
-          // the outermost layout; rendering it yields L1(L2(...(page))).
-          for (const layer of layoutParts) {
+          // §16.3: `input.layouts` is ordered OUTERMOST → INNERMOST. To build
+          // the tree we must wrap from the innermost layout outward, so we
+          // walk the list in reverse; the final assignment is the outermost
+          // (element 0), yielding L1(L2(L3(page))) when rendered.
+          for (const layer of [...layoutParts].reverse()) {
             if (layer.Component === undefined) {
               headWarnings.push(
                 `<!-- oxide: layout ${safeComment(layer.id)} declared but componentFor returned undefined; skipped -->`,
