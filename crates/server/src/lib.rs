@@ -1048,11 +1048,71 @@ pub async fn forward_proxy(url: &str, req: OxideRequest) -> Result<OxideResponse
 
 /// The pipeline service: rules → static → L0 → (render dispatch is injected by cli).
 /// Constructed from config + manifests; testable without a listener via `serve_request`.
+/// SPEC-10 / §16.4: the i18n policy the pipeline applies to an incoming
+/// path — a locale prefix selects the locale; a missing prefix on a
+/// non-default request is redirected to the negotiated locale.
+#[derive(Debug, Clone, Default)]
+pub struct I18nPolicy {
+    pub locales: Vec<String>,
+    pub default: String,
+    /// `prefix-except-default` (default) | `prefix-always` | `prefix-never`.
+    pub strategy: String,
+}
+
+impl I18nPolicy {
+    fn is_enabled(&self) -> bool {
+        !self.locales.is_empty()
+    }
+    /// The locale a path explicitly prefixes, plus the remainder.
+    fn explicit<'a>(&self, path: &'a str) -> Option<(String, &'a str)> {
+        for loc in &self.locales {
+            let pref = format!("/{loc}");
+            if let Some(rest) = path.strip_prefix(&pref) {
+                if rest.is_empty() || rest.starts_with('/') {
+                    return Some((loc.clone(), if rest.is_empty() { "/" } else { rest }));
+                }
+            }
+        }
+        None
+    }
+    /// Should this locale carry a path prefix under the strategy?
+    fn prefixes(&self, locale: &str) -> bool {
+        match self.strategy.as_str() {
+            "prefix-always" => true,
+            "prefix-never" => false,
+            _ => locale != self.default,
+        }
+    }
+    /// Negotiate `Accept-Language` against the supported set.
+    fn negotiate(&self, accept_language: &str) -> String {
+        for part in accept_language.split(',') {
+            let tag = part.split(';').next().unwrap_or("").trim();
+            if tag.is_empty() || tag == "*" {
+                continue;
+            }
+            for loc in &self.locales {
+                if loc.eq_ignore_ascii_case(tag) {
+                    return loc.clone();
+                }
+            }
+            let lang = tag.split('-').next().unwrap_or(tag);
+            for loc in &self.locales {
+                if loc.split('-').next().unwrap_or(loc).eq_ignore_ascii_case(lang) {
+                    return loc.clone();
+                }
+            }
+        }
+        self.default.clone()
+    }
+}
+
 pub struct Pipeline {
     pub rules: RulesEngine,
     pub assets: Option<StaticAssets>,
     pub limits: Limits,
     pub security: crate::SecuritySettings,
+    /// SPEC-10 / §16.4: i18n locale policy. `None` disables locale routing.
+    pub i18n: Option<crate::I18nPolicy>,
     pub rate_limiter: Arc<RateLimiter>,
     pub health_path: String,
     /// Prometheus metrics endpoint path (§20). `/_oxide/metrics` default;
@@ -1270,6 +1330,7 @@ impl Default for Pipeline {
             assets: None,
             limits: Default::default(),
             security: Default::default(),
+            i18n: None,
             rate_limiter: std::sync::Arc::new(Default::default()),
             health_path: String::new(),
             metrics_path: String::new(),
@@ -2156,7 +2217,7 @@ enum NativePrefix {
         rule_headers: Vec<(String, String)>,
     },
     /// Proceed to dispatch carrying the merged rule headers.
-    Dispatch(Vec<(String, String)>),
+    Dispatch(Vec<(String, String)>, Option<String>),
 }
 
 impl Pipeline {
@@ -2271,7 +2332,7 @@ impl Pipeline {
                     self.finish_response_with_request(resp, &rule_headers, &request_id, Some(&method), cookie.as_deref())
                 })
             }
-            NativePrefix::Dispatch(rule_headers) => {
+            NativePrefix::Dispatch(rule_headers, content_language) => {
                 // Capture the request id before `req` moves into `dispatch` —
                 // `finish_response` needs it to derive the per-request CSP
                 // nonce, and the framework dispatch derives the same value
@@ -2302,6 +2363,16 @@ impl Pipeline {
                             "Server-Timing",
                             format!("total;dur={ms:.2}"),
                         );
+                    }
+                    // SPEC-10: the resolved locale rides the page response.
+                    if let Some(loc) = &content_language {
+                        if !resp
+                            .headers
+                            .iter()
+                            .any(|(k, _)| k.eq_ignore_ascii_case("content-language"))
+                        {
+                            resp = resp.with_header("Content-Language", loc.clone());
+                        }
                     }
                     self.finish_response_full(
                         resp,
@@ -2349,6 +2420,30 @@ impl Pipeline {
         }
 
         let mut path = path_of(&req.url);
+        // SPEC-10 / §16.4: locale routing. A locale prefix selects the locale
+        // and is stripped (the route table is locale-free); a missing prefix
+        // on a non-default `Accept-Language` redirects to the prefixed URL
+        // under the strategy. `Content-Language` rides the response.
+        let mut content_language: Option<String> = None;
+        if let Some(pol) = self.i18n.as_ref().filter(|p| p.is_enabled()) {
+            if let Some((loc, rest)) = pol.explicit(&path) {
+                content_language = Some(loc);
+                path = rest.to_string();
+                req.url = url_with_path(&req.url, &path);
+            } else {
+                let neg = pol.negotiate(req.header("accept-language").unwrap_or(""));
+                if pol.prefixes(&neg) {
+                    let loc = format!("/{neg}");
+                    let dest = if path == "/" { loc } else { format!("{loc}{path}") };
+                    return NativePrefix::Raw(
+                        OxideResponse::new(307, Bytes::new())
+                            .with_header("Location", dest)
+                            .with_header("Content-Language", neg),
+                    );
+                }
+                content_language = Some(neg);
+            }
+        }
 
         // (3a) metrics endpoint (§20) — Prometheus text exposition.
         if req.method.eq_ignore_ascii_case("GET")
@@ -2575,7 +2670,7 @@ impl Pipeline {
         if let Err(d) = csrf_check(req, &self.security.csrf) {
             return NativePrefix::Raw(OxideResponse::new(403, Bytes::from(d.message)));
         }
-        NativePrefix::Dispatch(rule_headers)
+        NativePrefix::Dispatch(rule_headers, content_language)
     }
 
     /// Append security headers (+ hash-mode CSP), rule headers and the Server-Timing
@@ -2680,6 +2775,7 @@ impl Pipeline {
         // dispatch's per-request nonce.
         let nonce = nonce_for(request_id);
         let mut r = resp;
+
         let csp_nonce = match self.security.csp.as_str() {
             "off" => None,
             "hash" => None, // hash policy appended explicitly below

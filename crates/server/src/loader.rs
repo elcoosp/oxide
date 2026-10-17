@@ -43,6 +43,10 @@ pub struct LoaderRunInput {
     pub params: BTreeMap<String, String>,
     /// Request headers (ordered; case-insensitive lookup by consumers).
     pub headers: Vec<(String, String)>,
+    /// SPEC-10: the resolved locale (path prefix → Accept-Language → default).
+    /// Empty when the project has no `i18n` config.
+    #[serde(default)]
+    pub locale: String,
 }
 
 impl LoaderRunInput {
@@ -60,6 +64,7 @@ impl LoaderRunInput {
             method: "GET".into(),
             params: BTreeMap::new(),
             headers: Vec::new(),
+            locale: String::new(),
         }
     }
 }

@@ -2925,6 +2925,9 @@ fn build_dispatch(
     // PERF-02: the render/loader pool, so the dispatch can surface its live
     // gauges into metrics. Tests pass `None`.
     pool: Option<std::sync::Arc<dyn oxide_jshost::Pool>>,
+    // SPEC-10: the i18n config, when the project declares locales. `None`
+    // disables locale resolution (every loader sees `locale = ""`).
+    i18n_cfg: Option<oxide_assets::i18n::I18nConfig>,
 ) -> std::sync::Arc<
     dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
 > {
@@ -2995,6 +2998,26 @@ fn build_dispatch(
             // actually invalidates it. Without this, entries are tagged with
             // the *route id* only, and path events match nothing.
             let req_path = normalized.clone();
+            // SPEC-10 / §16.4: resolve the request locale when the project
+            // configures i18n — path prefix first, then `Accept-Language`,
+            // then the default. Empty when no i18n is configured.
+            // `i18n_cfg` is captured by the dispatch closure (built from config
+            // before any request); `req` supplies the header.
+            let resolved_locale: String = match i18n_cfg.as_ref() {
+                Some(a) => {
+                    let stripped = oxide_assets::i18n::strip_locale_prefix(a, &req_path);
+                    let from_path = stripped.0 != a.default && stripped.1 != req_path.as_str();
+                    if from_path {
+                        stripped.0
+                    } else {
+                        oxide_assets::i18n::negotiate(
+                            a,
+                            req.header("accept-language").unwrap_or(""),
+                        )
+                    }
+                }
+                None => String::new(),
+            };
             let candidates = if normalized == "/" {
                 vec!["/".to_string(), "/index".to_string()]
             } else {
@@ -3296,6 +3319,8 @@ fn build_dispatch(
                         input.method = req_owned.method.clone();
                         input.headers = req_owned.headers.clone();
                         input.params = params.clone();
+                        // SPEC-10: expose the resolved locale to `load()`.
+                        input.locale = resolved_locale.clone();
 
                         match runner.run(input).await {
                             Ok(out) if out.short_circuits() => {
@@ -4100,6 +4125,15 @@ async fn start_server_inner_full(
         server_fns,
         actions: actions.clone(),
         limits: oxide_server::Limits::default(),
+        // SPEC-10: locale policy for the pipeline (None when unconfigured).
+        i18n: {
+            let c = &cfg.i18n;
+            (!c.locales.is_empty()).then(|| oxide_server::I18nPolicy {
+                locales: c.locales.clone(),
+                default: c.default_locale.clone(),
+                strategy: c.strategy.clone(),
+            })
+        },
         security: oxide_server::SecuritySettings {
             csp: cfg.security.csp.clone(),
             csrf: cfg.security.csrf.clone(),
@@ -4252,6 +4286,14 @@ async fn start_server_inner_full(
         actions,
         archived,
         stack.pool.clone(),
+        {
+            let c = &cfg.i18n;
+            (!c.locales.is_empty()).then(|| oxide_assets::i18n::I18nConfig {
+                locales: c.locales.clone(),
+                default: c.default_locale.clone(),
+                strategy: c.strategy.clone(),
+            })
+        },
     );
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (tx, rx) = tokio::sync::watch::channel(false);
