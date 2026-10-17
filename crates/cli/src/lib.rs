@@ -1680,6 +1680,96 @@ fn emit_config_bundle(
     Ok(())
 }
 
+/// SPEC-21 / §16.6: emit `sw.js` when a `manifest` (a PWA block) is
+/// configured. The worker precaches every client asset in the manifest
+/// (cache-first) and serves an offline fallback for a navigation miss. The
+/// registration snippet is emitted as `dist/pwa-register.js` so the page can
+/// `<script src="/pwa-register.js">` it (or the CLI can inject it).
+fn emit_pwa_worker(
+    cfg: &oxide_config::OxideConfig,
+    dist: &Path,
+    client_manifest: &serde_json::Value,
+    w: Writer<'_>,
+) -> anyhow::Result<()> {
+    if cfg.manifest.is_none() {
+        return Ok(());
+    }
+    // Every asset path the client manifest names (entry + preload + css),
+    // turned into a URL.
+    let mut precache: Vec<String> = vec!["/".to_string()];
+    if let Some(routes) = client_manifest.get("routes").and_then(|r| r.as_object()) {
+        for row in routes.values() {
+            if let Some(entry) = row.get("entry_chunk").and_then(|v| v.as_str()) {
+                precache.push(format!("/client/{entry}"));
+            }
+            if let Some(pre) = row.get("preload").and_then(|v| v.as_array()) {
+                for p in pre {
+                    if let Some(s) = p.as_str() {
+                        precache.push(format!("/client/{s}"));
+                    }
+                }
+            }
+            if let Some(css) = row.get("css").and_then(|v| v.as_array()) {
+                for c in css {
+                    if let Some(s) = c.as_str() {
+                        precache.push(format!("/{s}"));
+                    }
+                }
+            }
+        }
+    }
+    if let Some(assets) = client_manifest.get("assets").and_then(|a| a.as_object()) {
+        for orig in assets.keys() {
+            precache.push(orig.clone());
+        }
+    }
+    precache.sort();
+    precache.dedup();
+    let list = precache
+        .iter()
+        .map(|s| format!("  {s:?},"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let sw = format!(
+        "// Oxide service worker (§16.6). Cache-first for precached assets,\n\
+// network-first with an offline fallback for navigations.\n\
+const CACHE = 'oxide-{build}';\n\
+const PRECACHE = [\n{list}\n];\n\
+self.addEventListener('install', (e) => {{\n\
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(PRECACHE)).then(() => self.skipWaiting()));\n\
+}});\n\
+self.addEventListener('activate', (e) => {{\n\
+  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));\n\
+}});\n\
+self.addEventListener('fetch', (e) => {{\n\
+  const req = e.request;\n\
+  if (req.method !== 'GET') return;\n\
+  const url = new URL(req.url);\n\
+  if (req.mode === 'navigate') {{\n\
+    e.respondWith(fetch(req).catch(() => caches.match('/') || caches.match(req)));\n\
+    return;\n\
+  }}\n\
+  e.respondWith(caches.match(req).then((hit) => hit || fetch(req)));\n\
+}});\n",
+        build = client_manifest
+            .get("build_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("dev"),
+    );
+    std::fs::write(dist.join("sw.js"), sw)
+        .map_err(|e| anyhow::anyhow!("write sw.js: {e}"))?;
+
+    let reg = "// Oxide PWA registration (§16.6).\n\
+if ('serviceWorker' in navigator) {\n\
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));\n\
+}\n";
+    std::fs::write(dist.join("pwa-register.js"), reg)
+        .map_err(|e| anyhow::anyhow!("write pwa-register.js: {e}"))?;
+    outln!(w, "pwa: sw.js + pwa-register.js emitted");
+    Ok(())
+}
+
 fn emit_web_manifest(
     cfg: &oxide_config::OxideConfig,
     dist: &Path,
@@ -2449,6 +2539,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // The bundler writes client.manifest.json / server.manifest.json into the out dirs.
     let client_manifest = read_json(&client_out.join("client.manifest.json"))
         .ok_or_else(|| anyhow::anyhow!("bundler did not write client.manifest.json"))?;
+    let client_manifest_snapshot = client_manifest.clone();
     // §10.3: the boot chunk URL, if islands were registered. `RolldownBundler`
     // emits `client.manifest.json.routes["__boot__"].entry_chunk` as the
     // hashed file name; the shell references `/client/<file>`.
@@ -2844,6 +2935,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     emit_sitemap_and_robots(&cfg, &tree, &dist, w)?;
     // §16.3: manifest.webmanifest, when a `manifest` block is configured.
     emit_web_manifest(&cfg, &dist, w)?;
+    // SPEC-21 / §16.6: the PWA service worker, when a manifest is configured.
+    emit_pwa_worker(&cfg, &dist, &client_manifest_snapshot, w)?;
     // §16.2: bundle configured font families into dist/fonts + fonts.css.
     emit_fonts(&cfg, &rootp, &dist, w)?;
     // §4.4: build a V8 startup snapshot from the server bundle.
