@@ -2122,6 +2122,146 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         persist_diagnostics(&rootp, &[e.0.clone()]);
         anyhow::anyhow!("{} {}", e.0.code, e.0.message)
     })?;
+    // SPEC-05 / §6.4: the forbidden-import guard. A `*.server.ts` module must
+    // never ship its real body into the client bundle. A legitimate import
+    // goes through the compiler's server-fn stub (a `serverFn(...)` export
+    // compiles to a `POST /_oxide/fn/<id>` stub with none of the module's own
+    // identifiers); a raw import leaks the body. So: collect every non-stub
+    // export name from every server module under the routes root, and fail if
+    // any appears in ANY emitted client chunk. This is metadata-independent —
+    // it reads the actual emitted bytes.
+    {
+        let mut server_exports: Vec<(std::path::PathBuf, String)> = Vec::new();
+        // Scan the WHOLE project, not just the routes dir: a server module
+        // can live anywhere (`src/posts.server.ts`). Skip build/vendor dirs.
+        let mut stack = vec![rootp.clone()];
+        while let Some(dir) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    let n = p.file_name().and_then(|x| x.to_str()).unwrap_or("");
+                    if !matches!(n, "node_modules" | "dist" | ".oxide" | "target" | ".git") {
+                        stack.push(p);
+                    }
+                    continue;
+                }
+                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if !(name.ends_with(".server.ts") || name.ends_with(".server.tsx")) {
+                    continue;
+                }
+                let src = std::fs::read_to_string(&p).unwrap_or_default();
+                for line in src.lines() {
+                    let t = line.trim();
+                    // Only a NON-FUNCTION `export const` is a leak risk — that
+                    // is a literal value (a secret, a base URL, a table). A
+                    // function export (`load`, `getPost`, a `serverFn`) never
+                    // ships its body to the client: loaders run server-side,
+                    // serverFns compile to stubs, and the compiler's cache
+                    // wrapper keeps the function on the server. Flagging a
+                    // generic name like `load` would false-positive on every
+                    // chunk (it is a common word).
+                    if let Some(rest) = t.strip_prefix("export const ") {
+                        if t.contains("serverFn(") {
+                            continue; // compiles to a stub — legitimate
+                        }
+                        let ident: String = rest
+                            .chars()
+                            .take_while(|c| c.is_alphanumeric() || *c == '_')
+                            .collect();
+                        // Build-time metadata the compiler consumes and never
+                        // ships as a body.
+                        if matches!(ident.as_str(), "config" | "prerender" | "generateParams" | "load") {
+                            continue;
+                        }
+                        // A function-ish RHS (`= async`, `= (`, `= function`,
+                        // `=>` on the same line) is not a literal export.
+                        let after = rest[ident.len()..].trim_start();
+                        let is_fn = after.starts_with("= async")
+                            || after.starts_with("= (")
+                            || after.starts_with("= function")
+                            || after.starts_with("=>")
+                            || after.contains("=> {");
+                        if !is_fn && ident.len() >= 3 {
+                            // The emitted chunk may inline the value, so look
+                            // for BOTH the identifier and any string literal
+                            // in the RHS (a base URL, a secret, a table).
+                            server_exports.push((p.clone(), ident.clone()));
+                            let rhs = after.splitn(2, '=').nth(1).unwrap_or("");
+                            let mut in_str = false;
+                            let mut lit = String::new();
+                            let mut quote = '\0';
+                            for ch in rhs.chars() {
+                                if !in_str && (ch == '\'' || ch == '"' || ch == '`') {
+                                    in_str = true;
+                                    quote = ch;
+                                } else if in_str && ch == quote {
+                                    if lit.len() >= 8 {
+                                        server_exports.push((p.clone(), lit.clone()));
+                                    }
+                                    in_str = false;
+                                    lit.clear();
+                                } else if in_str {
+                                    lit.push(ch);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Read every emitted client .js once.
+        let mut client_code: Vec<(String, String)> = Vec::new();
+        let mut stack = vec![client_out.clone()];
+        while let Some(dir) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                    continue;
+                }
+                if p.extension().and_then(|x| x.to_str()) != Some("js") {
+                    continue;
+                }
+                if let Ok(code) = std::fs::read_to_string(&p) {
+                    client_code.push((p.to_string_lossy().to_string(), code));
+                }
+            }
+        }
+        let mut hits: Vec<oxide_diagnostics::Diagnostic> = Vec::new();
+        for (sp, ident) in &server_exports {
+            for (chunk, code) in &client_code {
+                if code.contains(ident.as_str()) {
+                    hits.push(
+                        oxide_diagnostics::Diagnostic::error(
+                            "CMP-GUARD",
+                            format!(
+                                "server-only `{ident}` from `{}` shipped into client chunk `{chunk}`",
+                                sp.display()
+                            ),
+                        )
+                        .with_fix(
+                            "import it via a server function (§9.4) or move the value \
+                             into a non-server module",
+                        ),
+                    );
+                    break;
+                }
+            }
+        }
+        if !hits.is_empty() {
+            for d in &hits {
+                outln!(w, "error {}: {}", d.code, d.message);
+            }
+            persist_diagnostics(&rootp, &hits);
+            anyhow::bail!(
+                "{} server-only export(s) reached the client bundle (CMP-GUARD)",
+                hits.len()
+            );
+        }
+    }
+
     // SEC-08: fail the build if a secret-looking `process.env.*` read shipped
     // into the client bundle.
     let secret_hits = oxide_bundler::scan_client_secrets(&client_outcome.chunks);
