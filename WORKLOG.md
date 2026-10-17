@@ -3746,3 +3746,93 @@ request, and `/…/metrics` exposes `oxide_pool_workers`,
 PERF-02 complete: core-sized pools, route affinity, and observable pool
 health.
 
+
+## PERF-04 (slice 4) — streaming-preserving fill, complete
+
+The L0 fill buffered the whole body before the first byte, so the first
+cacheable hit paid full-render latency. Now the rendered body is **tee'd**:
+each chunk flushes to the client immediately AND accumulates; on stream end
+the sender is dropped FIRST (client sees EOF at once, not after the store),
+then the body is stored (live nonce → sentinel) and published for
+single-flight followers.
+
+The first attempt hung (10 s responses) because `tx` was held across the
+store; `drop(tx)` before storing fixed it. Verified end-to-end: first request
+`x-oxide-cache: L0-miss` with the body intact, a concurrent request
+`L0-coalesced`, and a settled request `L0-hit`. `oxide-cli --lib` 98;
+four-fixture gate PASS.
+
+PERF-04 is now complete: SWR stale-serve, ETag/304, single-flight, seeding,
+and a streaming fill.
+
+## PERF-04 (slice 4) — streaming-preserving fill, complete
+
+The L0 fill buffered the whole body before the first byte, so the first
+cacheable hit paid full-render latency. Now the rendered body is **tee'd**:
+each chunk flushes to the client immediately AND accumulates; on stream end
+the sender is dropped FIRST (client sees EOF at once, not after the store),
+then the body is stored (live nonce → sentinel) and published for
+single-flight followers.
+
+The first attempt hung (10 s responses) because `tx` was held across the
+store; `drop(tx)` before storing fixed it. Verified end-to-end: first request
+`x-oxide-cache: L0-miss` with the body intact, a concurrent request
+`L0-coalesced`, and a settled request `L0-hit`. `oxide-cli --lib` 98;
+four-fixture gate PASS.
+
+PERF-04 is now complete: SWR stale-serve, ETag/304, single-flight, seeding,
+and a streaming fill.
+
+## PERF-04 (slice 4) — streaming-preserving fill, complete
+
+The L0 fill buffered the whole body before the first byte, so the first
+cacheable hit paid full-render latency. Now the rendered body is **tee'd**:
+each chunk flushes to the client immediately AND accumulates; on stream end
+the sender is dropped FIRST (client sees EOF at once, not after the store),
+then the body is stored (live nonce → sentinel) and published for
+single-flight followers.
+
+The first attempt hung (10 s responses) because `tx` was held across the
+store; `drop(tx)` before storing fixed it. Verified end-to-end: first request
+`x-oxide-cache: L0-miss` with the body intact, a concurrent request
+`L0-coalesced`, and a settled request `L0-hit`. `oxide-cli --lib` 98;
+four-fixture gate PASS.
+
+PERF-04 is now complete: SWR stale-serve, ETag/304, single-flight, seeding,
+and a streaming fill.
+
+## PERF-04 (slice 4) — streaming-preserving fill, complete
+
+The L0 fill buffered the whole body before the first byte, so the first
+cacheable hit paid full-render latency. Now the rendered body is **tee'd**:
+each chunk flushes to the client immediately AND accumulates; on stream end
+the sender is dropped FIRST (client sees EOF at once, not after the store),
+then the body is stored (live nonce → sentinel) and published for
+single-flight followers.
+
+The first attempt hung (10 s responses) because `tx` was held across the
+store; `drop(tx)` before storing fixed it. Verified end-to-end: first request
+`x-oxide-cache: L0-miss` with the body intact, a concurrent request
+`L0-coalesced`, and a settled request `L0-hit`. `oxide-cli --lib` 98;
+four-fixture gate PASS.
+
+PERF-04 is now complete: SWR stale-serve, ETag/304, single-flight, seeding,
+and a streaming fill.
+
+## PERF-04 (slice 4) — streaming-preserving fill, complete
+
+The L0 fill buffered the whole body before the first byte, so the first
+cacheable hit paid full-render latency. Now the rendered body is **tee'd**:
+each chunk flushes to the client immediately AND accumulates; on stream end
+the sender is dropped FIRST (client sees EOF at once, not after the store),
+then the body is stored (live nonce → sentinel) and published for
+single-flight followers.
+
+The first attempt hung (10 s responses) because `tx` was held across the
+store; `drop(tx)` before storing fixed it. Verified end-to-end: first request
+`x-oxide-cache: L0-miss` with the body intact, a concurrent request
+`L0-coalesced`, and a settled request `L0-hit`. `oxide-cli --lib` 98;
+four-fixture gate PASS.
+
+PERF-04 is now complete: SWR stale-serve, ETag/304, single-flight, seeding,
+and a streaming fill.
