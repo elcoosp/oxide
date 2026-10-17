@@ -4164,3 +4164,99 @@ are what must not reach the browser.
 Verified: V8 gate PASS (build 0, 10/10, generateParams ×2, action), four
 fixtures PASS, and a real `API_BASE = 'https://internal.example'` import still
 fails the build (exit 1).
+
+## SPEC-24 — per-stage spans, JSON logs, redaction
+
+- **JSON logs**: `OXIDE_LOG=json` selects `tracing_subscriber::fmt(…).json()`
+  (flattened event); the default stays human-readable.
+- **Redaction**: `is_secret_key` (`cookie`/`authorization`/`set-cookie`/dev
+  token, or any key containing `secret`/`token`/`password`/`api_key`) — a
+  finished response emits one request log line with those header values
+  replaced by `[redacted]`.
+- **Stage span**: `oxide.match` wraps the native prefix (routing + rules);
+  the dispatch delegate keeps its `total` timing.
+
+Verified: a `GET` carrying `cookie: session=SECRET123` + `authorization:
+Bearer TOPSECRET` produces a JSON request line with **zero** occurrences of
+either secret. (The request headers themselves aren't logged on the success
+path; the response headers — which is what `log_request` covers — carry none.)
+
+## SPEC-24 — per-stage spans, JSON logs, redaction
+
+- **JSON logs**: `OXIDE_LOG=json` selects `tracing_subscriber::fmt(…).json()`
+  (flattened event); the default stays human-readable.
+- **Redaction**: `is_secret_key` (`cookie`/`authorization`/`set-cookie`/dev
+  token, or any key containing `secret`/`token`/`password`/`api_key`) — a
+  finished response emits one request log line with those header values
+  replaced by `[redacted]`.
+- **Stage span**: `oxide.match` wraps the native prefix (routing + rules);
+  the dispatch delegate keeps its `total` timing.
+
+Verified: a `GET` carrying `cookie: session=SECRET123` + `authorization:
+Bearer TOPSECRET` produces a JSON request line with **zero** occurrences of
+either secret. (The request headers themselves aren't logged on the success
+path; the response headers — which is what `log_request` covers — carry none.)
+
+## SPEC-24 — per-stage spans, JSON logs, redaction
+
+- **JSON logs**: `OXIDE_LOG=json` selects `tracing_subscriber::fmt(…).json()`
+  (flattened event); the default stays human-readable.
+- **Redaction**: `is_secret_key` (`cookie`/`authorization`/`set-cookie`/dev
+  token, or any key containing `secret`/`token`/`password`/`api_key`) — a
+  finished response emits one request log line with those header values
+  replaced by `[redacted]`.
+- **Stage span**: `oxide.match` wraps the native prefix (routing + rules);
+  the dispatch delegate keeps its `total` timing.
+
+Verified: a `GET` carrying `cookie: session=SECRET123` + `authorization:
+Bearer TOPSECRET` produces a JSON request line with **zero** occurrences of
+either secret. (The request headers themselves aren't logged on the success
+path; the response headers — which is what `log_request` covers — carry none.)
+
+## SPEC-24 — per-stage spans, JSON logs, redaction
+
+- **JSON logs**: `OXIDE_LOG=json` selects `tracing_subscriber::fmt(…).json()`
+  (flattened event); the default stays human-readable.
+- **Redaction**: `is_secret_key` (`cookie`/`authorization`/`set-cookie`/dev
+  token, or any key containing `secret`/`token`/`password`/`api_key`) — a
+  finished response emits one request log line with those header values
+  replaced by `[redacted]`.
+- **Stage span**: `oxide.match` wraps the native prefix (routing + rules);
+  the dispatch delegate keeps its `total` timing.
+
+Verified: a `GET` carrying `cookie: session=SECRET123` + `authorization:
+Bearer TOPSECRET` produces a JSON request line with **zero** occurrences of
+either secret. (The request headers themselves aren't logged on the success
+path; the response headers — which is what `log_request` covers — carry none.)
+
+## SPEC-24 — per-stage spans, JSON logs, redaction
+
+- **JSON logs**: `OXIDE_LOG=json` selects `tracing_subscriber::fmt(…).json()`
+  (flattened event); the default stays human-readable.
+- **Redaction**: `is_secret_key` (`cookie`/`authorization`/`set-cookie`/dev
+  token, or any key containing `secret`/`token`/`password`/`api_key`) — a
+  finished response emits one request log line with those header values
+  replaced by `[redacted]`.
+- **Stage span**: `oxide.match` wraps the native prefix (routing + rules);
+  the dispatch delegate keeps its `total` timing.
+
+Verified: a `GET` carrying `cookie: session=SECRET123` + `authorization:
+Bearer TOPSECRET` produces a JSON request line with **zero** occurrences of
+either secret. (The request headers themselves aren't logged on the success
+path; the response headers — which is what `log_request` covers — carry none.)
+
+## SPEC-24 — per-stage spans, JSON logs, redaction
+
+- **JSON logs**: `OXIDE_LOG=json` selects `tracing_subscriber::fmt(…).json()`
+  (flattened event); the default stays human-readable.
+- **Redaction**: `is_secret_key` (`cookie`/`authorization`/`set-cookie`/dev
+  token, or any key containing `secret`/`token`/`password`/`api_key`) — a
+  finished response emits one request log line with those header values
+  replaced by `[redacted]`.
+- **Stage span**: `oxide.match` wraps the native prefix (routing + rules);
+  the dispatch delegate keeps its `total` timing.
+
+Verified: a `GET` carrying `cookie: session=SECRET123` + `authorization:
+Bearer TOPSECRET` produces a JSON request line with **zero** occurrences of
+either secret. (The request headers themselves aren't logged on the success
+path; the response headers — which is what `log_request` covers — carry none.)
