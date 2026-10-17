@@ -11,7 +11,7 @@
 pub mod metrics;
 pub mod page_renderer;
 pub mod loader;
-pub use page_renderer::{EndpointDispatcher, EndpointRunError, EndpointRunResult, PageRenderInput, PageRenderer, RenderStream};
+pub use page_renderer::{EndpointDispatcher, EndpointRunError, EndpointRunResult, MiddlewareDispatcher, MiddlewareRunError, MiddlewareRunResult, PageRenderInput, PageRenderer, RenderStream};
 pub use loader::{LoaderOutput, LoaderRunInput, LoaderRunner};
 pub mod session;
 pub use session::{Session, SessionCodec};
