@@ -9,6 +9,8 @@
 // is behind a runtime guard; the module has no top-level side effects.
 
 import { hydrateIslands, type IslandsOptions } from './islands.ts'
+import { createRouter } from './router.ts'
+import { decodeOdf } from './odf-decode.ts'
 import { loadScripts } from './scripts.ts'
 import type { FrameworkAdapter } from '../types.ts'
 
@@ -86,6 +88,95 @@ export function boot(): void {
   } else {
     run()
   }
+}
+
+/**
+ * Boot the client router (§8.4): hydrate the SSR root from `window.__oxide`,
+ * then attach `createRouter` so same-origin link clicks navigate via
+ * `/__data` instead of a full page load.
+ *
+ * Guarded and idempotent:
+ * - no `document` / no adapter / no `#root` / no `window.__oxide` → no-op;
+ * - a hydration failure logs and leaves the SSR markup untouched;
+ * - `data` in `window.__oxide` is base64 ODF, decoded via `decodeOdf`; a
+ *   decode failure falls back to the raw string rather than throwing.
+ *
+ * Returns a disposer (the router's `dispose`), or a no-op.
+ */
+export function bootWithRouter(
+  adapter: FrameworkAdapter,
+  opts: { doc?: Document } = {},
+): () => void {
+  const doc = opts.doc ?? (globalThis as { document?: Document }).document
+  if (!doc) return () => {}
+  const w = globalThis as {
+    __oxide?: { route?: string; data?: string }
+    __oxideBoot?: BootState
+    location?: { pathname: string; search: string }
+  }
+
+  // (a) Root hydration — REQUIRED before the router can do anything useful.
+  // On a click the router calls `adapter.update(input)`, which on the client
+  // side resolves to the module-level `active?.update(input)` in
+  // `packages/react/src/hydrate.ts` — and `active` is only set by
+  // `hydrate()` or `mount()`. Without this step SPA navigation changes the
+  // URL but leaves the DOM untouched (worse than no router at all).
+  //
+  // Root hydration does NOT rewrite `#root.innerHTML` when the SSR markup is
+  // already present (`createClientRoot` only renders when the root is empty
+  // and otherwise just binds handlers), so `<ox-island>` hosts survive and
+  // the island scan below still finds them.
+  let hydratedRoot = false
+  const root = doc.getElementById?.('root')
+  const payload = w.__oxide
+  if (root && payload) {
+    let data: unknown = {}
+    if (typeof payload.data === 'string' && payload.data.length > 0) {
+      try {
+        const bin = atob(payload.data)
+        const bytes = new Uint8Array(bin.length)
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+        const decoded = decodeOdf(bytes) as Record<string, unknown>
+        data = decoded && typeof decoded === 'object' && 'data' in decoded ? decoded.data : decoded
+      } catch (e) {
+        // Not fatal: the page still hydrates with empty data; navigation works.
+        console.warn?.('oxide: window.__oxide.data decode failed; hydrating with {}', e)
+      }
+    }
+    const input = {
+      route: payload.route ?? '/',
+      url: (w.location?.pathname ?? '/') + (w.location?.search ?? ''),
+      params: {} as Record<string, string>,
+      data,
+    }
+    try {
+      adapter.hydrate(root, input as never)
+      hydratedRoot = true
+    } catch (e) {
+      console.error?.('oxide: root hydration failed; SPA router not attached', e)
+    }
+  }
+
+  // (b) Islands + deferred scripts — the same work `boot()` did, so
+  //     `bootWithRouter` is a strict superset. A page with no `#root` /
+  //     `window.__oxide` (pure SPA, or non-SSR HTML) still gets island
+  //     hydration here.
+  const loadChunk =
+    w.__oxideBoot?.loadChunk ?? (async (c: string) => import(/* @vite-ignore */ c))
+  try {
+    hydrateIslands({ doc: doc as never, adapter: adapter as never, loadChunk })
+    loadScripts({ doc: doc as never })
+  } catch (e) {
+    console.error?.('oxide: island hydration failed', e)
+  }
+
+  // (c) Router LAST — only when we actually hydrated a root. Otherwise leave
+  //     the page on plain anchor navigation.
+  if (!hydratedRoot) return () => {}
+  const router = createRouter({
+    adapter: adapter as unknown as { update(i: unknown): void },
+  } as never)
+  return router.attach()
 }
 
 /**
