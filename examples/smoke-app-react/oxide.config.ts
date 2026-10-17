@@ -29,6 +29,9 @@ import ErrorPage from './src/routes/error.tsx'
 // §10.2 step 5 smoke fixture: a page that throws on purpose.
 // @ts-expect-error
 import Boom from './src/routes/boom/page.tsx'
+// §8.1 middleware.ts smoke fixture: a page whose loader reads `locals`.
+// @ts-expect-error
+import Greeting from './src/routes/greeting/page.tsx'
 
 const components: Record<string, unknown> = {
   'routes/index': Home,
@@ -37,6 +40,7 @@ const components: Record<string, unknown> = {
   'routes/not-found': NotFound,
   'routes/error': ErrorPage,
   'routes/boom': Boom,
+  'routes/greeting': Greeting,
 }
 
 export default defineConfig({
