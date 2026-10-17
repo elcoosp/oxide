@@ -701,7 +701,7 @@ function decodeURIComponentSafe(s) {
 }
 
 async function dispatchLoaderRun(id, input) {
-  const { module_path, route, params, url, method, headers } = input.payload ?? {};
+  const { module_path, route, params, url, method, headers, locals: inputLocals } = input.payload ?? {};
   if (typeof module_path !== "string" || module_path.length === 0) {
     callErr(id, "JSH-LOADER", "loader:run requires a `module_path` string");
     return;
@@ -795,7 +795,10 @@ async function dispatchLoaderRun(id, input) {
         url: url ?? "/",
         headers: Array.isArray(headers) ? headers : [],
       },
-      locals: {},
+      // §8.1 / §9.1: request-scoped locals injected by middleware. Absent
+      // (empty object) when the project has no middleware; present when a
+      // middleware returned `{ locals: {...} }`.
+      locals: inputLocals && typeof inputLocals === "object" ? inputLocals : {},
       cookies,
       setHeaders,
       parent,
