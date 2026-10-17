@@ -3385,6 +3385,58 @@ fn build_dispatch(
                 ),
                 None => (None, None, std::collections::BTreeMap::new(), false, None),
             };
+
+            // §10.2 step 5 / §8.3: an unmatched URL gets a 404 status (the
+            // `status` label above). To render a user-visible 404 page the
+            // request must resolve to the project's `not-found.tsx` route id
+            // (with its layout chain), not to a placeholder component that
+            // `componentFor` cannot find. Precompute both here, before
+            // `matched` is consumed, so the async render block below can use
+            // them.
+            let (unmatched_route_id, unmatched_layout_ids): (Option<String>, Vec<String>) = {
+                let not_found_entry = tree
+                    .entries
+                    .iter()
+                    .find(|e| matches!(e.kind, oxide_router::RouteKind::NotFound));
+                match not_found_entry {
+                    Some(e) => {
+                        let not_found_id = e
+                            .id
+                            .0
+                            .strip_suffix("/not-found")
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| e.id.0.clone());
+                        // The layout chain that wraps the not-found route.
+                        // Same rule as the page `layout_ids` above: any layout
+                        // whose base directory is a prefix of the route id.
+                        let mut chain: Vec<(String, usize)> = Vec::new();
+                        for candidate in &tree.entries {
+                            if !matches!(candidate.kind, oxide_router::RouteKind::Layout) {
+                                continue;
+                            }
+                            let layout_base = candidate
+                                .id
+                                .0
+                                .strip_suffix("/layout")
+                                .unwrap_or(&candidate.id.0);
+                            let wraps = if layout_base == "routes" || layout_base.is_empty() {
+                                true
+                            } else {
+                                e.id.0.starts_with(&format!("{layout_base}/"))
+                            };
+                            if wraps {
+                                chain.push((candidate.id.0.clone(), layout_base.len()));
+                            }
+                        }
+                        chain.sort_by_key(|(_, len)| *len);
+                        (
+                            Some(not_found_id),
+                            chain.into_iter().map(|(id, _)| id).collect(),
+                        )
+                    }
+                    None => (None, Vec::new()),
+                }
+            };
             // The URL pattern (`pattern_of(segments)`) is for metrics labels;
             // the ROUTE ID is what the framework adapter's `componentFor`
             // expects. Two conventions to reconcile here:
@@ -3725,11 +3777,17 @@ fn build_dispatch(
                 let stage_render_start = std::time::Instant::now();
 
                 if let Some(renderer) = page_renderer.as_ref() {
-                    // Route ID — the framework adapter's `componentFor`
-                    // receives this, not the URL pattern.
-                    let route_for_render = route_id_for_render
-                        .clone()
-                        .unwrap_or_else(|| "_unmatched".to_string());
+                    // §10.2 step 5: an unmatched URL is a 404 with the
+                    // project's `not-found.tsx` as the body, when one exists.
+                    // Matched routes resolve to their own id + layout chain;
+                    // only the no-match branch substitutes the not-found id.
+                    let (route_for_render, effective_layouts) = match &route_id_for_render {
+                        Some(id) => (id.clone(), layout_ids.clone()),
+                        None => match &unmatched_route_id {
+                            Some(nf) => (nf.clone(), unmatched_layout_ids.clone()),
+                            None => ("_unmatched".to_string(), Vec::new()),
+                        },
+                    };
                     let mut input = oxide_server::PageRenderInput::new(
                         route_for_render,
                         req_owned.url.clone(),
@@ -3739,7 +3797,7 @@ fn build_dispatch(
                     // §8.2: hand the layout chain to the adapter so it can
                     // nest the page. The adapter renders
                     // `L1( L2( ...( page ) ) )` using `componentFor(layoutId)`.
-                    input.layouts = layout_ids.clone();
+                    input.layouts = effective_layouts;
                     match renderer.render_streaming(input).await {
                         Ok(render_stream) => {
                             metrics.observe(&label, started.elapsed(), 200);
