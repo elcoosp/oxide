@@ -420,3 +420,112 @@ impl ServerFnHost {
             })
     }
 }
+
+// ---------------------------------------------------------------------------
+// Endpoint host (§8.1 route.ts, §10.2 step 7)
+// ---------------------------------------------------------------------------
+
+/// A host for `endpoint:run`. Loads the route's `route.ts`, calls the
+/// method handler in a worker, and returns the raw response (status,
+/// headers, body bytes).
+pub struct EndpointHost {
+    pool: Arc<dyn Pool>,
+}
+
+/// The result of a `route.ts` call: status, headers, raw body. Body is raw
+/// bytes so a route.ts can return binary (an image proxy, a CSV download).
+#[derive(Debug, Clone)]
+pub struct EndpointOutcome {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+impl EndpointHost {
+    pub fn new(pool: Arc<dyn Pool>) -> Self {
+        Self { pool }
+    }
+
+    /// Run `route.ts` for `module_path` with the method/handler convention.
+    /// The body is base64-encoded in the payload — a route.ts can be an
+    /// upload proxy, so the wire must carry arbitrary bytes.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run(
+        &self,
+        module_path: &str,
+        method: &str,
+        url: &str,
+        params: &serde_json::Map<String, Value>,
+        headers: &[(String, String)],
+        body: &[u8],
+    ) -> Result<EndpointOutcome> {
+        use base64::Engine as _;
+        let body_b64 = if body.is_empty() {
+            String::new()
+        } else {
+            base64::engine::general_purpose::STANDARD.encode(body)
+        };
+        let payload = serde_json::json!({
+            "module_path": module_path,
+            "method": method,
+            "url": url,
+            "params": params,
+            "headers": headers,
+            "body_b64": body_b64,
+        });
+        let call_input = CallInput {
+            payload,
+            headers: Default::default(),
+            has_body: !body.is_empty(),
+            request_id: format!("endpoint:run:{method}"),
+            route: None,
+        };
+        let entry = EntryRef {
+            kind: "endpoint:run".into(),
+            module: module_path.to_string(),
+            export: method.to_uppercase(),
+        };
+        let mut stream = self.pool.call(entry, call_input).await?;
+        let bytes = stream.collect().await?;
+        let v: Value = serde_json::from_slice(&bytes).map_err(|e| {
+            crate::err("JSH-ENDPOINT", format!("endpoint:run returned invalid JSON: {e}"))
+        })?;
+        if let Some(err_msg) = v.get("__oxide_error").and_then(|x| x.as_str()) {
+            return Err(crate::err("JSH-ENDPOINT", err_msg.to_string()));
+        }
+        let status = v.get("status").and_then(|x| x.as_u64()).unwrap_or(200) as u16;
+        let headers_out: Vec<(String, String)> = v
+            .get("headers")
+            .and_then(|x| x.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|pair| {
+                        let p = pair.as_array()?;
+                        let k = p.first()?.as_str()?.to_string();
+                        let val = p.get(1)?.as_str()?.to_string();
+                        Some((k, val))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let body_b64_out = v
+            .get("body_b64")
+            .and_then(|x| x.as_str())
+            .unwrap_or("");
+        let body = if body_b64_out.is_empty() {
+            Vec::new()
+        } else {
+            base64::engine::general_purpose::STANDARD
+                .decode(body_b64_out)
+                .map_err(|e| {
+                    crate::err("JSH-ENDPOINT", format!("endpoint body_b64 invalid: {e}"))
+                })?
+        };
+        Ok(EndpointOutcome {
+            status,
+            headers: headers_out,
+            body,
+        })
+    }
+}
+
