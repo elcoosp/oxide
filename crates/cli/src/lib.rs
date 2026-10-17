@@ -1890,6 +1890,7 @@ fn inject_island_boot_script(shell: &str, boot_url: &str, nonce: &str) -> String
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 async fn write_prerender(
     dist: &Path,
     rel: &str,
@@ -1902,6 +1903,10 @@ async fn write_prerender(
     loader_runner: Option<&std::sync::Arc<dyn oxide_server::LoaderRunner>>,
     module_path: Option<&Path>,
     boot_script_url: Option<&str>,
+    // §8.2: layout chain for this route, outermost first. Populated by the
+    // caller from `MatchInfo.layout_chain`; the adapter nests the page
+    // inside them. Empty means "no layouts wrap this page".
+    layouts: &[String],
 ) -> anyhow::Result<String> {
     // §9.1: run the loader for this route (if the module exists and a
     // loader runner is attached) to obtain the data the render phase
@@ -1976,6 +1981,10 @@ async fn write_prerender(
             input.params.insert(k.clone(), v.clone());
         }
         input.data = data.clone();
+        // §8.2: hand the layout chain to the adapter so it can nest the page.
+        // The prerender path is separate from the live-dispatch path; both
+        // populate this field from the same `MatchInfo.layout_chain`.
+        input.layouts = layouts.to_vec();
         renderer
             .render(input)
             .await
@@ -2623,6 +2632,38 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         let pattern = pattern_of(&e.segments);
         let nonce_for = nonce.clone();
         let route_id = e.id.0.clone();
+        // §8.2: the layout chain for this route. `e` is a scanned entry;
+        // asking the tree to match this route's own id via a synthetic path
+        // is overkill — compute the chain directly from the entry list using
+        // the same rule the matcher uses (any layout whose id is a prefix
+        // directory of this route id).
+        let layout_ids: Vec<String> = {
+            let mut chain: Vec<(String, usize)> = Vec::new();
+            for candidate in &tree.entries {
+                if !matches!(candidate.kind, oxide_router::RouteKind::Layout) {
+                    continue;
+                }
+                // A layout `routes/<a>/<b>/layout` wraps any route whose id
+                // starts with `routes/<a>/<b>/`. The root layout
+                // `routes/layout` wraps everything.
+                let layout_base = candidate
+                    .id
+                    .0
+                    .strip_suffix("/layout")
+                    .unwrap_or(&candidate.id.0);
+                let wraps = if layout_base == "routes" || layout_base.is_empty() {
+                    true
+                } else {
+                    route_id.starts_with(&format!("{layout_base}/"))
+                };
+                if wraps {
+                    chain.push((candidate.id.0.clone(), layout_base.len()));
+                }
+            }
+            // Outermost first: shortest base wins.
+            chain.sort_by_key(|(_, len)| *len);
+            chain.into_iter().map(|(id, _)| id).collect()
+        };
         // §9.1: if the route declares a server module, resolve its path so
         // the loader can run during prerender. Uses the same
         // `page.server.ts` sibling convention as build_dispatch.
@@ -2666,6 +2707,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                         stack.loader_runner.as_ref(),
                         module_path.as_deref(),
                         boot_script_url.as_deref(),
+                        &layout_ids,
                     )
                     .await?;
                     seed_bodies.push((
@@ -2743,6 +2785,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                                 stack.loader_runner.as_ref(),
                                 module_path.as_deref(),
                                 boot_script_url.as_deref(),
+                                &layout_ids,
                             )
                             .await?;
                             seed_bodies.push((
@@ -2823,6 +2866,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     stack.loader_runner.as_ref(),
                     module_path.as_deref(),
                     boot_script_url.as_deref(),
+                    &layout_ids,
                 )
                 .await?;
                 seed_bodies.push((
