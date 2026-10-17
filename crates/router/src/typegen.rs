@@ -57,7 +57,7 @@ fn ts_lit(pattern: &str) -> String {
     }
 }
 
-pub(crate) fn typegen_impl(tree: &RouteTree, out_dir: &Path) -> Result<String> {
+pub(crate) fn typegen_impl(tree: &RouteTree, out_dir: &Path, routes_root: Option<&Path>) -> Result<String> {
     let types_dir = out_dir.join(".oxide").join("types");
     fs::create_dir_all(&types_dir).map_err(|e| {
         ferr(
@@ -129,7 +129,12 @@ pub(crate) fn typegen_impl(tree: &RouteTree, out_dir: &Path) -> Result<String> {
             .iter()
             .find(|e| pattern_encoded(&e.segments) == *encoded)
             .and_then(|e| {
-                let server = e.file.with_file_name("page.server.ts");
+                // `RouteEntry.file` is routes-root-relative; join the root.
+                let rel = e.file.with_file_name("page.server.ts");
+                let server = match routes_root {
+                    Some(root) => root.join(&rel),
+                    None => rel,
+                };
                 std::fs::read_to_string(&server).ok()
             })
             .and_then(|src| {

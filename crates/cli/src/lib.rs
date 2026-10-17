@@ -2846,7 +2846,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // route tree so `href()`/`PageProps` stay in sync with the routes without
     // a separate `oxide routes` run. A typegen failure is a warning, not a
     // build failure — the app still ships.
-    if let Err(e) = tree.typegen(&rootp) {
+    if let Err(e) = tree.typegen_with_root(&rootp, &rootp.join(&cfg.routes.dir)) {
         outln!(w, "warn: typegen failed ({} {}); routes.d.ts is stale", e.0.code, e.0.message);
     }
 

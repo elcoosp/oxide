@@ -189,7 +189,14 @@ impl RouteTree {
     /// Also writes a machine-readable `.oxide/types/routes.json` manifest used by
     /// `oxide routes` (§19.1). Returns the path of the generated `.d.ts`.
     pub fn typegen(&self, out_dir: &Path) -> Result<String> {
-        typegen::typegen_impl(self, out_dir)
+        typegen::typegen_impl(self, out_dir, None)
+    }
+
+    /// §8.3 like [`typegen`](Self::typegen), but with the routes root so a
+    /// per-route `page.server.ts` `LoaderData` annotation can be read (the
+    /// entry's `file` is routes-root-relative).
+    pub fn typegen_with_root(&self, out_dir: &Path, routes_root: &Path) -> Result<String> {
+        typegen::typegen_impl(self, out_dir, Some(routes_root))
     }
 
     /// Sorted deterministic listing for `oxide routes` (§19.1) incl. inferred modes.
