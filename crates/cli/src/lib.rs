@@ -3362,6 +3362,21 @@ fn build_dispatch(
                 .as_deref()
                 .map(|s| s.strip_suffix("/page").unwrap_or(s).to_string());
 
+            // §8.2 / §16.3: precompute the layout chain (outermost first)
+            // before `matched` is dropped. Ids carry the role suffix the
+            // scanner emits (`routes/layout`), which is also the key
+            // adapters use for `componentFor` (same convention as the page
+            // id after `/page` is stripped). An unmatched URL gets an empty
+            // chain.
+            let layout_ids: Vec<String> = match &matched {
+                Some(m) => m
+                    .layout_chain
+                    .iter()
+                    .map(|id| id.0.clone())
+                    .collect(),
+                None => Vec::new(),
+            };
+
             // §9.3: a form POST to `?/<name>` is an action invocation. Only a
             // POST with a named action on a route that has a server module is
             // eligible; everything else falls through to the loader/render path.
@@ -3677,6 +3692,10 @@ fn build_dispatch(
                     );
                     input.params = params;
                     input.data = data;
+                    // §8.2: hand the layout chain to the adapter so it can
+                    // nest the page. The adapter renders
+                    // `L1( L2( ...( page ) ) )` using `componentFor(layoutId)`.
+                    input.layouts = layout_ids.clone();
                     match renderer.render_streaming(input).await {
                         Ok(render_stream) => {
                             metrics.observe(&label, started.elapsed(), 200);
