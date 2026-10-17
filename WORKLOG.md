@@ -3784,3 +3784,133 @@ dispatch API it does not have.
 This is a documented limitation, not a TODO: the streaming path that matters
 (TTFB before the render completes) works.
 
+
+## SPEC-05 — §6.4 forbidden-import guard on the build path
+
+`compiler::guard_server_only` existed with zero callers. Wiring it exposed two
+real problems:
+
+1. **`BundleOutput.modules` was empty** in the rolldown backend, so any
+   graph-based guard got an empty graph. Populated it from the union of chunk
+   module ids (with `server_only` set for `*.server.ts`).
+2. **Graph-based checking can't distinguish a stub from a leak.** A
+   `serverFn(...)` export legitimately appears in a client chunk (compiled to
+   `POST /_oxide/fn/<id>`), and function exports like `load` are common words
+   that appear everywhere. The real invariant is about *emitted bytes*.
+
+Final design: scan every `*.server.ts` under the project root for
+**non-function `export const` literals** (skipping `serverFn`, `config`,
+`load`, `prerender`, `generateParams`), then fail the build if the identifier
+**or any string literal ≥ 8 chars in its RHS** appears in any emitted client
+`.js`. Rolldown inlines literals, so the RHS is what actually leaks.
+
+Verified both directions:
+- four fixtures PASS (no false positive on legitimate stubs/loaders);
+- a client component importing `export const API_BASE = 'https://internal.example'`
+  from a `.server.ts` **fails the build** with
+  `CMP-GUARD: server-only 'https://internal.example' … shipped into client chunk
+  dist/client/routes/index/page.js`.
+
+## SPEC-05 — §6.4 forbidden-import guard on the build path
+
+`compiler::guard_server_only` existed with zero callers. Wiring it exposed two
+real problems:
+
+1. **`BundleOutput.modules` was empty** in the rolldown backend, so any
+   graph-based guard got an empty graph. Populated it from the union of chunk
+   module ids (with `server_only` set for `*.server.ts`).
+2. **Graph-based checking can't distinguish a stub from a leak.** A
+   `serverFn(...)` export legitimately appears in a client chunk (compiled to
+   `POST /_oxide/fn/<id>`), and function exports like `load` are common words
+   that appear everywhere. The real invariant is about *emitted bytes*.
+
+Final design: scan every `*.server.ts` under the project root for
+**non-function `export const` literals** (skipping `serverFn`, `config`,
+`load`, `prerender`, `generateParams`), then fail the build if the identifier
+**or any string literal ≥ 8 chars in its RHS** appears in any emitted client
+`.js`. Rolldown inlines literals, so the RHS is what actually leaks.
+
+Verified both directions:
+- four fixtures PASS (no false positive on legitimate stubs/loaders);
+- a client component importing `export const API_BASE = 'https://internal.example'`
+  from a `.server.ts` **fails the build** with
+  `CMP-GUARD: server-only 'https://internal.example' … shipped into client chunk
+  dist/client/routes/index/page.js`.
+
+## SPEC-05 — §6.4 forbidden-import guard on the build path
+
+`compiler::guard_server_only` existed with zero callers. Wiring it exposed two
+real problems:
+
+1. **`BundleOutput.modules` was empty** in the rolldown backend, so any
+   graph-based guard got an empty graph. Populated it from the union of chunk
+   module ids (with `server_only` set for `*.server.ts`).
+2. **Graph-based checking can't distinguish a stub from a leak.** A
+   `serverFn(...)` export legitimately appears in a client chunk (compiled to
+   `POST /_oxide/fn/<id>`), and function exports like `load` are common words
+   that appear everywhere. The real invariant is about *emitted bytes*.
+
+Final design: scan every `*.server.ts` under the project root for
+**non-function `export const` literals** (skipping `serverFn`, `config`,
+`load`, `prerender`, `generateParams`), then fail the build if the identifier
+**or any string literal ≥ 8 chars in its RHS** appears in any emitted client
+`.js`. Rolldown inlines literals, so the RHS is what actually leaks.
+
+Verified both directions:
+- four fixtures PASS (no false positive on legitimate stubs/loaders);
+- a client component importing `export const API_BASE = 'https://internal.example'`
+  from a `.server.ts` **fails the build** with
+  `CMP-GUARD: server-only 'https://internal.example' … shipped into client chunk
+  dist/client/routes/index/page.js`.
+
+## SPEC-05 — §6.4 forbidden-import guard on the build path
+
+`compiler::guard_server_only` existed with zero callers. Wiring it exposed two
+real problems:
+
+1. **`BundleOutput.modules` was empty** in the rolldown backend, so any
+   graph-based guard got an empty graph. Populated it from the union of chunk
+   module ids (with `server_only` set for `*.server.ts`).
+2. **Graph-based checking can't distinguish a stub from a leak.** A
+   `serverFn(...)` export legitimately appears in a client chunk (compiled to
+   `POST /_oxide/fn/<id>`), and function exports like `load` are common words
+   that appear everywhere. The real invariant is about *emitted bytes*.
+
+Final design: scan every `*.server.ts` under the project root for
+**non-function `export const` literals** (skipping `serverFn`, `config`,
+`load`, `prerender`, `generateParams`), then fail the build if the identifier
+**or any string literal ≥ 8 chars in its RHS** appears in any emitted client
+`.js`. Rolldown inlines literals, so the RHS is what actually leaks.
+
+Verified both directions:
+- four fixtures PASS (no false positive on legitimate stubs/loaders);
+- a client component importing `export const API_BASE = 'https://internal.example'`
+  from a `.server.ts` **fails the build** with
+  `CMP-GUARD: server-only 'https://internal.example' … shipped into client chunk
+  dist/client/routes/index/page.js`.
+
+## SPEC-05 — §6.4 forbidden-import guard on the build path
+
+`compiler::guard_server_only` existed with zero callers. Wiring it exposed two
+real problems:
+
+1. **`BundleOutput.modules` was empty** in the rolldown backend, so any
+   graph-based guard got an empty graph. Populated it from the union of chunk
+   module ids (with `server_only` set for `*.server.ts`).
+2. **Graph-based checking can't distinguish a stub from a leak.** A
+   `serverFn(...)` export legitimately appears in a client chunk (compiled to
+   `POST /_oxide/fn/<id>`), and function exports like `load` are common words
+   that appear everywhere. The real invariant is about *emitted bytes*.
+
+Final design: scan every `*.server.ts` under the project root for
+**non-function `export const` literals** (skipping `serverFn`, `config`,
+`load`, `prerender`, `generateParams`), then fail the build if the identifier
+**or any string literal ≥ 8 chars in its RHS** appears in any emitted client
+`.js`. Rolldown inlines literals, so the RHS is what actually leaks.
+
+Verified both directions:
+- four fixtures PASS (no false positive on legitimate stubs/loaders);
+- a client component importing `export const API_BASE = 'https://internal.example'`
+  from a `.server.ts` **fails the build** with
+  `CMP-GUARD: server-only 'https://internal.example' … shipped into client chunk
+  dist/client/routes/index/page.js`.
