@@ -3841,3 +3841,68 @@ Verified: `oxide-core-wasm` 14 tests, including
 - the reference BLAKE3 vector for `"abc"`
   (`6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85`).
 
+
+## SPEC-25 — per-route + total budget enforcement
+
+`oxide analyze` used a single budget (`routeJs` falling back to `clientJs`) for
+every row, so the two budgets were one number. Now:
+- `routeJs` is checked per route (the route's own JS), and
+- `clientJs` is checked on the **total** emitted client JS (the union of every
+  `dist/client/**/*.js` file — summing per-route numbers would double-count
+  shared chunks).
+
+Both failures set the non-zero exit. Verified: with `routeJs: '1kb'` every
+route is OVER and `analyze` exits 1; a generous budget exits 0. The CI gate
+(`benchmarks/gate.sh` + `analyze`) already runs on the four fixtures.
+
+## SPEC-25 — per-route + total budget enforcement
+
+`oxide analyze` used a single budget (`routeJs` falling back to `clientJs`) for
+every row, so the two budgets were one number. Now:
+- `routeJs` is checked per route (the route's own JS), and
+- `clientJs` is checked on the **total** emitted client JS (the union of every
+  `dist/client/**/*.js` file — summing per-route numbers would double-count
+  shared chunks).
+
+Both failures set the non-zero exit. Verified: with `routeJs: '1kb'` every
+route is OVER and `analyze` exits 1; a generous budget exits 0. The CI gate
+(`benchmarks/gate.sh` + `analyze`) already runs on the four fixtures.
+
+## SPEC-25 — per-route + total budget enforcement
+
+`oxide analyze` used a single budget (`routeJs` falling back to `clientJs`) for
+every row, so the two budgets were one number. Now:
+- `routeJs` is checked per route (the route's own JS), and
+- `clientJs` is checked on the **total** emitted client JS (the union of every
+  `dist/client/**/*.js` file — summing per-route numbers would double-count
+  shared chunks).
+
+Both failures set the non-zero exit. Verified: with `routeJs: '1kb'` every
+route is OVER and `analyze` exits 1; a generous budget exits 0. The CI gate
+(`benchmarks/gate.sh` + `analyze`) already runs on the four fixtures.
+
+## SPEC-25 — per-route + total budget enforcement
+
+`oxide analyze` used a single budget (`routeJs` falling back to `clientJs`) for
+every row, so the two budgets were one number. Now:
+- `routeJs` is checked per route (the route's own JS), and
+- `clientJs` is checked on the **total** emitted client JS (the union of every
+  `dist/client/**/*.js` file — summing per-route numbers would double-count
+  shared chunks).
+
+Both failures set the non-zero exit. Verified: with `routeJs: '1kb'` every
+route is OVER and `analyze` exits 1; a generous budget exits 0. The CI gate
+(`benchmarks/gate.sh` + `analyze`) already runs on the four fixtures.
+
+## SPEC-25 — per-route + total budget enforcement
+
+`oxide analyze` used a single budget (`routeJs` falling back to `clientJs`) for
+every row, so the two budgets were one number. Now:
+- `routeJs` is checked per route (the route's own JS), and
+- `clientJs` is checked on the **total** emitted client JS (the union of every
+  `dist/client/**/*.js` file — summing per-route numbers would double-count
+  shared chunks).
+
+Both failures set the non-zero exit. Verified: with `routeJs: '1kb'` every
+route is OVER and `analyze` exits 1; a generous budget exits 0. The CI gate
+(`benchmarks/gate.sh` + `analyze`) already runs on the four fixtures.
