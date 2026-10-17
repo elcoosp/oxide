@@ -251,6 +251,9 @@ pub trait EndpointDispatcher: Send + Sync {
         params: &serde_json::Map<String, serde_json::Value>,
         headers: &[(String, String)],
         body: &[u8],
+        // §8.1 middleware.ts / §9.1: request-scoped locals injected by
+        // middleware. A route.ts's `ctx.locals` reads this.
+        locals: &serde_json::Value,
     ) -> std::result::Result<EndpointRunResult, EndpointRunError>;
 }
 

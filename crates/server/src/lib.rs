@@ -1214,6 +1214,10 @@ pub trait ActionDispatcher: Send + Sync {
         url: &str,
         method: &str,
         headers: &[(String, String)],
+        // §8.1 middleware.ts / §9.1: request-scoped locals injected by
+        // middleware. An action's `event.locals` reads this; absent (empty
+        // object) when no middleware ran.
+        locals: &serde_json::Value,
     ) -> std::result::Result<ActionRunResult, DispatchError>;
 }
 
@@ -2175,6 +2179,8 @@ pub async fn run_action(
     url: &str,
     method: &str,
     headers: &[(String, String)],
+    // §8.1 middleware.ts / §9.1: request-scoped locals injected by middleware.
+    locals: &serde_json::Value,
 ) -> OxideResponse {
     let Some(dispatcher) = dispatcher else {
         return OxideResponse::json(
@@ -2183,7 +2189,7 @@ pub async fn run_action(
         );
     };
     match dispatcher
-        .dispatch(module_path, action, form_json, params, url, method, headers)
+        .dispatch(module_path, action, form_json, params, url, method, headers, locals)
         .await
     {
         Ok(out) => {
