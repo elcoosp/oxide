@@ -118,9 +118,40 @@ pub(crate) fn typegen_impl(tree: &RouteTree, out_dir: &Path) -> Result<String> {
             }
         }
     }
+    // SPEC-09: per-route loader data. A `page.server.ts` that exports
+    // `export type LoaderData = …` contributes that type; a route with no
+    // annotation is `unknown` (honest — we do not infer from arbitrary TS).
+    dts.push_str("\nexport type RouteData = {\n");
+    for (ts, encoded, _) in &rows {
+        // Find the entry matching this pattern to reach its server module.
+        let data_ty = tree
+            .entries
+            .iter()
+            .find(|e| pattern_encoded(&e.segments) == *encoded)
+            .and_then(|e| {
+                let server = e.file.with_file_name("page.server.ts");
+                std::fs::read_to_string(&server).ok()
+            })
+            .and_then(|src| {
+                // A user-declared `export type LoaderData = X;` names X.
+                src.lines().find_map(|l| {
+                    let t = l.trim();
+                    t.strip_prefix("export type LoaderData")
+                        .and_then(|r| r.split_once('=').map(|(_, x)| x.trim().trim_end_matches(';').to_string()))
+                })
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+        dts.push_str(&format!("  {}: {};\n", ts_lit(ts), data_ty));
+    }
+    dts.push_str("};\n");
+    dts.push_str(
+        "\nexport type PageProps<R extends OxideRoutes> = {\n  data: RouteData[R];\n  params: RouteParams[R];\n};\n",
+    );
+
     dts.push_str("\ndeclare module \"oxide\" {\n");
     dts.push_str("  export type Routes = OxideRoutes;\n");
     dts.push_str("  export type Params<R extends OxideRoutes> = RouteParams[R];\n");
+    dts.push_str("  export type Data<R extends OxideRoutes> = RouteData[R];\n");
     dts.push_str("}\n");
 
     let dts_path = types_dir.join("routes.d.ts");

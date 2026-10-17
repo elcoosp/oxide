@@ -2842,6 +2842,14 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         }
     }
 
+    // SPEC-09 / §8.3: regenerate `.oxide/types/routes.d.ts` from the build's
+    // route tree so `href()`/`PageProps` stay in sync with the routes without
+    // a separate `oxide routes` run. A typegen failure is a warning, not a
+    // build failure — the app still ships.
+    if let Err(e) = tree.typegen(&rootp) {
+        outln!(w, "warn: typegen failed ({} {}); routes.d.ts is stale", e.0.code, e.0.message);
+    }
+
     // Enrich the server manifest with inferred render modes + prerendered
     // files. The bundler leaves `render_mode` unset; §10.1 mode inference
     // lives with the route scanner, and the pragmatic rule at build time is:
