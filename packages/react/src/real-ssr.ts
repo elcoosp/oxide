@@ -91,6 +91,54 @@ export async function getReactDomServer(): Promise<ReactDomServerLike | undefine
  * check `isReactAvailable()` first, or fall back to the IR renderer in
  * ./render.ts.
  */
+/**
+ * Structural shape of a child descriptor (§8.2). `makeRealAdapter` hands the
+ * layout a `children` value of `{ Component, props }` — a plain descriptor,
+ * not a live React element. That lets the layout chain be framework-agnostic
+ * (Vue and Svelte use the same wire shape). React, however, can only render
+ * a real element as `props.children`, so we expand each descriptor into
+ * `React.createElement(descriptor.Component, descriptor.props)` before the
+ * top-level `createElement` call.
+ */
+interface ChildDescriptor {
+  Component: (props: Record<string, unknown>) => unknown
+  props: Record<string, unknown>
+}
+
+function isChildDescriptor(v: unknown): v is ChildDescriptor {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    'Component' in v &&
+    'props' in v &&
+    typeof (v as { Component: unknown }).Component !== 'undefined'
+  )
+}
+
+function expandDescriptor(
+  react: ReactLike,
+  descriptor: ChildDescriptor,
+): unknown {
+  const props: Record<string, unknown> = { ...descriptor.props }
+  // Nested layout: `props.children` is another descriptor — expand it
+  // depth-first so innermost pages become elements first. A layout with N
+  // outer layouts is N descriptors deep.
+  if (isChildDescriptor(props.children)) {
+    props.children = expandDescriptor(react, props.children)
+  }
+  return react.createElement(descriptor.Component, props)
+}
+
+/**
+ * Render a React component to its HTML string via `react-dom/server`'s
+ * `renderToString`. Descriptor children (`{ Component, props }`) are expanded
+ * to real React elements before the outer `createElement` call — see
+ * `expandDescriptor`.
+ *
+ * Throws when React is not installed — callers should check
+ * `isReactAvailable()` first, or fall back to the IR renderer in
+ * ./render.ts.
+ */
 export async function renderReactToString(
   Component: (props: Record<string, unknown>) => unknown,
   props: Record<string, unknown> = {},
@@ -101,6 +149,14 @@ export async function renderReactToString(
       '@oxide/react: real SSR requires `react` and `react-dom/server` to be installed',
     )
   }
-  const element = deps.react.createElement(Component, props)
+  // §8.2: a layout receives `props.children` as a descriptor. Expand it into
+  // a React element first so the layout can render `{props.children}` as a
+  // normal JSX child. The outermost call also accepts a plain component (a
+  // page with no layout), which has no descriptor children.
+  const expanded: Record<string, unknown> = { ...props }
+  if (isChildDescriptor(expanded.children)) {
+    expanded.children = expandDescriptor(deps.react, expanded.children)
+  }
+  const element = deps.react.createElement(Component, expanded)
   return deps.server.renderToString(element)
 }
