@@ -23,12 +23,20 @@ import RootLayout from './src/routes/layout.tsx'
 // §10.2 step 5: unmatched URLs render this page with a 404 status.
 // @ts-expect-error
 import NotFound from './src/routes/not-found.tsx'
+// §10.2 step 5: nearest error.tsx renders on SSR throw.
+// @ts-expect-error
+import ErrorPage from './src/routes/error.tsx'
+// §10.2 step 5 smoke fixture: a page that throws on purpose.
+// @ts-expect-error
+import Boom from './src/routes/boom/page.tsx'
 
 const components: Record<string, unknown> = {
   'routes/index': Home,
   'routes/blog/[slug]': Post,
   'routes/layout': RootLayout,
   'routes/not-found': NotFound,
+  'routes/error': ErrorPage,
+  'routes/boom': Boom,
 }
 
 export default defineConfig({
