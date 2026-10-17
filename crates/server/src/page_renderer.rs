@@ -228,3 +228,45 @@ mod tests {
         assert!(pipeline.page_renderer().is_none(), "default pipeline has no renderer");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Endpoint dispatch (§8.1 route.ts, §10.2 step 7)
+// ---------------------------------------------------------------------------
+
+/// The seam between the HTTP pipeline and whichever runtime executes a
+/// route's `route.ts` handler. Mirrors `ActionDispatcher`; the CLI wires a
+/// dispatcher backed by the render pool (`oxide-jshost::EndpointHost`); tests
+/// can wire a table of closures.
+#[async_trait::async_trait]
+pub trait EndpointDispatcher: Send + Sync {
+    /// Dispatch the route's `route.ts` for the request. `module_path` is the
+    /// on-disk path to `route.ts`; `method` is the HTTP method; `body` is the
+    /// raw request body (a route.ts can be an upload proxy, so the wire must
+    /// carry arbitrary bytes). The result is the raw `Response` shape.
+    async fn dispatch(
+        &self,
+        module_path: &str,
+        method: &str,
+        url: &str,
+        params: &serde_json::Map<String, serde_json::Value>,
+        headers: &[(String, String)],
+        body: &[u8],
+    ) -> std::result::Result<EndpointRunResult, EndpointRunError>;
+}
+
+/// The result of a `route.ts` run.
+#[derive(Debug, Clone, Default)]
+pub struct EndpointRunResult {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+/// A dispatch failure the pipeline maps to an HTTP status + a JSON envelope.
+#[derive(Debug, Clone)]
+pub struct EndpointRunError {
+    pub status: u16,
+    pub code: String,
+    pub message: String,
+}
+
