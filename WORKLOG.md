@@ -4221,3 +4221,10 @@ completes (exit 0) in normal time.
 marker — prerender renders the page through the page-renderer's module loader,
 not the plugin-transformed bundle. Wiring plugin transforms into that render
 path (or documenting it as a dev-only hook) is the follow-up.
+
+## Session 2026-10-17 (bucket-2)
+
+Six of seven user-visible Bucket-2 gaps closed and end-to-end proven
+(router boot, nested layouts, not-found, error.tsx, route.ts, middleware).
+Loading boundaries remain open. Full detail in
+`docs/HANDOFF-bucket2-session.md`.
