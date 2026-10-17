@@ -13,6 +13,7 @@
 #![forbid(unsafe_code)]
 
 pub mod http;
+pub mod http_handler;
 pub mod single_flight;
 pub mod tiers;
 
