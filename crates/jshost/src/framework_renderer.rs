@@ -48,6 +48,12 @@ pub struct FrameworkRenderInput {
     /// external constructor.
     #[serde(default)]
     pub layouts: Vec<String>,
+    /// §10.2 step 5: nearest `error.tsx` ancestor route id, if any. The
+    /// adapter renders this component when the page throws during SSR.
+    /// Mirrors `PageRenderInput.error_route_id`; the JS adapter reads it
+    /// as `input.errorRoute`.
+    #[serde(default)]
+    pub error_route_id: Option<String>,
 }
 
 impl FrameworkRenderInput {
@@ -62,6 +68,7 @@ impl FrameworkRenderInput {
                 "meta": [], "link": [], "style": [], "script": []
             }),
             layouts: Vec::new(),
+            error_route_id: None,
         }
     }
 
@@ -74,6 +81,7 @@ impl FrameworkRenderInput {
             "data": self.data,
             "head": self.head,
             "layouts": self.layouts,
+            "errorRoute": self.error_route_id,
         })
     }
 }

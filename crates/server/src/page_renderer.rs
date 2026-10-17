@@ -55,6 +55,12 @@ pub struct PageRenderInput {
     /// and any external `PageRenderInput` constructors compiling.
     #[serde(default)]
     pub layouts: Vec<String>,
+    /// §10.2 step 5: route id of the nearest `error.tsx` ancestor, if any.
+    /// The adapter renders this component when the page throws during SSR,
+    /// instead of the framework-neutral `OX-500` placeholder. `None` means
+    /// no error boundary is registered for this route.
+    #[serde(default)]
+    pub error_route_id: Option<String>,
 }
 
 impl PageRenderInput {
@@ -70,6 +76,7 @@ impl PageRenderInput {
                 "meta": [], "link": [], "style": [], "script": []
             }),
             layouts: Vec::new(),
+            error_route_id: None,
         }
     }
 }

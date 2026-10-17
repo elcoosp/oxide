@@ -101,6 +101,7 @@ fn to_fw_input(input: PageRenderInput) -> FrameworkRenderInput {
         // router's `MatchInfo.layout_chain` (outermost first). The JS
         // adapter consumes this as `input.layouts` to nest the page.
         layouts: input.layouts,
+        error_route_id: input.error_route_id,
     }
 }
 
