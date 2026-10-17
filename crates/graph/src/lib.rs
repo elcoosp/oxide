@@ -256,6 +256,96 @@ pub trait RemoteCache: Send + Sync {
     async fn store(&self, key: &CasKey, data: &[u8]) -> Result<()>;
 }
 
+/// SPEC-04 / §5.4: an HTTP remote cache. `GET {base}/{key-hex}` for a
+/// read-through; `PUT` to write. A minimal HTTP/1.1 client over tokio (no
+/// hyper dependency) — the cache protocol is two verbs on a URL, so a full
+/// client is overkill.
+///
+/// A non-200 GET is a miss (not an error): the remote may not have the key
+/// yet, and a read-through cache must degrade to a local compute. A network
+/// failure is a miss too — the build proceeds.
+pub struct HttpRemoteCache {
+    base: String,
+}
+
+impl HttpRemoteCache {
+    pub fn new(base: impl Into<String>) -> Self {
+        Self {
+            base: base.into().trim_end_matches('/').to_string(),
+        }
+    }
+
+    /// Minimal one-request HTTP/1.1 exchange. Returns `(status, body)`.
+    async fn request(
+        &self,
+        method: &str,
+        key: &CasKey,
+        body: Option<&[u8]>,
+    ) -> Result<(u16, Vec<u8>)> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let url = format!("{}/{}.bin", self.base, key.hex());
+        let rest = url
+            .strip_prefix("http://")
+            .ok_or_else(|| err("CAS-REMOTE", format!("remote cache URL must be http:// ({url})")))?;
+        let (host_port, path) = rest.split_once('/').unwrap_or((rest, ""));
+        let path = format!("/{path}");
+        let mut stream = tokio::net::TcpStream::connect(host_port)
+            .await
+            .map_err(|e| err("CAS-REMOTE", format!("connect {host_port}: {e}")))?;
+        let body_bytes = body.unwrap_or(&[]);
+        let req = format!(
+            "{method} {path} HTTP/1.1\r\nHost: {host_port}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
+            body_bytes.len()
+        );
+        stream
+            .write_all(req.as_bytes())
+            .await
+            .map_err(|e| err("CAS-REMOTE", format!("write request: {e}")))?;
+        if !body_bytes.is_empty() {
+            stream
+                .write_all(body_bytes)
+                .await
+                .map_err(|e| err("CAS-REMOTE", format!("write body: {e}")))?;
+        }
+        let mut buf = Vec::new();
+        stream
+            .read_to_end(&mut buf)
+            .await
+            .map_err(|e| err("CAS-REMOTE", format!("read response: {e}")))?;
+        let split = buf
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .ok_or_else(|| err("CAS-REMOTE", "response missing header terminator"))?;
+        let head = String::from_utf8_lossy(&buf[..split]);
+        let status: u16 = head
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| err("CAS-REMOTE", "response missing status"))?;
+        Ok((status, buf[split + 4..].to_vec()))
+    }
+}
+
+#[async_trait::async_trait]
+impl RemoteCache for HttpRemoteCache {
+    async fn fetch(&self, key: &CasKey) -> Result<Option<Vec<u8>>> {
+        match self.request("GET", key, None).await {
+            Ok((200, body)) => Ok(Some(body)),
+            // Any other status / a network error is a miss.
+            _ => Ok(None),
+        }
+    }
+    async fn store(&self, key: &CasKey, data: &[u8]) -> Result<()> {
+        // A failed write is logged, not fatal: the local build already
+        // produced the artifact; the remote is an optimization.
+        match self.request("PUT", key, Some(data)).await {
+            Ok((s, _)) if (200..300).contains(&s) => Ok(()),
+            Ok((s, _)) => Err(err("CAS-REMOTE", format!("remote store returned {s}"))),
+            Err(e) => Err(e),
+        }
+    }
+}
+
 /// In-memory [`RemoteCache`] used for tests and as a read-through fallback.
 #[derive(Default)]
 pub struct MemoryRemoteCache {
@@ -278,6 +368,86 @@ impl RemoteCache for MemoryRemoteCache {
 
 /// Minimal executor for immediately-ready futures in tests (no tokio dep; the
 /// in-memory remote cache never yields `Pending`).
+#[cfg(test)]
+mod spec04_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// SPEC-04: HttpRemoteCache round-trips against a tiny in-process HTTP
+    /// server (PUT stores, GET returns 200 + body).
+    #[tokio::test]
+    async fn http_remote_cache_roundtrips() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        // A one-thread mock: PUT stores the body, GET returns it (404 if absent).
+        let store = std::sync::Arc::new(std::sync::Mutex::new(
+            std::collections::HashMap::<String, Vec<u8>>::new(),
+        ));
+        let store2 = store.clone();
+        std::thread::spawn(move || {
+            for conn in listener.incoming() {
+                let Ok(mut s) = conn else { continue };
+                let mut buf = Vec::new();
+                let mut tmp = [0u8; 1024];
+                // Read headers.
+                let header_end = loop {
+                    let n = s.read(&mut tmp).unwrap_or(0);
+                    if n == 0 {
+                        break None;
+                    }
+                    buf.extend_from_slice(&tmp[..n]);
+                    if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break Some(i);
+                    }
+                };
+                let Some(he) = header_end else { continue };
+                let head = String::from_utf8_lossy(&buf[..he]).to_string();
+                let mut lines = head.lines();
+                let reqline = lines.next().unwrap_or("").to_string();
+                let mut clen = 0usize;
+                for l in lines {
+                    if let Some(v) = l.to_ascii_lowercase().strip_prefix("content-length:") {
+                        clen = v.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut body = buf[he + 4..].to_vec();
+                while body.len() < clen {
+                    let n = s.read(&mut tmp).unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    body.extend_from_slice(&tmp[..n]);
+                }
+                let path = reqline.split_whitespace().nth(1).unwrap_or("").to_string();
+                let method = reqline.split_whitespace().next().unwrap_or("").to_string();
+                let mut store = store2.lock().unwrap();
+                if method == "PUT" {
+                    store.insert(path, body);
+                    let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                } else if let Some(b) = store.get(&path) {
+                    let h = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        b.len()
+                    );
+                    let _ = s.write_all(h.as_bytes());
+                    let _ = s.write_all(b);
+                } else {
+                    let _ = s.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                }
+            }
+        });
+
+        let rc = HttpRemoteCache::new(format!("http://{addr}"));
+        let key = CasKey::of(b"hello");
+        // Miss before store.
+        assert!(rc.fetch(&key).await.unwrap().is_none());
+        // Store, then hit.
+        rc.store(&key, b"payload").await.unwrap();
+        assert_eq!(rc.fetch(&key).await.unwrap(), Some(b"payload".to_vec()));
+    }
+}
+
 #[cfg(test)]
 fn block_on<F: std::future::Future>(fut: F) -> F::Output {
     use std::pin::pin;
