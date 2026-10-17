@@ -1101,6 +1101,133 @@ async function dispatchEndpointRun(id, input) {
   }
 }
 
+// --- Middleware op (spec §8.1 middleware.ts, §8.5 rewrites) -------------
+//
+//   middleware:run   { module_path, method, url, params, headers, body_b64,
+//                      locals }
+//                  → { short: bool, status, headers, body_b64, redirect?, rewrite? }
+//
+// Loads the middleware module at `module_path`, calls the user's
+// `middleware(request, ctx)` (or the default export), and produces a
+// directive the pipeline applies:
+//
+//   undefined / null          → `{ short: false }` (pass through)
+//   { headers: [[k,v]] }      → `{ short: false, headers }` (add response headers)
+//   { locals: {...} }         → `{ short: false, locals }` (propagate to loader)
+//   { rewrite: '/path' }      → `{ short: false, rewrite }` (re-route request)
+//   { redirect: '/login', status? } → `{ short: true, status, redirect }`
+//   Response (Web)            → `{ short: true, status, headers, body_b64 }`
+//
+// Returning anything else is a diagnostic (`JSH-MIDDLEWARE`) — a middleware
+// that forgot to return is a bug we surface rather than silently letting a
+// request proceed.
+async function dispatchMiddlewareRun(id, input) {
+  const { module_path, method, url, params, headers, body_b64, locals } = input.payload ?? {};
+  if (typeof module_path !== "string" || module_path.length === 0) {
+    callErr(id, "JSH-MIDDLEWARE", "middleware:run requires a `module_path` string");
+    return;
+  }
+  const methodUpper = String(method ?? "GET").toUpperCase();
+  try {
+    const compiled = await compileServerModule(module_path);
+    const mod = await import(versioned(compiled.url));
+    const handler = mod.middleware ?? mod.default;
+    if (typeof handler !== "function") {
+      callErr(
+        id,
+        "JSH-MIDDLEWARE",
+        `module at ${module_path} has no \`middleware\` export and no default export`,
+      );
+      return;
+    }
+
+    const headerList = Array.isArray(headers) ? headers : [];
+    const bodyBytes = body_b64 ? Buffer.from(body_b64, "base64") : new Uint8Array();
+    const canHaveBody = methodUpper !== "GET" && methodUpper !== "HEAD";
+    const reqInit = {
+      method: methodUpper,
+      headers: headerList,
+      ...(canHaveBody && bodyBytes.length > 0 ? { body: bodyBytes } : {}),
+    };
+    const absoluteUrl = url && url.startsWith("http")
+      ? url
+      : `http://placeholder${url || "/"}`;
+    const request = new Request(absoluteUrl, reqInit);
+    const ctx = {
+      params: params ?? {},
+      locals: locals ?? {},
+    };
+
+    let result;
+    try {
+      result = await handler(request, ctx);
+    } catch (err) {
+      if (err && typeof err.status === "number") {
+        callOk(id, {
+          short: true,
+          status: err.status,
+          headers: err.location ? [["location", String(err.location)]] : [],
+          body_b64: "",
+          redirect: err.location ?? null,
+        });
+        return;
+      }
+      throw err;
+    }
+
+    if (result === undefined || result === null) {
+      callOk(id, { short: false, status: 200, headers: [], body_b64: "" });
+      return;
+    }
+
+    // A Web Response short-circuits entirely.
+    if (result instanceof Response) {
+      const respHeaders = [];
+      result.headers.forEach((v, k) => respHeaders.push([k, v]));
+      const respBody = new Uint8Array(await result.arrayBuffer());
+      const bodyOut = respBody.length > 0 ? Buffer.from(respBody).toString("base64") : "";
+      callOk(id, {
+        short: true,
+        status: result.status,
+        headers: respHeaders,
+        body_b64: bodyOut,
+      });
+      return;
+    }
+
+    // A plain object is a directive.
+    if (typeof result === "object") {
+      if (typeof result.redirect === "string") {
+        callOk(id, {
+          short: true,
+          status: typeof result.status === "number" ? result.status : 307,
+          headers: [["location", result.redirect]],
+          body_b64: "",
+          redirect: result.redirect,
+        });
+        return;
+      }
+      callOk(id, {
+        short: false,
+        status: 200,
+        headers: Array.isArray(result.headers) ? result.headers : [],
+        body_b64: "",
+        rewrite: typeof result.rewrite === "string" ? result.rewrite : null,
+        locals: result.locals ?? null,
+      });
+      return;
+    }
+
+    callErr(
+      id,
+      "JSH-MIDDLEWARE",
+      `middleware returned ${typeof result}; expected undefined, an object directive, or a Response`,
+    );
+  } catch (e) {
+    callErr(id, "JSH-MIDDLEWARE", `middleware:run failed: ${e?.message ?? e}`);
+  }
+}
+
 // --- HMR op (spec §13.3) --------------------------------------------------
 //
 //   framework:invalidate   {}   → { generation: N }
@@ -1292,6 +1419,7 @@ async function handleCall(msg) {
   if (entry.kind === "server-fn:run") { await dispatchServerFn(id, input); return; }
   if (entry.kind === "action:run") { await dispatchActionRun(id, input); return; }
   if (entry.kind === "endpoint:run") { await dispatchEndpointRun(id, input); return; }
+  if (entry.kind === "middleware:run") { await dispatchMiddlewareRun(id, input); return; }
   if (entry.kind === "die") process.exit(1);
   if (entry.kind === "sleep") {
     await new Promise((r) => setTimeout(r, Number(input.payload?.ms ?? 100)));
