@@ -3982,3 +3982,28 @@ Verified:
 - editing a CSS file delivers `{"type":"css-update","path":…}` over the socket;
 - 5 client-runtime unit tests (css swap, data update, overlay, reload, no-op
   off-browser).
+
+## SPEC-14 — HMR end-to-end
+
+Every piece existed (hub, 7-kind protocol, behavior table, ws codec) with zero
+wiring. Now:
+- **`classify_path`** maps a changed file to a `ChangeKind` (css / page-loader
+  / server module / config-routes / component).
+- **`HmrHub::sender()`** exposes the broadcast sender the server subscribes to.
+- **`/_oxide/hmr`** in `oxide-server`: a real RFC6455 upgrade (hand-rolled
+  SHA-1 for `Sec-WebSocket-Accept`, since the handshake needs it and the ws
+  codec owns framing), then a pump that writes each broadcast JSON as a text
+  frame and answers client closes. The `OnUpgrade` handle lives on the hyper
+  request, so the check is in the `service_fn` before `from_hyper_request`.
+- **Pipeline.hmr** (opaque `broadcast::Sender<String>`, dev only — the server
+  does not depend on `oxide-dev`).
+- **Dev loop** publishes the mapped `HmrMessage` for every file event.
+- **Client runtime** (`packages/oxide/src/client/hmr.ts`): ws with reconnect,
+  dispatch for css/data/module/reload/error, and a diagnostic overlay.
+
+Verified:
+- WebSocket handshake returns `101` + the correct `sec-websocket-accept`;
+- the client receives `{"type":"connected"}`;
+- editing a CSS file delivers `{"type":"css-update","path":…}` over the socket;
+- 5 client-runtime unit tests (css swap, data update, overlay, reload, no-op
+  off-browser).
