@@ -3989,3 +3989,78 @@ the shell, it still aborts.
 
 Verified: new test (shell preserved + `ox-error` + the diagnostic code
 present in the body); `oxide-cli --lib` 99.
+
+## SPEC-22 — real blake3 edge cache keys
+
+`oxide-core-wasm` keyed its edge cache with a hand-rolled keyed-FNV-1a "blake3
+shape" stub (64 hex chars, but a different digest), so a key computed at the
+edge did not match the native L0 key — a cross-tier cache miss every time.
+
+`blake3` is pure Rust and compiles to wasm32, so the stub is replaced by a thin
+wrapper over the real crate (same `new`/`update`/`hex_digest` shape — no
+call-site changes). Edge keys are now byte-identical to native L0 keys.
+
+Verified: `oxide-core-wasm` 14 tests, including
+- `edge_keys_match_native_blake3` (edge digest == `blake3::hash`), and
+- the reference BLAKE3 vector for `"abc"`
+  (`6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85`).
+
+## SPEC-22 — real blake3 edge cache keys
+
+`oxide-core-wasm` keyed its edge cache with a hand-rolled keyed-FNV-1a "blake3
+shape" stub (64 hex chars, but a different digest), so a key computed at the
+edge did not match the native L0 key — a cross-tier cache miss every time.
+
+`blake3` is pure Rust and compiles to wasm32, so the stub is replaced by a thin
+wrapper over the real crate (same `new`/`update`/`hex_digest` shape — no
+call-site changes). Edge keys are now byte-identical to native L0 keys.
+
+Verified: `oxide-core-wasm` 14 tests, including
+- `edge_keys_match_native_blake3` (edge digest == `blake3::hash`), and
+- the reference BLAKE3 vector for `"abc"`
+  (`6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85`).
+
+## SPEC-22 — real blake3 edge cache keys
+
+`oxide-core-wasm` keyed its edge cache with a hand-rolled keyed-FNV-1a "blake3
+shape" stub (64 hex chars, but a different digest), so a key computed at the
+edge did not match the native L0 key — a cross-tier cache miss every time.
+
+`blake3` is pure Rust and compiles to wasm32, so the stub is replaced by a thin
+wrapper over the real crate (same `new`/`update`/`hex_digest` shape — no
+call-site changes). Edge keys are now byte-identical to native L0 keys.
+
+Verified: `oxide-core-wasm` 14 tests, including
+- `edge_keys_match_native_blake3` (edge digest == `blake3::hash`), and
+- the reference BLAKE3 vector for `"abc"`
+  (`6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85`).
+
+## SPEC-22 — real blake3 edge cache keys
+
+`oxide-core-wasm` keyed its edge cache with a hand-rolled keyed-FNV-1a "blake3
+shape" stub (64 hex chars, but a different digest), so a key computed at the
+edge did not match the native L0 key — a cross-tier cache miss every time.
+
+`blake3` is pure Rust and compiles to wasm32, so the stub is replaced by a thin
+wrapper over the real crate (same `new`/`update`/`hex_digest` shape — no
+call-site changes). Edge keys are now byte-identical to native L0 keys.
+
+Verified: `oxide-core-wasm` 14 tests, including
+- `edge_keys_match_native_blake3` (edge digest == `blake3::hash`), and
+- the reference BLAKE3 vector for `"abc"`
+  (`6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85`).
+
+## SPEC-22 — real blake3 edge cache keys
+
+`oxide-core-wasm` keyed its edge cache with a hand-rolled keyed-FNV-1a "blake3
+shape" stub (64 hex chars, but a different digest), so a key computed at the
+edge did not match the native L0 key — a cross-tier cache miss every time.
+
+`blake3` is pure Rust and compiles to wasm32, so the stub is replaced by a thin
+wrapper over the real crate (same `new`/`update`/`hex_digest` shape — no
+call-site changes). Edge keys are now byte-identical to native L0 keys.
+
+Verified: `oxide-core-wasm` 14 tests, including
+- `edge_keys_match_native_blake3` (edge digest == `blake3::hash`), and
+- the reference BLAKE3 vector for `"abc"`
+  (`6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85`).
