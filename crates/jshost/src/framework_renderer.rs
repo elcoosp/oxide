@@ -42,6 +42,12 @@ pub struct FrameworkRenderInput {
     pub data: Value,
     /// Neutral head model (spec §16.3) as a JSON object.
     pub head: Value,
+    /// §8.2 / §16.3: layout chain, outermost → innermost. Mirrors
+    /// `PageRenderInput.layouts`; the JS adapter consumes it as
+    /// `input.layouts`. `#[serde(default)]` for test round-trips and any
+    /// external constructor.
+    #[serde(default)]
+    pub layouts: Vec<String>,
 }
 
 impl FrameworkRenderInput {
@@ -55,6 +61,7 @@ impl FrameworkRenderInput {
             head: serde_json::json!({
                 "meta": [], "link": [], "style": [], "script": []
             }),
+            layouts: Vec::new(),
         }
     }
 
@@ -66,6 +73,7 @@ impl FrameworkRenderInput {
             "params": self.params,
             "data": self.data,
             "head": self.head,
+            "layouts": self.layouts,
         })
     }
 }

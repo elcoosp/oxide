@@ -47,6 +47,14 @@ pub struct PageRenderInput {
     pub data: Value,
     /// Neutral head model (spec §16.3) as a JSON object.
     pub head: Value,
+    /// §8.2 / §16.3: layout chain for this route, **outermost → innermost**.
+    /// Each entry is a route module id like `routes/layout` or
+    /// `routes/blog/layout`. Populated by the pipeline from the router's
+    /// `MatchInfo.layout_chain`; empty means "no layouts wrap this page".
+    /// `#[serde(default)]` keeps existing `serde_json::from_str` round-trips
+    /// and any external `PageRenderInput` constructors compiling.
+    #[serde(default)]
+    pub layouts: Vec<String>,
 }
 
 impl PageRenderInput {
@@ -61,6 +69,7 @@ impl PageRenderInput {
             head: serde_json::json!({
                 "meta": [], "link": [], "style": [], "script": []
             }),
+            layouts: Vec::new(),
         }
     }
 }

@@ -97,6 +97,10 @@ fn to_fw_input(input: PageRenderInput) -> FrameworkRenderInput {
         params,
         data: input.data,
         head: input.head,
+        // §8.2: forward the layout chain the pipeline populated from the
+        // router's `MatchInfo.layout_chain` (outermost first). The JS
+        // adapter consumes this as `input.layouts` to nest the page.
+        layouts: input.layouts,
     }
 }
 
