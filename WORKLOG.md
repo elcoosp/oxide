@@ -4007,3 +4007,37 @@ Verified:
 - editing a CSS file delivers `{"type":"css-update","path":…}` over the socket;
 - 5 client-runtime unit tests (css swap, data update, overlay, reload, no-op
   off-browser).
+
+## SPEC-02 — §4.6 tier-3 auto-selection + loud shims
+
+Two changes:
+- **Loud shims**: an unsupported `node:` builtin now compiles to a module
+  that *throws on import* naming the builtin and the remedy
+  (`JSH-NODESHIM`), instead of a silent `export default {}` that fails far
+  from the cause.
+- **`JSH-V8KIND`**: a V8 build whose source server modules import a `.node`
+  addon or an unshimmed `node:` builtin now **fails the build** with a
+  diagnostic naming every offender, instead of shipping a bundle that throws
+  at first import. The bundler externalizes `node:`, so the check scans the
+  source tree, not the emitted JS.
+
+Verified both directions: a V8 build importing `node:child_process` exits 1
+with `JSH-V8KIND`; the V8 gate (shimmed `node:module` only) still PASSes, and
+the four-fixture gate PASSes.
+
+## SPEC-02 — §4.6 tier-3 auto-selection + loud shims
+
+Two changes:
+- **Loud shims**: an unsupported `node:` builtin now compiles to a module
+  that *throws on import* naming the builtin and the remedy
+  (`JSH-NODESHIM`), instead of a silent `export default {}` that fails far
+  from the cause.
+- **`JSH-V8KIND`**: a V8 build whose source server modules import a `.node`
+  addon or an unshimmed `node:` builtin now **fails the build** with a
+  diagnostic naming every offender, instead of shipping a bundle that throws
+  at first import. The bundler externalizes `node:`, so the check scans the
+  source tree, not the emitted JS.
+
+Verified both directions: a V8 build importing `node:child_process` exits 1
+with `JSH-V8KIND`; the V8 gate (shimmed `node:module` only) still PASSes, and
+the four-fixture gate PASSes.
