@@ -1,0 +1,15 @@
+---
+source: crates/adapters/tests/snapshots_adapters.rs
+expression: "cloudflare_worker_entry(\"build-abc123\")"
+---
+// Oxide Cloudflare Workers entry (§18, §2 D18). build_id: build-abc123
+// WinterCG-compatible: `edge.js` dispatches through the web-standard
+// handler contract `(Request) => Promise<Response>`.
+import handler from "./edge.js";
+
+export default {
+async fetch(request, env, ctx) {
+const response = await handler(request, env, ctx);
+return response ?? new Response("Not Found", { status: 404 });
+},
+};

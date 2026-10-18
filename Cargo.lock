@@ -4601,6 +4601,7 @@ name = "oxide-adapters"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "insta",
  "oxide-diagnostics",
  "serde",
  "serde_json",

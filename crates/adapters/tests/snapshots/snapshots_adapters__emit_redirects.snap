@@ -1,0 +1,7 @@
+---
+source: crates/adapters/tests/snapshots_adapters.rs
+expression: emit_redirects(&rules)
+---
+/old/:slug /new/:slug 308
+/legacy / 301
+/gone /404 410

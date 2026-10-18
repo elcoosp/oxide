@@ -1,0 +1,5 @@
+---
+source: crates/adapters/tests/snapshots_adapters.rs
+expression: "emit_headers(&[])"
+---
+
