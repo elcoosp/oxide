@@ -689,3 +689,5 @@ mod security_cfg_tests {
         assert_eq!(s.cookie_keys, vec!["key1"]);
     }
 }
+
+pub use extract::extract_public;
