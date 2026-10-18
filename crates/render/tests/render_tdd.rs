@@ -578,7 +578,9 @@ fn script_placeholder_inline_is_base64_and_marks_module() {
     let b64 = out.split("data-ox-inline=\"").nth(1).unwrap();
     let b64 = b64.split('"').next().unwrap();
     use base64::Engine as _;
-    let raw = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .unwrap();
     assert_eq!(String::from_utf8(raw).unwrap(), "console.log(1)");
     // No `data-ox-src` for an inline script.
     assert!(!out.contains("data-ox-src"), "{out}");
@@ -596,7 +598,10 @@ fn script_placeholder_rejects_empty_and_ambiguous() {
 #[test]
 fn script_placeholder_escapes_hostile_src_and_attrs() {
     let mut attrs = std::collections::BTreeMap::new();
-    attrs.insert("data-x".to_string(), "\"><script>alert(1)</script>".to_string());
+    attrs.insert(
+        "data-x".to_string(),
+        "\"><script>alert(1)</script>".to_string(),
+    );
     let out = script_placeholder(
         "defer",
         Some("\"><script>alert(2)</script>"),
