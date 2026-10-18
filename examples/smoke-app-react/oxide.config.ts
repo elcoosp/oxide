@@ -35,6 +35,10 @@ import Greeting from './src/routes/greeting/page.tsx'
 // §8.4 loading boundary smoke fixture: a slow page.
 // @ts-expect-error
 import Slow from './src/routes/slow/page.tsx'
+// @ts-expect-error
+import Nested from './src/routes/nested/page.tsx'
+// @ts-expect-error
+import NestedLayout from './src/routes/nested/layout.tsx'
 
 const components: Record<string, unknown> = {
   'routes/index': Home,
@@ -45,6 +49,8 @@ const components: Record<string, unknown> = {
   'routes/boom': Boom,
   'routes/greeting': Greeting,
   'routes/slow': Slow,
+  'routes/nested': Nested,
+  'routes/nested/layout': NestedLayout,
 }
 
 export default defineConfig({
