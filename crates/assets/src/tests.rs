@@ -54,7 +54,8 @@ fn asset_query_rejects_empty_and_leading_question_mark() {
 
 #[test]
 fn tailwind_scan_collects_class_tokens_sorted_and_deduped() {
-    let html = r#"<div class="flex items-center p-4  p-4"><span class="hidden md:flex"></span></div>"#;
+    let html =
+        r#"<div class="flex items-center p-4  p-4"><span class="hidden md:flex"></span></div>"#;
     let tsx = r#"export const A = () => <div className="grid gap-2 md:flex">hi</div>;"#;
     let astro = r#"<div class:list="'w-full hidden'"></div>"#;
     let vue = r#"<div :class="'shrink-0'"></div>"#;
@@ -62,8 +63,15 @@ fn tailwind_scan_collects_class_tokens_sorted_and_deduped() {
     assert_eq!(
         cands,
         vec![
-            "flex", "gap-2", "grid", "hidden", "items-center", "md:flex", "p-4",
-            "shrink-0", "w-full"
+            "flex",
+            "gap-2",
+            "grid",
+            "hidden",
+            "items-center",
+            "md:flex",
+            "p-4",
+            "shrink-0",
+            "w-full"
         ]
     );
 }
@@ -78,14 +86,24 @@ fn tailwind_scan_ignores_non_attribute_text() {
 
 fn gradient_png(w: u32, h: u32) -> Vec<u8> {
     let img = image::DynamicImage::ImageRgba8(image::ImageBuffer::from_fn(w, h, |x, y| {
-        image::Rgba([(x * 255 / w.max(1)) as u8, (y * 255 / h.max(1)) as u8, 128, 255])
+        image::Rgba([
+            (x * 255 / w.max(1)) as u8,
+            (y * 255 / h.max(1)) as u8,
+            128,
+            255,
+        ])
     }));
     let mut buf = std::io::Cursor::new(Vec::new());
     img.write_to(&mut buf, image::ImageFormat::Png).unwrap();
     buf.into_inner()
 }
 
-fn req(source: Vec<u8>, width: Option<u32>, format: ImageFormat, ph: Option<PlaceholderKind>) -> ImageRequest {
+fn req(
+    source: Vec<u8>,
+    width: Option<u32>,
+    format: ImageFormat,
+    ph: Option<PlaceholderKind>,
+) -> ImageRequest {
     ImageRequest {
         source,
         source_format: ImageFormat::Png,
@@ -143,7 +161,12 @@ fn image_avif_encoding_produces_real_avif_bytes() {
 fn image_lqip_placeholder_is_a_base64_jpeg_data_uri() {
     for kind in [PlaceholderKind::Lqip, PlaceholderKind::Blur] {
         let out = RustImageBackend
-            .process(req(gradient_png(64, 32), None, ImageFormat::Png, Some(kind)))
+            .process(req(
+                gradient_png(64, 32),
+                None,
+                ImageFormat::Png,
+                Some(kind),
+            ))
             .unwrap();
         let ph = out.placeholder.expect("placeholder requested");
         assert!(ph.starts_with("data:image/jpeg;base64,"), "{ph}");
@@ -152,18 +175,29 @@ fn image_lqip_placeholder_is_a_base64_jpeg_data_uri() {
 
 #[test]
 fn image_cache_key_is_stable_and_param_sensitive() {
-    let a = RustImageBackend.process(req(gradient_png(32, 16), None, ImageFormat::Png, None)).unwrap();
-    let b = RustImageBackend.process(req(gradient_png(32, 16), None, ImageFormat::Png, None)).unwrap();
+    let a = RustImageBackend
+        .process(req(gradient_png(32, 16), None, ImageFormat::Png, None))
+        .unwrap();
+    let b = RustImageBackend
+        .process(req(gradient_png(32, 16), None, ImageFormat::Png, None))
+        .unwrap();
     assert_eq!(a.cache_key, b.cache_key);
     assert_eq!(a.cache_key.len(), 16);
-    let c = RustImageBackend.process(req(gradient_png(32, 16), Some(16), ImageFormat::Png, None)).unwrap();
+    let c = RustImageBackend
+        .process(req(gradient_png(32, 16), Some(16), ImageFormat::Png, None))
+        .unwrap();
     assert_ne!(a.cache_key, c.cache_key);
 }
 
 #[test]
 fn image_decode_failure_is_an_ast_img_error() {
     let e = RustImageBackend
-        .process(req(vec![0xDE, 0xAD, 0xBE, 0xEF], None, ImageFormat::Png, None))
+        .process(req(
+            vec![0xDE, 0xAD, 0xBE, 0xEF],
+            None,
+            ImageFormat::Png,
+            None,
+        ))
         .unwrap_err();
     assert_eq!(e.0.code, "AST-IMG");
 }
@@ -173,7 +207,10 @@ fn image_decode_failure_is_an_ast_img_error() {
 #[test]
 fn srcset_lists_widths_ascending() {
     let s = srcset(&[1024, 640], "/_oxide/image/hero.png");
-    assert_eq!(s, "/_oxide/image/hero.png?w=640 640w, /_oxide/image/hero.png?w=1024 1024w");
+    assert_eq!(
+        s,
+        "/_oxide/image/hero.png?w=640 640w, /_oxide/image/hero.png?w=1024 1024w"
+    );
     assert_eq!(srcset(&[], "/x.png"), "");
 }
 
@@ -225,7 +262,10 @@ fn font_bundle_missing_file_is_an_error() {
         subset: vec![],
         local_paths: vec!["/definitely/not/here.woff2".into()],
     };
-    assert_eq!(DefaultFontBackend.bundle(&spec).unwrap_err().0.code, "AST-FONT");
+    assert_eq!(
+        DefaultFontBackend.bundle(&spec).unwrap_err().0.code,
+        "AST-FONT"
+    );
 }
 
 // ---------------- Font metric math (§16.2) ----------------
@@ -237,7 +277,11 @@ fn font_metric_overrides_use_real_metrics_when_a_font_parses() {
         "/System/Library/Fonts/Geneva.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     ];
-    let Some(path) = candidates.iter().map(std::path::Path::new).find(|p| p.exists()) else {
+    let Some(path) = candidates
+        .iter()
+        .map(std::path::Path::new)
+        .find(|p| p.exists())
+    else {
         eprintln!("skipping: no system TTF available");
         return;
     };
@@ -287,8 +331,16 @@ fn metadata_to_head_emits_og_property_and_twitter_name_tags() {
         ..Default::default()
     };
     let h = m.to_head();
-    assert!(h.meta.iter().any(|(k, v)| k == "property:og:type" && v == "website"));
-    assert!(h.meta.iter().any(|(k, v)| k == "name:twitter:card" && v == "summary"));
+    assert!(
+        h.meta
+            .iter()
+            .any(|(k, v)| k == "property:og:type" && v == "website")
+    );
+    assert!(
+        h.meta
+            .iter()
+            .any(|(k, v)| k == "name:twitter:card" && v == "summary")
+    );
 }
 
 // ---------------- sitemap / robots (§16.3) ----------------
@@ -344,11 +396,21 @@ fn markdown_blockquote_hr_and_paragraphs() {
 #[test]
 fn content_entry_parses_frontmatter_types_slug_and_path() {
     let p = std::path::Path::new("posts/hello.md");
-    let e = parse_content_entry(p, "---\ntitle: Hi\ncount: 3\ndraft: true\n---\n\n# Hi\nbody\n").unwrap();
+    let e = parse_content_entry(
+        p,
+        "---\ntitle: Hi\ncount: 3\ndraft: true\n---\n\n# Hi\nbody\n",
+    )
+    .unwrap();
     assert_eq!(e.slug, "hello");
-    assert_eq!(e.frontmatter.get("title").unwrap(), &serde_json::json!("Hi"));
+    assert_eq!(
+        e.frontmatter.get("title").unwrap(),
+        &serde_json::json!("Hi")
+    );
     assert_eq!(e.frontmatter.get("count").unwrap(), &serde_json::json!(3));
-    assert_eq!(e.frontmatter.get("draft").unwrap(), &serde_json::json!(true));
+    assert_eq!(
+        e.frontmatter.get("draft").unwrap(),
+        &serde_json::json!(true)
+    );
 }
 
 #[test]
@@ -361,7 +423,8 @@ fn content_entry_without_frontmatter_treats_all_as_body() {
 
 #[test]
 fn content_entry_unclosed_frontmatter_is_ast_front() {
-    let e = parse_content_entry(std::path::Path::new("broken.md"), "---\ntitle: no end\n").unwrap_err();
+    let e =
+        parse_content_entry(std::path::Path::new("broken.md"), "---\ntitle: no end\n").unwrap_err();
     assert_eq!(e.0.code, "AST-FRONT");
 }
 
@@ -391,22 +454,31 @@ fn highlight_escapes_html_before_wrapping() {
     assert!(out.contains("&lt;b&gt;") || !out.contains("<b>"), "{out}");
 }
 
-
 // ---------------- §16.5 MDX bridging ----------------
 
 #[test]
 fn content_format_from_path_infers_by_extension() {
     use std::path::Path;
-    assert_eq!(ContentFormat::from_path(Path::new("a.mdx")), ContentFormat::Mdx);
-    assert_eq!(ContentFormat::from_path(Path::new("a.md")), ContentFormat::Markdown);
-    assert_eq!(ContentFormat::from_path(Path::new("a.txt")), ContentFormat::Markdown);
+    assert_eq!(
+        ContentFormat::from_path(Path::new("a.mdx")),
+        ContentFormat::Mdx
+    );
+    assert_eq!(
+        ContentFormat::from_path(Path::new("a.md")),
+        ContentFormat::Markdown
+    );
+    assert_eq!(
+        ContentFormat::from_path(Path::new("a.txt")),
+        ContentFormat::Markdown
+    );
 }
 
 #[test]
 fn parse_content_entry_with_format_is_format_agnostic_at_this_stage() {
     use std::path::Path;
     let src = "---\ntitle: Hi\n---\nbody\n";
-    let a = parse_content_entry_with_format(Path::new("a.md"), src, ContentFormat::Markdown).unwrap();
+    let a =
+        parse_content_entry_with_format(Path::new("a.md"), src, ContentFormat::Markdown).unwrap();
     let b = parse_content_entry_with_format(Path::new("a.mdx"), src, ContentFormat::Mdx).unwrap();
     assert_eq!(a.frontmatter, b.frontmatter);
     assert_eq!(a.body_markdown, b.body_markdown);
@@ -419,7 +491,10 @@ fn parse_mdx_source_targets_mdx_js() {
     let path = std::path::Path::new("posts/hello.mdx");
     let src = "---\ntitle: Hello\n---\n\n# Hi <X />\n";
     let (entry, req) = parse_mdx_source(path, src).unwrap();
-    assert_eq!(entry.frontmatter.get("title").unwrap(), &serde_json::json!("Hello"));
+    assert_eq!(
+        entry.frontmatter.get("title").unwrap(),
+        &serde_json::json!("Hello")
+    );
     assert_eq!(req.module, "@mdx-js/mdx");
     assert_eq!(req.export, "compile");
     assert!(req.source.contains("<X />"));
@@ -434,7 +509,6 @@ fn mdx_compile_request_round_trips_through_serde() {
     assert_eq!(back.export, r.export);
     assert_eq!(back.source, r.source);
 }
-
 
 // ---------------------------------------------------------------------------
 // §16.1 image endpoint helpers: sign / verify / parse.
@@ -500,9 +574,21 @@ fn image_signature_round_trip() {
         .split('&')
         .find_map(|p| p.strip_prefix("s="))
         .expect("s= present");
-    assert!(crate::verify_image_signature("/hero.png?w=640", secret, sig));
-    assert!(!crate::verify_image_signature("/hero.png?w=641", secret, sig));
-    assert!(!crate::verify_image_signature("/hero.png?w=640", "other", sig));
+    assert!(crate::verify_image_signature(
+        "/hero.png?w=640",
+        secret,
+        sig
+    ));
+    assert!(!crate::verify_image_signature(
+        "/hero.png?w=641",
+        secret,
+        sig
+    ));
+    assert!(!crate::verify_image_signature(
+        "/hero.png?w=640",
+        "other",
+        sig
+    ));
 }
 
 #[test]
@@ -511,7 +597,6 @@ fn image_signature_appends_with_question_or_ampersand() {
     assert!(crate::sign_image_url("/a.png", secret).starts_with("/a.png?s="));
     assert!(crate::sign_image_url("/a.png?w=1", secret).starts_with("/a.png?w=1&s="));
 }
-
 
 // ----------------------------------------------------------- §16.2 fonts
 
