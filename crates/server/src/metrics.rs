@@ -3,8 +3,8 @@
 //! process-level counter. Text exposition format; no client library required.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 const BUCKET_BOUNDS_MS: [u64; 10] = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000];
@@ -26,7 +26,8 @@ impl RouteMetrics {
     }
     fn observe(&self, d: Duration) {
         self.count.fetch_add(1, Ordering::Relaxed);
-        self.sum_us.fetch_add(d.as_micros() as u64, Ordering::Relaxed);
+        self.sum_us
+            .fetch_add(d.as_micros() as u64, Ordering::Relaxed);
         let ms = d.as_millis() as u64;
         for (i, bound) in BUCKET_BOUNDS_MS.iter().enumerate() {
             if ms <= *bound {
@@ -52,7 +53,8 @@ fn prom_escape(s: &str) -> String {
 
 /// The metric registry. One per server instance.
 #[derive(Debug, Default)]
-pub struct Metrics {    inner: RwLock<HashMap<String, RouteMetrics>>,
+pub struct Metrics {
+    inner: RwLock<HashMap<String, RouteMetrics>>,
     pub requests_total: AtomicU64,
     pub errors_total: AtomicU64,
     pub cache_hits_l0: AtomicU64,
@@ -106,8 +108,10 @@ impl Metrics {
     pub fn observe_pool(&self, workers: usize, in_flight: u64, queue_wait_p99_ms: f64) {
         self.pool_workers.store(workers as u64, Ordering::Relaxed);
         self.pool_in_flight.store(in_flight, Ordering::Relaxed);
-        self.pool_queue_wait_p99_us
-            .store((queue_wait_p99_ms.max(0.0) * 1000.0) as u64, Ordering::Relaxed);
+        self.pool_queue_wait_p99_us.store(
+            (queue_wait_p99_ms.max(0.0) * 1000.0) as u64,
+            Ordering::Relaxed,
+        );
     }
 
     /// §16.6: record one browser web-vital sample. `name` is the metric
@@ -128,40 +132,69 @@ impl Metrics {
         let mut out = String::with_capacity(1024);
         out.push_str("# HELP oxide_requests_total Total requests served\n");
         out.push_str("# TYPE oxide_requests_total counter\n");
-        out.push_str(&format!("oxide_requests_total {}\n", self.requests_total.load(Ordering::Relaxed)));
+        out.push_str(&format!(
+            "oxide_requests_total {}\n",
+            self.requests_total.load(Ordering::Relaxed)
+        ));
 
         out.push_str("# HELP oxide_errors_total Total 5xx responses\n");
         out.push_str("# TYPE oxide_errors_total counter\n");
-        out.push_str(&format!("oxide_errors_total {}\n", self.errors_total.load(Ordering::Relaxed)));
+        out.push_str(&format!(
+            "oxide_errors_total {}\n",
+            self.errors_total.load(Ordering::Relaxed)
+        ));
 
         out.push_str("# HELP oxide_cache_l0_hits_total L0 cache hits\n");
         out.push_str("# TYPE oxide_cache_l0_hits_total counter\n");
-        out.push_str(&format!("oxide_cache_l0_hits_total {}\n", self.cache_hits_l0.load(Ordering::Relaxed)));
+        out.push_str(&format!(
+            "oxide_cache_l0_hits_total {}\n",
+            self.cache_hits_l0.load(Ordering::Relaxed)
+        ));
         out.push_str("# HELP oxide_cache_l0_misses_total L0 cache misses\n");
         out.push_str("# TYPE oxide_cache_l0_misses_total counter\n");
-        out.push_str(&format!("oxide_cache_l0_misses_total {}\n", self.cache_misses_l0.load(Ordering::Relaxed)));
+        out.push_str(&format!(
+            "oxide_cache_l0_misses_total {}\n",
+            self.cache_misses_l0.load(Ordering::Relaxed)
+        ));
 
         out.push_str("# HELP oxide_pool_workers Live worker count in the JS pool\n");
         out.push_str("# TYPE oxide_pool_workers gauge\n");
-        out.push_str(&format!("oxide_pool_workers {}\n", self.pool_workers.load(Ordering::Relaxed)));
+        out.push_str(&format!(
+            "oxide_pool_workers {}\n",
+            self.pool_workers.load(Ordering::Relaxed)
+        ));
         out.push_str("# HELP oxide_pool_in_flight In-flight calls in the JS pool\n");
         out.push_str("# TYPE oxide_pool_in_flight gauge\n");
-        out.push_str(&format!("oxide_pool_in_flight {}\n", self.pool_in_flight.load(Ordering::Relaxed)));
+        out.push_str(&format!(
+            "oxide_pool_in_flight {}\n",
+            self.pool_in_flight.load(Ordering::Relaxed)
+        ));
         out.push_str("# HELP oxide_pool_queue_wait_p99_us Pool queue-wait p99 (microseconds)\n");
         out.push_str("# TYPE oxide_pool_queue_wait_p99_us gauge\n");
-        out.push_str(&format!("oxide_pool_queue_wait_p99_us {}\n", self.pool_queue_wait_p99_us.load(Ordering::Relaxed)));
+        out.push_str(&format!(
+            "oxide_pool_queue_wait_p99_us {}\n",
+            self.pool_queue_wait_p99_us.load(Ordering::Relaxed)
+        ));
 
         out.push_str("# HELP oxide_isolates_recycled_total Isolate recycle events\n");
         out.push_str("# TYPE oxide_isolates_recycled_total counter\n");
-        out.push_str(&format!("oxide_isolates_recycled_total {}\n", self.isolates_recycled.load(Ordering::Relaxed)));
+        out.push_str(&format!(
+            "oxide_isolates_recycled_total {}\n",
+            self.isolates_recycled.load(Ordering::Relaxed)
+        ));
         out.push_str("# HELP oxide_isolates_crashed_total Isolate crash events\n");
         out.push_str("# TYPE oxide_isolates_crashed_total counter\n");
-        out.push_str(&format!("oxide_isolates_crashed_total {}\n", self.isolates_crashed.load(Ordering::Relaxed)));
+        out.push_str(&format!(
+            "oxide_isolates_crashed_total {}\n",
+            self.isolates_crashed.load(Ordering::Relaxed)
+        ));
 
         {
             let vitals = self.web_vitals.read().expect("vitals lock");
             if !vitals.is_empty() {
-                out.push_str("# HELP oxide_web_vital_count Web-vital samples by metric and route\n");
+                out.push_str(
+                    "# HELP oxide_web_vital_count Web-vital samples by metric and route\n",
+                );
                 out.push_str("# TYPE oxide_web_vital_count counter\n");
                 out.push_str("# HELP oxide_web_vital_sum Summed web-vital values\n");
                 out.push_str("# TYPE oxide_web_vital_sum counter\n");
