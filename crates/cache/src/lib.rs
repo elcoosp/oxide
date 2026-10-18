@@ -18,11 +18,11 @@ pub mod single_flight;
 pub mod tiers;
 
 pub use http::{
-    cache_control, conditional_response, http_date, memo_key, parse_http_date, FetchMemo,
+    FetchMemo, cache_control, conditional_response, http_date, memo_key, parse_http_date,
 };
+pub use http_handler::HttpCacheHandler;
 pub use single_flight::{FlightSlot, SingleFlight};
 pub use tiers::{CacheStats, DiskTier, MemoryTier, TieredCache};
-pub use http_handler::HttpCacheHandler;
 
 use blake3::Hasher;
 use oxide_diagnostics::{Diagnostic, OxideError};
