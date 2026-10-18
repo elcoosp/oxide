@@ -213,6 +213,7 @@ mod tests {
                 "theme=dark; Path=/".into(),
             ],
             headers: vec![("x-oxide-visits".into(), "7".into())],
+            deferred: std::collections::BTreeMap::new(),
         };
         let s = serde_json::to_string(&out).unwrap();
         let back: LoaderOutput = serde_json::from_str(&s).unwrap();
