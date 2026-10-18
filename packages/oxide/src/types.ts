@@ -147,6 +147,14 @@ export interface ClientRouteEntry {
   /** Server data module path (page.server.ts), when the route has one. */
   server?: string
   renderMode?: 'static' | 'isr' | 'dynamic' | 'spa' | 'islands'
+  /**
+   * The route's entry JS chunk, relative to the client output dir (§6.4
+   * `RouteBundle.entry_chunk` — the wire manifest serves it under
+   * `/client/<entry_chunk>`). The client runtime imports it through
+   * `componentFor` (client/route-manifest.ts) to render the route's REAL
+   * page component (§8.4/§10.3).
+   */
+  entry_chunk?: string
   /** Client entry chunks in preload order. */
   chunks?: string[]
   css?: string[]
