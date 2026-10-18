@@ -988,6 +988,131 @@ async fn hmr_route_data_update(
 
 /// `oxide dev` (§13). `--once` runs a single watch poll (test hook); otherwise the
 /// 200 ms poll loop runs until Ctrl-C.
+/// §13.1 / P0-7: produce `dist/client/client.manifest.json` on a fresh
+/// `oxide dev` when it is missing. Without a client bundle the dev server has
+/// no boot script: no router, no loading boundaries, no defer glue, no island
+/// hydration — only the inline HMR client runs. This runs the client bundler
+/// once, **unminified** (fast; dev does not need the production size), into
+/// `dist/client/`, then returns. A project that already has a manifest (a
+/// `build` ran first) is left alone.
+///
+/// This is the dev-mode bundling path: a full per-module dev server is
+/// post-v0.1. A cold `oxide dev` on a fresh project therefore pays one
+/// unminified client build (~1-3s on the smoke fixtures).
+async fn ensure_dev_client_bundle(
+    rootp: &Path,
+    cfg: &oxide_config::OxideConfig,
+    tree: &oxide_router::RouteTree,
+    w: Writer<'_>,
+) -> anyhow::Result<()> {
+    let dist = rootp.join("dist");
+    let client_out = dist.join("client");
+    if client_out.join("client.manifest.json").is_file() {
+        return Ok(());
+    }
+
+    // Entries: pages + endpoints + loading boundaries (mirrors cmd_build).
+    let mut entries: BTreeMap<String, PathBuf> = BTreeMap::new();
+    let mut loading_entries: BTreeMap<String, PathBuf> = BTreeMap::new();
+    for e in &tree.entries {
+        match e.kind {
+            oxide_router::RouteKind::Loading => {
+                loading_entries
+                    .insert(e.id.0.clone(), rootp.join(&cfg.routes.dir).join(&e.file));
+            }
+            oxide_router::RouteKind::Page | oxide_router::RouteKind::Endpoint => {
+                entries.insert(e.id.0.clone(), rootp.join(&cfg.routes.dir).join(&e.file));
+            }
+            _ => {}
+        }
+    }
+    let mut client_entries = entries;
+
+    // The boot entry (client router + loading map + defer glue + PWA), when
+    // the project has any page route.
+    let has_page_routes = tree
+        .entries
+        .iter()
+        .any(|e| matches!(e.kind, oxide_router::RouteKind::Page));
+    if has_page_routes {
+        let framework = cfg
+            .framework
+            .adapter
+            .clone()
+            .or_else(|| cfg.framework.name.clone())
+            .unwrap_or_else(|| "react".to_string());
+        let mut loading_dir_map: BTreeMap<String, PathBuf> = BTreeMap::new();
+        for (route_id, path) in &loading_entries {
+            loading_dir_map.insert(route_id.clone(), path.clone());
+        }
+        let boot_src = generate_island_boot_entry(
+            rootp,
+            &framework,
+            &cfg.framework.islands,
+            &loading_dir_map,
+            cfg.manifest.is_some(),
+        );
+        let boot_dir = rootp.join(".oxide");
+        std::fs::create_dir_all(&boot_dir)?;
+        let boot_path = boot_dir.join("island-boot.mjs");
+        std::fs::write(&boot_path, boot_src)?;
+        client_entries.insert("__boot__".to_string(), boot_path);
+    }
+
+    // The transform + CSS hooks the dev bundle uses.
+    let jsx_source = jsx_import_source_for(
+        cfg.framework
+            .adapter
+            .as_deref()
+            .or(cfg.framework.name.as_deref())
+            .unwrap_or("react"),
+    );
+    let build_secret = build_secret(rootp).unwrap_or_default();
+    let transform_hook = build_transform_hook(rootp, cfg);
+    let css_transform = build_css_transform_hook(cfg);
+
+    // §6.5 / §6.1: unminified, sourcemaps on (dev debugging). No precompile
+    // pass here — the Oxc path handles TS/JSX; SFC precompile is a build-time
+    // optimization, and a dev start should not block on the tooling pool.
+    let client_opts = bundle_env_options(
+        oxide_bundler::BundleEnv::Client,
+        client_entries,
+        client_out,
+        BTreeMap::new(),
+        jsx_source,
+        build_secret,
+        transform_hook,
+        css_transform,
+        Vec::new(),
+        true, // sourcemap on for dev
+    );
+    use oxide_bundler::Bundler as _;
+    let rb = oxide_bundler::RolldownBundler::new(rootp);
+    match rb.bundle(&client_opts) {
+        Ok(outcome) => {
+            outln!(
+                w,
+                "dev: client bundle ready ({} chunks)",
+                outcome.chunks.len()
+            );
+            Ok(())
+        }
+        Err(e) => {
+            // A failed dev bundle is reported but not fatal: the SSR-only
+            // page still serves (no client hydration), and the error overlay
+            // surfaces the diagnostic. A hard failure here would stop `dev`
+            // on a project that only has a syntax error in one component.
+            outln!(
+                w,
+                "dev: client bundle failed ({} {}); pages serve without hydration",
+                e.0.code,
+                e.0.message
+            );
+            Ok(())
+        }
+    }
+}
+
 async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
     let cfg = load_config_or_default(&rootp, "development");
@@ -1106,6 +1231,11 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // payload the client has to fetch itself).
     let hmr_loader: Option<std::sync::Arc<dyn oxide_server::LoaderRunner>> =
         stack.loader_runner.clone();
+
+    // §13.1 / P0-7: a fresh `oxide dev` has no client bundle, so nothing
+    // would hydrate, navigate, or load a route's JS. Build it once (unminified)
+    // if the manifest is missing. A `dev` after `build` finds it and skips.
+    ensure_dev_client_bundle(&rootp, &cfg, &tree, w).await?;
 
     // SPEC-14: the HMR hub. Its build id comes from the client manifest
     // when present (a `dev` start after `build`), else `"dev"`.
