@@ -62,19 +62,35 @@ fn dockerfile_user_is_on_its_own_line() {
         .lines()
         .filter(|l| l.trim_start().starts_with("USER "))
         .collect();
-    assert_eq!(user_lines.len(), 1, "expected exactly one USER directive:\n{df}");
+    assert_eq!(
+        user_lines.len(),
+        1,
+        "expected exactly one USER directive:\n{df}"
+    );
     assert_eq!(user_lines[0].trim(), "USER nonroot:nonroot");
     // The preceding COPY must end at `/app/server`, not `/app/serverUSER`.
-    assert!(df.contains("/app/server\nUSER") || df.lines().any(|l| l.trim_end().ends_with("/app/server")),
-        "COPY destination must terminate at /app/server:\n{df}");
+    assert!(
+        df.contains("/app/server\nUSER")
+            || df.lines().any(|l| l.trim_end().ends_with("/app/server")),
+        "COPY destination must terminate at /app/server:\n{df}"
+    );
 }
 
 #[test]
 fn dockerfile_every_instruction_starts_its_own_line() {
     let df = dockerfile(false);
     const KNOWN: &[&str] = &[
-        "FROM ", "WORKDIR ", "COPY ", "RUN ", "USER ", "ENV ",
-        "EXPOSE ", "HEALTHCHECK ", "ENTRYPOINT ", "CMD ", "ARG ",
+        "FROM ",
+        "WORKDIR ",
+        "COPY ",
+        "RUN ",
+        "USER ",
+        "ENV ",
+        "EXPOSE ",
+        "HEALTHCHECK ",
+        "ENTRYPOINT ",
+        "CMD ",
+        "ARG ",
     ];
     for line in df.lines() {
         let t = line.trim();
@@ -279,8 +295,10 @@ fn emit_static_copies_prerendered_and_emits_headers_redirects() {
 
     let mut art = artifact("b3", manifest_json());
     art.out_dir = build_out.clone();
-    art.prerendered
-        .insert("routes/index/page".into(), vec!["prerendered/index.html".into()]);
+    art.prerendered.insert(
+        "routes/index/page".into(),
+        vec!["prerendered/index.html".into()],
+    );
     art.prerendered.insert(
         "routes/blog/hello/page".into(),
         vec!["prerendered/blog/hello.html".into()],
@@ -557,7 +575,6 @@ fn js_entries_are_deterministic_and_reference_handler_contract() {
     );
 }
 
-
 #[test]
 fn cloudflare_emits_complete_worker_package() {
     let dir = tempfile::tempdir().unwrap();
@@ -567,8 +584,17 @@ fn cloudflare_emits_complete_worker_package() {
         .iter()
         .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
         .collect();
-    for expected in ["worker.js", "edge.js", "_routes.json", "wrangler.toml", "deploy.json"] {
-        assert!(names.contains(&expected.to_string()), "missing {expected}: {names:?}");
+    for expected in [
+        "worker.js",
+        "edge.js",
+        "_routes.json",
+        "wrangler.toml",
+        "deploy.json",
+    ] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "missing {expected}: {names:?}"
+        );
     }
     // The worker imports edge.js (not the never-written ./server/edge.js).
     let worker = std::fs::read_to_string(out.join("worker.js")).unwrap();
@@ -577,12 +603,21 @@ fn cloudflare_emits_complete_worker_package() {
     // edge.js is a real WinterCG handler with the JS fallbacks.
     let edge = std::fs::read_to_string(out.join("edge.js")).unwrap();
     assert!(edge.contains("export default { fetch: handler }"), "{edge}");
-    assert!(edge.contains("export { cacheKey, mergeHead, encodeOdf }"), "{edge}");
+    assert!(
+        edge.contains("export { cacheKey, mergeHead, encodeOdf }"),
+        "{edge}"
+    );
     // The routes file excludes assets.
     let routes: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(out.join("_routes.json")).unwrap()).unwrap();
     assert_eq!(routes["version"], 1);
-    assert!(routes["include"].as_array().unwrap().iter().any(|v| v == "/*"));
+    assert!(
+        routes["include"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "/*")
+    );
     // Wrangler has the compat flags and doesn't declare wasm when absent.
     let wrangler = std::fs::read_to_string(out.join("wrangler.toml")).unwrap();
     assert!(wrangler.contains("main = \"worker.js\""));
