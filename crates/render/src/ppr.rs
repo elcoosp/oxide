@@ -14,7 +14,7 @@
 //!    boundary content streams back into the cached shell and yields a single
 //!    streaming response.
 
-use crate::{err, Result};
+use crate::{Result, err};
 use std::collections::BTreeMap;
 
 /// The static shell of a PPR response — the HTML with each deferred boundary
@@ -57,20 +57,21 @@ pub fn split_shell(html: &str) -> Result<Shell> {
         let id = rest[..close_q].to_string();
         // Find the matching `</template>` after this opening tag.
         let after_open = &rest[close_q + 1..];
-        let close_rel = after_open.find("</template>").ok_or_else(|| {
-            err(
-                "RND-PPR",
-                format!("boundary `{id}` has no closing tag"),
-            )
-        })?;
+        let close_rel = after_open
+            .find("</template>")
+            .ok_or_else(|| err("RND-PPR", format!("boundary `{id}` has no closing tag")))?;
         // Emit an opaque placeholder in the shell.
         out.push_str(&format!("<ox-hole id=\"{id}\"></ox-hole>"));
         holes.push(id);
-        cursor = open + "<template data-ox-b=".len() + 1 + close_q + 1 + close_rel + "</template>".len();
+        cursor =
+            open + "<template data-ox-b=".len() + 1 + close_q + 1 + close_rel + "</template>".len();
     }
     // Trailing content after the last boundary.
     out.push_str(&html[cursor..]);
-    Ok(Shell { html: out, hole_ids: holes })
+    Ok(Shell {
+        html: out,
+        hole_ids: holes,
+    })
 }
 
 /// Assemble the final HTML from a cached shell and the per-request resolved
@@ -91,10 +92,7 @@ pub fn assemble(shell: &Shell, resolved: &BTreeMap<String, String>) -> Result<St
         let end_rel = after_q
             .find("></ox-hole>")
             .ok_or_else(|| err("RND-PPR", format!("hole `{id}` has no closing marker")))?;
-        let fill = resolved
-            .get(id)
-            .cloned()
-            .unwrap_or_else(|| String::new());
+        let fill = resolved.get(id).cloned().unwrap_or_else(|| String::new());
         out.push_str(&fill);
         cursor = open + "<ox-hole id=\"".len() + close_q + 1 + end_rel + "></ox-hole>".len();
     }
@@ -151,7 +149,10 @@ mod tests {
         let html = "a<template data-ox-b=\"x\">X</template>b<template data-ox-b='y'>Y</template>c";
         let shell = split_shell(html).unwrap();
         assert_eq!(shell.hole_ids, vec!["x", "y"]);
-        assert_eq!(shell.html, "a<ox-hole id=\"x\"></ox-hole>b<ox-hole id=\"y\"></ox-hole>c");
+        assert_eq!(
+            shell.html,
+            "a<ox-hole id=\"x\"></ox-hole>b<ox-hole id=\"y\"></ox-hole>c"
+        );
 
         let plain = split_shell("<p>static</p>").unwrap();
         assert!(plain.hole_ids.is_empty());
