@@ -21,10 +21,42 @@ const TAG = {
   UNDEFINED: 0x01,
   BOOL: 0x02,
   NUMBER: 0x03,
+  BIGINT: 0x04,
   STRING: 0x05,
+  DATE: 0x06,
+  URL: 0x07,
+  REGEXP: 0x08,
   ARRAY: 0x09,
   OBJECT: 0x0a,
+  MAP: 0x0b,
+  SET: 0x0c,
+  TYPED_ARRAY: 0x0d,
 } as const
+
+/**
+ * Typed-array kind byte → the matching global constructor, in the exact order
+ * `crates/odf/src/wire.rs` declares (`TypedArrayKind`): 0 = I8 … 10 = BigUint64.
+ */
+const TYPED_ARRAY_KINDS: Array<{ ctor: unknown; kind: number }> = [
+  { ctor: (globalThis as { Int8Array?: unknown }).Int8Array, kind: 0 },
+  { ctor: (globalThis as { Uint8Array?: unknown }).Uint8Array, kind: 1 },
+  { ctor: (globalThis as { Uint8ClampedArray?: unknown }).Uint8ClampedArray, kind: 2 },
+  { ctor: (globalThis as { Int16Array?: unknown }).Int16Array, kind: 3 },
+  { ctor: (globalThis as { Uint16Array?: unknown }).Uint16Array, kind: 4 },
+  { ctor: (globalThis as { Int32Array?: unknown }).Int32Array, kind: 5 },
+  { ctor: (globalThis as { Uint32Array?: unknown }).Uint32Array, kind: 6 },
+  { ctor: (globalThis as { Float32Array?: unknown }).Float32Array, kind: 7 },
+  { ctor: (globalThis as { Float64Array?: unknown }).Float64Array, kind: 8 },
+  { ctor: (globalThis as { BigInt64Array?: unknown }).BigInt64Array, kind: 9 },
+  { ctor: (globalThis as { BigUint64Array?: unknown }).BigUint64Array, kind: 10 },
+]
+
+function typedArrayKindOf(v: object): number | undefined {
+  for (const { ctor, kind } of TYPED_ARRAY_KINDS) {
+    if (typeof ctor === 'function' && v instanceof (ctor as new () => object)) return kind
+  }
+  return undefined
+}
 
 function varu(out: number[], n: number): void {
   n = n >>> 0
@@ -72,7 +104,82 @@ function writeValue(out: number[], v: unknown): void {
     for (const item of v) writeValue(out, item)
     return
   }
+  if (typeof v === 'bigint') {
+    // BIGINT (0x04): varu(len) + decimal-string bytes. Rust validates the same
+    // `-?(0|[0-9]+)` shape on encode.
+    const dec = v.toString(10)
+    out.push(TAG.BIGINT)
+    const bytes = utf8(dec)
+    varu(out, bytes.length)
+    out.push(...bytes)
+    return
+  }
   if (typeof v === 'object') {
+    // DATE (0x06): i64 epoch-ms, little-endian — matches `Value::Date(i64)`.
+    if (v instanceof Date) {
+      const ms = v.getTime()
+      if (!Number.isFinite(ms)) {
+        throw new TypeError('odf: cannot encode an Invalid Date')
+      }
+      out.push(TAG.DATE)
+      const buf = new ArrayBuffer(8)
+      new DataView(buf).setBigInt64(0, BigInt(Math.trunc(ms)), true)
+      out.push(...new Uint8Array(buf))
+      return
+    }
+    // MAP (0x0b): varu(pairCount) + alternating key, value records.
+    if (v instanceof Map) {
+      out.push(TAG.MAP)
+      varu(out, v.size)
+      for (const [k, val] of v) {
+        writeValue(out, k)
+        writeValue(out, val)
+      }
+      return
+    }
+    // SET (0x0c): varu(count) + records.
+    if (v instanceof Set) {
+      out.push(TAG.SET)
+      varu(out, v.size)
+      for (const item of v) writeValue(out, item)
+      return
+    }
+    // URL (0x07): varu(len) + string form.
+    if (typeof URL !== 'undefined' && v instanceof URL) {
+      const s = v.toString()
+      out.push(TAG.URL)
+      const bytes = utf8(s)
+      varu(out, bytes.length)
+      out.push(...bytes)
+      return
+    }
+    // REGEXP (0x08): varu(srcLen) + src + varu(flagsLen) + flags.
+    if (v instanceof RegExp) {
+      const source = v.source
+      const flags = v.flags
+      out.push(TAG.REGEXP)
+      const sb = utf8(source)
+      varu(out, sb.length)
+      out.push(...sb)
+      const fb = utf8(flags)
+      varu(out, fb.length)
+      out.push(...fb)
+      return
+    }
+    // TYPED_ARRAY (0x0d): kind byte + varu(byteLength) + raw little-endian
+    // element bytes. The JS typed array already stores in platform order,
+    // which is little-endian on every target we run (and matches Rust's
+    // `to_le_bytes` for the numeric kinds).
+    const taKind = typedArrayKindOf(v)
+    if (taKind !== undefined) {
+      const view = v as ArrayBufferView
+      const bytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength)
+      out.push(TAG.TYPED_ARRAY)
+      out.push(taKind)
+      varu(out, bytes.length)
+      out.push(...bytes)
+      return
+    }
     // Filter the reserved keys BEFORE counting: the declared count must match
     // the number of pairs actually written, or the decoder desyncs.
     const keys = Object.keys(v as Record<string, unknown>)
@@ -96,7 +203,7 @@ export function isOdfEncodable(v: unknown, depth = 0, seen = new Set<object>()):
   if (depth > 100) return false
   if (v === null || v === undefined) return true
   const t = typeof v
-  if (t === 'boolean' || t === 'number' || t === 'string') return true
+  if (t === 'boolean' || t === 'number' || t === 'string' || t === 'bigint') return true
   if (t !== 'object') return false
   const o = v as object
   if (seen.has(o)) return false // cycle
@@ -104,12 +211,36 @@ export function isOdfEncodable(v: unknown, depth = 0, seen = new Set<object>()):
   let ok = true
   if (Array.isArray(v)) {
     ok = v.every((x) => isOdfEncodable(x, depth + 1, seen))
+  } else if (v instanceof Date) {
+    ok = Number.isFinite(v.getTime())
+  } else if (v instanceof Map) {
+    ok = true
+    for (const [k, val] of v) {
+      if (!isOdfEncodable(k, depth + 1, seen) || !isOdfEncodable(val, depth + 1, seen)) {
+        ok = false
+        break
+      }
+    }
+  } else if (v instanceof Set) {
+    ok = true
+    for (const item of v) {
+      if (!isOdfEncodable(item, depth + 1, seen)) {
+        ok = false
+        break
+      }
+    }
+  } else if (typeof URL !== 'undefined' && v instanceof URL) {
+    ok = true
+  } else if (v instanceof RegExp) {
+    ok = true
+  } else if (typedArrayKindOf(o) !== undefined) {
+    ok = true
   } else if (Object.getPrototypeOf(o) === Object.prototype || Object.getPrototypeOf(o) === null) {
     ok = Object.values(v as Record<string, unknown>).every((x) =>
       isOdfEncodable(x, depth + 1, seen),
     )
   } else {
-    ok = false // Date/Map/Set/typed arrays/etc.
+    ok = false
   }
   seen.delete(o)
   return ok
