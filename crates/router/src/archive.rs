@@ -12,12 +12,12 @@ use std::path::{Path, PathBuf};
 
 use rkyv::option::ArchivedOption;
 use rkyv::string::ArchivedString;
-use rkyv::{rancor, Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize, rancor};
 
-use crate::matcher::{layout_chain, match_in, EntryLike};
+use crate::matcher::{EntryLike, layout_chain, match_in};
 use crate::{
-    ferr, ArchivedRouteKind, ArchivedTree, MatchResult, Result, RouteEntry, RouteId, RouteKind,
-    RouteTree,
+    ArchivedRouteKind, ArchivedTree, MatchResult, Result, RouteEntry, RouteId, RouteKind,
+    RouteTree, ferr,
 };
 
 /// Shadow DTO written to the archive (see module docs).
