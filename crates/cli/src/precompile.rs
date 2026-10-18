@@ -12,8 +12,8 @@
 //! `BLD-FRAMEWORK` diagnostic naming the file when it reaches a `.vue` or
 //! `.svelte` module without a precompiled entry.
 
-use anyhow::Context;
 use crate::precompile_cache::{PrecompileCache, PrecompileKey};
+use anyhow::Context;
 use oxide_jshost::{CallInput, EntryRef, Pool};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -62,7 +62,11 @@ fn scan_import_specs(src: &str) -> Vec<String> {
         .collect()
 }
 
-async fn call_pool(pool: &Arc<dyn Pool>, kind: &str, payload: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+async fn call_pool(
+    pool: &Arc<dyn Pool>,
+    kind: &str,
+    payload: serde_json::Value,
+) -> anyhow::Result<serde_json::Value> {
     let req = CallInput {
         payload,
         headers: Default::default(),
@@ -83,7 +87,8 @@ async fn call_pool(pool: &Arc<dyn Pool>, kind: &str, payload: serde_json::Value)
         .collect()
         .await
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
-    let v: serde_json::Value = serde_json::from_slice(&bytes).context("worker returned invalid JSON")?;
+    let v: serde_json::Value =
+        serde_json::from_slice(&bytes).context("worker returned invalid JSON")?;
     if let Some(err) = v.get("__oxide_error").and_then(|x| x.as_str()) {
         anyhow::bail!("{err}");
     }
@@ -103,7 +108,12 @@ async fn compile_vue(pool: &Arc<dyn Pool>, path: &Path, source: &str) -> anyhow:
         .ok_or_else(|| anyhow::anyhow!("vue-compile returned no `js` field"))
 }
 
-async fn compile_solid(pool: &Arc<dyn Pool>, path: &Path, source: &str, ssr: bool) -> anyhow::Result<String> {
+async fn compile_solid(
+    pool: &Arc<dyn Pool>,
+    path: &Path,
+    source: &str,
+    ssr: bool,
+) -> anyhow::Result<String> {
     let v = call_pool(
         pool,
         "tooling:solid-compile",
@@ -120,7 +130,12 @@ async fn compile_solid(pool: &Arc<dyn Pool>, path: &Path, source: &str, ssr: boo
         .ok_or_else(|| anyhow::anyhow!("solid-compile returned no `js` field"))
 }
 
-async fn compile_svelte(pool: &Arc<dyn Pool>, path: &Path, source: &str, generate: &str) -> anyhow::Result<String> {
+async fn compile_svelte(
+    pool: &Arc<dyn Pool>,
+    path: &Path,
+    source: &str,
+    generate: &str,
+) -> anyhow::Result<String> {
     let v = call_pool(
         pool,
         "tooling:svelte-compile",
