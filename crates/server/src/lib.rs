@@ -3273,6 +3273,32 @@ impl Server {
                                     );
                                 }
                             }
+                            // §9.6: a WebSocket upgrade for a matched
+                            // `socket.ts` route. Checked before the normal
+                            // pipeline so the `hyper::upgrade::OnUpgrade`
+                            // handle is available (the pipeline consumes it).
+                            if let Some(svc) = pipeline.sockets.as_ref() {
+                                let is_ws = req
+                                    .headers()
+                                    .get(hyper::header::UPGRADE)
+                                    .and_then(|v| v.to_str().ok())
+                                    .map(|v| v.eq_ignore_ascii_case("websocket"))
+                                    .unwrap_or(false);
+                                if is_ws {
+                                    let path = req.uri().path().to_string();
+                                    if let Some(module) =
+                                        crate::socket_route_for(&svc.routes, &path)
+                                    {
+                                        return Ok::<_, std::io::Error>(
+                                            crate::ws_socket_upgrade(
+                                                req,
+                                                Arc::clone(svc),
+                                                module.clone(),
+                                            ),
+                                        );
+                                    }
+                                }
+                            }
                             let request_id = next_request_id();
                             match from_hyper_request(req, request_id, &pipeline.limits).await {
                                 Ok(oreq) => {
