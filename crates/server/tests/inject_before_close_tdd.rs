@@ -8,11 +8,13 @@
 
 use bytes::Bytes;
 use futures::stream;
-use oxide_server::{inject_before_close, BodyStream};
+use oxide_server::{BodyStream, inject_before_close};
 
 fn stream_of(chunks: Vec<&'static [u8]>) -> BodyStream {
-    let owned: Vec<Result<Bytes, std::io::Error>> =
-        chunks.into_iter().map(|c| Ok(Bytes::from_static(c))).collect();
+    let owned: Vec<Result<Bytes, std::io::Error>> = chunks
+        .into_iter()
+        .map(|c| Ok(Bytes::from_static(c)))
+        .collect();
     Box::pin(stream::iter(owned))
 }
 
@@ -118,7 +120,10 @@ async fn passes_errors_through() {
     // failure aborts the HTTP connection; it must not be silently swallowed).
     let chunks: Vec<Result<Bytes, std::io::Error>> = vec![
         Ok(Bytes::from_static(b"<html><body>hi")),
-        Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "client gone")),
+        Err(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "client gone",
+        )),
     ];
     let s: BodyStream = Box::pin(stream::iter(chunks));
     let mut s = inject_before_close(s, CLOSE, TAG);
@@ -129,7 +134,6 @@ async fn passes_errors_through() {
     assert!(second.is_err(), "error must propagate");
 }
 
-
 // ---------------------------------------------------------------------------
 // §16.1 remote image source gating.
 //
@@ -139,13 +143,19 @@ async fn passes_errors_through() {
 // every branch, including the ones a hostile input would try.
 // ---------------------------------------------------------------------------
 
-use oxide_server::{remote_pattern_allows, RemoteImagePattern};
+use oxide_server::{RemoteImagePattern, remote_pattern_allows};
 
 fn pat(host: &str) -> RemoteImagePattern {
-    RemoteImagePattern { host: host.to_string(), protocol: None }
+    RemoteImagePattern {
+        host: host.to_string(),
+        protocol: None,
+    }
 }
 fn pat_proto(host: &str, proto: &str) -> RemoteImagePattern {
-    RemoteImagePattern { host: host.to_string(), protocol: Some(proto.to_string()) }
+    RemoteImagePattern {
+        host: host.to_string(),
+        protocol: Some(proto.to_string()),
+    }
 }
 
 #[test]
@@ -153,7 +163,11 @@ fn exact_host_matches() {
     let patterns = vec![pat("cdn.example.com")];
     assert!(remote_pattern_allows(&patterns, "cdn.example.com", "https"));
     assert!(!remote_pattern_allows(&patterns, "example.com", "https"));
-    assert!(!remote_pattern_allows(&patterns, "evil.example.com", "https"));
+    assert!(!remote_pattern_allows(
+        &patterns,
+        "evil.example.com",
+        "https"
+    ));
 }
 
 #[test]
@@ -189,7 +203,11 @@ fn an_empty_pattern_list_allows_nothing() {
     // empty (before this fn is even called), but the fn itself must also
     // say "no".
     let patterns: Vec<RemoteImagePattern> = vec![];
-    assert!(!remote_pattern_allows(&patterns, "cdn.example.com", "https"));
+    assert!(!remote_pattern_allows(
+        &patterns,
+        "cdn.example.com",
+        "https"
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -200,19 +218,13 @@ fn an_empty_pattern_list_allows_nothing() {
 // against a hand-written dispatcher — no runtime, no V8, no worker.
 // ---------------------------------------------------------------------------
 
-use oxide_server::{
-    DispatchError, OxideRequest, Pipeline, ServerFnDispatcher,
-};
+use oxide_server::{DispatchError, OxideRequest, Pipeline, ServerFnDispatcher};
 use std::sync::Arc;
 
 struct EchoDispatcher;
 #[async_trait::async_trait]
 impl ServerFnDispatcher for EchoDispatcher {
-    async fn dispatch(
-        &self,
-        id: &str,
-        args_json: &[u8],
-    ) -> Result<Vec<u8>, DispatchError> {
+    async fn dispatch(&self, id: &str, args_json: &[u8]) -> Result<Vec<u8>, DispatchError> {
         if id == "missing" {
             return Err(DispatchError::not_found(id));
         }
@@ -252,9 +264,11 @@ fn fn_request(method: &str, id: &str, body: &str, ct: &str) -> OxideRequest {
 async fn server_fn_post_dispatches_and_wraps_in_envelope() {
     let p = fn_pipeline();
     let req = fn_request("POST", "add", r#"{"args":[1,2]}"#, "application/oxide-fn");
-    let resp = p.serve_request(req, &|_r| {
-        Box::pin(async { oxide_server::OxideResponse::new(500, "dispatch should not run") })
-    }).await;
+    let resp = p
+        .serve_request(req, &|_r| {
+            Box::pin(async { oxide_server::OxideResponse::new(500, "dispatch should not run") })
+        })
+        .await;
     assert_eq!(resp.status, 200);
     let body: serde_json::Value = serde_json::from_slice(&resp.body).expect("json body");
     assert_eq!(body["ok"], true);
@@ -266,9 +280,11 @@ async fn server_fn_post_dispatches_and_wraps_in_envelope() {
 async fn server_fn_get_is_rejected_with_405() {
     let p = fn_pipeline();
     let req = fn_request("GET", "add", "", "application/oxide-fn");
-    let resp = p.serve_request(req, &|_r| {
-        Box::pin(async { oxide_server::OxideResponse::new(500, "dispatch should not run") })
-    }).await;
+    let resp = p
+        .serve_request(req, &|_r| {
+            Box::pin(async { oxide_server::OxideResponse::new(500, "dispatch should not run") })
+        })
+        .await;
     assert_eq!(resp.status, 405);
     assert!(resp.header("allow").is_some_and(|v| v.contains("POST")));
 }
@@ -277,9 +293,11 @@ async fn server_fn_get_is_rejected_with_405() {
 async fn server_fn_wrong_content_type_is_rejected_with_415() {
     let p = fn_pipeline();
     let req = fn_request("POST", "add", "{}", "application/json");
-    let resp = p.serve_request(req, &|_r| {
-        Box::pin(async { oxide_server::OxideResponse::new(500, "dispatch should not run") })
-    }).await;
+    let resp = p
+        .serve_request(req, &|_r| {
+            Box::pin(async { oxide_server::OxideResponse::new(500, "dispatch should not run") })
+        })
+        .await;
     assert_eq!(resp.status, 415);
 }
 
@@ -287,9 +305,11 @@ async fn server_fn_wrong_content_type_is_rejected_with_415() {
 async fn server_fn_unknown_id_is_404_with_error_envelope() {
     let p = fn_pipeline();
     let req = fn_request("POST", "missing", "{}", "application/oxide-fn");
-    let resp = p.serve_request(req, &|_r| {
-        Box::pin(async { oxide_server::OxideResponse::new(500, "dispatch should not run") })
-    }).await;
+    let resp = p
+        .serve_request(req, &|_r| {
+            Box::pin(async { oxide_server::OxideResponse::new(500, "dispatch should not run") })
+        })
+        .await;
     assert_eq!(resp.status, 404);
     let body: serde_json::Value = serde_json::from_slice(&resp.body).expect("json body");
     assert_eq!(body["ok"], false);
@@ -301,9 +321,11 @@ async fn server_fn_without_dispatcher_is_404() {
     // No dispatcher wired (a build with server functions disabled).
     let p = Pipeline::default();
     let req = fn_request("POST", "add", "{}", "application/oxide-fn");
-    let resp = p.serve_request(req, &|_r| {
-        Box::pin(async { oxide_server::OxideResponse::new(500, "dispatch should not run") })
-    }).await;
+    let resp = p
+        .serve_request(req, &|_r| {
+            Box::pin(async { oxide_server::OxideResponse::new(500, "dispatch should not run") })
+        })
+        .await;
     assert_eq!(resp.status, 404);
     let body: serde_json::Value = serde_json::from_slice(&resp.body).expect("json body");
     assert_eq!(body["code"], "FN-NO-DISPATCHER");
@@ -318,17 +340,14 @@ async fn server_fn_without_dispatcher_is_404() {
 // ---------------------------------------------------------------------------
 
 use oxide_server::{
-    plan_remote_image_for_test, ImageEndpoint, ImageEndpointBackend,
-    ImageEndpointRequest, ImageEndpointResult, ImageQueryForTest,
+    ImageEndpoint, ImageEndpointBackend, ImageEndpointRequest, ImageEndpointResult,
+    ImageQueryForTest, plan_remote_image_for_test,
 };
 
 /// A backend that never runs — the plan fn does not touch it.
 struct NoopBackend;
 impl ImageEndpointBackend for NoopBackend {
-    fn process(
-        &self,
-        _req: ImageEndpointRequest,
-    ) -> Result<ImageEndpointResult, String> {
+    fn process(&self, _req: ImageEndpointRequest) -> Result<ImageEndpointResult, String> {
         Err("noop".into())
     }
 }
@@ -345,9 +364,10 @@ fn endpoint_with(patterns: Vec<RemoteImagePattern>) -> ImageEndpoint {
 }
 
 fn query(url: &str) -> ImageQueryForTest {
-    ImageQueryForTest { url: url.to_string() }
+    ImageQueryForTest {
+        url: url.to_string(),
+    }
 }
-
 
 #[test]
 fn plan_rejects_a_host_not_in_remote_patterns() {
@@ -389,8 +409,7 @@ fn plan_rejects_a_loopback_literal() {
 #[test]
 fn plan_rejects_a_non_http_scheme() {
     let e = endpoint_with(vec![pat("cdn.example.com")]);
-    let (status, msg) =
-        plan_remote_image_for_test(&e, &query("file:///etc/passwd")).unwrap_err();
+    let (status, msg) = plan_remote_image_for_test(&e, &query("file:///etc/passwd")).unwrap_err();
     assert_eq!(status, 400);
     assert!(msg.contains("scheme"), "{msg}");
 }
