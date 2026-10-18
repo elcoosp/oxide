@@ -84,3 +84,105 @@ export async function renderVueToString(
   const app = deps.vue.createSSRApp(Component, props)
   return await deps.server.renderToString(app)
 }
+
+/**
+ * Stream a Vue component's HTML via `@vue/server-renderer`'s `renderToStream`.
+ * Yields the shell before async setup/suspense resolves — the TTFB property
+ * streaming exists for. Falls back to a single-chunk stream from
+ * `renderVueToString` when the runtime lacks `renderToStream`.
+ */
+export async function renderVueToStream(
+  Component: unknown,
+  props: Record<string, unknown> = {},
+): Promise<ReadableStream<Uint8Array>> {
+  const deps = await load()
+  if (!deps) {
+    throw new Error('@oxide/vue: real SSR requires `vue` and `@vue/server-renderer` to be installed')
+  }
+  const app = deps.vue.createSSRApp(Component, props)
+  const server = deps.server as unknown as {
+    renderToStream?: (app: unknown) => Promise<NodeJS.ReadableStream | ReadableStream<Uint8Array>>
+    renderToString: (app: unknown) => Promise<string>
+  }
+  if (typeof server.renderToStream === 'function') {
+    const vueStream = await server.renderToStream(app)
+    // `renderToStream` returns a Node Readable on Node and a web
+    // ReadableStream on edge runtimes. Normalize to a web stream — the
+    // worker consumes `for await` which works on both, but the adapter's
+    // contract is a web `ReadableStream`.
+    if (typeof (vueStream as ReadableStream<Uint8Array>).getReader === 'function') {
+      return vueStream as ReadableStream<Uint8Array>
+    }
+    // Node Readable → web ReadableStream.
+    const nodeStream = vueStream as NodeJS.ReadableStream
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        nodeStream.on('data', (chunk: Buffer | string) => {
+          controller.enqueue(typeof chunk === 'string' ? new TextEncoder().encode(chunk) : new Uint8Array(chunk))
+        })
+        nodeStream.on('end', () => controller.close())
+        nodeStream.on('error', (e) => controller.error(e))
+      },
+    })
+  }
+  // No streaming API: single-chunk fallback.
+  const html = await server.renderToString(app)
+  const bytes = new TextEncoder().encode(html)
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes)
+      controller.close()
+    },
+  })
+}
+
+/**
+ * Stream a Vue component's HTML via `@vue/server-renderer`'s `renderToStream`.
+ * Yields the shell before async setup/suspense resolves — the TTFB property
+ * streaming exists for. Falls back to a single-chunk stream from
+ * `renderVueToString` when the runtime lacks `renderToStream`.
+ */
+export async function renderVueToStream(
+  Component: unknown,
+  props: Record<string, unknown> = {},
+): Promise<ReadableStream<Uint8Array>> {
+  const deps = await load()
+  if (!deps) {
+    throw new Error('@oxide/vue: real SSR requires `vue` and `@vue/server-renderer` to be installed')
+  }
+  const app = deps.vue.createSSRApp(Component, props)
+  const server = deps.server as unknown as {
+    renderToStream?: (app: unknown) => Promise<NodeJS.ReadableStream | ReadableStream<Uint8Array>>
+    renderToString: (app: unknown) => Promise<string>
+  }
+  if (typeof server.renderToStream === 'function') {
+    const vueStream = await server.renderToStream(app)
+    // `renderToStream` returns a Node Readable on Node and a web
+    // ReadableStream on edge runtimes. Normalize to a web stream — the
+    // worker consumes `for await` which works on both, but the adapter's
+    // contract is a web `ReadableStream`.
+    if (typeof (vueStream as ReadableStream<Uint8Array>).getReader === 'function') {
+      return vueStream as ReadableStream<Uint8Array>
+    }
+    // Node Readable → web ReadableStream.
+    const nodeStream = vueStream as NodeJS.ReadableStream
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        nodeStream.on('data', (chunk: Buffer | string) => {
+          controller.enqueue(typeof chunk === 'string' ? new TextEncoder().encode(chunk) : new Uint8Array(chunk))
+        })
+        nodeStream.on('end', () => controller.close())
+        nodeStream.on('error', (e) => controller.error(e))
+      },
+    })
+  }
+  // No streaming API: single-chunk fallback.
+  const html = await server.renderToString(app)
+  const bytes = new TextEncoder().encode(html)
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes)
+      controller.close()
+    },
+  })
+}

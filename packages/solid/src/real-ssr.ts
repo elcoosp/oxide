@@ -120,3 +120,95 @@ export async function renderSolidToString(fn: () => unknown): Promise<string> {
   }
   throw new Error('@oxide/solid: upstream renderer exposes neither renderToString nor renderToStringAsync')
 }
+
+/**
+ * Stream a Solid component's HTML via `@solidjs/web`'s `renderToStream`.
+ * Yields the shell before Suspense/resources resolve. Falls back to a
+ * single-chunk stream from `renderSolidToString` when the runtime lacks
+ * `renderToStream` (Solid 1.x's web runtime exposes only `renderToString`).
+ *
+ * `renderToStream` takes a zero-argument factory (like `renderToString`).
+ */
+export async function renderSolidToStream(
+  fn: () => unknown,
+): Promise<ReadableStream<Uint8Array>> {
+  const loaded = await load()
+  if (!loaded) {
+    throw new Error('@oxide/solid: real SSR requires `@solidjs/web` (Solid 2) or `solid-js/web` (Solid 1) to be installed')
+  }
+  const web = loaded.web as unknown as {
+    renderToStream?: (fn: () => unknown) => Promise<NodeJS.ReadableStream | ReadableStream<Uint8Array>>
+    renderToString?: (fn: () => unknown) => string | Promise<string>
+  }
+  if (typeof web.renderToStream === 'function') {
+    const solidStream = await web.renderToStream(fn)
+    if (typeof (solidStream as ReadableStream<Uint8Array>).getReader === 'function') {
+      return solidStream as ReadableStream<Uint8Array>
+    }
+    const nodeStream = solidStream as NodeJS.ReadableStream
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        nodeStream.on('data', (chunk: Buffer | string) => {
+          controller.enqueue(typeof chunk === 'string' ? new TextEncoder().encode(chunk) : new Uint8Array(chunk))
+        })
+        nodeStream.on('end', () => controller.close())
+        nodeStream.on('error', (e) => controller.error(e))
+      },
+    })
+  }
+  // Fallback: single-chunk from renderToString.
+  const html = await renderSolidToString(fn)
+  const bytes = new TextEncoder().encode(html)
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes)
+      controller.close()
+    },
+  })
+}
+
+/**
+ * Stream a Solid component's HTML via `@solidjs/web`'s `renderToStream`.
+ * Yields the shell before Suspense/resources resolve. Falls back to a
+ * single-chunk stream from `renderSolidToString` when the runtime lacks
+ * `renderToStream` (Solid 1.x's web runtime exposes only `renderToString`).
+ *
+ * `renderToStream` takes a zero-argument factory (like `renderToString`).
+ */
+export async function renderSolidToStream(
+  fn: () => unknown,
+): Promise<ReadableStream<Uint8Array>> {
+  const loaded = await load()
+  if (!loaded) {
+    throw new Error('@oxide/solid: real SSR requires `@solidjs/web` (Solid 2) or `solid-js/web` (Solid 1) to be installed')
+  }
+  const web = loaded.web as unknown as {
+    renderToStream?: (fn: () => unknown) => Promise<NodeJS.ReadableStream | ReadableStream<Uint8Array>>
+    renderToString?: (fn: () => unknown) => string | Promise<string>
+  }
+  if (typeof web.renderToStream === 'function') {
+    const solidStream = await web.renderToStream(fn)
+    if (typeof (solidStream as ReadableStream<Uint8Array>).getReader === 'function') {
+      return solidStream as ReadableStream<Uint8Array>
+    }
+    const nodeStream = solidStream as NodeJS.ReadableStream
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        nodeStream.on('data', (chunk: Buffer | string) => {
+          controller.enqueue(typeof chunk === 'string' ? new TextEncoder().encode(chunk) : new Uint8Array(chunk))
+        })
+        nodeStream.on('end', () => controller.close())
+        nodeStream.on('error', (e) => controller.error(e))
+      },
+    })
+  }
+  // Fallback: single-chunk from renderToString.
+  const html = await renderSolidToString(fn)
+  const bytes = new TextEncoder().encode(html)
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes)
+      controller.close()
+    },
+  })
+}
