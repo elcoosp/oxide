@@ -4,7 +4,7 @@
 //!
 //! The full wire layout is documented in `crates/odf/docs/format.md`.
 
-use crate::{err, Result, TypedArrayKind, Value};
+use crate::{Result, TypedArrayKind, Value, err};
 
 /// Type-tag bytes. The byte equals the ordinal of the matching [Value] variant.
 pub(crate) mod tags {
@@ -152,8 +152,16 @@ pub fn bitexact_eq(a: &Value, b: &Value) -> bool {
                 }
             }
             (
-                Value::Error { name: n1, message: m1, stack: s1 },
-                Value::Error { name: n2, message: m2, stack: s2 },
+                Value::Error {
+                    name: n1,
+                    message: m1,
+                    stack: s1,
+                },
+                Value::Error {
+                    name: n2,
+                    message: m2,
+                    stack: s2,
+                },
             ) => {
                 if n1 != n2 || m1 != m2 || s1 != s2 {
                     return false;
