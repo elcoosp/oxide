@@ -15,7 +15,7 @@
 //! hostile payload nested `MAX_DEPTH`-deep must fail with `ODF-CYCLE`, not
 //! by overflowing the host thread's stack before the guard can fire.
 
-use crate::{err, Result, Value, MAX_DEPTH};
+use crate::{MAX_DEPTH, Result, Value, err};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Resolve `Value::Ref(i)` markers against the value's own virtual shared
@@ -180,11 +180,7 @@ impl<'a> Resolver<'a> {
                 if strict && child_depth > MAX_DEPTH {
                     return Err(Self::too_deep());
                 }
-                stack
-                    .last_mut()
-                    .expect("non-empty")
-                    .out
-                    .push(other.clone());
+                stack.last_mut().expect("non-empty").out.push(other.clone());
                 Ok(())
             }
         }
@@ -195,12 +191,7 @@ impl<'a> Resolver<'a> {
     /// The depth guard applies to containers only: leaves never recurse, so
     /// they cannot contribute to expansion depth (mirrors the encoder, where
     /// only nesting structure counts toward `MAX_DEPTH`).
-    fn push_inline(
-        &mut self,
-        stack: &mut Vec<Frame<'a>>,
-        v: &'a Value,
-        depth: u32,
-    ) -> Result<()> {
+    fn push_inline(&mut self, stack: &mut Vec<Frame<'a>>, v: &'a Value, depth: u32) -> Result<()> {
         if depth > MAX_DEPTH {
             return Err(Self::too_deep());
         }
@@ -214,12 +205,7 @@ impl<'a> Resolver<'a> {
 
     /// Push an interior container of a shared entry: no slot, strict depth
     /// accounting, result used once and discarded.
-    fn push_anon(
-        &mut self,
-        stack: &mut Vec<Frame<'a>>,
-        v: &'a Value,
-        depth: u32,
-    ) -> Result<()> {
+    fn push_anon(&mut self, stack: &mut Vec<Frame<'a>>, v: &'a Value, depth: u32) -> Result<()> {
         if depth > MAX_DEPTH {
             return Err(Self::too_deep());
         }
