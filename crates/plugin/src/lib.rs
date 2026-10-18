@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 mod wasm;
-pub use wasm::{hook_export_name, WasmPlugin};
+pub use wasm::{WasmPlugin, hook_export_name};
 
 pub type Result<T> = std::result::Result<T, OxideError>;
 
