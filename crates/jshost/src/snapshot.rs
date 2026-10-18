@@ -8,8 +8,8 @@
 //! that creates a live handle) degrades to a V8 code cache — the loader feeds
 //! the source through V8 on second boot; parse and compile are still skipped.
 
-use crate::{err, Result};
-use deno_core::snapshot::{create_snapshot, CreateSnapshotOptions};
+use crate::{Result, err};
+use deno_core::snapshot::{CreateSnapshotOptions, create_snapshot};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 
@@ -44,10 +44,22 @@ pub struct SideEffect {
 /// first.
 pub fn lint_top_level_side_effects(path: &str, source: &str) -> Vec<SideEffect> {
     const PATTERNS: &[(&str, &str)] = &[
-        ("setTimeout(", "setTimeout at module top level holds a live timer at snapshot time"),
-        ("setInterval(", "setInterval at module top level holds a live timer at snapshot time"),
-        ("new WebSocket(", "WebSocket opened at module top level holds a live socket"),
-        ("new EventSource(", "EventSource opened at module top level holds a live socket"),
+        (
+            "setTimeout(",
+            "setTimeout at module top level holds a live timer at snapshot time",
+        ),
+        (
+            "setInterval(",
+            "setInterval at module top level holds a live timer at snapshot time",
+        ),
+        (
+            "new WebSocket(",
+            "WebSocket opened at module top level holds a live socket",
+        ),
+        (
+            "new EventSource(",
+            "EventSource opened at module top level holds a live socket",
+        ),
     ];
     let mut out = Vec::new();
     let mut depth: i32 = 0;
@@ -86,14 +98,19 @@ pub fn snapshot_build(entry: &str, source: &str) -> Result<AppSnapshot> {
     // sources are `Cow<'static, [ExtensionFileSource]>`.
     use deno_core::ExtensionFileSource;
     use std::sync::Arc;
-    let ext_name = leak(format!("oxide_snapshot_{}", entry.replace(['/', '.', '-'], "_")));
+    let ext_name = leak(format!(
+        "oxide_snapshot_{}",
+        entry.replace(['/', '.', '-'], "_")
+    ));
     let specifier: &'static str = leak(format!("oxide:snapshot/{}", entry));
     // `new_computed` is the constructor for runtime-computed source (Arc<str>);
     // `new` requires a `FastStaticString` compile-time literal that we can't
     // produce for a user bundle. The specifier here matches `esm_entry_point`
     // below so deno_core evaluates exactly this module.
-    let esm_files: Vec<ExtensionFileSource> =
-        vec![ExtensionFileSource::new_computed(specifier, Arc::from(source))];
+    let esm_files: Vec<ExtensionFileSource> = vec![ExtensionFileSource::new_computed(
+        specifier,
+        Arc::from(source),
+    )];
 
     let ext = deno_core::Extension {
         name: ext_name,
@@ -225,7 +242,9 @@ pub fn snapshot_build_bundle(
     // differ and deno_core reports "was not passed as an extension module".
     let url_of = |p: &std::path::Path| -> Option<String> {
         let canon = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-        ModuleSpecifier::from_file_path(&canon).ok().map(|u| u.to_string())
+        ModuleSpecifier::from_file_path(&canon)
+            .ok()
+            .map(|u| u.to_string())
     };
     let entry_url = match url_of(std::path::Path::new(entry_path)) {
         Some(u) => u,
@@ -246,7 +265,10 @@ pub fn snapshot_build_bundle(
         let Some(url) = url_of(p) else { continue };
         let spec: &'static str = leak(url);
         let ascii = escape_non_ascii(src);
-        esm_files.push(ExtensionFileSource::new_computed(spec, Arc::from(ascii.as_str())));
+        esm_files.push(ExtensionFileSource::new_computed(
+            spec,
+            Arc::from(ascii.as_str()),
+        ));
     }
 
     // The compat bootstrap, as a plain JS file so it runs before the ESM entry.
