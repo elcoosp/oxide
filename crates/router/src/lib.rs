@@ -14,10 +14,9 @@
 
 pub mod slot;
 pub use slot::{
-    parse_intercept_marker, parse_slot_name, resolve_slots, InterceptLevel, InterceptSpec,
-    SlotMatch, SlotSpec,
+    InterceptLevel, InterceptSpec, SlotMatch, SlotSpec, parse_intercept_marker, parse_slot_name,
+    resolve_slots,
 };
-
 
 use oxide_diagnostics::{Diagnostic, OxideError};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
@@ -313,12 +312,17 @@ impl RulesEngine {
 #[derive(Debug, Clone, PartialEq)]
 pub enum RuleOutcome {
     None,
-    Redirect { destination: String, status: u16 },
+    Redirect {
+        destination: String,
+        status: u16,
+    },
     Rewrite(String),
     Headers(BTreeMap<String, String>),
     AuthRequired,
     /// SEC-01: the token bucket for this key is empty. `retry_after_secs` is
     /// how long until at least one token refills (the server sends it as the
     /// `Retry-After` header).
-    RateLimited { retry_after_secs: u64 },
+    RateLimited {
+        retry_after_secs: u64,
+    },
 }
