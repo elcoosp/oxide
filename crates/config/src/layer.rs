@@ -11,7 +11,7 @@
 //! remaining typed defaults. Validation rejects unknown top-level keys with a
 //! Levenshtein ≤ 2 "did you mean" hint and requires `framework.adapter`.
 
-use crate::{err, extract_static_config, parse_env_file, OxideConfig, Result};
+use crate::{OxideConfig, Result, err, extract_static_config, parse_env_file};
 use oxide_diagnostics::{Diagnostic, OxideError};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
