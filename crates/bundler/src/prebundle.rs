@@ -2,7 +2,7 @@
 //! bare-import dependency graph is bundled into a single ESM file via Rolldown
 //! and cached by lockfile hash. Subsequent dev server starts reuse the cache.
 
-use crate::{err, BundleEnv, Result};
+use crate::{BundleEnv, Result, err};
 use blake3::Hasher;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -53,8 +53,12 @@ pub fn prebundle(opts: &PrebundleOptions) -> Result<PrebundleManifest> {
         }
     }
 
-    std::fs::create_dir_all(&opts.out_dir)
-        .map_err(|e| err("BLD-PREBUNDLE", format!("mkdir {}: {e}", opts.out_dir.display())))?;
+    std::fs::create_dir_all(&opts.out_dir).map_err(|e| {
+        err(
+            "BLD-PREBUNDLE",
+            format!("mkdir {}: {e}", opts.out_dir.display()),
+        )
+    })?;
 
     // 1. Scan entry files for bare specifiers.
     let mut bare: BTreeSet<String> = BTreeSet::new();
@@ -68,7 +72,10 @@ pub fn prebundle(opts: &PrebundleOptions) -> Result<PrebundleManifest> {
     }
 
     if bare.is_empty() {
-        let m = PrebundleManifest { cache_key, packages: BTreeMap::new() };
+        let m = PrebundleManifest {
+            cache_key,
+            packages: BTreeMap::new(),
+        };
         write_manifest(&manifest_path, &m)?;
         return Ok(m);
     }
@@ -79,7 +86,10 @@ pub fn prebundle(opts: &PrebundleOptions) -> Result<PrebundleManifest> {
     let synthetic = opts.out_dir.join("_prebundle_entry.js");
     let mut body = String::new();
     for pkg in &bare {
-        body.push_str(&format!("import * as {id} from {pkg:?};\nexport {{ {id} }};\n", id = sanitize_id(pkg)));
+        body.push_str(&format!(
+            "import * as {id} from {pkg:?};\nexport {{ {id} }};\n",
+            id = sanitize_id(pkg)
+        ));
     }
     std::fs::write(&synthetic, &body)
         .map_err(|e| err("BLD-PREBUNDLE", format!("write synthetic entry: {e}")))?;
@@ -101,7 +111,9 @@ pub fn prebundle(opts: &PrebundleOptions) -> Result<PrebundleManifest> {
         inline_dynamic_imports: false,
         resolve_conditions: None,
     };
-    options.entries.insert("_prebundle".into(), synthetic.clone());
+    options
+        .entries
+        .insert("_prebundle".into(), synthetic.clone());
 
     let backend = crate::RolldownBundler::new(&opts.root);
     use crate::Bundler as _;
@@ -119,7 +131,10 @@ pub fn prebundle(opts: &PrebundleOptions) -> Result<PrebundleManifest> {
             },
         );
     }
-    let m = PrebundleManifest { cache_key, packages };
+    let m = PrebundleManifest {
+        cache_key,
+        packages,
+    };
     write_manifest(&manifest_path, &m)?;
     Ok(m)
 }
@@ -131,7 +146,12 @@ fn write_manifest(path: &Path, m: &PrebundleManifest) -> Result<()> {
 }
 
 fn read_lockfile(root: &Path) -> Option<Vec<u8>> {
-    for name in ["Cargo.lock", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"] {
+    for name in [
+        "Cargo.lock",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+    ] {
         let p = root.join(name);
         if let Ok(b) = std::fs::read(&p) {
             return Some(b);
@@ -158,7 +178,11 @@ fn package_root(spec: &str) -> String {
     if let Some(rest) = spec.strip_prefix('@') {
         if let Some(slash) = rest.find('/') {
             if let Some(second) = rest[slash + 1..].find('/') {
-                return format!("@{}/{}", &rest[..slash], &rest[slash + 1..slash + 1 + second]);
+                return format!(
+                    "@{}/{}",
+                    &rest[..slash],
+                    &rest[slash + 1..slash + 1 + second]
+                );
             }
             return spec.to_string();
         }
