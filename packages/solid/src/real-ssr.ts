@@ -86,6 +86,89 @@ export async function isSolidAvailable(): Promise<boolean> {
   return (await load()) !== undefined
 }
 
+/**
+ * Structural shape of the `solid-js` core module's component factory. Solid
+ * components are functions called with props; `createComponent` (Solid 1)
+ * / `createElement` (the Solid 2 alias the island path uses) builds the
+ * element that a parent receives as `props.children`.
+ */
+export interface SolidCoreLike {
+  createComponent?(type: unknown, props: Record<string, unknown>): unknown
+  createElement?(type: unknown, props: unknown): unknown
+}
+
+let cachedCore: SolidCoreLike | undefined
+
+/**
+ * The `solid-js` core runtime, or undefined when not installed. Separate
+ * from the web renderer load — a layout-chain expansion needs the core even
+ * when the caller only renders strings through the web module.
+ */
+export async function getSolidCore(): Promise<SolidCoreLike | undefined> {
+  if (cachedCore) return cachedCore
+  try {
+    const mod = (await import('solid-js')) as unknown as
+      { default?: SolidCoreLike } & SolidCoreLike
+    const core = (mod.default ?? mod) as SolidCoreLike
+    if (typeof core?.createElement !== 'function' && typeof core?.createComponent !== 'function') {
+      return undefined
+    }
+    cachedCore = core
+    return cachedCore
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Structural shape of a layout child descriptor (§8.2). `makeRealAdapter`
+ * hands a layout a `children` value of `{ Component, props }` — a plain
+ * descriptor, not a live element, so the layout chain stays framework-
+ * agnostic on the wire.
+ */
+interface ChildDescriptor {
+  Component: unknown
+  props: Record<string, unknown>
+}
+
+function isChildDescriptor(v: unknown): v is ChildDescriptor {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    'Component' in v &&
+    'props' in v &&
+    typeof (v as { Component: unknown }).Component !== 'undefined'
+  )
+}
+
+/**
+ * §8.2: expand a layout child descriptor chain into Solid's `props.children`
+ * idiom, depth-first — Solid consumes children as a PROP, so each layer's
+ * descriptor becomes a real element built with `createComponent` (or the
+ * Solid 2 `createElement` alias):
+ * `createComponent(L, { ...layoutProps, children: createComponent(page, pageProps) })`.
+ * Returns the original props unchanged when the core runtime is unavailable
+ * (the pre-descriptor behavior).
+ */
+export async function expandSolidChildren(
+  props: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  if (!isChildDescriptor(props.children)) return props
+  const core = await getSolidCore()
+  const create =
+    typeof core?.createComponent === 'function'
+      ? core.createComponent
+      : typeof core?.createElement === 'function'
+        ? core.createElement
+        : undefined
+  if (!create) return props
+  const child = props.children
+  // Depth-first: the innermost chain expands first, so nested layouts
+  // (L1(L2(page))) each see a real element for everything below them.
+  const childProps = await expandSolidChildren(child.props)
+  return { ...props, children: create(child.Component, childProps) }
+}
+
 /** The resolved Solid web module, or undefined when not installed. */
 export async function getSolidWeb(): Promise<SolidWebLike | undefined> {
   return (await load())?.web
