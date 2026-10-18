@@ -20,7 +20,7 @@ import type { RenderInput, HeadTags, RenderCtx } from '../../oxide/src/types.ts'
 import { render as irRender, head as irHead, mergeHead } from './render.ts'
 import { hydrate, hydrateIsland, mount, update } from './hydrate.ts'
 import { vueHydrateIsland } from './hydrate-island-real.ts'
-import { isVueAvailable, renderVueToString, getLastLoadError } from './real-ssr.ts'
+import { isVueAvailable, renderVueToString, renderVueToStream, getLastLoadError } from './real-ssr.ts'
 
 export type { RealAdapterOptions }
 
@@ -63,6 +63,8 @@ export function createRealAdapter(opts: RealAdapterOptions) {
     isAvailable: isVueAvailable,
     lastError: getLastLoadError,
     renderBody: renderVueToString,
+    // §7.1: Vue's real streaming SSR via `@vue/server-renderer`'s renderToStream.
+    renderStream: renderVueToStream,
     rootAttrs: ' id="root" data-v-app=""',
     hydrate: hydrate as never,
     // §10.3: real `createSSRApp().mount()` so Vue reactivity works, not the
