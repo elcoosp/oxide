@@ -25,7 +25,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT OR Apache-2.0"
-repository = "https://example.com/oxide/oxide"
+repository = "https://github.com/elcoosp/oxide"
 description = "Oxide: framework-agnostic, full-stack meta-framework with a Rust core (working name, spec v0.1)"
 
 [workspace.dependencies]
