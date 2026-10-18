@@ -4840,20 +4840,17 @@ fn build_dispatch(
             // §9.2: layout loads run in chain order (outer → inner); each
             // layout gets the pre-resolved data of its own outer layout as
             // `parent_data` (which a load reads via `await parent()`). The
-            // page load then runs, receiving the innermost layout's data as
-            // its `parent_data`.
+            // innermost layout's data feeds the page's `parent_data`.
             //
-            // **Deviation from §9.2's "layout and page loads run in
-            // parallel":** the loads are SEQUENTIAL here. The layout chain
-            // must resolve outer-first (each needs its parent's data), and
-            // the page load is awaited after it because a page may await
-            // `parent()`. Running the page concurrently would require first
-            // detecting at build time whether the page calls `parent()` (a
-            // `needs_parent` flag on `RouteEntry`) and only then joining the
-            // two futures. That optimization is tracked in
-            // `docs/HANDOFF-bucket2-complete.md` §"Remaining"; it is a
-            // latency win, not a correctness gap — the sequential loads
-            // produce the right data in every case.
+            // **Parallelism (v0.1):** when `RouteEntry.needs_parent` is
+            // `false` for the matched page (the scanner detected no
+            // `parent` reference in `page.server.ts`), the LAST layout load
+            // and the page load run concurrently via `tokio::join!` — the
+            // page does not read layout data, so the ordering has no
+            // observable effect. Earlier layouts still resolve outer-first.
+            // Pages that call `parent()` (needs_parent = true) keep the
+            // full sequential chain. Layout-then-page precedence on
+            // short-circuit matches the sequential order.
             let mut layout_data_chain: Vec<serde_json::Value> = Vec::new();
             let mut layout_side_effects: Vec<(Vec<String>, Vec<(String, String)>)> = Vec::new();
             // §9.2 parallel path (v0.1): when the page does not call

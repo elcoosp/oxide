@@ -3563,3 +3563,190 @@ async fn middleware_headers_ride_l0_hits() {
         second.headers
     );
 }
+
+// ---- §9.2 parallel layout loads ----------------------------------------
+//
+// `build_dispatch` overlaps the last-layout load with the page load when
+// `RouteEntry.needs_parent == false`. These two tests are load-bearing for
+// that decision: reverting the parallel branch to sequential makes the
+// first test's `max_active == 2` assertion fail (it drops to 1), while the
+// second test pins the sequential behavior that pages calling `parent()`
+// still need.
+
+/// Records peak concurrency across overlapping `run()` calls, sleeping
+/// long enough for a parallel join to be observable as `max_active >= 2`.
+struct ConcurrencyProbe {
+    active: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    max_active: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl ConcurrencyProbe {
+    fn new() -> Self {
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicUsize;
+        Self {
+            active: Arc::new(AtomicUsize::new(0)),
+            max_active: Arc::new(AtomicUsize::new(0)),
+            calls: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl oxide_server::LoaderRunner for ConcurrencyProbe {
+    fn name(&self) -> &str {
+        "concurrency-probe"
+    }
+    async fn run(
+        &self,
+        input: oxide_server::LoaderRunInput,
+    ) -> oxide_server::Result<oxide_server::LoaderOutput> {
+        use std::sync::atomic::Ordering;
+        let n = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        loop {
+            let prev = self.max_active.load(Ordering::SeqCst);
+            if n <= prev {
+                break;
+            }
+            if self
+                .max_active
+                .compare_exchange(prev, n, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                break;
+            }
+        }
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        // Wide enough that any scheduling jitter still shows overlap.
+        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+        self.active.fetch_sub(1, Ordering::SeqCst);
+        Ok(oxide_server::LoaderOutput::ok(serde_json::json!({
+            "route": input.route,
+        })))
+    }
+}
+
+/// Scan a real tempdir into a `RouteTree` so `layout_module_paths` is
+/// populated exactly as it is at runtime (`filter(p.is_file())` needs a
+/// real layout.server.ts on disk). `needs_parent` is decided by the
+/// scanner's page.server.ts content heuristic, not set by the test.
+fn scan_probe_project(
+    page_server_src: &str,
+) -> (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    std::sync::Arc<oxide_router::RouteTree>,
+) {
+    use std::sync::Arc;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    std::fs::write(
+        root.join("layout.tsx"),
+        "export default function L(p) { return p.children }\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("layout.server.ts"), "export const config = {};\n").unwrap();
+    std::fs::write(
+        root.join("page.tsx"),
+        "export default function P() { return null }\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("page.server.ts"), page_server_src).unwrap();
+    let tree = Arc::new(oxide_router::RouteTree::scan(&root).unwrap());
+    (dir, root, tree)
+}
+
+#[tokio::test]
+async fn layout_and_page_overlap_when_page_does_not_call_parent() {
+    use std::sync::Arc;
+    use std::sync::atomic::Ordering;
+
+    let (_dir, root, tree) = scan_probe_project("export async function load() { return {}; }\n");
+    let m = tree.match_path("/").expect("page matches /");
+    assert_eq!(m.layout_chain.len(), 1, "one layout in chain");
+    assert!(m.route.has_server_module, "page.server.ts present");
+    assert!(!m.route.needs_parent, "no `parent` in page.server.ts");
+
+    let probe = Arc::new(ConcurrencyProbe::new());
+    let calls = Arc::clone(&probe.calls);
+    let max_active = Arc::clone(&probe.max_active);
+    let loader: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(probe);
+
+    let metrics = Arc::new(oxide_server::Metrics::new());
+    let dispatch = build_dispatch(
+        tree,
+        metrics,
+        Vec::new(),
+        None,
+        loader,
+        root,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        Vec::new(),
+        None,
+        None,
+    );
+    let resp = dispatch(test_request("GET", "/")).await;
+    assert_eq!(resp.status, 200, "matched page renders");
+    assert_eq!(calls.load(Ordering::SeqCst), 2, "layout + page both ran");
+    assert_eq!(
+        max_active.load(Ordering::SeqCst),
+        2,
+        "layout and page overlapped — parallel join, not sequential"
+    );
+}
+
+#[tokio::test]
+async fn layout_then_page_sequential_when_page_calls_parent() {
+    use std::sync::Arc;
+    use std::sync::atomic::Ordering;
+
+    let (_dir, root, tree) =
+        scan_probe_project("export async function load({ parent }) { return await parent(); }\n");
+    let m = tree.match_path("/").expect("page matches /");
+    assert_eq!(m.layout_chain.len(), 1, "one layout in chain");
+    assert!(m.route.needs_parent, "`parent` appears in page.server.ts");
+
+    let probe = Arc::new(ConcurrencyProbe::new());
+    let calls = Arc::clone(&probe.calls);
+    let max_active = Arc::clone(&probe.max_active);
+    let loader: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(probe);
+
+    let metrics = Arc::new(oxide_server::Metrics::new());
+    let dispatch = build_dispatch(
+        tree,
+        metrics,
+        Vec::new(),
+        None,
+        loader,
+        root,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        Vec::new(),
+        None,
+        None,
+    );
+    let resp = dispatch(test_request("GET", "/")).await;
+    assert_eq!(resp.status, 200, "matched page renders");
+    assert_eq!(calls.load(Ordering::SeqCst), 2, "layout + page both ran");
+    assert_eq!(
+        max_active.load(Ordering::SeqCst),
+        1,
+        "page needs parent() → sequential chain, no overlap"
+    );
+}
