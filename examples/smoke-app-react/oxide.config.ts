@@ -32,6 +32,9 @@ import Boom from './src/routes/boom/page.tsx'
 // §8.1 middleware.ts smoke fixture: a page whose loader reads `locals`.
 // @ts-expect-error
 import Greeting from './src/routes/greeting/page.tsx'
+// §8.4 loading boundary smoke fixture: a slow page.
+// @ts-expect-error
+import Slow from './src/routes/slow/page.tsx'
 
 const components: Record<string, unknown> = {
   'routes/index': Home,
@@ -41,6 +44,7 @@ const components: Record<string, unknown> = {
   'routes/error': ErrorPage,
   'routes/boom': Boom,
   'routes/greeting': Greeting,
+  'routes/slow': Slow,
 }
 
 export default defineConfig({
