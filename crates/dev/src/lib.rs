@@ -91,7 +91,10 @@ impl Watcher {
                 .watch(root, RecursiveMode::Recursive)
                 .map_err(|e| crate::err("DEV-NOTIFY", format!("watch {}: {e}", root.display())))?;
         }
-        Ok(NotifyBackend { _watcher: watcher, rx })
+        Ok(NotifyBackend {
+            _watcher: watcher,
+            rx,
+        })
     }
 
     /// Poll-based snapshot diffing (notify backend slots in behind this API).
@@ -522,7 +525,6 @@ pub fn prebundle_key(lockfile_hash: &str, dep: &str) -> String {
     format!("prebundle:{lockfile_hash}:{dep}")
 }
 
-
 // ---------------------------------------------------------------------------
 // §13.4 Inspector — route-table provider
 // ---------------------------------------------------------------------------
@@ -556,7 +558,10 @@ impl RouteTableInspector {
                 },
             })
             .collect();
-        Self { routes, waterfalls: None }
+        Self {
+            routes,
+            waterfalls: None,
+        }
     }
 
     /// Produce the inspector state. Module-graph / cache / pool fields stay
@@ -620,7 +625,10 @@ fn html_escape(s: &str) -> String {
 }
 
 pub mod dev_server;
-pub use dev_server::{apply_proxy, generate_dev_cert, local_url, network_url, open_browser, render_qr, DevCert, DevServerConfig, ProxyMatch, ProxyRule};
+pub use dev_server::{
+    DevCert, DevServerConfig, ProxyMatch, ProxyRule, apply_proxy, generate_dev_cert, local_url,
+    network_url, open_browser, render_qr,
+};
 
 #[cfg(test)]
 mod tests;
