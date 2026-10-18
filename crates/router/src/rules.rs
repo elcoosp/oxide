@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use crate::segment::split_path;
-use crate::{ferr, NativeRule, Result, RuleOutcome, RulesEngine};
+use crate::{NativeRule, Result, RuleOutcome, RulesEngine, ferr};
 
 /// Compile-time validation + normalization (see `RulesEngine::compile` docs).
 pub(crate) fn compile_impl(rules: Vec<NativeRule>) -> Result<RulesEngine> {
@@ -73,7 +73,9 @@ impl Clone for TokenBuckets {
     /// Share the bucket map: a cloned engine must see the same counters (a
     /// per-clone copy would reset the limit).
     fn clone(&self) -> Self {
-        Self { map: std::sync::Arc::clone(&self.map) }
+        Self {
+            map: std::sync::Arc::clone(&self.map),
+        }
     }
 }
 
@@ -108,7 +110,11 @@ impl TokenBuckets {
 /// Resolve a rule's `rate_limit.key` against the captured params and the
 /// request's key material. `ip`/empty → `client_key`; `:name` → the captured
 /// param (`client_key` when absent); anything else is a literal.
-fn resolve_bucket_key(rule_key: &str, params: &std::collections::BTreeMap<String, String>, client_key: &str) -> String {
+fn resolve_bucket_key(
+    rule_key: &str,
+    params: &std::collections::BTreeMap<String, String>,
+    client_key: &str,
+) -> String {
     if rule_key.is_empty() || rule_key == "ip" {
         return format!("ip:{client_key}");
     }
@@ -134,7 +140,8 @@ pub(crate) fn evaluate_impl(engine: &RulesEngine, path: &str, client_key: &str) 
             // consulted), so one configured rule 429'd the path forever.
             if let Some(rl) = &rule.rate_limit {
                 let bucket_key = resolve_bucket_key(&rl.key, &params, client_key);
-                if let Err(retry_after_secs) = engine.limiter.take(&bucket_key, rl.max, rl.window_secs)
+                if let Err(retry_after_secs) =
+                    engine.limiter.take(&bucket_key, rl.max, rl.window_secs)
                 {
                     return RuleOutcome::RateLimited { retry_after_secs };
                 }
@@ -142,7 +149,9 @@ pub(crate) fn evaluate_impl(engine: &RulesEngine, path: &str, client_key: &str) 
                 // so a later rewrite/redirect/header rule can still apply).
                 continue;
             }
-            return RuleOutcome::RateLimited { retry_after_secs: 1 };
+            return RuleOutcome::RateLimited {
+                retry_after_secs: 1,
+            };
         }
         if rule.basic_auth.is_some() {
             return RuleOutcome::AuthRequired;
@@ -398,8 +407,13 @@ mod tests {
         // rate-limited. (Before this fix the rule 429'd unconditionally.)
         let e = RulesEngine::compile(vec![r.clone()]).unwrap();
         for _ in 0..100 {
-            assert_ne!(e.evaluate("/api/data"), RuleOutcome::RateLimited { retry_after_secs: 0 },
-                "within budget is allowed");
+            assert_ne!(
+                e.evaluate("/api/data"),
+                RuleOutcome::RateLimited {
+                    retry_after_secs: 0
+                },
+                "within budget is allowed"
+            );
         }
         match e.evaluate("/api/data") {
             RuleOutcome::RateLimited { retry_after_secs } => assert!(retry_after_secs >= 1),
@@ -410,7 +424,12 @@ mod tests {
         r2.rate_limit = r.rate_limit.clone();
         let e = RulesEngine::compile(vec![r2]).unwrap();
         assert_eq!(e.rules[0].rule_type.as_deref(), Some("ratelimit"));
-        assert_ne!(e.evaluate("/v2/x"), RuleOutcome::RateLimited { retry_after_secs: 0 });
+        assert_ne!(
+            e.evaluate("/v2/x"),
+            RuleOutcome::RateLimited {
+                retry_after_secs: 0
+            }
+        );
     }
 
     #[test]
