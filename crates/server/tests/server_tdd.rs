@@ -63,7 +63,7 @@ fn pipeline(
         dev_token: None,
         sockets: None,
     }
-    }
+}
 
 fn test_assets() -> StaticAssets {
     let dir = tempfile::tempdir().unwrap();
@@ -320,9 +320,11 @@ fn serve_head_returns_headers_only() {
 #[test]
 fn serve_miss_returns_none() {
     let assets = test_assets();
-    assert!(assets
-        .serve(&req("GET", "/nope.js", &[]), "/nope.js")
-        .is_none());
+    assert!(
+        assets
+            .serve(&req("GET", "/nope.js", &[]), "/nope.js")
+            .is_none()
+    );
 }
 
 // ------------------------------------------------------------------ negotiate_encoding
@@ -420,7 +422,10 @@ fn security_headers_defaults_and_tls() {
 
     let h = security_headers(true, Some("n0nce"));
     let get = |k: &str| h.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
-    assert_eq!(get("Strict-Transport-Security"), Some("max-age=63072000; includeSubDomains"));
+    assert_eq!(
+        get("Strict-Transport-Security"),
+        Some("max-age=63072000; includeSubDomains")
+    );
     assert_eq!(
         get("Content-Security-Policy"),
         Some(csp_header("strict", "n0nce").as_str())
@@ -597,11 +602,7 @@ fn sec03_first_blocked_addr_catches_any_blocked_resolution() {
     use std::net::IpAddr;
     let parse = |s: &str| s.parse::<IpAddr>().unwrap();
     // All public → None.
-    assert!(first_blocked_addr(
-        &[parse("93.184.216.34"), parse("8.8.8.8")],
-        &[]
-    )
-    .is_none());
+    assert!(first_blocked_addr(&[parse("93.184.216.34"), parse("8.8.8.8")], &[]).is_none());
     // One private among public → that private address.
     let bad = first_blocked_addr(&[parse("8.8.8.8"), parse("10.0.0.5")], &[]);
     assert_eq!(bad, Some(parse("10.0.0.5")));
@@ -611,11 +612,7 @@ fn sec03_first_blocked_addr_catches_any_blocked_resolution() {
         Some(parse("169.254.169.254"))
     );
     // An allow-listed host bypasses the range check.
-    assert!(first_blocked_addr(
-        &[parse("10.0.0.5")],
-        &["10.0.0.5".to_string()]
-    )
-    .is_none());
+    assert!(first_blocked_addr(&[parse("10.0.0.5")], &["10.0.0.5".to_string()]).is_none());
 }
 
 #[test]
@@ -807,7 +804,7 @@ async fn metrics_endpoint_renders_prometheus_text() {
         health_path: "/_oxide/health".into(),
         metrics_path: "/_oxide/metrics".into(),
         metrics: Some(m),
-            inspector: None,
+        inspector: None,
         page_renderer: None,
         image_endpoint: None,
         server_fns: None,
@@ -827,7 +824,10 @@ async fn metrics_endpoint_renders_prometheus_text() {
         .unwrap_or("");
     assert!(ct.starts_with("text/plain"), "content-type: {ct}");
     let body = String::from_utf8_lossy(&resp.body);
-    assert!(body.contains("# TYPE oxide_requests_total counter"), "{body}");
+    assert!(
+        body.contains("# TYPE oxide_requests_total counter"),
+        "{body}"
+    );
     assert!(body.contains("oxide_requests_total 1"), "{body}");
 }
 
@@ -920,7 +920,7 @@ async fn metrics_endpoint_404_when_not_configured() {
         health_path: "/_oxide/health".into(),
         metrics_path: "/_oxide/metrics".into(),
         metrics: None,
-            inspector: None,
+        inspector: None,
         page_renderer: None,
         image_endpoint: None,
         server_fns: None,
@@ -937,8 +937,8 @@ async fn metrics_endpoint_404_when_not_configured() {
 #[tokio::test]
 async fn pipeline_observes_native_branch_requests() {
     use oxide_server::Metrics;
-    use std::sync::atomic::Ordering;
     use std::sync::Arc;
+    use std::sync::atomic::Ordering;
 
     let m = Arc::new(Metrics::new());
     let p = Pipeline {
@@ -952,7 +952,7 @@ async fn pipeline_observes_native_branch_requests() {
         health_path: "/_oxide/health".into(),
         metrics_path: "/_oxide/metrics".into(),
         metrics: Some(Arc::clone(&m)),
-            inspector: None,
+        inspector: None,
         page_renderer: None,
         image_endpoint: None,
         server_fns: None,
@@ -990,7 +990,7 @@ async fn with_metrics_attaches_registry() {
         health_path: "/_oxide/health".into(),
         metrics_path: "/_oxide/metrics".into(),
         metrics: None,
-            inspector: None,
+        inspector: None,
         page_renderer: None,
         image_endpoint: None,
         server_fns: None,
@@ -1053,9 +1053,7 @@ fn inspector_pipeline() -> Pipeline {
 async fn inspector_endpoint_returns_json_state() {
     let p = inspector_pipeline();
     let d = &echo_dispatch();
-    let resp = p
-        .serve_request(req("GET", "/__oxide/state", &[]), d)
-        .await;
+    let resp = p.serve_request(req("GET", "/__oxide/state", &[]), d).await;
     assert_eq!(resp.status, 200);
     let ct = resp
         .headers
@@ -1107,8 +1105,6 @@ async fn inspector_endpoint_absent_when_not_configured() {
         "fall-through went to dispatch: {body}"
     );
 }
-
-
 
 #[tokio::test]
 async fn pipeline_rule_outcomes() {
@@ -1182,7 +1178,10 @@ async fn pipeline_rule_outcomes() {
     assert_eq!(resp.status, 200, "first call is within the token budget");
     let resp = p.serve_request(req("GET", "/api", &[]), d).await;
     assert_eq!(resp.status, 429, "second call exceeds `max: 1`");
-    assert!(resp.header("retry-after").is_some(), "429 carries Retry-After");
+    assert!(
+        resp.header("retry-after").is_some(),
+        "429 carries Retry-After"
+    );
 }
 
 #[tokio::test]
@@ -1619,7 +1618,6 @@ fn ws_mask_key_deterministic() {
     assert_ne!(other[2..6], bytes[2..6], "fresh PRNG key per frame");
 }
 
-
 // ------------------------------------------------------- §20 tracing
 
 /// A subscriber that captures span names into a shared Vec for assertions.
@@ -1692,7 +1690,10 @@ async fn serve_request_span_has_no_path_leak_into_metrics() {
     let metrics = p.metrics.as_ref();
     if let Some(m) = metrics {
         let text = m.render();
-        assert!(!text.contains("arbitrary"), "path leaked into metrics: {text}");
+        assert!(
+            !text.contains("arbitrary"),
+            "path leaked into metrics: {text}"
+        );
     }
 }
 
@@ -1719,9 +1720,7 @@ async fn hsts_emitted_only_on_tls() {
         ..Default::default()
     };
     let d = &echo_dispatch();
-    let r_plain = plain
-        .serve_request(req("GET", "/", &[]), d)
-        .await;
+    let r_plain = plain.serve_request(req("GET", "/", &[]), d).await;
     let r_tls = tls_p.serve_request(req("GET", "/", &[]), d).await;
     let has_hsts = |r: &OxideResponse| {
         r.headers
@@ -1901,7 +1900,9 @@ async fn sec09_inspector_requires_the_dev_token() {
     #[derive(Debug)]
     struct FakeInsp;
     impl InspectorSnapshot for FakeInsp {
-        fn state_json(&self) -> serde_json::Value { serde_json::json!({}) }
+        fn state_json(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
     }
     let mut p = pipeline(
         RulesEngine::default(),
@@ -1914,9 +1915,7 @@ async fn sec09_inspector_requires_the_dev_token() {
     let d = &echo_dispatch();
 
     // No token → 403.
-    let resp = p
-        .serve_request(req("GET", "/__oxide/state", &[]), d)
-        .await;
+    let resp = p.serve_request(req("GET", "/__oxide/state", &[]), d).await;
     assert_eq!(resp.status, 403, "inspector without token is refused");
 
     // Query token → 200.
@@ -1928,7 +1927,11 @@ async fn sec09_inspector_requires_the_dev_token() {
     // Header token → 200.
     let resp = p
         .serve_request(
-            req("GET", "/__oxide/state", &[("x-oxide-dev-token", "secret-token")]),
+            req(
+                "GET",
+                "/__oxide/state",
+                &[("x-oxide-dev-token", "secret-token")],
+            ),
             d,
         )
         .await;
@@ -1978,10 +1981,7 @@ async fn perf06_dynamic_compression() {
 
     // With `accept-encoding: gzip` the response carries Content-Encoding: gzip.
     let resp = p
-        .serve_request(
-            req("GET", "/", &[("accept-encoding", "gzip")]),
-            &d,
-        )
+        .serve_request(req("GET", "/", &[("accept-encoding", "gzip")]), &d)
         .await;
     assert_eq!(resp.status, 200);
     assert_eq!(
@@ -1994,7 +1994,10 @@ async fn perf06_dynamic_compression() {
 
     // Without accept-encoding the body is uncompressed.
     let resp = p.serve_request(req("GET", "/", &[]), &d).await;
-    assert!(resp.header("content-encoding").is_none(), "no AE -> identity");
+    assert!(
+        resp.header("content-encoding").is_none(),
+        "no AE -> identity"
+    );
     assert_eq!(resp.body.len(), body.len());
 }
 
