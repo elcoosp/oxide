@@ -847,7 +847,7 @@ async function dispatchLoaderRun(id, input) {
 // location (same as a load). `revalidate` calls made through the action's
 // `ctx.revalidate` are collected and returned so the pipeline can invalidate.
 async function dispatchActionRun(id, input) {
-  const { module_path, action, form_json, params, url, method, headers } =
+  const { module_path, action, form_json, params, url, method, headers, locals: inputLocals } =
     input.payload ?? {};
   if (typeof module_path !== "string" || module_path.length === 0) {
     callErr(id, "JSH-ACTION", "action:run requires a `module_path` string");
@@ -972,7 +972,9 @@ async function dispatchActionRun(id, input) {
         url: url ?? "/",
         headers: Array.isArray(headers) ? headers : [],
       },
-      locals: {},
+      // §8.1 middleware.ts / §9.1: request-scoped locals injected by
+      // middleware.
+      locals: inputLocals && typeof inputLocals === "object" ? inputLocals : {},
       cookies,
       setHeaders,
       input: validated,
@@ -1026,7 +1028,7 @@ async function dispatchActionRun(id, input) {
 // a diagnostic 500 — a route.ts that forgets to return is a bug we surface
 // loudly rather than converting to a silent 204.
 async function dispatchEndpointRun(id, input) {
-  const { module_path, method, url, params, headers, body_b64 } = input.payload ?? {};
+  const { module_path, method, url, params, headers, body_b64, locals: inputLocals } = input.payload ?? {};
   if (typeof module_path !== "string" || module_path.length === 0) {
     callErr(id, "JSH-ENDPOINT", "endpoint:run requires a `module_path` string");
     return;
@@ -1062,7 +1064,8 @@ async function dispatchEndpointRun(id, input) {
     const ctx = {
       request: new Request(absoluteUrl, reqInit),
       params: params ?? {},
-      locals: {},
+      // §8.1 middleware.ts / §9.1: request-scoped locals injected by middleware.
+      locals: inputLocals && typeof inputLocals === "object" ? inputLocals : {},
     };
 
     let response;

@@ -3697,6 +3697,78 @@ fn build_dispatch(
                     )
                     .await;
                 }
+                // §8.1 middleware.ts / §8.5: run the route's nearest ancestor
+                // middleware BEFORE the loader/render phase. It can:
+                //   * short-circuit with a `Response` or `{ redirect }`;
+                //   * inject `locals` (delivered to the loader via
+                //     `LoaderRunInput.locals`);
+                //   * add response headers.
+                // A `{ rewrite }` is logged but not re-matched in this slice
+                // (documented gap). An error surfaces as a 500 with a
+                // `MIDDLEWARE`-coded envelope.
+                let mut middleware_locals: serde_json::Value = serde_json::json!({});
+                let mut middleware_headers: Vec<(String, String)> = Vec::new();
+                if let (Some(dispatcher), Some(mp)) =
+                    (middleware_for_dispatch.as_deref(), middleware_module_path.as_ref())
+                {
+                    let module_path_s = mp.to_string_lossy().to_string();
+                    // Pass the full request (headers + body) so an auth /
+                    // upload middleware sees what it needs.
+                    let mw_res = dispatcher
+                        .dispatch(
+                            &module_path_s,
+                            &req_owned.method,
+                            &req_owned.url,
+                            &endpoint_params_json,
+                            &endpoint_headers,
+                            endpoint_body.as_ref(),
+                            None,
+                        )
+                        .await;
+                    match mw_res {
+                        Ok(out) => {
+                            if out.short {
+                                metrics.observe(&label, started.elapsed(), out.status);
+                                let mut resp = oxide_server::OxideResponse::new(
+                                    out.status,
+                                    bytes::Bytes::from(out.body),
+                                );
+                                for (k, v) in &out.headers {
+                                    resp = resp.with_header(k, v.clone());
+                                }
+                                return resp;
+                            }
+                            // Non-short-circuit: accumulate headers and locals.
+                            for (k, v) in &out.headers {
+                                middleware_headers.push((k.clone(), v.clone()));
+                            }
+                            if let Some(l) = out.locals {
+                                if l.is_object() {
+                                    middleware_locals = l;
+                                }
+                            }
+                            if let Some(rw) = out.rewrite.as_deref() {
+                                tracing::warn!(
+                                    route = %label,
+                                    rewrite = %rw,
+                                    "middleware rewrite is not re-matched in this slice (§8.5)",
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            metrics.observe(&label, started.elapsed(), e.status);
+                            return oxide_server::OxideResponse::json(
+                                e.status,
+                                serde_json::json!({"error": {
+                                    "code": e.code,
+                                    "message": e.message,
+                                    "route": label,
+                                }}),
+                            );
+                        }
+                    }
+                }
+
                 // §9.3: a form action POST runs the route's `actions[name]`
                 // and returns its result. This precedes the loader phase — an
                 // action is its own request, not a page render.
@@ -3718,6 +3790,7 @@ fn build_dispatch(
                             &req_owned.url,
                             &req_owned.method,
                             &req_owned.headers,
+                            &middleware_locals,
                         )
                         .await;
                         // §11.3: apply any tag/path invalidations the action
@@ -3836,78 +3909,6 @@ fn build_dispatch(
                     }
                 }
 
-                // §8.1 middleware.ts / §8.5: run the route's nearest ancestor
-                // middleware BEFORE the loader/render phase. It can:
-                //   * short-circuit with a `Response` or `{ redirect }`;
-                //   * inject `locals` (delivered to the loader via
-                //     `LoaderRunInput.locals`);
-                //   * add response headers.
-                // A `{ rewrite }` is logged but not re-matched in this slice
-                // (documented gap). An error surfaces as a 500 with a
-                // `MIDDLEWARE`-coded envelope.
-                let mut middleware_locals: serde_json::Value = serde_json::json!({});
-                let mut middleware_headers: Vec<(String, String)> = Vec::new();
-                if let (Some(dispatcher), Some(mp)) =
-                    (middleware_for_dispatch.as_deref(), middleware_module_path.as_ref())
-                {
-                    let module_path_s = mp.to_string_lossy().to_string();
-                    // Pass the full request (headers + body) so an auth /
-                    // upload middleware sees what it needs.
-                    let mw_res = dispatcher
-                        .dispatch(
-                            &module_path_s,
-                            &req_owned.method,
-                            &req_owned.url,
-                            &endpoint_params_json,
-                            &endpoint_headers,
-                            endpoint_body.as_ref(),
-                            None,
-                        )
-                        .await;
-                    match mw_res {
-                        Ok(out) => {
-                            if out.short {
-                                metrics.observe(&label, started.elapsed(), out.status);
-                                let mut resp = oxide_server::OxideResponse::new(
-                                    out.status,
-                                    bytes::Bytes::from(out.body),
-                                );
-                                for (k, v) in &out.headers {
-                                    resp = resp.with_header(k, v.clone());
-                                }
-                                return resp;
-                            }
-                            // Non-short-circuit: accumulate headers and locals.
-                            for (k, v) in &out.headers {
-                                middleware_headers.push((k.clone(), v.clone()));
-                            }
-                            if let Some(l) = out.locals {
-                                if l.is_object() {
-                                    middleware_locals = l;
-                                }
-                            }
-                            if let Some(rw) = out.rewrite.as_deref() {
-                                tracing::warn!(
-                                    route = %label,
-                                    rewrite = %rw,
-                                    "middleware rewrite is not re-matched in this slice (§8.5)",
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            metrics.observe(&label, started.elapsed(), e.status);
-                            return oxide_server::OxideResponse::json(
-                                e.status,
-                                serde_json::json!({"error": {
-                                    "code": e.code,
-                                    "message": e.message,
-                                    "route": label,
-                                }}),
-                            );
-                        }
-                    }
-                }
-
                 // §9.1: loader phase. When the matched route declares a server
                 // module and a LoaderRunner is attached, run it. A non-200
                 // output (error(...) or redirect(...)) short-circuits the
@@ -4015,6 +4016,7 @@ fn build_dispatch(
                             &endpoint_params_json,
                             &endpoint_headers,
                             endpoint_body.as_ref(),
+                            &middleware_locals,
                         )
                         .await
                     {
@@ -4563,10 +4565,11 @@ impl oxide_server::ActionDispatcher for ActionDispatcherImpl {
         url: &str,
         method: &str,
         headers: &[(String, String)],
+        locals: &serde_json::Value,
     ) -> std::result::Result<oxide_server::ActionRunResult, oxide_server::DispatchError> {
         match self
             .host
-            .run(module_path, action, form_json, params, url, method, headers)
+            .run(module_path, action, form_json, params, url, method, headers, locals)
             .await
         {
             Ok(out) => Ok(oxide_server::ActionRunResult {
@@ -4624,8 +4627,9 @@ impl oxide_server::EndpointDispatcher for EndpointDispatcherImpl {
         params: &serde_json::Map<String, serde_json::Value>,
         headers: &[(String, String)],
         body: &[u8],
+        locals: &serde_json::Value,
     ) -> std::result::Result<oxide_server::EndpointRunResult, oxide_server::EndpointRunError> {
-        match self.host.run(module_path, method, url, params, headers, body).await {
+        match self.host.run(module_path, method, url, params, headers, body, locals).await {
             Ok(out) => Ok(oxide_server::EndpointRunResult {
                 status: out.status,
                 headers: out.headers,

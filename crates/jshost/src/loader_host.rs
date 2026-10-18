@@ -360,6 +360,9 @@ impl ActionHost {
         url: &str,
         method: &str,
         headers: &[(String, String)],
+        // §8.1 middleware.ts / §9.1: request-scoped locals injected by
+        // middleware; delivered to the action's `event.locals`.
+        locals: &Value,
     ) -> Result<ActionOutcome> {
         let payload = serde_json::json!({
             "module_path": module_path,
@@ -369,6 +372,7 @@ impl ActionHost {
             "url": url,
             "method": method,
             "headers": headers,
+            "locals": locals,
         });
         let call_input = CallInput {
             payload,
@@ -462,6 +466,9 @@ impl EndpointHost {
         params: &serde_json::Map<String, Value>,
         headers: &[(String, String)],
         body: &[u8],
+        // §8.1 middleware.ts / §9.1: request-scoped locals injected by
+        // middleware; delivered to the route.ts handler's `ctx.locals`.
+        locals: &Value,
     ) -> Result<EndpointOutcome> {
         use base64::Engine as _;
         let body_b64 = if body.is_empty() {
@@ -476,6 +483,7 @@ impl EndpointHost {
             "params": params,
             "headers": headers,
             "body_b64": body_b64,
+            "locals": locals,
         });
         let call_input = CallInput {
             payload,
