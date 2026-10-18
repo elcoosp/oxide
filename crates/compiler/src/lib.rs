@@ -24,14 +24,17 @@ use oxide_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-pub mod lexer;
 pub mod framework;
 pub mod generate_params;
+pub mod lexer;
 mod oxc_backend;
 
-pub use oxc_backend::{lower_to_js, OxcTransformer};
-pub use framework::{compiler_for, Framework, FrameworkCompiler, FrameworkInput, FrameworkOutput, ReactInline, SolidInline, ToolingDispatcher};
-pub use generate_params::{extract_generate_params, GenerateParamsResult};
+pub use framework::{
+    Framework, FrameworkCompiler, FrameworkInput, FrameworkOutput, ReactInline, SolidInline,
+    ToolingDispatcher, compiler_for,
+};
+pub use generate_params::{GenerateParamsResult, extract_generate_params};
+pub use oxc_backend::{OxcTransformer, lower_to_js};
 
 pub type Result<T> = std::result::Result<T, OxideError>;
 
@@ -909,7 +912,6 @@ fn escape_js(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-
 // ---------------------------------------------------------------------------
 // §10.1 render-mode inference.
 // ---------------------------------------------------------------------------
@@ -1042,7 +1044,9 @@ fn walk_stmt_for_request_reads<'a>(
             walk_decl(&e.declaration, source, found);
         }
         Statement::ExportDefaultDeclaration(e) => {
-            if let oxc_ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(f) = &e.declaration {
+            if let oxc_ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(f) =
+                &e.declaration
+            {
                 if let Some(body) = &f.body {
                     for s in &body.statements {
                         walk_stmt_for_request_reads(s, source, found);
@@ -1145,7 +1149,10 @@ fn walk_expr<'a>(
             }
             if let Expression::Identifier(obj) = &m.object {
                 if obj.name.as_str() == "request" && m.property.name.as_str() == "headers" {
-                    *found = Some(((m.span.start as usize, m.span.end as usize), "request.headers"));
+                    *found = Some((
+                        (m.span.start as usize, m.span.end as usize),
+                        "request.headers",
+                    ));
                     return;
                 }
             }
