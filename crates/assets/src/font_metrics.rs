@@ -9,7 +9,7 @@
 //! normalize everything to em units, then scale the target's metrics by the ratio
 //! of fallback total height to target total height.
 
-use crate::{err, Result};
+use crate::{Result, err};
 use skrifa::instance::{LocationRef, Size};
 use skrifa::{FontRef, MetadataProvider};
 
@@ -35,8 +35,8 @@ pub const TIMES_NEW_ROMAN: FontMetric = FontMetric {
 /// Read metrics from OpenType/TrueType bytes. Returns `AST-FONT` on any parse
 /// failure (WOFF2-compressed input is not decompressed here; callers fall back).
 pub fn read_metrics(bytes: &[u8]) -> Result<FontMetric> {
-    let font = FontRef::new(bytes)
-        .map_err(|e| err("AST-FONT", format!("skrifa parse failed: {e}")))?;
+    let font =
+        FontRef::new(bytes).map_err(|e| err("AST-FONT", format!("skrifa parse failed: {e}")))?;
     let m = font.metrics(Size::unscaled(), LocationRef::default());
     if m.units_per_em == 0 {
         return Err(err("AST-FONT", "font reports 0 units-per-em"));
@@ -61,8 +61,7 @@ pub struct MetricOverrides {
 /// Compute the CSS overrides that make the `fallback` face occupy exactly the same
 /// vertical box as `target`. See module docs for the algorithm.
 pub fn metric_overrides(target: FontMetric, fallback: FontMetric) -> MetricOverrides {
-    let target_total =
-        (target.ascent + target.descent + target.line_gap) / target.units_per_em;
+    let target_total = (target.ascent + target.descent + target.line_gap) / target.units_per_em;
     let fallback_total =
         (fallback.ascent + fallback.descent + fallback.line_gap) / fallback.units_per_em;
     let ratio = if target_total == 0.0 {
@@ -102,7 +101,11 @@ mod tests {
             units_per_em: 2048.0,
         };
         let o = metric_overrides(tiny, TIMES_NEW_ROMAN);
-        assert!((o.size_adjust - 200.0).abs() < 0.05, "got {}", o.size_adjust);
+        assert!(
+            (o.size_adjust - 200.0).abs() < 0.05,
+            "got {}",
+            o.size_adjust
+        );
     }
 
     /// The three individual overrides sum to size-adjust * (total_height/upem).
