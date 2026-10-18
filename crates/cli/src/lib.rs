@@ -2171,6 +2171,11 @@ async fn write_prerender(
     // caller from `MatchInfo.layout_chain`; the adapter nests the page
     // inside them. Empty means "no layouts wrap this page".
     layouts: &[String],
+    // §9.2: layout `(id, layout.server.ts path)` pairs, outermost first. The
+    // prerender path runs each layout's `load()` before the page load and
+    // threads `parent_data`, so a prerendered page's `await parent()` sees
+    // the real layout data (mirrors the live and /__data paths).
+    layout_module_paths: &[(String, std::path::PathBuf)],
     // §10.2 step 5: nearest ancestor `error.tsx` route id, if any. The
     // adapter renders it on an SSR throw. Mirrors the live-dispatch
     // resolution — an error thrown while prerendering has the same
@@ -2193,6 +2198,61 @@ async fn write_prerender(
     // emits (below).
     let mut deferred_values: std::collections::BTreeMap<String, serde_json::Value> =
         std::collections::BTreeMap::new();
+    // §9.2: run the layout chain (outer → inner) first, threading
+    // `parent_data`, so the page's `await parent()` sees the real layout
+    // data — the same sequence the live and /__data paths run.
+    let mut parent_data: serde_json::Value = serde_json::Value::Null;
+    if let Some(loader) = loader_runner {
+        for (lid, lpath) in layout_module_paths {
+            let mut linput = oxide_server::LoaderRunInput::new(
+                lpath.to_string_lossy().to_string(),
+                lid.clone(),
+                url_path,
+            );
+            linput.params = params.clone();
+            linput.parent_data = parent_data.clone();
+            // Build time has no request middleware; `locals` is `{}` and the
+            // locale is the project default (there is no Accept-Language).
+            linput.locals = serde_json::json!({});
+            match loader.run(linput).await {
+                Ok(out) if out.status == 200 => {
+                    parent_data = out.data;
+                }
+                Ok(out) => {
+                    // A layout short-circuit during prerender is the same as
+                    // a page short-circuit: write a diagnostic file.
+                    let body = format!(
+                        "<!doctype html><html><body>\
+                         <h1>layout loader short-circuit: {}</h1><pre>{}</pre>\
+                         </body></html>",
+                        out.status, out.data
+                    );
+                    let dest = dist.join(rel);
+                    if let Some(parent) = dest.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::write(&dest, &body)?;
+                    return Ok(body);
+                }
+                Err(e) => {
+                    let body = format!(
+                        "<!doctype html><html><body>\
+                         <h1>layout loader error</h1><pre>{}: {}</pre>\
+                         </body></html>",
+                        oxide_render::escape_text(&e.0.code),
+                        oxide_render::escape_text(&e.0.message)
+                    );
+                    let dest = dist.join(rel);
+                    if let Some(parent) = dest.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::write(&dest, &body)?;
+                    return Ok(body);
+                }
+            }
+        }
+    }
+
     if let (Some(loader), Some(mp)) = (loader_runner, module_path) {
         // Match the route-id normalization the renderer will do so user
         // loaders see the same string in `event.route`.
@@ -2206,6 +2266,8 @@ async fn write_prerender(
             url_path,
         );
         input.params = params.clone();
+        // §9.2: the innermost layout's data — what `parent()` reads.
+        input.parent_data = parent_data.clone();
         match loader.run(input).await {
             Ok(out) if out.status == 200 => {
                 data = out.data;
@@ -3158,6 +3220,29 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             chain.sort_by_key(|(_, len)| *len);
             chain.into_iter().map(|(id, _)| id).collect()
         };
+
+        // §9.2: layout `(id, layout.server.ts path)` pairs for the prerender
+        // layout-load chain. Only layouts that actually have a
+        // `layout.server.ts` participate.
+        let prerender_layout_modules: Vec<(String, std::path::PathBuf)> = layout_ids
+            .iter()
+            .filter_map(|lid| {
+                tree.entries
+                    .iter()
+                    .find(|le| {
+                        le.id.0 == *lid && matches!(le.kind, oxide_router::RouteKind::Layout)
+                    })
+                    .map(|le| {
+                        (
+                            lid.clone(),
+                            rootp
+                                .join(&cfg.routes.dir)
+                                .join(le.file.with_file_name("layout.server.ts")),
+                        )
+                    })
+            })
+            .filter(|(_, p)| p.is_file())
+            .collect();
         // §10.2 step 5: nearest ancestor error.tsx for this route.
         // Innermost wins — a `routes/blog/error` shadows `routes/error`.
         let prerender_error_route_id: Option<String> = {
@@ -3231,6 +3316,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                         module_path.as_deref(),
                         boot_script_url.as_deref(),
                         &layout_ids,
+
+                        &prerender_layout_modules,
                         prerender_error_route_id.as_deref(),
                     )
                     .await?;
@@ -3307,6 +3394,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                                 module_path.as_deref(),
                                 boot_script_url.as_deref(),
                                 &layout_ids,
+
+                                &prerender_layout_modules,
                                 prerender_error_route_id.as_deref(),
                             )
                             .await?;
@@ -3389,6 +3478,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     module_path.as_deref(),
                     boot_script_url.as_deref(),
                     &layout_ids,
+
+                    &prerender_layout_modules,
                     prerender_error_route_id.as_deref(),
                 )
                 .await?;

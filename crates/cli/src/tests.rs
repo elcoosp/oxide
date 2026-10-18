@@ -674,6 +674,7 @@ async fn write_prerender_threads_loader_data_into_renderer() {
         Some(std::path::Path::new("/fake/page.server.ts")),
         None, // no island boot script in this test
         &[],  // no layouts in this test
+        &[],  // no layout chain in this test
         None, // no error.tsx in this test
     )
     .await
@@ -717,6 +718,7 @@ async fn write_prerender_without_loader_uses_empty_data() {
         None,
         None, // no island boot script
         &[],  // no layouts
+        &[],  // no layout chain
         None, // no error.tsx
     )
     .await
