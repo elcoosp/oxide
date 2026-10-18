@@ -1,0 +1,45 @@
+# §22: `cargo-fuzz` targets for the untrusted-input surfaces the spec names —
+# the ODF decoder, the router matcher, and the config extractor. Kept in its own
+# workspace so a normal `cargo build --workspace` does not pull libfuzzer in.
+#
+# Run: `cargo +nightly fuzz run odf_decode` (needs a nightly toolchain).
+[package]
+name = "oxide-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+oxide-odf = { path = "../crates/odf" }
+oxide-router = { path = "../crates/router" }
+oxide-config = { path = "../crates/config" }
+
+[[bin]]
+name = "odf_decode"
+path = "fuzz_targets/odf_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "router_match"
+path = "fuzz_targets/router_match.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "config_extract"
+path = "fuzz_targets/config_extract.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "path_split"
+path = "fuzz_targets/path_split.rs"
+test = false
+doc = false
+
+[workspace]
