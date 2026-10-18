@@ -87,7 +87,7 @@ impl ToolingPool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CallStream, EntryRef, PoolConfig, ScriptedHost, JsHost};
+    use crate::{CallStream, EntryRef, JsHost, PoolConfig, ScriptedHost};
     use bytes::Bytes;
     use serde_json::json;
     use std::sync::Arc;
@@ -102,7 +102,11 @@ mod tests {
         }
     }
     fn entry() -> EntryRef {
-        EntryRef { kind: "tooling:compile".into(), module: "m".into(), export: "e".into() }
+        EntryRef {
+            kind: "tooling:compile".into(),
+            module: "m".into(),
+            export: "e".into(),
+        }
     }
 
     #[tokio::test]
