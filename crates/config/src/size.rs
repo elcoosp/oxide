@@ -4,7 +4,7 @@
 //! case-insensitive, with an optional decimal fraction (`1.5mb`). Plain digit
 //! strings are bytes. Anything else → `CFG-SIZE`.
 
-use crate::{err, Result};
+use crate::{Result, err};
 
 pub(crate) fn parse(s: &str) -> Result<u64> {
     let t = s.trim().to_ascii_lowercase();
@@ -30,7 +30,7 @@ pub(crate) fn parse(s: &str) -> Result<u64> {
             return Err(err(
                 "CFG-SIZE",
                 format!("invalid size `{s}`: unknown unit `{unit}` (expected b|kb|mb|gb|tb)"),
-            ))
+            ));
         }
     };
     let n: f64 = num.parse::<f64>().map_err(|_| {
