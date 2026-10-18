@@ -4294,8 +4294,10 @@ fn build_dispatch(
         // middleware's directory is the scoping key; the deepest
         // matching ancestor wraps the route (a `routes/blog/middleware`
         // shadows `routes/middleware`). Scope to a bounded slice:
-        // middleware is executed once, before the loader/render; a
-        // rewrite is logged but not re-matched (documented gap).
+        // middleware runs once, before the loader/render. A middleware
+        // `{ rewrite }` re-dispatches the request through the normal
+        // match → loader → render path via the self_dispatch closure
+        // (see the §8.5 rewrite notes in `build_dispatch`).
         let middleware_module_path: Option<std::path::PathBuf> = {
             let route_id_for_mw = route_id.as_deref().unwrap_or("");
             let mut best: Option<(std::path::PathBuf, usize)> = None;

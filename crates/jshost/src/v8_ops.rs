@@ -9,9 +9,11 @@
 //! The request-scoped ops (`stream_write`, `response_head`,
 //! `request_body_read`, `cache_get/set/tag`, `fetch`, `ws_*`) belong to
 //! per-request state that only exists once the JS render path produces
-//! streaming output — they are not registered yet. A JS caller gets
-//! `Op not found` from deno_core, which is the honest signal that the
-//! streaming layer is not wired. See `docs/deviations.md` if kept.
+//! streaming output. The cache ops (`cache_get/set/tag`) are wired via
+//! the `CACHE_HANDLER` thread-local below (BUG-02); the streaming ops
+//! (`stream_write`, `response_head`, `request_body_read`, `fetch`,
+//! `ws_*`) are still pending — a JS caller gets `Op not found` from
+//! deno_core until they land.
 
 use deno_core::op2;
 use std::cell::RefCell;

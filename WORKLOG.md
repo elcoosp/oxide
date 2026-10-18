@@ -4143,54 +4143,6 @@ Verified: a fixture build writes `.oxide/types/routes.d.ts` (746 B) containing
 `href()` already covered params; `searchParams` extraction from a
 `searchSchema` export is the remaining SPEC-09 piece.
 
-## SPEC-09 — §8.3 typegen completion + build hook
-
-- **Per-route data types**: typegen now emits `RouteData` (pattern → the route's
-  `export type LoaderData = …` when the `page.server.ts` declares one, else
-  `unknown`) and `PageProps<R>` = `{ data: RouteData[R]; params: RouteParams[R] }`,
-  plus a `Data<R>` alias under `declare module "oxide"`.
-- **Build hook**: `cmd_build` calls `tree.typegen(&rootp)` after the route tree
-  is final, so `routes.d.ts` stays in sync without a separate `oxide routes` run
-  (a typegen failure warns, never fails the build).
-
-Verified: a fixture build writes `.oxide/types/routes.d.ts` (746 B) containing
-`RouteData`, `PageProps`, and the module augmentation. The per-route
-`LoaderData` extraction is wired but missed on the blog fixture (falls back to
-`unknown`) — the annotation path works, the entry lookup needs a follow-up.
-`href()` already covered params; `searchParams` extraction from a
-`searchSchema` export is the remaining SPEC-09 piece.
-
-## SPEC-17 — §15.1 JS plugin bridge execution
-
-The `BridgeMsg` protocol and hook allow-list existed; nothing executed a JS
-plugin. Built:
-- **Worker**: `plugin:load` (imports a plugin module, records its hook list)
-  and `plugin:call` (invokes one hook with a Vite-style context; returns the
-  result or a `PLG-CALL`/`PLG-HOOK` error).
-- **CLI**: `build_js_plugin_hook` loads each `kind: js` plugin once and runs
-  its `transform(code, id)` per module; composed with the WASM hook
-  (JS first, then WASM).
-- Plugin errors fail the build (`PLG-CALL`); a plugin missing `transform` is
-  skipped for that hook.
-
-**Two real bugs found during verification, both mine:**
-1. A `Runtime::block_on` called from inside the bundler's own tokio runtime
-   **deadlocked the build**. Fixed by running the bridge on a scoped thread
-   (the same pattern `emit_snapshot_blob` uses for V8).
-2. The worker read `input.path`, but the CLI sends `input.payload.path` — so
-   every plugin saw an empty path and errored. Fixed.
-
-Verified: a fixture with a real `transform` plugin that rewrites
-`PLUGIN_MARKER` → `TRANSFORMED_BY_PLUGIN` produces the transformed string in
-**both** `dist/client/routes/index/page.js` and
-`dist/server/routes/index/page.js`, with 0 plugin errors, and the build
-completes (exit 0) in normal time.
-
-**Known remainder:** the prerendered HTML still carries the untransformed
-marker — prerender renders the page through the page-renderer's module loader,
-not the plugin-transformed bundle. Wiring plugin transforms into that render
-path (or documenting it as a dev-only hook) is the follow-up.
-
 ## SPEC-17 — §15.1 JS plugin bridge execution
 
 The `BridgeMsg` protocol and hook allow-list existed; nothing executed a JS
