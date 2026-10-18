@@ -11,8 +11,8 @@
 //! payload nested `MAX_DEPTH`-deep must fail with `ODF-DEPTH`, not by
 //! overflowing the host thread's stack before the guard can fire.
 
-use crate::wire::{tags, Reader};
-use crate::{err, Result, Value, MAX_BYTES, MAX_DEPTH, MAX_REFS};
+use crate::wire::{Reader, tags};
+use crate::{MAX_BYTES, MAX_DEPTH, MAX_REFS, Result, Value, err};
 use std::collections::BTreeMap;
 
 /// Decode ODF bytes back into a [Value] plus its shared-value table.
@@ -65,10 +65,24 @@ pub fn decode_with_shared(bytes: &[u8]) -> Result<(Value, Vec<Value>)> {
 
 /// A container under construction on the explicit work stack.
 enum Frame {
-    Array { items: Vec<Value>, remaining: u32 },
-    Set { items: Vec<Value>, remaining: u32 },
-    Object { map: BTreeMap<String, Value>, remaining: u32, pending_key: Option<String> },
-    Map { pairs: Vec<(Value, Value)>, remaining: u32, pending_key: Option<Value> },
+    Array {
+        items: Vec<Value>,
+        remaining: u32,
+    },
+    Set {
+        items: Vec<Value>,
+        remaining: u32,
+    },
+    Object {
+        map: BTreeMap<String, Value>,
+        remaining: u32,
+        pending_key: Option<String>,
+    },
+    Map {
+        pairs: Vec<(Value, Value)>,
+        remaining: u32,
+        pending_key: Option<Value>,
+    },
 }
 
 /// Read one root value iteratively. `base` is the number of preamble slots
@@ -81,14 +95,15 @@ fn read_value(r: &mut Reader<'_>, base: u32, started: &mut u32) -> Result<Value>
     loop {
         // An object frame awaiting its next key reads a bare string (keys
         // carry no tag and consume no depth — same as the recursive reader).
-        if let Some(Frame::Object { pending_key: None, .. }) = stack.last() {
+        if let Some(Frame::Object {
+            pending_key: None, ..
+        }) = stack.last()
+        {
             let key = r.string()?;
             if !crate::wire::valid_object_key(&key) {
                 return Err(err(
                     "ODF-KEY",
-                    format!(
-                        "reserved object key `{key}` (§17.1: prototype pollution rejected)"
-                    ),
+                    format!("reserved object key `{key}` (§17.1: prototype pollution rejected)"),
                 ));
             }
             if let Some(Frame::Object { pending_key, .. }) = stack.last_mut() {
@@ -134,12 +149,18 @@ fn read_value(r: &mut Reader<'_>, base: u32, started: &mut u32) -> Result<Value>
             }
             tags::ARRAY => {
                 open_slot(base, started)?;
-                stack.push(Frame::Array { items: Vec::new(), remaining: r.varu()? });
+                stack.push(Frame::Array {
+                    items: Vec::new(),
+                    remaining: r.varu()?,
+                });
                 None
             }
             tags::SET => {
                 open_slot(base, started)?;
-                stack.push(Frame::Set { items: Vec::new(), remaining: r.varu()? });
+                stack.push(Frame::Set {
+                    items: Vec::new(),
+                    remaining: r.varu()?,
+                });
                 None
             }
             tags::OBJECT => {
@@ -153,7 +174,11 @@ fn read_value(r: &mut Reader<'_>, base: u32, started: &mut u32) -> Result<Value>
             }
             tags::MAP => {
                 open_slot(base, started)?;
-                stack.push(Frame::Map { pairs: Vec::new(), remaining: r.varu()?, pending_key: None });
+                stack.push(Frame::Map {
+                    pairs: Vec::new(),
+                    remaining: r.varu()?,
+                    pending_key: None,
+                });
                 None
             }
             tags::TYPED_ARRAY => {
@@ -182,9 +207,15 @@ fn read_value(r: &mut Reader<'_>, base: u32, started: &mut u32) -> Result<Value>
                 let stack_flag = match r.u8()? {
                     0 => None,
                     1 => Some(r.string()?),
-                    other => return Err(err("ODF-TAG", format!("invalid stack flag byte {other}"))),
+                    other => {
+                        return Err(err("ODF-TAG", format!("invalid stack flag byte {other}")));
+                    }
                 };
-                Some(Value::Error { name, message, stack: stack_flag })
+                Some(Value::Error {
+                    name,
+                    message,
+                    stack: stack_flag,
+                })
             }
             tags::REF => {
                 let i = r.varu()?;
@@ -238,7 +269,11 @@ fn read_value(r: &mut Reader<'_>, base: u32, started: &mut u32) -> Result<Value>
                             break;
                         }
                     }
-                    Frame::Object { map, remaining, pending_key } => {
+                    Frame::Object {
+                        map,
+                        remaining,
+                        pending_key,
+                    } => {
                         let key = pending_key.take().expect("object key precedes value");
                         map.insert(key, v);
                         *remaining -= 1;
@@ -246,7 +281,11 @@ fn read_value(r: &mut Reader<'_>, base: u32, started: &mut u32) -> Result<Value>
                             break;
                         }
                     }
-                    Frame::Map { pairs, remaining, pending_key } => {
+                    Frame::Map {
+                        pairs,
+                        remaining,
+                        pending_key,
+                    } => {
                         if let Some(k) = pending_key.take() {
                             pairs.push((k, v));
                             *remaining -= 1;
