@@ -11,17 +11,16 @@
 //! path when only span surgery (not syntax validation) is needed.
 
 use crate::{
-    inject_hmr_boundary, is_server_module_path, scan_import_spans, Directive, Env, ImportScan,
-    ImportSpan, Result, ServerFnStub,
-    TransformInput, TransformOutput, Transformer,
+    Directive, Env, ImportScan, ImportSpan, Result, ServerFnStub, TransformInput, TransformOutput,
+    Transformer, inject_hmr_boundary, is_server_module_path, scan_import_spans,
 };
-use oxide_diagnostics::Diagnostic;
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{Program, Statement};
 use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType};
-use std::path::PathBuf;
+use oxide_diagnostics::Diagnostic;
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 
 /// Oxc-backed transformer (D4). Parse errors surface as `CMP-PARSE` diagnostics;
 /// the pipeline continues with scanner passes so bad user code still gets a
@@ -291,7 +290,6 @@ fn build_scan(spans: &[ImportSpan]) -> ImportScan {
     scan
 }
 
-
 // ---------------- Oxc-AST-driven passes ----------------
 
 use std::collections::BTreeMap as AstBTreeMap;
@@ -302,9 +300,7 @@ fn directive_text(d: &oxc_ast::ast::Directive<'_>) -> String {
 }
 
 /// Find the first `'use cache'` directive in a function body.
-fn find_use_cache_directive(
-    body: &oxc_ast::ast::FunctionBody<'_>,
-) -> Option<(u32, u32)> {
+fn find_use_cache_directive(body: &oxc_ast::ast::FunctionBody<'_>) -> Option<(u32, u32)> {
     for d in &body.directives {
         if directive_text(d) == "use cache" {
             return Some((d.span.start, d.span.end));
@@ -454,7 +450,9 @@ fn walk_var_decl_for_use_cache(
             BindingPattern::BindingIdentifier(id) => id.name.as_str().to_string(),
             _ => continue, // destructuring not supported for 'use cache'
         };
-        let Some(init) = declarator.init.as_ref() else { continue };
+        let Some(init) = declarator.init.as_ref() else {
+            continue;
+        };
         let (func_body, fn_span_start, fn_span_end, params_src) = match init {
             Expression::ArrowFunctionExpression(arrow) => {
                 let body = match &arrow.body {
@@ -465,13 +463,17 @@ fn walk_var_decl_for_use_cache(
                 (body, arrow.span.start, arrow.span.end, ps.to_string())
             }
             Expression::FunctionExpression(func) => {
-                let Some(body) = func.body.as_ref() else { continue };
+                let Some(body) = func.body.as_ref() else {
+                    continue;
+                };
                 let ps = &code[func.params.span.start as usize..func.params.span.end as usize];
                 (body, func.span.start, func.span.end, ps.to_string())
             }
             _ => continue,
         };
-        let Some((ds, de)) = find_use_cache_directive(func_body) else { continue };
+        let Some((ds, de)) = find_use_cache_directive(func_body) else {
+            continue;
+        };
 
         // Reconstruct the function text from the source span, blanking the directive.
         let fn_text_raw = &code[fn_span_start as usize..fn_span_end as usize];
@@ -587,8 +589,12 @@ fn ast_server_fn_stubs(
     fn as_server_fn_call<'a>(
         expr: &'a Expression<'a>,
     ) -> Option<&'a oxc_ast::ast::CallExpression<'a>> {
-        let Expression::CallExpression(call) = expr else { return None };
-        let Expression::Identifier(id) = &call.callee else { return None };
+        let Expression::CallExpression(call) = expr else {
+            return None;
+        };
+        let Expression::Identifier(id) = &call.callee else {
+            return None;
+        };
         (id.name.as_str() == "serverFn").then_some(call)
     }
 
@@ -605,9 +611,15 @@ fn ast_server_fn_stubs(
                                stubs: &mut Vec<ServerFnStub>,
                                ssr_lines: &mut Vec<String>| {
         for d in &var.declarations {
-            let Some(name) = declarator_name(&d.id) else { continue };
-            let Some(init) = d.init.as_ref() else { continue };
-            let Some(_call) = as_server_fn_call(init) else { continue };
+            let Some(name) = declarator_name(&d.id) else {
+                continue;
+            };
+            let Some(init) = d.init.as_ref() else {
+                continue;
+            };
+            let Some(_call) = as_server_fn_call(init) else {
+                continue;
+            };
 
             // Full declarator span is `name = serverFn(...)`; the scanner replaces
             // the whole `export const NAME = serverFn(...)` statement. We use the
@@ -623,10 +635,12 @@ fn ast_server_fn_stubs(
                 // `oxide/fn`, which owns the fetch + wire format. Previously
                 // this inlined a fetch calling bare `__oxide_encode` /
                 // `__oxide_decode` globals that no module defines.
-                Env::Client => format!(
-                    "{name} = (async (...args) => __oxide_call_fn(\"{id}\", args));"
-                ),
-                Env::Ssr | Env::Edge => code[d.span.start as usize..d.span.end as usize].to_string(),
+                Env::Client => {
+                    format!("{name} = (async (...args) => __oxide_call_fn(\"{id}\", args));")
+                }
+                Env::Ssr | Env::Edge => {
+                    code[d.span.start as usize..d.span.end as usize].to_string()
+                }
             };
             edits.push((d.span.start, d.span.end, repl));
 
@@ -692,7 +706,6 @@ fn apply_str_edits(code: &str, mut edits: Vec<(u32, u32, String)>) -> String {
     out
 }
 
-
 /// Walk the statements of a function body collecting `cacheTag("x")` and
 /// `cacheLife({...})` calls, and return:
 ///   - the `__oxide_cache` options object literal text (tags array + life object)
@@ -722,14 +735,22 @@ fn collect_cache_options(
     let mut spans: Vec<(u32, u32)> = Vec::new();
 
     for stmt in &body.statements {
-        let Statement::ExpressionStatement(es) = stmt else { continue };
-        let Expression::CallExpression(call) = &es.expression else { continue };
-        let Expression::Identifier(id) = &call.callee else { continue };
+        let Statement::ExpressionStatement(es) = stmt else {
+            continue;
+        };
+        let Expression::CallExpression(call) = &es.expression else {
+            continue;
+        };
+        let Expression::Identifier(id) = &call.callee else {
+            continue;
+        };
         let callee = id.name.as_str();
 
         match callee {
             "cacheTag" => {
-                let Some(arg) = call.arguments.first() else { continue };
+                let Some(arg) = call.arguments.first() else {
+                    continue;
+                };
                 // Any argument form is accepted now — a literal, a
                 // template, a concatenation, an identifier. The raw source
                 // slice is what goes into the emitted thunk, so the quote
