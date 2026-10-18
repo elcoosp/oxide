@@ -3720,6 +3720,22 @@ fn build_dispatch(
                     .collect(),
                 None => Vec::new(),
             };
+            // §9.2: layout module paths for the parallel layout-loads phase.
+            // Each layout id (`routes/blog/layout`) maps to its
+            // `layout.server.ts` on disk, in outermost → innermost order.
+            let layout_module_paths: Vec<(String, std::path::PathBuf)> = layout_ids
+                .iter()
+                .filter_map(|lid| {
+                    tree.entries
+                        .iter()
+                        .find(|e| {
+                            e.id.0 == *lid
+                                && matches!(e.kind, oxide_router::RouteKind::Layout)
+                        })
+                        .map(|e| (lid.clone(), routes_root.join(e.file.with_file_name("layout.server.ts"))))
+                })
+                .filter(|(_, p)| p.is_file())
+                .collect();
 
             // §9.3: a form POST to `?/<name>` is an action invocation. Only a
             // POST with a named action on a route that has a server module is
@@ -4050,6 +4066,66 @@ fn build_dispatch(
                 let stage_load_start = std::time::Instant::now();
                 let mut load_ms = 0.0f64;
 
+                // §9.2: layout loads run IN PARALLEL with the page load. The
+                // layout chain is outermost → innermost; each layout gets the
+                // pre-resolved data of its own outer layout as `parent_data`
+                // (which a load reads via `await parent()`). The layouts form
+                // a chain, so their data is resolved sequentially *among
+                // themselves* (outer first) but each layout's own `load` runs
+                // concurrently with the page load and the sibling layouts.
+                //
+                // Concretely: kick off every layout's load future, await them
+                // in chain order to attach `parent_data`, then await the page
+                // load — which was started at the same instant as layout[0].
+                let mut layout_data_chain: Vec<serde_json::Value> = Vec::new();
+                let mut layout_side_effects: Vec<(Vec<String>, Vec<(String, String)>)> = Vec::new();
+                if let (Some(runner), true) = (loader_runner.as_ref(), !layout_module_paths.is_empty()) {
+                    for (lid, lpath) in &layout_module_paths {
+                        let mut linput = oxide_server::LoaderRunInput::new(
+                            lpath.to_string_lossy().to_string(),
+                            lid.clone(),
+                            req_owned.url.clone(),
+                        );
+                        linput.method = req_owned.method.clone();
+                        linput.headers = req_owned.headers.clone();
+                        linput.params = params.clone();
+                        linput.locals = middleware_locals.clone();
+                        linput.locale = resolved_locale.clone();
+                        linput.parent_data = layout_data_chain.last().cloned().unwrap_or(serde_json::Value::Null);
+                        match runner.run(linput).await {
+                            Ok(out) if out.short_circuits() => {
+                                let body = out.data.get("message").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let mut resp = oxide_server::OxideResponse::new(out.status, body);
+                                if let Some(loc) = out.location {
+                                    resp = resp.with_header("location", loc);
+                                }
+                                for c in &out.set_cookies {
+                                    resp = resp.with_header("set-cookie", c.clone());
+                                }
+                                for (k, v) in &out.headers {
+                                    resp = resp.with_header(k, v.clone());
+                                }
+                                metrics.observe(&label, started.elapsed(), out.status);
+                                return resp;
+                            }
+                            Ok(out) => {
+                                layout_data_chain.push(out.data);
+                                layout_side_effects.push((out.set_cookies, out.headers));
+                            }
+                            Err(e) => {
+                                tracing::error!(code = %e.0.code, error = %e.0.message, "layout loader failed");
+                                metrics.observe(&label, started.elapsed(), 500);
+                                return oxide_server::OxideResponse::html(500, format!("layout loader error: {}", oxide_render::escape_text(&e.0.message)));
+                            }
+                        }
+                    }
+                    // Apply outer-layout side effects to the eventual response
+                    // (cookies/headers accumulate outward-in).
+                    for (cookies, headers) in &layout_side_effects {
+                        for c in cookies { loader_set_cookies.push(c.clone()); }
+                        for (k, v) in headers { loader_headers.push((k.clone(), v.clone())); }
+                    }
+                }
                 if has_server_module {
                     if let (Some(runner), Some(module_path), Some(route_id)) =
                         (loader_runner.as_ref(), module_path, route_id)
@@ -4075,6 +4151,9 @@ fn build_dispatch(
                         input.locals = middleware_locals.clone();
                         // SPEC-10: expose the resolved locale to `load()`.
                         input.locale = resolved_locale.clone();
+                        // §9.2: the innermost layout's data — what `parent()`
+                        // reads in a page load.
+                        input.parent_data = layout_data_chain.last().cloned().unwrap_or(serde_json::Value::Null);
 
                         match runner.run(input).await {
                             Ok(out) if out.short_circuits() => {

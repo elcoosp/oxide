@@ -51,6 +51,11 @@ pub struct LoaderRunInput {
     /// middleware. Absent when no middleware runs (the loader sees `{}`).
     #[serde(default)]
     pub locals: serde_json::Value,
+    /// §9.2: the resolved data of the outer layout, so the page (and inner
+    /// layouts) can call `await parent()`. Pre-resolved before the load
+    /// runs (the pipeline awaits all layout loads, then the page load).
+    #[serde(default)]
+    pub parent_data: serde_json::Value,
 }
 
 impl LoaderRunInput {
@@ -70,6 +75,7 @@ impl LoaderRunInput {
             headers: Vec::new(),
             locale: String::new(),
             locals: serde_json::json!({}),
+            parent_data: serde_json::Value::Null,
         }
     }
 }

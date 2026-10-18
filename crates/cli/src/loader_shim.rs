@@ -28,6 +28,8 @@ pub fn input_to_payload(input: &LoaderRunInput) -> Value {
         "locals": input.locals,
         // SPEC-10: resolved locale — the worker's loader event sees it.
         "locale": input.locale,
+        // §9.2: the pre-resolved outer-layout data for `parent()`.
+        "parent_data": input.parent_data,
     })
 }
 
