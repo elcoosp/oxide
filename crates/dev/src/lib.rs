@@ -457,6 +457,48 @@ pub struct RequestTimingsRow {
     pub waterfall_ms: Vec<(String, f64)>,
 }
 
+/// §20 / §13.4: a bounded, thread-safe recorder of per-request timings.
+/// The dispatch closure records every request's `Server-Timing` stages here;
+/// the inspector renders the last N as a waterfall (the dev flamegraph).
+#[derive(Clone, Default)]
+pub struct WaterfallRecorder {
+    inner: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<RequestTimingsRow>>>,
+}
+
+impl WaterfallRecorder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record one request's stages. Keeps the most recent `MAX` entries.
+    pub fn record(&self, request_id: &str, waterfall_ms: Vec<(String, f64)>) {
+        const MAX: usize = 50;
+        if let Ok(mut q) = self.inner.lock() {
+            q.push_back(RequestTimingsRow {
+                request_id: request_id.to_string(),
+                waterfall_ms,
+            });
+            while q.len() > MAX {
+                q.pop_front();
+            }
+        }
+    }
+
+    /// Snapshot for the inspector.
+    pub fn snapshot(&self) -> Vec<RequestTimingsRow> {
+        self.inner
+            .lock()
+            .map(|q| q.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+}
+
+impl std::fmt::Debug for WaterfallRecorder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("WaterfallRecorder(..)")
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PoolRow {
     pub workers: usize,
@@ -492,6 +534,9 @@ pub fn prebundle_key(lockfile_hash: &str, dep: &str) -> String {
 #[derive(Debug, Clone, Default)]
 pub struct RouteTableInspector {
     pub routes: Vec<RouteRow>,
+    /// §20: the shared per-request timings recorder. `None` renders an empty
+    /// waterfall table.
+    pub waterfalls: Option<WaterfallRecorder>,
 }
 
 impl RouteTableInspector {
