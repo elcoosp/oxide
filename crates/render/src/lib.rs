@@ -22,8 +22,8 @@ pub mod ppr;
 
 use base64::Engine as _;
 use bytes::Bytes;
-use futures::channel::mpsc;
 use futures::StreamExt;
+use futures::channel::mpsc;
 use lol_html::html_content::ContentType;
 use lol_html::{ElementContentHandlers, HtmlRewriter, RewriteStrSettings, Selector};
 use oxide_diagnostics::{Diagnostic, OxideError};
@@ -506,6 +506,13 @@ pub struct Injector {
     pub css_links: Vec<String>,
     pub odf_payload_b64: Option<String>,
     pub route_id: String,
+    /// Extra HTML appended to the body injection fragment, AFTER the
+    /// hydration bootstrap. The CLI uses it for the resolved-deferred
+    /// `<script type="application/oxide-deferred">` on prerendered pages
+    /// (§7.1 / §10.2 step 5: prerendered pages must resolve their defer
+    /// slots exactly like live pages do). The fragment is trusted (built
+    /// by the pipeline, `<`-escaped JSON inside).
+    pub body_extra: String,
 }
 
 impl Injector {
@@ -517,6 +524,7 @@ impl Injector {
             css_links: Vec::new(),
             odf_payload_b64: None,
             route_id,
+            body_extra: String::new(),
         }
     }
 
@@ -535,10 +543,19 @@ impl Injector {
                 escape_attr(url)
             ));
         }
-        let body = self
-            .odf_payload_b64
-            .as_ref()
-            .map(|b64| hydration_bootstrap(b64, &self.route_id, &self.nonce));
+        // The body fragment is the hydration bootstrap (when a payload is
+        // set) plus any pipeline-supplied extra. Emitted when EITHER is
+        // present so a payload-less injector can still append `body_extra`.
+        let body = if self.odf_payload_b64.is_some() || !self.body_extra.is_empty() {
+            let mut body = String::new();
+            if let Some(b64) = self.odf_payload_b64.as_ref() {
+                body.push_str(&hydration_bootstrap(b64, &self.route_id, &self.nonce));
+            }
+            body.push_str(&self.body_extra);
+            Some(body)
+        } else {
+            None
+        };
         (head, body)
     }
 
@@ -554,20 +571,13 @@ impl Injector {
         let (head_inject, body_inject) = self.injection_fragments();
         let html = ensure_head(html);
         let body_seen = Arc::new(AtomicBool::new(false));
-        let out = lol_html::rewrite_str(
-            &html,
-            {
-                let mut __oxide_settings = RewriteStrSettings::new();
-                for __h in element_handlers(
-                    head_inject,
-                    body_inject.clone(),
-                    Arc::clone(&body_seen),
-                ) {
-                    __oxide_settings = __oxide_settings.append_element_content_handler(__h);
-                }
-                __oxide_settings
-            },
-        )
+        let out = lol_html::rewrite_str(&html, {
+            let mut __oxide_settings = RewriteStrSettings::new();
+            for __h in element_handlers(head_inject, body_inject.clone(), Arc::clone(&body_seen)) {
+                __oxide_settings = __oxide_settings.append_element_content_handler(__h);
+            }
+            __oxide_settings
+        })
         .map_err(|e| err("RND-INJECT", format!("html injection failed: {e}")))?;
         let mut out = out;
         if !body_seen.load(Ordering::Acquire) {
@@ -588,16 +598,12 @@ impl Injector {
         let (head_inject, body_inject) = self.injection_fragments();
         let body_seen = Arc::new(AtomicBool::new(false));
         let settings = {
-                           let mut __oxide_settings = lol_html::Settings::new();
-                           for __h in element_handlers(
-                head_inject,
-                body_inject.clone(),
-                Arc::clone(&body_seen),
-            ) {
-                               __oxide_settings = __oxide_settings.append_element_content_handler(__h);
-                           }
-                           __oxide_settings
-                       };
+            let mut __oxide_settings = lol_html::Settings::new();
+            for __h in element_handlers(head_inject, body_inject.clone(), Arc::clone(&body_seen)) {
+                __oxide_settings = __oxide_settings.append_element_content_handler(__h);
+            }
+            __oxide_settings
+        };
         let sink: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
         let out = Arc::clone(&sink);
         let sink_fn: Box<dyn FnMut(&[u8])> =
@@ -626,23 +632,27 @@ fn element_handlers(
     vec![
         (
             std::borrow::Cow::Owned("head".parse().unwrap()),
-            ElementContentHandlers::default().element(move |el: &mut lol_html::html_content::Element| {
-                // `append` inserts right before `</head>`, i.e. after the existing
-                // head content (§10.2 step 4: head tags, then links).
-                el.append(&head_inject, ContentType::Html);
-                Ok(())
-            }),
+            ElementContentHandlers::default().element(
+                move |el: &mut lol_html::html_content::Element| {
+                    // `append` inserts right before `</head>`, i.e. after the existing
+                    // head content (§10.2 step 4: head tags, then links).
+                    el.append(&head_inject, ContentType::Html);
+                    Ok(())
+                },
+            ),
         ),
         (
             std::borrow::Cow::Owned("body".parse().unwrap()),
-            ElementContentHandlers::default().element(move |el: &mut lol_html::html_content::Element| {
-                body_seen.store(true, Ordering::Release);
-                if let Some(b) = body_inject.as_ref() {
-                    // `append` inserts right before `</body>` (§10.2 step 4).
-                    el.append(b, ContentType::Html);
-                }
-                Ok(())
-            }),
+            ElementContentHandlers::default().element(
+                move |el: &mut lol_html::html_content::Element| {
+                    body_seen.store(true, Ordering::Release);
+                    if let Some(b) = body_inject.as_ref() {
+                        // `append` inserts right before `</body>` (§10.2 step 4).
+                        el.append(b, ContentType::Html);
+                    }
+                    Ok(())
+                },
+            ),
         ),
     ]
 }
@@ -781,7 +791,7 @@ pub fn stream_error_recovery(boundary_id: &str, diagnostic: &Diagnostic, nonce: 
     boundary_content_with_id(&id, &html, nonce)
 }
 
-pub use ppr::{assemble, shell_cache_key, split_shell, Shell};
+pub use ppr::{Shell, assemble, shell_cache_key, split_shell};
 #[cfg(test)]
 mod tests {
     use super::*;
