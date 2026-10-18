@@ -1,0 +1,5 @@
+---
+source: crates/render/tests/snapshots_render.rs
+expression: "sample_head().to_html(\"NONCE123\")"
+---
+<title>Hello &amp; &lt;World&gt;</title><meta name="description" content="A &quot;quoted&quot; desc"><meta property="og:title" content="OG"><meta name="charset" content="utf-8"><link href="/style.css" rel="stylesheet"><script defer="" nonce="NONCE123">console.log('hi')</script><script type="application/ld+json" nonce="NONCE123">{"@type":"Article","name":"x"}</script>

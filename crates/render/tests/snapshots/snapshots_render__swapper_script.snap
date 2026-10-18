@@ -1,0 +1,5 @@
+---
+source: crates/render/tests/snapshots_render.rs
+expression: "swapper_script(\"nonce-xyz\")"
+---
+<script nonce='nonce-xyz'>window.__oxSwap=function(id){var t=document.querySelector("template[data-ox-c='"+id+"']"),p=document.querySelector("template[data-ox-b='"+id+"']");if(t&&p){var d=document.createElement("div");d.innerHTML=t.innerHTML;p.replaceWith.apply(p,d.childNodes);document.dispatchEvent(new CustomEvent("ox:swap",{detail:{id:id,value:t.innerHTML}}))}};window.addEventListener('ox:defer',function(e){window.__oxSwap(e.detail.id)});</script>

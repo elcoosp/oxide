@@ -1,0 +1,5 @@
+---
+source: crates/render/tests/snapshots_render.rs
+expression: "inj.inject_into_html(html).expect(\"inject\")"
+---
+<!doctype html><html><head><title>x</title><link rel="modulepreload" href="/chunk.js"><link rel="stylesheet" href="/app.css"></head><body><main>hi</main><script type='application/oxide-data' nonce='NONCE4'>T0RGMQAK</script><script nonce='NONCE4'>window.__oxide={route:"routes/index/page",data:document.currentScript.previousElementSibling.textContent}</script></body></html>

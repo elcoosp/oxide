@@ -1,0 +1,5 @@
+---
+source: crates/render/tests/snapshots_render.rs
+expression: "boundary_content(42, \"<p class='done'>ok</p>\", \"abc123\")"
+---
+<template data-ox-c='42'><p class='done'>ok</p></template><script nonce='abc123'>(function(id){var t=document.querySelector("template[data-ox-c='"+id+"']"),p=document.querySelector("template[data-ox-b='"+id+"']");if(t&&p){var d=document.createElement("div");d.innerHTML=t.innerHTML;p.replaceWith.apply(p,d.childNodes);document.dispatchEvent(new CustomEvent("ox:swap",{detail:{id:id,value:t.innerHTML}}))}})('42')</script>

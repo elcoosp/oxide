@@ -1,0 +1,5 @@
+---
+source: crates/render/tests/snapshots_render.rs
+expression: "hydration_bootstrap(\"T0RGMQAK\", \"routes/index/page\", \"NONCE9\")"
+---
+<script type='application/oxide-data' nonce='NONCE9'>T0RGMQAK</script><script nonce='NONCE9'>window.__oxide={route:"routes/index/page",data:document.currentScript.previousElementSibling.textContent}</script>

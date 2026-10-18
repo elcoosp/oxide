@@ -1,0 +1,5 @@
+---
+source: crates/render/tests/snapshots_render.rs
+expression: "island_element(&d, \"<span>3</span>\")"
+---
+<ox-island data-ox-island='Counter' data-ox-chunk='/islands/counter.js' data-ox-strategy='load' data-ox-props='T0RGMQAK'><span>3</span></ox-island>

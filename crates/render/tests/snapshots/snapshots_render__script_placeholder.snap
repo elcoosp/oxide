@@ -1,0 +1,5 @@
+---
+source: crates/render/tests/snapshots_render.rs
+expression: "script_placeholder(\"idle\", Some(\"/a.js\"), None, false, &attrs,\n\"NONCE1\").expect(\"script placeholder\")"
+---
+<script data-ox-script data-ox-script-placeholder data-ox-strategy="idle" data-ox-src="/a.js" data-analytics="x" nonce="NONCE1"></script>

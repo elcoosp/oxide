@@ -1,0 +1,5 @@
+---
+source: crates/render/tests/snapshots_render.rs
+expression: "empty.to_html(\"n0nce\")"
+---
+
