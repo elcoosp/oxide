@@ -22,12 +22,14 @@ impl LoaderHost {
         Self { pool }
     }
 
-    /// Run the loader at `module_path`. `input` is the JSON payload for the
-    /// worker op: `{ route, params, url, method, headers }`. Returns the
-    /// raw worker response value, which callers convert to a typed
-    /// `LoaderOutput`.
-    pub async fn run(&self, module_path: &str, input: Value) -> Result<Value> {
-        let payload = serde_json::json!({
+    /// The payload whitelist `run` forwards to the `loader:run` worker op.
+    /// Pure so the whitelist is unit-testable without a `Pool`.
+    ///
+    /// Regression note (10-b): this used to drop `parent_data` and `locale` —
+    /// the shim (`loader_shim::input_to_payload`) forwards both, so `parent()`
+    /// resolved to `{}` and i18n loads lost their locale on every backend.
+    fn build_payload(module_path: &str, input: &Value) -> Value {
+        serde_json::json!({
             "module_path": module_path,
             "route": input.get("route").cloned().unwrap_or(Value::Null),
             "params": input.get("params").cloned().unwrap_or(Value::Null),
@@ -38,7 +40,24 @@ impl LoaderHost {
             // middleware. The loader's `event.locals` reads this. Defaults to
             // `{}` so a project without middleware still sees a (empty) object.
             "locals": input.get("locals").cloned().unwrap_or(serde_json::json!({})),
-        });
+            // §9.2: the pre-resolved outer-layout data the worker exposes as
+            // `parent()`. Absent → Null; the worker treats that as `{}`.
+            "parent_data": input.get("parent_data").cloned().unwrap_or(Value::Null),
+            // SPEC-10 / §16.4: resolved locale for i18n-aware loads. Defaults
+            // to "" like the shim's `LoaderRunInput::locale`.
+            "locale": input
+                .get("locale")
+                .cloned()
+                .unwrap_or(Value::String(String::new())),
+        })
+    }
+
+    /// Run the loader at `module_path`. `input` is the JSON payload for the
+    /// worker op: `{ route, params, url, method, headers, locals, locale,
+    /// parent_data }`. Returns the raw worker response value, which callers
+    /// convert to a typed `LoaderOutput`.
+    pub async fn run(&self, module_path: &str, input: Value) -> Result<Value> {
+        let payload = Self::build_payload(module_path, &input);
         // PERF-02: affinity key = the route the loader serves (read before
         // `payload` moves into the CallInput).
         let route = payload
@@ -60,7 +79,10 @@ impl LoaderHost {
         let mut stream = self.pool.call(entry, call_input).await?;
         let bytes = stream.collect().await?;
         let v: Value = serde_json::from_slice(&bytes).map_err(|e| {
-            crate::err("JSH-LOADER", format!("loader:run returned invalid JSON: {e}"))
+            crate::err(
+                "JSH-LOADER",
+                format!("loader:run returned invalid JSON: {e}"),
+            )
         })?;
         if let Some(err_msg) = v.get("__oxide_error").and_then(|x| x.as_str()) {
             return Err(crate::err("JSH-LOADER", err_msg.to_string()));
@@ -104,20 +126,17 @@ impl LoaderHost {
         if let Some(err_msg) = v.get("__oxide_error").and_then(|x| x.as_str()) {
             return Err(crate::err("JSH-PARAMS", err_msg.to_string()));
         }
-        let arr = v
-            .get("params")
-            .and_then(|x| x.as_array())
-            .ok_or_else(|| {
-                crate::err(
-                    "JSH-PARAMS",
-                    "generate-params:run response missing `params` array",
-                )
-            })?;
+        let arr = v.get("params").and_then(|x| x.as_array()).ok_or_else(|| {
+            crate::err(
+                "JSH-PARAMS",
+                "generate-params:run response missing `params` array",
+            )
+        })?;
         let mut out = Vec::with_capacity(arr.len());
         for item in arr {
-            let obj = item.as_object().ok_or_else(|| {
-                crate::err("JSH-PARAMS", "params entry not an object")
-            })?;
+            let obj = item
+                .as_object()
+                .ok_or_else(|| crate::err("JSH-PARAMS", "params entry not an object"))?;
             let mut map = std::collections::BTreeMap::new();
             for (k, val) in obj {
                 if let Some(s) = val.as_str() {
@@ -187,7 +206,11 @@ mod tests {
         let h = LoaderHost::new(pool);
         let err = h.run("/nope", json!({})).await.unwrap_err();
         assert_eq!(err.0.code, "JSH-LOADER");
-        assert!(err.0.message.contains("Cannot find module"), "{}", err.0.message);
+        assert!(
+            err.0.message.contains("Cannot find module"),
+            "{}",
+            err.0.message
+        );
     }
 
     #[tokio::test]
@@ -202,6 +225,48 @@ mod tests {
         assert!(err.0.message.contains("invalid JSON"));
     }
 
+    #[test]
+    fn build_payload_forwards_parent_data_and_locale() {
+        // Regression guard (10-b): the whitelist dropped `parent_data` and
+        // `locale`, so the worker's `parent()` always resolved to `{}` and
+        // i18n loads lost their locale — even though the CLI shim forwarded
+        // both. Both must survive `LoaderHost::run`'s payload rebuild.
+        let input = json!({
+            "route": "routes/blog/[slug]",
+            "params": { "slug": "hi" },
+            "url": "/blog/hi",
+            "method": "GET",
+            "headers": [["cookie", "a=b"]],
+            "locals": { "user": "ada" },
+            "parent_data": { "cart": ["a", "b"] },
+            "locale": "en",
+        });
+        let p = LoaderHost::build_payload("/abs/page.server.ts", &input);
+        assert_eq!(p["module_path"], "/abs/page.server.ts");
+        assert_eq!(p["route"], "routes/blog/[slug]");
+        assert_eq!(p["params"]["slug"], "hi");
+        assert_eq!(p["locals"]["user"], "ada");
+        assert_eq!(
+            p["parent_data"]["cart"],
+            json!(["a", "b"]),
+            "parent_data survives the whitelist"
+        );
+        assert_eq!(p["locale"], "en", "locale survives the whitelist");
+    }
+
+    #[test]
+    fn build_payload_defaults_parent_data_and_locale() {
+        // Absent fields take the same defaults the shim's `LoaderRunInput`
+        // uses: `parent_data` → Null (the worker reads it as `{}`) and
+        // `locale` → "".
+        let p = LoaderHost::build_payload("/x/page.server.ts", &json!({ "url": "/x" }));
+        assert!(p["parent_data"].is_null());
+        assert_eq!(p["locale"], "");
+        assert_eq!(p["method"], "GET");
+        assert_eq!(p["locals"], json!({}));
+        assert_eq!(p["headers"], json!([]));
+    }
+
     #[tokio::test]
     async fn generate_params_success() {
         let pool = mock_pool(json!({
@@ -211,10 +276,7 @@ mod tests {
             ]
         }));
         let h = LoaderHost::new(pool);
-        let out = h
-            .generate_params("/abs/page.server.ts")
-            .await
-            .unwrap();
+        let out = h.generate_params("/abs/page.server.ts").await.unwrap();
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].get("slug"), Some(&"hello".to_string()));
         assert_eq!(out[1].get("slug"), Some(&"world".to_string()));
@@ -236,7 +298,11 @@ mod tests {
         let h = LoaderHost::new(pool);
         let err = h.generate_params("/missing.ts").await.unwrap_err();
         assert_eq!(err.0.code, "JSH-PARAMS");
-        assert!(err.0.message.contains("no such module"), "{}", err.0.message);
+        assert!(
+            err.0.message.contains("no such module"),
+            "{}",
+            err.0.message
+        );
     }
 
     #[tokio::test]
@@ -248,7 +314,6 @@ mod tests {
         assert!(err.0.message.contains("missing `params` array"));
     }
 }
-
 
 /// §9.4: the host for `server-fn:run`. A server function is registered at
 /// module-evaluation time under a build-computed id; `run` sends the id,
@@ -276,12 +341,7 @@ impl ServerFnHost {
     /// Returns the resolved value as JSON. A function that threw, an
     /// unknown id, and a missing registry all surface as `JSH-FN*` errors
     /// so the pipeline can build the right envelope.
-    pub async fn run(
-        &self,
-        fn_id: &str,
-        args_json: &[u8],
-        entry_path: &str,
-    ) -> Result<Value> {
+    pub async fn run(&self, fn_id: &str, args_json: &[u8], entry_path: &str) -> Result<Value> {
         let args_str = std::str::from_utf8(args_json).unwrap_or("[]");
         let payload = serde_json::json!({
             "fn_id": fn_id,
@@ -303,7 +363,10 @@ impl ServerFnHost {
         let mut stream = self.pool.call(entry, call_input).await?;
         let bytes = stream.collect().await?;
         let v: Value = serde_json::from_slice(&bytes).map_err(|e| {
-            crate::err("JSH-FN", format!("server-fn:run returned invalid JSON: {e}"))
+            crate::err(
+                "JSH-FN",
+                format!("server-fn:run returned invalid JSON: {e}"),
+            )
         })?;
         if let Some(err_msg) = v.get("__oxide_error").and_then(|x| x.as_str()) {
             return Err(crate::err("JSH-FN", err_msg.to_string()));
@@ -389,14 +452,16 @@ impl ActionHost {
         let mut stream = self.pool.call(entry, call_input).await?;
         let bytes = stream.collect().await?;
         let v: Value = serde_json::from_slice(&bytes).map_err(|e| {
-            crate::err("JSH-ACTION", format!("action:run returned invalid JSON: {e}"))
+            crate::err(
+                "JSH-ACTION",
+                format!("action:run returned invalid JSON: {e}"),
+            )
         })?;
         if let Some(err_msg) = v.get("__oxide_error").and_then(|x| x.as_str()) {
             return Err(crate::err("JSH-ACTION", err_msg.to_string()));
         }
-        serde_json::from_value(v).map_err(|e| {
-            crate::err("JSH-ACTION", format!("action:run result shape: {e}"))
-        })
+        serde_json::from_value(v)
+            .map_err(|e| crate::err("JSH-ACTION", format!("action:run result shape: {e}")))
     }
 }
 
@@ -510,7 +575,10 @@ impl EndpointHost {
         match &mut stream {
             crate::CallStream::Complete(bytes) => {
                 let v: Value = serde_json::from_slice(bytes).map_err(|e| {
-                    crate::err("JSH-ENDPOINT", format!("endpoint:run returned invalid JSON: {e}"))
+                    crate::err(
+                        "JSH-ENDPOINT",
+                        format!("endpoint:run returned invalid JSON: {e}"),
+                    )
                 })?;
                 return Self::from_complete_json(v);
             }
@@ -525,11 +593,14 @@ impl EndpointHost {
                             headers: Vec::new(),
                             body: Vec::new(),
                             stream: None,
-                        })
+                        });
                     }
                 };
                 let v: Value = serde_json::from_slice(&first).map_err(|e| {
-                    crate::err("JSH-ENDPOINT", format!("endpoint:run header frame invalid: {e}"))
+                    crate::err(
+                        "JSH-ENDPOINT",
+                        format!("endpoint:run header frame invalid: {e}"),
+                    )
                 })?;
                 if let Some(err_msg) = v.get("__oxide_error").and_then(|x| x.as_str()) {
                     return Err(crate::err("JSH-ENDPOINT", err_msg.to_string()));
@@ -584,10 +655,7 @@ impl EndpointHost {
         }
         let status = v.get("status").and_then(|x| x.as_u64()).unwrap_or(200) as u16;
         let headers_out = Self::parse_headers(&v);
-        let body_b64_out = v
-            .get("body_b64")
-            .and_then(|x| x.as_str())
-            .unwrap_or("");
+        let body_b64_out = v.get("body_b64").and_then(|x| x.as_str()).unwrap_or("");
         let body = if body_b64_out.is_empty() {
             Vec::new()
         } else {
@@ -682,7 +750,10 @@ impl MiddlewareHost {
         let mut stream = self.pool.call(entry, call_input).await?;
         let bytes = stream.collect().await?;
         let v: Value = serde_json::from_slice(&bytes).map_err(|e| {
-            crate::err("JSH-MIDDLEWARE", format!("middleware:run returned invalid JSON: {e}"))
+            crate::err(
+                "JSH-MIDDLEWARE",
+                format!("middleware:run returned invalid JSON: {e}"),
+            )
         })?;
         if let Some(err_msg) = v.get("__oxide_error").and_then(|x| x.as_str()) {
             return Err(crate::err("JSH-MIDDLEWARE", err_msg.to_string()));
@@ -710,11 +781,20 @@ impl MiddlewareHost {
             base64::engine::general_purpose::STANDARD
                 .decode(body_b64_out)
                 .map_err(|e| {
-                    crate::err("JSH-MIDDLEWARE", format!("middleware body_b64 invalid: {e}"))
+                    crate::err(
+                        "JSH-MIDDLEWARE",
+                        format!("middleware body_b64 invalid: {e}"),
+                    )
                 })?
         };
-        let redirect = v.get("redirect").and_then(|x| x.as_str()).map(str::to_string);
-        let rewrite = v.get("rewrite").and_then(|x| x.as_str()).map(str::to_string);
+        let redirect = v
+            .get("redirect")
+            .and_then(|x| x.as_str())
+            .map(str::to_string);
+        let rewrite = v
+            .get("rewrite")
+            .and_then(|x| x.as_str())
+            .map(str::to_string);
         let locals = v.get("locals").cloned().filter(|x| !x.is_null());
         Ok(MiddlewareOutcome {
             short,
@@ -727,7 +807,6 @@ impl MiddlewareHost {
         })
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Socket host (§9.6)
@@ -781,19 +860,30 @@ impl SocketHost {
         };
         let mut stream = self.pool.call(entry, call_input).await?;
         let bytes = stream.collect().await?;
-        let v: Value = serde_json::from_slice(&bytes)
-            .map_err(|e| crate::err("JSH-SOCKET", format!("socket:run returned invalid JSON: {e}")))?;
+        let v: Value = serde_json::from_slice(&bytes).map_err(|e| {
+            crate::err(
+                "JSH-SOCKET",
+                format!("socket:run returned invalid JSON: {e}"),
+            )
+        })?;
         if let Some(err_msg) = v.get("__oxide_error").and_then(|x| x.as_str()) {
             return Err(crate::err("JSH-SOCKET", err_msg.to_string()));
         }
         let sends: Vec<String> = match v.get("send") {
             Some(Value::String(s)) => vec![s.clone()],
-            Some(Value::Array(a)) => a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect(),
+            Some(Value::Array(a)) => a
+                .iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect(),
             _ => Vec::new(),
         };
         let close = v.get("close").and_then(|c| {
             let code = c.get("code").and_then(|x| x.as_u64()).unwrap_or(1000) as u16;
-            let reason = c.get("reason").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let reason = c
+                .get("reason")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
             Some((code, reason))
         });
         Ok(SocketOutcome { sends, close })
