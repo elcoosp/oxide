@@ -211,7 +211,10 @@ mod tests {
             "// compiled temp",
         );
         let after = fingerprint(dir.path(), "production", false);
-        assert_eq!(before, after, "a *.oxide.ts temp must not change the fingerprint");
+        assert_eq!(
+            before, after,
+            "a *.oxide.ts temp must not change the fingerprint"
+        );
 
         // A real source edit still does.
         write(dir.path(), "src/page.server.ts", "export const load = 2;\n");
