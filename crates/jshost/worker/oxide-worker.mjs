@@ -1110,6 +1110,35 @@ async function dispatchEndpointRun(id, input) {
 
     const respHeaders = [];
     response.headers.forEach((v, k) => respHeaders.push([k, v]));
+
+    // §9.6: a `route.ts` that returns a streaming body (an SSE response, a
+    // download) must not be buffered — `arrayBuffer()` would wait for the
+    // whole stream and defeat server-sent events. When the body is a
+    // `ReadableStream`, emit a header frame then each chunk as a
+    // `call_chunk_bin` frame; the Rust side assembles an `OxideResponse`
+    // whose body is that stream.
+    if (response.body && typeof response.body.getReader === "function") {
+      out({
+        t: "call_ok",
+        id,
+        chunks: [b64(Buffer.from(JSON.stringify({ status: response.status, headers: respHeaders, streaming: true }), "utf8"))],
+        complete: false,
+      });
+      const reader = response.body.getReader();
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          if (value && value.length > 0) outBinChunk(id, Buffer.from(value));
+        }
+      } catch (e) {
+        // A mid-stream throw: end the stream cleanly; the client sees the
+        // partial body (an SSE `retry` on the next reconnect).
+      }
+      out({ t: "call_end", id });
+      return;
+    }
+
     const respBody = new Uint8Array(await response.arrayBuffer());
     const bodyOut = respBody.length > 0 ? Buffer.from(respBody).toString("base64") : "";
     callOk(id, {
