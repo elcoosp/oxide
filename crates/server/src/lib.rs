@@ -11,7 +11,7 @@
 pub mod metrics;
 pub mod page_renderer;
 pub mod loader;
-pub use page_renderer::{EndpointDispatcher, EndpointRunError, EndpointRunResult, MiddlewareDispatcher, MiddlewareRunError, MiddlewareRunResult, PageRenderInput, PageRenderer, RenderStream};
+pub use page_renderer::{EndpointDispatcher, EndpointRunError, EndpointRunResult, MiddlewareDispatcher, MiddlewareRunError, MiddlewareRunResult, PageRenderInput, PageRenderer, RenderStream, SocketDispatcher, SocketRunError, SocketRunResult};
 pub use loader::{LoaderOutput, LoaderRunInput, LoaderRunner};
 pub mod session;
 pub use session::{Session, SessionCodec};
@@ -1194,6 +1194,62 @@ pub struct Pipeline {
     /// expose its inspector to anyone who can reach the port. `None`
     /// disables the guard (production never sets an inspector at all).
     pub dev_token: Option<String>,
+    /// §9.6: WebSocket route dispatch. `Some` when the project has any
+    /// `socket.ts` routes and a pool to run them. The service function
+    /// upgrades a matching request and pumps phases through this.
+    pub sockets: Option<Arc<SocketService>>,
+}
+
+/// §9.6: the WebSocket route service. Holds the dispatcher and a lookup from
+/// URL path → `socket.ts` module path (matched against the route tree at
+/// boot, so the hot path is a map probe, not a re-scan).
+#[derive(Clone)]
+pub struct SocketService {
+    pub dispatcher: Arc<dyn SocketDispatcher>,
+    /// URL path → on-disk `socket.ts` path. Keyed by the route's URL segments
+    /// joined by `/` (a `:param` segment matches any value — see the lookup
+    /// in `serve_request`).
+    pub routes: Arc<std::collections::BTreeMap<String, std::path::PathBuf>>,
+}
+
+impl std::fmt::Debug for SocketService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SocketService")
+            .field("routes", &self.routes.len())
+            .finish()
+    }
+}
+
+/// Find the socket route for a URL path: exact match first, then a
+/// segment-count match where any `:param` / `*rest` segment matches.
+pub fn socket_route_for<'a>(
+    routes: &'a std::collections::BTreeMap<String, std::path::PathBuf>,
+    path: &str,
+) -> Option<&'a std::path::PathBuf> {
+    if let Some(p) = routes.get(path) {
+        return Some(p);
+    }
+    let want: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    for (pattern, module) in routes {
+        let pat: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
+        if pat.len() != want.len() {
+            continue;
+        }
+        let mut ok = true;
+        for (p, w) in pat.iter().zip(want.iter()) {
+            if p.starts_with(':') || p.starts_with('*') {
+                continue;
+            }
+            if p != w {
+                ok = false;
+                break;
+            }
+        }
+        if ok {
+            return Some(module);
+        }
+    }
+    None
 }
 
 /// §9.3: the seam between the HTTP pipeline and whichever runtime runs a
@@ -1387,6 +1443,7 @@ impl Default for Pipeline {
             actions: None,
             tls: false,
             dev_token: None,
+            sockets: None,
         }
     }
 }
@@ -3384,6 +3441,166 @@ fn ws_hmr_upgrade(
                 }
             }
         }
+    });
+    let mut resp = HyperResponse::new(
+        BodyExt::boxed(Full::new(Bytes::new()).map_err(|never| match never {})),
+    );
+    *resp.status_mut() = hyper::StatusCode::SWITCHING_PROTOCOLS;
+    let h = resp.headers_mut();
+    h.insert(
+        hyper::header::CONNECTION,
+        hyper::header::HeaderValue::from_static("Upgrade"),
+    );
+    h.insert(
+        hyper::header::UPGRADE,
+        hyper::header::HeaderValue::from_static("websocket"),
+    );
+    if let Ok(v) = hyper::header::HeaderValue::from_str(&accept) {
+        h.insert(
+            hyper::header::HeaderName::from_static("sec-websocket-accept"),
+            v,
+        );
+    }
+    resp
+}
+
+/// §9.6: accept a WebSocket upgrade for a matched `socket.ts` route and pump
+/// the three user phases (`open`, `message`, `close`) through the
+/// `SocketService` dispatcher. The handshake is the same RFC6455 one the HMR
+/// endpoint uses; the difference is that here every inbound data frame runs
+/// the user's `message` handler and every outbound `send` becomes a server
+/// text frame (unmasked, per RFC6455 §5.1).
+fn ws_socket_upgrade(
+    mut req: HyperRequest<hyper::body::Incoming>,
+    service: Arc<SocketService>,
+    module_path: std::path::PathBuf,
+) -> HyperResponse<BoxBody<Bytes, std::io::Error>> {
+    use http_body_util::Full;
+    let key = req
+        .headers()
+        .get("sec-websocket-key")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let accept = {
+        use base64::Engine as _;
+        let mut h = <sha1_shim::Sha1>::new();
+        h.update(key.as_bytes());
+        h.update(b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+        base64::engine::general_purpose::STANDARD.encode(h.finalize())
+    };
+    let on_upgrade = hyper::upgrade::on(&mut req);
+    // One id per connection, so the worker can key per-socket state (a user
+    // id stashed in `open` and read in `message`).
+    static NEXT_SOCKET_ID: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(1);
+    let socket_id = format!(
+        "sock-{}",
+        NEXT_SOCKET_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    tokio::spawn(async move {
+        let Ok(upgraded) = on_upgrade.await else { return };
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let io = hyper_util::rt::TokioIo::new(upgraded);
+        let (mut rd, mut wr) = tokio::io::split(io);
+        let mp = module_path.to_string_lossy().to_string();
+        let dispatcher = Arc::clone(&service.dispatcher);
+
+        // `open` phase.
+        match dispatcher.run(&mp, "open", serde_json::Value::Null, &socket_id).await {
+            Ok(out) => {
+                for text in &out.sends {
+                    if wr.write_all(&crate::ws::encode(&crate::ws::Frame::Text(text.clone()), false)).await.is_err() {
+                        return;
+                    }
+                }
+                if let Some((code, _)) = out.close {
+                    let _ = wr.write_all(&crate::ws::encode(&crate::ws::Frame::Close(Some(code)), false)).await;
+                    return;
+                }
+            }
+            Err(_) => {
+                let _ = wr.write_all(&crate::ws::encode(&crate::ws::Frame::Close(Some(1011)), false)).await;
+                return;
+            }
+        }
+
+        let mut buf: Vec<u8> = Vec::with_capacity(8192);
+        let mut chunk = [0u8; 8192];
+        loop {
+            let n = match rd.read(&mut chunk).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            };
+            buf.extend_from_slice(&chunk[..n]);
+            let (frames, consumed) = match crate::ws::decode(&buf) {
+                Ok(v) => v,
+                Err(_) => {
+                    let _ = wr.write_all(&crate::ws::encode(&crate::ws::Frame::Close(Some(1002)), false)).await;
+                    return;
+                }
+            };
+            buf.drain(..consumed);
+            let mut close_code: Option<u16> = None;
+            for frame in frames {
+                match frame {
+                    crate::ws::Frame::Text(text) => {
+                        let payload = serde_json::json!({ "data": text });
+                        match dispatcher.run(&mp, "message", payload, &socket_id).await {
+                            Ok(out) => {
+                                for send in &out.sends {
+                                    if wr.write_all(&crate::ws::encode(&crate::ws::Frame::Text(send.clone()), false)).await.is_err() {
+                                        return;
+                                    }
+                                }
+                                if let Some((code, _)) = out.close {
+                                    close_code = Some(code);
+                                }
+                            }
+                            Err(_) => close_code = Some(1011),
+                        }
+                    }
+                    crate::ws::Frame::Binary(bytes) => {
+                        // A binary message is base64-encoded so the JSON bridge
+                        // carries it without a second wire format.
+                        use base64::Engine as _;
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                        let payload = serde_json::json!({ "data": b64, "binary": true });
+                        if let Ok(out) = dispatcher.run(&mp, "message", payload, &socket_id).await {
+                            for send in &out.sends {
+                                if wr.write_all(&crate::ws::encode(&crate::ws::Frame::Text(send.clone()), false)).await.is_err() {
+                                    return;
+                                }
+                            }
+                            if let Some((code, _)) = out.close {
+                                close_code = Some(code);
+                            }
+                        }
+                    }
+                    crate::ws::Frame::Ping(p) => {
+                        let _ = wr.write_all(&crate::ws::encode(&crate::ws::Frame::Pong(p), false)).await;
+                    }
+                    crate::ws::Frame::Close(code) => {
+                        close_code = Some(code.unwrap_or(1000));
+                    }
+                    crate::ws::Frame::Pong(_) => {}
+                }
+                if close_code.is_some() {
+                    break;
+                }
+            }
+            if let Some(code) = close_code {
+                // `close` phase before the socket goes away.
+                let payload = serde_json::json!({ "code": code, "reason": "" });
+                let _ = dispatcher.run(&mp, "close", payload, &socket_id).await;
+                let _ = wr.write_all(&crate::ws::encode(&crate::ws::Frame::Close(Some(code)), false)).await;
+                return;
+            }
+        }
+        // The peer dropped without a close frame — still run the `close` phase
+        // so the handler can clean up its own state.
+        let payload = serde_json::json!({ "code": 1006, "reason": "peer disconnected" });
+        let _ = dispatcher.run(&mp, "close", payload, &socket_id).await;
     });
     let mut resp = HyperResponse::new(
         BodyExt::boxed(Full::new(Bytes::new()).map_err(|never| match never {})),
