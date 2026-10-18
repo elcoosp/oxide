@@ -11,26 +11,26 @@ import handler from "./server/index.js";
 const port = Number(process.env.PORT ?? 3000);
 
 const server = http.createServer(async (req, res) => {
-const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-const headers = new Headers();
-for (let i = 0; i < req.rawHeaders.length; i += 2) {
-headers.append(req.rawHeaders[i], req.rawHeaders[i + 1]);
-}
-const method = req.method ?? "GET";
-const hasBody = method !== "GET" && method !== "HEAD";
-const request = new Request(url, {
-method,
-headers,
-body: hasBody ? req : undefined,
-...(hasBody ? { duplex: "half" } : {}),
-});
-const response = await handler(request);
-res.statusCode = response.status;
-response.headers.forEach((value, key) => res.setHeader(key, value));
-if (response.body) {
-for await (const chunk of response.body) res.write(chunk);
-}
-res.end();
+  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+  const headers = new Headers();
+  for (let i = 0; i < req.rawHeaders.length; i += 2) {
+    headers.append(req.rawHeaders[i], req.rawHeaders[i + 1]);
+  }
+  const method = req.method ?? "GET";
+  const hasBody = method !== "GET" && method !== "HEAD";
+  const request = new Request(url, {
+    method,
+    headers,
+    body: hasBody ? req : undefined,
+    ...(hasBody ? { duplex: "half" } : {}),
+  });
+  const response = await handler(request);
+  res.statusCode = response.status;
+  response.headers.forEach((value, key) => res.setHeader(key, value));
+  if (response.body) {
+    for await (const chunk of response.body) res.write(chunk);
+  }
+  res.end();
 });
 
 server.listen(port);

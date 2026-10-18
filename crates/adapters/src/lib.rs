@@ -1068,40 +1068,43 @@ pub fn cloudflare_wrangler_toml(build_id: &str, has_wasm: bool) -> String {
 /// which must export the web-standard handler) and serves it over `node:http`,
 /// converting Node req/res to `Request`/`Response`.
 pub fn node_server_entry(build_id: &str) -> String {
-    format!(
-        "// Oxide node target entry (§18). build_id: {build_id}\n\
-         // Bridges Node's http server to the web-standard handler contract\n\
-         // `(Request) => Promise<Response>` exported by the server bundle.\n\
-         import http from \"node:http\";\n\
-         import handler from \"./server/index.js\";\n\
-         \n\
-         const port = Number(process.env.PORT ?? 3000);\n\
-         \n\
-         const server = http.createServer(async (req, res) => {{\n\
-           const url = new URL(req.url ?? \"/\", `http://${{req.headers.host ?? \"localhost\"}}`);\n\
-           const headers = new Headers();\n\
-           for (let i = 0; i < req.rawHeaders.length; i += 2) {{\n\
-             headers.append(req.rawHeaders[i], req.rawHeaders[i + 1]);\n\
-           }}\n\
-           const method = req.method ?? \"GET\";\n\
-           const hasBody = method !== \"GET\" && method !== \"HEAD\";\n\
-           const request = new Request(url, {{\n\
-             method,\n\
-             headers,\n\
-             body: hasBody ? req : undefined,\n\
-             ...(hasBody ? {{ duplex: \"half\" }} : {{}}),\n\
-           }});\n\
-           const response = await handler(request);\n\
-           res.statusCode = response.status;\n\
-           response.headers.forEach((value, key) => res.setHeader(key, value));\n\
-           if (response.body) {{\n\
-             for await (const chunk of response.body) res.write(chunk);\n\
-           }}\n\
-           res.end();\n\
-         }});\n\
-         \n\
-         server.listen(port);\n"
-    )
+    // Raw string + replace (not `\`-continuation): a trailing `\` strips the
+    // next line's leading whitespace, which silently un-indents the emitted
+    // JS. The snapshot suite caught this — keep the emitted body indented.
+    let tpl = r#"// Oxide node target entry (§18). build_id: __BUILD_ID__
+// Bridges Node's http server to the web-standard handler contract
+// `(Request) => Promise<Response>` exported by the server bundle.
+import http from "node:http";
+import handler from "./server/index.js";
+
+const port = Number(process.env.PORT ?? 3000);
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+  const headers = new Headers();
+  for (let i = 0; i < req.rawHeaders.length; i += 2) {
+    headers.append(req.rawHeaders[i], req.rawHeaders[i + 1]);
+  }
+  const method = req.method ?? "GET";
+  const hasBody = method !== "GET" && method !== "HEAD";
+  const request = new Request(url, {
+    method,
+    headers,
+    body: hasBody ? req : undefined,
+    ...(hasBody ? { duplex: "half" } : {}),
+  });
+  const response = await handler(request);
+  res.statusCode = response.status;
+  response.headers.forEach((value, key) => res.setHeader(key, value));
+  if (response.body) {
+    for await (const chunk of response.body) res.write(chunk);
+  }
+  res.end();
+});
+
+server.listen(port);
+"#;
+    tpl.replace("__BUILD_ID__", build_id)
 }
 
 #[cfg(test)]
