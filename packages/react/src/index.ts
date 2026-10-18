@@ -14,6 +14,7 @@ import type { Plugin } from '../../oxide/src/types.ts'
 import { render, renderToString, renderShellToString, head, mergeHead, applyTitleTemplate, islandModules, pageComponent } from './render.ts'
 import { hydrate, hydrateIsland as irHydrateIsland, mount, update, type ClientOptions } from './hydrate.ts'
 import { reactHydrateIsland } from './hydrate-island-real.ts'
+import { reactRenderLoading } from './render-loading.ts'
 import { createRealAdapter, type RealAdapterOptions } from './real-adapter.ts'
 
 export const adapter: FrameworkAdapter = {
@@ -65,6 +66,7 @@ export const adapter: FrameworkAdapter = {
 export const clientAdapter: FrameworkAdapter = {
   ...adapter,
   hydrateIsland: reactHydrateIsland as unknown as FrameworkAdapter['hydrateIsland'],
+  renderLoading: reactRenderLoading as unknown as FrameworkAdapter['renderLoading'],
 }
 
 // ---------------------------------------------------------------------------

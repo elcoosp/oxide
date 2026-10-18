@@ -50,11 +50,14 @@ export const adapter: FrameworkAdapter = {
  * generated boot entry picks it up with no CLI change.
  */
 import { svelteHydrateIsland } from './hydrate-island-real.ts'
+import { svelteRenderLoading } from './render-loading.ts'
 
 export const clientAdapter: FrameworkAdapter = {
   ...adapter,
   // §10.3: real `mount(..., { hydrate: true })` hydration so Svelte 5 runes work.
   hydrateIsland: svelteHydrateIsland as never,
+  // §8.4: real `mount(...)` for per-route loading boundaries.
+  renderLoading: svelteRenderLoading as never,
 }
 
 // ---------------------------------------------------------------------------

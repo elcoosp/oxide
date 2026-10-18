@@ -41,11 +41,14 @@ export const adapter: FrameworkAdapter = {
 }
 
 import { vueHydrateIsland } from './hydrate-island-real.ts'
+import { vueRenderLoading } from './render-loading.ts'
 
 export const clientAdapter: FrameworkAdapter = {
   ...adapter,
   // §10.3: real `createSSRApp().mount()` hydration so Vue reactivity works.
   hydrateIsland: vueHydrateIsland as never,
+  // §8.4: real `createApp().mount()` for per-route loading boundaries.
+  renderLoading: vueRenderLoading as never,
 }
 
 // ---------------------------------------------------------------------------

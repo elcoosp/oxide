@@ -53,11 +53,14 @@ export const adapter: FrameworkAdapter = {
  * generated boot entry picks it up with no CLI change.
  */
 import { solidHydrateIsland } from './hydrate-island-real.ts'
+import { solidRenderLoading } from './render-loading.ts'
 
 export const clientAdapter: FrameworkAdapter = {
   ...adapter,
   // §10.3: real `hydrate()` so Solid signals work.
   hydrateIsland: solidHydrateIsland as never,
+  // §8.4: real `render()` for per-route loading boundaries.
+  renderLoading: solidRenderLoading as never,
 }
 
 // ---------------------------------------------------------------------------
