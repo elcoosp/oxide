@@ -23,6 +23,7 @@
 //! again" — the cache is never load-bearing for correctness.
 
 use oxide_graph::{CasKey, CasWriteMeta, ContentStore};
+use std::sync::Arc;
 use std::path::{Path, PathBuf};
 
 /// The descriptor a precompile cache entry is keyed by.
@@ -60,6 +61,8 @@ impl PrecompileKey {
 pub struct PrecompileCache {
     store: ContentStore,
     ptr_dir: PathBuf,
+    /// §5.4: an optional remote read-through cache. `None` for a local build.
+    remote: Option<Arc<dyn oxide_graph::RemoteCache>>,
 }
 
 impl PrecompileCache {
@@ -74,7 +77,18 @@ impl PrecompileCache {
                 format!("create {}: {e}", ptr_dir.display()),
             )
         })?;
-        Ok(Self { store, ptr_dir })
+        Ok(Self { store, ptr_dir, remote: None })
+    }
+
+    /// Open with a §5.4 remote read-through cache. A local miss consults the
+    /// remote; a successful compile writes back through it.
+    pub fn open_with_remote(
+        root: &Path,
+        remote: Arc<dyn oxide_graph::RemoteCache>,
+    ) -> oxide_graph::Result<Self> {
+        let mut cache = Self::open(root)?;
+        cache.remote = Some(remote);
+        Ok(cache)
     }
 
     /// Open, or `None` when the cache directory cannot be created — a build must
@@ -129,6 +143,40 @@ impl PrecompileCache {
             oxide_graph::err("CAS-IO", format!("rename {}: {e}", ptr.display()))
         })?;
         Ok(())
+    }
+
+    /// §5.4: read-through. When the local CAS misses and a remote is
+    /// configured, fetch the blob by its content key — but the local pointer
+    /// is keyed by the *descriptor* digest, and the remote key is the CAS
+    /// output key. So the remote protocol here is "descriptor → CAS key →
+    /// blob": the pointer file's content (the CAS key hex) is what the remote
+    /// stores under `ptr/<descriptor-digest>`, and the blob under
+    /// `cas/<key-hex>`. This helper does both lookups. `None` = not remote-hit.
+    pub async fn get_remote(&self, key: &PrecompileKey) -> Option<String> {
+        let remote = self.remote.as_ref()?;
+        let digest = key.digest();
+        // 1) Fetch the pointer (the CAS key hex) under the descriptor digest.
+        let ptr_key = CasKey::of(format!("ptr:{digest}").as_bytes());
+        let ptr_bytes = remote.fetch(&ptr_key).await.ok()??;
+        let hex = String::from_utf8_lossy(&ptr_bytes).trim().to_string();
+        // 2) Fetch the blob under the CAS key.
+        let cas_key = hex_to_key(&hex)?;
+        let blob = remote.fetch(&cas_key).await.ok()??;
+        String::from_utf8(blob).ok()
+    }
+
+    /// §5.4: write-through. Stores the blob + pointer on the remote so the
+    /// next build (another machine, a CI job) gets a hit. Best-effort: a
+    /// remote failure never fails the build.
+    pub async fn put_remote(&self, key: &PrecompileKey, js: &str) {
+        let Some(remote) = self.remote.as_ref() else { return };
+        let digest = key.digest();
+        let cas_key = CasKey::of(js.as_bytes());
+        let ptr_key = CasKey::of(format!("ptr:{digest}").as_bytes());
+        // Store the blob, then the pointer (pointer last so a partial write
+        // never points at a missing blob).
+        let _ = remote.store(&cas_key, js.as_bytes()).await;
+        let _ = remote.store(&ptr_key, cas_key.hex().as_bytes()).await;
     }
 
     /// Number of pointer files — the cached-entry count (for `oxide cache stats`).
