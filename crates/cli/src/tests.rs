@@ -75,8 +75,6 @@ fn manifest_fixture(routes: serde_json::Value) -> String {
 
 // ---------------------------------------------------------- parse surface (§19.1)
 
-
-
 #[tokio::test]
 #[ignore]
 async fn cli_render_dispatches_real_react_ssr() {
@@ -123,10 +121,15 @@ export default {
     // FrameworkHost does spawn a real Node worker.
     let root_str = e2e_dir.to_string_lossy().to_string();
     let (code, out) = run_ok(&[
-        "oxide", "render", "routes/index",
-        "--root", &root_str,
-        "--data", r#"{"name":"CLI"}"#,
-    ]).await;
+        "oxide",
+        "render",
+        "routes/index",
+        "--root",
+        &root_str,
+        "--data",
+        r#"{"name":"CLI"}"#,
+    ])
+    .await;
     assert_eq!(code, 0, "oxide render exit code; output:\n{out}");
     assert!(
         out.starts_with("<!doctype html>"),
@@ -157,12 +160,8 @@ impl oxide_server::PageRenderer for CountingRenderer {
     fn name(&self) -> &str {
         "counting"
     }
-    async fn render(
-        &self,
-        input: oxide_server::PageRenderInput,
-    ) -> oxide_server::Result<String> {
-        self.calls
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    async fn render(&self, input: oxide_server::PageRenderInput) -> oxide_server::Result<String> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(format!(
             "<!doctype html><html><body><h1>RENDERER:{}</h1></body></html>",
             input.route
@@ -178,10 +177,7 @@ impl oxide_server::PageRenderer for FailingRenderer {
     fn name(&self) -> &str {
         "failing"
     }
-    async fn render(
-        &self,
-        _input: oxide_server::PageRenderInput,
-    ) -> oxide_server::Result<String> {
+    async fn render(&self, _input: oxide_server::PageRenderInput) -> oxide_server::Result<String> {
         Err(oxide_server::err("FAKE-RENDER", "simulated render failure"))
     }
 }
@@ -202,8 +198,8 @@ fn empty_tree() -> std::sync::Arc<oxide_router::RouteTree> {
 
 #[tokio::test]
 async fn dispatch_routes_through_page_renderer_when_attached() {
-    use std::sync::atomic::Ordering;
     use std::sync::Arc;
+    use std::sync::atomic::Ordering;
 
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let tree = empty_tree();
@@ -212,7 +208,23 @@ async fn dispatch_routes_through_page_renderer_when_attached() {
         calls: calls.clone(),
     }));
 
-    let dispatch = build_dispatch(tree, metrics, Vec::new(), renderer, None, std::path::PathBuf::new(), None, None, None, None, None, None, None, None, false);
+    let dispatch = build_dispatch(
+        tree,
+        metrics,
+        Vec::new(),
+        renderer,
+        None,
+        std::path::PathBuf::new(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+    );
     let resp = dispatch(test_request("GET", "/")).await;
 
     // §10.2 step 5: an unmatched URL (the empty tree matches nothing) is a
@@ -228,7 +240,11 @@ async fn dispatch_routes_through_page_renderer_when_attached() {
         body.contains("RENDERER:"),
         "response body should come from the attached renderer: {body}"
     );
-    assert_eq!(calls.load(Ordering::SeqCst), 1, "renderer called exactly once");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "renderer called exactly once"
+    );
 }
 
 #[tokio::test]
@@ -237,12 +253,31 @@ async fn dispatch_uses_ir_placeholder_when_no_renderer() {
 
     let tree = empty_tree();
     let metrics = Arc::new(oxide_server::Metrics::new());
-    let dispatch = build_dispatch(tree, metrics, Vec::new(), None, None, std::path::PathBuf::new(), None, None, None, None, None, None, None, None, false);
+    let dispatch = build_dispatch(
+        tree,
+        metrics,
+        Vec::new(),
+        None,
+        None,
+        std::path::PathBuf::new(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+    );
 
     let resp = dispatch(test_request("GET", "/some/page")).await;
 
     // Empty tree → `_unmatched` → 404, IR placeholder body.
-    assert_eq!(resp.status, 404, "no renderer → placeholder status from tree match");
+    assert_eq!(
+        resp.status, 404,
+        "no renderer → placeholder status from tree match"
+    );
     let body = std::str::from_utf8(resp.body.as_ref()).expect("utf8 body");
     assert!(
         body.contains("Oxide serving"),
@@ -262,21 +297,33 @@ async fn dispatch_propagates_renderer_error_as_500() {
     let metrics = Arc::new(oxide_server::Metrics::new());
     let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(FailingRenderer));
 
-    let dispatch = build_dispatch(tree, metrics, Vec::new(), renderer, None, std::path::PathBuf::new(), None, None, None, None, None, None, None, None, false);
+    let dispatch = build_dispatch(
+        tree,
+        metrics,
+        Vec::new(),
+        renderer,
+        None,
+        std::path::PathBuf::new(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+    );
     let resp = dispatch(test_request("GET", "/")).await;
 
     assert_eq!(resp.status, 500, "renderer error → 500");
     let body = std::str::from_utf8(resp.body.as_ref()).expect("utf8 body");
-    assert!(
-        body.contains("render error"),
-        "error response body: {body}"
-    );
+    assert!(body.contains("render error"), "error response body: {body}");
     assert!(
         body.contains("simulated render failure"),
         "error message surfaced: {body}"
     );
 }
-
 
 // ------------------------------------------- loader dispatch (spec §9.1)
 
@@ -298,11 +345,10 @@ impl DataCapturingRenderer {
 
 #[async_trait::async_trait]
 impl oxide_server::PageRenderer for DataCapturingRenderer {
-    fn name(&self) -> &str { "data-capture" }
-    async fn render(
-        &self,
-        input: oxide_server::PageRenderInput,
-    ) -> oxide_server::Result<String> {
+    fn name(&self) -> &str {
+        "data-capture"
+    }
+    async fn render(&self, input: oxide_server::PageRenderInput) -> oxide_server::Result<String> {
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         *self.last_data.lock().unwrap() = input.data.clone();
         Ok(format!(
@@ -352,7 +398,9 @@ impl ScriptedLoader {
 
 #[async_trait::async_trait]
 impl oxide_server::LoaderRunner for ScriptedLoader {
-    fn name(&self) -> &str { "scripted" }
+    fn name(&self) -> &str {
+        "scripted"
+    }
     async fn run(
         &self,
         _input: oxide_server::LoaderRunInput,
@@ -391,8 +439,8 @@ fn routes_root() -> std::path::PathBuf {
 
 #[tokio::test]
 async fn loader_feeds_data_to_renderer() {
-    use std::sync::atomic::Ordering;
     use std::sync::Arc;
+    use std::sync::atomic::Ordering;
 
     let tree = tree_with_server_route();
     let metrics = Arc::new(oxide_server::Metrics::new());
@@ -407,7 +455,13 @@ async fn loader_feeds_data_to_renderer() {
     let loader_runner: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(loader);
 
     let dispatch = build_dispatch(
-        tree, metrics, Vec::new(), page_renderer, loader_runner, routes_root(), None,
+        tree,
+        metrics,
+        Vec::new(),
+        page_renderer,
+        loader_runner,
+        routes_root(),
+        None,
         None,
         None,
         None,
@@ -421,15 +475,19 @@ async fn loader_feeds_data_to_renderer() {
 
     assert_eq!(resp.status, 200);
     assert_eq!(loader_calls.load(Ordering::SeqCst), 1, "loader ran once");
-    assert_eq!(renderer_calls.load(Ordering::SeqCst), 1, "renderer ran once");
+    assert_eq!(
+        renderer_calls.load(Ordering::SeqCst),
+        1,
+        "renderer ran once"
+    );
     let data = renderer_data.lock().unwrap().clone();
     assert_eq!(data["title"], "Hi", "loader data reached the renderer");
 }
 
 #[tokio::test]
 async fn loader_404_short_circuits_render() {
-    use std::sync::atomic::Ordering;
     use std::sync::Arc;
+    use std::sync::atomic::Ordering;
 
     let tree = tree_with_server_route();
     let metrics = Arc::new(oxide_server::Metrics::new());
@@ -443,7 +501,13 @@ async fn loader_404_short_circuits_render() {
     let loader_runner: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(loader);
 
     let dispatch = build_dispatch(
-        tree, metrics, Vec::new(), page_renderer, loader_runner, routes_root(), None,
+        tree,
+        metrics,
+        Vec::new(),
+        page_renderer,
+        loader_runner,
+        routes_root(),
+        None,
         None,
         None,
         None,
@@ -457,15 +521,19 @@ async fn loader_404_short_circuits_render() {
 
     assert_eq!(resp.status, 404);
     assert_eq!(loader_calls.load(Ordering::SeqCst), 1, "loader ran once");
-    assert_eq!(renderer_calls.load(Ordering::SeqCst), 0, "renderer must NOT run");
+    assert_eq!(
+        renderer_calls.load(Ordering::SeqCst),
+        0,
+        "renderer must NOT run"
+    );
     let body = std::str::from_utf8(resp.body.as_ref()).unwrap();
     assert!(body.contains("not found"), "error message in body: {body}");
 }
 
 #[tokio::test]
 async fn loader_redirect_short_circuits_with_location() {
-    use std::sync::atomic::Ordering;
     use std::sync::Arc;
+    use std::sync::atomic::Ordering;
 
     let tree = tree_with_server_route();
     let metrics = Arc::new(oxide_server::Metrics::new());
@@ -479,7 +547,13 @@ async fn loader_redirect_short_circuits_with_location() {
     let loader_runner: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(loader);
 
     let dispatch = build_dispatch(
-        tree, metrics, Vec::new(), page_renderer, loader_runner, routes_root(), None,
+        tree,
+        metrics,
+        Vec::new(),
+        page_renderer,
+        loader_runner,
+        routes_root(),
+        None,
         None,
         None,
         None,
@@ -494,13 +568,17 @@ async fn loader_redirect_short_circuits_with_location() {
     assert_eq!(resp.status, 303);
     assert_eq!(resp.header("location"), Some("/login"));
     assert_eq!(loader_calls.load(Ordering::SeqCst), 1);
-    assert_eq!(renderer_calls.load(Ordering::SeqCst), 0, "renderer must NOT run");
+    assert_eq!(
+        renderer_calls.load(Ordering::SeqCst),
+        0,
+        "renderer must NOT run"
+    );
 }
 
 #[tokio::test]
 async fn no_server_module_skips_loader() {
-    use std::sync::atomic::Ordering;
     use std::sync::Arc;
+    use std::sync::atomic::Ordering;
 
     // Tree with `has_server_module: false`.
     let mut tree = oxide_router::RouteTree::new();
@@ -527,7 +605,13 @@ async fn no_server_module_skips_loader() {
     let loader_runner: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(loader);
 
     let dispatch = build_dispatch(
-        tree, metrics, Vec::new(), page_renderer, loader_runner, routes_root(), None,
+        tree,
+        metrics,
+        Vec::new(),
+        page_renderer,
+        loader_runner,
+        routes_root(),
+        None,
         None,
         None,
         None,
@@ -540,10 +624,22 @@ async fn no_server_module_skips_loader() {
     let resp = dispatch(test_request("GET", "/")).await;
 
     assert_eq!(resp.status, 200);
-    assert_eq!(loader_calls.load(Ordering::SeqCst), 0, "loader must NOT run");
-    assert_eq!(renderer_calls.load(Ordering::SeqCst), 1, "renderer runs with empty data");
+    assert_eq!(
+        loader_calls.load(Ordering::SeqCst),
+        0,
+        "loader must NOT run"
+    );
+    assert_eq!(
+        renderer_calls.load(Ordering::SeqCst),
+        1,
+        "renderer runs with empty data"
+    );
     let data = renderer_data.lock().unwrap().clone();
-    assert_eq!(data, serde_json::json!({}), "empty data when no server module");
+    assert_eq!(
+        data,
+        serde_json::json!({}),
+        "empty data when no server module"
+    );
 }
 
 // ---------------------------------- prerender loader (spec §9.1 at build)
@@ -564,8 +660,7 @@ async fn write_prerender_threads_loader_data_into_renderer() {
     ));
     let loader_runner: Arc<dyn oxide_server::LoaderRunner> = loader;
 
-    let params: std::collections::BTreeMap<String, String> =
-        std::collections::BTreeMap::new();
+    let params: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
     write_prerender(
         &dist,
         "prerendered/index.html",
@@ -584,8 +679,8 @@ async fn write_prerender_threads_loader_data_into_renderer() {
     .await
     .expect("write_prerender ok");
 
-    let html = std::fs::read_to_string(dist.join("prerendered/index.html"))
-        .expect("read output file");
+    let html =
+        std::fs::read_to_string(dist.join("prerendered/index.html")).expect("read output file");
     assert!(
         html.contains("Prerender Hi"),
         "loader data should appear in the output html: {html}"
@@ -608,8 +703,7 @@ async fn write_prerender_without_loader_uses_empty_data() {
     let renderer_data = Arc::clone(&renderer.last_data);
     let page_renderer: Arc<dyn oxide_server::PageRenderer> = renderer;
 
-    let params: std::collections::BTreeMap<String, String> =
-        std::collections::BTreeMap::new();
+    let params: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
     write_prerender(
         &dist,
         "prerendered/index.html",
@@ -664,9 +758,8 @@ async fn smoke_app_renders_through_real_config() {
     // 1. `oxide config <smoke> --json` loads the .ts and emits the descriptor.
     let (code, out) = run_ok(&["oxide", "config", smoke_str, "--json"]).await;
     assert_eq!(code, 0, "config exit code; output:\n{out}");
-    let v: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|e| {
-        panic!("config output not JSON ({e}): {out}")
-    });
+    let v: serde_json::Value = serde_json::from_str(&out)
+        .unwrap_or_else(|e| panic!("config output not JSON ({e}): {out}"));
     assert_eq!(
         v["name"], "react",
         "descriptor.name from oxide.config.ts: {out}"
@@ -675,16 +768,17 @@ async fn smoke_app_renders_through_real_config() {
 
     // 2. `oxide render routes/index` produces the home page markup.
     let (code, out) = run_ok(&[
-        "oxide", "render", "routes/index",
-        "--root", smoke_str,
-        "--data", "{}",
+        "oxide",
+        "render",
+        "routes/index",
+        "--root",
+        smoke_str,
+        "--data",
+        "{}",
     ])
     .await;
     assert_eq!(code, 0, "render routes/index exit; output:\n{out}");
-    assert!(
-        out.starts_with("<!doctype html>"),
-        "doctype first: {out}"
-    );
+    assert!(out.starts_with("<!doctype html>"), "doctype first: {out}");
     // The smoke-app's `page.tsx` is `return <h1>Home</h1>`; the loader
     // hook compiles it via sucrase, so we assert the user's own content
     // (not the IR fallback's Atlas mock).
@@ -692,18 +786,21 @@ async fn smoke_app_renders_through_real_config() {
         out.contains(">Home</h1>"),
         "home route renders the user's page.tsx: {out}"
     );
-    assert!(
-        out.contains("data-reactroot"),
-        "root marker present: {out}"
-    );
+    assert!(out.contains("data-reactroot"), "root marker present: {out}");
 
     // 3. `oxide render routes/blog/[slug]` threads the URL param through.
     let (code, out) = run_ok(&[
-        "oxide", "render", "routes/blog/[slug]",
-        "--root", smoke_str,
-        "--url", "/blog/hello-smoke",
-        "--param", "slug=hello-smoke",
-        "--data", "{}",
+        "oxide",
+        "render",
+        "routes/blog/[slug]",
+        "--root",
+        smoke_str,
+        "--url",
+        "/blog/hello-smoke",
+        "--param",
+        "slug=hello-smoke",
+        "--data",
+        "{}",
     ])
     .await;
     assert_eq!(code, 0, "render blog exit; output:\n{out}");
@@ -728,10 +825,7 @@ async fn smoke_app_renders_through_real_config() {
 /// only need to check a status line and substring the body; no chunked
 /// decoding, no keep-alive. `Connection: close` makes the server close
 /// the stream after the response, so `read_to_end` completes.
-async fn http_get(
-    addr: std::net::SocketAddr,
-    path: &str,
-) -> String {
+async fn http_get(addr: std::net::SocketAddr, path: &str) -> String {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
     // Retry the connect: `start_dev_server_full` spawns the accept loop in
@@ -752,10 +846,11 @@ async fn http_get(
         }
     };
 
-    let req = format!(
-        "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
-    );
-    stream.write_all(req.as_bytes()).await.expect("write request");
+    let req = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    stream
+        .write_all(req.as_bytes())
+        .await
+        .expect("write request");
     stream.flush().await.expect("flush");
 
     let mut buf = Vec::with_capacity(8 * 1024);
@@ -808,8 +903,15 @@ async fn dev_server_serves_smoke_app_over_http() {
     );
     let smoke_str = smoke.to_str().expect("smoke path utf-8");
 
-    // Build the same framework stack cmd_dev builds.
-    let stack = crate::framework_shim::build_framework_stack(Some(&config_path), oxide_config::JsBackend::Node, None).await;
+    // Build the same framework stack cmd_dev builds (`cache.handler: None`
+    // — the fixture has no handler config and the test needs no remote).
+    let stack = crate::framework_shim::build_framework_stack(
+        Some(&config_path),
+        oxide_config::JsBackend::Node,
+        None,
+        None,
+    )
+    .await;
     assert!(
         stack.has_renderer(),
         "framework renderer must attach for the smoke-app's oxide.config.ts"
@@ -850,7 +952,9 @@ async fn dev_server_serves_smoke_app_over_http() {
     // Chunked responses announce themselves; hyper uses this encoding
     // automatically when the body has unknown length.
     assert!(
-        resp_home.to_lowercase().contains("transfer-encoding: chunked"),
+        resp_home
+            .to_lowercase()
+            .contains("transfer-encoding: chunked"),
         "streaming response must use chunked transfer encoding; got:\n{}",
         resp_home
     );
@@ -892,7 +996,9 @@ async fn dev_server_serves_smoke_app_over_http() {
         resp_health
     );
     assert!(
-        !resp_health.to_lowercase().contains("transfer-encoding: chunked"),
+        !resp_health
+            .to_lowercase()
+            .contains("transfer-encoding: chunked"),
         "collected response must NOT use chunked encoding; got:\n{}",
         resp_health
     );
@@ -1025,9 +1131,7 @@ async fn smoke_app_builds_its_own_pages() {
 /// `.body` empty by design; the content is in `.stream`. Most tests want
 /// the logical body regardless of which transport shape the dispatch
 /// chose, so they call this instead of reading `.body` directly.
-async fn collect_response_body(
-    mut resp: oxide_server::OxideResponse,
-) -> Vec<u8> {
+async fn collect_response_body(mut resp: oxide_server::OxideResponse) -> Vec<u8> {
     // Streaming responses leave `.body` empty; the content is in `.stream`.
     // Read the stream directly (no HTTP framing needed) so the helper
     // works without depending on hyper/http_body_util in the cli crate.
@@ -1077,7 +1181,13 @@ async fn start_serves_smoke_app_over_http() {
     let smoke_str = smoke.to_str().expect("smoke path utf-8");
 
     // Build the same framework stack `cmd_serve` builds.
-    let stack = crate::framework_shim::build_framework_stack(Some(&config_path), oxide_config::JsBackend::Node, None).await;
+    let stack = crate::framework_shim::build_framework_stack(
+        Some(&config_path),
+        oxide_config::JsBackend::Node,
+        None,
+        None,
+    )
+    .await;
     assert!(
         stack.has_renderer(),
         "framework renderer must attach for the smoke-app's oxide.config.ts"
@@ -1110,7 +1220,9 @@ async fn start_serves_smoke_app_over_http() {
         resp_home
     );
     assert!(
-        resp_home.to_lowercase().contains("transfer-encoding: chunked"),
+        resp_home
+            .to_lowercase()
+            .contains("transfer-encoding: chunked"),
         "streaming response must use chunked encoding; got:\n{}",
         resp_home
     );
@@ -1128,7 +1240,9 @@ async fn start_serves_smoke_app_over_http() {
         resp_health
     );
     assert!(
-        !resp_health.to_lowercase().contains("transfer-encoding: chunked"),
+        !resp_health
+            .to_lowercase()
+            .contains("transfer-encoding: chunked"),
         "collected response must NOT use chunked encoding; got:\n{}",
         resp_health
     );
@@ -1162,14 +1276,28 @@ async fn start_serves_smoke_app_over_http() {
 fn render_subcommand_parses_route_and_optional_flags() {
     use clap::Parser;
     let cli = crate::Cli::try_parse_from([
-        "oxide", "render", "routes/index",
-        "--root", "/some/root",
-        "--url", "/home",
-        "--param", "slug=hello",
-        "--data", r#"{"title":"Hi"}"#,
-    ]).expect("parse");
+        "oxide",
+        "render",
+        "routes/index",
+        "--root",
+        "/some/root",
+        "--url",
+        "/home",
+        "--param",
+        "slug=hello",
+        "--data",
+        r#"{"title":"Hi"}"#,
+    ])
+    .expect("parse");
     match cli.command {
-        crate::Command::Render { root, route, url, params, data, stream: _ } => {
+        crate::Command::Render {
+            root,
+            route,
+            url,
+            params,
+            data,
+            stream: _,
+        } => {
             assert_eq!(root, "/some/root");
             assert_eq!(route, "routes/index");
             assert_eq!(url.as_deref(), Some("/home"));
@@ -1183,10 +1311,16 @@ fn render_subcommand_parses_route_and_optional_flags() {
 #[test]
 fn render_subcommand_defaults_root_url_params_data() {
     use clap::Parser;
-    let cli = crate::Cli::try_parse_from(["oxide", "render", "routes/blog/[slug]"])
-        .expect("parse");
+    let cli = crate::Cli::try_parse_from(["oxide", "render", "routes/blog/[slug]"]).expect("parse");
     match cli.command {
-        crate::Command::Render { root, route, url, params, data, stream: _ } => {
+        crate::Command::Render {
+            root,
+            route,
+            url,
+            params,
+            data,
+            stream: _,
+        } => {
             assert_eq!(root, ".");
             assert_eq!(route, "routes/blog/[slug]");
             assert_eq!(url, None);
@@ -1200,9 +1334,8 @@ fn render_subcommand_defaults_root_url_params_data() {
 #[test]
 fn render_subcommand_accepts_root_flag_after_route() {
     use clap::Parser;
-    let cli = crate::Cli::try_parse_from([
-        "oxide", "render", "routes/index", "--root", "/proj",
-    ]).expect("parse");
+    let cli = crate::Cli::try_parse_from(["oxide", "render", "routes/index", "--root", "/proj"])
+        .expect("parse");
     match cli.command {
         crate::Command::Render { root, route, .. } => {
             assert_eq!(root, "/proj");
@@ -1215,9 +1348,8 @@ fn render_subcommand_accepts_root_flag_after_route() {
 #[test]
 fn config_subcommand_parses_root_and_json_flag() {
     use clap::Parser;
-    let cli = crate::Cli::try_parse_from([
-        "oxide", "config", "--json", "/some/root",
-    ]).expect("parse");
+    let cli =
+        crate::Cli::try_parse_from(["oxide", "config", "--json", "/some/root"]).expect("parse");
     match cli.command {
         crate::Command::Config { root, json } => {
             assert_eq!(root, "/some/root");
@@ -1769,7 +1901,13 @@ async fn data_endpoint_returns_odf_envelope() {
 #[tokio::test]
 async fn start_serves_health_endpoint_then_shuts_down() {
     let (_d, root) = fixture_project();
-    let started = start_server(root.to_str().unwrap(), Some(0), crate::framework_shim::FrameworkStack::default()).await.unwrap();
+    let started = start_server(
+        root.to_str().unwrap(),
+        Some(0),
+        crate::framework_shim::FrameworkStack::default(),
+    )
+    .await
+    .unwrap();
     // Poll until the listener accepts. The budget is generous (10 s) because
     // under full-workspace parallel load the listener can take a moment to
     // sched­ule; success still returns on the first accepted connection.
@@ -1880,7 +2018,6 @@ async fn run_returns_exit_code_and_prints_buffer_to_stdout() {
     assert!(!buf.is_empty(), "writer received the report");
 }
 
-
 // ------------------------------------------------------- §20 dispatch metrics
 
 /// Wait until the started server actually accepts connections, then return.
@@ -1907,8 +2044,7 @@ async fn simple_get(url: &str) -> std::io::Result<String> {
         .map(|(h, p)| (h, format!("/{p}")))
         .unwrap_or((stripped, "/".to_string()));
     let mut stream = tokio::net::TcpStream::connect(hostport).await?;
-    let req =
-        format!("GET {path} HTTP/1.1\r\nHost: {hostport}\r\nConnection: close\r\n\r\n");
+    let req = format!("GET {path} HTTP/1.1\r\nHost: {hostport}\r\nConnection: close\r\n\r\n");
     stream.write_all(req.as_bytes()).await?;
     let mut buf = String::new();
     stream.read_to_string(&mut buf).await?;
@@ -1926,11 +2062,18 @@ async fn started_server_exposes_metrics_registry() {
     )
     .unwrap();
 
-    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0), crate::framework_shim::FrameworkStack::default())
-        .await
-        .expect("start_server");
+    let started = crate::start_server(
+        dir.path().to_str().unwrap(),
+        Some(0),
+        crate::framework_shim::FrameworkStack::default(),
+    )
+    .await
+    .expect("start_server");
     let text = started.metrics.render();
-    assert!(text.contains("# TYPE oxide_requests_total counter"), "{text}");
+    assert!(
+        text.contains("# TYPE oxide_requests_total counter"),
+        "{text}"
+    );
     let _ = started.shutdown.send(true);
 }
 
@@ -1951,9 +2094,13 @@ async fn dispatch_observes_route_pattern_labels() {
     )
     .unwrap();
 
-    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0), crate::framework_shim::FrameworkStack::default())
-        .await
-        .expect("start_server");
+    let started = crate::start_server(
+        dir.path().to_str().unwrap(),
+        Some(0),
+        crate::framework_shim::FrameworkStack::default(),
+    )
+    .await
+    .expect("start_server");
     wait_ready(started.addr).await;
 
     let url = format!("http://{}/blog/hello", started.addr);
@@ -1979,9 +2126,13 @@ async fn dispatch_observes_unmatched_label() {
     )
     .unwrap();
 
-    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0), crate::framework_shim::FrameworkStack::default())
-        .await
-        .expect("start_server");
+    let started = crate::start_server(
+        dir.path().to_str().unwrap(),
+        Some(0),
+        crate::framework_shim::FrameworkStack::default(),
+    )
+    .await
+    .expect("start_server");
     wait_ready(started.addr).await;
 
     let url = format!("http://{}/definitely/not/a/route", started.addr);
@@ -2006,9 +2157,13 @@ async fn dispatch_label_cardinality_is_bounded() {
     )
     .unwrap();
 
-    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0), crate::framework_shim::FrameworkStack::default())
-        .await
-        .expect("start_server");
+    let started = crate::start_server(
+        dir.path().to_str().unwrap(),
+        Some(0),
+        crate::framework_shim::FrameworkStack::default(),
+    )
+    .await
+    .expect("start_server");
     wait_ready(started.addr).await;
 
     for i in 0..20 {
@@ -2032,7 +2187,6 @@ async fn dispatch_label_cardinality_is_bounded() {
     );
     let _ = started.shutdown.send(true);
 }
-
 
 #[tokio::test]
 async fn dev_server_serves_inspector_endpoint() {
@@ -2062,7 +2216,10 @@ async fn dev_server_serves_inspector_endpoint() {
     // A request without the token is refused.
     let no_token = format!("http://{}/__oxide/state", started.addr);
     let resp = simple_get(&no_token).await.expect("GET /__oxide/state");
-    assert!(resp.contains("403"), "inspector without token is 403: {resp}");
+    assert!(
+        resp.contains("403"),
+        "inspector without token is 403: {resp}"
+    );
 
     // JSON state endpoint (token via query).
     let state_url = format!("http://{}/__oxide/state?token={token}", started.addr);
@@ -2092,9 +2249,13 @@ async fn production_server_does_not_serve_inspector() {
     )
     .unwrap();
 
-    let started = crate::start_server(dir.path().to_str().unwrap(), Some(0), crate::framework_shim::FrameworkStack::default())
-        .await
-        .expect("start_server");
+    let started = crate::start_server(
+        dir.path().to_str().unwrap(),
+        Some(0),
+        crate::framework_shim::FrameworkStack::default(),
+    )
+    .await
+    .expect("start_server");
     wait_ready(started.addr).await;
 
     let url = format!("http://{}/__oxide/state", started.addr);
@@ -2117,7 +2278,6 @@ async fn production_server_does_not_serve_inspector() {
     );
     let _ = started.shutdown.send(true);
 }
-
 
 // ------------------------------------------------------- §10.5 static export
 
@@ -2192,8 +2352,16 @@ async fn static_build_enumerates_generate_params() {
     assert_eq!(code, 0, "build output: {}", String::from_utf8_lossy(&buf));
 
     // Both param values produce distinct HTML files.
-    assert!(dir.path().join("dist/prerendered/blog/hello.html").is_file());
-    assert!(dir.path().join("dist/prerendered/blog/world.html").is_file());
+    assert!(
+        dir.path()
+            .join("dist/prerendered/blog/hello.html")
+            .is_file()
+    );
+    assert!(
+        dir.path()
+            .join("dist/prerendered/blog/world.html")
+            .is_file()
+    );
     // They land in the deploy dir.
     assert!(dir.path().join("dist/deploy/blog/hello.html").is_file());
     assert!(dir.path().join("dist/deploy/blog/world.html").is_file());
@@ -2237,13 +2405,12 @@ async fn static_build_refuses_dynamic_without_fallback() {
     );
 }
 
-
 // ------------------------------------------------------- §19.3 MCP server
 
 #[tokio::test]
 async fn mcp_routes_tool_lists_routes() {
-    use rmcp::handler::server::wrapper::Parameters;
     use rmcp::ServerHandler as _;
+    use rmcp::handler::server::wrapper::Parameters;
     let dir = tempfile::tempdir().unwrap();
     let routes = dir.path().join("src/routes");
     std::fs::create_dir_all(routes.join("blog").join("[slug]")).unwrap();
@@ -2358,11 +2525,15 @@ async fn mcp_errors_tool_reads_diagnostics_file() {
         .collect::<Vec<_>>()
         .join("\n");
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert!(v["source"].as_str().unwrap().ends_with("last-build-diagnostics.json"));
+    assert!(
+        v["source"]
+            .as_str()
+            .unwrap()
+            .ends_with("last-build-diagnostics.json")
+    );
     assert_eq!(v["entries"][0]["code"], "BLD-RESOLVE");
     assert_eq!(v["entries"][0]["fix"], "fix it");
 }
-
 
 // ------------------------------------------------------- §19.3 JSON Schema
 
@@ -2390,7 +2561,6 @@ async fn schema_command_emits_valid_json_schema() {
     assert!(v["properties"]["framework"]["properties"]["adapter"]["enum"].is_array());
     assert!(v["properties"]["static"]["properties"]["fallback"].is_object());
 }
-
 
 // ------------------------------------------------------- §16.5 content search index
 
@@ -2486,8 +2656,6 @@ async fn fetch_propagates_trace_context_header() {
     assert_eq!(tc.trace_id, "0af7651916cd43dd8448eb211c80319c");
     assert_eq!(tc.parent_id, "b7ad6b7169203331");
     assert!(tc.sampled);
-
-
 }
 
 // ---------------------------------------------------------------------------
@@ -2526,7 +2694,9 @@ fn walk_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for entry in rd.flatten() {
             let p = entry.path();
             if p.is_dir() {
@@ -2549,7 +2719,10 @@ async fn smoke_app_emits_valid_js_in_every_chunk() {
         .and_then(|p| p.parent())
         .expect("workspace root");
     let smoke = workspace.join("examples/smoke-app-react");
-    assert!(smoke.join("oxide.config.ts").is_file(), "smoke-app fixture missing");
+    assert!(
+        smoke.join("oxide.config.ts").is_file(),
+        "smoke-app fixture missing"
+    );
 
     let dist = smoke.join("dist");
     let _ = std::fs::remove_dir_all(&dist);
@@ -2567,7 +2740,10 @@ async fn smoke_app_emits_valid_js_in_every_chunk() {
             checked += 1;
         }
     }
-    assert!(checked >= 2, "expected at least the client + server chunks; got {checked}");
+    assert!(
+        checked >= 2,
+        "expected at least the client + server chunks; got {checked}"
+    );
 
     // Chunks land in both envs.
     let client_dir = dist.join("client");
@@ -2575,11 +2751,15 @@ async fn smoke_app_emits_valid_js_in_every_chunk() {
     assert!(client_dir.is_dir(), "dist/client must exist");
     assert!(server_dir.is_dir(), "dist/server must exist");
     assert!(
-        walk_files(&client_dir).iter().any(|p| p.extension().is_some_and(|e| e == "js")),
+        walk_files(&client_dir)
+            .iter()
+            .any(|p| p.extension().is_some_and(|e| e == "js")),
         "dist/client must contain at least one .js chunk"
     );
     assert!(
-        walk_files(&server_dir).iter().any(|p| p.extension().is_some_and(|e| e == "js")),
+        walk_files(&server_dir)
+            .iter()
+            .any(|p| p.extension().is_some_and(|e| e == "js")),
         "dist/server must contain at least one .js chunk"
     );
 
@@ -2610,15 +2790,21 @@ async fn smoke_app_emits_valid_js_in_every_chunk() {
 
     // Deploy dir matches the `binary` target from the smoke-app config.
     let deploy = dist.join("deploy");
-    assert!(deploy.is_dir(), "dist/deploy must exist for the binary target");
-    for name in ["deploy.json", "client.manifest.json", "server.manifest.json"] {
+    assert!(
+        deploy.is_dir(),
+        "dist/deploy must exist for the binary target"
+    );
+    for name in [
+        "deploy.json",
+        "client.manifest.json",
+        "server.manifest.json",
+    ] {
         assert!(
             deploy.join(name).is_file(),
             "deploy/{name} missing (binary target characteristic file)"
         );
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // §10.3 islands end-to-end at the CLI level.
@@ -2685,7 +2871,10 @@ async fn smoke_app_emits_island_markup_and_boot_script() {
     // 2. The island's SSR children render inside <ox-island>: the Counter
     //    shows `3`, which comes from `props.initial` in the fixture.
     let open = index_html.find("<ox-island").expect("opening tag");
-    let close = index_html[open..].find("</ox-island>").expect("closing tag") + open;
+    let close = index_html[open..]
+        .find("</ox-island>")
+        .expect("closing tag")
+        + open;
     let island_body = &index_html[open..close];
     assert!(
         island_body.contains("<span>3</span>"),
@@ -2717,14 +2906,16 @@ async fn smoke_app_emits_island_markup_and_boot_script() {
 /// truncated); before the shell it still aborts.
 #[tokio::test]
 async fn stream_error_recovery_after_shell_emits_boundary() {
-    use futures::channel::mpsc as fmpsc;
     use futures::StreamExt as _;
+    use futures::channel::mpsc as fmpsc;
 
     // Build a RenderStream that yields one chunk then an error.
     let (mut tx, rx) = fmpsc::channel::<oxide_diagnostics::Result<bytes::Bytes>>(8);
     tokio::spawn(async move {
         use futures::SinkExt as _;
-        let _ = tx.send(Ok(bytes::Bytes::from_static(b"<html>shell</html>"))).await;
+        let _ = tx
+            .send(Ok(bytes::Bytes::from_static(b"<html>shell</html>")))
+            .await;
         let _ = tx
             .send(Err(oxide_diagnostics::OxideError(
                 oxide_diagnostics::Diagnostic::error("RND-TEST", "mid-stream boom"),
@@ -2751,6 +2942,458 @@ async fn stream_error_recovery_after_shell_emits_boundary() {
     };
     let text = String::from_utf8_lossy(&collected);
     assert!(text.contains("shell"), "shell preserved: {text}");
-    assert!(text.contains("ox-error"), "recovery boundary emitted: {text}");
+    assert!(
+        text.contains("ox-error"),
+        "recovery boundary emitted: {text}"
+    );
     assert!(text.contains("RND-TEST"), "diagnostic code named: {text}");
+}
+
+// ------------------------- §8.4/§9.5 live ODF payload + §10.2 error status
+
+/// A streaming renderer whose FIRST chunk is the canonical error-status
+/// contract marker (`<!--oxide-status:500-->`) — what an adapter yields
+/// when the render failed before the shell (§10.2 step 5; the marker side
+/// lives in `real-ssr.ts`, the status side in `probe_render_error_status`).
+struct ErrorMarkerRenderer;
+
+#[async_trait::async_trait]
+impl oxide_server::PageRenderer for ErrorMarkerRenderer {
+    fn name(&self) -> &str {
+        "error-marker"
+    }
+    async fn render(&self, _input: oxide_server::PageRenderInput) -> oxide_server::Result<String> {
+        Ok("<!doctype html><html><body>ERR</body></html>".into())
+    }
+    async fn render_streaming(
+        &self,
+        _input: oxide_server::PageRenderInput,
+    ) -> oxide_server::Result<oxide_server::RenderStream> {
+        let items: Vec<oxide_server::Result<bytes::Bytes>> = vec![
+            Ok(bytes::Bytes::from_static(b"<!--oxide-status:500-->")),
+            Ok(bytes::Bytes::from_static(
+                b"<!doctype html><html><body>ERR</body></html>",
+            )),
+        ];
+        Ok(Box::pin(futures::stream::iter(items)))
+    }
+}
+
+/// Same shape, but announcing the GENERIC OX-500 fallback boundary the
+/// adapter emits when no `error.tsx` is registered (or the error page
+/// itself throws) — the pipeline must treat that as a 500 too.
+struct Ox500FallbackRenderer;
+
+#[async_trait::async_trait]
+impl oxide_server::PageRenderer for Ox500FallbackRenderer {
+    fn name(&self) -> &str {
+        "ox500-fallback"
+    }
+    async fn render(&self, _input: oxide_server::PageRenderInput) -> oxide_server::Result<String> {
+        Ok("<!doctype html><html><body>ERR</body></html>".into())
+    }
+    async fn render_streaming(
+        &self,
+        _input: oxide_server::PageRenderInput,
+    ) -> oxide_server::Result<oxide_server::RenderStream> {
+        let items: Vec<oxide_server::Result<bytes::Bytes>> = vec![
+            Ok(bytes::Bytes::from_static(
+                b"<div class='ox-error' data-ox-error='OX-500'>OX-500: boom</div>",
+            )),
+            Ok(bytes::Bytes::from_static(b"</body></html>")),
+        ];
+        Ok(Box::pin(futures::stream::iter(items)))
+    }
+}
+
+#[tokio::test]
+async fn live_render_injects_odf_payload_script() {
+    use std::sync::Arc;
+
+    let tree = tree_with_server_route();
+    let metrics = Arc::new(oxide_server::Metrics::new());
+    let page_renderer: Option<Arc<dyn oxide_server::PageRenderer>> =
+        Some(Arc::new(DataCapturingRenderer::new()));
+    let loader_runner: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(Arc::new(
+        ScriptedLoader::ok(serde_json::json!({ "title": "Hi" })),
+    ));
+
+    let dispatch = build_dispatch(
+        tree,
+        metrics,
+        Vec::new(),
+        page_renderer,
+        loader_runner,
+        routes_root(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+    );
+    let resp = dispatch(test_request("GET", "/")).await;
+
+    assert_eq!(resp.status, 200);
+    let collected = collect_response_body(resp).await;
+    let body = String::from_utf8_lossy(&collected).to_string();
+    // §9.5 / §8.4: the SAME `window.__oxide` payload script prerendered
+    // pages embed must also ride the LIVE (streamed) path — previously the
+    // dynamic page had no payload and the boot module skipped hydration
+    // and the router entirely.
+    assert!(
+        body.contains("application/oxide-data"),
+        "live page carries the ODF payload script: {body}"
+    );
+    assert!(
+        body.contains("window.__oxide="),
+        "hydration bootstrap present: {body}"
+    );
+    // The payload decodes to the §8.4 {route, url, params, data} envelope
+    // with the loader's data inside.
+    let b64 = body
+        .split("application/oxide-data")
+        .nth(1)
+        .and_then(|rest| rest.split('>').nth(1))
+        .and_then(|seg| seg.split('<').next())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    assert!(
+        !b64.is_empty(),
+        "payload script carries base64 content: {body}"
+    );
+    use base64::Engine as _;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(&b64)
+        .expect("payload is base64");
+    let value = oxide_odf::decode(&raw).expect("payload decodes as ODF");
+    let json = value.to_json();
+    assert_eq!(
+        json["data"]["title"], "Hi",
+        "loader data inside the live payload: {json}"
+    );
+    assert_eq!(json["route"], "routes/index");
+}
+
+#[tokio::test]
+async fn error_status_marker_yields_http_500() {
+    use std::sync::Arc;
+
+    // §10.2 step 5 (error-status contract): a LIVE render whose first
+    // chunk announces an error document is a 500 on the wire — not a 200
+    // with error-shaped content. Two markers are honoured: the canonical
+    // `<!--oxide-status:500-->` and the generic OX-500 fallback attribute
+    // the adapter already emits today. A PRERENDERED error page stays 200
+    // (a static file has no status channel — documented in
+    // `write_prerender`).
+    let renderers: Vec<(&str, Arc<dyn oxide_server::PageRenderer>)> = vec![
+        (
+            "canonical marker",
+            Arc::new(ErrorMarkerRenderer) as Arc<dyn oxide_server::PageRenderer>,
+        ),
+        (
+            "generic fallback",
+            Arc::new(Ox500FallbackRenderer) as Arc<dyn oxide_server::PageRenderer>,
+        ),
+    ];
+    for (name, renderer) in renderers {
+        let tree = tree_with_server_route();
+        let metrics = Arc::new(oxide_server::Metrics::new());
+        let dispatch = build_dispatch(
+            tree,
+            metrics,
+            Vec::new(),
+            Some(renderer),
+            None,
+            routes_root(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        );
+        let resp = dispatch(test_request("GET", "/")).await;
+        assert_eq!(resp.status, 500, "{name} → HTTP 500");
+        let collected = collect_response_body(resp).await;
+        let body = String::from_utf8_lossy(&collected).to_string();
+        // The canonical marker renderer emits "ERR: ..."; the generic
+        // fallback renders the OX-500 boundary text. Both must survive.
+        assert!(
+            body.contains("ERR") || body.contains("OX-500"),
+            "{name}: error body preserved: {body}"
+        );
+    }
+}
+
+#[test]
+fn loading_map_keys_preserve_dynamic_tokens() {
+    // §8.4 KEY CONTRACT (client matcher, honored by the boot runtime): a
+    // loading-map key is an ABSOLUTE PATH whose segments may be `[name]`
+    // tokens; a `[name]` segment matches exactly ONE non-empty URL
+    // segment; the key with the most segments wins. The old keys were
+    // literal bracket-prefix strings (`/blog/[slug]/`) that never matched
+    // a real URL.
+    let mut loading = std::collections::BTreeMap::new();
+    loading.insert(
+        "routes/blog/[slug]/loading".to_string(),
+        std::path::PathBuf::from("src/routes/blog/[slug]/loading.tsx"),
+    );
+    loading.insert(
+        "routes/loading".to_string(),
+        std::path::PathBuf::from("src/routes/loading.tsx"),
+    );
+    let out = crate::generate_island_boot_entry(
+        std::path::Path::new("/proj"),
+        "react",
+        &std::collections::BTreeMap::new(),
+        &loading,
+        false,
+    );
+    assert!(
+        out.contains("\"/blog/[slug]\""),
+        "dynamic segment keeps its [name] token: {out}"
+    );
+    assert!(
+        !out.contains("\"/blog/[slug]/\""),
+        "no literal-prefix keys (never matched): {out}"
+    );
+    assert!(out.contains("\"/\""), "root loading key is /: {out}");
+}
+
+#[test]
+fn remote_cache_url_maps_handler_config() {
+    // §11.2 / SPEC-12: only `cache.handler=http` attaches a remote tier;
+    // redis/s3 warn-and-no-op; memory/disk are the local tiers. Regression
+    // guard for the shadowing bug: this mapping used to live ONLY in an
+    // unreachable CLI arm (build_framework_stack always returned
+    // cache_tier: Some), so a configured http handler never attached.
+    use oxide_config::CacheHandlerConfig;
+    let f = crate::framework_shim::remote_cache_url;
+    assert_eq!(
+        f(Some(&CacheHandlerConfig::Http {
+            url: "https://cache.example".into()
+        })),
+        Some("https://cache.example".to_string())
+    );
+    assert_eq!(f(Some(&CacheHandlerConfig::Memory)), None);
+    assert_eq!(f(Some(&CacheHandlerConfig::Disk)), None);
+    assert_eq!(
+        f(Some(&CacheHandlerConfig::Redis {
+            url: "redis://x".into()
+        })),
+        None
+    );
+    assert_eq!(
+        f(Some(&CacheHandlerConfig::S3 { bucket: "b".into() })),
+        None
+    );
+    assert_eq!(f(None), None);
+}
+
+// -------------------------------- §8.1/§8.4 middleware parity (headers+locals)
+
+/// A `MiddlewareDispatcher` that always succeeds, adds fixed response
+/// headers and (optionally) injects `locals`. Test-only.
+struct ScriptedMiddleware {
+    headers: Vec<(String, String)>,
+    locals: Option<serde_json::Value>,
+}
+
+#[async_trait::async_trait]
+impl oxide_server::MiddlewareDispatcher for ScriptedMiddleware {
+    async fn dispatch(
+        &self,
+        _module_path: &str,
+        _method: &str,
+        _url: &str,
+        _params: &serde_json::Map<String, serde_json::Value>,
+        _headers: &[(String, String)],
+        _body: &[u8],
+        _locals: Option<&serde_json::Value>,
+    ) -> std::result::Result<oxide_server::MiddlewareRunResult, oxide_server::MiddlewareRunError>
+    {
+        Ok(oxide_server::MiddlewareRunResult {
+            short: false,
+            status: 200,
+            headers: self.headers.clone(),
+            body: Vec::new(),
+            redirect: None,
+            rewrite: None,
+            locals: self.locals.clone(),
+        })
+    }
+}
+
+/// A `LoaderRunner` that records the LAST `locals` it received and returns
+/// a fixed data + deferred payload. Proves the middleware phase feeds the
+/// loader and the resolved defers reach the consumer (§8.4 parity).
+struct LocalsCapturingLoader {
+    last_locals: std::sync::Arc<std::sync::Mutex<serde_json::Value>>,
+}
+
+impl LocalsCapturingLoader {
+    fn new() -> Self {
+        Self {
+            last_locals: std::sync::Arc::new(std::sync::Mutex::new(serde_json::Value::Null)),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl oxide_server::LoaderRunner for LocalsCapturingLoader {
+    fn name(&self) -> &str {
+        "locals-capture"
+    }
+    async fn run(
+        &self,
+        input: oxide_server::LoaderRunInput,
+    ) -> oxide_server::Result<oxide_server::LoaderOutput> {
+        *self.last_locals.lock().unwrap() = input.locals.clone();
+        let mut deferred = std::collections::BTreeMap::new();
+        deferred.insert(
+            "0".to_string(),
+            serde_json::json!({ "slow": "resolved-by-loader" }),
+        );
+        Ok(oxide_server::LoaderOutput {
+            status: 200,
+            location: None,
+            data: serde_json::json!({ "v": 1 }),
+            set_cookies: Vec::new(),
+            headers: Vec::new(),
+            deferred,
+        })
+    }
+}
+
+/// A page route + a root `middleware.ts`, so the dispatch resolves a
+/// nearest-ancestor middleware (no filesystem needed — the scripted
+/// dispatcher ignores the module path).
+fn tree_with_page_and_middleware() -> std::sync::Arc<oxide_router::RouteTree> {
+    let mut tree = oxide_router::RouteTree::new();
+    tree.insert(oxide_router::RouteEntry {
+        id: oxide_router::RouteId("routes/index".into()),
+        kind: oxide_router::RouteKind::Page,
+        segments: vec![],
+        file: std::path::PathBuf::from("index/page.tsx"),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: true,
+        slot: None,
+    });
+    tree.insert(oxide_router::RouteEntry {
+        id: oxide_router::RouteId("routes/middleware".into()),
+        kind: oxide_router::RouteKind::Middleware,
+        segments: vec![],
+        file: std::path::PathBuf::from("middleware.ts"),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: false,
+        slot: None,
+    });
+    std::sync::Arc::new(tree)
+}
+
+#[tokio::test]
+async fn middleware_headers_ride_page_and_data_responses() {
+    use std::sync::Arc;
+
+    let metrics = Arc::new(oxide_server::Metrics::new());
+    let mw: Option<Arc<dyn oxide_server::MiddlewareDispatcher>> =
+        Some(Arc::new(ScriptedMiddleware {
+            headers: vec![("x-oxide-mw".to_string(), "on".to_string())],
+            locals: Some(serde_json::json!({ "tenant": "acme" })),
+        }));
+
+    // §8.5: the accumulated `middleware_headers` previously died in a dead
+    // variable — the PAGE response must carry them.
+    let page_renderer: Option<Arc<dyn oxide_server::PageRenderer>> =
+        Some(Arc::new(DataCapturingRenderer::new()));
+    let dispatch = build_dispatch(
+        tree_with_page_and_middleware(),
+        std::sync::Arc::clone(&metrics),
+        Vec::new(),
+        page_renderer,
+        None,
+        routes_root(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        mw.clone(),
+        false,
+    );
+    let resp = dispatch(test_request("GET", "/")).await;
+    assert_eq!(resp.status, 200);
+    let hdr = resp
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-mw"));
+    assert_eq!(
+        hdr.map(|(_, v)| v.as_str()),
+        Some("on"),
+        "middleware header on the page response: {:?}",
+        resp.headers
+    );
+
+    // §8.4 parity: a /__data request runs the SAME middleware phase before
+    // the data branch — its headers ride the ODF response and its locals
+    // reach the loader.
+    let loader = Arc::new(LocalsCapturingLoader::new());
+    let last_locals = Arc::clone(&loader.last_locals);
+    let loader_runner: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(loader);
+    let dispatch = build_dispatch(
+        tree_with_page_and_middleware(),
+        metrics,
+        Vec::new(),
+        None,
+        loader_runner,
+        routes_root(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        mw,
+        false,
+    );
+    let resp = dispatch(test_request("GET", "/__data?route=%2F")).await;
+    assert_eq!(resp.status, 200, "data response for a matched route");
+    let hdr = resp
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-mw"));
+    assert_eq!(
+        hdr.map(|(_, v)| v.as_str()),
+        Some("on"),
+        "middleware header on the /__data response: {:?}",
+        resp.headers
+    );
+    assert_eq!(
+        last_locals.lock().unwrap()["tenant"],
+        "acme",
+        "middleware locals reached the loader on the /__data path"
+    );
+    // The ODF envelope carries the loader's data, the resolved defers and
+    // the locale (§8.4 parity with the SSR render's inputs).
+    let json = oxide_odf::decode(&resp.body).expect("data response is ODF");
+    let json = json.to_json();
+    assert_eq!(json["data"]["v"], 1, "loader data in the envelope: {json}");
+    assert_eq!(
+        json["deferred"]["0"]["slow"], "resolved-by-loader",
+        "resolved defers in the envelope: {json}"
+    );
+    assert!(json["locale"].is_string(), "locale in the envelope: {json}");
 }
