@@ -4,12 +4,12 @@
 
 use bytes::Bytes;
 use oxide_cache::{
-    build_id, cache_control, conditional_response, CacheHandler, CacheKey, Entry, FetchMemo,
-    FlightSlot, Hit, Layer, Policy, SingleFlight, TieredCache,
+    CacheHandler, CacheKey, Entry, FetchMemo, FlightSlot, Hit, Layer, Policy, SingleFlight,
+    TieredCache, build_id, cache_control, conditional_response,
 };
 use serde_json::json;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 fn now_ms() -> u64 {
@@ -882,9 +882,10 @@ fn fetch_memo_roundtrip_and_body_sensitivity() {
         memo.get_for_request("GET", "https://api/x", b"").unwrap(),
         Bytes::from_static(b"resp1")
     );
-    assert!(memo
-        .get_for_request("GET", "https://api/x", b"other")
-        .is_none());
+    assert!(
+        memo.get_for_request("GET", "https://api/x", b"other")
+            .is_none()
+    );
     assert!(memo.get_for_request("POST", "https://api/x", b"").is_none());
 }
 
