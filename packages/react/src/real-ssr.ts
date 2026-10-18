@@ -29,6 +29,17 @@ export interface ReactLike {
 /** Minimal structural type of the `react-dom/server` module we depend on. */
 export interface ReactDomServerLike {
   renderToString(element: unknown): string
+  /**
+   * React 19's streaming renderer (available on `react-dom/server.browser`,
+   * `.edge`, `.node`, `.bun` — every non-`react-server` entry). Resolves to
+   * a `ReadableStream<Uint8Array>` the caller can pump into its response.
+   * Optional: an older React 18 may only have the `renderToPipeableStream`
+   * Node shape, so the caller feature-detects.
+   */
+  renderToReadableStream?(
+    element: unknown,
+    options?: { onError?: (e: unknown) => void },
+  ): Promise<ReadableStream<Uint8Array>>
   version?: string
 }
 
@@ -159,4 +170,57 @@ export async function renderReactToString(
   }
   const element = deps.react.createElement(Component, expanded)
   return deps.server.renderToString(element)
+}
+
+/**
+ * Stream a React component's HTML via `renderToReadableStream` (React 19).
+ * The returned stream yields the shell immediately and boundary content as
+ * it resolves — the TTFB property streaming exists for. The shell-first
+ * chunking is preserved end-to-end: the worker emits each chunk as a raw
+ * binary frame, and the pipeline's `render_stream_with_recovery` passes them
+ * straight to the client (only splicing the recovery boundary if a mid-stream
+ * error occurs).
+ *
+ * Falls back to `[renderReactToString]`'s single-chunk result when the
+ * runtime has no streaming API — a caller that drains the stream still gets
+ * the same HTML, just as one chunk.
+ */
+export async function renderReactToStream(
+  Component: (props: Record<string, unknown>) => unknown,
+  props: Record<string, unknown> = {},
+): Promise<ReadableStream<Uint8Array>> {
+  const deps = await load()
+  if (!deps) {
+    throw new Error(
+      '@oxide/react: real SSR requires `react` and `react-dom/server` to be installed',
+    )
+  }
+  // Same descriptor-expansion as `renderReactToString`: a layout receives
+  // `props.children` as `{ Component, props }`; React needs a live element.
+  const expanded: Record<string, unknown> = { ...props }
+  if (isChildDescriptor(expanded.children)) {
+    expanded.children = expandDescriptor(deps.react, expanded.children)
+  }
+  const element = deps.react.createElement(Component, expanded)
+
+  if (typeof deps.server.renderToReadableStream === 'function') {
+    // React 19 streams natively. `onError` reports a thrown component; the
+    // stream itself then closes early. That error surfaces to the caller as
+    // the pipeline's recovery boundary (render_stream_with_recovery).
+    return deps.server.renderToReadableStream(element, {
+      onError: (e) => {
+        console.error?.('oxide: React streaming SSR error', e)
+      },
+    })
+  }
+  // Older React (no streaming API): synthesize a single-chunk stream from
+  // `renderToString` so the caller sees a uniform interface.
+  const html = deps.server.renderToString(element)
+  const bytes = new TextEncoder().encode(html)
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes)
+      controller.close()
+    },
+  })
 }
