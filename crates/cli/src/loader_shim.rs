@@ -42,10 +42,7 @@ pub fn output_from_raw(raw: &Value) -> oxide_server::Result<LoaderOutput> {
         .and_then(|v| v.as_u64())
         .map(|n| n as u16)
         .ok_or_else(|| {
-            oxide_server::err(
-                "JSH-LOADER",
-                "loader:run response missing numeric `status`",
-            )
+            oxide_server::err("JSH-LOADER", "loader:run response missing numeric `status`")
         })?;
     let location = raw
         .get("location")
@@ -144,7 +141,8 @@ mod tests {
 
     #[test]
     fn input_to_payload_serializes_all_fields() {
-        let mut input = LoaderRunInput::new("/abs/page.server.ts", "routes/blog/[slug]", "/blog/hi");
+        let mut input =
+            LoaderRunInput::new("/abs/page.server.ts", "routes/blog/[slug]", "/blog/hi");
         input.params.insert("slug".into(), "hi".into());
         input.headers.push(("cookie".into(), "a=b".into()));
         let v = input_to_payload(&input);
@@ -186,7 +184,10 @@ mod tests {
         assert_eq!(out.status, 200);
         assert_eq!(out.set_cookies.len(), 1);
         assert!(out.set_cookies[0].starts_with("visits=42"));
-        assert_eq!(out.headers, vec![("x-oxide-visits".to_string(), "42".to_string())]);
+        assert_eq!(
+            out.headers,
+            vec![("x-oxide-visits".to_string(), "42".to_string())]
+        );
     }
 
     #[test]
@@ -217,7 +218,8 @@ mod tests {
 
     #[test]
     fn output_from_raw_error_status() {
-        let raw = json!({ "ok": true, "status": 404, "location": null, "data": {"message":"missing"} });
+        let raw =
+            json!({ "ok": true, "status": 404, "location": null, "data": {"message":"missing"} });
         let out = output_from_raw(&raw).unwrap();
         assert_eq!(out.status, 404);
         assert_eq!(out.data["message"], "missing");
