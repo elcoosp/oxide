@@ -1,9 +1,9 @@
 //! TDD suite for oxide-compiler (spec §6.2–6.4, §9.3–9.4, §19.4).
 
 use oxide_compiler::{
-    guard_server_only, inject_hmr_boundary, scan_import_spans, scan_imports, server_fn_id,
-    transform_server_fn_stubs, transform_use_cache, DirectiveKind, Env, ScannerTransformer,
-    TransformInput, Transformer,
+    DirectiveKind, Env, ScannerTransformer, TransformInput, Transformer, guard_server_only,
+    inject_hmr_boundary, scan_import_spans, scan_imports, server_fn_id, transform_server_fn_stubs,
+    transform_use_cache,
 };
 use oxide_diagnostics::Diagnostic;
 use std::collections::BTreeMap;
@@ -284,8 +284,7 @@ fn stubs_ssr_keep_bodies_and_register_ids() {
 
 #[test]
 fn stubs_schema_first_arg_supported() {
-    let code =
-        "export const create = serverFn(schema, async (input) => {\n  return db.insert(input);\n});\n";
+    let code = "export const create = serverFn(schema, async (input) => {\n  return db.insert(input);\n});\n";
     let (out, stubs) = transform_server_fn_stubs(code, "x.server.ts", Env::Client, "s").unwrap();
     assert_eq!(stubs.len(), 1);
     assert_eq!(stubs[0].export_name, "create");
@@ -322,12 +321,16 @@ fn guard_reports_full_import_chain() {
     // entry, so `a.ts` and `entry.tsx` each report the violation → 2 diagnostics.
     assert_eq!(diags.len(), 2);
     assert!(diags.iter().all(|d| diag_code(d) == "CMP-GUARD"));
-    assert!(diags
-        .iter()
-        .any(|d| d.message.contains("entry.tsx -> a.ts -> db.server.ts")));
-    assert!(diags
-        .iter()
-        .any(|d| d.message.contains("a.ts -> db.server.ts")));
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message.contains("entry.tsx -> a.ts -> db.server.ts"))
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message.contains("a.ts -> db.server.ts"))
+    );
     assert!(diags[0].fix.is_some());
 }
 
@@ -346,12 +349,16 @@ fn guard_multiple_violations_multiple_diagnostics() {
     let diags = guard_server_only(&graph, &servers);
     // entries = a.ts, b.ts, entry.tsx → 2 + 2 = 4 diagnostics, all chains intact
     assert_eq!(diags.len(), 4);
-    assert!(diags
-        .iter()
-        .any(|d| d.message.contains("entry.tsx -> a.ts -> db.server.ts")));
-    assert!(diags
-        .iter()
-        .any(|d| d.message.contains("entry.tsx -> b.ts -> auth.server.ts")));
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message.contains("entry.tsx -> a.ts -> db.server.ts"))
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message.contains("entry.tsx -> b.ts -> auth.server.ts"))
+    );
     assert!(diags.iter().any(|d| d.message.contains("db.server.ts")));
     assert!(diags.iter().any(|d| d.message.contains("auth.server.ts")));
 }
@@ -524,7 +531,8 @@ fn oxc_transformer_surfaces_cmp_parse_on_syntax_error() {
 
 #[test]
 fn oxc_transformer_scan_uses_ast_spans() {
-    let code = "import './a';\nimport x from './b';\nexport { y } from './c';\nexport * from './d';\n";
+    let code =
+        "import './a';\nimport x from './b';\nexport { y } from './c';\nexport * from './d';\n";
     let input = TransformInput {
         path: "mod.ts".into(),
         code: code.into(),
@@ -584,7 +592,8 @@ fn oxc_transformer_use_cache_arrow_binding_via_ast() {
 
 #[test]
 fn oxc_transformer_server_fn_client_stub_via_ast() {
-    let code = "export const addToCart = serverFn(async (id: string) => {\n  return db.add(id);\n});\n";
+    let code =
+        "export const addToCart = serverFn(async (id: string) => {\n  return db.add(id);\n});\n";
     let input = TransformInput {
         path: "cart.server.ts".into(),
         code: code.into(),
@@ -645,11 +654,7 @@ fn oxc_transformer_use_cache_hoists_tags_and_life_via_ast() {
     let out = oxc_transform(input);
     assert_eq!(out.directives.len(), 1);
     assert_eq!(out.directives[0].name.as_deref(), Some("getPosts"));
-    assert!(
-        out.code.contains("__oxide_cache("),
-        "output:\n{}",
-        out.code
-    );
+    assert!(out.code.contains("__oxide_cache("), "output:\n{}", out.code);
     assert!(
         out.code.contains("tags: ['posts']"),
         "tags must appear in options:\n{}",
@@ -741,7 +746,6 @@ fn oxc_transformer_use_cache_arrow_with_tags_via_ast() {
     assert!(out.code.contains("return 42;"));
 }
 
-
 // ---------------------------------------------------------------------------
 // §9.3: a non-literal `cacheTag(…)` argument is emitted as a thunk.
 //
@@ -788,7 +792,8 @@ fn use_cache_non_literal_tag_becomes_a_thunk() {
 fn use_cache_literal_tag_stays_a_plain_array() {
     // The static case is unchanged: a literal tag is a constant array, not
     // a thunk, so the common path has no per-call closure.
-    let code = "export const getHome = async () => {\n  'use cache'\n  cacheTag('home')\n  return 1\n}\n";
+    let code =
+        "export const getHome = async () => {\n  'use cache'\n  cacheTag('home')\n  return 1\n}\n";
     let input = TransformInput {
         path: "home.server.ts".into(),
         code: code.into(),
@@ -812,7 +817,6 @@ fn use_cache_literal_tag_stays_a_plain_array() {
         out.code
     );
 }
-
 
 // ---------------------------------------------------------------------------
 // §10.1 render-mode inference (AST pass).
@@ -839,7 +843,10 @@ fn infer_dynamic_for_cookies() {
     let m = infer_render_mode(src, "page.server.ts");
     assert_eq!(m.mode, "dynamic");
     assert_eq!(m.trigger, Some("cookies"));
-    assert!(m.trigger_span.is_some(), "a trigger span lets a diagnostic point at the read");
+    assert!(
+        m.trigger_span.is_some(),
+        "a trigger span lets a diagnostic point at the read"
+    );
 }
 
 #[test]
@@ -860,7 +867,8 @@ fn infer_dynamic_for_locals() {
 
 #[test]
 fn infer_dynamic_for_search_params() {
-    let src = "export const load = async ({ searchParams }) => {\n  return { q: searchParams.q }\n}\n";
+    let src =
+        "export const load = async ({ searchParams }) => {\n  return { q: searchParams.q }\n}\n";
     let m = infer_render_mode(src, "page.server.ts");
     assert_eq!(m.mode, "dynamic");
     assert_eq!(m.trigger, Some("searchParams"));
