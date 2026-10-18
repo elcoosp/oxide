@@ -23,8 +23,8 @@
 //! again" — the cache is never load-bearing for correctness.
 
 use oxide_graph::{CasKey, CasWriteMeta, ContentStore};
-use std::sync::Arc;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// The descriptor a precompile cache entry is keyed by.
 #[derive(Debug, Clone)]
@@ -72,12 +72,13 @@ impl PrecompileCache {
         let store = ContentStore::open(cache_root.join("cas"))?;
         let ptr_dir = cache_root.join("precompile");
         std::fs::create_dir_all(&ptr_dir).map_err(|e| {
-            oxide_graph::err(
-                "CAS-IO",
-                format!("create {}: {e}", ptr_dir.display()),
-            )
+            oxide_graph::err("CAS-IO", format!("create {}: {e}", ptr_dir.display()))
         })?;
-        Ok(Self { store, ptr_dir, remote: None })
+        Ok(Self {
+            store,
+            ptr_dir,
+            remote: None,
+        })
     }
 
     /// Open with a §5.4 remote read-through cache. A local miss consults the
@@ -136,12 +137,10 @@ impl PrecompileCache {
         // Atomic write: a half-written pointer would be a permanent miss, not a
         // corruption, but a rename keeps a concurrent reader from seeing it.
         let tmp = ptr.with_extension("ptr.tmp");
-        std::fs::write(&tmp, cas_key.hex()).map_err(|e| {
-            oxide_graph::err("CAS-IO", format!("write {}: {e}", tmp.display()))
-        })?;
-        std::fs::rename(&tmp, &ptr).map_err(|e| {
-            oxide_graph::err("CAS-IO", format!("rename {}: {e}", ptr.display()))
-        })?;
+        std::fs::write(&tmp, cas_key.hex())
+            .map_err(|e| oxide_graph::err("CAS-IO", format!("write {}: {e}", tmp.display())))?;
+        std::fs::rename(&tmp, &ptr)
+            .map_err(|e| oxide_graph::err("CAS-IO", format!("rename {}: {e}", ptr.display())))?;
         Ok(())
     }
 
@@ -169,7 +168,9 @@ impl PrecompileCache {
     /// next build (another machine, a CI job) gets a hit. Best-effort: a
     /// remote failure never fails the build.
     pub async fn put_remote(&self, key: &PrecompileKey, js: &str) {
-        let Some(remote) = self.remote.as_ref() else { return };
+        let Some(remote) = self.remote.as_ref() else {
+            return;
+        };
         let digest = key.digest();
         let cas_key = CasKey::of(js.as_bytes());
         let ptr_key = CasKey::of(format!("ptr:{digest}").as_bytes());
