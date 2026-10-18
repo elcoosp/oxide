@@ -3386,8 +3386,39 @@ fn build_dispatch(
             >,
         >,
     > = std::sync::Arc::new(dashmap::DashMap::new());
-    std::sync::Arc::new(move |req: oxide_server::OxideRequest| {
+    // §8.5: a middleware `{ rewrite }` re-routes the request to another path.
+    // The cleanest way to honour that (without duplicating the 280-line route
+    // precompute) is a bounded self-redispatch: after middleware returns a
+    // rewrite, this closure re-invokes itself with the rewritten URL and a
+    // hop header, so the new URL goes through the normal match → loader →
+    // render path. The hop header prevents an infinite rewrite loop (a
+    // middleware that always rewrites to itself would otherwise spin).
+    let self_dispatch: std::sync::Arc<std::sync::OnceLock<
+        std::sync::Arc<
+            dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
+        >,
+    >> = std::sync::Arc::new(std::sync::OnceLock::new());
+    let self_dispatch_for_closure = std::sync::Arc::clone(&self_dispatch);
+    let dispatch_fn: std::sync::Arc<
+        dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
+    > = std::sync::Arc::new(move |req: oxide_server::OxideRequest| {
             let started = std::time::Instant::now();
+            // Rewrite-hop guard (§8.5): a request that already carries the
+            // rewrite header is a re-dispatch. Cap the number of hops so a
+            // middleware that unconditionally rewrites cannot loop.
+            let rewrite_hop: u32 = req
+                .header("x-oxide-rewrite-hop")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let _is_rewritten = rewrite_hop > 0;
+            if rewrite_hop > 8 {
+                return Box::pin(async move {
+                    oxide_server::OxideResponse::html(
+                        508,
+                        "middleware rewrite loop detected (too many hops)",
+                    )
+                });
+            }
             // PERF-02: surface the pool's live gauges into the metrics registry.
             if let Some(p) = pool.as_ref() {
                 let s = p.stats();
@@ -3705,6 +3736,9 @@ fn build_dispatch(
             let endpoint_for_dispatch = endpoint_for_dispatch.clone();
             // §8.1 middleware.ts / §8.5: same shadow for middleware.
             let middleware_for_dispatch = middleware_for_dispatch.clone();
+            // §8.5: same shadow for the self-dispatch handle used by a
+            // middleware rewrite (the async block moves it per-call).
+            let self_dispatch_for_closure = self_dispatch_for_closure.clone();
             // §11 L0: only a GET on a static/isr route is a cache candidate.
             let l0 = l0.clone();
             // A route with a server module may read request state the L0 key
@@ -3806,10 +3840,26 @@ fn build_dispatch(
                                 }
                             }
                             if let Some(rw) = out.rewrite.as_deref() {
+                                // §8.5: honour the rewrite by re-dispatching
+                                // the request to the new URL through the
+                                // normal match → loader → render path. The
+                                // rewrite-hop header prevents an infinite
+                                // loop when a middleware always rewrites.
+                                if let Some(re_dispatch) =
+                                    self_dispatch_for_closure.get()
+                                {
+                                    let mut new_req = req_owned.clone();
+                                    new_req.url = rw.to_string();
+                                    new_req.headers.push((
+                                        "x-oxide-rewrite-hop".to_string(),
+                                        (rewrite_hop + 1).to_string(),
+                                    ));
+                                    return re_dispatch(new_req).await;
+                                }
                                 tracing::warn!(
                                     route = %label,
                                     rewrite = %rw,
-                                    "middleware rewrite is not re-matched in this slice (§8.5)",
+                                    "middleware rewrite: self-dispatch unavailable",
                                 );
                             }
                         }
@@ -4381,7 +4431,12 @@ fn build_dispatch(
                     )
                 }
             })
-        })
+        });
+    // §8.5: publish the dispatch closure so middleware `{ rewrite }` can
+    // re-enter it with a rewritten URL. The OnceLock is set once; subsequent
+    // calls are no-ops (a running dispatch is already published).
+    let _ = self_dispatch.set(std::sync::Arc::clone(&dispatch_fn));
+    dispatch_fn
 }
 
 pub async fn start_dev_server_full(
