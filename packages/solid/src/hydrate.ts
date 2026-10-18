@@ -13,9 +13,11 @@
 // DeferredClient slots.
 
 import { attachDeferGlue, type DeferGlue } from '../../oxide/src/client/defer-glue.ts'
+import { componentFor, getRouteComponentSource, routeIdFor } from '../../oxide/src/client/route-manifest.ts'
 import type { ClientInput, Disposer } from '../../oxide/src/types.ts'
 import { el, type ComponentFn, type Node } from './ir.ts'
 import { renderShellToString, renderNodeToString, walkTreeForHandlers, newRenderState, pageComponent, type HandlerBinding } from './render.ts'
+import { mountSolidPageRoot, type RealPageRoot } from './real-client.ts'
 
 // ---------------------------------------------------------------------------
 // Injectable DOM surfaces (structural — real elements and the fake DOM both fit)
@@ -127,10 +129,29 @@ function bindAll(
  */
 let active: ClientHandle | undefined
 
+/**
+ * §8.4 / §10.3: true when the registered client manifest resolves this route
+ * to a client chunk — the real-render path owns the page then (the caller
+ * skips the IR paint and lets the async manifest render land). The manifest
+ * source is registered by `bootWithRouter` from `/client/client.manifest.json`.
+ */
+function manifestRouteExists(route: string): boolean {
+  const src = getRouteComponentSource()
+  return src !== undefined && routeIdFor(route, src.manifest) !== undefined
+}
+
 function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts: ClientOptions): ClientHandle {
   let current = input
   let glue: DeferGlue | undefined
   let disposed = false
+  // §8.4 manifest path: the live real Solid root + the navigation sequence
+  // guard (async chunk imports can resolve out of order — an older render
+  // must never paint over a newer one) + the serialized chain (two
+  // navigations racing on the same container mount one after the other,
+  // never concurrently).
+  let realRoot: RealPageRoot | undefined
+  let renderSeq = 0
+  let realChain: Promise<void> = Promise.resolve()
   const bound: Array<{ el: OxElement; type: string; fn: (ev: unknown) => void }> = []
 
   const client: ClientHooks = {
@@ -161,23 +182,100 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
     root.innerHTML = renderShellToString(pageRenderInput(inp))
   }
 
+  /** The props a REAL page component receives — the same shape the server's
+   * real SSR path (`makeRealAdapter`) renders with, so hydration matches. */
+  function realProps(inp: ClientInput): Record<string, unknown> {
+    return { route: inp.route, url: inp.url, params: inp.params, data: inp.data }
+  }
+
+  /** Synchronous IR fallback paint (also the real path's failure mode). */
+  function renderIr(): void {
+    render(current)
+    rebind()
+  }
+
+  /**
+   * §8.4 + §10.3: the manifest-driven real render. Resolves the route's page
+   * component from the client manifest (`componentFor` → dynamic import of
+   * the route's `entry_chunk`), then mounts/hydrates it with Solid's own
+   * runtime via `mountSolidPageRoot`. Returns `false` immediately when no
+   * manifest source is registered or the route isn't in it — the caller
+   * then takes the IR fallback synchronously. When it returns `true` the
+   * async chain owns the root; a missing component, a broken chunk or an
+   * absent Solid falls back to the IR paint inside the chain (sequence-
+   * guarded, so a superseded navigation never paints).
+   */
+  function tryRealRender(seq: number, inp: ClientInput): boolean {
+    const src = getRouteComponentSource()
+    if (!src) return false
+    if (routeIdFor(inp.route, src.manifest) === undefined) return false
+    if (seq !== renderSeq) return true
+    // §7.1 / §9.2: wire deferred markers BEFORE the tree paints so the
+    // components receive promise-likes, not `{__deferred: id}` placeholders.
+    glue?.wire(current.data)
+    realChain = realChain.then(async () => {
+      if (disposed || seq !== renderSeq) return
+      const Component = await componentFor(inp.route)
+      if (disposed || seq !== renderSeq) return
+      if (Component === undefined || Component === null) {
+        renderIr()
+        return
+      }
+      try {
+        if (realRoot) {
+          realRoot.update(realProps(inp))
+          return
+        }
+        // First real mount: hydrate the SSR markup when present, fresh-mount
+        // into an empty root (SPA mode).
+        const mounted = await mountSolidPageRoot(
+          root as unknown as Element,
+          Component,
+          realProps(inp),
+          { hydrate: (root.innerHTML ?? '') !== '' },
+        )
+        if (disposed || seq !== renderSeq) {
+          mounted?.dispose()
+          return
+        }
+        if (!mounted) {
+          // solid not installed → IR fallback.
+          renderIr()
+          return
+        }
+        realRoot = mounted
+      } catch (e) {
+        console.warn?.('oxide: real page render failed; falling back to IR', e)
+        if (!disposed && seq === renderSeq) renderIr()
+      }
+    })
+    return true
+  }
+
   function update(inp: ClientInput): void {
     current = inp
-    render(inp)
-    rebind()
+    const seq = ++renderSeq
+    if (tryRealRender(seq, inp)) return
     // §7.1 / §9.2: re-wire the new page's deferred markers on navigation.
     glue?.wire(inp.data)
+    render(inp)
+    rebind()
   }
 
   // Hydration: the server markup is already in the root — do NOT rewrite it
   // (deterministic markup ⇒ no hydration mismatch, §7.2). Only bind. An empty
-  // root (defensive) falls back to a client render.
-  if (root.innerHTML === '') render(current)
-  rebind()
+  // root (defensive) falls back to a client render. When a manifest route
+  // exists the real render owns the root instead (the IR paint is skipped;
+  // the chain's IR fallback repaints if it fails).
   glue = attachDeferGlue({ doc: doc as unknown as Document, onSwap: (d) => opts.onSwap?.(d) })
   // §7.1 / §9.2: rewrite `{__deferred: id}` markers in the loader data into
   // `DeferredClient` slots so the adapter's components can await them.
-  glue.wire(current.data)
+  const seq = ++renderSeq
+  if (!tryRealRender(seq, current)) {
+    if (root.innerHTML === '') render(current)
+    rebind()
+    glue.wire(current.data)
+  }
 
   const handle: ClientHandle = {
     update,
@@ -185,6 +283,8 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
       if (disposed) return
       disposed = true
       unbind()
+      realRoot?.dispose()
+      realRoot = undefined
       glue?.dispose()
       glue = undefined
       if (active === handle) active = undefined
@@ -209,11 +309,15 @@ export function hydrate(root: OxElement, input: ClientInput, opts: ClientOptions
   return handle.dispose
 }
 
-/** SPA mode (§10.1 `spa`): render the shell into an empty root, then bind. */
+/** SPA mode (§10.1 `spa`): render the shell into an empty root, then bind.
+ * When a manifest route exists the real page component paints instead —
+ * `createClientRoot` skips the IR shell for that route (§8.4/§10.3). */
 export function mount(root: OxElement, input: ClientInput, opts: ClientOptions = {}): Disposer {
   const doc = opts.doc ?? root.ownerDocument
   if (!doc) throw new TypeError('mount: no document (pass opts.doc in non-browser tests)')
-  root.innerHTML = renderShellToString(pageRenderInput(input))
+  if (!manifestRouteExists(input.route)) {
+    root.innerHTML = renderShellToString(pageRenderInput(input))
+  }
   const handle = createClientRoot(root, input, doc, opts)
   active = handle
   return handle.dispose
