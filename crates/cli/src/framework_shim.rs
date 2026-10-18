@@ -13,8 +13,8 @@
 //! returns an `Arc<dyn PageRenderer>` ready to hand to the pipeline.
 
 use async_trait::async_trait;
-use oxide_jshost::{FrameworkHostRenderer, FrameworkRenderInput, FrameworkRenderer};
 use oxide_config::JsBackend;
+use oxide_jshost::{FrameworkHostRenderer, FrameworkRenderInput, FrameworkRenderer};
 use oxide_server::{LoaderRunner, PageRenderInput, PageRenderer};
 use std::sync::Arc;
 
@@ -29,11 +29,7 @@ pub struct HookTransformHandler {
 
 #[async_trait::async_trait]
 impl oxide_jshost::TransformHandler for HookTransformHandler {
-    async fn transform(
-        &self,
-        id: &str,
-        source: &str,
-    ) -> oxide_diagnostics::Result<String> {
+    async fn transform(&self, id: &str, source: &str) -> oxide_diagnostics::Result<String> {
         self.hook.call(id, source)
     }
 }
@@ -46,7 +42,6 @@ pub fn build_transform_handler(
     let hook = crate::build_transform_hook(root, cfg)?;
     Some(Arc::new(HookTransformHandler { hook }))
 }
-
 
 /// PERF-05: the `fetch` op handler. Delegates to `oxide-server`'s
 /// SSRF-hardened fetch, so a server-side `fetch()` in user code goes through
@@ -64,8 +59,7 @@ impl oxide_jshost::FetchHandler for CliFetchHandler {
         headers: &[(String, String)],
         body: &[u8],
     ) -> oxide_diagnostics::Result<oxide_jshost::FetchResponse> {
-        match oxide_server::ssrf_safe_fetch(method, url, headers, body, &self.ssrf_allow_list)
-            .await
+        match oxide_server::ssrf_safe_fetch(method, url, headers, body, &self.ssrf_allow_list).await
         {
             Ok((status, headers, body)) => Ok(oxide_jshost::FetchResponse {
                 status,
@@ -78,7 +72,6 @@ impl oxide_jshost::FetchHandler for CliFetchHandler {
         }
     }
 }
-
 
 /// PERF-02: the render/loader pool size — the machine's available
 /// parallelism, floored at 2 so a single-core box still has a spare worker
@@ -119,8 +112,7 @@ fn to_fw_input(input: PageRenderInput) -> FrameworkRenderInput {
     // serialization can't fail for this input shape (string keys and
     // values always map to JSON), but we degrade to `{}` on the
     // impossible path rather than panicking.
-    let params = serde_json::to_value(&input.params)
-        .unwrap_or_else(|_| serde_json::json!({}));
+    let params = serde_json::to_value(&input.params).unwrap_or_else(|_| serde_json::json!({}));
     FrameworkRenderInput {
         route: input.route,
         url: input.url,
@@ -141,10 +133,7 @@ impl PageRenderer for AdapterPageRenderer {
         self.inner.name()
     }
 
-    async fn render(
-        &self,
-        input: PageRenderInput,
-    ) -> oxide_server::Result<String> {
+    async fn render(&self, input: PageRenderInput) -> oxide_server::Result<String> {
         self.inner.render(to_fw_input(input)).await
     }
 
@@ -267,6 +256,43 @@ fn backend_str(b: JsBackend) -> &'static str {
     }
 }
 
+/// §11.2 / SPEC-12: map the project's `cache.handler` selection onto the
+/// shared TieredCache. Only the `http` handler has a Rust driver today: it
+/// attaches as the REMOTE tier (`TieredCache::with_remote`) so `'use cache'`
+/// and the L0 response cache read through / write through it. `redis`/`s3`
+/// are warn-and-no-op (no driver shipped); `memory`/`disk` are the local
+/// tiers the caller already materialized.
+///
+/// Pure so the decision is unit testable without a worker pool — this is
+/// the seam that USED to be dead: the CLI's own `cache.handler` arm only
+/// ran when `stack.cache_tier` was `None`, which never happens for a
+/// stack this function builds.
+pub fn remote_cache_url(handler: Option<&oxide_config::CacheHandlerConfig>) -> Option<String> {
+    match handler {
+        Some(oxide_config::CacheHandlerConfig::Http { url }) => Some(url.clone()),
+        Some(oxide_config::CacheHandlerConfig::Redis { url }) => {
+            tracing::warn!(
+                url = %url,
+                "cache.handler=redis is not implemented in this build; \
+                 use cache.handler={{type:'http',url}} against an HTTP cache \
+                 gateway, or 'disk' for a local tier",
+            );
+            None
+        }
+        Some(oxide_config::CacheHandlerConfig::S3 { bucket }) => {
+            tracing::warn!(
+                bucket = %bucket,
+                "cache.handler=s3 is not implemented in this build; \
+                 use cache.handler={{type:'http',url}} against an S3-backed \
+                 HTTP cache gateway",
+            );
+            None
+        }
+        // `memory` needs no remote; `disk` is attached by the caller below.
+        _ => None,
+    }
+}
+
 pub async fn build_framework_stack(
     config_path: Option<&std::path::Path>,
     backend: JsBackend,
@@ -275,6 +301,10 @@ pub async fn build_framework_stack(
     // it — reaching the prerender path (which renders through the worker,
     // not the bundler).
     transform_handler: Option<Arc<dyn oxide_jshost::TransformHandler>>,
+    // §11.2 / SPEC-12: the project's `cache.handler` selection, threaded in
+    // by every `cmd_*` call site so the tier the WORKER sees honors the
+    // config. `None` keeps the memory/disk-only tier (tests, defaults).
+    cache_handler: Option<&oxide_config::CacheHandlerConfig>,
 ) -> FrameworkStack {
     use oxide_jshost::{JsHost, NodeHost, PoolConfig, V8Host};
 
@@ -301,7 +331,9 @@ pub async fn build_framework_stack(
     // once `deno_node` module loading lands.
     // §9.3 / §11: a Rust cache tier the worker reaches through the
     // `op_request` protocol. Memory-only by default; a project that
-    // configures a disk root gets the L1 tier too.
+    // configures a disk root gets the L1 tier too; §11.2: a configured
+    // `cache.handler=http` attaches an `HttpCacheHandler` REMOTE tier via
+    // `with_remote` so `'use cache'` reads/writes through it.
     let cache_tier: Arc<dyn oxide_cache::CacheHandler> = {
         let t = oxide_cache::TieredCache::new(512 * 1024 * 1024);
         // A disk root beside the config, when one is known. `with_disk`
@@ -314,9 +346,17 @@ pub async fn build_framework_stack(
             .map(|root| root.join(".oxide/cache/l1"))
             .filter(|d| std::fs::create_dir_all(d).is_ok());
         let with_disk = disk.and_then(|d| t.with_disk(d).ok());
-        match with_disk {
-            Some(c) => Arc::new(c),
-            None => Arc::new(oxide_cache::TieredCache::new(512 * 1024 * 1024)),
+        let tier = match with_disk {
+            Some(c) => c,
+            None => oxide_cache::TieredCache::new(512 * 1024 * 1024),
+        };
+        // §11.2: the remote tier. `remote_cache_url` warns-and-no-ops for
+        // redis/s3 (no driver in this build) and returns the url for http.
+        match remote_cache_url(cache_handler) {
+            Some(url) => {
+                Arc::new(tier.with_remote(Arc::new(oxide_cache::HttpCacheHandler::new(url))))
+            }
+            None => Arc::new(tier),
         }
     };
 
@@ -363,7 +403,10 @@ pub async fn build_framework_stack(
     // a hardcoded 2. Under load a 2-worker pool throttles TTFB; the spec
     // calls for "physical cores" (min 2, so a single-core CI box still works).
     let pool_size = render_pool_size();
-    let pool = match host.tooling_pool(PoolConfig { size: pool_size, ..Default::default() }) {
+    let pool = match host.tooling_pool(PoolConfig {
+        size: pool_size,
+        ..Default::default()
+    }) {
         Ok(p) => p,
         Err(e) => {
             eprintln!(
@@ -389,9 +432,11 @@ pub async fn build_framework_stack(
             if let Some(t) = transform_handler.as_ref() {
                 h = h.with_transform_handler(Arc::clone(t));
             }
-            h.tooling_pool(PoolConfig { size: pool_size, ..Default::default() })
-        }
-        {
+            h.tooling_pool(PoolConfig {
+                size: pool_size,
+                ..Default::default()
+            })
+        } {
             Ok(p) => p,
             Err(e) => {
                 eprintln!(
@@ -407,9 +452,8 @@ pub async fn build_framework_stack(
     };
 
     // The loader runner needs only the pool — it resolves modules per request.
-    let loader_runner: Arc<dyn LoaderRunner> = crate::loader_shim::build_loader_runner(
-        Arc::clone(&pool),
-    );
+    let loader_runner: Arc<dyn LoaderRunner> =
+        crate::loader_shim::build_loader_runner(Arc::clone(&pool));
 
     // Keep a second Arc reference to the pool so callers (notably cmd_dev's
     // watcher) can send out-of-band ops after the renderer/loader have been
@@ -433,8 +477,11 @@ pub async fn build_framework_stack(
             // The raw config; `bundled_path` above is preferred at resolve time.
             let config_path = path.to_string_lossy().to_string();
             let bundled_path = if matches!(backend, JsBackend::V8) {
-                path.parent()
-                    .map(|root| root.join(".oxide/config.server.js").to_string_lossy().to_string())
+                path.parent().map(|root| {
+                    root.join(".oxide/config.server.js")
+                        .to_string_lossy()
+                        .to_string()
+                })
             } else {
                 None
             };
@@ -510,10 +557,7 @@ impl FrameworkRenderer for LazyFrameworkRenderer {
     fn name(&self) -> &str {
         &self.name
     }
-    async fn render(
-        &self,
-        input: FrameworkRenderInput,
-    ) -> oxide_jshost::Result<String> {
+    async fn render(&self, input: FrameworkRenderInput) -> oxide_jshost::Result<String> {
         self.resolve().await?.render(input).await
     }
     async fn render_streaming(
@@ -542,12 +586,9 @@ pub async fn build_adapter_renderer(
         .tooling_pool(PoolConfig::default())
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
 
-    let host_renderer = FrameworkHostRenderer::new(
-        pool,
-        config_path.to_string_lossy().to_string(),
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+    let host_renderer = FrameworkHostRenderer::new(pool, config_path.to_string_lossy().to_string())
+        .await
+        .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
 
     let inner: Arc<dyn FrameworkRenderer> = Arc::new(host_renderer);
     Ok(Arc::new(AdapterPageRenderer::new(inner)))
@@ -567,10 +608,7 @@ mod tests {
         fn name(&self) -> &str {
             "echo-fw"
         }
-        async fn render(
-            &self,
-            input: FrameworkRenderInput,
-        ) -> oxide_jshost::Result<String> {
+        async fn render(&self, input: FrameworkRenderInput) -> oxide_jshost::Result<String> {
             let params_json = serde_json::to_string(&input.params).unwrap_or_default();
             Ok(format!(
                 "<!doctype html><html><body><h1>route={}</h1><pre>{}</pre></body></html>",
@@ -587,10 +625,7 @@ mod tests {
         fn name(&self) -> &str {
             "boom-fw"
         }
-        async fn render(
-            &self,
-            _input: FrameworkRenderInput,
-        ) -> oxide_jshost::Result<String> {
+        async fn render(&self, _input: FrameworkRenderInput) -> oxide_jshost::Result<String> {
             Err(oxide_jshost::err(
                 "JSH-FRAMEWORK",
                 "simulated render failure",
@@ -613,7 +648,10 @@ mod tests {
 
         let html = r.render(input).await.expect("render ok");
         assert!(html.contains("route=routes/blog/[slug]"), "{html}");
-        assert!(html.contains(r#""slug":"hello""#), "params converted: {html}");
+        assert!(
+            html.contains(r#""slug":"hello""#),
+            "params converted: {html}"
+        );
     }
 
     #[tokio::test]
@@ -623,7 +661,10 @@ mod tests {
             .render(PageRenderInput::new("routes/index", "/"))
             .await
             .unwrap();
-        assert!(html.contains("<pre>{}</pre>"), "empty params → `{{}}`: {html}");
+        assert!(
+            html.contains("<pre>{}</pre>"),
+            "empty params → `{{}}`: {html}"
+        );
     }
 
     #[tokio::test]
@@ -654,7 +695,9 @@ mod tests {
 
     #[async_trait]
     impl oxide_jshost::FrameworkRenderer for ChunkedRenderer {
-        fn name(&self) -> &str { "chunked" }
+        fn name(&self) -> &str {
+            "chunked"
+        }
         async fn render(
             &self,
             _input: oxide_jshost::FrameworkRenderInput,
