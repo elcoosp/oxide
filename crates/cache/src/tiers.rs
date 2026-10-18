@@ -15,16 +15,16 @@
 //! 32 bytes roughly cover status/etag/timestamp bookkeeping). The canonical cache key
 //! length is not counted (it is a constant per layer in practice).
 
-use crate::{err, CacheHandler, Entry, Hit, Result};
+use crate::{CacheHandler, Entry, Hit, Result, err};
 use dashmap::DashMap;
 use moka::sync::Cache as MokaCache;
 use oxide_diagnostics::{Diagnostic, OxideError};
-use redb::{Database, ReadableTable, TableDefinition};
 use redb::ReadableDatabase;
+use redb::{Database, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Current wall clock in unix milliseconds (the crate-wide time base for §11.3).
@@ -830,7 +830,6 @@ mod tests {
         assert!(PATH_TAG_PREFIX.starts_with("path"));
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // §11.2: `TieredCache` as a `CacheHandler`.
