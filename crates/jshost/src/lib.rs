@@ -3082,6 +3082,7 @@ fn drop_stream(worker: &Worker, id: u64) {
 async fn op_dispatch(
     cache: Option<&dyn oxide_cache::CacheHandler>,
     fetch: Option<&dyn FetchHandler>,
+    transform: Option<&dyn TransformHandler>,
     memo: Option<&oxide_cache::FetchMemo>,
     streams: Option<Arc<std::sync::Mutex<HashMap<u64, mpsc::Sender<Result<Bytes>>>>>>,
     op: Op,
@@ -3195,9 +3196,24 @@ async fn op_dispatch(
                 Some("js") | Some("mjs") => "mjs",
                 _ => "ts",
             };
+            // §6.2 / §15: run the plugin `transform` hook FIRST, before the
+            // Oxc passes. This is what makes a plugin transform reach the
+            // prerender path — the prerender compiles modules through this
+            // op. A hook error fails the module's compile with the hook's
+            // diagnostic.
+            let source_owned: String = if let Some(h) = transform {
+                h.transform(path, code).await.map_err(|e| {
+                    err(
+                        "JSH-COMPILE",
+                        format!("plugin transform failed for {path}: {}", e.0.message),
+                    )
+                })?
+            } else {
+                code.to_string()
+            };
             let input = oxide_compiler::TransformInput {
                 path: path.to_string(),
-                code: code.to_string(),
+                code: source_owned,
                 // The loader path is server-side: the passes that matter
                 // here (`'use cache'` on a `.server.ts`) run on `Ssr`.
                 env: oxide_compiler::Env::Ssr,
@@ -3402,12 +3418,14 @@ fn handle_worker_msg(msg: WorkerMsg, worker: &Arc<Worker>) {
         WorkerMsg::OpRequest { id, op, args } => {
             let cache = worker.cache.lock().unwrap().clone();
             let fetch = worker.fetch.lock().unwrap().clone();
+            let transform = worker.transform.lock().unwrap().clone();
             let streams = Arc::clone(&worker.streams);
             let worker = Arc::clone(worker);
             tokio::spawn(async move {
                 let (ok, data) = match op_dispatch(
                     cache.as_deref(),
                     fetch.as_deref(),
+                    transform.as_deref(),
                     None,
                     Some(Arc::clone(&streams)),
                     op,
@@ -3536,7 +3554,7 @@ mod perf01_tests {
     #[tokio::test]
     async fn serialize_op_encodes_odf() {
         let args = serde_json::json!({ "value": { "a": 1, "b": [true, null] } });
-        let out = op_dispatch(None, None, None, None, Op::Serialize, &args).await.expect("serialize ok");
+        let out = op_dispatch(None, None, None, None, None, Op::Serialize, &args).await.expect("serialize ok");
         let b64 = out["b64"].as_str().expect("b64 field");
         let bytes = base64::Engine::decode(
             &base64::engine::general_purpose::STANDARD,
@@ -3551,7 +3569,7 @@ mod perf01_tests {
 
     #[tokio::test]
     async fn serialize_op_requires_a_value() {
-        let out = op_dispatch(None, None, None, None, Op::Serialize, &serde_json::json!({})).await;
+        let out = op_dispatch(None, None, None, None, None, Op::Serialize, &serde_json::json!({})).await;
         assert!(out.is_err(), "missing value is an error");
     }
 }
@@ -3582,7 +3600,7 @@ mod perf05_tests {
     async fn fetch_op_delegates_to_the_handler() {
         let h = Echo;
         let args = serde_json::json!({ "url": "https://x.test/p", "method": "get" });
-        let out = op_dispatch(None, Some(&h), None, None, Op::Fetch, &args)
+        let out = op_dispatch(None, Some(&h), None, None, None, Op::Fetch, &args)
             .await
             .expect("fetch ok");
         assert_eq!(out["status"], 200);
@@ -3597,7 +3615,7 @@ mod perf05_tests {
     #[tokio::test]
     async fn fetch_op_without_a_handler_errors() {
         let args = serde_json::json!({ "url": "https://x.test/" });
-        assert!(op_dispatch(None, None, None, None, Op::Fetch, &args).await.is_err());
+        assert!(op_dispatch(None, None, None, None, None, Op::Fetch, &args).await.is_err());
     }
 
     #[tokio::test]
@@ -3605,9 +3623,9 @@ mod perf05_tests {
         let h = Echo;
         let memo = oxide_cache::FetchMemo::default();
         let args = serde_json::json!({ "url": "https://x.test/memo", "method": "GET" });
-        let _ = op_dispatch(None, Some(&h), Some(&memo), None, Op::Fetch, &args).await.unwrap();
+        let _ = op_dispatch(None, Some(&h), None, Some(&memo), None, Op::Fetch, &args).await.unwrap();
         // A second call for the same GET hits the memo (same body).
-        let out = op_dispatch(None, Some(&h), Some(&memo), None, Op::Fetch, &args).await.unwrap();
+        let out = op_dispatch(None, Some(&h), None, Some(&memo), None, Op::Fetch, &args).await.unwrap();
         assert_eq!(out["status"], 200);
     }
 }
