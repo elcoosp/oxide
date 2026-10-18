@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::{ferr, Result, RouteEntry, RouteId, RouteKind, RouteTree};
+use crate::{Result, RouteEntry, RouteId, RouteKind, RouteTree, ferr};
 
 /// Conventional file bases recognized by the scanner (extension-agnostic, §8.1).
 const CONVENTION_BASES: &[&str] = &[
