@@ -4251,10 +4251,16 @@ fn build_dispatch(
                     {
                         Ok(out) => {
                             metrics.observe(&label, started.elapsed(), out.status);
-                            let mut resp = oxide_server::OxideResponse::new(
-                                out.status,
-                                bytes::Bytes::from(out.body),
-                            );
+                            // §9.6: a streaming route.ts (SSE, downloads)
+                            // drives the response body from `out.stream`;
+                            // a buffered one uses `out.body`.
+                            let mut resp = match out.stream {
+                                Some(stream) => oxide_server::OxideResponse::stream(out.status, stream),
+                                None => oxide_server::OxideResponse::new(
+                                    out.status,
+                                    bytes::Bytes::from(out.body),
+                                ),
+                            };
                             for (k, v) in &out.headers {
                                 resp = resp.with_header(k, v.clone());
                             }
@@ -4919,11 +4925,37 @@ impl oxide_server::EndpointDispatcher for EndpointDispatcherImpl {
         locals: &serde_json::Value,
     ) -> std::result::Result<oxide_server::EndpointRunResult, oxide_server::EndpointRunError> {
         match self.host.run(module_path, method, url, params, headers, body, locals).await {
-            Ok(out) => Ok(oxide_server::EndpointRunResult {
-                status: out.status,
-                headers: out.headers,
-                body: out.body,
-            }),
+            Ok(out) => {
+                // §9.6: a streaming outcome's receiver becomes a `BodyStream`.
+                let stream: Option<oxide_server::BodyStream> = out.stream.map(|mut rx| {
+                    // The worker's chunk receiver carries `OxideError`; the
+                    // transport body stream carries `std::io::Error`. Pump
+                    // through a fresh channel that maps at the boundary,
+                    // preserving the diagnostic code/message.
+                    let (tx, mut out_rx) = tokio::sync::mpsc::channel::<
+                        std::result::Result<bytes::Bytes, std::io::Error>,
+                    >(8);
+                    tokio::spawn(async move {
+                        while let Some(item) = rx.recv().await {
+                            let mapped = item.map_err(|e| {
+                                std::io::Error::other(format!("{}: {}", e.0.code, e.0.message))
+                            });
+                            if tx.send(mapped).await.is_err() {
+                                return;
+                            }
+                        }
+                    });
+                    Box::pin(futures::stream::poll_fn(move |cx| {
+                        out_rx.poll_recv(cx)
+                    })) as oxide_server::BodyStream
+                });
+                Ok(oxide_server::EndpointRunResult {
+                    status: out.status,
+                    headers: out.headers,
+                    body: out.body,
+                    stream,
+                })
+            }
             Err(e) => Err(oxide_server::EndpointRunError {
                 status: 500,
                 code: e.0.code.to_string().replace("JSH-ENDPOINT", "ENDPOINT"),
