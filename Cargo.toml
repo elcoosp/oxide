@@ -107,7 +107,11 @@ miette = { version = "7.6.0", features = ["fancy"] }
 
 # Testing
 proptest = "1.12.0"
-insta = { version = "1.49.0", features = ["yaml", "json"] }
+# No `json`/`yaml` features: they pull `serde_json/preserve_order`, which
+# silently flips every `serde_json::Value` in the workspace from sorted keys
+# to insertion order — a production-visible semantic change caused by a
+# test-only dependency. All snapshot assertions here are on strings.
+insta = "1.49.0"
 tempfile = "3.27.0"
 tokio-test = "0.4.6"
 mimalloc = { version = "0.1" }
