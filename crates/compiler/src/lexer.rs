@@ -298,9 +298,10 @@ mod tests {
         assert!(kinds.contains(&&Tok::TemplateMid));
         assert!(kinds.contains(&&Tok::TemplateEnd));
         // the string 'x' inside the nested interpolation is a Str token
-        assert!(toks
-            .iter()
-            .any(|t| matches!(&t.kind, Tok::Str { value } if value == "x")));
+        assert!(
+            toks.iter()
+                .any(|t| matches!(&t.kind, Tok::Str { value } if value == "x"))
+        );
     }
 
     #[test]
@@ -313,9 +314,10 @@ mod tests {
             .map(|t| &src[t.start..t.end])
             .collect();
         assert_eq!(words, vec!["const", "s"]);
-        assert!(toks
-            .iter()
-            .any(|t| matches!(&t.kind, Tok::Str { value } if value == "hello")));
+        assert!(
+            toks.iter()
+                .any(|t| matches!(&t.kind, Tok::Str { value } if value == "hello"))
+        );
     }
 
     #[test]
