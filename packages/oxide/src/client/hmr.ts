@@ -4,7 +4,10 @@
 //
 // Message kinds (mirror `oxide_dev::HmrMessage`):
 //   - `css-update`        swap a <link> href to the new CSS
-//   - `route-data-update` re-render with the new ODF data (the router's job)
+//   - `route-data-update` re-fetch `/__data` for the current route (or decode
+//                         the pushed `odf_b64`) and dispatch `ox:data` with a
+//                         fresh ClientInput — `bootWithRouter` feeds it to
+//                         `adapter.update` so a loader edit re-renders in place
 //   - `module-update`     apply a component module (via the adapter's HMR hook)
 //   - `server-module-swap` a server module changed — full reload
 //   - `full-reload`       reload the page
@@ -13,6 +16,8 @@
 //
 // Fully guarded: a no-op outside the browser, so `@oxide/react` can re-export
 // it and the config loader can evaluate it in the Node worker.
+
+import { decodeOdf } from './odf-decode.ts'
 
 export interface HmrMessage {
   type: string
@@ -104,6 +109,66 @@ export function showOverlay(diag: { code?: string; message?: string; fix?: strin
   return el
 }
 
+/**
+ * §13.3 `route-data-update`: a page loader changed in dev. The dev server
+ * publishes the route as a FILE path (not a URL) and an empty `odf_b64`
+ * today, so the actionable refresh is: decode a non-empty `odf_b64` inline,
+ * otherwise re-fetch `/__data` for the CURRENT location, then dispatch
+ * `ox:data` on the document with the normalized ClientInput — the same
+ * event `bootWithRouter` consumes to call `adapter.update` (the same data
+ * path a navigation uses, §8.4). All failures are silent: an HMR data
+ * refresh is best-effort and must never break the socket loop.
+ */
+async function refreshRouteData(odfB64: string): Promise<void> {
+  const g = globalThis as {
+    document?: { dispatchEvent?(ev: unknown): boolean }
+    location?: { pathname: string; search: string }
+    fetch?: typeof fetch
+    CustomEvent?: new (type: string, opts: { detail?: unknown }) => unknown
+  }
+  const path = (g.location?.pathname ?? '/') + (g.location?.search ?? '')
+  let decoded: unknown
+  if (odfB64.length > 0) {
+    try {
+      const bin = atob(odfB64)
+      const bytes = new Uint8Array(bin.length)
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+      decoded = decodeOdf(bytes)
+    } catch {
+      return // a malformed pushed payload is ignored, not fatal
+    }
+  } else {
+    if (typeof g.fetch !== 'function') return
+    try {
+      const res = await g.fetch(`/__data?route=${encodeURIComponent(path)}`, {
+        headers: { accept: 'application/oxide+odf, application/json' },
+      })
+      if (!res.ok) return
+      decoded = decodeOdf(new Uint8Array(await res.arrayBuffer()))
+    } catch {
+      return
+    }
+  }
+  // Same normalization as the router's `normalizeInput` (§8.4): the /__data
+  // envelope is `{ route, url, params, data }`; a bare payload IS the data.
+  const d = (typeof decoded === 'object' && decoded !== null ? decoded : {}) as Record<string, unknown>
+  const input = {
+    route: (d.route as string) ?? path,
+    url: (d.url as string) ?? path,
+    params: (d.params as Record<string, string | string[]>) ?? {},
+    data: 'data' in d ? d.data : decoded,
+  }
+  try {
+    const detail = { route: path, input }
+    const ev = typeof g.CustomEvent === 'function'
+      ? new g.CustomEvent('ox:data', { detail })
+      : { type: 'ox:data', detail }
+    g.document?.dispatchEvent?.(ev)
+  } catch {
+    // A listener throwing must not break the HMR socket loop.
+  }
+}
+
 /** Apply one HMR message. Returns true when handled. */
 export function applyHmrMessage(msg: HmrMessage, opts: HmrOptions = {}): boolean {
   const doc = (globalThis as { document?: Document }).document
@@ -119,6 +184,10 @@ export function applyHmrMessage(msg: HmrMessage, opts: HmrOptions = {}): boolean
       const route = String(msg.route ?? '')
       const odf = String(msg.odf_b64 ?? '')
       opts.onRouteData?.(route, odf)
+      // §13.3: re-fetch (or decode) the fresh loader data and re-dispatch it
+      // through the same event the boot machinery consumes. Async and
+      // silent — the message itself is handled synchronously.
+      void refreshRouteData(odf)
       return true
     }
     case 'module-update': {
