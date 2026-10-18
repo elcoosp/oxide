@@ -8,7 +8,7 @@
 //! fresh tempdir per target. No bundler, no Node, no fixture project: just
 //! the adapter emission path in isolation.
 
-use oxide_adapters::{emit, BuildArtifact, Target};
+use oxide_adapters::{BuildArtifact, Target, emit};
 use std::collections::BTreeMap;
 use std::fs;
 use tempfile::TempDir;
@@ -50,18 +50,52 @@ fn minimal_artifact(root: &std::path::Path, with_prerendered: bool) -> BuildArti
 /// `deploy.json` is included in every row because every target emits it
 /// (it carries `target` and `build_id` for the operator).
 const MATRIX: &[(Target, &[&str])] = &[
-    (Target::Binary,     &["deploy.json", "README.txt"]),
-    (Target::Node,       &["deploy.json", "server.mjs", "package.json"]),
-    (Target::Docker,     &["deploy.json", "Dockerfile"]),
-    (Target::Cloudflare, &["deploy.json", "worker.js", "wrangler.toml", "_routes.json", "edge.js"]),
-    (Target::CloudflarePages, &["deploy.json", "_worker.js", "wrangler.toml", "_routes.json", "edge.js"]),
-    (Target::Vercel,     &["deploy.json", "vercel.json", "api/handler.mjs"]),
-    (Target::VercelFunctions, &["deploy.json", "vercel.json", "api/handler.mjs"]),
-    (Target::Netlify,    &["deploy.json", "netlify.toml", "netlify/functions/handler.mjs"]),
-    (Target::Lambda,     &["deploy.json", "handler.mjs", "template.yaml"]),
-    (Target::Deno,       &["deploy.json", "server.ts", "deno.json"]),
-    (Target::Bun,        &["deploy.json", "server.ts"]),
-    (Target::Static,     &["deploy.json", "index.html"]),
+    (Target::Binary, &["deploy.json", "README.txt"]),
+    (Target::Node, &["deploy.json", "server.mjs", "package.json"]),
+    (Target::Docker, &["deploy.json", "Dockerfile"]),
+    (
+        Target::Cloudflare,
+        &[
+            "deploy.json",
+            "worker.js",
+            "wrangler.toml",
+            "_routes.json",
+            "edge.js",
+        ],
+    ),
+    (
+        Target::CloudflarePages,
+        &[
+            "deploy.json",
+            "_worker.js",
+            "wrangler.toml",
+            "_routes.json",
+            "edge.js",
+        ],
+    ),
+    (
+        Target::Vercel,
+        &["deploy.json", "vercel.json", "api/handler.mjs"],
+    ),
+    (
+        Target::VercelFunctions,
+        &["deploy.json", "vercel.json", "api/handler.mjs"],
+    ),
+    (
+        Target::Netlify,
+        &[
+            "deploy.json",
+            "netlify.toml",
+            "netlify/functions/handler.mjs",
+        ],
+    ),
+    (
+        Target::Lambda,
+        &["deploy.json", "handler.mjs", "template.yaml"],
+    ),
+    (Target::Deno, &["deploy.json", "server.ts", "deno.json"]),
+    (Target::Bun, &["deploy.json", "server.ts"]),
+    (Target::Static, &["deploy.json", "index.html"]),
 ];
 
 #[test]
@@ -74,9 +108,8 @@ fn each_target_emits_its_characteristic_files() {
         // Static needs the prerendered source present; others ignore it.
         let artifact = minimal_artifact(tmp.path(), *target == Target::Static);
 
-        let written = emit(*target, &artifact, &out).unwrap_or_else(|e| {
-            panic!("emit({target:?}) failed: {} {}", e.0.code, e.0.message)
-        });
+        let written = emit(*target, &artifact, &out)
+            .unwrap_or_else(|e| panic!("emit({target:?}) failed: {} {}", e.0.code, e.0.message));
 
         for name in *expected {
             let p = out.join(name);
@@ -229,8 +262,17 @@ fn dockerfile_healthcheck_uses_the_oxide_path() {
         }
         // Common instruction prefixes in our Dockerfile.
         const KNOWN: &[&str] = &[
-            "FROM ", "WORKDIR ", "COPY ", "RUN ", "USER ", "ENV ",
-            "EXPOSE ", "HEALTHCHECK ", "ENTRYPOINT ", "CMD ", "ARG ",
+            "FROM ",
+            "WORKDIR ",
+            "COPY ",
+            "RUN ",
+            "USER ",
+            "ENV ",
+            "EXPOSE ",
+            "HEALTHCHECK ",
+            "ENTRYPOINT ",
+            "CMD ",
+            "ARG ",
         ];
         assert!(
             KNOWN.iter().any(|p| trimmed.starts_with(p)),
