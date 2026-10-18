@@ -2586,14 +2586,14 @@ impl Pipeline {
                             resp = resp.with_header("Content-Language", loc.clone());
                         }
                     }
-                    self.finish_response_full(
+                    self.finish_response_full_async(
                         resp,
                         &rule_headers,
                         &request_id,
                         Some(&method),
                         cookie.as_deref(),
                         accept_encoding.as_deref(),
-                    )
+                    ).await
                 })
             }
         }
@@ -2916,6 +2916,9 @@ impl Pipeline {
     /// the caller passes the request's `Accept-Encoding`. Kept separate so the
     /// many existing call sites (which have no body worth compressing, or a
     /// pre-compressed static asset) do not need the extra argument.
+    /// PERF-06: the sync form finalizes headers/security only. Dynamic
+    /// compression lives in [`Self::finish_response_full_async`] so the CPU
+    /// work runs on the blocking pool, not a Tokio worker.
     fn finish_response_full(
         &self,
         resp: OxideResponse,
@@ -2925,35 +2928,55 @@ impl Pipeline {
         cookie_header: Option<&str>,
         accept_encoding: Option<&str>,
     ) -> OxideResponse {
-        // PERF-06: dynamic compression (§12.1 step 8). Only a non-streaming
-        // body with a compressible content type and no existing encoding is
-        // compressed; a static asset already carries its precompressed
-        // encoding and arrives with a `Content-Encoding` header.
-        let mut resp = resp;
+        let _ = accept_encoding;
+        self.finish_response_inner(resp, rule_headers, request_id, method, cookie_header)
+    }
+
+    /// PERF-06 / §12.1 step 8: dynamic compression off the reactor.
+    /// `zstd`/`gzip` at level 3 on a 50 KB page is ~0.2-0.5 ms of pure CPU;
+    /// inline on a Tokio worker it blocks every other task on that worker.
+    /// `spawn_blocking` moves it to the blocking pool. Only a non-streaming
+    /// body with a compressible content type and no existing encoding is
+    /// considered — a static asset arrives pre-compressed.
+    async fn finish_response_full_async(
+        &self,
+        mut resp: OxideResponse,
+        rule_headers: &[(String, String)],
+        request_id: &str,
+        method: Option<&str>,
+        cookie_header: Option<&str>,
+        accept_encoding: Option<&str>,
+    ) -> OxideResponse {
         if let Some(ae) = accept_encoding {
-            if resp.stream.is_none()
+            let compressible = resp.stream.is_none()
                 && !resp.body.is_empty()
                 && !resp
                     .headers
                     .iter()
-                    .any(|(k, _)| k.eq_ignore_ascii_case("content-encoding"))
-            {
-                let ct = resp
+                    .any(|(k, _)| k.eq_ignore_ascii_case("content-encoding"));
+            if compressible {
+                let ct_owned = resp
                     .headers
                     .iter()
                     .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
-                    .map(|(_, v)| v.as_str())
-                    .unwrap_or("");
-                if is_compressible(ct) {
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or_default();
+                if is_compressible(&ct_owned) {
                     if let Some(enc) = negotiate_encoding(ae, &["zstd", "gzip"]) {
-                        if let Ok(compressed) = compress_body(&enc, &resp.body, 3) {
-                            // Only worth it if it actually shrank.
-                            if compressed.len() < resp.body.len() {
+                        let body = resp.body.clone();
+                        let orig_len = body.len();
+                        let enc_for_task = enc.clone();
+                        let joined = tokio::task::spawn_blocking(move || {
+                            compress_body(&enc_for_task, &body, 3).ok()
+                        })
+                        .await;
+                        if let Ok(Some(compressed)) = joined {
+                            if compressed.len() < orig_len {
                                 resp.body = compressed;
                                 resp.headers
                                     .retain(|(k, _)| !k.eq_ignore_ascii_case("content-length"));
                                 resp.headers
-                                    .push(("Content-Encoding".to_string(), enc.clone()));
+                                    .push(("Content-Encoding".to_string(), enc));
                                 resp.headers
                                     .push(("Vary".to_string(), "Accept-Encoding".to_string()));
                             }
@@ -2962,7 +2985,7 @@ impl Pipeline {
                 }
             }
         }
-        self.finish_response_inner(resp, rule_headers, request_id, method, cookie_header)
+        self.finish_response_full(resp, rule_headers, request_id, method, cookie_header, None)
     }
 
     fn finish_response_inner(
