@@ -10,7 +10,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
     CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
 };
-use rmcp::{tool, tool_router, ErrorData, ServerHandler};
+use rmcp::{ErrorData, ServerHandler, tool, tool_router};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -93,10 +93,8 @@ impl OxideMcp {
         Self { root }
     }
 
-    #[tool(
-        description = "List every route in the project: pattern, kind \
-                       (page|endpoint|layout), inferred render mode, and cache tags."
-    )]
+    #[tool(description = "List every route in the project: pattern, kind \
+                       (page|endpoint|layout), inferred render mode, and cache tags.")]
     pub async fn oxide_routes(
         &self,
         Parameters(NoArgs {}): Parameters<NoArgs>,
