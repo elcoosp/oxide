@@ -2,9 +2,8 @@
 //! the public API as a caller would.
 
 use oxide_assets::{
-    build_search_index, check_references, parse_mdx_source, scan_collection,
-    search_index_to_json, validate_collection, CollectionConfig, FieldType, NativeSchema,
-    SchemaKind,
+    CollectionConfig, FieldType, NativeSchema, SchemaKind, build_search_index, check_references,
+    parse_mdx_source, scan_collection, search_index_to_json, validate_collection,
 };
 use std::fs;
 use std::path::Path;
@@ -120,7 +119,11 @@ fn parse_mdx_source_yields_compile_request_targeting_mdx_js() {
 #[test]
 fn search_index_is_stable_and_byte_identical() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), "a.md", "---\ntitle: Alpha\n---\nRust is fast.\n");
+    write(
+        dir.path(),
+        "a.md",
+        "---\ntitle: Alpha\n---\nRust is fast.\n",
+    );
     write(dir.path(), "b.md", "---\ntitle: Beta\n---\nRust is safe.\n");
     let coll = scan_collection(&cfg(dir.path(), SchemaKind::Unchecked)).unwrap();
     let i1 = build_search_index(&coll, &["title".into()]);
@@ -178,10 +181,8 @@ fn external_schema_requires_nonempty_frontmatter() {
 fn native_schema_serialization_round_trip() {
     let mut s = NativeSchema::empty();
     s.required.insert("title".into(), FieldType::String);
-    s.optional.insert(
-        "tags".into(),
-        FieldType::Array(Box::new(FieldType::String)),
-    );
+    s.optional
+        .insert("tags".into(), FieldType::Array(Box::new(FieldType::String)));
     let json = serde_json::to_value(&s).unwrap();
     let back: NativeSchema = serde_json::from_value(json).unwrap();
     assert_eq!(back, s);
