@@ -2,7 +2,7 @@
 //! through its public API: env-file parsing, size parsing, static extraction
 //! (including the exact §14.1 example), layering, validation and public env.
 
-use oxide_config::{extract_static_config, load_with_env, parse_env_file, parse_size, OxideConfig};
+use oxide_config::{OxideConfig, extract_static_config, load_with_env, parse_env_file, parse_size};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -729,7 +729,6 @@ fn typed_config_serializes_camel_case_and_roundtrips() {
     assert_eq!(back, cfg);
 }
 
-
 // ---------------------------------------------------------------------------
 // extract_islands_map — §10.3 regression tests.
 //
@@ -791,9 +790,16 @@ export default {
         .and_then(|f| f.get("islands"))
         .and_then(|i| i.as_object())
         .expect("islands map");
-    assert_eq!(islands.len(), 1, "only the real islands block counts: {islands:?}");
+    assert_eq!(
+        islands.len(),
+        1,
+        "only the real islands block counts: {islands:?}"
+    );
     assert_eq!(islands["Counter"], "src/islands/counter.tsx");
-    assert!(!islands.contains_key("routes/index"), "must not grab the components map");
+    assert!(
+        !islands.contains_key("routes/index"),
+        "must not grab the components map"
+    );
 }
 
 #[test]
@@ -802,7 +808,8 @@ fn islands_extractor_no_block_yields_none() {
 ";
     let v = oxide_config::extract_for_test(src);
     assert!(
-        v.and_then(|x| x.get("framework").and_then(|f| f.get("islands")).cloned()).is_none(),
+        v.and_then(|x| x.get("framework").and_then(|f| f.get("islands")).cloned())
+            .is_none(),
         "no islands block must not surface a map"
     );
 }
