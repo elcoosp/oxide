@@ -1,0 +1,36 @@
+---
+source: crates/adapters/tests/snapshots_adapters.rs
+expression: "node_server_entry(\"build-abc123\")"
+---
+// Oxide node target entry (§18). build_id: build-abc123
+// Bridges Node's http server to the web-standard handler contract
+// `(Request) => Promise<Response>` exported by the server bundle.
+import http from "node:http";
+import handler from "./server/index.js";
+
+const port = Number(process.env.PORT ?? 3000);
+
+const server = http.createServer(async (req, res) => {
+const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+const headers = new Headers();
+for (let i = 0; i < req.rawHeaders.length; i += 2) {
+headers.append(req.rawHeaders[i], req.rawHeaders[i + 1]);
+}
+const method = req.method ?? "GET";
+const hasBody = method !== "GET" && method !== "HEAD";
+const request = new Request(url, {
+method,
+headers,
+body: hasBody ? req : undefined,
+...(hasBody ? { duplex: "half" } : {}),
+});
+const response = await handler(request);
+res.statusCode = response.status;
+response.headers.forEach((value, key) => res.setHeader(key, value));
+if (response.body) {
+for await (const chunk of response.body) res.write(chunk);
+}
+res.end();
+});
+
+server.listen(port);

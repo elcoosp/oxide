@@ -72,3 +72,19 @@ fn snapshot_cloudflare_worker_entry() {
         cloudflare_worker_entry("build-abc123")
     );
 }
+
+
+// ---------------------------------------------------------------- node server entry (§18)
+
+#[test]
+fn snapshot_node_server_entry() {
+    insta::assert_snapshot!("node_server_entry", node_server_entry("build-abc123"));
+}
+
+// ---------------------------------------------------------------- vercel functions manifest (§18)
+
+#[test]
+fn snapshot_vercel_functions_json() {
+    let v = vercel_functions_json("build-abc123");
+    insta::assert_snapshot!("vercel_functions_json", serde_json::to_string_pretty(&v).unwrap());
+}

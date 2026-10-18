@@ -1,0 +1,21 @@
+---
+source: crates/adapters/tests/snapshots_adapters.rs
+expression: "serde_json::to_string_pretty(&v).unwrap()"
+---
+{
+  "functions": {
+    "api/handler.mjs": {
+      "maxDuration": 30,
+      "memory": 1024,
+      "runtime": "nodejs20.x"
+    }
+  },
+  "name": "oxide-build-abc123",
+  "rewrites": [
+    {
+      "destination": "/api/handler",
+      "source": "/(.*)"
+    }
+  ],
+  "version": 2
+}
