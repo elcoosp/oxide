@@ -4,7 +4,7 @@
 //! core `(i32) -> i32` function into a component `(s32) -> s32` export exercises
 //! the full `load → instantiate → probe → call → return` path end to end.
 
-use oxide_plugin::{hook_export_name, Hook, WasmPlugin, WasmPluginManifest};
+use oxide_plugin::{Hook, WasmPlugin, WasmPluginManifest, hook_export_name};
 
 /// `unwrap_err` needs the Ok type to be `Debug`; wasmtime handles are not.
 fn err_of<T>(r: oxide_plugin::Result<T>) -> oxide_diagnostics::OxideError {
@@ -88,7 +88,11 @@ fn call_unexported_hook_errors_with_plg_wasm() {
         WasmPlugin::load(b"(component)", manifest(vec![Hook::Transform]), None).unwrap();
     let e = err_of(plugin.call_string_hook(&Hook::Transform, "input"));
     assert_eq!(e.0.code, "PLG-WASM");
-    assert!(e.0.message.contains("does not export hook"), "{}", e.0.message);
+    assert!(
+        e.0.message.contains("does not export hook"),
+        "{}",
+        e.0.message
+    );
     assert!(e.0.message.contains("transform"), "{}", e.0.message);
 }
 
@@ -125,8 +129,12 @@ const ADD_ONE_WAT: &str = r#"
 
 #[test]
 fn real_component_transform_add_one_roundtrips() {
-    let mut plugin = WasmPlugin::load(ADD_ONE_WAT.as_bytes(), manifest(vec![Hook::Transform]), None)
-        .expect("real component loads");
+    let mut plugin = WasmPlugin::load(
+        ADD_ONE_WAT.as_bytes(),
+        manifest(vec![Hook::Transform]),
+        None,
+    )
+    .expect("real component loads");
     assert!(
         plugin.available_hooks().contains(&Hook::Transform),
         "available hooks: {:?}",
@@ -142,20 +150,20 @@ fn real_component_honours_declared_hook_subset() {
     // Component exports `transform`; manifest declares `load` only. The declared
     // hook doesn't match, so `available_hooks` must be empty even though the
     // component has a `transform` export.
-    let plugin = WasmPlugin::load(
-        ADD_ONE_WAT.as_bytes(),
-        manifest(vec![Hook::Load]),
-        None,
-    )
-    .unwrap();
+    let plugin =
+        WasmPlugin::load(ADD_ONE_WAT.as_bytes(), manifest(vec![Hook::Load]), None).unwrap();
     assert!(plugin.available_hooks().is_empty());
 }
 
 #[test]
 fn real_component_call_wrong_abi_shape_errors() {
     // Calling `call_string_hook` on an s32-signature export must error cleanly.
-    let mut plugin = WasmPlugin::load(ADD_ONE_WAT.as_bytes(), manifest(vec![Hook::Transform]), None)
-        .unwrap();
+    let mut plugin = WasmPlugin::load(
+        ADD_ONE_WAT.as_bytes(),
+        manifest(vec![Hook::Transform]),
+        None,
+    )
+    .unwrap();
     let e = err_of(plugin.call_string_hook(&Hook::Transform, "hello"));
     assert_eq!(e.0.code, "PLG-WASM");
     assert!(
