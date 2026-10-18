@@ -4835,17 +4835,23 @@ fn build_dispatch(
             let stage_load_start = std::time::Instant::now();
             let mut load_ms = 0.0f64;
 
-            // §9.2: layout loads run IN PARALLEL with the page load. The
-            // layout chain is outermost → innermost; each layout gets the
-            // pre-resolved data of its own outer layout as `parent_data`
-            // (which a load reads via `await parent()`). The layouts form
-            // a chain, so their data is resolved sequentially *among
-            // themselves* (outer first) but each layout's own `load` runs
-            // concurrently with the page load and the sibling layouts.
+            // §9.2: layout loads run in chain order (outer → inner); each
+            // layout gets the pre-resolved data of its own outer layout as
+            // `parent_data` (which a load reads via `await parent()`). The
+            // page load then runs, receiving the innermost layout's data as
+            // its `parent_data`.
             //
-            // Concretely: kick off every layout's load future, await them
-            // in chain order to attach `parent_data`, then await the page
-            // load — which was started at the same instant as layout[0].
+            // **Deviation from §9.2's "layout and page loads run in
+            // parallel":** the loads are SEQUENTIAL here. The layout chain
+            // must resolve outer-first (each needs its parent's data), and
+            // the page load is awaited after it because a page may await
+            // `parent()`. Running the page concurrently would require first
+            // detecting at build time whether the page calls `parent()` (a
+            // `needs_parent` flag on `RouteEntry`) and only then joining the
+            // two futures. That optimization is tracked in
+            // `docs/HANDOFF-bucket2-complete.md` §"Remaining"; it is a
+            // latency win, not a correctness gap — the sequential loads
+            // produce the right data in every case.
             let mut layout_data_chain: Vec<serde_json::Value> = Vec::new();
             let mut layout_side_effects: Vec<(Vec<String>, Vec<(String, String)>)> = Vec::new();
             if let (Some(runner), true) = (loader_runner.as_ref(), !layout_module_paths.is_empty())
