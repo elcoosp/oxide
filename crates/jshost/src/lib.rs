@@ -1077,6 +1077,35 @@ globalThis.oxide = {
   },
 };
 
+// Sec.4.5 / Sec.9.3: the bridge the oxide/server runtime ('use cache',
+// cache()) calls to reach the host. Node has this as a frame+promise bridge
+// over the worker pipe; the V8 backend exposes direct async ops, so this
+// maps the same op names onto the ops above. Returns a promise of the op
+// result (null on a cache miss). ASCII only (deno_core requires 7-bit).
+globalThis.__oxide_op_request = async (op, args = {}) => {
+  switch (String(op)) {
+    case 'cache_get': {
+      const raw = await Deno.core.ops.op_oxide_cache_get(String(args.key ?? ''));
+      try { return JSON.parse(raw); } catch { return null; }
+    }
+    case 'cache_set': {
+      const tags = Array.isArray(args.tags) ? args.tags.join(',') : '';
+      const b64 = String(args.body_b64 ?? '');
+      const status = Number(args.status ?? 200) | 0;
+      const ok = await Deno.core.ops.op_oxide_cache_set(
+        String(args.key ?? ''), status, b64, tags);
+      return ok === 'true';
+    }
+    case 'cache_tag': {
+      const raw = await Deno.core.ops.op_oxide_cache_tag(String(args.tag ?? ''));
+      return Number(raw) || 0;
+    }
+    default:
+      throw new Error(
+        'oxide_op_request: op `' + String(op) + '` is not implemented on the V8 backend');
+  }
+};
+
 // PERF-05: a `fetch()` for user code, routed through the op.
 if (typeof globalThis.fetch === 'undefined') {
   globalThis.fetch = async function (input, init = {}) {

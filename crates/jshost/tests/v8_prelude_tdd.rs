@@ -148,3 +148,83 @@ async fn v8_interval_survives_throw_and_stops_on_clear() {
         "worker alive after interval test: {v2}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// §9.3 / P0-4: the V8 prelude must expose `__oxide_op_request` so a
+// `'use cache'` function (and `cache()`) can reach the host cache tier.
+// Without it, `'use cache'` under `backend=v8` silently degraded to an
+// in-process Map — the entry never reached the tiered cache.
+// ---------------------------------------------------------------------------
+
+const OP_BRIDGE_MOD: &str = r#"
+export function bridgePresent() {
+  return {
+    isFunction: typeof globalThis.__oxide_op_request === 'function',
+  };
+}
+export async function cacheRoundTrip() {
+  // No cache handler is wired in this test, so `cache_set` answers false and
+  // `cache_get` answers null — the point is that the bridge EXISTS and the
+  // ops are reachable (not that a handler is present).
+  const setOk = await globalThis.__oxide_op_request('cache_set', {
+    key: 'k1',
+    status: 200,
+    body_b64: 'T0RGMQAK',
+    tags: ['t'],
+  });
+  const got = await globalThis.__oxide_op_request('cache_get', { key: 'k1' });
+  return { setOk, got };
+}
+export async function unknownOpRejects() {
+  try {
+    await globalThis.__oxide_op_request('nope', {});
+    return { threw: false };
+  } catch (e) {
+    return { threw: true, message: String(e && e.message) };
+  }
+}
+"#;
+
+fn write_probe_module(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("oxide-v8-probe-{}-{}", std::process::id(), name));
+    let _ = std::fs::create_dir_all(&dir);
+    let p = dir.join("mod.ts");
+    let _ = std::fs::write(&p, OP_BRIDGE_MOD);
+    p
+}
+
+#[tokio::test]
+#[ignore = "boots a V8 isolate; run with --ignored"]
+async fn v8_prelude_defines_the_op_request_bridge() {
+    let pool = pool1();
+    let path = write_probe_module("bridge");
+    let v = run(&pool, path.to_str().unwrap(), "bridgePresent").await;
+    assert_eq!(
+        v["isFunction"], true,
+        "globalThis.__oxide_op_request must be a function on the V8 backend: {v}"
+    );
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[tokio::test]
+#[ignore = "boots a V8 isolate; run with --ignored"]
+async fn v8_op_request_reaches_the_cache_ops() {
+    let pool = pool1();
+    let path = write_probe_module("cache");
+    let v = run(&pool, path.to_str().unwrap(), "cacheRoundTrip").await;
+    // No handler wired: set answers false, get answers null. Both prove the
+    // bridge routed to the op (a missing op would have thrown).
+    assert_eq!(v["setOk"], false, "no handler -> cache_set is false: {v}");
+    assert!(v["got"].is_null(), "no handler -> cache_get is null: {v}");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[tokio::test]
+#[ignore = "boots a V8 isolate; run with --ignored"]
+async fn v8_op_request_rejects_an_unknown_op() {
+    let pool = pool1();
+    let path = write_probe_module("unknown");
+    let v = run(&pool, path.to_str().unwrap(), "unknownOpRejects").await;
+    assert_eq!(v["threw"], true, "an unknown op must reject: {v}");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
