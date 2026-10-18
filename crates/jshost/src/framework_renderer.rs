@@ -15,10 +15,10 @@
 //! so SSR HTML flushes as it's produced) is a follow-up.
 
 use crate::framework_host::{FrameworkDescriptor, FrameworkHost};
-use bytes::Bytes;
-use futures::stream::BoxStream;
 use crate::{Pool, Result};
 use async_trait::async_trait;
+use bytes::Bytes;
+use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
@@ -110,10 +110,7 @@ pub trait FrameworkRenderer: Send + Sync {
     /// **Contract:** the concatenated chunks equal what `render` would
     /// return, modulo chunk boundaries. Callers must drain to `None` to
     /// release the underlying resource (worker slot).
-    async fn render_streaming(
-        &self,
-        input: FrameworkRenderInput,
-    ) -> Result<RenderStream> {
+    async fn render_streaming(&self, input: FrameworkRenderInput) -> Result<RenderStream> {
         let html = self.render(input).await?;
         let stream = futures::stream::once(async move { Ok(Bytes::from(html)) });
         Ok(Box::pin(stream))
@@ -147,7 +144,11 @@ impl FrameworkHostRenderer {
         let config_path = config_path.into();
         let host = FrameworkHost::new(pool);
         let descriptor = host.load_config(&config_path).await?;
-        Ok(Self { host, config_path, descriptor })
+        Ok(Self {
+            host,
+            config_path,
+            descriptor,
+        })
     }
 
     /// The descriptor loaded at construction time.
@@ -168,17 +169,16 @@ impl FrameworkRenderer for FrameworkHostRenderer {
     }
 
     async fn render(&self, input: FrameworkRenderInput) -> Result<String> {
-        self.host.render(&self.config_path, input.to_payload()).await
+        self.host
+            .render(&self.config_path, input.to_payload())
+            .await
     }
 
     /// Override: use the raw worker CallStream and forward each chunk as
     /// it arrives, instead of collecting the whole payload first. This is
     /// the version a hyper body writer wants — TTFB is the first chunk's
     /// arrival, not the whole response's.
-    async fn render_streaming(
-        &self,
-        input: FrameworkRenderInput,
-    ) -> Result<RenderStream> {
+    async fn render_streaming(&self, input: FrameworkRenderInput) -> Result<RenderStream> {
         let stream = self
             .host
             .render_streaming(&self.config_path, input.to_payload())
@@ -201,9 +201,7 @@ fn async_stream_via_channel(stream: crate::CallStream) -> RenderStream {
             Box::pin(s)
         }
         crate::CallStream::Chunked(mut rx) => {
-            let s = futures::stream::poll_fn(move |cx| {
-                rx.poll_recv(cx)
-            });
+            let s = futures::stream::poll_fn(move |cx| rx.poll_recv(cx));
             Box::pin(s)
         }
     }
@@ -302,10 +300,7 @@ mod tests {
                     br#"{"name":"react","extensions":[".tsx"],"capabilities":{}}"#,
                 )))
             } else {
-                Err(crate::err(
-                    "JSH-FRAMEWORK",
-                    "framework:render failed: Boom",
-                ))
+                Err(crate::err("JSH-FRAMEWORK", "framework:render failed: Boom"))
             }
         }));
         let pool = host.tooling_pool(PoolConfig::default()).unwrap();
@@ -321,9 +316,8 @@ mod tests {
     #[tokio::test]
     async fn renderer_is_object_safe_and_arc_friendly() {
         let pool = mock_pool("vue", json!({}));
-        let r: Arc<dyn FrameworkRenderer> = Arc::new(
-            FrameworkHostRenderer::new(pool, "/x").await.unwrap(),
-        );
+        let r: Arc<dyn FrameworkRenderer> =
+            Arc::new(FrameworkHostRenderer::new(pool, "/x").await.unwrap());
         assert_eq!(r.name(), "vue");
         let html = r
             .render(FrameworkRenderInput::new("routes/index", "/"))
@@ -339,7 +333,9 @@ mod tests {
         struct StaticRenderer;
         #[async_trait]
         impl FrameworkRenderer for StaticRenderer {
-            fn name(&self) -> &str { "static" }
+            fn name(&self) -> &str {
+                "static"
+            }
             async fn render(&self, _input: FrameworkRenderInput) -> Result<String> {
                 Ok("<h1>default</h1>".to_string())
             }
