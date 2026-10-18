@@ -174,12 +174,14 @@ pub fn degradation(target: Target, cap: Capability) -> Option<&'static str> {
         (Target::Lambda | Target::Vercel | Target::VercelFunctions | Target::Netlify, Isr) => {
             "ISR via on-demand regeneration where the platform supports it"
         }
-        (Target::Lambda | Target::Vercel | Target::VercelFunctions | Target::Netlify, ImageOptimization) => {
-            "build-time optimization plus the platform image service"
-        }
-        (Target::Lambda | Target::Vercel | Target::VercelFunctions | Target::Netlify, Snapshots) => {
-            "snapshot-friendly cold start; isolate reuse not guaranteed"
-        }
+        (
+            Target::Lambda | Target::Vercel | Target::VercelFunctions | Target::Netlify,
+            ImageOptimization,
+        ) => "build-time optimization plus the platform image service",
+        (
+            Target::Lambda | Target::Vercel | Target::VercelFunctions | Target::Netlify,
+            Snapshots,
+        ) => "snapshot-friendly cold start; isolate reuse not guaranteed",
         _ => return None,
     };
     Some(reason)
@@ -311,10 +313,7 @@ pub fn emit(target: Target, artifact: &BuildArtifact, out_dir: &Path) -> Result<
                 let bytes = std::fs::read(&src).map_err(|e| {
                     err(
                         "ADP-IO",
-                        format!(
-                            "static.fallback `{fb}` missing at {}: {e}",
-                            src.display()
-                        ),
+                        format!("static.fallback `{fb}` missing at {}: {e}", src.display()),
                     )
                 })?;
                 written.push(write_bytes(out_dir.join("404.html"), &bytes)?);
@@ -368,10 +367,7 @@ pub fn emit(target: Target, artifact: &BuildArtifact, out_dir: &Path) -> Result<
             // `oxide-core-wasm` to wasm32-unknown-unknown best-effort and adds
             // its path to the artifact when successful. Absence is normal and
             // the JS fallback covers it.
-            let has_wasm = artifact
-                .out_dir
-                .join("edge.wasm")
-                .is_file();
+            let has_wasm = artifact.out_dir.join("edge.wasm").is_file();
             written.push(write_file(
                 out_dir.join("wrangler.toml"),
                 &cloudflare_wrangler_toml(build_id, has_wasm),
@@ -445,7 +441,10 @@ pub fn emit(target: Target, artifact: &BuildArtifact, out_dir: &Path) -> Result<
                 Target::Vercel | Target::VercelFunctions => {
                     let api_dir = out_dir.join("api");
                     std::fs::create_dir_all(&api_dir).map_err(|e| {
-                        err("ADP-IO", format!("cannot create {}: {e}", api_dir.display()))
+                        err(
+                            "ADP-IO",
+                            format!("cannot create {}: {e}", api_dir.display()),
+                        )
                     })?;
                     written.push(write_file(
                         api_dir.join("handler.mjs"),
@@ -467,7 +466,10 @@ pub fn emit(target: Target, artifact: &BuildArtifact, out_dir: &Path) -> Result<
                 Target::Netlify => {
                     let funcs_dir = out_dir.join("netlify").join("functions");
                     std::fs::create_dir_all(&funcs_dir).map_err(|e| {
-                        err("ADP-IO", format!("cannot create {}: {e}", funcs_dir.display()))
+                        err(
+                            "ADP-IO",
+                            format!("cannot create {}: {e}", funcs_dir.display()),
+                        )
                     })?;
                     written.push(write_file(
                         funcs_dir.join("handler.mjs"),
@@ -487,7 +489,12 @@ pub fn emit(target: Target, artifact: &BuildArtifact, out_dir: &Path) -> Result<
   status = 200
 "#;
                     written.push(write_file(out_dir.join("netlify.toml"), toml)?);
-                    written.push(write_deploy(out_dir, target, build_id, "netlify/functions/handler.mjs")?);
+                    written.push(write_deploy(
+                        out_dir,
+                        target,
+                        build_id,
+                        "netlify/functions/handler.mjs",
+                    )?);
                 }
                 Target::Lambda => {
                     written.push(write_file(
@@ -703,10 +710,7 @@ export {{ handlerWrapper }};
 ///
 /// The copy is recursive and preserves relative structure so the bundle's
 /// internal `../routes-*.js` imports keep resolving.
-fn copy_server_bundle(
-    artifact: &BuildArtifact,
-    out_dir: &Path,
-) -> Result<Vec<PathBuf>> {
+fn copy_server_bundle(artifact: &BuildArtifact, out_dir: &Path) -> Result<Vec<PathBuf>> {
     let Some(bundle_path) = &artifact.server_bundle else {
         // Not an error — a caller may emit a target without a server bundle
         // (e.g. a static export). The handler file's import will fail at
@@ -720,19 +724,28 @@ fn copy_server_bundle(
     let Some(ssr_dir) = bundle_path.parent() else {
         return Err(err(
             "ADP-IO",
-            format!("server bundle path has no parent: {}", bundle_path.display()),
+            format!(
+                "server bundle path has no parent: {}",
+                bundle_path.display()
+            ),
         ));
     };
     let Some(server_dir) = ssr_dir.parent() else {
         return Err(err(
             "ADP-IO",
-            format!("server bundle path has no grandparent: {}", bundle_path.display()),
+            format!(
+                "server bundle path has no grandparent: {}",
+                bundle_path.display()
+            ),
         ));
     };
 
     let dst_root = out_dir.join("server");
     std::fs::create_dir_all(&dst_root).map_err(|e| {
-        err("ADP-IO", format!("cannot create {}: {e}", dst_root.display()))
+        err(
+            "ADP-IO",
+            format!("cannot create {}: {e}", dst_root.display()),
+        )
     })?;
 
     let mut written = Vec::new();
@@ -742,28 +755,28 @@ fn copy_server_bundle(
 
 /// Recursively copy a directory tree, accumulating the destination paths.
 fn copy_dir_recursive(src: &Path, dst: &Path, written: &mut Vec<PathBuf>) -> Result<()> {
-    let entries = std::fs::read_dir(src).map_err(|e| {
-        err("ADP-IO", format!("cannot read {}: {e}", src.display()))
-    })?;
+    let entries = std::fs::read_dir(src)
+        .map_err(|e| err("ADP-IO", format!("cannot read {}: {e}", src.display())))?;
     for entry in entries {
         let entry = entry.map_err(|e| err("ADP-IO", format!("read_dir entry: {e}")))?;
         let file_type = entry.file_type().map_err(|e| {
-            err("ADP-IO", format!("file_type for {}: {e}", entry.path().display()))
+            err(
+                "ADP-IO",
+                format!("file_type for {}: {e}", entry.path().display()),
+            )
         })?;
         let child_src = entry.path();
-        let rel = child_src.strip_prefix(src).map_err(|e| {
-            err("ADP-IO", format!("relativize {}: {e}", child_src.display()))
-        })?;
+        let rel = child_src
+            .strip_prefix(src)
+            .map_err(|e| err("ADP-IO", format!("relativize {}: {e}", child_src.display())))?;
         let child_dst = dst.join(rel);
         if file_type.is_dir() {
-            std::fs::create_dir_all(&child_dst).map_err(|e| {
-                err("ADP-IO", format!("mkdir {}: {e}", child_dst.display()))
-            })?;
+            std::fs::create_dir_all(&child_dst)
+                .map_err(|e| err("ADP-IO", format!("mkdir {}: {e}", child_dst.display())))?;
             copy_dir_recursive(&child_src, &child_dst, written)?;
         } else if file_type.is_file() {
-            let bytes = std::fs::read(&child_src).map_err(|e| {
-                err("ADP-IO", format!("read {}: {e}", child_src.display()))
-            })?;
+            let bytes = std::fs::read(&child_src)
+                .map_err(|e| err("ADP-IO", format!("read {}: {e}", child_src.display())))?;
             written.push(write_bytes(child_dst, &bytes)?);
         }
         // Symlinks and other types: skip. The bundler doesn't emit them.
@@ -868,7 +881,6 @@ pub fn cloudflare_worker_entry(build_id: &str) -> String {
          }};\n"
     )
 }
-
 
 /// Edge handler (`edge.js`) for the Cloudflare target (§18, §2 D18).
 ///
