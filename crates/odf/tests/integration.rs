@@ -6,9 +6,9 @@
 
 use oxide_odf::fixtures;
 use oxide_odf::{
-    bitexact_eq, cyclic_fixture, decode, decode_with_shared, encode, encode_to_bytes,
-    encode_with_shared, resolve_refs, resolve_refs_with, TypedArrayKind, Value, MAX_BYTES,
-    MAX_DEPTH, MAX_REFS,
+    MAX_BYTES, MAX_DEPTH, MAX_REFS, TypedArrayKind, Value, bitexact_eq, cyclic_fixture, decode,
+    decode_with_shared, encode, encode_to_bytes, encode_with_shared, resolve_refs,
+    resolve_refs_with,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
