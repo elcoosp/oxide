@@ -5734,7 +5734,7 @@ async fn start_server_inner_full(
     // §12.1: HTTP/3 rides QUIC over UDP on the same port. Enabled by
     // `server.http3` + TLS (QUIC has no plaintext mode). A second listener
     // task drives it; the HTTP/1+2 server is untouched.
-    let http3_cfg: Option<quinn::ServerConfig> = if cfg.server.http3 {
+    let http3_cfg: Option<oxide_server::H3ServerConfig> = if cfg.server.http3 {
         match tls.as_ref() {
             Some(tls_cfg) => match oxide_server::Server::h3_config_from_tls(tls_cfg.as_ref()) {
                 Ok(c) => Some(c),

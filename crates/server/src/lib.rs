@@ -11,6 +11,10 @@
 pub mod metrics;
 pub mod page_renderer;
 pub mod loader;
+/// §12.1: the QUIC server config the CLI passes to `serve_http3`. Re-exported
+/// so the CLI does not depend on `quinn` directly.
+pub use quinn::ServerConfig as H3ServerConfig;
+
 pub use page_renderer::{EndpointDispatcher, EndpointRunError, EndpointRunResult, MiddlewareDispatcher, MiddlewareRunError, MiddlewareRunResult, PageRenderInput, PageRenderer, RenderStream, SocketDispatcher, SocketRunError, SocketRunResult};
 pub use loader::{LoaderOutput, LoaderRunInput, LoaderRunner};
 pub mod session;
