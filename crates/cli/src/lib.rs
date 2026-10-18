@@ -5315,10 +5315,25 @@ async fn start_server_inner_full(
         );
         512 * 1024 * 1024
     });
-    let l0_tier: std::sync::Arc<dyn oxide_cache::CacheHandler> = stack
+    // §11.2: `cache.handler` selects the L2 remote. A configured `http`
+    // handler attaches to the tiered cache; an explicit `stack.cache_tier`
+    // (a test or a caller-provided cache) wins over config. Memory/disk
+    // are the local tiers every handler gets.
+    let l0_tier: std::sync::Arc<dyn oxide_cache::CacheHandler> = match stack
         .cache_tier
         .clone()
-        .unwrap_or_else(|| std::sync::Arc::new(oxide_cache::TieredCache::new(l0_bytes)));
+    {
+        Some(tier) => tier,
+        None => {
+            let mut tier = oxide_cache::TieredCache::new(l0_bytes);
+            if let oxide_config::CacheHandlerConfig::Http { url } = &cfg.cache.handler {
+                tier = tier.with_remote(std::sync::Arc::new(
+                    oxide_cache::HttpCacheHandler::new(url.clone()),
+                ));
+            }
+            std::sync::Arc::new(tier)
+        }
+    };
     let l0 = Some(std::sync::Arc::new(l0_cache::L0Cache::new(
         l0_tier,
         build_id.clone(),

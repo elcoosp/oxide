@@ -22,6 +22,7 @@ pub use http::{
 };
 pub use single_flight::{FlightSlot, SingleFlight};
 pub use tiers::{CacheStats, DiskTier, MemoryTier, TieredCache};
+pub use http_handler::HttpCacheHandler;
 
 use blake3::Hasher;
 use oxide_diagnostics::{Diagnostic, OxideError};

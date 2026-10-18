@@ -278,6 +278,11 @@ pub enum CacheHandlerConfig {
     S3 {
         bucket: String,
     },
+    /// §11.2 / SPEC-12: a remote HTTP cache (`HttpCacheHandler`). The build
+    /// driver serves `GET/PUT/DELETE /cache/<key>` + `POST /cache/invalidate`.
+    Http {
+        url: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

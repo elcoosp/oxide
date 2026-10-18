@@ -433,6 +433,15 @@ impl TieredCache {
         Ok(self)
     }
 
+    /// Attach a remote tier (L2) — a handler like `HttpCacheHandler` that
+    /// serves the §11.2 protocol. Reads fall through memory → disk → remote;
+    /// writes write through all three. This is the constructor
+    /// `cache.handler = { type: 'http', url }` wires to.
+    pub fn with_remote(mut self, remote: Arc<dyn CacheHandler>) -> Self {
+        self.remote = Some(remote);
+        self
+    }
+
     /// Get across tiers (memory → disk → remote). Every tier hit promotes the entry to
     /// memory. Records hits/misses/stale for [`TieredCache::stats`].
     pub async fn get(&self, key: &str) -> Result<Option<Hit>> {
