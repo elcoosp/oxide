@@ -12,6 +12,8 @@ import { hydrateIslands, type IslandsOptions } from './islands.ts'
 import { createRouter } from './router.ts'
 import { decodeOdf } from './odf-decode.ts'
 import { loadScripts } from './scripts.ts'
+import { setRouteComponentSource, isParamSegment, type ClientManifestLike } from './route-manifest.ts'
+import { attachDeferGlue, type DeferGlue } from './defer-glue.ts'
 import type { FrameworkAdapter } from '../types.ts'
 
 interface BootState {
@@ -96,34 +98,50 @@ export function boot(): void {
  * `/__data` instead of a full page load.
  *
  * Guarded and idempotent:
- * - no `document` / no adapter / no `#root` / no `window.__oxide` → no-op;
- * - a hydration failure logs and leaves the SSR markup untouched;
+ * - no `document` → no-op;
+ * - no `window.__oxide` → islands + scripts only, no router (plain anchors);
+ * - `window.__oxide` with `#root` → full mode: hydrate the root, islands,
+ *   then the router. A hydration FAILURE leaves the SSR markup untouched and
+ *   does NOT attach the router (the adapters' `update` would no-op and the
+ *   URL would change without a DOM swap — worse than plain anchors);
+ * - `window.__oxide` WITHOUT `#root` → router-only mode: nothing to
+ *   hydrate, but the page still gets the loading overlays (§8.4), the defer
+ *   glue (§7.1/§9.2), manifest-driven chunk preloading (§6.4) and the
+ *   `ox:data` HMR path (§13.3). The adapters' `update` calls no-op without
+ *   a mounted root.
  * - `data` in `window.__oxide` is base64 ODF, decoded via `decodeOdf`; a
  *   decode failure falls back to the raw string rather than throwing.
  *
- * Returns a disposer (the router's `dispose`), or a no-op.
+ * Returns a disposer (the router's `dispose` + boot glue teardown), or a
+ * no-op.
  */
 export function bootWithRouter(
   adapter: FrameworkAdapter,
   opts: {
     doc?: Document
     /**
-     * §8.4 loading boundaries: URL-prefix → loading component map. Keys are
-     * URL prefixes (`/`, `/blog`, `/blog/x`), values are the module the
-     * boot entry statically imported from `loading.tsx`. On a client
-     * navigation, the longest matching prefix wins and `adapter.renderLoading`
-     * paints it into an overlay until the tree swaps. Absent (or a framework
-     * without `renderLoading`) → no loading boundary; the router still fires
-     * the hooks, they are just no-ops here.
+     * §8.4 loading boundaries: route-pattern → loading component map. Keys
+     * are absolute paths whose segments may be `[name]` / `:name` tokens for
+     * dynamic segments (`/blog/[slug]`), emitted by the boot entry from each
+     * `loading.tsx`'s route directory. On a client navigation the longest
+     * matching key (most matching segments; a key may cover the routes below
+     * it) wins and `adapter.renderLoading` paints it into an overlay until
+     * the tree swaps. Absent (or a framework without `renderLoading`) → no
+     * loading boundary; the router still fires the hooks, they are just
+     * no-ops here.
      */
     loading?: Record<string, unknown>
     /**
-     * §6.4 manifest-driven chunk preloading: route entry id
-     * (`routes/blog/_slug_/page`) → preload chunk URLs. The router uses it
-     * to warm the JS for a route in parallel with the `/__data` fetch.
-     * Absent → no chunk preloading (data-only prefetch).
+     * §6.4 manifest-driven chunk preloading + §8.4/§10.3 real component
+     * resolution: the wire shape of `/client/client.manifest.json`
+     * (`{ buildId, routes: { [routeId]: { entry_chunk, preload, css } } }`).
+     * The router warms a route's chunks in parallel with the `/__data`
+     * fetch, and the manifest is registered as the adapters'
+     * {@link setRouteComponentSource | component source} so `update()`
+     * renders the route's REAL page component instead of the IR registry.
+     * Absent → data-only prefetch and the IR fallback.
      */
-    manifest?: { buildId?: string; routes: Record<string, { preload?: string[]; chunks?: string[] }> }
+    manifest?: ClientManifestLike
   } = {},
 ): () => void {
   const doc = opts.doc ?? (globalThis as { document?: Document }).document
@@ -134,20 +152,32 @@ export function bootWithRouter(
     location?: { pathname: string; search: string }
   }
 
-  // (a) Root hydration — REQUIRED before the router can do anything useful.
-  // On a click the router calls `adapter.update(input)`, which on the client
-  // side resolves to the module-level `active?.update(input)` in
-  // `packages/react/src/hydrate.ts` — and `active` is only set by
-  // `hydrate()` or `mount()`. Without this step SPA navigation changes the
-  // URL but leaves the DOM untouched (worse than no router at all).
+  const loadChunk =
+    w.__oxideBoot?.loadChunk ?? (async (c: string) => import(/* @vite-ignore */ c))
+
+  // §6.4 + §8.4/§10.3: register the manifest + chunk loader BEFORE the root
+  // hydrates so every adapter's hydrate()/mount()/update() resolves REAL
+  // page components through `componentFor` (route-manifest.ts) instead of
+  // the IR Atlas registry. No manifest (dev server, static export without
+  // one) → the adapters stay on the IR fallback, unchanged.
+  setRouteComponentSource(opts.manifest ? { manifest: opts.manifest, loadChunk } : undefined)
+
+  // (a) Root hydration — the router-independent part of boot. On a click the
+  // router calls `adapter.update(input)`, which on the client side resolves
+  // to the module-level `active?.update(input)` in each adapter's
+  // `hydrate.ts` — and `active` is only set by `hydrate()` or `mount()`.
+  // Without hydration the real-render path still works from `update()`
+  // itself (it mounts into `#root` through the manifest), but the IR-only
+  // path needs the handle, so a failed hydration still skips router
+  // attachment below (the URL must never change without a DOM swap).
   //
   // Root hydration does NOT rewrite `#root.innerHTML` when the SSR markup is
-  // already present (`createClientRoot` only renders when the root is empty
-  // and otherwise just binds handlers), so `<ox-island>` hosts survive and
-  // the island scan below still finds them.
+  // already present, so `<ox-island>` hosts survive and the island scan
+  // below still finds them.
   let hydratedRoot = false
   const root = doc.getElementById?.('root')
   const payload = w.__oxide
+  let payloadData: unknown
   if (root && payload) {
     let data: unknown = {}
     if (typeof payload.data === 'string' && payload.data.length > 0) {
@@ -162,6 +192,7 @@ export function bootWithRouter(
         console.warn?.('oxide: window.__oxide.data decode failed; hydrating with {}', e)
       }
     }
+    payloadData = data
     const input = {
       route: payload.route ?? '/',
       url: (w.location?.pathname ?? '/') + (w.location?.search ?? ''),
@@ -180,8 +211,6 @@ export function bootWithRouter(
   //     `bootWithRouter` is a strict superset. A page with no `#root` /
   //     `window.__oxide` (pure SPA, or non-SSR HTML) still gets island
   //     hydration here.
-  const loadChunk =
-    w.__oxideBoot?.loadChunk ?? (async (c: string) => import(/* @vite-ignore */ c))
   try {
     hydrateIslands({ doc: doc as never, adapter: adapter as never, loadChunk })
     loadScripts({ doc: doc as never })
@@ -189,38 +218,88 @@ export function bootWithRouter(
     console.error?.('oxide: island hydration failed', e)
   }
 
-  // (c) Router LAST — only when we actually hydrated a root. Otherwise leave
-  //     the page on plain anchor navigation.
-  if (!hydratedRoot) return () => {}
+  // (c) Router attach — gated on the PAYLOAD, not the root (§8.4): a page
+  //     with `window.__oxide` but no `#root` still gets loading overlays,
+  //     the defer glue, manifest preloading and nav data (router-only
+  //     mode). A hydration FAILURE with a root present is the one state
+  //     that still skips attachment: `adapter.update` would no-op and the
+  //     URL would change without a DOM swap.
+  const hasPayload = payload !== undefined && payload !== null
+  if (!hasPayload) return () => {}
+  const routerOnly = !hydratedRoot
+  if (routerOnly && root) return () => {}
+
+  // (c.1) §7.1 / §9.2 boot-path glue init (router-only mode): the adapter's
+  //       hydrate/update hooks never ran, so nothing wired the payload's
+  //       `{__deferred: id}` markers or resolved the injected
+  //       `<script type="application/oxide-deferred">`. Attach the core
+  //       glue here so deferred boundaries resolve without islands or a
+  //       page root.
+  let bootGlue: DeferGlue | undefined
+  if (routerOnly) {
+    try {
+      bootGlue = attachDeferGlue({ doc: doc as unknown as Document })
+      if (payloadData !== undefined) bootGlue.wire(payloadData)
+    } catch (e) {
+      console.warn?.('oxide: boot defer glue failed', e)
+      bootGlue = undefined
+    }
+  }
 
   // §8.4 loading boundaries: on nav start, find the longest matching loading
-  // prefix and paint that component into an overlay div; on nav end, tear
+  // key and paint that component into an overlay div; on nav end, tear
   // the overlay down (right before the tree swap).
-  let loadingDispose: (() => void) | undefined
-  let loadingOverlay: HTMLElement | undefined
-
+  //
+  // KEY MATCHER (§8.4, the contract the CLI's boot entry documents): a key
+  // is an absolute path whose segments may be `[name]` / `:name` tokens. A
+  // literal key segment must equal the URL segment; a param key segment
+  // matches exactly ONE non-empty URL segment; a key that is a proper
+  // PREFIX of the URL matches too (a layout-level `loading.tsx` covers the
+  // routes below it). The longest key (most matching segments) wins, ties
+  // resolved to the key with more literal segments. Trailing slashes are
+  // normalized on both sides (same behavior as the router's own loader);
+  // the root key `/` matches every URL with the lowest priority.
   function findLoading(url: string): unknown {
     const map = opts.loading
     if (!map) return undefined
-    // Strip query/hash. The CLI emits keys WITH a trailing slash
-    // (`/`, `/slow/`), so normalize the key (drop a trailing slash) and the
-    // path (drop a trailing slash) before the prefix comparison. The root
-    // key `/` matches every URL.
-    const path = (url.split(/[?#]/, 1)[0] || '/').replace(/\/+$/, '') || '/'
+    // Strip query/hash and split into non-empty segments (`/blog/x` →
+    // `['blog', 'x']`, `/` → `[]`).
+    const urlSegs = (url.split(/[?#]/, 1)[0] || '/').split('/').filter((s) => s.length > 0)
     let bestKey: string | undefined
-    let bestLen = -1
+    let bestSegs = -1
+    let bestStatic = -1
     for (const key of Object.keys(map)) {
-      const normalized = (key || '/').replace(/\/+$/, '') || '/'
-      const isPrefix =
-        normalized === '/' || path === normalized || path.startsWith(normalized + '/')
-      if (!isPrefix) continue
-      if (normalized.length > bestLen) {
-        bestLen = normalized.length
+      const keySegs = ((key || '/').replace(/\/+$/, '') || '/')
+        .split('/')
+        .filter((s) => s.length > 0)
+      // A key longer than the URL can never match (prefix semantics).
+      if (keySegs.length > urlSegs.length) continue
+      let ok = true
+      let staticCount = 0
+      for (let i = 0; i < keySegs.length; i++) {
+        const k = keySegs[i]
+        if (isParamSegment(k)) {
+          if (urlSegs[i].length === 0) { ok = false; break }
+          continue
+        }
+        if (k !== urlSegs[i]) { ok = false; break }
+        staticCount++
+      }
+      if (!ok) continue
+      if (
+        keySegs.length > bestSegs ||
+        (keySegs.length === bestSegs && staticCount > bestStatic)
+      ) {
         bestKey = key
+        bestSegs = keySegs.length
+        bestStatic = staticCount
       }
     }
     return bestKey !== undefined ? map[bestKey] : undefined
   }
+
+  let loadingDispose: (() => void) | undefined
+  let loadingOverlay: HTMLElement | undefined
 
   const onNavigateStart = (url: string): void => {
     if (typeof adapter.renderLoading !== 'function') return
@@ -251,13 +330,37 @@ export function bootWithRouter(
     loadingOverlay = undefined
   }
 
+  // §13.3: the HMR client re-fetches route data on `route-data-update` and
+  // dispatches `ox:data` with a fresh ClientInput on the document. Feed it
+  // through the same `adapter.update` path a navigation uses so a loader
+  // edit re-renders the page in place.
+  const onData = (e: Event): void => {
+    const detail = (e as CustomEvent<{ input?: unknown }>).detail
+    const input = detail?.input as
+      | { route: string; url: string; params: Record<string, string | string[]>; data: unknown }
+      | undefined
+    if (!input || typeof input !== 'object' || typeof input.route !== 'string') return
+    try {
+      ;(adapter as unknown as { update(i: unknown): void }).update(input)
+    } catch (err) {
+      console.warn?.('oxide: ox:data update threw', err)
+    }
+  }
+  doc.addEventListener('ox:data', onData as EventListener)
+
   const router = createRouter({
     adapter: adapter as unknown as { update(i: unknown): void },
     onNavigateStart,
     onNavigateEnd,
     ...(opts.manifest ? { manifest: opts.manifest } : {}),
   } as never)
-  return router.attach()
+  const disposeRouter = router.attach()
+  return () => {
+    disposeRouter()
+    doc.removeEventListener('ox:data', onData as EventListener)
+    bootGlue?.dispose()
+    bootGlue = undefined
+  }
 }
 
 /**
