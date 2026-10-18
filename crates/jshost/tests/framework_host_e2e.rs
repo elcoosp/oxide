@@ -23,15 +23,17 @@
 //! paths never write anything.
 
 use oxide_jshost::{CallStream, FrameworkHost, JsHost, NodeHost, PoolConfig};
+use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde_json::json;
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent().expect("crates/")
-        .parent().expect("workspace root")
+        .parent()
+        .expect("crates/")
+        .parent()
+        .expect("workspace root")
         .to_path_buf()
 }
 
@@ -45,8 +47,7 @@ fn e2e_base() -> PathBuf {
 /// ~1µs resolution, and two parallel `#[tokio::test]`s hitting it at the
 /// same instant would then share a filename, one dropping the file the
 /// other is about to import.
-static NONCE_COUNTER: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+static NONCE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn unique_nonce() -> String {
     let nanos = SystemTime::now()
@@ -67,8 +68,12 @@ impl E2eConfigFile {
         let name = format!("oxide-{}.config.mjs", unique_nonce());
         Self(dir.join(name))
     }
-    fn path(&self) -> &Path { &self.0 }
-    fn path_str(&self) -> String { self.0.to_string_lossy().to_string() }
+    fn path(&self) -> &Path {
+        &self.0
+    }
+    fn path_str(&self) -> String {
+        self.0.to_string_lossy().to_string()
+    }
 }
 
 impl Drop for E2eConfigFile {
@@ -110,10 +115,7 @@ async fn end_to_end_load_and_render_real_react_config() {
     let fw = FrameworkHost::new(pool);
 
     // (1) load_config: descriptor round-trips through the real adapter.
-    let descriptor = fw
-        .load_config(&config_str)
-        .await
-        .expect("load_config");
+    let descriptor = fw.load_config(&config_str).await.expect("load_config");
     assert_eq!(descriptor.name, "react", "adapter name from the config");
     assert_eq!(descriptor.extensions, vec![".tsx".to_string()]);
     assert_eq!(descriptor.capabilities["islands"], true);
@@ -130,14 +132,17 @@ async fn end_to_end_load_and_render_real_react_config() {
             "link": [], "style": [], "script": []
         },
     });
-    let html = fw
-        .render(&config_str, input)
-        .await
-        .expect("render");
+    let html = fw.render(&config_str, input).await.expect("render");
     assert!(html.starts_with("<!doctype html>"), "html head: {html}");
-    assert!(html.contains("Hello from E2E"), "component rendered: {html}");
+    assert!(
+        html.contains("Hello from E2E"),
+        "component rendered: {html}"
+    );
     assert!(html.contains("data-reactroot"), "react root marker: {html}");
-    assert!(html.contains("<meta name=\"x-e2e\" content=\"yes\">"), "head merge: {html}");
+    assert!(
+        html.contains("<meta name=\"x-e2e\" content=\"yes\">"),
+        "head merge: {html}"
+    );
     assert!(html.contains("<title>E2E"), "title emitted: {html}");
 }
 
@@ -149,10 +154,7 @@ async fn end_to_end_missing_config_surfaces_clear_error() {
         .tooling_pool(PoolConfig::default())
         .expect("spawn node worker");
     let fw = FrameworkHost::new(pool);
-    let bogus = format!(
-        "/nonexistent/{}/oxide.config.mjs",
-        unique_nonce()
-    );
+    let bogus = format!("/nonexistent/{}/oxide.config.mjs", unique_nonce());
     let err = fw
         .load_config(&bogus)
         .await
@@ -160,7 +162,9 @@ async fn end_to_end_missing_config_surfaces_clear_error() {
     assert_eq!(err.0.code, "JSH-FRAMEWORK");
     let msg = &err.0.message;
     assert!(
-        msg.contains("framework:load") || msg.contains("Cannot find") || msg.contains("ERR_MODULE_NOT_FOUND"),
+        msg.contains("framework:load")
+            || msg.contains("Cannot find")
+            || msg.contains("ERR_MODULE_NOT_FOUND"),
         "message: {msg}"
     );
 }
@@ -250,4 +254,3 @@ export default {
     let collected = fw.render(&config_str, json!({})).await.expect("render");
     assert_eq!(collected, "AAABBBCCC");
 }
-
