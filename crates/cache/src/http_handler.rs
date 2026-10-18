@@ -14,7 +14,7 @@
 //! converge. A network error degrades to a miss/no-op — the local tier keeps
 //! serving, and the build/render proceeds (a remote cache is an optimization).
 
-use crate::{err, Entry, Result};
+use crate::{Entry, Result, err};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -150,9 +150,10 @@ mod tests {
     async fn http_cache_handler_roundtrips() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        let store = std::sync::Arc::new(std::sync::Mutex::new(
-            std::collections::HashMap::<String, Vec<u8>>::new(),
-        ));
+        let store = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
+            String,
+            Vec<u8>,
+        >::new()));
         let store2 = store.clone();
         std::thread::spawn(move || {
             for conn in listener.incoming() {
@@ -161,7 +162,9 @@ mod tests {
                 let mut tmp = [0u8; 1024];
                 let he = loop {
                     let n = s.read(&mut tmp).unwrap_or(0);
-                    if n == 0 { break None; }
+                    if n == 0 {
+                        break None;
+                    }
                     buf.extend_from_slice(&tmp[..n]);
                     if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
                         break Some(i);
@@ -180,7 +183,9 @@ mod tests {
                 let mut body = buf[he + 4..].to_vec();
                 while body.len() < clen {
                     let n = s.read(&mut tmp).unwrap_or(0);
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                     body.extend_from_slice(&tmp[..n]);
                 }
                 let method = reqline.split_whitespace().next().unwrap_or("").to_string();
@@ -192,7 +197,10 @@ mod tests {
                         store.insert(key, body);
                         let _ = s.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
                     } else if let Some(b) = store.get(&key) {
-                        let h = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", b.len());
+                        let h = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            b.len()
+                        );
                         let _ = s.write_all(h.as_bytes());
                         let _ = s.write_all(b);
                     } else {
@@ -201,7 +209,9 @@ mod tests {
                 } else if path.starts_with("/invalidate/") {
                     let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\n{\"count\":1}\n");
                 } else {
-                    let _ = s.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    let _ = s.write_all(
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    );
                 }
             }
         });
