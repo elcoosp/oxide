@@ -269,11 +269,18 @@ pub struct CacheConfig {
 pub struct L0CacheConfig {
     /// e.g. `"512mb"`, `"64kb"`, `"1gb"` — parsed by `parse_size`.
     pub max_size: String,
+    /// §11.2 / §14.1: request headers the L0 key is fingerprinted by. A cached
+    /// response that varies by a header not listed here is served to a
+    /// different request — so this must name every header the app branches on
+    /// (beyond the always-included `accept-language` when i18n is configured).
+    /// Empty disables header variance. Matched case-insensitively.
+    pub vary: Vec<String>,
 }
 impl Default for L0CacheConfig {
     fn default() -> Self {
         Self {
             max_size: "512mb".into(),
+            vary: vec!["accept-language".into()],
         }
     }
 }

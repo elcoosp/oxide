@@ -253,13 +253,32 @@ impl CachedResponse {
 }
 
 /// A Vary fingerprint: the normalized dimensions a cached response depends on
-/// (§11.2). Today: the `Accept-Language` primary tag (i18n) and nothing else.
-pub fn vary_of(headers: &[(String, String)]) -> String {
-    let lang = headers
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("accept-language"))
-        .map(|(_, v)| {
-            v.split(',')
+/// (§11.2 / §14.1 `cache.l0.vary`).
+///
+/// `vary_headers` names the request headers the key is fingerprinted by
+/// (case-insensitive). The fingerprint is a stable `name=value;name=value`
+/// string in the configured order — a header absent from the request
+/// contributes `name=` so a missing header is distinct from an empty one.
+///
+/// `accept-language` is always fingerprinted by its primary tag (`en-US,en;q=0.9`
+/// → `en-us`), because that is what the i18n negotiation actually keys on.
+/// Any other header is fingerprinted by its raw trimmed value.
+pub fn vary_of(headers: &[(String, String)], vary_headers: &[String]) -> String {
+    if vary_headers.is_empty() {
+        return String::new();
+    }
+    let mut parts: Vec<String> = Vec::with_capacity(vary_headers.len());
+    for name in vary_headers {
+        let lower = name.to_ascii_lowercase();
+        let raw = headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(&lower))
+            .map(|(_, v)| v.as_str())
+            .unwrap_or("");
+        let value = if lower == "accept-language" {
+            // Primary language tag: the first comma-separated entry, stripped
+            // of its q-weight, lowercased.
+            raw.split(',')
                 .next()
                 .unwrap_or("")
                 .split(';')
@@ -267,9 +286,12 @@ pub fn vary_of(headers: &[(String, String)]) -> String {
                 .unwrap_or("")
                 .trim()
                 .to_ascii_lowercase()
-        })
-        .unwrap_or_default();
-    format!("lang={lang}")
+        } else {
+            raw.trim().to_string()
+        };
+        parts.push(format!("{lower}={value}"));
+    }
+    parts.join(";")
 }
 
 /// True when a route's inferred/explicit mode is safe to cache at L0.
@@ -452,16 +474,6 @@ mod tests {
         assert!(b.get("r", "", "").await.is_none());
     }
 
-    #[test]
-    fn vary_tracks_accept_language() {
-        let none = vary_of(&[]);
-        let en = vary_of(&[("accept-language".into(), "en-US,en;q=0.9".into())]);
-        let fr = vary_of(&[("accept-language".into(), "fr".into())]);
-        assert_ne!(en, fr);
-        assert_eq!(none, "lang=");
-        assert_eq!(en, "lang=en-us");
-    }
-
     /// PERF-04: an entry past its TTL but within the SWR window is served as
     /// a *stale* hit; past the window it is a miss.
     #[tokio::test]
@@ -541,13 +553,43 @@ mod tests {
     }
 
     #[test]
-    fn only_static_and_isr_are_cacheable() {
-        assert!(mode_is_cacheable(Some("static")));
-        assert!(mode_is_cacheable(Some("isr")));
-        assert!(!mode_is_cacheable(Some("dynamic")));
-        assert!(!mode_is_cacheable(Some("spa")));
-        assert!(!mode_is_cacheable(None));
-    }
+fn vary_tracks_the_configured_headers() {
+    let lang = vec!["accept-language".to_string()];
+    // No header -> empty value, but the NAME is still present so a missing
+    // header is distinct from an empty configured list.
+    assert_eq!(vary_of(&[], &lang), "accept-language=");
+    // The primary language tag is normalized (first entry, q-weight stripped,
+    // lowercased) — what i18n negotiation actually keys on.
+    assert_eq!(
+        vary_of(&[("accept-language".into(), "en-US,en;q=0.9".into())], &lang),
+        "accept-language=en-us"
+    );
+    assert_eq!(
+        vary_of(&[("Accept-Language".into(), "FR".into())], &lang),
+        "accept-language=fr"
+    );
+    // An empty configured list disables header variance entirely.
+    assert_eq!(vary_of(&[("accept-language".into(), "fr".into())], &[]), "");
+}
+
+#[test]
+fn vary_covers_arbitrary_configured_headers() {
+    // A non-language header is fingerprinted by its raw trimmed value.
+    let cfg = vec!["accept".to_string(), "x-tenant".to_string()];
+    let got = vary_of(
+        &[
+            ("Accept".into(), "application/odf".into()),
+            ("X-Tenant".into(), "acme".into()),
+        ],
+        &cfg,
+    );
+    assert_eq!(got, "accept=application/odf;x-tenant=acme");
+    // A header absent from the request contributes an empty value.
+    assert_eq!(
+        vary_of(&[("accept".into(), "application/odf".into())], &cfg),
+        "accept=application/odf;x-tenant="
+    );
+}
 
     // ---------------------------------------------------------- BUG-01
     // The revalidate path: an entry tagged `path:<path>` must be

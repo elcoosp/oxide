@@ -4077,6 +4077,9 @@ fn build_dispatch(
     // (connects to `/_oxide/hmr`, swaps CSS, reloads on server updates, shows
     // the error overlay). `false` in production.
     dev_hmr: bool,
+    // §11.2 / §14.1: the request headers the L0 key is fingerprinted by
+    // (`cache.l0.vary`). Empty disables header variance.
+    vary_headers: Vec<String>,
 ) -> std::sync::Arc<dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync> {
     let boot_script_url_for_render = boot_script_url.clone();
     let dev_hmr_for_render = dev_hmr;
@@ -4510,7 +4513,8 @@ fn build_dispatch(
                 .collect::<Vec<_>>()
                 .join("&")
         };
-        let l0_vary = l0_cache::vary_of(&req_owned.headers);
+        // §11.2 / §14.1: fingerprint exactly the headers `cache.l0.vary` names.
+        let l0_vary = l0_cache::vary_of(&req_owned.headers, &vary_headers);
         // BUG-01: the path tag the L0 put site stamps alongside the route
         // tag, so `revalidate.path` can invalidate it.
         let l0_path = req_path;
@@ -6552,6 +6556,8 @@ async fn start_server_inner_full(
         // §13.3: HMR client injection is dev-only. `hmr` is `Some` exactly when
         // the caller wired a dev hub (cmd_dev); serve/prod pass `None`.
         hmr.is_some(),
+        // §11.2: the L0 Vary fingerprint set from `cache.l0.vary`.
+        cfg.cache.l0.vary.clone(),
     );
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (tx, rx) = tokio::sync::watch::channel(false);
