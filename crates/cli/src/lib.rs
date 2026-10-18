@@ -6414,13 +6414,14 @@ async fn start_server_inner_full(
     // worker's `'use cache'` entries and the L0 response cache now share one
     // handler, so BUG-01's invalidation reaches both. A stack built without a
     // cache (tests, `FrameworkStack::empty()`) gets a private tier.
-    // BUG-11: honour `cache.l0MaxSize` (parsed: "512mb" | "64kb" | bytes).
+    // BUG-11: honour `cache.l0.maxSize` (parsed: "512mb" | "64kb" | bytes).
     // A malformed value falls back to 512 MiB with a warning rather than
     // refusing to start.
-    let l0_bytes = oxide_config::parse_size(&cfg.cache.l0_max_size).unwrap_or_else(|_| {
+    // §14.1: `cache.l0.maxSize`.
+    let l0_bytes = oxide_config::parse_size(&cfg.cache.l0.max_size).unwrap_or_else(|_| {
         tracing::warn!(
-            value = %cfg.cache.l0_max_size,
-            "cache.l0MaxSize is malformed; using 512mb"
+            value = %cfg.cache.l0.max_size,
+            "cache.l0.maxSize is malformed; using 512mb"
         );
         512 * 1024 * 1024
     });

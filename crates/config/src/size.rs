@@ -1,4 +1,4 @@
-//! Size literal parsing (§14: `cache.l0MaxSize`, `budgets.clientJs`, …).
+//! Size literal parsing (§14: `cache.l0.maxSize`, `budgets.clientJs`, …).
 //!
 //! Binary units: `b` = 1, `kb` = 1024, `mb` = 1024², `gb` = 1024³, `tb` = 1024⁴,
 //! case-insensitive, with an optional decimal fraction (`1.5mb`). Plain digit

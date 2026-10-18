@@ -4,6 +4,10 @@
 //! (`oxide.config.production.ts`) → env (`OXIDE_*`) → CLI flags.
 //! Env files: `.env`, `.env.local`, `.env.[mode]`, `.env.[mode].local`;
 //! `PUBLIC_`-prefixed variables are exposed to client code.
+// §14.2: the JSON schema `json!` literal is large enough to exceed the
+// default macro recursion limit (128). Raise it for this crate.
+#![recursion_limit = "512"]
+
 
 use oxide_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};
@@ -254,14 +258,31 @@ impl Default for RenderConfig {
 #[serde(rename_all = "camelCase", default)]
 pub struct CacheConfig {
     pub handler: CacheHandlerConfig,
-    /// e.g. "512mb" — parsed by `parse_size`.
-    pub l0_max_size: String,
+    /// §14.1: `cache: { l0: { maxSize: "512mb" } }`.
+    #[serde(default)]
+    pub l0: L0CacheConfig,
 }
+
+/// §14.1: `cache.l0` — the L0 response-cache settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct L0CacheConfig {
+    /// e.g. `"512mb"`, `"64kb"`, `"1gb"` — parsed by `parse_size`.
+    pub max_size: String,
+}
+impl Default for L0CacheConfig {
+    fn default() -> Self {
+        Self {
+            max_size: "512mb".into(),
+        }
+    }
+}
+
 impl Default for CacheConfig {
     fn default() -> Self {
         Self {
             handler: CacheHandlerConfig::default(),
-            l0_max_size: "512mb".into(),
+            l0: L0CacheConfig::default(),
         }
     }
 }

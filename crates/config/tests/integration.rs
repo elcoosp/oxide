@@ -426,7 +426,7 @@ fn load_static_ts_end_to_end_with_spec_example() {
     );
     assert_eq!(loaded.config.routes.dir, "src/routes");
     assert_eq!(loaded.config.adapter, "binary");
-    assert_eq!(loaded.config.cache.l0_max_size, "512mb");
+    assert_eq!(loaded.config.cache.l0.max_size, "512mb");
     assert_eq!(
         loaded.config.cache.handler,
         oxide_config::CacheHandlerConfig::Disk

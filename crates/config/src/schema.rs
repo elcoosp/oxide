@@ -76,10 +76,19 @@ pub fn config_schema() -> Value {
                     "handler": {
                         "type": "object",
                         "properties": {
-                            "type": { "type": "string", "enum": ["memory", "disk", "redis", "s3", "http"] }
-                        }
+                            "type": { "type": "string", "enum": ["memory", "disk", "redis", "s3", "http"] },
+                            "url": { "type": "string", "description": "Remote base URL for `type: \"http\"` or `type: \"redis\"`." },
+                            "bucket": { "type": "string", "description": "Bucket name for `type: \"s3\"`." }
+                        },
+                        "required": ["type"]
                     },
-                    "l0MaxSize": { "type": "string", "pattern": "^[0-9]+(kb|mb|gb)$", "default": "512mb" }
+                    "l0": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "maxSize": { "type": "string", "pattern": "^[0-9]+(kb|mb|gb)$", "default": "512mb" }
+                        }
+                    }
                 }
             },
             "images": {
@@ -116,7 +125,8 @@ pub fn config_schema() -> Value {
                     "default": { "type": "string" },
                     "strategy": {
                         "type": "string",
-                        "enum": ["prefix-except-default", "prefix-always", "prefix-never"]
+                        "enum": ["prefix", "prefix-except-default", "none"],
+                        "description": "Locale routing strategy: `prefix` (always), `prefix-except-default` (omit the default locale), `none` (no path prefix; cookie/Accept-Language only)."
                     }
                 }
             },
@@ -159,12 +169,52 @@ pub fn config_schema() -> Value {
                 "properties": {
                     "target": { "type": "string" },
                     "sourcemap": { "type": "string", "enum": ["hidden", "inline", "external", "off"] },
-                    "ssrExternals": { "type": "array", "items": { "type": "string" } }
+                    "ssrExternals": { "type": "array", "items": { "type": "string" } },
+                    "remoteCache": { "type": "string", "description": "§5.4: remote build-cache URL (http://). Read-through on a local miss, write-back on store." }
                 }
             },
             "adapter": {
                 "type": "string",
                 "enum": ["binary", "node", "static", "docker", "cloudflare", "lambda", "vercel", "netlify", "deno", "bun"]
+            },
+            "siteUrl": {
+                "type": "string",
+                "description": "§16.3: absolute site origin used by sitemap.xml and robots.txt."
+            },
+            "manifest": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "§16.3: web app manifest (PWA). Present -> oxide build emits manifest.webmanifest + a service worker."
+            },
+            "static": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "§10.5: static-export options (fallback behavior for dynamic routes)."
+            },
+            "plugins": {
+                "type": "array",
+                "items": { "type": "object", "additionalProperties": true },
+                "description": "§15: plugin entries (native, wasm, or js)."
+            },
+            "modules": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "§15.4: distributable modules to install."
+            },
+            "extends": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "§14.2: shared configs to merge before this file."
+            },
+            "environments": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "§14.2: per-environment Rolldown overrides (client / ssr)."
+            },
+            "dev": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "§13.5: dev-server options (https, host, qr, open, proxy)."
             },
             "content": {
                 "type": "object",
@@ -261,12 +311,12 @@ mod tests {
         ] {
             assert!(sec.get(k).is_some(), "security.{k} missing from schema");
         }
-        // `cache.l0MaxSize` is a top-level key on `cache`, not a nested `l0`.
+        // §14.1: `cache.l0.maxSize` (nested), not a flat `l0MaxSize`.
         assert!(
-            v["properties"]["cache"]["properties"]
-                .get("l0MaxSize")
+            v["properties"]["cache"]["properties"]["l0"]["properties"]
+                .get("maxSize")
                 .is_some(),
-            "cache.l0MaxSize missing"
+            "cache.l0.maxSize missing"
         );
         assert!(
             v["properties"]["server"]["properties"]
