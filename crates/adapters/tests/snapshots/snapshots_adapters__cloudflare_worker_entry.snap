@@ -8,8 +8,8 @@ expression: "cloudflare_worker_entry(\"build-abc123\")"
 import handler from "./edge.js";
 
 export default {
-async fetch(request, env, ctx) {
-const response = await handler(request, env, ctx);
-return response ?? new Response("Not Found", { status: 404 });
-},
+  async fetch(request, env, ctx) {
+    const response = await handler(request, env, ctx);
+    return response ?? new Response("Not Found", { status: 404 });
+  },
 };

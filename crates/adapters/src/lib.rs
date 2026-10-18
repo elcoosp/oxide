@@ -867,19 +867,22 @@ pub fn dockerfile(embed: bool) -> String {
 /// Cloudflare Workers entry: WinterCG-compatible JS consuming the edge build (D18).
 /// Deterministic; interpolates the `build_id` into a provenance comment.
 pub fn cloudflare_worker_entry(build_id: &str) -> String {
-    format!(
-        "// Oxide Cloudflare Workers entry (§18, §2 D18). build_id: {build_id}\n\
-         // WinterCG-compatible: `edge.js` dispatches through the web-standard\n\
-         // handler contract `(Request) => Promise<Response>`.\n\
-         import handler from \"./edge.js\";\n\
-         \n\
-         export default {{\n\
-           async fetch(request, env, ctx) {{\n\
-             const response = await handler(request, env, ctx);\n\
-             return response ?? new Response(\"Not Found\", {{ status: 404 }});\n\
-           }},\n\
-         }};\n"
-    )
+    // Raw string + replace (not `\`-continuation): a `\` at end of line
+    // strips the next line's leading whitespace, which silently un-indents the
+    // emitted JS. The `edge_handler_js` function below uses this same pattern.
+    let tpl = r#"// Oxide Cloudflare Workers entry (§18, §2 D18). build_id: __BUILD_ID__
+// WinterCG-compatible: `edge.js` dispatches through the web-standard
+// handler contract `(Request) => Promise<Response>`.
+import handler from "./edge.js";
+
+export default {
+  async fetch(request, env, ctx) {
+    const response = await handler(request, env, ctx);
+    return response ?? new Response("Not Found", { status: 404 });
+  },
+};
+"#;
+    tpl.replace("__BUILD_ID__", build_id)
 }
 
 /// Edge handler (`edge.js`) for the Cloudflare target (§18, §2 D18).
