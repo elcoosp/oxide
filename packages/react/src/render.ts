@@ -447,18 +447,27 @@ interface Shell {
 
 function buildTree(input: RenderInput): Node {
   const page = PAGES[input.route] ?? { component: NotFoundPage }
-  return el(AtlasLayout, {
+  const pageProps = {
     route: input.route,
     url: input.url,
     params: input.params,
     data: input.data as Record<string, unknown>,
-    page: el(page.component, {
-      route: input.route,
-      url: input.url,
-      params: input.params,
-      data: input.data as Record<string, unknown>,
-    }),
-  })
+  }
+  const pageNode = el(page.component, pageProps)
+
+  // §8.2 / §16.3 layout nesting: this IR renderer is the **conformance**
+  // renderer for the Atlas reference app. Its `PAGES` registry holds page
+  // components only — there are no layout components to resolve a chain
+  // against, so `input.layouts` is deliberately ignored here and the page is
+  // always wrapped in the default `AtlasLayout` shell. That shell is the
+  // markup contract the real adapter (`real-adapter.ts` / `makeRealAdapter`)
+  // must also emit for a route with no layouts, and the real adapter's
+  // multi-level chain is asserted separately in
+  // `packages/oxide/test/nested-layouts.test.ts`. Resolving `input.layouts`
+  // here would risk a page id accidentally swallowing the page's children
+  // (a page component ignores `props.children`), so it is intentionally a
+  // no-op — the IR's job is the *shell* contract, not user component wiring.
+  return el(AtlasLayout, { ...pageProps, page: pageNode })
 }
 
 /** Convert head elements extracted from the page tree into the neutral model.
@@ -506,6 +515,32 @@ function buildShell(input: RenderInput, state: RenderState): Shell {
 /** Error shell (§10.2 step 5): the core error boundary replaces the tree. */
 function errorShell(input: RenderInput, err: unknown): Shell {
   const message = err instanceof Error ? err.message : String(err)
+  // §10.2 step 5: prefer the project's `error.tsx` component when one
+  // resolves through this adapter's registry. The real adapter passes an
+  // `input.errorRoute` the same way; the IR keeps the same shape so the
+  // conformance suite can assert it.
+  const errorComponent = input.errorRoute ? PAGES[input.errorRoute] : undefined
+  if (errorComponent) {
+    const state = newRenderState(`${input.route}#error`)
+    try {
+      const tree = el(errorComponent.component, {
+        route: input.route,
+        url: input.url,
+        params: input.params,
+        data: input.data as Record<string, unknown>,
+        error: { message, route: input.route, status: 500 },
+      })
+      const walked = walk(tree, state, 1, true)
+      const head = mergeHead(LAYOUT_HEAD, input.head)
+      return {
+        headHtml: `<!doctype html>\n<html lang="en"><head>${renderHeadHtml(head)}</head>`,
+        bodyHtml: `<body>${walked.html}</body></html>`,
+        defers: state.defers,
+      }
+    } catch {
+      // The error page itself threw — fall through to the generic boundary.
+    }
+  }
   const head = mergeHead(LAYOUT_HEAD, { title: 'Error', meta: [], link: [], style: [], script: [] })
   return {
     headHtml: `<!doctype html>\n<html lang="en"><head>${renderHeadHtml(head)}</head>`,
