@@ -3058,20 +3058,22 @@ async fn op_dispatch(
             };
             match cache.get(key).await? {
                 Some(entry) => {
-                    // `cache_set` stored the value as JSON bytes. Decode
-                    // them so the runtime receives the value itself, not the
-                    // entry envelope — a caller does `const v = await
-                    // cacheGet(key)` and expects `v` to be what it stored.
-                    // A body that is not valid JSON is returned as the raw
-                    // UTF-8 string, which is the honest best-effort for a
-                    // value the tier round-trips as opaque bytes.
-                    let value: serde_json::Value = serde_json::from_slice(&entry.body)
-                        .unwrap_or_else(|_| {
-                            serde_json::Value::String(
-                                String::from_utf8_lossy(&entry.body).into_owned(),
-                            )
-                        });
-                    Ok(value)
+                    // §9.5: the entry body is ODF bytes (the same format the
+                    // wire uses). Return them base64-encoded — the JS runtime
+                    // decodes with `decodeOdf` so rich types (Date, Map, Set,
+                    // BigInt, shared refs) survive the cache round-trip. Raw
+                    // bytes are opaque to the tier, so ODF is the honest
+                    // representation; JSON was lossy (it flattened every rich
+                    // type).
+                    use base64::Engine as _;
+                    let body_b64 =
+                        base64::engine::general_purpose::STANDARD.encode(&entry.body);
+                    Ok(serde_json::json!({
+                        "body_b64": body_b64,
+                        // Keep the tags on the response for a caller that wants
+                        // to re-derive policy without a second round-trip.
+                        "tags": entry.tags,
+                    }))
                 }
                 None => Ok(serde_json::Value::Null),
             }
@@ -3083,13 +3085,24 @@ async fn op_dispatch(
             let Some(key) = args.get("key").and_then(|v| v.as_str()) else {
                 return Err(err("JSH-OP", "cache_set requires a string `key`"));
             };
-            let Some(body) = args.get("body") else {
-                return Err(err("JSH-OP", "cache_set requires a `body` field"));
+            // §9.5: `body_b64` is base64 ODF — the primary path (rich types
+            // survive). A `body` JSON value is the fallback for a runtime
+            // that could not ODF-encode; it is serialized as JSON bytes.
+            let bytes = if let Some(b64) = args.get("body_b64").and_then(|v| v.as_str()) {
+                use base64::Engine as _;
+                base64::engine::general_purpose::STANDARD
+                    .decode(b64)
+                    .map_err(|e| err("JSH-OP", format!("cache_set body_b64 invalid: {e}")))?
+            } else if let Some(body) = args.get("body") {
+                serde_json::to_vec(body).map_err(|e| {
+                    err("JSH-OP", format!("cache_set body is not serializable: {e}"))
+                })?
+            } else {
+                return Err(err(
+                    "JSH-OP",
+                    "cache_set requires a `body_b64` (ODF) or `body` (JSON) field",
+                ));
             };
-            // `body` is a JSON value; serialize it to bytes.
-            let bytes = serde_json::to_vec(body).map_err(|e| {
-                err("JSH-OP", format!("cache_set body is not serializable: {e}"))
-            })?;
             let tags: Vec<String> = args
                 .get("tags")
                 .and_then(|v| v.as_array())
