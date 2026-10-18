@@ -95,6 +95,12 @@ pub struct LoaderOutput {
     /// Headers the load added via `setHeaders`, in insertion order.
     #[serde(default)]
     pub headers: Vec<(String, String)>,
+    /// §7.1 / §9.2: resolved `defer(promise)` values, keyed by the numeric id
+    /// the loader's `defer()` assigned. The CLI injects `<script data-ox-d>`
+    /// resolution scripts so client `DeferredClient` slots resolve. Empty
+    /// when the load had no deferred data.
+    #[serde(default)]
+    pub deferred: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 impl LoaderOutput {
@@ -103,6 +109,7 @@ impl LoaderOutput {
         Self {
             status: 200,
             data,
+            deferred: std::collections::BTreeMap::new(),
             ..Default::default()
         }
     }

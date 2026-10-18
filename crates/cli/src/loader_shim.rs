@@ -80,12 +80,24 @@ pub fn output_from_raw(raw: &Value) -> oxide_server::Result<LoaderOutput> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    // §7.1 / §9.2: resolved deferred data. The worker returns `{id: value}`
+    // (keys are stringified numeric ids). Absent field → empty map.
+    let deferred = raw
+        .get("deferred")
+        .and_then(|v| v.as_object())
+        .map(|o| {
+            o.iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect::<std::collections::BTreeMap<String, serde_json::Value>>()
+        })
+        .unwrap_or_default();
     Ok(LoaderOutput {
         status,
         location,
         data,
         set_cookies,
         headers,
+        deferred,
     })
 }
 

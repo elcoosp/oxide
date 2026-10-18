@@ -824,10 +824,25 @@ async function dispatchLoaderRun(id, input) {
       }
       throw err;
     }
+    // §7.1 / §9.2: the loader's `defer(promise)` markers point into a
+    // registry populated by the wrapper. Await every promise and serialize
+    // `{ id: value }` so the Rust side can inject resolution scripts and
+    // the client's DeferredClient slots resolve to real data. A rejected
+    // promise surfaces as a serialized error object, not a throw — a
+    // loader whose data is partially ready should still render.
+    const deferred = {};
+    for (const [did, promise] of registry) {
+      try {
+        deferred[String(did)] = await promise;
+      } catch (e) {
+        deferred[String(did)] = { __oxide_deferred_error: String(e?.message ?? e) };
+      }
+    }
     callOk(id, {
       ok: true,
       status: 200,
       location: null,
+      deferred,
       data: result ?? {},
       setCookies: [...pendingCookies.values()],
       headers: extraHeaders,
