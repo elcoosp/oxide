@@ -253,7 +253,6 @@ fn overlay_payload_serializes_the_diagnostic() {
     assert!(Diagnostic::from_json(&payload).is_ok());
 }
 
-
 // ---------------------------------------------------------------------------
 // §13.4 Inspector tests
 // ---------------------------------------------------------------------------
@@ -332,7 +331,10 @@ fn notify_backend_reports_a_real_change() {
     let mut found = false;
     for _ in 0..60 {
         let ev = w.poll(&mut seen).unwrap();
-        if ev.iter().any(|e| matches!(e, FileEvent::Modified(p) | FileEvent::Created(p) if p == &file)) {
+        if ev
+            .iter()
+            .any(|e| matches!(e, FileEvent::Modified(p) | FileEvent::Created(p) if p == &file))
+        {
             found = true;
             break;
         }
