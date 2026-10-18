@@ -145,7 +145,9 @@ mod tests {
     struct OkLoader;
     #[async_trait]
     impl LoaderRunner for OkLoader {
-        fn name(&self) -> &str { "ok" }
+        fn name(&self) -> &str {
+            "ok"
+        }
         async fn run(&self, input: LoaderRunInput) -> Result<LoaderOutput> {
             Ok(LoaderOutput::ok(serde_json::json!({
                 "route": input.route,
@@ -157,9 +159,15 @@ mod tests {
     struct HttpErrLoader;
     #[async_trait]
     impl LoaderRunner for HttpErrLoader {
-        fn name(&self) -> &str { "http-err" }
+        fn name(&self) -> &str {
+            "http-err"
+        }
         async fn run(&self, _input: LoaderRunInput) -> Result<LoaderOutput> {
-            Ok(LoaderOutput { status: 404, data: serde_json::json!({"message":"not found"}), ..Default::default() })
+            Ok(LoaderOutput {
+                status: 404,
+                data: serde_json::json!({"message":"not found"}),
+                ..Default::default()
+            })
         }
     }
 
@@ -181,9 +189,31 @@ mod tests {
 
     #[test]
     fn non_200_short_circuits() {
-        assert!(LoaderOutput { status: 404, data: serde_json::json!({}), ..Default::default() }.short_circuits());
-        assert!(LoaderOutput { status: 303, location: Some("/".into()), data: serde_json::json!({}), ..Default::default() }.short_circuits());
-        assert!(LoaderOutput { status: 500, data: serde_json::json!({}), ..Default::default() }.short_circuits());
+        assert!(
+            LoaderOutput {
+                status: 404,
+                data: serde_json::json!({}),
+                ..Default::default()
+            }
+            .short_circuits()
+        );
+        assert!(
+            LoaderOutput {
+                status: 303,
+                location: Some("/".into()),
+                data: serde_json::json!({}),
+                ..Default::default()
+            }
+            .short_circuits()
+        );
+        assert!(
+            LoaderOutput {
+                status: 500,
+                data: serde_json::json!({}),
+                ..Default::default()
+            }
+            .short_circuits()
+        );
     }
 
     #[tokio::test]
@@ -201,7 +231,10 @@ mod tests {
     #[tokio::test]
     async fn error_and_redirect_are_ok_not_err() {
         let r: Arc<dyn LoaderRunner> = Arc::new(HttpErrLoader);
-        let out = r.run(LoaderRunInput::new("/m.ts", "routes/x", "/x")).await.unwrap();
+        let out = r
+            .run(LoaderRunInput::new("/m.ts", "routes/x", "/x"))
+            .await
+            .unwrap();
         assert_eq!(out.status, 404);
         assert!(out.short_circuits());
     }
