@@ -14,7 +14,7 @@
 //! Test names describe the case: success, http-error, redirect, no-load,
 //! missing-module.
 
-use oxide_jshost::{LoaderHost, Pool, JsHost, NodeHost, PoolConfig};
+use oxide_jshost::{JsHost, LoaderHost, NodeHost, Pool, PoolConfig};
 use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
@@ -31,8 +31,7 @@ fn e2e_dir() -> PathBuf {
 /// ~1µs resolution, and two parallel `#[tokio::test]`s hitting it at the
 /// same instant would then share a filename, one dropping the file the
 /// other is about to import.
-static NONCE_COUNTER: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+static NONCE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn unique_nonce() -> String {
     let nanos = SystemTime::now()
