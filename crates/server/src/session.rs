@@ -9,8 +9,8 @@
 //!
 //! `ring` provides the AEAD; there is no hand-rolled cryptography here.
 
-use crate::{err, Result};
-use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, CHACHA20_POLY1305, NONCE_LEN};
+use crate::{Result, err};
+use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -307,7 +307,10 @@ mod tests {
             let data: Vec<u8> = (0..n).map(|i| (i * 7 + 3) as u8).collect();
             let enc = b64url_encode(&data);
             assert!(!enc.contains('='), "no padding");
-            assert!(!enc.contains('+') && !enc.contains('/'), "url-safe alphabet");
+            assert!(
+                !enc.contains('+') && !enc.contains('/'),
+                "url-safe alphabet"
+            );
             assert_eq!(b64url_decode(&enc).unwrap(), data, "n={n}");
         }
     }
