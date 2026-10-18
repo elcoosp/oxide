@@ -3,7 +3,7 @@
 //! Ignored by default (boots V8 snapshot machinery) and needs a prior
 //! `oxide build examples/smoke-app-react`. Run with `--ignored`.
 
-use oxide_jshost::{snapshot_build_bundle, SNAPSHOT_FORMAT};
+use oxide_jshost::{SNAPSHOT_FORMAT, snapshot_build_bundle};
 
 fn collect(root: &std::path::Path, out: &mut Vec<(std::path::PathBuf, String)>) {
     if let Ok(rd) = std::fs::read_dir(root) {
@@ -32,7 +32,11 @@ fn snapshot_a_real_bundle_graph() {
     }
     let mut files = Vec::new();
     collect(&server, &mut files);
-    assert!(files.len() >= 3, "expected a multi-file bundle, got {}", files.len());
+    assert!(
+        files.len() >= 3,
+        "expected a multi-file bundle, got {}",
+        files.len()
+    );
 
     let snap = snapshot_build_bundle(&entry.to_string_lossy(), &files).unwrap();
     assert_eq!(snap.format, SNAPSHOT_FORMAT);
@@ -46,7 +50,11 @@ fn snapshot_a_real_bundle_graph() {
         "expected a real V8 startup blob, got an empty one"
     );
     // A populated snapshot of a real bundle is hundreds of KB.
-    assert!(snap.blob.len() > 100_000, "blob too small: {}", snap.blob.len());
+    assert!(
+        snap.blob.len() > 100_000,
+        "blob too small: {}",
+        snap.blob.len()
+    );
     assert_eq!(snap.source_hash.len(), 64);
 }
 
