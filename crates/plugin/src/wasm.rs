@@ -20,7 +20,7 @@
 //! Every hook is optional: a component that omits a function is treated as a
 //! no-op for that hook. Unknown exports are ignored.
 
-use crate::{err, Hook, Result, WasmPluginManifest};
+use crate::{Hook, Result, WasmPluginManifest, err};
 use std::path::Path;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store};
@@ -69,12 +69,9 @@ impl WasmPlugin {
         store.set_epoch_deadline(1_000); // coarse watchdog; dropped by the caller
 
         let linker: Linker<()> = Linker::new(&engine);
-        let instance = linker.instantiate(&mut store, &component).map_err(|e| {
-            err(
-                "PLG-WASM",
-                format!("failed to instantiate component: {e}"),
-            )
-        })?;
+        let instance = linker
+            .instantiate(&mut store, &component)
+            .map_err(|e| err("PLG-WASM", format!("failed to instantiate component: {e}")))?;
 
         // Probe which declared hooks the component actually exports, tolerating
         // the small set of ABI shapes we know how to call: `(string) -> string`,
