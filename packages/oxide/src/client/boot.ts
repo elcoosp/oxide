@@ -105,7 +105,19 @@ export function boot(): void {
  */
 export function bootWithRouter(
   adapter: FrameworkAdapter,
-  opts: { doc?: Document } = {},
+  opts: {
+    doc?: Document
+    /**
+     * §8.4 loading boundaries: URL-prefix → loading component map. Keys are
+     * URL prefixes (`/`, `/blog`, `/blog/x`), values are the module the
+     * boot entry statically imported from `loading.tsx`. On a client
+     * navigation, the longest matching prefix wins and `adapter.renderLoading`
+     * paints it into an overlay until the tree swaps. Absent (or a framework
+     * without `renderLoading`) → no loading boundary; the router still fires
+     * the hooks, they are just no-ops here.
+     */
+    loading?: Record<string, unknown>
+  } = {},
 ): () => void {
   const doc = opts.doc ?? (globalThis as { document?: Document }).document
   if (!doc) return () => {}
@@ -173,8 +185,65 @@ export function bootWithRouter(
   // (c) Router LAST — only when we actually hydrated a root. Otherwise leave
   //     the page on plain anchor navigation.
   if (!hydratedRoot) return () => {}
+
+  // §8.4 loading boundaries: on nav start, find the longest matching loading
+  // prefix and paint that component into an overlay div; on nav end, tear
+  // the overlay down (right before the tree swap).
+  let loadingDispose: (() => void) | undefined
+  let loadingOverlay: HTMLElement | undefined
+
+  function findLoading(url: string): unknown {
+    const map = opts.loading
+    if (!map) return undefined
+    // Strip query/hash, then find the longest prefix key that is a
+    // path-segment boundary of the URL. `'/'` matches everything.
+    const path = url.split(/[?#]/, 1)[0] || '/'
+    let bestKey: string | undefined
+    for (const key of Object.keys(map)) {
+      const k = key === '' ? '/' : key
+      const isPrefix =
+        k === '/' ? true : path === k || path.startsWith(k + '/')
+      if (!isPrefix) continue
+      if (!bestKey || k.length > (bestKey === '' ? 1 : bestKey.length)) {
+        bestKey = key
+      }
+    }
+    return bestKey !== undefined ? map[bestKey] : undefined
+  }
+
+  const onNavigateStart = (url: string): void => {
+    if (typeof adapter.renderLoading !== 'function') return
+    const Component = findLoading(url)
+    if (Component === undefined) return
+    // A dedicated overlay layer so the loading component does not collide
+    // with the SSR root's own markup; removed on nav end.
+    const overlay = doc.createElement('div')
+    overlay.setAttribute('data-ox-loading', '')
+    ;(doc.body ?? doc.documentElement)?.appendChild(overlay)
+    loadingOverlay = overlay
+    try {
+      loadingDispose = adapter.renderLoading(overlay, { url, route: url, params: {}, data: {} }, Component)
+    } catch (e) {
+      console.warn?.('oxide: renderLoading threw', e)
+      overlay.remove()
+      loadingOverlay = undefined
+    }
+  }
+  const onNavigateEnd = (): void => {
+    try {
+      loadingDispose?.()
+    } catch {
+      // A disposer that throws must not block navigation.
+    }
+    loadingDispose = undefined
+    loadingOverlay?.remove()
+    loadingOverlay = undefined
+  }
+
   const router = createRouter({
     adapter: adapter as unknown as { update(i: unknown): void },
+    onNavigateStart,
+    onNavigateEnd,
   } as never)
   return router.attach()
 }
