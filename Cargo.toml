@@ -59,6 +59,10 @@ ring = "0.17"
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring"] }
 rustls-pemfile = "2.2.0"
+# §12.1: HTTP/3 (quinn QUIC + h3 framing). Opt-in at runtime via `server.http3`.
+quinn = "0.11"
+h3 = "0.0.8"
+h3-quinn = "0.0.10"
 
 # Serialization / storage (spec Appendix A)
 serde = { version = "1.0.229", features = ["derive"] }

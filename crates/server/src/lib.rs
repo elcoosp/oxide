@@ -3650,6 +3650,136 @@ fn ws_socket_upgrade(
     resp
 }
 
+/// §12.1: build a QUIC server config (quinn) from the same PEM certificate
+/// and key the TLS listener uses. HTTP/3 rides QUIC with TLS 1.3, so the
+/// cert/key are shared with the TCP/TLS listener.
+pub fn h3_config_from_pem(
+    cert_pem: &[u8],
+    key_pem: &[u8],
+) -> Result<quinn::ServerConfig> {
+    use quinn::crypto::rustls::QuicServerConfig;
+    use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
+
+    let mut cert_reader = std::io::BufReader::new(cert_pem);
+    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| err("SRV-TLS", format!("h3 cert parse failed: {e}")))?;
+    if certs.is_empty() {
+        return Err(err("SRV-TLS", "h3 cert PEM contains no CERTIFICATE blocks".to_string()));
+    }
+    let mut key_reader = std::io::BufReader::new(key_pem);
+    let key: PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_reader)
+        .map_err(|e| err("SRV-TLS", format!("h3 key parse failed: {e}")))?
+        .ok_or_else(|| err("SRV-TLS", "h3 key PEM contains no PRIVATE KEY block".to_string()))?;
+
+    // ALPN must advertise h3 for a QUIC client to speak HTTP/3.
+    let mut tls = tokio_rustls::rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .map_err(|e| err("SRV-TLS", format!("h3 rustls config failed: {e}")))?;
+    tls.alpn_protocols = vec![b"h3".to_vec()];
+    let quic = QuicServerConfig::try_from(tls)
+        .map_err(|e| err("SRV-TLS", format!("h3 QUIC config failed: {e}")))?;
+    let mut server = quinn::ServerConfig::with_crypto(std::sync::Arc::new(quic));
+    // Idle timeout + keep-alive: a QUIC connection that stalls is dropped,
+    // matching the TCP slowloris protection.
+    let mut transport = quinn::TransportConfig::default();
+    transport.max_idle_timeout(Some(
+        std::time::Duration::from_secs(30).try_into().unwrap(),
+    ));
+    server.transport_config(std::sync::Arc::new(transport));
+    Ok(server)
+}
+
+/// §12.1: the HTTP/3 listener. Binds a UDP socket on the same port as the
+/// TCP listener, accepts QUIC connections, and drives each through `h3`.
+/// Requests are converted to the same `OxideRequest` shape the HTTP/1+2 path
+/// uses, so the pipeline is identical. `http3: true` in config + TLS enabled
+/// is what turns this on; without TLS there is no QUIC.
+pub async fn serve_http3(
+    addr: std::net::SocketAddr,
+    pipeline: Arc<Pipeline>,
+    dispatch: Arc<
+        dyn Fn(OxideRequest) -> futures::future::BoxFuture<'static, OxideResponse>
+            + Send
+            + Sync,
+    >,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+    server_config: quinn::ServerConfig,
+) -> Result<()> {
+    let endpoint = quinn::Endpoint::server(server_config, addr)
+        .map_err(|e| err("SRV-BIND", format!("cannot bind UDP {addr}: {e}")))?;
+    loop {
+        tokio::select! {
+            _ = shutdown.changed() => break,
+            incoming = endpoint.accept() => {
+                let Some(connecting) = incoming else { break };
+                let pipeline = Arc::clone(&pipeline);
+                let dispatch = Arc::clone(&dispatch);
+                tokio::spawn(async move {
+                    let Ok(conn) = connecting.await else { return };
+                    let h3_conn = h3_quinn::Connection::new(conn);
+                    let mut h3 = match h3::server::Connection::new(h3_conn).await {
+                        Ok(c) => c,
+                        Err(_) => return,
+                    };
+                    loop {
+                        match h3.accept().await {
+                            Ok(Some(resolver)) => {
+                                let (req, mut stream) = match resolver.resolve_request().await {
+                                    Ok(v) => v,
+                                    Err(_) => continue,
+                                };
+                                let method = req.method().to_string();
+                                let url = req.uri().to_string();
+                                let headers: Vec<(String, String)> = req
+                                    .headers()
+                                    .iter()
+                                    .filter_map(|(k, v)| {
+                                        v.to_str().ok().map(|vs| (k.to_string(), vs.to_string()))
+                                    })
+                                    .collect();
+                                let oreq = OxideRequest {
+                                    method,
+                                    url,
+                                    headers,
+                                    body: bytes::Bytes::new(),
+                                    request_id: next_request_id(),
+                                };
+                                let resp = pipeline.serve_request(oreq, dispatch.as_ref()).await;
+                                // 响应 head
+                                let mut builder = hyper::http::Response::builder().status(resp.status);
+                                for (k, v) in &resp.headers {
+                                    builder = builder.header(k.as_str(), v.as_str());
+                                }
+                                let response = match builder.body(()) {
+                                    Ok(r) => r,
+                                    Err(_) => {
+                                        let _ = stream.finish().await;
+                                        continue;
+                                    }
+                                };
+                                if stream.send_response(response).await.is_err() {
+                                    continue;
+                                }
+                                if !resp.body.is_empty() {
+                                    let _ = stream.send_data(resp.body).await;
+                                }
+                                let _ = stream.finish().await;
+                            }
+                            Ok(None) => break,
+                            Err(_) => break,
+                        }
+                    }
+                    let _ = h3.shutdown(0).await;
+                });
+            }
+        }
+    }
+    endpoint.wait_idle().await;
+    Ok(())
+}
+
 /// Minimal SHA-1 for the WebSocket handshake (RFC6455 requires it; SHA-1 is
 /// not a security primitive here — it is a fixed protocol constant).
 mod sha1_shim {

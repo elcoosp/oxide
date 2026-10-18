@@ -22,6 +22,11 @@ socket2 = { version = "0.5", features = ["all"] }
 http-body-util = { workspace = true }
 tokio = { workspace = true }
 tokio-rustls = { workspace = true }
+# §12.1: HTTP/3 (QUIC transport + HTTP/3 framing). Feature-gated at the call
+# site by `server.http3`; the deps are always compiled so the surface is real.
+quinn = { workspace = true }
+h3 = { workspace = true }
+h3-quinn = { workspace = true }
 rustls-pemfile = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
