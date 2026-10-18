@@ -400,6 +400,11 @@ pub struct SecurityConfig {
     /// SEC-05 / §16.6: cookie-signing keys (32+ bytes each, first signs).
     /// Empty = derive from `.oxide/secret`.
     pub cookie_keys: Vec<String>,
+    /// §16.6: session-**encryption** keys for `SessionCodec` (ChaCha20-Poly1305;
+    /// 32+ bytes each, first key seals, all tried on open). Empty = session
+    /// cookies fall back to the signed-only `sign_cookie` primitive (payload
+    /// visible). Set this to make session payloads confidential.
+    pub session_keys: Vec<String>,
 }
 impl Default for SecurityConfig {
     fn default() -> Self {
@@ -410,6 +415,7 @@ impl Default for SecurityConfig {
             ssrf_allow_list: Vec::new(),
             trusted_proxies: Vec::new(),
             cookie_keys: Vec::new(),
+            session_keys: Vec::new(),
         }
     }
 }

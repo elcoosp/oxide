@@ -124,6 +124,11 @@ impl Session {
         Self::default()
     }
 
+    /// The whole session map, for handing to a loader as `locals.session`.
+    pub fn to_value(&self) -> Value {
+        Value::Object(self.data.clone().into_iter().collect())
+    }
+
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.data.get(key)
     }

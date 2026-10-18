@@ -4075,6 +4075,11 @@ fn build_dispatch(
     // §20: the per-request waterfall recorder. `None` for a non-inspector
     // server; the dispatch then skips recording.
     waterfall: Option<oxide_dev::WaterfallRecorder>,
+    // §16.6: the session codec, built from `security.sessionKeys`. `None`
+    // when the project configures no keys — session cookies then carry no
+    // `locals.session` (the signed-only `sign_cookie` primitive remains for
+    // a project that wants a tamper-evident, non-confidential cookie).
+    session_codec: Option<std::sync::Arc<oxide_server::SessionCodec>>,
 ) -> std::sync::Arc<dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync> {
     let boot_script_url_for_render = boot_script_url.clone();
     let dev_hmr_for_render = dev_hmr;
@@ -4484,6 +4489,8 @@ fn build_dispatch(
         // §20: the waterfall recorder (Arc inside, cheap to clone) is moved
         // by the async block; shadow it per call like the dispatchers above.
         let waterfall = waterfall.clone();
+        // §16.6: same shadow for the session codec.
+        let session_codec = session_codec.clone();
         // §11 L0: only a GET on a cacheable-mode route is a candidate.
         let l0 = l0.clone();
         // §11.1: L0 caches the FULL response for cacheable modes. The
@@ -4537,6 +4544,16 @@ fn build_dispatch(
             // error surfaces as a 500 with a `MIDDLEWARE`-coded envelope.
             let stage_middleware_start = std::time::Instant::now();
             let mut middleware_locals: serde_json::Value = serde_json::json!({});
+            // §16.6: decode the encrypted session cookie into
+            // `locals.session` so a loader/action reads it as an object. A
+            // missing or tampered cookie is an empty session, never an error.
+            if let Some(codec) = session_codec.as_deref() {
+                if let Some(cookie) = req_owned.header("oxide_session") {
+                    if let Ok(sess) = oxide_server::Session::decode(codec, cookie) {
+                        middleware_locals["session"] = sess.to_value();
+                    }
+                }
+            }
             let mut middleware_headers: Vec<(String, String)> = Vec::new();
             if let (Some(dispatcher), Some(mp)) = (
                 middleware_for_dispatch.as_deref(),
@@ -6374,6 +6391,31 @@ async fn start_server_inner_full(
     // dispatch then skips recording (a branch, not an allocation).
     let waterfall_recorder: Option<oxide_dev::WaterfallRecorder> =
         with_inspector.then(oxide_dev::WaterfallRecorder::new);
+    // §16.6: the session codec from `security.sessionKeys`. A malformed key
+    // (too short) is a hard config error — silently falling back to an
+    // unsigned cookie would be a security downgrade.
+    let session_codec: Option<std::sync::Arc<oxide_server::SessionCodec>> = {
+        let keys: Vec<Vec<u8>> = cfg
+            .security
+            .session_keys
+            .iter()
+            .map(|k| k.as_bytes().to_vec())
+            .collect();
+        if keys.is_empty() {
+            None
+        } else {
+            match oxide_server::SessionCodec::new(&keys) {
+                Ok(c) => Some(std::sync::Arc::new(c)),
+                Err(e) => {
+                    eprintln!(
+                        "error: security.sessionKeys is invalid: {} {}",
+                        e.0.code, e.0.message
+                    );
+                    return Err(anyhow::anyhow!("invalid session keys"));
+                }
+            }
+        }
+    };
 
     let pipeline = std::sync::Arc::new(oxide_server::Pipeline {
         rules,
@@ -6425,6 +6467,14 @@ async fn start_server_inner_full(
                     configured
                 }
             },
+            // §16.6: session-encryption keys. Empty -> the pipeline's
+            // session helpers fall back to signed-only cookies (documented).
+            session_keys: cfg
+                .security
+                .session_keys
+                .iter()
+                .map(|k| k.as_bytes().to_vec())
+                .collect(),
         },
         rate_limiter: std::sync::Arc::new(oxide_server::RateLimiter::default()),
         health_path: "/_oxide/health".to_string(),
@@ -6610,6 +6660,8 @@ async fn start_server_inner_full(
         cfg.cache.l0.vary.clone(),
         // §20: the waterfall recorder (None for a non-inspector server).
         waterfall_recorder.clone(),
+        // §16.6: the session codec (None when no keys are configured).
+        session_codec,
     );
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (tx, rx) = tokio::sync::watch::channel(false);
