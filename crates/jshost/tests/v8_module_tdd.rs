@@ -87,7 +87,11 @@ async fn v8_surfaces_a_missing_export() {
         Err(e) => e,
     };
     assert_eq!(err.0.code, "JSH-V8");
-    assert!(err.0.message.contains("no callable export"), "msg: {}", err.0.message);
+    assert!(
+        err.0.message.contains("no callable export"),
+        "msg: {}",
+        err.0.message
+    );
 }
 
 #[tokio::test]
@@ -95,7 +99,11 @@ async fn v8_surfaces_a_missing_export() {
 async fn v8_surfaces_a_throwing_export() {
     let dir = tempfile::tempdir().unwrap();
     let module = dir.path().join("mod.mjs");
-    std::fs::write(&module, "export function boom() { throw new Error('kaboom'); }\n").unwrap();
+    std::fs::write(
+        &module,
+        "export function boom() { throw new Error('kaboom'); }\n",
+    )
+    .unwrap();
 
     let pool = V8Host::new().render_pool(PoolConfig::default()).unwrap();
     let err = match pool
