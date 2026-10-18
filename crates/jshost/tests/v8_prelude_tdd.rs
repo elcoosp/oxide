@@ -143,5 +143,8 @@ async fn v8_interval_survives_throw_and_stops_on_clear() {
     );
     // The worker is still alive (a throwing interval must not crash it).
     let v2 = run(&pool, &m, "splitEuroNoStream").await;
-    assert!(v2.get("a").is_some(), "worker alive after interval test: {v2}");
+    assert!(
+        v2.get("a").is_some(),
+        "worker alive after interval test: {v2}"
+    );
 }
