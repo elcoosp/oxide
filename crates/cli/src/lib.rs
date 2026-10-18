@@ -2340,7 +2340,30 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // §6.3 / §5.4: the precompile pass is a pure function of
     // (source, framework, mode, compiler version) and is cached in the Tier-B
     // CAS, so an unchanged SFC is not recompiled on the next build.
-    let precompile_cache = precompile_cache::PrecompileCache::open_soft(&rootp);
+    // §5.4: a configured `build.remoteCache` makes the precompile cache
+    // read-through/write-through against a remote HTTP cache. A missing/failed
+    // remote degrades to local-only (open_with_remote falls back).
+    let precompile_cache = {
+        let local = precompile_cache::PrecompileCache::open_soft(&rootp);
+        match (&cfg.build.remote_cache, local) {
+            (Some(url), Some(c)) => {
+                let remote: std::sync::Arc<dyn oxide_graph::RemoteCache> =
+                    std::sync::Arc::new(oxide_graph::HttpRemoteCache::new(url.clone()));
+                // Re-open with the remote attached, keeping the local CAS.
+                match precompile_cache::PrecompileCache::open_with_remote(&rootp, remote) {
+                    Ok(rc) => Some(rc),
+                    Err(e) => {
+                        eprintln!(
+                            "warn: remote build cache unavailable ({}); using local only",
+                            e.0.message
+                        );
+                        Some(c)
+                    }
+                }
+            }
+            (_, l) => l,
+        }
+    };
     let tool_version = env!("CARGO_PKG_VERSION");
     let client_precompiled = precompile::precompile_entries(
         stack.tooling_pool.as_ref(),
