@@ -3377,10 +3377,15 @@ fn build_dispatch(
     // §8.1 middleware.ts / §8.5: dispatch a route's middleware before the
     // loader/render phase. `None` means middleware is not executed.
     middleware_dispatcher: Option<std::sync::Arc<dyn oxide_server::MiddlewareDispatcher>>,
+    // §13.3: dev-only. When true, inject a self-contained HMR client script
+    // (connects to `/_oxide/hmr`, swaps CSS, reloads on server updates, shows
+    // the error overlay). `false` in production.
+    dev_hmr: bool,
 ) -> std::sync::Arc<
     dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
 > {
     let boot_script_url_for_render = boot_script_url.clone();
+    let dev_hmr_for_render = dev_hmr;
     let actions_for_dispatch = actions.clone();
     let endpoint_for_dispatch = endpoint_dispatcher.clone();
     let middleware_for_dispatch = middleware_dispatcher.clone();
@@ -4246,10 +4251,36 @@ fn build_dispatch(
                                     r#"<script type="application/oxide-deferred" nonce="{nonce}">{safe}</script>"#,
                                 )
                             };
+                            // §13.3: a self-contained dev HMR client. It
+                            // connects to `/_oxide/hmr`, swaps the matching
+                            // <link> on a CSS update, and reloads the page on
+                            // a module/server update. Inlined (not a bundled
+                            // module) so it works in dev without a build step.
+                            let hmr_tag = if dev_hmr_for_render {
+                                format!(
+                                    concat!(
+                                        r#"<script nonce="{n}">(function(){{"#,
+                                        r#"try{{var ws=new WebSocket((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/_oxide/hmr');"#,
+                                        r#"ws.onmessage=function(ev){{try{{var m=JSON.parse(ev.data);"#,
+                                        r#"if(m.type==='css-update'){{var p=(m.path||'').split('?')[0];var ls=document.querySelectorAll('link[rel=stylesheet]');"#,
+                                        r#"for(var i=0;i<ls.length;i++){{var h=(ls[i].getAttribute('href')||'').split('?')[0];"#,
+                                        r#"if(h===p||h.slice(-p.length)===p){{ls[i].setAttribute('href',p+'?t='+Date.now());break;}}}}}}"#,
+                                        r#"else if(m.type==='module-update'||m.type==='server-module-swap'||m.type==='full-reload'){{location.reload();}}"#,
+                                        r#"else if(m.type==='error'){{var d=document.createElement('div');"#,
+                                        r#"d.setAttribute('data-oxide-error','');d.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);color:#fff;font:14px/1.4 monospace;padding:2rem;z-index:2147483647;overflow:auto';"#,
+                                        r#"d.textContent=(m.diagnostic&&(m.diagnostic.code+': '+m.diagnostic.message))||'Oxide error';document.body.appendChild(d);"#,
+                                        r#"d.addEventListener('click',function(){{d.remove();}});}}}}catch(e){{}}}};"#,
+                                        r#"ws.onclose=function(){{setTimeout(function(){{location.reload();}},2000);}};}}catch(e){{}}}})();</script>"#,
+                                    ),
+                                    n = nonce,
+                                )
+                            } else {
+                                String::new()
+                            };
                             let body = match boot_script_url_for_render.as_deref() {
                                 Some(url) => {
                                     let tag = format!(
-                                        r#"{deferred_tag}<script type="module" src="/{url}" nonce="{nonce}"></script>"#,
+                                        r#"{deferred_tag}{hmr_tag}<script type="module" src="/{url}" nonce="{nonce}"></script>"#,
                                     );
                                     oxide_server::inject_before_close(
                                         bridged,
@@ -4258,17 +4289,14 @@ fn build_dispatch(
                                     )
                                 }
                                 None => {
-                                    // No boot module, but a loader may still have
-                                    // deferred values to resolve on the client
-                                    // (an islands-only or a plain page using
-                                    // `defer`). Inject only the deferred script.
-                                    if deferred_tag.is_empty() {
+                                    let extra = format!("{deferred_tag}{hmr_tag}");
+                                    if extra.is_empty() {
                                         bridged
                                     } else {
                                         oxide_server::inject_before_close(
                                             bridged,
                                             b"</body>",
-                                            deferred_tag.as_bytes(),
+                                            extra.as_bytes(),
                                         )
                                     }
                                 }
@@ -5440,6 +5468,9 @@ async fn start_server_inner_full(
         },
         endpoint_dispatcher,
         middleware_dispatcher,
+        // §13.3: HMR client injection is dev-only. `hmr` is `Some` exactly when
+        // the caller wired a dev hub (cmd_dev); serve/prod pass `None`.
+        hmr.is_some(),
     );
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (tx, rx) = tokio::sync::watch::channel(false);
