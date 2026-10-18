@@ -4498,6 +4498,13 @@ fn build_dispatch(
                             let mut resp = oxide_server::OxideResponse::new(304, "");
                             resp = resp.with_header("etag", etag.clone());
                             resp = resp.with_header("x-oxide-cache", "L0-hit");
+                            // P0-5: middleware runs per request and its
+                            // headers must reflect THIS request, not the
+                            // request that stored the entry. Apply before
+                            // returning so an L0 hit carries them too.
+                            for (k, v) in &middleware_headers {
+                                resp = resp.with_header(k, v.clone());
+                            }
                             metrics.observe(&label, started.elapsed(), 304);
                             return resp;
                         }
@@ -4516,6 +4523,12 @@ fn build_dispatch(
                             "x-oxide-cache",
                             if hit.stale { "L0-stale" } else { "L0-hit" },
                         );
+                        // P0-5: middleware headers reflect this request; a
+                        // cached body must not suppress an auth/security
+                        // header the middleware just set.
+                        for (k, v) in &middleware_headers {
+                            resp = resp.with_header(k, v.clone());
+                        }
                         metrics.observe(&label, started.elapsed(), hit.status);
                         return resp;
                     }
@@ -4547,6 +4560,11 @@ fn build_dispatch(
                                 resp = resp.with_header(k, v.clone());
                             }
                             resp = resp.with_header("x-oxide-cache", "L0-coalesced");
+                            // P0-5: a coalesced follower gets the same
+                            // per-request middleware headers as a direct hit.
+                            for (k, v) in &middleware_headers {
+                                resp = resp.with_header(k, v.clone());
+                            }
                             metrics.observe(&label, started.elapsed(), entry.status);
                             return resp;
                         }

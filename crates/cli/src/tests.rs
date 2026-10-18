@@ -3397,3 +3397,124 @@ async fn middleware_headers_ride_page_and_data_responses() {
     );
     assert!(json["locale"].is_string(), "locale in the envelope: {json}");
 }
+
+// ---------------------------------------------------------------------------
+// P0-5: middleware headers on L0 hits + single-flight followers (§11.1, §8.5)
+// ---------------------------------------------------------------------------
+
+/// A cacheable route (static mode, no server module) so `l0_eligible` is true.
+fn tree_with_static_page_and_middleware() -> std::sync::Arc<oxide_router::RouteTree> {
+    let mut tree = oxide_router::RouteTree::new();
+    tree.insert(oxide_router::RouteEntry {
+        id: oxide_router::RouteId("routes/index".into()),
+        kind: oxide_router::RouteKind::Page,
+        segments: vec![],
+        file: std::path::PathBuf::from("index/page.tsx"),
+        render_mode: Some("static".into()),
+        tags: Vec::new(),
+        has_server_module: false,
+        slot: None,
+    });
+    tree.insert(oxide_router::RouteEntry {
+        id: oxide_router::RouteId("routes/middleware".into()),
+        kind: oxide_router::RouteKind::Middleware,
+        segments: vec![],
+        file: std::path::PathBuf::from("middleware.ts"),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: false,
+        slot: None,
+    });
+    std::sync::Arc::new(tree)
+}
+
+#[tokio::test]
+async fn middleware_headers_ride_l0_hits() {
+    use std::sync::Arc;
+
+    // Memory tier the L0 cache stores into.
+    let tier: Arc<dyn oxide_cache::CacheHandler> =
+        Arc::new(oxide_cache::TieredCache::new(8 * 1024 * 1024));
+    let l0 = Arc::new(l0_cache::L0Cache::new(
+        tier,
+        "test-build",
+        std::time::Duration::from_secs(300),
+    ));
+
+    let metrics = Arc::new(oxide_server::Metrics::new());
+    let mw: Option<Arc<dyn oxide_server::MiddlewareDispatcher>> =
+        Some(Arc::new(ScriptedMiddleware {
+            headers: vec![("x-oxide-mw".to_string(), "on".to_string())],
+            locals: None,
+        }));
+
+    // A renderer is attached so the FIRST request takes the render path and
+    // stores its output in L0 (a no-renderer request returns the IR
+    // placeholder before the L0 store).
+    let page_renderer: Option<Arc<dyn oxide_server::PageRenderer>> =
+        Some(Arc::new(DataCapturingRenderer::new()));
+
+    let dispatch = build_dispatch(
+        tree_with_static_page_and_middleware(),
+        metrics,
+        Vec::new(),
+        page_renderer,
+        None,
+        routes_root(),
+        None,
+        Some(Arc::clone(&l0)),
+        None,
+        None,
+        None,
+        None,
+        None,
+        mw,
+        false,
+    );
+
+    // First request: an L0 miss. It renders and stores the entry; the
+    // middleware header rides it.
+    let first = dispatch(test_request("GET", "/")).await;
+    assert_eq!(first.status, 200, "first request status");
+    let first_cache = first
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-cache"))
+        .map(|(_, v)| v.as_str());
+    assert_ne!(
+        first_cache,
+        Some("L0-hit"),
+        "the first request must not be an L0 hit: {:?}",
+        first.headers
+    );
+
+    // Second request: an L0 HIT. The body comes from cache, but middleware
+    // ran for THIS request — its header must still ride the response (P0-5).
+    let second = dispatch(test_request("GET", "/")).await;
+    assert_eq!(second.status, 200, "second request status");
+    let second_cache = second
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-cache"))
+        .map(|(_, v)| v.as_str());
+    // The second request may be served from L0 directly (`L0-hit`) or via
+    // single-flight coalescing (`L0-coalesced`) if the first request's store
+    // had not yet completed — both are the cached paths P0-5 fixed.
+    assert!(
+        matches!(second_cache, Some("L0-hit") | Some("L0-coalesced")),
+        "the second request is served from cache: {:?}",
+        second.headers
+    );
+
+    let mw_hdr = second
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-mw"))
+        .map(|(_, v)| v.as_str());
+    assert_eq!(
+        mw_hdr,
+        Some("on"),
+        "middleware header on the L0-hit response: {:?}",
+        second.headers
+    );
+}
