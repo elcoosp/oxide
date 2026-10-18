@@ -663,3 +663,74 @@ impl MiddlewareHost {
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// Socket host (§9.6)
+// ---------------------------------------------------------------------------
+
+/// A host for `socket:run`. Loads a route's `socket.ts` and runs one phase
+/// (`open` / `message` / `close`) against the Rust-side WebSocket. Rust owns
+/// the upgrade, framing and ping/pong; this host is one phase call.
+pub struct SocketHost {
+    pool: Arc<dyn Pool>,
+}
+
+/// The result of a socket phase: whatever the handler `send()`s (a single
+/// string, or several in order) and an optional close.
+#[derive(Debug, Clone, Default)]
+pub struct SocketOutcome {
+    pub sends: Vec<String>,
+    pub close: Option<(u16, String)>,
+}
+
+impl SocketHost {
+    pub fn new(pool: Arc<dyn Pool>) -> Self {
+        Self { pool }
+    }
+
+    /// Run one socket phase. `payload` carries the message data (for
+    /// `message`) or the close code/reason (for `close`).
+    pub async fn run(
+        &self,
+        module_path: &str,
+        phase: &str,
+        payload: serde_json::Value,
+        socket_id: &str,
+    ) -> Result<SocketOutcome> {
+        let call_input = CallInput {
+            payload: serde_json::json!({
+                "module_path": module_path,
+                "phase": phase,
+                "payload": payload,
+                "socket_id": socket_id,
+            }),
+            headers: Default::default(),
+            has_body: false,
+            request_id: format!("socket:run:{phase}"),
+            route: None,
+        };
+        let entry = EntryRef {
+            kind: "socket:run".into(),
+            module: module_path.to_string(),
+            export: phase.to_string(),
+        };
+        let mut stream = self.pool.call(entry, call_input).await?;
+        let bytes = stream.collect().await?;
+        let v: Value = serde_json::from_slice(&bytes)
+            .map_err(|e| crate::err("JSH-SOCKET", format!("socket:run returned invalid JSON: {e}")))?;
+        if let Some(err_msg) = v.get("__oxide_error").and_then(|x| x.as_str()) {
+            return Err(crate::err("JSH-SOCKET", err_msg.to_string()));
+        }
+        let sends: Vec<String> = match v.get("send") {
+            Some(Value::String(s)) => vec![s.clone()],
+            Some(Value::Array(a)) => a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect(),
+            _ => Vec::new(),
+        };
+        let close = v.get("close").and_then(|c| {
+            let code = c.get("code").and_then(|x| x.as_u64()).unwrap_or(1000) as u16;
+            let reason = c.get("reason").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            Some((code, reason))
+        });
+        Ok(SocketOutcome { sends, close })
+    }
+}
