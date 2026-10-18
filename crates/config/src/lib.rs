@@ -11,8 +11,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 mod env_file;
-pub mod schema;
 mod extract;
+pub mod schema;
 
 /// Test-only wrapper around the minimal-config extractor. Production code
 /// reaches the same result through `OxideConfig::load`; this exposes the
@@ -27,7 +27,7 @@ mod size;
 
 pub type Result<T> = std::result::Result<T, OxideError>;
 
-pub use schema::{config_schema, config_schema_pretty, CONFIG_SCHEMA_URI};
+pub use schema::{CONFIG_SCHEMA_URI, config_schema, config_schema_pretty};
 
 pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
     OxideError(Diagnostic::error(code, msg))
@@ -593,7 +593,11 @@ mod spec16_tests {
     #[test]
     fn detects_pnpm_workspace_root() {
         let ws = tempdir().unwrap();
-        fs::write(ws.path().join("pnpm-workspace.yaml"), "packages:\n  - apps/*\n").unwrap();
+        fs::write(
+            ws.path().join("pnpm-workspace.yaml"),
+            "packages:\n  - apps/*\n",
+        )
+        .unwrap();
         let app = ws.path().join("apps/web");
         fs::create_dir_all(&app).unwrap();
         assert_eq!(detect_workspace_root(&app), Some(ws.path().to_path_buf()));
@@ -605,14 +609,21 @@ mod spec16_tests {
     #[test]
     fn detects_package_workspaces_and_cargo() {
         let ws = tempdir().unwrap();
-        fs::write(ws.path().join("package.json"), r#"{"workspaces":["packages/*"]}"#).unwrap();
+        fs::write(
+            ws.path().join("package.json"),
+            r#"{"workspaces":["packages/*"]}"#,
+        )
+        .unwrap();
         let app = ws.path().join("packages/a");
         fs::create_dir_all(&app).unwrap();
         assert_eq!(detect_workspace_root(&app), Some(ws.path().to_path_buf()));
 
         let cws = tempdir().unwrap();
         fs::write(cws.path().join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
-        assert_eq!(detect_workspace_root(cws.path()), Some(cws.path().to_path_buf()));
+        assert_eq!(
+            detect_workspace_root(cws.path()),
+            Some(cws.path().to_path_buf())
+        );
     }
 
     /// SPEC-16: a bare `extends` package resolves from the workspace root's
@@ -620,7 +631,11 @@ mod spec16_tests {
     #[test]
     fn resolves_workspace_preset() {
         let ws = tempdir().unwrap();
-        fs::write(ws.path().join("pnpm-workspace.yaml"), "packages:\n  - apps/*\n").unwrap();
+        fs::write(
+            ws.path().join("pnpm-workspace.yaml"),
+            "packages:\n  - apps/*\n",
+        )
+        .unwrap();
         let app = ws.path().join("apps/web");
         fs::create_dir_all(&app).unwrap();
         let preset = ws.path().join("node_modules/@scope/oxide-preset");
