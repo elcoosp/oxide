@@ -701,7 +701,8 @@ function decodeURIComponentSafe(s) {
 }
 
 async function dispatchLoaderRun(id, input) {
-  const { module_path, route, params, url, method, headers, locals: inputLocals } = input.payload ?? {};
+  const { module_path, route, params, url, method, headers, locals: inputLocals, locale: payloadLocale } =
+    input.payload ?? {};
   if (typeof module_path !== "string" || module_path.length === 0) {
     callErr(id, "JSH-LOADER", "loader:run requires a `module_path` string");
     return;
@@ -799,6 +800,10 @@ async function dispatchLoaderRun(id, input) {
       // (empty object) when the project has no middleware; present when a
       // middleware returned `{ locals: {...} }`.
       locals: inputLocals && typeof inputLocals === "object" ? inputLocals : {},
+      // SPEC-10 / §16.4: the pipeline's resolved locale, forwarded by the
+      // Rust host whitelist. Empty string when the project has no i18n —
+      // mirrors the shim's `LoaderRunInput::locale` default.
+      locale: typeof payloadLocale === "string" ? payloadLocale : "",
       cookies,
       setHeaders,
       parent,
