@@ -195,16 +195,20 @@ export function bootWithRouter(
   function findLoading(url: string): unknown {
     const map = opts.loading
     if (!map) return undefined
-    // Strip query/hash, then find the longest prefix key that is a
-    // path-segment boundary of the URL. `'/'` matches everything.
-    const path = url.split(/[?#]/, 1)[0] || '/'
+    // Strip query/hash. The CLI emits keys WITH a trailing slash
+    // (`/`, `/slow/`), so normalize the key (drop a trailing slash) and the
+    // path (drop a trailing slash) before the prefix comparison. The root
+    // key `/` matches every URL.
+    const path = (url.split(/[?#]/, 1)[0] || '/').replace(/\/+$/, '') || '/'
     let bestKey: string | undefined
+    let bestLen = -1
     for (const key of Object.keys(map)) {
-      const k = key === '' ? '/' : key
+      const normalized = (key || '/').replace(/\/+$/, '') || '/'
       const isPrefix =
-        k === '/' ? true : path === k || path.startsWith(k + '/')
+        normalized === '/' || path === normalized || path.startsWith(normalized + '/')
       if (!isPrefix) continue
-      if (!bestKey || k.length > (bestKey === '' ? 1 : bestKey.length)) {
+      if (normalized.length > bestLen) {
+        bestLen = normalized.length
         bestKey = key
       }
     }
