@@ -1249,6 +1249,75 @@ async function dispatchMiddlewareRun(id, input) {
   }
 }
 
+// --- Socket op (spec §9.6) -----------------------------------------------
+//
+//   socket:run   { module_path, phase, payload, socket_id }
+//              → { send?: string, close?: {code,reason} }
+//
+// Loads the route's `socket.ts` (`export const socket = defineSocket({...})`
+// or a default `{ open, message, close }` object), calls the named phase,
+// and returns whatever the handler `send()`s plus an optional close. The
+// Rust side owns the upgrade, framing and ping/pong; this op is one phase.
+async function dispatchSocketRun(id, input) {
+  const { module_path, phase, payload, socket_id } = input.payload ?? {}
+  if (typeof module_path !== "string" || module_path.length === 0) {
+    callErr(id, "JSH-SOCKET", "socket:run requires a `module_path` string")
+    return
+  }
+  const phaseName = phase === "open" || phase === "message" || phase === "close" ? phase : "message"
+  try {
+    const compiled = await compileServerModule(module_path)
+    const mod = await import(versioned(compiled.url))
+    const handlers = mod.socket ?? mod.default
+    if (!handlers || typeof handlers !== "object") {
+      callErr(id, "JSH-SOCKET", `module at ${module_path} exports no socket handlers`)
+      return
+    }
+    const fn = handlers[phaseName]
+    if (typeof fn !== "function") {
+      // No handler for this phase is not an error — a socket may only
+      // implement `message`.
+      callOk(id, { send: null, close: null })
+      return
+    }
+    // Per-socket state: a Map on the worker so `open` can stash a user id
+    // that `message` reads. Keyed by the Rust-side socket_id.
+    if (!globalThis.__oxide_socket_state) globalThis.__oxide_socket_state = new Map()
+    const state = globalThis.__oxide_socket_state
+    let record = state.get(socket_id)
+    if (!record) { record = { locals: {} }; state.set(socket_id, record) }
+
+    const sent = []
+    const send = (data) => {
+      sent.push(typeof data === "string" ? data : Buffer.from(data).toString("base64"))
+    }
+    let close = null
+    const ctx = {
+      data: phaseName === "message" ? payload?.data : undefined,
+      code: phaseName === "close" ? (payload?.code ?? 1000) : undefined,
+      reason: phaseName === "close" ? (payload?.reason ?? "") : undefined,
+      locals: record.locals,
+      send,
+    }
+    try {
+      await fn(ctx)
+    } catch (e) {
+      if (e && typeof e.code === "number") {
+        close = { code: e.code, reason: String(e.reason ?? e.message ?? "") }
+      } else {
+        throw e
+      }
+    }
+    if (phaseName === "close") state.delete(socket_id)
+    callOk(id, {
+      send: sent.length === 0 ? null : (sent.length === 1 ? sent[0] : sent),
+      close,
+    })
+  } catch (e) {
+    callErr(id, "JSH-SOCKET", `socket:run failed: ${e?.message ?? e}`)
+  }
+}
+
 // --- HMR op (spec §13.3) --------------------------------------------------
 //
 //   framework:invalidate   {}   → { generation: N }
@@ -1440,6 +1509,7 @@ async function handleCall(msg) {
   if (entry.kind === "server-fn:run") { await dispatchServerFn(id, input); return; }
   if (entry.kind === "action:run") { await dispatchActionRun(id, input); return; }
   if (entry.kind === "endpoint:run") { await dispatchEndpointRun(id, input); return; }
+  if (entry.kind === "socket:run") { await dispatchSocketRun(id, input); return; }
   if (entry.kind === "middleware:run") { await dispatchMiddlewareRun(id, input); return; }
   if (entry.kind === "die") process.exit(1);
   if (entry.kind === "sleep") {
