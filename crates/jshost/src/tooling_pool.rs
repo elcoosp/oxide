@@ -77,7 +77,12 @@ impl ToolingModules {
     }
 
     /// Convenience: Svelte compiler (`svelte/compiler`).
-    pub async fn svelte_compile(&self, source: &str, filename: &str, generate: &str) -> Result<Value> {
+    pub async fn svelte_compile(
+        &self,
+        source: &str,
+        filename: &str,
+        generate: &str,
+    ) -> Result<Value> {
         self.call_module(ModuleCall {
             module: "svelte/compiler".into(),
             export: "compile".into(),
@@ -137,7 +142,8 @@ mod tests {
 
     fn entry_error() -> Arc<dyn Pool> {
         let host = ScriptedHost::with_handler(Arc::new(|_e, _i| {
-            let bytes = serde_json::to_vec(&json!({ "__oxide_error": "simulated failure" })).unwrap();
+            let bytes =
+                serde_json::to_vec(&json!({ "__oxide_error": "simulated failure" })).unwrap();
             Ok(CallStream::Complete(Bytes::from(bytes)))
         }));
         host.tooling_pool(PoolConfig::default()).unwrap()
