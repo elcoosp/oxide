@@ -739,7 +739,16 @@ fn generate_island_boot_entry(
     // manifest-driven chunk preloading is a documented gap, not silently
     // stubbed). A hydrate failure leaves the SSR markup untouched and skips
     // router attachment so anchors fall back to full-page navigation.
-    out.push_str("bootWithRouter(clientAdapter, { loading: __loading_map });\n");
+    // §6.4: fetch the client manifest at boot so the router can preload a
+    // route's chunks in parallel with the /__data fetch. The fetch is
+    // best-effort — a missing manifest (dev server, static export without it)
+    // leaves `manifest` undefined and the router silently skips preloading.
+    out.push_str(
+        "fetch('/client/client.manifest.json')\n  \
+         .then((r) => (r.ok ? r.json() : undefined))\n  \
+         .then((manifest) => bootWithRouter(clientAdapter, { loading: __loading_map, manifest }))\n  \
+         .catch(() => bootWithRouter(clientAdapter, { loading: __loading_map }));\n",
+    );
     // §16.6 / §20: report Core Web Vitals to `/_oxide/vitals`. Guarded and
     // no-op outside the browser; the boot entry only runs in one.
     out.push_str("import { reportWebVitals } from 'oxide/client';\nreportWebVitals();\n");

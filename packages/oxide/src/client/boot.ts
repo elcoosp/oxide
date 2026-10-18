@@ -117,6 +117,13 @@ export function bootWithRouter(
      * the hooks, they are just no-ops here.
      */
     loading?: Record<string, unknown>
+    /**
+     * §6.4 manifest-driven chunk preloading: route entry id
+     * (`routes/blog/_slug_/page`) → preload chunk URLs. The router uses it
+     * to warm the JS for a route in parallel with the `/__data` fetch.
+     * Absent → no chunk preloading (data-only prefetch).
+     */
+    manifest?: { buildId?: string; routes: Record<string, { preload?: string[]; chunks?: string[] }> }
   } = {},
 ): () => void {
   const doc = opts.doc ?? (globalThis as { document?: Document }).document
@@ -248,6 +255,7 @@ export function bootWithRouter(
     adapter: adapter as unknown as { update(i: unknown): void },
     onNavigateStart,
     onNavigateEnd,
+    ...(opts.manifest ? { manifest: opts.manifest } : {}),
   } as never)
   return router.attach()
 }

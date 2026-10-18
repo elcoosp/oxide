@@ -198,26 +198,33 @@ export function createRouter(opts: RouterOptions): Router {
     if (!routeManifest) return []
     const hit = manifestCache.get(path)
     if (hit) return hit
+    // `routes/index/page` is the manifest key for the root URL; normalize a
+    // trailing-empty root to `index` before segment comparison.
     const segs = path.split('/').filter(Boolean)
     let best: string[] | undefined
     let bestStaticCount = -1
     for (const [routeId, entry] of Object.entries(routeManifest.routes)) {
-      // `routes/<...>/page` → the pattern segments.
-      const m = /^routes\/(.*?)(?:\/page)?$/.exec(routeId)
+      if (routeId === '__boot__') continue
+      // `routes/<...>/page` → the pattern segments; `/route` entries
+      // (endpoints) are not client page chunks and are skipped.
+      if (!routeId.endsWith('/page') && routeId !== 'routes/index/page') continue
+      const m = /^routes\/(.*?)\/page$/.exec(routeId)
       if (!m) continue
       const routeSegs = m[1] ? m[1].split('/').filter(Boolean) : []
-      if (routeSegs.length !== segs.length) continue
+      // Root: `routes/index/page` → segs `['index']`, URL `/` → `[]`.
+      const effectiveUrl = segs.length === 0 ? ['index'] : segs
+      if (routeSegs.length !== effectiveUrl.length) continue
       let staticCount = 0
       let ok = true
       for (let i = 0; i < routeSegs.length; i++) {
         const rs = routeSegs[i]
-        const isParam = /^(_?\[|_)|^_/.test(rs)
-        // `_slug_`, `[slug]`, `[...rest]` — all params. A literal segment
-        // must match the URL exactly.
-        if (isParam || /^_/.test(rs) || rs.includes('[')) {
+        // Param segment forms: `_slug_` (the manifest normalizes `[slug]`),
+        // `[...rest]`, `[slug]`.
+        const isParam = /^_|\[/.test(rs)
+        if (isParam) {
           continue
         }
-        if (rs !== segs[i]) {
+        if (rs !== effectiveUrl[i]) {
           ok = false
           break
         }
