@@ -189,6 +189,7 @@ fn test_request(method: &str, url: &str) -> oxide_server::OxideRequest {
         headers: Vec::new(),
         body: bytes::Bytes::new(),
         request_id: "dispatch-test".into(),
+            trace: None,
     }
 }
 
@@ -226,6 +227,7 @@ async fn dispatch_routes_through_page_renderer_when_attached() {
         false,
         Vec::new(),
         None, // no waterfall recorder in tests
+        None, // no session codec in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -273,6 +275,7 @@ async fn dispatch_uses_ir_placeholder_when_no_renderer() {
         false,
         Vec::new(),
         None, // no waterfall recorder in tests
+        None, // no session codec in tests
     );
 
     let resp = dispatch(test_request("GET", "/some/page")).await;
@@ -319,6 +322,7 @@ async fn dispatch_propagates_renderer_error_as_500() {
         false,
         Vec::new(),
         None, // no waterfall recorder in tests
+        None, // no session codec in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -478,6 +482,7 @@ async fn loader_feeds_data_to_renderer() {
         false,
         Vec::new(),
         None, // no waterfall recorder in tests
+        None, // no session codec in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -526,6 +531,7 @@ async fn loader_404_short_circuits_render() {
         false,
         Vec::new(),
         None, // no waterfall recorder in tests
+        None, // no session codec in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -574,6 +580,7 @@ async fn loader_redirect_short_circuits_with_location() {
         false,
         Vec::new(),
         None, // no waterfall recorder in tests
+        None, // no session codec in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -634,6 +641,7 @@ async fn no_server_module_skips_loader() {
         false,
         Vec::new(),
         None, // no waterfall recorder in tests
+        None, // no session codec in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -3052,6 +3060,7 @@ async fn live_render_injects_odf_payload_script() {
         false,
         Vec::new(),
         None, // no waterfall recorder in tests
+        None, // no session codec in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -3139,6 +3148,7 @@ async fn error_status_marker_yields_http_500() {
             false,
             Vec::new(),
             None, // no waterfall recorder in tests
+            None, // no session codec in tests
         );
         let resp = dispatch(test_request("GET", "/")).await;
         assert_eq!(resp.status, 500, "{name} → HTTP 500");
@@ -3354,6 +3364,7 @@ async fn middleware_headers_ride_page_and_data_responses() {
         false,
         Vec::new(),
         None, // no waterfall recorder in tests
+        None, // no session codec in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
     assert_eq!(resp.status, 200);
@@ -3392,6 +3403,7 @@ async fn middleware_headers_ride_page_and_data_responses() {
         false,
         Vec::new(),
         None, // no waterfall recorder in tests
+        None, // no session codec in tests
     );
     let resp = dispatch(test_request("GET", "/__data?route=%2F")).await;
     assert_eq!(resp.status, 200, "data response for a matched route");
@@ -3496,6 +3508,7 @@ async fn middleware_headers_ride_l0_hits() {
         false,
         Vec::new(),
         None, // no waterfall recorder in tests
+        None, // no session codec in tests
     );
 
     // First request: an L0 miss. It renders and stores the entry; the

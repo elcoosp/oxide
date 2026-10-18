@@ -58,6 +58,11 @@ pub struct OxideRequest {
     pub headers: Vec<(String, String)>,
     pub body: Bytes,
     pub request_id: String,
+    /// §20: the parsed W3C trace context from the incoming `traceparent`
+    /// header, when present. Threaded into the fetch op so an outgoing
+    /// request carries `traceparent` and a downstream service joins the
+    /// same trace. `None` when the header is absent or malformed.
+    pub trace: Option<crate::trace_context::TraceContext>,
 }
 
 impl OxideRequest {
@@ -1644,6 +1649,11 @@ pub struct SecuritySettings {
     pub host_allow_list: Vec<String>,
     pub ssrf_allow_list: Vec<String>,
     pub cookie_keys: Vec<Vec<u8>>,
+    /// §16.6: encryption keys for the session codec (`SessionCodec`), first
+    /// key seals, every key tried on open (rotation without logout). Empty
+    /// when the project configures none — session cookies then fall back to
+    /// the signed-only `sign_cookie` primitive.
+    pub session_keys: Vec<Vec<u8>>,
 }
 
 impl Default for SecuritySettings {
@@ -1654,6 +1664,7 @@ impl Default for SecuritySettings {
             host_allow_list: Vec::new(),
             ssrf_allow_list: Vec::new(),
             cookie_keys: Vec::new(),
+            session_keys: Vec::new(),
         }
     }
 }
@@ -3386,7 +3397,7 @@ pub async fn from_hyper_request(
 ) -> Result<OxideRequest> {
     let method = req.method().as_str().to_string();
     let url = req.uri().to_string();
-    let headers = req
+    let headers: Vec<(String, String)> = req
         .headers()
         .iter()
         .map(|(k, v)| {
@@ -3410,12 +3421,24 @@ pub async fn from_hyper_request(
             )
         })?
         .to_bytes();
+    // §20: parse the incoming W3C trace context so the fetch op can
+    // propagate it. A malformed header is a no-trace request, not an error.
+    let trace = {
+        let mut map: BTreeMap<String, String> = BTreeMap::new();
+        for (k, v) in &headers {
+            if k.eq_ignore_ascii_case("traceparent") || k.eq_ignore_ascii_case("tracestate") {
+                map.insert(k.clone(), v.clone());
+            }
+        }
+        crate::trace_context::TraceContext::from_headers(&map)
+    };
     Ok(OxideRequest {
         method,
         url,
         headers,
         body,
         request_id,
+        trace,
     })
 }
 
@@ -4115,6 +4138,7 @@ pub async fn serve_http3(
                                     headers,
                                     body: bytes::Bytes::new(),
                                     request_id: next_request_id(),
+                                    trace: None,
                                 };
                                 let resp = pipeline.serve_request(oreq, dispatch.as_ref()).await;
                                 // 响应 head

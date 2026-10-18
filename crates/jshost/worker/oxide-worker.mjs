@@ -123,6 +123,25 @@ function opName(name) {
 
 globalThis.__oxide_op_request = oxideOpRequest;
 
+// §20: the inbound request's W3C `traceparent`, stashed for the duration of
+// one op so the `fetch` shim can propagate it to outgoing requests. The
+// worker runs one op at a time, so a module-level variable is per-request
+// correct. Cleared after each dispatch.
+let currentTraceparent = null;
+
+/** Pull `traceparent` out of a payload's request-headers array. */
+function traceparentFromPayload(payload) {
+  const hs = payload && payload.headers;
+  if (!Array.isArray(hs)) return null;
+  for (const pair of hs) {
+    if (Array.isArray(pair) && pair.length === 2 &&
+        String(pair[0]).toLowerCase() === "traceparent") {
+      return String(pair[1]);
+    }
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // PERF-05: a `fetch` shim. User code's server-side `fetch()` routes through
 // the `fetch` op so it goes through the host's SSRF-hardened path (the same
@@ -163,6 +182,11 @@ globalThis.fetch = async function oxideFetch(input, init = {}) {
   }
   if (process.env.OXIDE_FETCH_NATIVE === "1" && __nativeFetch) {
     return __nativeFetch(input, init);
+  }
+  // §20: propagate the inbound trace to the outbound request. A caller that
+  // set its own `traceparent` wins.
+  if (currentTraceparent && !Object.keys(headers).some((k) => k.toLowerCase() === "traceparent")) {
+    headers["traceparent"] = currentTraceparent;
   }
   try {
     const res = await oxideOpRequest("fetch", { url, method, headers, body_b64: bodyB64 });
@@ -701,6 +725,9 @@ function decodeURIComponentSafe(s) {
 }
 
 async function dispatchLoaderRun(id, input) {
+  // §20: stash this op's traceparent for the fetch shim.
+  currentTraceparent = traceparentFromPayload(input && input.payload);
+
   const { module_path, route, params, url, method, headers, locals: inputLocals, locale: payloadLocale } =
     input.payload ?? {};
   if (typeof module_path !== "string" || module_path.length === 0) {
@@ -867,6 +894,9 @@ async function dispatchLoaderRun(id, input) {
 // location (same as a load). `revalidate` calls made through the action's
 // `ctx.revalidate` are collected and returned so the pipeline can invalidate.
 async function dispatchActionRun(id, input) {
+  // §20: stash this op's traceparent for the fetch shim.
+  currentTraceparent = traceparentFromPayload(input && input.payload);
+
   const { module_path, action, form_json, params, url, method, headers, locals: inputLocals } =
     input.payload ?? {};
   if (typeof module_path !== "string" || module_path.length === 0) {
@@ -1048,6 +1078,9 @@ async function dispatchActionRun(id, input) {
 // a diagnostic 500 — a route.ts that forgets to return is a bug we surface
 // loudly rather than converting to a silent 204.
 async function dispatchEndpointRun(id, input) {
+  // §20: stash this op's traceparent for the fetch shim.
+  currentTraceparent = traceparentFromPayload(input && input.payload);
+
   const { module_path, method, url, params, headers, body_b64, locals: inputLocals } = input.payload ?? {};
   if (typeof module_path !== "string" || module_path.length === 0) {
     callErr(id, "JSH-ENDPOINT", "endpoint:run requires a `module_path` string");
@@ -1177,6 +1210,9 @@ async function dispatchEndpointRun(id, input) {
 // that forgot to return is a bug we surface rather than silently letting a
 // request proceed.
 async function dispatchMiddlewareRun(id, input) {
+  // §20: stash this op's traceparent for the fetch shim.
+  currentTraceparent = traceparentFromPayload(input && input.payload);
+
   const { module_path, method, url, params, headers, body_b64, locals } = input.payload ?? {};
   if (typeof module_path !== "string" || module_path.length === 0) {
     callErr(id, "JSH-MIDDLEWARE", "middleware:run requires a `module_path` string");
@@ -1293,6 +1329,9 @@ async function dispatchMiddlewareRun(id, input) {
 // and returns whatever the handler `send()`s plus an optional close. The
 // Rust side owns the upgrade, framing and ping/pong; this op is one phase.
 async function dispatchSocketRun(id, input) {
+  // §20: stash this op's traceparent for the fetch shim.
+  currentTraceparent = traceparentFromPayload(input && input.payload);
+
   const { module_path, phase, payload, socket_id } = input.payload ?? {}
   if (typeof module_path !== "string" || module_path.length === 0) {
     callErr(id, "JSH-SOCKET", "socket:run requires a `module_path` string")
@@ -1528,6 +1567,16 @@ const handlers = {
 };
 
 async function handleCall(msg) {
+  // §20: `currentTraceparent` is per-op state. Clear it in `finally` so a
+  // later op on the same worker never inherits a stale trace id.
+  try {
+    return await handleCallInner(msg);
+  } finally {
+    currentTraceparent = null;
+  }
+}
+
+async function handleCallInner(msg) {
   const { id, entry, input } = msg;
   if (entry.kind === "tooling:module") { await dispatchToolingModule(id, input); return; }
   if (entry.kind === "tooling:vue-compile") { await dispatchVueCompile(id, input); return; }

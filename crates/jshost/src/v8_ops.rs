@@ -43,6 +43,31 @@ thread_local! {
         const { RefCell::new(None) };
 }
 
+thread_local! {
+    /// §20: the W3C `traceparent` value for the request currently being
+    /// served on this worker thread. Set by the op dispatcher from
+    /// `CallInput.headers`; the `fetch` op appends it to every outgoing
+    /// request so a downstream service joins the same trace. A `JsRuntime`
+    /// is `!Send` and pinned to one thread, so a thread-local is the correct
+    /// scope (same reasoning as `CACHE_HANDLER`/`FETCH_HANDLER`).
+    static TRACE_PARENT: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// Install the current request's `traceparent` for the worker thread.
+///
+/// **Not yet called from a live site.** The V8 op args do not carry the
+/// inbound request headers (only the payload does), so the trace id would
+/// have to be threaded through `CallInput` per op. The Node backend already
+/// propagates correctly (the loader payload carries the request headers);
+/// this is the V8 parity follow-up.
+pub fn set_trace_parent(value: Option<String>) {
+    TRACE_PARENT.with(|c| *c.borrow_mut() = value);
+}
+
+fn trace_parent() -> Option<String> {
+    TRACE_PARENT.with(|c| c.borrow().clone())
+}
+
 /// Install the fetch handler for the current V8 worker thread.
 pub fn set_fetch_handler(handler: Option<Arc<dyn crate::FetchHandler>>) {
     FETCH_HANDLER.with(|c| *c.borrow_mut() = handler);
@@ -117,7 +142,15 @@ pub async fn op_oxide_fetch(
             "fetch op unavailable: no FetchHandler wired",
         ));
     };
-    let headers: Vec<(String, String)> = serde_json::from_str(&headers_json).unwrap_or_default();
+    let mut headers: Vec<(String, String)> =
+        serde_json::from_str(&headers_json).unwrap_or_default();
+    // §20: propagate the inbound trace to the outbound request. A caller that
+    // already set its own `traceparent` wins (it knows the span better).
+    if let Some(tp) = trace_parent() {
+        if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("traceparent")) {
+            headers.push(("traceparent".to_string(), tp));
+        }
+    }
     use base64::Engine as _;
     let body = base64::engine::general_purpose::STANDARD
         .decode(&body_b64)

@@ -22,6 +22,7 @@ fn req(method: &str, url: &str, headers: &[(&str, &str)]) -> OxideRequest {
             .collect(),
         body: Bytes::new(),
         request_id: "req-test".into(),
+            trace: None,
     }
 }
 
