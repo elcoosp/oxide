@@ -6932,10 +6932,14 @@ async fn cmd_analyze(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
 async fn cmd_check(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = PathBuf::from(root);
     let mut ok = true;
+    let mut diags: Vec<oxide_diagnostics::Diagnostic> = Vec::new();
+
+    // (1) config + routes — the two checks the tool can always run.
     match oxide_config::load(&rootp, "development", BTreeMap::new()) {
         Ok(lc) => outln!(w, "config: OK ({} env vars)", lc.env.len()),
         Err(e) => {
             outln!(w, "config: {} {}", e.0.code, e.0.message);
+            diags.push(e.0.clone());
             ok = false;
         }
     }
@@ -6947,12 +6951,86 @@ async fn cmd_check(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
             ok = false;
         }
     }
+
+    // (2) §19.1 / D16: typecheck via `tsgo` and lint via `oxlint`. Both are
+    // external binaries, resolved on `PATH`. When one is absent the check
+    // says so LOUDLY (a silent pass would hide that the project was never
+    // typechecked) and does not fail the command — a project that has not
+    // installed the tool has not failed a check it never ran. `--strict`
+    // turns a missing tool into a failure.
+    let strict = std::env::var_os("OXIDE_CHECK_STRICT").is_some();
+    for (label, bin, args) in [
+        ("typecheck", "tsgo", vec!["--noEmit", "--pretty", "false"]),
+        ("lint", "oxlint", vec!["--format", "json"]),
+    ] {
+        match which(bin) {
+            None => {
+                outln!(
+                    w,
+                    "{label}: SKIPPED (`{bin}` not on PATH; install it or set OXIDE_CHECK_STRICT=1 to fail)"
+                );
+                if strict {
+                    ok = false;
+                }
+            }
+            Some(_) => {
+                let mut cmd = std::process::Command::new(bin);
+                cmd.args(&args).current_dir(&rootp);
+                match cmd.output() {
+                    Ok(out) => {
+                        let stdout = String::from_utf8_lossy(&out.stdout);
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        if out.status.success() {
+                            outln!(w, "{label}: OK");
+                        } else {
+                            outln!(w, "{label}: FAILED");
+                            // Emit the tool's own lines verbatim (they are
+                            // already human-formatted) and capture a single
+                            // diagnostic so `.oxide/last-build-diagnostics.json`
+                            // records the failure.
+                            for line in stdout.lines().chain(stderr.lines()).take(50) {
+                                outln!(w, "  {line}");
+                            }
+                            diags.push(oxide_diagnostics::Diagnostic::error(
+                                if label == "typecheck" { "CHECK-TS" } else { "CHECK-LINT" },
+                                format!("`{bin}` reported errors"),
+                            ));
+                            ok = false;
+                        }
+                    }
+                    Err(e) => {
+                        outln!(w, "{label}: could not run `{bin}`: {e}");
+                        ok = false;
+                    }
+                }
+            }
+        }
+    }
+
+    // §19.4: every check result lands in the shared diagnostic file so the
+    // editor/CI read one artifact.
+    if !diags.is_empty() {
+        persist_diagnostics(&rootp, &diags);
+    }
+
     if ok {
         outln!(w, "OK");
         Ok(0)
     } else {
         Ok(1)
     }
+}
+
+/// Resolve a binary on `PATH` (no shell; avoids a shell-injection surface).
+fn which(bin: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join(bin);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 /// `oxide why <module>` (§13.4): importers (routes) and chunks referencing the module,
