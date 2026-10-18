@@ -17,22 +17,22 @@
 #![forbid(unsafe_code)]
 
 mod minify;
+mod prebundle;
 mod resolve;
 mod rolldown_backend;
-mod prebundle;
 
 use blake3::Hasher;
 use oxide_compiler::{
-    is_server_module_path, scan_import_spans, Env as CompilerEnv, OxcTransformer,
-    TransformInput, Transformer as _,
+    Env as CompilerEnv, OxcTransformer, TransformInput, Transformer as _, is_server_module_path,
+    scan_import_spans,
 };
 use oxide_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 
+pub use prebundle::{PrebundleManifest, PrebundleOptions, PrebundledPackage, prebundle};
 pub use rolldown_backend::RolldownBundler;
-pub use prebundle::{prebundle, PrebundleManifest, PrebundleOptions, PrebundledPackage};
 
 pub type Result<T> = std::result::Result<T, OxideError>;
 
@@ -142,10 +142,8 @@ pub struct BundleOptions {
 #[derive(Clone)]
 pub struct CssTransformHook(
     #[allow(clippy::type_complexity)]
-    pub std::sync::Arc<
-        dyn Fn(&str, &str, bool, bool) -> Result<(String, BTreeMap<String, String>)>
-            + Send
-            + Sync,
+    pub  std::sync::Arc<
+        dyn Fn(&str, &str, bool, bool) -> Result<(String, BTreeMap<String, String>)> + Send + Sync,
     >,
 );
 
@@ -185,7 +183,7 @@ impl std::fmt::Debug for CssTransformHook {
 #[derive(Clone)]
 pub struct TransformHook(
     #[allow(clippy::type_complexity)]
-    pub std::sync::Arc<dyn Fn(&str, &str) -> Result<String> + Send + Sync>,
+    pub  std::sync::Arc<dyn Fn(&str, &str) -> Result<String> + Send + Sync>,
 );
 
 impl TransformHook {
@@ -1183,7 +1181,7 @@ fn rewrite_imports(
 /// `export const|let|var|function|class NAME`, `export async function NAME`,
 /// `export { a, b as c }`. `export default` is skipped (documented limitation).
 fn export_names(code: &str) -> Vec<String> {
-    use oxide_compiler::lexer::{lex, Tok};
+    use oxide_compiler::lexer::{Tok, lex};
     let toks = lex(code);
     let mut names: Vec<String> = Vec::new();
     let word = |t: &oxide_compiler::lexer::Token, w: &str| {
