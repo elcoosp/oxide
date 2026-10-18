@@ -60,7 +60,9 @@ pub struct SlotMatch {
 
 /// Parse a slot directory name: `@modal` → `"modal"`, `@` alone → error.
 pub fn parse_slot_name(dir: &str) -> Option<String> {
-    dir.strip_prefix('@').filter(|s| !s.is_empty()).map(String::from)
+    dir.strip_prefix('@')
+        .filter(|s| !s.is_empty())
+        .map(String::from)
 }
 
 /// Parse an intercept marker at the start of a route segment.
@@ -79,7 +81,11 @@ pub fn parse_intercept_marker(segment: &str) -> Option<(InterceptLevel, &str)> {
             rest = r;
         }
         return Some((
-            if n == 1 { InterceptLevel::UpOne } else { InterceptLevel::Up(n) },
+            if n == 1 {
+                InterceptLevel::UpOne
+            } else {
+                InterceptLevel::Up(n)
+            },
             rest,
         ));
     }
