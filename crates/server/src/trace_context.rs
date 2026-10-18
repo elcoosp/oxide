@@ -53,7 +53,9 @@ impl TraceContext {
         if flags.len() != 2 || !is_hex(flags) {
             return None;
         }
-        let sampled = u8::from_str_radix(flags, 16).map(|f| f & 0x01 != 0).unwrap_or(false);
+        let sampled = u8::from_str_radix(flags, 16)
+            .map(|f| f & 0x01 != 0)
+            .unwrap_or(false);
         Some(TraceContext {
             trace_id: trace_id.to_string(),
             parent_id: parent_id.to_string(),
@@ -120,18 +122,22 @@ mod tests {
 
     #[test]
     fn rejects_all_zero_trace_id() {
-        assert!(TraceContext::parse_traceparent(
-            "00-00000000000000000000000000000000-b7ad6b7169203331-01"
-        )
-        .is_none());
+        assert!(
+            TraceContext::parse_traceparent(
+                "00-00000000000000000000000000000000-b7ad6b7169203331-01"
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn rejects_version_ff() {
-        assert!(TraceContext::parse_traceparent(
-            "ff-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
-        )
-        .is_none());
+        assert!(
+            TraceContext::parse_traceparent(
+                "ff-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+            )
+            .is_none()
+        );
     }
 
     #[test]
