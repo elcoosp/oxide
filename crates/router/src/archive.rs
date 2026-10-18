@@ -176,6 +176,7 @@ impl EntryLike for ArchivedArchEntry {
             ArchivedRouteKind::Error => RouteKind::Error,
             ArchivedRouteKind::NotFound => RouteKind::NotFound,
             ArchivedRouteKind::Template => RouteKind::Template,
+            ArchivedRouteKind::Socket => RouteKind::Socket,
             ArchivedRouteKind::Endpoint => RouteKind::Endpoint,
             ArchivedRouteKind::Middleware => RouteKind::Middleware,
         }

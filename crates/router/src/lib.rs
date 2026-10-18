@@ -58,6 +58,7 @@ pub(crate) fn kind_str(k: &RouteKind) -> &'static str {
         RouteKind::Template => "template",
         RouteKind::Endpoint => "endpoint",
         RouteKind::Middleware => "middleware",
+        RouteKind::Socket => "socket",
     }
 }
 
@@ -74,6 +75,8 @@ pub enum RouteKind {
     Template,
     Endpoint,
     Middleware,
+    /// §9.6: a `socket.ts` WebSocket route (per-phase handlers).
+    Socket,
 }
 
 /// A route id is its file-derived path, e.g. `routes/blog/[slug]/page`.

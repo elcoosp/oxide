@@ -16,6 +16,7 @@ const CONVENTION_BASES: &[&str] = &[
     "template",
     "route",
     "middleware",
+    "socket",
 ];
 /// Filename segments that disqualify a conventional-looking file (tests, CSS modules…).
 const DENYLIST_EXTS: &[&str] = &["test", "spec", "stories", "module", "d", "snap", "mock"];
@@ -148,6 +149,7 @@ fn walk_dir(
             FileRole::Template => RouteKind::Template,
             FileRole::Endpoint => RouteKind::Endpoint,
             FileRole::Middleware => RouteKind::Middleware,
+            FileRole::Socket => RouteKind::Socket,
         };
         let mut id = walk.id_prefix.clone();
         for r in rel {
@@ -219,6 +221,7 @@ enum FileRole {
     Template,
     Endpoint,
     Middleware,
+    Socket,
 }
 
 /// Classify a conventional file name (extension-agnostic, lowercase, §8.1).
@@ -249,6 +252,7 @@ fn file_role(name: &str) -> Option<FileRole> {
         "template" => Some(FileRole::Template),
         "route" => Some(FileRole::Endpoint),
         "middleware" => Some(FileRole::Middleware),
+        "socket" => Some(FileRole::Socket),
         _ => None,
     }
 }
