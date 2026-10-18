@@ -16,3 +16,6 @@ examples/**/.*.oxide.ts
 # PH0-03: the V8 gate's temp roots.
 examples/.v8-gate-*/
 examples/.v8-*/
+
+# §22: cargo-fuzz build dir (each fuzz run rebuilds; never commit)
+fuzz/target/
