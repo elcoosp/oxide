@@ -9,7 +9,7 @@
 //! writing it explicitly keeps it legible and stable across crate versions.
 
 use crate::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The `$schema` URI written into the config schema file. Editors recognise
 /// the `$schema` field and use this URI to fetch the schema.
@@ -253,7 +253,12 @@ mod tests {
     fn schema_declares_the_security_and_cache_keys() {
         let v = config_schema();
         let sec = &v["properties"]["security"]["properties"];
-        for k in ["hostAllowList", "ssrfAllowList", "trustedProxies", "cookieKeys"] {
+        for k in [
+            "hostAllowList",
+            "ssrfAllowList",
+            "trustedProxies",
+            "cookieKeys",
+        ] {
             assert!(sec.get(k).is_some(), "security.{k} missing from schema");
         }
         // `cache.l0MaxSize` is a top-level key on `cache`, not a nested `l0`.
@@ -264,7 +269,9 @@ mod tests {
             "cache.l0MaxSize missing"
         );
         assert!(
-            v["properties"]["server"]["properties"].get("backend").is_some(),
+            v["properties"]["server"]["properties"]
+                .get("backend")
+                .is_some(),
             "server.backend missing"
         );
         assert!(
