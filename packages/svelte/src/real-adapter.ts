@@ -8,6 +8,7 @@ import { makeRealAdapter, type RealAdapterOptions } from '../../oxide/src/server
 import type { RenderInput, HeadTags, RenderCtx } from '../../oxide/src/types.ts'
 import { render as irRender, head as irHead, mergeHead } from './render.ts'
 import { hydrate, hydrateIsland, mount, update } from './hydrate.ts'
+import { svelteHydrateIsland } from './hydrate-island-real.ts'
 import { isSvelteAvailable, renderSvelteToString, getLastLoadError } from './real-ssr.ts'
 
 export type { RealAdapterOptions }
@@ -52,7 +53,8 @@ export function createRealAdapter(opts: RealAdapterOptions) {
     renderBody: renderSvelteToString,
     rootAttrs: ' id="root" class="oxide-root"',
     hydrate: hydrate as never,
-    hydrateIsland: hydrateIsland as never,
+    // §10.3: real `mount(..., { hydrate: true })` so Svelte 5 runes work.
+    hydrateIsland: svelteHydrateIsland as never,
     mount: mount as never,
     update,
     opts,

@@ -52,7 +52,13 @@ export const adapter: FrameworkAdapter = {
  * `react-dom/client` path), it overrides `hydrateIsland` here and the
  * generated boot entry picks it up with no CLI change.
  */
-export const clientAdapter: FrameworkAdapter = adapter
+import { solidHydrateIsland } from './hydrate-island-real.ts'
+
+export const clientAdapter: FrameworkAdapter = {
+  ...adapter,
+  // §10.3: real `hydrate()` so Solid signals work.
+  hydrateIsland: solidHydrateIsland as never,
+}
 
 // ---------------------------------------------------------------------------
 // Config surface (spec §14): a callable default export so oxide.config.ts can

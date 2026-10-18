@@ -19,6 +19,7 @@ import { makeRealAdapter, type RealAdapterOptions } from '../../oxide/src/server
 import type { RenderInput, HeadTags, RenderCtx } from '../../oxide/src/types.ts'
 import { render as irRender, head as irHead, mergeHead } from './render.ts'
 import { hydrate, hydrateIsland, mount, update } from './hydrate.ts'
+import { vueHydrateIsland } from './hydrate-island-real.ts'
 import { isVueAvailable, renderVueToString, getLastLoadError } from './real-ssr.ts'
 
 export type { RealAdapterOptions }
@@ -64,7 +65,9 @@ export function createRealAdapter(opts: RealAdapterOptions) {
     renderBody: renderVueToString,
     rootAttrs: ' id="root" data-v-app=""',
     hydrate: hydrate as never,
-    hydrateIsland: hydrateIsland as never,
+    // §10.3: real `createSSRApp().mount()` so Vue reactivity works, not the
+    // IR replay that only handles static markup.
+    hydrateIsland: vueHydrateIsland as never,
     mount: mount as never,
     update,
     opts,

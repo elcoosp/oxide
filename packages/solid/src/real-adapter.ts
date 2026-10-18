@@ -15,6 +15,7 @@ import { makeRealAdapter, type RealAdapterOptions } from '../../oxide/src/server
 import type { RenderInput, HeadTags, RenderCtx } from '../../oxide/src/types.ts'
 import { render as irRender, head as irHead, mergeHead } from './render.ts'
 import { hydrate, hydrateIsland, mount, update } from './hydrate.ts'
+import { solidHydrateIsland } from './hydrate-island-real.ts'
 import { isSolidAvailable, renderSolidToString, getLastLoadError } from './real-ssr.ts'
 
 export type { RealAdapterOptions }
@@ -73,7 +74,8 @@ export function createRealAdapter(opts: RealAdapterOptions) {
     },
     rootAttrs: ' id="root" data-solid=""',
     hydrate: hydrate as never,
-    hydrateIsland: hydrateIsland as never,
+    // §10.3: real `hydrate()` so Solid signals work.
+    hydrateIsland: solidHydrateIsland as never,
     mount: mount as never,
     update,
     opts,
