@@ -157,8 +157,6 @@ fn hmr_messages_roundtrip_through_json_all_variants() {
     let msgs = vec![
         HmrMessage::ModuleUpdate {
             path: "app.tsx".into(),
-            boundary: "app.tsx".into(),
-            code: "export {} // +hmr".into(),
         },
         HmrMessage::CssUpdate {
             path: "a.css".into(),
