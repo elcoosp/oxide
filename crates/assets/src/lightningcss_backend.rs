@@ -12,7 +12,7 @@
 //! tests target; `LightningCssBackend` uses the engine the spec names (§6.6, D5),
 //! with its own hash-driven scoped-name scheme.
 
-use crate::{err, CssBackend, CssInput, CssKind, CssOutput, Result};
+use crate::{CssBackend, CssInput, CssKind, CssOutput, Result, err};
 use lightningcss::css_modules::CssModuleExport;
 use lightningcss::stylesheet::{ParserOptions, PrinterOptions, StyleSheet};
 use lightningcss::targets::{Browsers, Targets};
