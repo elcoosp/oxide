@@ -530,7 +530,11 @@ async fn v8_host_boom_and_missing_module_report_errors() {
     // An entry with no module cannot be dispatched.
     let e2 = err_of(
         pool.call(
-            EntryRef { kind: "render".into(), module: String::new(), export: "x".into() },
+            EntryRef {
+                kind: "render".into(),
+                module: String::new(),
+                export: "x".into(),
+            },
             input(json!({})),
         )
         .await,
@@ -588,7 +592,10 @@ async fn v8_host_abort_request_resolves_pending_call() {
     tokio::time::sleep(Duration::from_millis(20)).await;
     pool.abort_request("req-not-in-flight"); // no-op on unknown id
     let mut s = pool
-        .call(v8_entry(&module, "echo"), input(json!({"title": "post-abort"})))
+        .call(
+            v8_entry(&module, "echo"),
+            input(json!({"title": "post-abort"})),
+        )
         .await
         .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&s.collect().await.unwrap()).unwrap();
@@ -634,7 +641,10 @@ async fn v8_pool_recycles_warm() {
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    assert!(pool.stats().recycles >= 1, "expected a recycle after 2 calls");
+    assert!(
+        pool.stats().recycles >= 1,
+        "expected a recycle after 2 calls"
+    );
 
     let mut s = pool
         .call(v8_entry(&module, "echo"), input(json!({})))
@@ -643,7 +653,11 @@ async fn v8_pool_recycles_warm() {
     let _ = s.collect().await.unwrap();
 
     let st = pool.stats();
-    assert!(st.recycles >= 1, "expected at least one recycle, got {}", st.recycles);
+    assert!(
+        st.recycles >= 1,
+        "expected at least one recycle, got {}",
+        st.recycles
+    );
     assert_eq!(st.failed, 0, "recycle must not fail any call");
     assert_eq!(st.completed, 3);
 }
@@ -663,7 +677,12 @@ async fn v8_ops_are_registered_and_callable() {
     );
 
     let host = V8Host::new();
-    let pool = host.render_pool(PoolConfig { size: 1, ..Default::default() }).unwrap();
+    let pool = host
+        .render_pool(PoolConfig {
+            size: 1,
+            ..Default::default()
+        })
+        .unwrap();
     let mut s = pool
         .call(v8_entry(&module, "probe"), input(json!({})))
         .await
@@ -683,7 +702,11 @@ fn op_decls_returns_the_documented_ops() {
     // the §4.6 tier-1 prelude installs, so they live in the ops table rather
     // than in the JS bootstrap.
     let decls = oxide_jshost::v8_ops::op_decls();
-    assert_eq!(decls.len(), 10, "expected log/trace/serialize/random/sleep + 3 cache ops + fetch + stream_write");
+    assert_eq!(
+        decls.len(),
+        10,
+        "expected log/trace/serialize/random/sleep + 3 cache ops + fetch + stream_write"
+    );
     // Op names are namespaced with the `op_oxide_` prefix so the JS side can
     // distinguish them from deno_core built-ins.
     let names: Vec<&str> = decls.iter().map(|d| d.name).collect();
@@ -699,6 +722,9 @@ fn op_decls_returns_the_documented_ops() {
         "op_oxide_fetch",
         "op_oxide_stream_write",
     ] {
-        assert!(names.iter().any(|n| n.contains(want)), "missing {want}: {names:?}");
+        assert!(
+            names.iter().any(|n| n.contains(want)),
+            "missing {want}: {names:?}"
+        );
     }
 }
