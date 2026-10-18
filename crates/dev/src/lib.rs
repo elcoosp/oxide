@@ -544,11 +544,6 @@ pub struct DevOptions {
     pub qr_code: bool,
 }
 
-/// Prebundle decision (§6.5 dev dependency prebundling): cache by lockfile hash.
-pub fn prebundle_key(lockfile_hash: &str, dep: &str) -> String {
-    format!("prebundle:{lockfile_hash}:{dep}")
-}
-
 // ---------------------------------------------------------------------------
 // §13.4 Inspector — route-table provider
 // ---------------------------------------------------------------------------

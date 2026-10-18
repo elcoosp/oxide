@@ -17,7 +17,6 @@
 #![forbid(unsafe_code)]
 
 mod minify;
-mod prebundle;
 mod resolve;
 mod rolldown_backend;
 
@@ -31,7 +30,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 
-pub use prebundle::{PrebundleManifest, PrebundleOptions, PrebundledPackage, prebundle};
 pub use rolldown_backend::RolldownBundler;
 
 pub type Result<T> = std::result::Result<T, OxideError>;

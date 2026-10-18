@@ -193,14 +193,7 @@ fn hmr_messages_roundtrip_through_json_all_variants() {
     assert!(HmrMessage::from_json("not json").is_none());
 }
 
-#[test]
-fn prebundle_key_is_lockfile_scoped() {
-    assert_eq!(prebundle_key("abc123", "react"), "prebundle:abc123:react");
-    assert_ne!(
-        prebundle_key("abc123", "react"),
-        prebundle_key("def456", "react")
-    );
-}
+
 
 // ---------------- HMR hub ----------------
 
