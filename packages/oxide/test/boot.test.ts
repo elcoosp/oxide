@@ -10,6 +10,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { bootWithRouter } from '../src/client/boot.ts'
+import { componentFor, getRouteComponentSource, setRouteComponentSource } from '../src/client/route-manifest.ts'
 import { encodeLite } from './helpers/odf-lite.ts'
 
 interface Saved {
@@ -93,6 +94,10 @@ function makeDoc(opts: { root?: any; links?: any[] } = {}): any {
     },
     dispatchEvent() { return true },
     _clickCount: () => (listeners.get('click') ?? []).length,
+    _listenerCount: (t: string) => (listeners.get(t) ?? []).length,
+    _fireEvent(t: string, ev: unknown) {
+      for (const f of listeners.get(t) ?? []) f(ev)
+    },
     _fireClick(link: any) {
       const ev = {
         target: { closest: (s: string) => (s === 'a' ? link : null) },
@@ -185,7 +190,7 @@ test('bootWithRouter: does NOT attach the router when hydrate throws', () => {
   }
 })
 
-test('bootWithRouter: does NOT attach the router when #root is missing', () => {
+test('bootWithRouter: router-only attach when #root is missing but payload exists (§8.4 un-gating)', () => {
   const saved = saveGlobals()
   try {
     const { doc } = installFakes({
@@ -199,7 +204,7 @@ test('bootWithRouter: does NOT attach the router when #root is missing', () => {
     }
     const clicksBefore = doc._clickCount()
     const dispose = bootWithRouter(adapter as any)
-    assert.equal(doc._clickCount(), clicksBefore, 'no router click listener without #root')
+    assert.ok(doc._clickCount() > clicksBefore, 'payload without #root attaches in router-only mode')
     dispose()
   } finally {
     restoreGlobals(saved)
@@ -225,6 +230,138 @@ test('bootWithRouter: does NOT attach the router when window.__oxide is missing'
     dispose()
   } finally {
     restoreGlobals(saved)
+  }
+})
+
+test('bootWithRouter: router-only mode — attaches when payload exists without #root', () => {
+  const saved = saveGlobals()
+  try {
+    const { doc } = installFakes({
+      oxide: { route: '/home', data: '' },
+      oxideBoot: { loadChunk: async () => ({}) },
+    })
+    const adapter = {
+      hydrate() {},
+      update() {},
+      hydrateIsland() { return () => {} },
+    }
+    const clicksBefore = doc._clickCount()
+    const dispose = bootWithRouter(adapter as any)
+    assert.ok(doc._clickCount() > clicksBefore, 'router attaches without a root when payload exists')
+    assert.ok(doc._listenerCount('ox:data') > 0, 'the ox:data HMR consumer is wired too')
+    dispose()
+    assert.equal(doc._listenerCount('ox:data'), 0, 'dispose removes the ox:data listener')
+  } finally {
+    restoreGlobals(saved)
+  }
+})
+
+test('bootWithRouter: router-only mode navigates and dispatches adapter.update (§8.4)', async () => {
+  const saved = saveGlobals()
+  try {
+    const link = makeLink('/about')
+    const odf = encodeLite({ route: '/about', url: '/about', params: {}, data: { title: 'About' } })
+    const { doc } = installFakes({
+      links: [link],
+      oxide: { route: '/home', data: '' },
+      oxideBoot: { loadChunk: async () => ({}) },
+      fetchResult: odf,
+    })
+    const updates: any[] = []
+    const adapter = {
+      hydrate() {},
+      update(input: unknown) { updates.push(input) },
+      hydrateIsland() { return () => {} },
+    }
+    const dispose = bootWithRouter(adapter as any)
+    doc._fireClick(link)
+    await new Promise((r) => setTimeout(r, 30))
+    assert.equal(updates.length, 1, 'router-only nav still reaches adapter.update')
+    assert.equal(updates[0].route, '/about')
+    dispose()
+  } finally {
+    restoreGlobals(saved)
+  }
+})
+
+test('bootWithRouter: ox:data (HMR route-data refresh) feeds adapter.update (§13.3)', () => {
+  const saved = saveGlobals()
+  try {
+    const root = makeRoot()
+    const { doc } = installFakes({
+      root,
+      oxide: { route: '/home', data: '' },
+      oxideBoot: { loadChunk: async () => ({}) },
+    })
+    const updates: any[] = []
+    const adapter = {
+      hydrate() {},
+      update(input: unknown) { updates.push(input) },
+      hydrateIsland() { return () => {} },
+    }
+    const dispose = bootWithRouter(adapter as any)
+    const input = { route: '/home', url: '/home', params: {}, data: { fresh: true } }
+    doc._fireEvent('ox:data', { type: 'ox:data', detail: { route: '/home', input } })
+    assert.equal(updates.length, 1, 'the HMR data event reaches the adapter')
+    assert.deepEqual(updates[0], input)
+    // Malformed detail is ignored.
+    doc._fireEvent('ox:data', { type: 'ox:data', detail: {} })
+    assert.equal(updates.length, 1)
+    dispose()
+  } finally {
+    restoreGlobals(saved)
+  }
+})
+
+test('bootWithRouter: boot-path defer glue wires the payload in router-only mode (§7.1/§9.2)', () => {
+  const saved = saveGlobals()
+  try {
+    // The payload's deferred placeholder becomes a DeferredClient slot; the
+    // injected `<script type="application/oxide-deferred">` resolves it.
+    const { doc } = installFakes({
+      oxide: { route: '/slow', data: '' },
+      oxideBoot: { loadChunk: async () => ({}) },
+    })
+    const adapter = {
+      hydrate() {},
+      update() {},
+      hydrateIsland() { return () => {} },
+    }
+    // No #root → router-only: the boot glue must attach and listen for swaps.
+    const dispose = bootWithRouter(adapter as any)
+    assert.ok(doc._listenerCount('ox:swap') > 0, 'boot glue listens for ox:swap without islands')
+    dispose()
+    assert.equal(doc._listenerCount('ox:swap'), 0, 'dispose tears the boot glue down')
+  } finally {
+    restoreGlobals(saved)
+  }
+})
+
+test('bootWithRouter: registers the manifest as the adapters component source (§6.4)', async () => {
+  const saved = saveGlobals()
+  try {
+    const root = makeRoot()
+    const { doc } = installFakes({
+      root,
+      oxide: { route: '/home', data: '' },
+      oxideBoot: { loadChunk: async (c: string) => ({ default: () => c }) },
+    })
+    const adapter = {
+      hydrate() {},
+      update() {},
+      hydrateIsland() { return () => {} },
+    }
+    const manifest = { buildId: 'b1', routes: { 'routes/home/page': { entry_chunk: 'home.js' } } }
+    const dispose = bootWithRouter(adapter as any, { manifest } as never)
+    const src = getRouteComponentSource()
+    assert.ok(src, 'manifest registered')
+    assert.equal(src!.manifest, manifest)
+    const c = (await componentFor('/home')) as (s: string) => string
+    assert.equal(c('/client/home.js'), '/client/home.js', 'componentFor resolves through the boot loader')
+    dispose()
+  } finally {
+    restoreGlobals(saved)
+    setRouteComponentSource(undefined)
   }
 })
 
