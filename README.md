@@ -15,7 +15,7 @@
     <img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/>
     <img src="https://img.shields.io/badge/Workspace-17%20crates%20%2B%206%20packages-6F4E37?style=flat-square" alt="Workspace"/>
     <img src="https://img.shields.io/badge/Code-%E2%89%8878k%20lines-9CF?style=flat-square" alt="Lines of code"/>
-    <img src="https://img.shields.io/badge/Tests-944%20Rust%20%7C%20212%20TS-brightgreen?style=flat-square" alt="Tests"/>
+    <img src="https://img.shields.io/badge/Tests-945%20Rust%20%7C%20229%20TS-brightgreen?style=flat-square" alt="Tests"/>
     <img src="https://img.shields.io/badge/ODF-16%20golden%20fixtures-00BFFF?style=flat-square" alt="ODF golden fixtures"/>
     <img src="https://img.shields.io/badge/TS%20runtime-zero%20npm%20deps-228B22?style=flat-square" alt="Zero dependencies"/>
   </p>
@@ -28,10 +28,12 @@
 
 - **One engine, four frameworks.** A versioned adapter contract (`contract: 1`) defines a
   capabilities manifest — suspense mode, islands support, HMR strategy — plus render,
-  hydrate, head and plugins hooks. Each adapter ships a zero-dependency neutral IR renderer
-  *and* an opt-in bridge to the real upstream renderer (`react-dom/server`,
+  hydrate, head, loading and plugins hooks. Each adapter ships a zero-dependency neutral IR
+  renderer *and* a bridge to the real upstream renderer (`react-dom/server`,
   `@vue/server-renderer`, `svelte/server`, `@solidjs/web`). Framework libraries are optional
   peer dependencies: when they are absent, the adapter degrades gracefully to the IR renderer.
+  Real streaming SSR is the primary live render path, and island hydration runs the real
+  framework runtime on all four adapters.
 - **Fast paths that skip JavaScript.** The route table is a build-time radix tree serialized
   to an `rkyv` archive and memory-mapped at boot — matches read the mapped bytes in place.
   Redirects, rewrites, headers, basic auth and rate limits are evaluated natively in Rust.
@@ -39,8 +41,9 @@
   evaluates JavaScript.
 - **One wire format.** ODF, the Oxide Data Format, is a devalue-compatible superset encoded
   natively in Rust and decoded by a single-file, zero-dependency TypeScript module. The same
-  bytes go to the cache and to the wire. Sixteen golden fixtures lock the format byte-exactly
-  on both sides.
+  bytes go to the cache and to the wire: `'use cache'` values are stored ODF-encoded, so
+  `Date`, `Map`, `Set` and `BigInt` survive a cache round trip. Sixteen golden fixtures lock
+  the format byte-exactly on both sides.
 - **Content-addressed to the byte.** A demand-driven incremental graph with early cutoff, a
   `blake3` content-addressed store on disk (`redb` index, `zstd` blobs), byte-stable manifests
   and typegen, and a three-tier cache — L0 in-process response cache, L1 data cache, L2
@@ -142,9 +145,11 @@ request → hyper 1.x → limits + request id → static assets (precompressed, 
         → native rules (redirects · rewrites · headers · basic auth · rate limits)
         → route match (rkyv archive, memory-mapped)
         → L0 response cache (weak-ETag 304s · stale-while-revalidate · single-flight · build-seeded)
-        → JS middleware (only when present)
-        → dispatch: render | action | server fn
-        → streaming response + Server-Timing + dynamic compression
+        → JS middleware (runs before loaders/actions, injects event.locals, may short-circuit or rewrite)
+        → loaders: layout chain outer→inner (await parent()), then the page load; deferred
+          values resolve and reach the client as a nonce'd script
+        → dispatch: render | action | endpoint (route.ts) | server fn
+        → streaming response (real SSR chunks) + Server-Timing + dynamic compression
         → cache fill + tag invalidation
 ```
 
@@ -180,8 +185,11 @@ routes through a tooling pool driving the real upstream compilers.
 Rendering, hydration and HMR strategy are the only things an adapter owns. The rest of the
 client runtime is core-owned (`packages/oxide`) and shipped identically to every framework:
 the ODF decoder, the island loader (strategies `load · idle · visible · media(q)` on
-`<ox-island>` hosts), progressive form `enhance`, script strategies, deferred-boundary glue
-and a Core Web Vitals reporter that beacons to `/_oxide/vitals` with zero third-party script.
+`<ox-island>` hosts), progressive form `enhance`, script strategies, deferred-boundary glue,
+navigation loading boundaries (`onNavigateStart/End` + per-adapter `renderLoading`),
+manifest-driven chunk preloading on prefetch/goto, and a Core Web Vitals reporter that
+beacons to `/_oxide/vitals` with zero third-party script. Island hydration calls the real
+framework runtime on all four adapters (`createSSRApp`/`mount(hydrate)`/`hydrate`/`createRoot`).
 
 ## One wire format: ODF
 
@@ -200,11 +208,12 @@ typed arrays, `undefined`, cyclic and shared references, `Error` and deferred pr
 The repository is built test-first: each crate's `*_tdd.rs` suites were written against its
 contract before the implementation.
 
-- **944 Rust test functions** across 17 crates (43 of them engine-dependent e2e tests gated
+- **945 Rust test functions** across 17 crates (43 of them engine-dependent e2e tests gated
   behind `#[ignore]`), including `proptest` property suites on the router and graph engines.
-- **212 TypeScript test cases** across 7 suites on Node's built-in test runner — including
-  the ODF decoder against the same golden fixtures as the Rust encoder, and router / island
-  tests against a hand-rolled fake DOM (no jsdom, no deps).
+- **229 TypeScript test cases** across 35 files on Node's built-in test runner — including
+  the ODF decoder against the same golden fixtures as the Rust encoder, router / island
+  tests against a hand-rolled fake DOM (no jsdom, no deps), and suites for the defer script
+  protocol and client-side loading boundaries.
 - **Conformance gate** — the Atlas reference app runs one 22-assertion set (contract shape,
   SSR content + framework markers, merged head, deterministic markup, streaming boundaries,
   error / not-found, islands, actions JS-on/off, server functions, cache shapes, client
@@ -224,16 +233,24 @@ build on >5% regression** against `benchmarks/report.md`.
 > versioned and treated as frozen; everything else may churn.
 
 **Shipped and gated today** — the production pipeline (hyper + rustls, rules, L0 cache,
-streaming), `oxide build` with prerender / snapshots / 12 deploy targets, real framework SSR
-on all four adapters, the ODF wire format, six-layer config extraction, cache semantics with
-tags and single-flight, the security stack, metrics and tracing, and the introspection
-tooling (`doctor`, `why`, `analyze`, `schema`, `mcp`).
+streaming SSR as the primary live path on both backends), `oxide build` with prerender /
+snapshots / 12 deploy targets, real framework SSR and real island hydration on all four
+adapters, the ODF wire format (including ODF-encoded `'use cache'` values), six-layer config
+extraction, cache semantics with tags and single-flight, JS middleware execution with
+`event.locals`, `route.ts` endpoint dispatch, layout loaders with short-circuits, client
+loading boundaries, PWA auto-registration, connected dev HMR, and the introspection tooling
+(`doctor`, `why`, `analyze`, `schema`, `mcp`).
 
-**Built, wiring in progress** — client router boot and client-side navigation (`/__data`),
-nested layout chains, `loading` / `error` / `not-found` boundary dispatch, endpoint routes
-and middleware execution, deferred-value streaming end to end, non-React island hydration,
-HMR browser push, font subsetting and partial prerendering (PPR) assembly. See
-[`HANDOFF.md`](HANDOFF.md) for the current thread list.
+**Built, wiring in progress** — the client router still only attaches where a page carries
+its ODF payload (prerendered / L0-seeded; dynamic pages get no `window.__oxide`, which keeps
+SPA navigation, the defer glue and loading overlays dark there), client-side `update()` still
+swaps the neutral IR registry instead of the real component tree, `error.tsx` renders but
+ships HTTP 200 instead of 500, `await parent()` returns `{}` pending a two-line payload
+forward in `LoaderHost`, `/__data` skips middleware and layout loads, and sockets,
+state-preserving HMR, SPEC-17 plugin transforms on prerender, font subsetting and partial
+prerendering (PPR) are built-but-unwired. See
+[`docs/HANDOFF-bucket2-complete.md`](docs/HANDOFF-bucket2-complete.md) for the current
+thread list.
 
 ## Documentation
 
