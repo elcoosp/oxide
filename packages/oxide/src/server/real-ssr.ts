@@ -62,6 +62,15 @@ export interface RealAdapterConfig {
   lastError?: () => string | undefined
   /** Real SSR body: given a component and props, produce HTML. */
   renderBody: (Component: unknown, props: Record<string, unknown>) => Promise<string>
+  /**
+   * §7.1 streaming SSR: an optional chunked body renderer. When present, the
+   * adapter yields its stream's chunks as the response body — the shell
+   * reaches the browser before deferred boundaries resolve. Absent → the
+   * adapter uses `renderBody` (one chunk). React wires this to React 19's
+   * `renderToReadableStream`; the others can adopt it as their frameworks
+   * expose a streaming renderer.
+   */
+  renderStream?: (Component: unknown, props: Record<string, unknown>) => Promise<ReadableStream<Uint8Array>>
   /** Attributes on the framework root container (e.g. ` id="root" data-reactroot=""`). */
   rootAttrs: string
   /** Client-side entries — re-used from the IR adapter (framework-neutral). */
@@ -243,14 +252,30 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
               props: { ...props, children: descriptor },
             }
           }
-          const body = await cfg.renderBody(descriptor.Component, descriptor.props)
           yield enc.encode(`<!doctype html>\n<html lang="en"><head>${emitHead(head)}</head>`)
           if (headWarnings.length > 0) {
             yield enc.encode(`<body>${headWarnings.join('')}<div${cfg.rootAttrs}>`)
           } else {
             yield enc.encode(`<body><div${cfg.rootAttrs}>`)
           }
-          yield enc.encode(`${body}</div></body></html>`)
+          // §7.1: when the adapter supplies a streaming body renderer, pump
+          // its chunks through as they arrive. The shell bytes above have
+          // already been yielded, so the browser starts parsing before the
+          // component tree finishes rendering. `renderBody` (one chunk) is
+          // the fallback for adapters/frameworks without a streaming API.
+          if (typeof cfg.renderStream === 'function') {
+            const bodyStream = await cfg.renderStream(descriptor.Component, descriptor.props)
+            const reader = bodyStream.getReader()
+            for (;;) {
+              const { value, done } = await reader.read()
+              if (done) break
+              if (value && value.length > 0) yield value
+            }
+          } else {
+            const body = await cfg.renderBody(descriptor.Component, descriptor.props)
+            yield enc.encode(body)
+          }
+          yield enc.encode('</div></body></html>')
         } catch (err) {
           // §10.2 step 5: prefer the project's error.tsx over the generic
           // OX-500 placeholder. The pipeline hands `input.errorRoute` (nearest
