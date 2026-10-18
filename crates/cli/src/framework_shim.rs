@@ -18,6 +18,36 @@ use oxide_config::JsBackend;
 use oxide_server::{LoaderRunner, PageRenderInput, PageRenderer};
 use std::sync::Arc;
 
+/// §6.2 / §15: a `TransformHandler` built from the bundler's transform hook.
+/// The hook is the same WASM/plugin transform the bundler runs; wrapping it
+/// lets the worker's `compile_module` op apply it during the **prerender**
+/// (which loads components through the worker's module loader, not the
+/// bundler).
+pub struct HookTransformHandler {
+    hook: oxide_bundler::TransformHook,
+}
+
+#[async_trait::async_trait]
+impl oxide_jshost::TransformHandler for HookTransformHandler {
+    async fn transform(
+        &self,
+        id: &str,
+        source: &str,
+    ) -> oxide_diagnostics::Result<String> {
+        self.hook.call(id, source)
+    }
+}
+
+/// Build a `TransformHandler` from the project's plugin transform hook.
+pub fn build_transform_handler(
+    root: &std::path::Path,
+    cfg: &oxide_config::OxideConfig,
+) -> Option<Arc<dyn oxide_jshost::TransformHandler>> {
+    let hook = crate::build_transform_hook(root, cfg)?;
+    Some(Arc::new(HookTransformHandler { hook }))
+}
+
+
 /// PERF-05: the `fetch` op handler. Delegates to `oxide-server`'s
 /// SSRF-hardened fetch, so a server-side `fetch()` in user code goes through
 /// the same validated path as the image endpoint.
@@ -240,6 +270,11 @@ fn backend_str(b: JsBackend) -> &'static str {
 pub async fn build_framework_stack(
     config_path: Option<&std::path::Path>,
     backend: JsBackend,
+    // §6.2 / §15: the plugin transform handler. When `Some`, it is attached
+    // to the render pool's host, so the worker's `compile_module` op applies
+    // it — reaching the prerender path (which renders through the worker,
+    // not the bundler).
+    transform_handler: Option<Arc<dyn oxide_jshost::TransformHandler>>,
 ) -> FrameworkStack {
     use oxide_jshost::{JsHost, NodeHost, PoolConfig, V8Host};
 
@@ -291,11 +326,16 @@ pub async fn build_framework_stack(
     });
 
     let host: Arc<dyn JsHost> = match backend {
-        JsBackend::Node => Arc::new(
-            NodeHost::new(NodeHost::worker_script_default())
+        JsBackend::Node => {
+            let mut h = NodeHost::new(NodeHost::worker_script_default())
                 .with_cache_handler(Arc::clone(&cache_tier))
-                .with_fetch_handler(Arc::clone(&fetch_handler)),
-        ),
+                .with_fetch_handler(Arc::clone(&fetch_handler));
+            // §6.2: attach the plugin transform to the render pool's host.
+            if let Some(t) = transform_handler.as_ref() {
+                h = h.with_transform_handler(Arc::clone(t));
+            }
+            Arc::new(h)
+        }
         JsBackend::V8 => {
             // §4.4: if `oxide build` wrote a snapshot, boot from it.
             let snap = config_path
@@ -307,10 +347,16 @@ pub async fn build_framework_stack(
             };
             // BUG-02: give the V8 backend the same cache tier as Node — it
             // had none, so `'use cache'` silently degraded to per-worker Maps.
-            Arc::new(
-                host.with_cache_handler(Arc::clone(&cache_tier))
-                    .with_fetch_handler(Arc::clone(&fetch_handler)),
-            )
+            let host = host
+                .with_cache_handler(Arc::clone(&cache_tier))
+                .with_fetch_handler(Arc::clone(&fetch_handler));
+            // §6.2: attach the plugin transform to the render pool's host.
+            let host = if let Some(t) = transform_handler.as_ref() {
+                host.with_transform_handler(Arc::clone(t))
+            } else {
+                host
+            };
+            Arc::new(host)
         }
     };
     // PERF-02: size the render/loader pool by the machine's parallelism, not
@@ -336,10 +382,15 @@ pub async fn build_framework_stack(
     // compile failure: a Vue fixture with `backend: "v8"` otherwise sends
     // `tooling:vue-compile` to the V8 pool, which has no such op.
     let tooling_pool: Arc<dyn oxide_jshost::Pool> = if matches!(backend, JsBackend::V8) {
-        match NodeHost::new(NodeHost::worker_script_default())
-            .with_cache_handler(Arc::clone(&cache_tier))
-            .with_fetch_handler(Arc::clone(&fetch_handler))
-            .tooling_pool(PoolConfig { size: pool_size, ..Default::default() })
+        match {
+            let mut h = NodeHost::new(NodeHost::worker_script_default())
+                .with_cache_handler(Arc::clone(&cache_tier))
+                .with_fetch_handler(Arc::clone(&fetch_handler));
+            if let Some(t) = transform_handler.as_ref() {
+                h = h.with_transform_handler(Arc::clone(t));
+            }
+            h.tooling_pool(PoolConfig { size: pool_size, ..Default::default() })
+        }
         {
             Ok(p) => p,
             Err(e) => {
