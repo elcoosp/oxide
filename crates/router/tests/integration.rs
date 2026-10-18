@@ -150,7 +150,9 @@ fn rules_engine_pipeline_position_smoke() {
     // rule rate-limited. The bucket now decides, not the rule's presence.
     assert_ne!(
         redirect.evaluate("/api/x"),
-        RuleOutcome::RateLimited { retry_after_secs: 0 }
+        RuleOutcome::RateLimited {
+            retry_after_secs: 0
+        }
     );
     assert_eq!(redirect.evaluate("/nothing"), RuleOutcome::None);
 }
