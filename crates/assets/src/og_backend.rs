@@ -24,7 +24,7 @@
 //! are CSS color strings; SVG's own parser resolves named colors, `#rgb`, `#rrggbb`,
 //! `rgb(...)`, and `rgba(...)`.
 
-use crate::{err, OgBackend, Result};
+use crate::{OgBackend, Result, err};
 
 /// Real resvg-backed OG image renderer (D19).
 pub struct SvgOgBackend;
@@ -157,7 +157,9 @@ fn escape_attr(s: &str) -> String {
 }
 
 fn escape_text(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 #[cfg(test)]
@@ -180,7 +182,9 @@ mod tests {
         assert!(svg.contains("width=\"1200\""));
         assert!(svg.contains("height=\"630\""));
         assert!(svg.contains("fill=\"#101010\""));
-        assert!(svg.contains("<rect x=\"40\" y=\"60\" width=\"800\" height=\"4\" fill=\"#ff0000\"/>"));
+        assert!(
+            svg.contains("<rect x=\"40\" y=\"60\" width=\"800\" height=\"4\" fill=\"#ff0000\"/>")
+        );
         assert!(svg.contains("font-size=\"72\""));
         // XML escaping in text
         assert!(svg.contains("Hello &amp; &lt;world&gt;"));
