@@ -83,8 +83,40 @@ fn snapshot_node_server_entry() {
 
 // ---------------------------------------------------------------- vercel functions manifest (§18)
 
+/// Recursively sort object keys so the serialized form is deterministic.
+///
+/// `serde_json::Value`'s key order depends on the `preserve_order` feature,
+/// which is **workspace-wide** (any crate that enables it flips it for all):
+/// `syntect`'s `yaml-load` feature turns it on, so a `-p oxide-adapters` test
+/// sees sorted keys while `--workspace` sees insertion order. A snapshot must
+/// not depend on that — it would pass in isolation and fail in CI. Sorting
+/// here makes the assertion feature-independent.
+fn sorted_json(v: &serde_json::Value) -> serde_json::Value {
+    match v {
+        serde_json::Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            for k in keys {
+                out.insert(k.clone(), sorted_json(&map[k]));
+            }
+            serde_json::Value::Object(out)
+        }
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.iter().map(sorted_json).collect())
+        }
+        other => other.clone(),
+    }
+}
+
 #[test]
 fn snapshot_vercel_functions_json() {
     let v = vercel_functions_json("build-abc123");
-    insta::assert_snapshot!("vercel_functions_json", serde_json::to_string_pretty(&v).unwrap());
+    // Sort so the snapshot is identical whether or not `serde_json`'s
+    // `preserve_order` is unified in (see `sorted_json`'s doc comment).
+    let normalized = sorted_json(&v);
+    insta::assert_snapshot!(
+        "vercel_functions_json",
+        serde_json::to_string_pretty(&normalized).unwrap()
+    );
 }
