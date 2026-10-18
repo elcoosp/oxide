@@ -187,9 +187,70 @@ export function createRouter(opts: RouterOptions): Router {
     }
   }
 
+  // §6.4 manifest-driven chunk preloading. `opts.manifest` maps a route entry
+  // id (`routes/blog/_slug_/page`) to its client chunks. We match the URL to
+  // the manifest's route pattern (segment count + static/param rules) and
+  // preload the winning entry's chunks so the next navigation has no JS
+  // waterfall. `null` = looked up, no match; `undefined` = not yet attempted.
+  const routeManifest = opts.manifest
+  const manifestCache = new Map<string, string[]>()
+  function chunksFor(path: string): string[] {
+    if (!routeManifest) return []
+    const hit = manifestCache.get(path)
+    if (hit) return hit
+    const segs = path.split('/').filter(Boolean)
+    let best: string[] | undefined
+    let bestStaticCount = -1
+    for (const [routeId, entry] of Object.entries(routeManifest.routes)) {
+      // `routes/<...>/page` → the pattern segments.
+      const m = /^routes\/(.*?)(?:\/page)?$/.exec(routeId)
+      if (!m) continue
+      const routeSegs = m[1] ? m[1].split('/').filter(Boolean) : []
+      if (routeSegs.length !== segs.length) continue
+      let staticCount = 0
+      let ok = true
+      for (let i = 0; i < routeSegs.length; i++) {
+        const rs = routeSegs[i]
+        const isParam = /^(_?\[|_)|^_/.test(rs)
+        // `_slug_`, `[slug]`, `[...rest]` — all params. A literal segment
+        // must match the URL exactly.
+        if (isParam || /^_/.test(rs) || rs.includes('[')) {
+          continue
+        }
+        if (rs !== segs[i]) {
+          ok = false
+          break
+        }
+        staticCount++
+      }
+      if (!ok) continue
+      if (staticCount > bestStaticCount) {
+        bestStaticCount = staticCount
+        best = entry.preload ?? entry.chunks ?? []
+      }
+    }
+    const result = best ?? []
+    manifestCache.set(path, result)
+    return result
+  }
+
+  /** Preload a route's manifest chunks via `import()`; the bundler dedupes. */
+  function preloadChunks(path: string): void {
+    for (const chunk of chunksFor(path)) {
+      // A dynamic import warms the module cache with no execution side effects.
+      void import(/* @vite-ignore */ `/${chunk}`).catch(() => {
+        // A missing preload chunk is not fatal — the real navigation will
+        // still fetch it (or 404 loudly) via the boot entry.
+      })
+    }
+  }
+
   /** Budgeted, cancelable prefetch (§8.4): max `budget` in flight. */
   function prefetch(href: string): void {
     const path = hrefPath(href)
+    // §6.4: preload the route's JS chunks in parallel with the data fetch.
+    // Both are silent on failure; a real `goto` retries.
+    preloadChunks(path)
     if (disposed || dataCache.has(path) || inFlight.has(path) || inFlight.size >= budget) return
     const ac = new AbortController()
     inFlight.set(path, ac)
@@ -208,6 +269,9 @@ export function createRouter(opts: RouterOptions): Router {
   async function goto(href: string, nav: { replace?: boolean } = {}): Promise<void> {
     const path = hrefPath(href)
     const navId = ++navSeq
+    // §6.4: kick off chunk preload immediately; the data fetch below runs in
+    // parallel. Idempotent (the bundler dedupes a warm module).
+    preloadChunks(path)
     let input = dataCache.get(path)
     // §8.4: optimistic navigation with loading boundaries. `onNavigateStart`
     // fires BEFORE the fetch so the caller can render a loading state. If
