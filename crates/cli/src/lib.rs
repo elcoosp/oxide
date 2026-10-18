@@ -2304,11 +2304,12 @@ async fn write_prerender(
     // fallback path.
     // STATUS NOTE (§10.2 step 5): a LIVE page that renders its error route
     // returns HTTP 500 (the §10.2 error-status contract marker). A
-    // PRERENDERED error page is BAKED at build time into a static file and
-    // is served as a plain 200 — a static file has no status channel. This
-    // is a documented deviation, not an oversight.
+    // PRERENDERED error page is baked at build time; the marker in the
+    // adapter's buffered output is captured below and carried through the
+    // L0 seed manifest so `oxide start` serves it with the real status.
+    // (Wave 3 fix — was a documented "baked 200" deviation.)
     error_route_id: Option<&str>,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<(String, u16)> {
     // §9.1: run the loader for this route (if the module exists and a
     // loader runner is attached) to obtain the data the render phase
     // receives. Prerendered static pages previously always wrote `{}`
@@ -2354,7 +2355,7 @@ async fn write_prerender(
                         std::fs::create_dir_all(parent)?;
                     }
                     std::fs::write(&dest, &body)?;
-                    return Ok(body);
+                    return Ok((body, out.status));
                 }
                 Err(e) => {
                     let body = format!(
@@ -2369,7 +2370,7 @@ async fn write_prerender(
                         std::fs::create_dir_all(parent)?;
                     }
                     std::fs::write(&dest, &body)?;
-                    return Ok(body);
+                    return Ok((body, 500u16));
                 }
             }
         }
@@ -2411,7 +2412,7 @@ async fn write_prerender(
                     std::fs::create_dir_all(parent)?;
                 }
                 std::fs::write(&dest, &body)?;
-                return Ok(body);
+                return Ok((body, out.status));
             }
             Err(e) => {
                 // SEC-07: escape worker error text (HTML injection).
@@ -2427,7 +2428,7 @@ async fn write_prerender(
                     std::fs::create_dir_all(parent)?;
                 }
                 std::fs::write(&dest, &body)?;
-                return Ok(body);
+                return Ok((body, 500u16));
             }
         }
     }
@@ -2468,6 +2469,12 @@ async fn write_prerender(
     // each island under its name, so on the wire the id and the URL are the
     // same string. (If a future slice adds per-island chunks, the rewrite
     // hook lives here.)
+    // §10.2 step 5 (prerender): the adapter's buffered output may carry
+    // the same wire-level error-status markers the streaming path peeks
+    // for. Detect them here (before the injector mutates `shell`) so the
+    // status the adapter intended rides the L0 seed and is served as a
+    // real 500 by `oxide start` — fixing what used to be a baked 200.
+    let prerender_status: u16 = if str_signals_error(&shell) { 500 } else { 200 };
     let mut shell = shell;
     if let Some(url) = boot_script_url {
         shell = inject_island_boot_script(&shell, url, nonce);
@@ -2517,9 +2524,9 @@ async fn write_prerender(
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(&dest, &html)?;
-    // PERF-04: return the HTML so the caller can build an L0 seed manifest
-    // (with the nonce swapped to the sentinel).
-    Ok(html)
+    // PERF-04 / §10.2 step 5: return (html, status) so the caller can seed
+    // the L0 entry with the status the adapter's marker indicated.
+    Ok((html, prerender_status))
 }
 
 /// PERF-01 / §8.4: answer a `/__data?route=<path>` request. Returns the
@@ -3287,7 +3294,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     let nonce = oxide_bundler::ChunkBundler::content_hash(&[build_id.as_bytes()]);
     let mut prerendered: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // PERF-04: (route_id, url_path, sentineled html) for the L0 seed manifest.
-    let mut seed_bodies: Vec<(String, String, String)> = Vec::new();
+    let mut seed_bodies: Vec<(String, String, String, u16)> = Vec::new();
     // Routes with literal generateParams are effectively static regardless of
     // whether they also have a server module.
     let mut static_override: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -3425,7 +3432,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     } else {
                         format!("prerendered/{}.html", segs.join("/"))
                     };
-                    let html = write_prerender(
+                    let (html, prerender_status) = write_prerender(
                         &dist,
                         &rel,
                         &route_id,
@@ -3447,6 +3454,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                         route_id.clone(),
                         url_path_from_rel(&rel),
                         html.replace(&nonce, l0_cache::NONCE_SENTINEL),
+                    prerender_status,
                     ));
                     outs.push(rel);
                 }
@@ -3503,7 +3511,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                             } else {
                                 format!("prerendered/{}.html", segs.join("/"))
                             };
-                            let html = write_prerender(
+                            let (html, prerender_status) = write_prerender(
                                 &dist,
                                 &rel,
                                 &route_id,
@@ -3525,6 +3533,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                                 route_id.clone(),
                                 url_path_from_rel(&rel),
                                 html.replace(&nonce, l0_cache::NONCE_SENTINEL),
+                    prerender_status,
                             ));
                             outs.push(rel);
                         }
@@ -3587,7 +3596,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     format!("prerendered/{}.html", e.segments.join("/"))
                 };
                 let empty_params: BTreeMap<String, String> = BTreeMap::new();
-                let html = write_prerender(
+                let (html, prerender_status) = write_prerender(
                     &dist,
                     &rel,
                     &route_id,
@@ -3609,6 +3618,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     route_id.clone(),
                     url_path_from_rel(&rel),
                     html.replace(&nonce, l0_cache::NONCE_SENTINEL),
+                    prerender_status,
                 ));
                 prerendered.insert(e.id.0.clone(), vec![rel]);
             }
@@ -3630,7 +3640,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // seeded route is an L0 hit on the very first request (no warm-up miss).
     if !seed_bodies.is_empty() {
         let mut entries = Vec::with_capacity(seed_bodies.len());
-        for (rid, url, sentineled) in &seed_bodies {
+        for (rid, url, sentineled, status) in &seed_bodies {
             // The key matches what the live server computes: route id
             // (no `/page` suffix), no params, vary `lang=` (empty).
             let rid = rid.strip_suffix("/page").unwrap_or(rid);
@@ -3639,6 +3649,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 "key": key,
                 "url": url,
                 "body": sentineled,
+                "status": status,
             }));
         }
         let seed = serde_json::json!({ "build_id": build_id, "entries": entries });
@@ -4001,6 +4012,13 @@ fn chunk_signals_error(chunk: &bytes::Bytes) -> bool {
         hay.windows(needle.len()).any(|w| w == needle)
     }
     has(chunk, CONTRACT_MARKER) || has(chunk, GENERIC_MARKER)
+}
+
+/// Same contract as [`chunk_signals_error`], for the buffered (prerender)
+/// path where the adapter's output is a `String` rather than a stream of
+/// `Bytes`.
+fn str_signals_error(s: &str) -> bool {
+    chunk_signals_error(&bytes::Bytes::copy_from_slice(s.as_bytes()))
 }
 
 /// §10.3: splice `<script type="module" src="/<url>">` into a streaming HTML
@@ -6777,8 +6795,12 @@ async fn start_server_inner_full(
                         for e in entries {
                             let key = e.get("key").and_then(|k| k.as_str()).unwrap_or("");
                             let body = e.get("body").and_then(|b| b.as_str()).unwrap_or("");
+                            let status = e
+                                .get("status")
+                                .and_then(|s| s.as_u64())
+                                .unwrap_or(200) as u16;
                             if !key.is_empty() && !body.is_empty() {
-                                cache.seed_entry(key, body.as_bytes().to_vec()).await;
+                                cache.seed_entry(key, body.as_bytes().to_vec(), status).await;
                             }
                         }
                     }

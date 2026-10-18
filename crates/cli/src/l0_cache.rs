@@ -171,10 +171,12 @@ impl L0Cache {
 
     /// PERF-04: seed an entry at an explicit key. Used by boot seeding,
     /// where the key was computed at build time. The body already carries the
-    /// nonce sentinel.
-    pub async fn seed_entry(&self, key: &str, body: Vec<u8>) {
+    /// nonce sentinel. §10.2 step 5: `status` carries the adapter's
+    /// error-status marker through the seed so a prerendered error page is
+    /// served as a real 500 (was always 200).
+    pub async fn seed_entry(&self, key: &str, body: Vec<u8>, status: u16) {
         let entry = self.make_entry(
-            200,
+            status,
             vec![(
                 "content-type".to_string(),
                 "text/html; charset=utf-8".to_string(),

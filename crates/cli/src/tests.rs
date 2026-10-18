@@ -3116,9 +3116,8 @@ async fn error_status_marker_yields_http_500() {
     // chunk announces an error document is a 500 on the wire — not a 200
     // with error-shaped content. Two markers are honoured: the canonical
     // `<!--oxide-status:500-->` and the generic OX-500 fallback attribute
-    // the adapter already emits today. A PRERENDERED error page stays 200
-    // (a static file has no status channel — documented in
-    // `write_prerender`).
+    // the adapter already emits today. A PRERENDERED error page's status
+    // is now carried through the L0 seed manifest (Wave 3 item 2).
     let renderers: Vec<(&str, Arc<dyn oxide_server::PageRenderer>)> = vec![
         (
             "canonical marker",
@@ -3749,4 +3748,115 @@ async fn layout_then_page_sequential_when_page_calls_parent() {
         1,
         "page needs parent() → sequential chain, no overlap"
     );
+}
+
+
+// ---- Wave 3 item 2: prerender error-status carried through L0 seed -----
+//
+// `write_prerender` must return the status the adapter's buffered output
+// announced — otherwise a prerendered error page is served as a 200 on
+// first request (the "baked 200" deviation). These two tests are
+// load-bearing for the return-tuple change: reverting to `Result<String>`
+// makes them fail to compile, and reverting only the status-detection
+// line would drop the first test's `status == 500` assertion.
+
+/// A buffered renderer whose `render()` output carries the canonical
+/// error-status contract marker (what a framework adapter emits when it
+/// renders the error route before the shell).
+struct BufferedErrorMarkerRenderer;
+
+#[async_trait::async_trait]
+impl oxide_server::PageRenderer for BufferedErrorMarkerRenderer {
+    fn name(&self) -> &str {
+        "buffered-error-marker"
+    }
+    async fn render(
+        &self,
+        _input: oxide_server::PageRenderInput,
+    ) -> oxide_server::Result<String> {
+        Ok(
+            "<!doctype html><html><head><!--oxide-status:500--></head><body>ERR</body></html>"
+                .into(),
+        )
+    }
+}
+
+/// A buffered renderer whose output carries no marker — the status must
+/// stay 200.
+struct CleanBodyRenderer;
+
+#[async_trait::async_trait]
+impl oxide_server::PageRenderer for CleanBodyRenderer {
+    fn name(&self) -> &str {
+        "clean-body"
+    }
+    async fn render(
+        &self,
+        _input: oxide_server::PageRenderInput,
+    ) -> oxide_server::Result<String> {
+        Ok("<!doctype html><html><body>ok</body></html>".into())
+    }
+}
+
+#[tokio::test]
+async fn write_prerender_carries_500_status_for_marker_body() {
+    let dir = tempfile::tempdir().unwrap();
+    let dist = dir.path().to_path_buf();
+    let renderer: std::sync::Arc<dyn oxide_server::PageRenderer> =
+        std::sync::Arc::new(BufferedErrorMarkerRenderer);
+    let params: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    let (html, status) = crate::write_prerender(
+        &dist,
+        "prerendered/index.html",
+        "routes/index",
+        "/",
+        "/",
+        &params,
+        "test-nonce",
+        Some(&renderer),
+        None, // no loader
+        None, // no module_path
+        None, // no boot script
+        &[],  // no layouts
+        &[],  // no layout server modules
+        None, // no error_route
+    )
+    .await
+    .expect("write_prerender succeeds");
+    assert_eq!(
+        status, 500,
+        "adapter's `<!--oxide-status:500-->` marker → status 500"
+    );
+    assert!(
+        html.contains("<!--oxide-status:500-->"),
+        "marker preserved through injection: {html}"
+    );
+}
+
+#[tokio::test]
+async fn write_prerender_carries_200_status_for_clean_body() {
+    let dir = tempfile::tempdir().unwrap();
+    let dist = dir.path().to_path_buf();
+    let renderer: std::sync::Arc<dyn oxide_server::PageRenderer> =
+        std::sync::Arc::new(CleanBodyRenderer);
+    let params: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    let (_html, status) = crate::write_prerender(
+        &dist,
+        "prerendered/index.html",
+        "routes/index",
+        "/",
+        "/",
+        &params,
+        "test-nonce",
+        Some(&renderer),
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+    )
+    .await
+    .expect("write_prerender succeeds");
+    assert_eq!(status, 200, "no marker → 200");
 }
