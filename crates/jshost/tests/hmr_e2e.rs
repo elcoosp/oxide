@@ -9,7 +9,7 @@
 //! Run explicitly:
 //!     cargo test -p oxide-jshost --test hmr_e2e -- --ignored
 
-use oxide_jshost::{FrameworkHost, LoaderHost, JsHost, NodeHost, Pool, PoolConfig};
+use oxide_jshost::{FrameworkHost, JsHost, LoaderHost, NodeHost, Pool, PoolConfig};
 use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
@@ -23,8 +23,7 @@ fn e2e_dir() -> PathBuf {
 /// A monotonic counter combined with pid + nanos. Prevents the race where
 /// parallel tests call SystemTime::now() within the same microsecond and
 /// produce an identical nonce.
-static NONCE_COUNTER: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+static NONCE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn unique_nonce() -> String {
     let nanos = SystemTime::now()
@@ -102,7 +101,10 @@ async fn invalidate_forces_module_reload() {
     // 3. Invalidate: the worker bumps its generation, every subsequent
     //    import is tagged with ?v=<new-gen>, Node treats it as fresh.
     let generation = framework.invalidate().await.expect("invalidate");
-    assert!(generation >= 1, "generation should be >= 1, got {generation}");
+    assert!(
+        generation >= 1,
+        "generation should be >= 1, got {generation}"
+    );
 
     // 4. Third import: new URL, fresh module, marker "v2".
     let out3 = loader
