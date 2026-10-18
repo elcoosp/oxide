@@ -109,10 +109,7 @@ pub trait PageRenderer: Send + Sync {
     /// **Contract:** concatenated chunks equal what `render` returns,
     /// modulo chunk boundaries. Callers must drain to `None` to release
     /// any underlying resource (worker slot, cache entry).
-    async fn render_streaming(
-        &self,
-        input: PageRenderInput,
-    ) -> Result<RenderStream> {
+    async fn render_streaming(&self, input: PageRenderInput) -> Result<RenderStream> {
         let html = self.render(input).await?;
         let stream = futures::stream::once(async move { Ok(Bytes::from(html)) });
         Ok(Box::pin(stream))
@@ -143,15 +140,11 @@ mod tests {
     #[tokio::test]
 
     async fn render_streaming_default_collects() {
-
         let r: Arc<dyn PageRenderer> = Arc::new(EchoRenderer);
 
         let mut stream = r
-
             .render_streaming(PageRenderInput::new("routes/a", "/a"))
-
             .await
-
             .unwrap();
 
         use futures::StreamExt;
@@ -159,9 +152,7 @@ mod tests {
         let mut chunks: Vec<bytes::Bytes> = Vec::new();
 
         while let Some(item) = stream.next().await {
-
             chunks.push(item.unwrap());
-
         }
 
         assert_eq!(chunks.len(), 1, "default yields one chunk");
@@ -169,9 +160,7 @@ mod tests {
         let joined = String::from_utf8_lossy(&chunks[0]);
 
         assert!(joined.contains("route=routes/a"), "{joined}");
-
     }
-
 
     #[tokio::test]
     async fn input_new_defaults_shape() {
@@ -187,7 +176,10 @@ mod tests {
     async fn trait_is_object_safe() {
         let r: Arc<dyn PageRenderer> = Arc::new(EchoRenderer);
         assert_eq!(r.name(), "echo");
-        let html = r.render(PageRenderInput::new("routes/a", "/a")).await.unwrap();
+        let html = r
+            .render(PageRenderInput::new("routes/a", "/a"))
+            .await
+            .unwrap();
         assert!(html.contains("route=routes/a"), "{html}");
     }
 
@@ -225,7 +217,10 @@ mod tests {
     fn pipeline_defaults_to_no_page_renderer() {
         use crate::Pipeline;
         let pipeline = Pipeline::default();
-        assert!(pipeline.page_renderer().is_none(), "default pipeline has no renderer");
+        assert!(
+            pipeline.page_renderer().is_none(),
+            "default pipeline has no renderer"
+        );
     }
 }
 
@@ -268,7 +263,6 @@ pub struct EndpointRunResult {
     pub stream: Option<crate::BodyStream>,
 }
 
-
 impl std::fmt::Debug for EndpointRunResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EndpointRunResult")
@@ -287,7 +281,6 @@ pub struct EndpointRunError {
     pub code: String,
     pub message: String,
 }
-
 
 // ---------------------------------------------------------------------------
 // Middleware dispatch (§8.1 middleware.ts, §8.5 rewrites)
@@ -333,7 +326,6 @@ pub struct MiddlewareRunError {
     pub code: String,
     pub message: String,
 }
-
 
 // ---------------------------------------------------------------------------
 // Socket dispatch (§9.6)
