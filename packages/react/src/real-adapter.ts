@@ -23,7 +23,7 @@ import type { RenderInput, HeadTags, RenderCtx } from '../../oxide/src/types.ts'
 import { render as irRender, head as irHead, mergeHead } from './render.ts'
 import { hydrate, mount, update } from './hydrate.ts'
 import { reactHydrateIsland } from './hydrate-island-real.ts'
-import { isReactAvailable, renderReactToString, getLastLoadError } from './real-ssr.ts'
+import { isReactAvailable, renderReactToString, renderReactToStream, getLastLoadError } from './real-ssr.ts'
 
 export type { RealAdapterOptions }
 
@@ -76,6 +76,10 @@ export function createRealAdapter(opts: RealAdapterOptions) {
     isAvailable: isReactAvailable,
     lastError: getLastLoadError,
     renderBody: renderReactToString,
+    // §7.1: React 19's real streaming SSR. The shell reaches the client before
+    // deferred boundaries resolve; the worker forwards each chunk as a raw
+    // binary frame end-to-end.
+    renderStream: renderReactToStream,
     rootAttrs: ' id="root" data-reactroot=""',
     hydrate: hydrate as never,
     hydrateIsland: reactHydrateIsland as never,
