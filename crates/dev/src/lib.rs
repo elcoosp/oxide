@@ -556,13 +556,20 @@ impl RouteTableInspector {
                 },
             })
             .collect();
-        Self { routes }
+        Self { routes, waterfalls: None }
     }
 
-    /// Produce the inspector state. Fields without a source stay empty.
+    /// Produce the inspector state. Module-graph / cache / pool fields stay
+    /// empty until those subsystems feed them; the waterfall is populated
+    /// from the shared recorder (§20).
     pub fn state(&self) -> InspectorState {
         InspectorState {
             routes: self.routes.clone(),
+            waterfalls: self
+                .waterfalls
+                .as_ref()
+                .map(|r| r.snapshot())
+                .unwrap_or_default(),
             ..Default::default()
         }
     }
