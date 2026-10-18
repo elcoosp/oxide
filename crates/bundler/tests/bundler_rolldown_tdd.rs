@@ -103,7 +103,11 @@ fn rolldown_emits_client_manifest_on_disk() {
 #[test]
 fn rolldown_emits_server_manifest_for_ssr_env() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), "src/handler.js", "export const GET = () => ({ ok: true });\n");
+    write(
+        dir.path(),
+        "src/handler.js",
+        "export const GET = () => ({ ok: true });\n",
+    );
     let out = RolldownBundler::new(dir.path())
         .bundle(&opts(
             dir.path(),
@@ -208,16 +212,16 @@ fn rolldown_honours_externals() {
         "import { x } from 'lodash';\nexport const out = x + 1;\nconsole.log(out);\n",
     );
 
-    let mut o = opts(
-        dir.path(),
-        BundleEnv::Client,
-        &[("index", "src/index.js")],
-    );
+    let mut o = opts(dir.path(), BundleEnv::Client, &[("index", "src/index.js")]);
     o.externals = vec!["lodash".to_string()];
     let out = RolldownBundler::new(dir.path()).bundle(&o).unwrap();
 
     // The external specifier must survive as an import in the output.
-    let entry = out.chunks.iter().find(|c| c.kind == ChunkKind::Entry).unwrap();
+    let entry = out
+        .chunks
+        .iter()
+        .find(|c| c.kind == ChunkKind::Entry)
+        .unwrap();
     let code = std::fs::read_to_string(dir.path().join("dist").join(&entry.file)).unwrap();
     assert!(
         code.contains("lodash"),
@@ -240,16 +244,18 @@ fn rolldown_applies_define_substitutions() {
         "export const env = process.env.NODE_ENV;\nconsole.log(env);\n",
     );
 
-    let mut o = opts(
-        dir.path(),
-        BundleEnv::Client,
-        &[("index", "src/index.js")],
+    let mut o = opts(dir.path(), BundleEnv::Client, &[("index", "src/index.js")]);
+    o.define.insert(
+        "process.env.NODE_ENV".to_string(),
+        "\"production\"".to_string(),
     );
-    o.define
-        .insert("process.env.NODE_ENV".to_string(), "\"production\"".to_string());
     let out = RolldownBundler::new(dir.path()).bundle(&o).unwrap();
 
-    let entry = out.chunks.iter().find(|c| c.kind == ChunkKind::Entry).unwrap();
+    let entry = out
+        .chunks
+        .iter()
+        .find(|c| c.kind == ChunkKind::Entry)
+        .unwrap();
     let code = std::fs::read_to_string(dir.path().join("dist").join(&entry.file)).unwrap();
     assert!(
         code.contains("\"production\"") || code.contains("'production'"),
@@ -271,11 +277,7 @@ fn rolldown_reads_tsconfig_paths_aliases() {
         "import { util } from '@app/util';\nexport const out = util;\nconsole.log(out);\n",
     );
 
-    let mut o = opts(
-        dir.path(),
-        BundleEnv::Client,
-        &[("index", "src/index.ts")],
-    );
+    let mut o = opts(dir.path(), BundleEnv::Client, &[("index", "src/index.ts")]);
     let mut paths = std::collections::BTreeMap::new();
     paths.insert("@app/*".to_string(), vec!["src/*".to_string()]);
     o.tsconfig_paths = paths;
@@ -295,7 +297,6 @@ fn rolldown_reads_tsconfig_paths_aliases() {
         "aliased util must be resolved and inlined:\n{code}"
     );
 }
-
 
 #[test]
 fn rolldown_emits_real_sourcemaps_next_to_chunks() {
@@ -342,7 +343,9 @@ fn rolldown_emits_real_sourcemaps_next_to_chunks() {
     assert!(v["mappings"].is_string(), "mappings present");
     let sources = v["sources"].as_array().expect("sources array");
     assert!(
-        sources.iter().any(|s| s.as_str().is_some_and(|s| s.contains("index.js"))),
+        sources
+            .iter()
+            .any(|s| s.as_str().is_some_and(|s| s.contains("index.js"))),
         "expected original file in sources, got {sources:?}"
     );
 
@@ -353,7 +356,6 @@ fn rolldown_emits_real_sourcemaps_next_to_chunks() {
         "chunk should carry sourceMappingURL comment, body:\n{js}"
     );
 }
-
 
 #[test]
 fn rolldown_precompiled_plugin_serves_precompiled_js() {
@@ -399,7 +401,6 @@ fn rolldown_precompiled_plugin_serves_precompiled_js() {
     );
 }
 
-
 // ---------------------------------------------------------------------------
 // §15.1: a plugin-supplied `transform` hook runs on each module before the
 // compiler passes.
@@ -411,8 +412,8 @@ fn rolldown_precompiled_plugin_serves_precompiled_js() {
 // ---------------------------------------------------------------------------
 
 use oxide_bundler::TransformHook;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[test]
 fn transform_hook_runs_before_the_compiler_passes() {
@@ -502,7 +503,6 @@ fn transform_hook_error_does_not_fail_the_build() {
     assert!(!out.chunks.is_empty(), "the chunk is still emitted");
 }
 
-
 // ---------------------------------------------------------------------------
 // §6.6: a `.css` import through `RolldownBundler` must run the CSS transform
 // hook and emit the result as an asset. Rolldown 1.2.x refuses a `.css`
@@ -522,20 +522,15 @@ fn rolldown_css_plugin_emits_transformed_stylesheet() {
         "src/index.js",
         "import './theme.css';\nexport const x = 1;\nconsole.log(x);\n",
     );
-    write(
-        dir.path(),
-        "src/theme.css",
-        ".a { color: #ff0000; }\n",
-    );
+    write(dir.path(), "src/theme.css", ".a { color: #ff0000; }\n");
 
-    let hook = CssTransformHook::new(|_path: &str, source: &str, _is_module: bool, _minify: bool| {
-        // A marker suffix proves the transform ran and its output is what
-        // reached disk. A real hook (the CLI's) lowers the CSS via Lightning.
-        Ok((
-            format!("{source}\n/* CSS-HOOK-RAN */\n"),
-            BTreeMap::new(),
-        ))
-    });
+    let hook = CssTransformHook::new(
+        |_path: &str, source: &str, _is_module: bool, _minify: bool| {
+            // A marker suffix proves the transform ran and its output is what
+            // reached disk. A real hook (the CLI's) lowers the CSS via Lightning.
+            Ok((format!("{source}\n/* CSS-HOOK-RAN */\n"), BTreeMap::new()))
+        },
+    );
     let mut o = opts(dir.path(), BundleEnv::Client, &[("index", "src/index.js")]);
     o.css_transform = Some(hook);
 
@@ -592,7 +587,11 @@ fn rolldown_without_a_css_import_is_unaffected() {
     let dir = tempfile::tempdir().unwrap();
     write(dir.path(), "src/index.js", "export const a = 1;\n");
     let out = RolldownBundler::new(dir.path())
-        .bundle(&opts(dir.path(), BundleEnv::Client, &[("index", "src/index.js")]))
+        .bundle(&opts(
+            dir.path(),
+            BundleEnv::Client,
+            &[("index", "src/index.js")],
+        ))
         .expect("pure-JS bundle");
     assert_eq!(out.chunks.len(), 1);
     assert!(out.client_manifest.is_some());
