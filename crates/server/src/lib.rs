@@ -1198,6 +1198,9 @@ pub struct Pipeline {
     /// depend on `oxide-dev`, so this is a broadcast of pre-serialized JSON
     /// strings the CLI wires from its `HmrHub`.
     pub hmr: Option<Arc<tokio::sync::broadcast::Sender<String>>>,
+    /// §13.3: the client manifest's `build_id` (`"dev"` when no build).
+    /// Advertised in the `Connected` HMR handshake so a stale tab reloads.
+    pub hmr_build_id: String,
     /// Optional page renderer (§7). When `Some`, `serve_request` dispatches
     /// page renders to it instead of the neutral-IR path. Attached via
     /// `Pipeline::with_page_renderer` (see the CLI wiring). `None` preserves
@@ -1476,6 +1479,7 @@ impl Default for Pipeline {
             metrics: None,
             inspector: None,
             hmr: None,
+            hmr_build_id: String::new(),
             page_renderer: None,
             image_endpoint: None,
             server_fns: None,
@@ -3396,7 +3400,11 @@ impl Server {
                             if let Some(hub) = pipeline.hmr.as_ref() {
                                 if req.uri().path() == "/_oxide/hmr" {
                                     return Ok::<_, std::io::Error>(
-                                        crate::ws_hmr_upgrade(req, Arc::clone(hub)),
+                                        crate::ws_hmr_upgrade(
+                                            req,
+                                            Arc::clone(hub),
+                                            pipeline.hmr_build_id.clone(),
+                                        ),
                                     );
                                 }
                             }
@@ -3540,6 +3548,7 @@ impl Server {
 fn ws_hmr_upgrade(
     mut req: HyperRequest<hyper::body::Incoming>,
     hub: Arc<tokio::sync::broadcast::Sender<String>>,
+    build_id: String,
 ) -> HyperResponse<BoxBody<Bytes, std::io::Error>> {
     use http_body_util::Full;
     // The client's `Sec-WebSocket-Key` is echoed back as
@@ -3567,7 +3576,11 @@ fn ws_hmr_upgrade(
         let (mut rd, mut wr) = tokio::io::split(io);
         let mut rx = hub.subscribe();
         // The first message tells the client it is connected.
-        let hello = format!("{{\"type\":\"connected\",\"build_id\":\"{}\"}}", "");
+        // §13.3: advertise the current build id so a stale tab can reload.
+        let hello = format!(
+            "{{\"type\":\"connected\",\"build_id\":\"{}\"}}",
+            build_id,
+        );
         let _ = wr
             .write_all(&crate::ws::encode(&crate::ws::Frame::Text(hello), false))
             .await;

@@ -33,8 +33,9 @@ export interface HmrOptions {
   onCssUpdate?: (path: string) => void
   /** Called after a route-data update. */
   onRouteData?: (route: string, odfB64: string) => void
-  /** Called for a module update; the adapter's HMR hook. */
-  onModuleUpdate?: (path: string, boundary: string, code: string) => void
+  /** Called for a module update (§13.3). v0.1 reloads on a module change,
+   * so only the path is meaningful; the empty code/boundary fields are gone. */
+  onModuleUpdate?: (path: string) => void
   /** Overridable reload (tests). */
   reload?: () => void
   /** The overlay root element (created if absent). */
@@ -191,11 +192,7 @@ export function applyHmrMessage(msg: HmrMessage, opts: HmrOptions = {}): boolean
       return true
     }
     case 'module-update': {
-      opts.onModuleUpdate?.(
-        String(msg.path ?? ''),
-        String(msg.boundary ?? ''),
-        String(msg.code ?? ''),
-      )
+      opts.onModuleUpdate?.(String(msg.path ?? ''))
       return true
     }
     case 'server-module-swap':

@@ -202,10 +202,12 @@ impl Watcher {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum HmrMessage {
+    /// §13.3: a client module changed. v0.1 does a reload — the adapter HMR
+    /// hook (`onModuleUpdate`) is wired but the `code`/`boundary` payload
+    /// fields were always empty, so they are gone. Populating them (real
+    /// module-swap HMR) is a post-v0.1 track.
     ModuleUpdate {
         path: String,
-        boundary: String,
-        code: String,
     },
     CssUpdate {
         path: String,
@@ -373,16 +375,38 @@ fn hash_file(path: &Path) -> Option<String> {
 /// Publishing with zero subscribers is a no-op (broadcast semantics).
 pub struct HmrHub {
     tx: tokio::sync::broadcast::Sender<String>,
+    /// §13.3: the build id sent to a newly connected client so it can detect
+    /// a stale tab. Set from the client manifest's `build_id`; `"dev"` when
+    /// no build exists (a fresh `oxide dev`).
+    build_id: String,
 }
 
 impl HmrHub {
     pub fn new() -> Self {
-        Self::with_capacity(128)
+        Self::with_build_id("dev")
+    }
+
+    /// A hub carrying the current build id. The CLI passes the client
+    /// manifest's `build_id` (or `"dev"`).
+    pub fn with_build_id(build_id: impl Into<String>) -> Self {
+        let (tx, _) = tokio::sync::broadcast::channel(128);
+        Self {
+            tx,
+            build_id: build_id.into(),
+        }
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
         let (tx, _) = tokio::sync::broadcast::channel(capacity.max(1));
-        Self { tx }
+        Self {
+            tx,
+            build_id: "dev".to_string(),
+        }
+    }
+
+    /// The build id a `Connected` handshake advertises.
+    pub fn build_id(&self) -> &str {
+        &self.build_id
     }
 
     /// A fresh receiver; it sees every message published after this call.

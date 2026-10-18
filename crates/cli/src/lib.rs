@@ -1107,9 +1107,14 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     let hmr_loader: Option<std::sync::Arc<dyn oxide_server::LoaderRunner>> =
         stack.loader_runner.clone();
 
-    // SPEC-14: the HMR hub. Created here, published to by the dev loop below,
-    // and subscribed to by `/_oxide/hmr`.
-    let hmr_hub = std::sync::Arc::new(oxide_dev::HmrHub::new());
+    // SPEC-14: the HMR hub. Its build id comes from the client manifest
+    // when present (a `dev` start after `build`), else `"dev"`.
+    let hmr_build_id = std::fs::read_to_string(rootp.join("dist/client/client.manifest.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|v| v.get("build_id").and_then(|x| x.as_str()).map(str::to_string))
+        .unwrap_or_else(|| "dev".to_string());
+    let hmr_hub = std::sync::Arc::new(oxide_dev::HmrHub::with_build_id(hmr_build_id));
     let started = start_dev_server_full(
         root,
         flags.port,
@@ -1347,8 +1352,6 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                     }
                     HmrBehavior::AdapterHmr => hub.publish(HmrMessage::ModuleUpdate {
                         path: pstr,
-                        boundary: String::new(),
-                        code: String::new(),
                     }),
                     HmrBehavior::ServerSwap => {
                         hub.publish(HmrMessage::ServerModuleSwap { path: pstr })
@@ -6081,6 +6084,30 @@ async fn start_server_inner_full(
     // (dev only). `serve` (production) never sets an inspector, so this is
     // `None` there.
     let dev_token: Option<String> = with_inspector.then(oxide_server::dev_token);
+    let client_manifest_json: Option<serde_json::Value> = {
+        let client_manifest = rootp.join("dist/client/client.manifest.json");
+        std::fs::read_to_string(&client_manifest)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+    };
+    let boot_script_url: Option<String> = client_manifest_json.as_ref().and_then(|v| {
+        v.get("routes")
+            .and_then(|r| r.get("__boot__"))
+            .and_then(|r| r.get("entry_chunk"))
+            .and_then(|e| e.as_str())
+            .map(|f| format!("client/{f}"))
+    });
+    // §11 L0: a response cache for static/isr routes. The build id scopes
+    // entries to this deployment, so a rebuild invalidates them; it comes from
+    // the client manifest, falling back to a source-derived hash when no build
+    // is present (a dev server with no `dist/` still serves, just uncached).
+    let build_id = client_manifest_json
+        .as_ref()
+        .and_then(|v| v.get("build_id"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| "dev".to_string());
+
     let pipeline = std::sync::Arc::new(oxide_server::Pipeline {
         rules,
         assets,
@@ -6145,6 +6172,9 @@ async fn start_server_inner_full(
         page_renderer: None,
         // SPEC-14: the HMR hub's broadcast sender, dev only.
         hmr: hmr.as_ref().map(|h| h.sender()),
+        // §13.3: advertise the client manifest's build id so a stale tab can
+        // detect a rebuild and reload.
+        hmr_build_id: build_id.clone(),
         // SEC-02: HSTS only on TLS (§17.1) — set where the listener is built.
         tls: tls.is_some(),
         // SEC-09: the dev inspector token (see below).
@@ -6158,29 +6188,7 @@ async fn start_server_inner_full(
     // §10.3: the same boot URL that the build-time prerender injects also
     // has to be spliced into every live request's shell — otherwise dev /
     // serve would ship pages whose `<ox-island>` markup is inert.
-    let client_manifest_json: Option<serde_json::Value> = {
-        let client_manifest = rootp.join("dist/client/client.manifest.json");
-        std::fs::read_to_string(&client_manifest)
-            .ok()
-            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-    };
-    let boot_script_url: Option<String> = client_manifest_json.as_ref().and_then(|v| {
-        v.get("routes")
-            .and_then(|r| r.get("__boot__"))
-            .and_then(|r| r.get("entry_chunk"))
-            .and_then(|e| e.as_str())
-            .map(|f| format!("client/{f}"))
-    });
-    // §11 L0: a response cache for static/isr routes. The build id scopes
-    // entries to this deployment, so a rebuild invalidates them; it comes from
-    // the client manifest, falling back to a source-derived hash when no build
-    // is present (a dev server with no `dist/` still serves, just uncached).
-    let build_id = client_manifest_json
-        .as_ref()
-        .and_then(|v| v.get("build_id"))
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| "dev".to_string());
+
     // BUG-02: wrap the framework stack's cache tier, not a fresh one. The
     // worker's `'use cache'` entries and the L0 response cache now share one
     // handler, so BUG-01's invalidation reaches both. A stack built without a
