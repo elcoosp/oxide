@@ -13,7 +13,7 @@
 //! (`MdxCompileRequest` in `content`) and handed to the tooling pool (§4.7),
 //! which runs `@mdx-js/mdx` in a Node worker.
 
-use crate::{err, Diagnostic, Result};
+use crate::{Diagnostic, Result, err};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -49,7 +49,10 @@ pub struct NativeSchema {
 
 impl NativeSchema {
     pub fn empty() -> Self {
-        Self { required: BTreeMap::new(), optional: BTreeMap::new() }
+        Self {
+            required: BTreeMap::new(),
+            optional: BTreeMap::new(),
+        }
     }
 }
 
@@ -132,9 +135,8 @@ pub fn scan_collection(cfg: &CollectionConfig) -> Result<Collection> {
             "mdx" => true,
             _ => continue,
         };
-        let source = std::fs::read_to_string(&p).map_err(|e| {
-            err("AST-ENTRY", format!("failed to read {}: {e}", p.display()))
-        })?;
+        let source = std::fs::read_to_string(&p)
+            .map_err(|e| err("AST-ENTRY", format!("failed to read {}: {e}", p.display())))?;
         let entry = crate::content::parse_content_entry(&p, &source)?;
         let slug = p
             .file_stem()
@@ -159,7 +161,9 @@ pub fn scan_collection(cfg: &CollectionConfig) -> Result<Collection> {
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     let mut here: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
     here.sort();
     for p in here {
@@ -615,7 +619,10 @@ mod tests {
     fn native_schema_reports_type_mismatch() {
         let mut schema = NativeSchema::empty();
         schema.required.insert("count".into(), FieldType::Number);
-        let coll = coll_with(vec![entry_with(&[("count", serde_json::json!("not a number"))])]);
+        let coll = coll_with(vec![entry_with(&[(
+            "count",
+            serde_json::json!("not a number"),
+        )])]);
         let diags = validate_collection(&coll, &SchemaKind::Native(schema));
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("number"));
@@ -628,7 +635,10 @@ mod tests {
         let ok = coll_with(vec![entry_with(&[])]);
         assert!(validate_collection(&ok, &SchemaKind::Native(schema.clone())).is_empty());
         let bad = coll_with(vec![entry_with(&[("excerpt", serde_json::json!(1))])]);
-        assert_eq!(validate_collection(&bad, &SchemaKind::Native(schema)).len(), 1);
+        assert_eq!(
+            validate_collection(&bad, &SchemaKind::Native(schema)).len(),
+            1
+        );
     }
 
     #[test]
@@ -640,8 +650,14 @@ mod tests {
         );
         let ok = coll_with(vec![entry_with(&[("status", serde_json::json!("draft"))])]);
         assert!(validate_collection(&ok, &SchemaKind::Native(schema.clone())).is_empty());
-        let bad = coll_with(vec![entry_with(&[("status", serde_json::json!("archived"))])]);
-        assert_eq!(validate_collection(&bad, &SchemaKind::Native(schema)).len(), 1);
+        let bad = coll_with(vec![entry_with(&[(
+            "status",
+            serde_json::json!("archived"),
+        )])]);
+        assert_eq!(
+            validate_collection(&bad, &SchemaKind::Native(schema)).len(),
+            1
+        );
     }
 
     #[test]
@@ -650,13 +666,13 @@ mod tests {
         schema
             .required
             .insert("tags".into(), FieldType::Array(Box::new(FieldType::String)));
-        let ok = coll_with(vec![entry_with(&[(
-            "tags",
-            serde_json::json!(["a", "b"]),
-        )])]);
+        let ok = coll_with(vec![entry_with(&[("tags", serde_json::json!(["a", "b"]))])]);
         assert!(validate_collection(&ok, &SchemaKind::Native(schema.clone())).is_empty());
         let bad = coll_with(vec![entry_with(&[("tags", serde_json::json!(["a", 1]))])]);
-        assert_eq!(validate_collection(&bad, &SchemaKind::Native(schema)).len(), 1);
+        assert_eq!(
+            validate_collection(&bad, &SchemaKind::Native(schema)).len(),
+            1
+        );
     }
 
     fn body_entry(slug: &str, body: &str) -> CollectionEntry {
@@ -689,7 +705,8 @@ mod tests {
 
     #[test]
     fn references_ignore_external_and_anchor_links() {
-        let body = "See [ext](https://example.com/x.md) and [anchor](#section) and [abs](/other.md)";
+        let body =
+            "See [ext](https://example.com/x.md) and [anchor](#section) and [abs](/other.md)";
         let coll = coll_with(vec![body_entry("a", body)]);
         assert!(check_references(&coll).is_empty());
     }
@@ -710,7 +727,11 @@ mod tests {
         let idx = build_search_index(&coll, &[]);
         let bucket = idx.terms.get("rust").expect("rust term");
         assert_eq!(bucket, &vec![0, 1]);
-        assert!(idx.terms.keys().all(|k| k.chars().all(|c| !c.is_uppercase())));
+        assert!(
+            idx.terms
+                .keys()
+                .all(|k| k.chars().all(|c| !c.is_uppercase()))
+        );
     }
 
     #[test]
