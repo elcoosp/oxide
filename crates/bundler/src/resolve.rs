@@ -5,8 +5,8 @@
 //! surface and the resolver's option struct.
 
 use super::BundleEnv;
-use oxide_diagnostics::{Diagnostic, OxideError};
 use oxc_resolver::{Alias, AliasValue, ResolveOptions, Resolver};
+use oxide_diagnostics::{Diagnostic, OxideError};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
