@@ -44,7 +44,7 @@ pub mod framework_renderer;
 pub mod loader_host;
 pub use framework_host::{FrameworkDescriptor, FrameworkHost};
 pub use framework_renderer::{FrameworkHostRenderer, FrameworkRenderInput, FrameworkRenderer, RenderStream};
-pub use loader_host::{ActionHost, ActionOutcome, EndpointHost, EndpointOutcome, LoaderHost, MiddlewareHost, MiddlewareOutcome, RevalidateEvent, ServerFnError, ServerFnHost};
+pub use loader_host::{ActionHost, ActionOutcome, EndpointHost, EndpointOutcome, LoaderHost, MiddlewareHost, MiddlewareOutcome, RevalidateEvent, ServerFnError, ServerFnHost, SocketHost, SocketOutcome};
 pub use tooling_pool::{ModuleCall, ToolingModules};
 
 pub type Result<T> = std::result::Result<T, OxideError>;
@@ -173,6 +173,17 @@ pub trait FetchHandler: Send + Sync {
         headers: &[(String, String)],
         body: &[u8],
     ) -> Result<FetchResponse>;
+}
+
+/// §6.2 / §15: a plugin `transform` hook the worker calls for every module
+/// it loads. This is what makes a plugin transform reach the **prerender**
+/// path — the prerender renders components through the worker's module
+/// loader (`compile_module`), so a plugin that rewrites a marker in a
+/// `.tsx` must run here too, not only in the bundler. `id` is the module
+/// path; the return is the transformed source (or the input unchanged).
+#[async_trait::async_trait]
+pub trait TransformHandler: Send + Sync {
+    async fn transform(&self, id: &str, source: &str) -> Result<String>;
 }
 
 /// The result of a [`FetchHandler::fetch`].
@@ -2020,6 +2031,9 @@ pub struct V8Host {
     cache_handler: Option<std::sync::Arc<dyn oxide_cache::CacheHandler>>,
     /// PERF-05: the fetch handler each worker installs for the `fetch` op.
     fetch_handler: Option<std::sync::Arc<dyn FetchHandler>>,
+    /// §6.2 / §15: the plugin `transform` hook applied to every module the
+    /// worker loads (reaching the prerender path).
+    transform_handler: Option<std::sync::Arc<dyn TransformHandler>>,
     /// §4.4 / BUG-03: the leaked `&'static` view of `snapshot`, computed
     /// **once**. Before this, `static_snapshot()` leaked a fresh copy on every
     /// call (`render_pool` + `tooling_pool` + each pool rebuild), an unbounded
@@ -2033,6 +2047,7 @@ impl Default for V8Host {
             snapshot: None,
             cache_handler: None,
             fetch_handler: None,
+            transform_handler: None,
             leaked: std::sync::OnceLock::new(),
         }
     }
@@ -2052,6 +2067,7 @@ impl V8Host {
             snapshot: Some(std::sync::Arc::new(blob)),
             cache_handler: None,
             fetch_handler: None,
+            transform_handler: None,
             leaked: std::sync::OnceLock::new(),
         }
     }
@@ -2073,6 +2089,17 @@ impl V8Host {
         handler: std::sync::Arc<dyn FetchHandler>,
     ) -> Self {
         self.fetch_handler = Some(handler);
+        self
+    }
+
+    /// §6.2 / §15: attach the plugin `transform` hook applied to every
+    /// module the worker's `compile_module` op loads (so a plugin transform
+    /// reaches the prerender path, not just the bundler).
+    pub fn with_transform_handler(
+        mut self,
+        handler: std::sync::Arc<dyn TransformHandler>,
+    ) -> Self {
+        self.transform_handler = Some(handler);
         self
     }
 
@@ -2509,6 +2536,10 @@ struct Worker {
     cache: Mutex<Option<Arc<dyn oxide_cache::CacheHandler>>>,
     /// PERF-05: the fetch handler this worker's `fetch` op delegates to.
     fetch: Mutex<Option<Arc<dyn FetchHandler>>>,
+    /// §6.2 / §15: the plugin `transform` hook this worker's `compile_module`
+    /// op runs before the Oxc passes (so a plugin transform reaches the
+    /// prerender path).
+    transform: Mutex<Option<Arc<dyn TransformHandler>>>,
 }
 
 /// Spawn `node <worker_script>` with piped stdio; returns (child, stdin, stdout).
@@ -2584,6 +2615,15 @@ impl NodePool {
     pub fn with_fetch_handler(self: &Arc<Self>, handler: Arc<dyn FetchHandler>) {
         for w in &self.workers {
             *w.fetch.lock().unwrap() = Some(Arc::clone(&handler));
+        }
+    }
+
+    /// §6.2 / §15: attach the plugin `transform` hook for the worker's
+    /// `compile_module` op (prerender-path transforms). Mirrors
+    /// [`Self::with_fetch_handler`].
+    pub fn with_transform_handler(self: &Arc<Self>, handler: Arc<dyn TransformHandler>) {
+        for w in &self.workers {
+            *w.transform.lock().unwrap() = Some(Arc::clone(&handler));
         }
     }
 }
@@ -2668,6 +2708,7 @@ impl NodePool {
             recycle_lock: tokio::sync::Mutex::new(()),
             cache: Mutex::new(None),
             fetch: Mutex::new(None),
+            transform: Mutex::new(None),
         });
         let reader = spawn_reader(stdout, Arc::clone(&worker), counters);
         *worker.reader_handle.lock().unwrap() = Some(reader);
