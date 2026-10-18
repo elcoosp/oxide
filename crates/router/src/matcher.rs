@@ -214,6 +214,7 @@ mod tests {
             tags: Vec::new(),
             has_server_module: false,
             slot: None,
+            needs_parent: false,
         }
     }
 

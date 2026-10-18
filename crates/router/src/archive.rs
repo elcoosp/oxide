@@ -36,6 +36,7 @@ pub(crate) struct ArchEntry {
     pub render_mode: Option<String>,
     pub tags: Vec<String>,
     pub has_server_module: bool,
+    pub needs_parent: bool,
     pub slot: Option<String>,
 }
 
@@ -49,6 +50,7 @@ impl From<&RouteEntry> for ArchEntry {
             render_mode: e.render_mode.clone(),
             tags: e.tags.clone(),
             has_server_module: e.has_server_module,
+            needs_parent: e.needs_parent,
             slot: e.slot.clone(),
         }
     }
@@ -76,6 +78,7 @@ pub(crate) fn entry_from_arch(a: &ArchivedArchEntry) -> RouteEntry {
         tags: a.tags.iter().map(|s| s.to_string()).collect(),
         has_server_module: a.has_server_module,
         slot: arch_opt_to_owned(&a.slot),
+        needs_parent: a.needs_parent,
     }
 }
 
@@ -249,6 +252,7 @@ mod tests {
             tags: Vec::new(),
             has_server_module: false,
             slot: None,
+            needs_parent: false,
         });
         let manifest = tmp.path().join("routes.manifest");
         tree.archive_to(&manifest).unwrap();

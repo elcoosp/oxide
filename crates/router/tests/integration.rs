@@ -209,6 +209,7 @@ proptest! {
                 tags: Vec::new(),
                 has_server_module: false,
                 slot: None,
+                needs_parent: false,
             });
         }
         let path = if segs.is_empty() { "/".to_string() } else { format!("/{}", segs.join("/")) };
@@ -235,6 +236,7 @@ proptest! {
             tags: Vec::new(),
             has_server_module: false,
             slot: None,
+            needs_parent: false,
         });
         let path = format!("/{}", segs.join("/"));
         let m = tree

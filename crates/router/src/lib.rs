@@ -111,6 +111,11 @@ pub struct RouteEntry {
     pub tags: Vec<String>,
     /// Whether a `.server.ts` data module accompanies this entry.
     pub has_server_module: bool,
+    /// §9.2: `true` when this page's `page.server.ts` references `parent()`,
+    /// meaning the page load must await the innermost layout's data. `false`
+    /// pages can have their load run concurrently with the layout chain.
+    /// Set by the scanner's source-file heuristic; layouts carry `false`.
+    pub needs_parent: bool,
     /// Parallel-route slot marker (§8.5): `Some("@modal")` for entries under an
     /// `@slot` directory. Slot entries reserve identity but are not URL-addressable.
     pub slot: Option<String>,

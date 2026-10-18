@@ -439,6 +439,7 @@ fn tree_with_server_route() -> std::sync::Arc<oxide_router::RouteTree> {
         tags: Vec::new(),
         has_server_module: true,
         slot: None,
+        needs_parent: false,
     });
     std::sync::Arc::new(tree)
 }
@@ -610,6 +611,7 @@ async fn no_server_module_skips_loader() {
         tags: Vec::new(),
         has_server_module: false,
         slot: None,
+        needs_parent: false,
     });
     let tree = Arc::new(tree);
     let metrics = Arc::new(oxide_server::Metrics::new());
@@ -3317,6 +3319,7 @@ fn tree_with_page_and_middleware() -> std::sync::Arc<oxide_router::RouteTree> {
         tags: Vec::new(),
         has_server_module: true,
         slot: None,
+        needs_parent: false,
     });
     tree.insert(oxide_router::RouteEntry {
         id: oxide_router::RouteId("routes/middleware".into()),
@@ -3327,6 +3330,7 @@ fn tree_with_page_and_middleware() -> std::sync::Arc<oxide_router::RouteTree> {
         tags: Vec::new(),
         has_server_module: false,
         slot: None,
+        needs_parent: false,
     });
     std::sync::Arc::new(tree)
 }
@@ -3450,6 +3454,7 @@ fn tree_with_static_page_and_middleware() -> std::sync::Arc<oxide_router::RouteT
         tags: Vec::new(),
         has_server_module: false,
         slot: None,
+        needs_parent: false,
     });
     tree.insert(oxide_router::RouteEntry {
         id: oxide_router::RouteId("routes/middleware".into()),
@@ -3460,6 +3465,7 @@ fn tree_with_static_page_and_middleware() -> std::sync::Arc<oxide_router::RouteT
         tags: Vec::new(),
         has_server_module: false,
         slot: None,
+        needs_parent: false,
     });
     std::sync::Arc::new(tree)
 }

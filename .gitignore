@@ -19,3 +19,5 @@ examples/.v8-*/
 
 # §22: cargo-fuzz build dir (each fuzz run rebuilds; never commit)
 fuzz/target/
+
+dump.txt

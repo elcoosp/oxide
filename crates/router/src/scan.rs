@@ -172,6 +172,15 @@ fn walk_dir(
             RouteKind::Layout => layout_server.is_some(),
             _ => false,
         };
+        let needs_parent = if matches!(kind, RouteKind::Page) {
+            page_server
+                .as_ref()
+                .and_then(|s| std::fs::read_to_string(dir.join(s)).ok())
+                .map(|c| c.contains("parent"))
+                .unwrap_or(false)
+        } else {
+            false
+        };
         walk.entries.push(RouteEntry {
             id: RouteId(id),
             kind,
@@ -181,6 +190,7 @@ fn walk_dir(
             tags,
             has_server_module,
             slot: slot.map(str::to_string),
+            needs_parent,
         });
     }
 
