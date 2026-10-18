@@ -73,6 +73,17 @@ export interface ClientInput {
   url: string
   params: Record<string, string | string[]>
   data: unknown
+  /**
+   * §7.1 / §9.2: resolved `defer()` values for this route, keyed by the
+   * numeric id the loader assigned. `/__data` carries them so a client-side
+   * navigation resolves its defer slots exactly as the SSR bootstrap does.
+   * Absent on a first hydration (the SSR payload's deferred script is the
+   * source there) and on a route with no deferred data.
+   */
+  deferred?: Record<string, unknown>
+  /** SPEC-10: the resolved request locale for this route, when the project
+   *  configures i18n. Absent otherwise. */
+  locale?: string
   /** Previous navigation input, when diffing (optional). */
   from?: ClientInput
   /** Search params of the navigation. */

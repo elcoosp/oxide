@@ -74,6 +74,14 @@ export interface DeferGlue {
   wire(data: unknown): void
   /** Resolve the slot with a value (e.g. an ODF payload from the stream). */
   resolve(id: number, value: unknown): void
+  /**
+   * §7.1 / §9.2: resolve a batch of already-resolved values (the `/__data`
+   * envelope's `deferred` map). A client navigation carries the loader's
+   * resolved `defer()` output; this settles the matching slots so a
+   * component awaiting one gets the value instead of hanging. Unknown ids
+   * are ignored (a slot may not be wired yet).
+   */
+  resolveAll(values: Record<string, unknown>): void
   reject(id: number, error: unknown): void
   readonly registry: Map<number, DeferredClient>
   dispose(): void
@@ -168,6 +176,13 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
     registry,
     resolve(id: number, value: unknown) {
       registry.get(id)?.resolve(value)
+    },
+    resolveAll(values: Record<string, unknown>) {
+      for (const [idStr, value] of Object.entries(values)) {
+        const id = Number(idStr)
+        if (!Number.isFinite(id)) continue
+        registry.get(id)?.resolve(value)
+      }
     },
     reject(id: number, error: unknown) {
       registry.get(id)?.reject(error)

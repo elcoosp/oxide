@@ -186,12 +186,23 @@ export function createRouter(opts: RouterOptions): Router {
 
   function normalizeInput(decoded: unknown, path: string): ClientInput {
     const d = (typeof decoded === 'object' && decoded !== null ? decoded : {}) as Record<string, unknown>
-    return {
+    const input: ClientInput = {
       route: (d.route as string) ?? path,
       url: (d.url as string) ?? path,
       params: (d.params as ClientInput['params']) ?? {},
       data: 'data' in d ? d.data : d,
     }
+    // §7.1 / §9.2: the `/__data` envelope also carries the loader's resolved
+    // `defer()` values and the request locale. Dropping them made a client
+    // navigation's deferred slots hang and its locale blank — the nav data
+    // diverged from what SSR had. Map them when present.
+    if (d.deferred && typeof d.deferred === 'object') {
+      input.deferred = d.deferred as Record<string, unknown>
+    }
+    if (typeof d.locale === 'string' && d.locale.length > 0) {
+      input.locale = d.locale
+    }
+    return input
   }
 
   // §6.4 manifest-driven chunk preloading. `opts.manifest` maps a route entry
