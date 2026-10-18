@@ -69,7 +69,9 @@ fn extract_islands_map(source: &str) -> Option<Value> {
     let needle = "islands";
     let mut from = 0usize;
     let key_at = loop {
-        let Some(rel) = stripped[from..].find(needle) else { return None };
+        let Some(rel) = stripped[from..].find(needle) else {
+            return None;
+        };
         let at = from + rel;
         from = at + needle.len();
         // Word-boundary check before `islands` (skip `some_islands`).
@@ -127,7 +129,9 @@ fn extract_islands_map(source: &str) -> Option<Value> {
         if line.is_empty() {
             continue;
         }
-        let Some(colon) = line.find(':') else { continue };
+        let Some(colon) = line.find(':') else {
+            continue;
+        };
         let key = line[..colon].trim().trim_matches(|c| c == '\'' || c == '"');
         if key.is_empty() {
             continue;
@@ -228,7 +232,9 @@ fn extract_minimal_framework(source: &str) -> Option<Value> {
             from = abs + "framework".len();
             let tail = &source[from..];
             let after_ws = tail.trim_start();
-            let Some(after_colon) = after_ws.strip_prefix(':') else { continue };
+            let Some(after_colon) = after_ws.strip_prefix(':') else {
+                continue;
+            };
             let after_colon_ws = after_colon.trim_start();
             if let Some(rest) = after_colon_ws.strip_prefix(name) {
                 if rest.trim_start().starts_with('(') {
@@ -250,10 +256,7 @@ fn extract_minimal_framework(source: &str) -> Option<Value> {
 
     // 3. `routes: { dir: 'X' }` — scan for a `dir:` string literal.
     if let Some(dir) = scan_top_level_string(source, "dir") {
-        obj.insert(
-            "routes".into(),
-            serde_json::json!({ "dir": dir }),
-        );
+        obj.insert("routes".into(), serde_json::json!({ "dir": dir }));
     }
 
     // 3b. `siteUrl: 'https://…'` — §16.3 sitemap/robots origin. Best-effort
@@ -306,7 +309,9 @@ fn scan_top_level_string(source: &str, key: &str) -> Option<String> {
         }
         let tail = &source[abs + key.len()..];
         let after_ws = tail.trim_start();
-        let Some(after_colon) = after_ws.strip_prefix(':') else { continue };
+        let Some(after_colon) = after_ws.strip_prefix(':') else {
+            continue;
+        };
         let after_colon_ws = after_colon.trim_start();
         let mut chars = after_colon_ws.chars();
         let quote = match chars.next() {
@@ -323,7 +328,6 @@ fn scan_top_level_string(source: &str, key: &str) -> Option<String> {
     }
     None
 }
-
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || haystack.len() < needle.len() {
@@ -783,7 +787,6 @@ impl<'a> Scanner<'a> {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
