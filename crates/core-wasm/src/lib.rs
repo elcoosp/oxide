@@ -126,6 +126,13 @@ pub fn encode_odf(value: &Value) -> Result<Vec<u8>> {
     oxide_odf::encode(value)
 }
 
+/// §9.5 / D18: decode ODF bytes back to a neutral value. The mirror of
+/// [`encode_odf`], exposed for the edge build. Errors surface as the
+/// decoder's own `ODF-*` codes.
+pub fn decode_odf(bytes: &[u8]) -> Result<Value> {
+    oxide_odf::decode(bytes)
+}
+
 /// Extract the URL-addressable route patterns from a router typegen `routes.json`
 /// document (§8.3, consumed by the edge bundle's router manifest, §2 D18).
 ///

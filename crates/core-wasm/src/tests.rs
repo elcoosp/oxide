@@ -197,3 +197,27 @@ fn edge_manifest_routes_wrapped_object_and_errors() {
             .is_empty()
     );
 }
+
+// ---------------------------------------------------------------- decode_odf
+
+#[test]
+fn decode_odf_round_trips_encode_odf() {
+    let v = Value::Object(BTreeMap::from([
+        ("title".to_string(), Value::String("Hi".into())),
+        ("n".to_string(), Value::Number(42.0)),
+        ("ok".to_string(), Value::Bool(true)),
+    ]));
+    let bytes = encode_odf(&v).expect("encode");
+    let back = decode_odf(&bytes).expect("decode");
+    assert_eq!(back, v, "encode -> decode is lossless");
+}
+
+#[test]
+fn decode_odf_rejects_non_odf_bytes() {
+    let err = decode_odf(b"not odf").expect_err("must reject");
+    assert!(
+        err.0.code.starts_with("ODF-"),
+        "error carries an ODF code: {}",
+        err.0.code
+    );
+}
