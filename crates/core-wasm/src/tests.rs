@@ -191,7 +191,9 @@ fn edge_manifest_routes_wrapped_object_and_errors() {
     let bad = serde_json::json!({ "something": "else" });
     let e = edge_manifest_routes(&bad).unwrap_err();
     assert_eq!(e.0.code, "EDGE-101", "stable code for a malformed manifest");
-    assert!(edge_manifest_routes(&serde_json::json!([]))
-        .unwrap()
-        .is_empty());
+    assert!(
+        edge_manifest_routes(&serde_json::json!([]))
+            .unwrap()
+            .is_empty()
+    );
 }
