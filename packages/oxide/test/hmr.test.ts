@@ -2,6 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { applyHmrMessage, showOverlay, connectHmr } from '../src/client/hmr.ts'
+import { encodeLite } from './helpers/odf-lite.ts'
 
 function fakeDoc() {
   const byId: Record<string, FakeEl> = {}
@@ -111,4 +112,120 @@ test('connectHmr is a no-op outside the browser', () => {
   const dispose = connectHmr()
   assert.equal(typeof dispose, 'function')
   dispose()
+})
+
+// ---------------------------------------------------------------------------
+// §13.3 route-data-update → ox:data: a loader edit re-fetches /__data (or
+// decodes the pushed odf_b64) and dispatches the same event bootWithRouter
+// consumes to call adapter.update. The fake doc records dispatched events.
+// ---------------------------------------------------------------------------
+
+interface DispatchedEvent {
+  type: string
+  detail?: {
+    route?: string
+    input?: { route: string; url: string; params: Record<string, string>; data: unknown }
+  }
+}
+
+function fakeDocWithDispatch() {
+  const dispatched: DispatchedEvent[] = []
+  const base = fakeDoc()
+  const doc = Object.assign(base.doc, {
+    dispatchEvent(ev: DispatchedEvent) {
+      dispatched.push(ev)
+      return true
+    },
+  })
+  return { doc, dispatched }
+}
+
+function installHmrGlobals(opts: { doc: unknown; location?: unknown; fetch?: unknown } = {}): () => void {
+  const g = globalThis as Record<string, unknown>
+  const saved = { document: g.document, location: g.location, fetch: g.fetch }
+  g.document = opts.doc
+  if (opts.location !== undefined) g.location = opts.location
+  if (opts.fetch !== undefined) g.fetch = opts.fetch
+  return () => {
+    if (saved.document === undefined) delete g.document
+    else g.document = saved.document
+    if (saved.location === undefined) delete g.location
+    else g.location = saved.location
+    if (saved.fetch === undefined) delete g.fetch
+    else g.fetch = saved.fetch
+  }
+}
+
+test('route-data-update with a pushed payload decodes it and dispatches ox:data', async () => {
+  const { doc, dispatched } = fakeDocWithDispatch()
+  const restore = installHmrGlobals({
+    doc,
+    location: { pathname: '/slow', search: '' },
+  })
+  try {
+    const odf = encodeLite({ route: '/slow', url: '/slow', params: { slug: 'x' }, data: { items: [1, 2] } })
+    const b64 = Buffer.from(odf).toString('base64')
+    const handled = applyHmrMessage({ type: 'route-data-update', route: 'src/routes/slow/page.server.ts', odf_b64: b64 })
+    assert.equal(handled, true)
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(dispatched.length, 1, 'one ox:data dispatched')
+    assert.equal(dispatched[0].type, 'ox:data')
+    assert.equal(dispatched[0].detail?.route, '/slow')
+    assert.deepEqual(dispatched[0].detail?.input?.data, { items: [1, 2] })
+    assert.deepEqual(dispatched[0].detail?.input?.params, { slug: 'x' })
+  } finally {
+    restore()
+  }
+})
+
+test('route-data-update without a payload re-fetches /__data for the current route', async () => {
+  const { doc, dispatched } = fakeDocWithDispatch()
+  const fetched: string[] = []
+  const odf = encodeLite({ route: '/slow', url: '/slow', params: {}, data: { n: 7 } })
+  const restore = installHmrGlobals({
+    doc,
+    location: { pathname: '/slow', search: '?x=1' },
+    fetch: (async (url: string) => {
+      fetched.push(url)
+      return new Response(odf as unknown as BodyInit, { status: 200 })
+    }) as typeof fetch,
+  })
+  try {
+    applyHmrMessage({ type: 'route-data-update', route: 'src/routes/slow/page.server.ts', odf_b64: '' })
+    await new Promise((r) => setTimeout(r, 10))
+    assert.deepEqual(fetched, ['/__data?route=%2Fslow%3Fx%3D1'], 'current path (+search) fetched')
+    assert.equal(dispatched.length, 1)
+    assert.equal(dispatched[0].detail?.input?.data && (dispatched[0].detail!.input!.data as { n?: number }).n, 7)
+  } finally {
+    restore()
+  }
+})
+
+test('route-data-update is silent on a failed /__data fetch', async () => {
+  const { doc, dispatched } = fakeDocWithDispatch()
+  const restore = installHmrGlobals({
+    doc,
+    location: { pathname: '/x', search: '' },
+    fetch: (async () => new Response('nope', { status: 500 })) as typeof fetch,
+  })
+  try {
+    const handled = applyHmrMessage({ type: 'route-data-update', route: 'p', odf_b64: '' })
+    assert.equal(handled, true, 'the message itself is handled synchronously')
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(dispatched.length, 0, 'no event on a failed refresh')
+  } finally {
+    restore()
+  }
+})
+
+test('route-data-update: malformed pushed odf_b64 is ignored', async () => {
+  const { doc, dispatched } = fakeDocWithDispatch()
+  const restore = installHmrGlobals({ doc, location: { pathname: '/x', search: '' } })
+  try {
+    applyHmrMessage({ type: 'route-data-update', route: 'p', odf_b64: '!!!not-base64-odf!!!' })
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(dispatched.length, 0)
+  } finally {
+    restore()
+  }
 })
