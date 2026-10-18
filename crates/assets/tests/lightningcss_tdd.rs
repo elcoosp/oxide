@@ -84,7 +84,11 @@ fn lightningcss_media_query_is_kept() {
         true,
         vec![],
     );
-    assert!(out.code.contains("@media"), "media query preserved: {}", out.code);
+    assert!(
+        out.code.contains("@media"),
+        "media query preserved: {}",
+        out.code
+    );
 }
 
 #[test]
@@ -131,8 +135,8 @@ fn lightningcss_browser_targets_are_accepted() {
 
 // ---------------- SvgOgBackend (§16.3, D19) ----------------
 
-use oxide_assets::SvgOgBackend;
 use oxide_assets::OgBackend;
+use oxide_assets::SvgOgBackend;
 use serde_json::json;
 
 #[test]
@@ -153,7 +157,9 @@ fn og_backend_renders_real_png_from_element_tree() {
 
 #[test]
 fn og_backend_handles_empty_tree() {
-    let png = SvgOgBackend.render(&json!({}), 400, 300).expect("rasterize default bg");
+    let png = SvgOgBackend
+        .render(&json!({}), 400, 300)
+        .expect("rasterize default bg");
     assert_eq!(&png[..8], &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
 }
 
