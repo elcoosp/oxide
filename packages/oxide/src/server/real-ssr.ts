@@ -297,7 +297,17 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
                   },
                 }
                 const body = await cfg.renderBody(ErrComp, errProps)
-                yield enc.encode(`<!doctype html>\n<html lang="en"><head>${emitHead(head)}</head>`)
+                // §10.2 step 5 (error-status contract): announce the error
+                // render in the FIRST bytes of the replacement document so
+                // the pipeline's first-chunk probe can fix the HTTP status
+                // to 500 before the response head is written. When the
+                // throw happened before the shell yielded (descriptor
+                // build, componentFor, render setup), this document IS the
+                // first chunk and the probe observes the marker; a
+                // late-throw after the shell has already streamed keeps
+                // the original status (HTTP cannot retroactively change
+                // it — the pipeline documents this deviation).
+                yield enc.encode(`<!--oxide-status:500--><!doctype html>\n<html lang="en"><head>${emitHead(head)}</head>`)
                 yield enc.encode(`<body><div${cfg.rootAttrs}>${body}</div></body></html>`)
                 return
               } catch {
@@ -307,7 +317,11 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
               }
             }
           }
-          yield enc.encode(`<!doctype html>\n<html lang="en"><head>${emitHead(head)}</head>`)
+          // §10.2 step 5: the canonical marker first (see the error.tsx
+          // branch above) so the generic fallback also produces a 500 when
+          // it forms the response's first chunk; the OX-500 boundary
+          // attribute remains the pipeline's secondary signal.
+          yield enc.encode(`<!--oxide-status:500--><!doctype html>\n<html lang="en"><head>${emitHead(head)}</head>`)
           yield enc.encode(`<body><div${cfg.rootAttrs}>`)
           yield enc.encode(`<div class='ox-error' data-ox-error='OX-500'>OX-500: ${escText(msg)}</div>`)
           yield enc.encode(`</div></body></html>`)
