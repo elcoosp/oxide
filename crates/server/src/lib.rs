@@ -1211,6 +1211,9 @@ pub struct Pipeline {
     /// The transform never enters JS. `None` disables the endpoint (a
     /// 404), which is what a project with images turned off wants.
     pub image_endpoint: Option<Arc<crate::ImageEndpoint>>,
+    /// §16.3: the OG-image endpoint. `Some` enables `GET /_oxide/og`.
+    /// The rasterization lives in `oxide-assets` behind `OgEndpointBackend`.
+    pub og_endpoint: Option<Arc<OgEndpoint>>,
     /// Optional server-function dispatcher (§9.4). When `Some`,
     /// `POST /_oxide/fn/<id>` routes through it. The dispatcher owns the
     /// id → handler map, the input validation, and the encode/decode of
@@ -1462,6 +1465,148 @@ pub struct ImageEndpointResult {
     pub cache_key: String,
 }
 
+// ---------------------------------------------------------------------------
+// OG image endpoint (§16.3)
+// ---------------------------------------------------------------------------
+
+/// §16.3: the `/_oxide/og` endpoint. Renders an Open Graph image from a
+/// neutral element tree through a pluggable backend (the pure-Rust
+/// `resvg`/`taffy`/`parley` pipeline in `oxide-assets`). Like the image
+/// endpoint, this is a trait seam so `oxide-server` does not depend on
+/// `oxide-assets`.
+pub struct OgEndpoint {
+    pub backend: Arc<dyn OgEndpointBackend>,
+}
+
+impl std::fmt::Debug for OgEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("OgEndpoint")
+    }
+}
+
+/// §16.3: rasterize a neutral OG element tree to PNG bytes.
+pub trait OgEndpointBackend: Send + Sync {
+    fn render(
+        &self,
+        tree: &serde_json::Value,
+        width: u32,
+        height: u32,
+    ) -> std::result::Result<Vec<u8>, String>;
+}
+
+/// Parse an `/_oxide/og?…` query into the element tree the backend renders.
+///
+/// Kept deliberately small: the query carries the *content* (a title, a
+/// subtitle, an optional background), and this builds the neutral tree from
+/// it. A caller that needs a richer template renders it at build time and
+/// serves the PNG as an asset — the endpoint is for the dynamic case.
+///
+/// Query keys: `title` (required), `subtitle` (optional), `bg` (optional CSS
+/// color, default `#0a0a0a`), `fg` (optional, default `#ffffff`), `w`/`h`
+/// (optional pixel size, default 1200×630).
+pub fn og_tree_from_query(query: &str) -> std::result::Result<(serde_json::Value, u32, u32), String> {
+    let mut title: Option<String> = None;
+    let mut subtitle: Option<String> = None;
+    let mut bg = "#0a0a0a".to_string();
+    let mut fg = "#ffffff".to_string();
+    let mut width: u32 = 1200;
+    let mut height: u32 = 630;
+    for pair in query.split('&').filter(|s| !s.is_empty()) {
+        let (k, v) = match pair.split_once('=') {
+            Some(kv) => kv,
+            None => continue,
+        };
+        let v = percent_decode_query(v);
+        match k {
+            "title" => title = Some(v),
+            "subtitle" => subtitle = Some(v),
+            "bg" => bg = v,
+            "fg" => fg = v,
+            "w" => {
+                if let Ok(n) = v.parse::<u32>() {
+                    width = n.clamp(16, 4096);
+                }
+            }
+            "h" => {
+                if let Ok(n) = v.parse::<u32>() {
+                    height = n.clamp(16, 4096);
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(title) = title else {
+        return Err("og endpoint requires a `title` query parameter".to_string());
+    };
+    let mut children = vec![serde_json::json!({
+        "type": "text",
+        "text": title,
+        "x": 64,
+        "y": 240,
+        "size": 72,
+        "fill": fg,
+        "weight": "bold",
+    })];
+    if let Some(sub) = subtitle {
+        children.push(serde_json::json!({
+            "type": "text",
+            "text": sub,
+            "x": 64,
+            "y": 340,
+            "size": 36,
+            "fill": fg,
+        }));
+    }
+    Ok((
+        serde_json::json!({ "background": bg, "children": children }),
+        width,
+        height,
+    ))
+}
+
+/// Minimal `+`/`%XX` query-value decode (no `+`-to-space: a title with a `+`
+/// means a literal plus, and a caller encodes a space as `%20`).
+fn percent_decode_query(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok();
+            if let Some(h) = hex {
+                if let Ok(b) = u8::from_str_radix(h, 16) {
+                    out.push(b as char);
+                    i += 3;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
+}
+
+/// §16.3: handle `GET /_oxide/og?title=…`. Synchronous: the backend rasterizes
+/// in-process, no fetch. The response is a PNG with a public cache header.
+fn serve_og_endpoint(endpoint: &OgEndpoint, raw_url: &str) -> OxideResponse {
+    let query = raw_url.split_once('?').map(|(_, q)| q).unwrap_or("");
+    let (tree, w, h) = match og_tree_from_query(query) {
+        Ok(v) => v,
+        Err(msg) => {
+            return OxideResponse::new(400, format!("bad og request: {msg}"))
+                .with_header("content-type", "text/plain; charset=utf-8")
+        }
+    };
+    match endpoint.backend.render(&tree, w, h) {
+        Ok(png) => OxideResponse::new(200, Bytes::from(png))
+            .with_header("content-type", "image/png")
+            .with_header("cache-control", "public, max-age=3600"),
+        Err(msg) => OxideResponse::new(500, format!("og render failed: {msg}"))
+            .with_header("content-type", "text/plain; charset=utf-8"),
+    }
+}
+
 impl Default for Pipeline {
     /// A no-op pipeline: no rules, no assets, no metrics, no renderer.
     /// Used as a starting point before chaining `with_*` builders and in
@@ -1482,6 +1627,7 @@ impl Default for Pipeline {
             hmr_build_id: String::new(),
             page_renderer: None,
             image_endpoint: None,
+            og_endpoint: None,
             server_fns: None,
             actions: None,
             tls: false,
@@ -2742,6 +2888,18 @@ impl Pipeline {
         // (3c) image endpoint (§16.1). GET/HEAD only. The transform runs
         // in Rust, never entering JS; a missing endpoint or an invalid
         // request yields a coded 4xx that names the reason.
+        // §16.3: the OG-image endpoint. Rendered synchronously through the
+        // backend (resvg/taffy/parley in oxide-assets); a PNG response.
+        if req.method.eq_ignore_ascii_case("GET") && path == "/_oxide/og" {
+            if let Some(ep) = self.og_endpoint.as_deref() {
+                return NativePrefix::Raw(serve_og_endpoint(ep, &req.url));
+            }
+            return NativePrefix::Raw(
+                OxideResponse::new(404, "og endpoint not configured")
+                    .with_header("content-type", "text/plain; charset=utf-8"),
+            );
+        }
+
         if req.method.eq_ignore_ascii_case("GET") && path == "/_oxide/image" {
             return serve_image_endpoint(self.image_endpoint.as_deref(), &req.url);
         }

@@ -1149,14 +1149,6 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         rootp.display(),
         tree.entries.len()
     );
-    for dep in &deps {
-        outln!(
-            w,
-            "prebundle {} → {}",
-            dep,
-            oxide_dev::prebundle_key(&lock_hash, dep)
-        );
-    }
     // §13.5 dev features: HTTPS, LAN host, QR, browser open.
     // Bind: LAN mode uses 0.0.0.0 so a phone on the same Wi-Fi can reach it;
     // otherwise loopback only.
@@ -5521,6 +5513,32 @@ impl oxide_server::ImageEndpointBackend for AssetsImageBackend {
 /// project declares no remote image patterns AND has no `public/` or
 /// `dist/client/` directory to serve from — a project with images off
 /// wants a 404, not an endpoint that always errors.
+/// §16.3: the OG-image endpoint. Enabled by default — the `oxide-assets`
+/// backend is pure-Rust (resvg + taffy + parley), so there is no external
+/// process and no reason to gate it. A project that does not want the
+/// endpoint can turn it off with a config flag (post-v0.1).
+struct SvgOgBackendImpl;
+
+impl oxide_server::OgEndpointBackend for SvgOgBackendImpl {
+    fn render(
+        &self,
+        tree: &serde_json::Value,
+        width: u32,
+        height: u32,
+    ) -> std::result::Result<Vec<u8>, String> {
+        use oxide_assets::OgBackend as _;
+        oxide_assets::SvgOgBackend
+            .render(tree, width, height)
+            .map_err(|e| format!("{} {}", e.0.code, e.0.message))
+    }
+}
+
+fn build_og_endpoint() -> Option<std::sync::Arc<oxide_server::OgEndpoint>> {
+    Some(std::sync::Arc::new(oxide_server::OgEndpoint {
+        backend: std::sync::Arc::new(SvgOgBackendImpl),
+    }))
+}
+
 fn build_image_endpoint(
     rootp: &Path,
     cfg: &oxide_config::OxideConfig,
@@ -6286,6 +6304,7 @@ async fn start_server_inner_full(
 
     let assets = load_client_assets(&rootp);
     let image_endpoint = build_image_endpoint(&rootp, &cfg);
+    let og_endpoint = build_og_endpoint();
     let server_fns = build_server_fn_dispatcher(&rootp, stack.pool.as_ref());
     let actions = build_action_dispatcher(stack.pool.as_ref());
     let endpoint_dispatcher = build_endpoint_dispatcher(stack.pool.as_ref());
@@ -6337,6 +6356,7 @@ async fn start_server_inner_full(
         rules,
         assets,
         image_endpoint,
+        og_endpoint,
         server_fns,
         actions: actions.clone(),
         limits: oxide_server::Limits::default(),
