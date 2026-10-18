@@ -119,6 +119,18 @@ export interface FrameworkAdapter {
     mod: unknown,
     props: unknown,
   ): Disposer | Promise<Disposer>
+  /**
+   * §8.4 "optimistic navigation with loading boundaries": render a route's
+   * `loading.tsx` component into `overlay` while a client-side navigation's
+   * `/__data` fetch is in flight. Called synchronously by the router's
+   * `onNavigateStart`; the returned disposer is called by `onNavigateEnd`
+   * right before `adapter.update` swaps the tree, so the overlay is torn
+   * down before the new page paints.
+   *
+   * Absent → the framework does not provide a loading renderer; the router
+   * still fires the hooks, so a caller may render its own spinner.
+   */
+  renderLoading?(overlay: Element, input: ClientInput, Component: unknown): Disposer
   /** SPA mode shell mount. */
   mount(root: Element, input: ClientInput): Disposer
   /** Client navigation: swap the route tree. */

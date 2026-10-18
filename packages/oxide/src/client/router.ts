@@ -77,6 +77,21 @@ export interface RouterOptions {
     | undefined
   /** Concurrent prefetch cap (§8.4 "budgeted and cancelable"). Default 5. */
   prefetchBudget?: number
+  /**
+   * §8.4 "optimistic navigation with loading boundaries": fired as soon as
+   * `goto()` starts — before the `/__data` fetch — with a best-effort input
+   * whose `route` is the currently-known path (the resolved route id is not
+   * available yet; the framework resolves the loading component from the
+   * manifest keyed on the URL's nearest route base). The hook is
+   * **synchronous**; the caller renders a loading state and returns nothing.
+   * Paired with {@link onNavigateEnd}, which fires after the data resolves
+   * and just before `adapter.update` swaps the tree.
+   */
+  onNavigateStart?: (url: string) => void
+  /** Fired after the `/__data` fetch resolves and just before `adapter.update`
+   *  commits the new tree. The caller tears down whatever {@link
+   *  onNavigateStart} rendered. Synchronous. */
+  onNavigateEnd?: (input: ClientInput) => void
 }
 
 export interface Router {
@@ -194,18 +209,51 @@ export function createRouter(opts: RouterOptions): Router {
     const path = hrefPath(href)
     const navId = ++navSeq
     let input = dataCache.get(path)
+    // §8.4: optimistic navigation with loading boundaries. `onNavigateStart`
+    // fires BEFORE the fetch so the caller can render a loading state. If
+    // the data is already cached, the hook is skipped — the swap is immediate.
     if (!input) {
-      const decoded = await fetchRouteData(path)
-      if (navId !== navSeq) return // a newer navigation superseded this one
-      input = normalizeInput(decoded, path)
-      dataCachePut(path, input)
+      try {
+        opts.onNavigateStart?.(path)
+      } catch (e) {
+        console.warn?.('router: onNavigateStart threw', e)
+      }
+      try {
+        const decoded = await fetchRouteData(path)
+        if (navId !== navSeq) return // a newer navigation superseded this one
+        input = normalizeInput(decoded, path)
+        dataCachePut(path, input)
+      } catch (e) {
+        // Navigation failed — tear down the loading state and propagate.
+        try {
+          opts.onNavigateEnd?.({ route: path, url: path, params: {}, data: {} })
+        } catch {
+          // swallow — cleanup errors must not mask the real fetch failure
+        }
+        throw e
+      }
     }
-    if (navId !== navSeq) return
+    if (navId !== navSeq) {
+      // A newer navigation took over; tear down the loading state it superseded.
+      try {
+        opts.onNavigateEnd?.(input!)
+      } catch {
+        // swallow
+      }
+      return
+    }
     // save the departure scroll into the entry we are leaving (§8.4)
     const prev = history.state as Partial<OxideHistoryState> | null
     if (prev && prev.__oxide) prev.scroll = getScroll()
     const state: OxideHistoryState = { __oxide: 1, input, scroll: { x: 0, y: 0 } }
     const commit = () => {
+      // Fires just before the tree swaps. The caller tears down whatever
+      // `onNavigateStart` rendered; the swap itself is `adapter.update`.
+      try {
+        opts.onNavigateEnd?.(input!)
+      } catch (e) {
+        console.warn?.('router: onNavigateEnd threw', e)
+      }
       history[nav.replace ? 'replaceState' : 'pushState'](state, '', path)
       opts.adapter.update(input!)
     }
