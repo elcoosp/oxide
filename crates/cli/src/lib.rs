@@ -4241,12 +4241,13 @@ fn build_dispatch(
 
         // Pre-compute the loader inputs synchronously so the async block
         // owns plain data (no borrow of `matched`).
-        let (module_path, route_id, params, has_server_module, render_mode): (
+        let (module_path, route_id, params, has_server_module, render_mode, needs_parent): (
             Option<std::path::PathBuf>,
             Option<String>,
             std::collections::BTreeMap<String, String>,
             bool,
             Option<String>,
+            bool,
         ) = match &matched {
             Some(m) => (
                 Some(routes_root.join(m.route.file.with_file_name("page.server.ts"))),
@@ -4254,8 +4255,9 @@ fn build_dispatch(
                 m.params.clone(),
                 m.route.has_server_module,
                 m.route.render_mode.clone(),
+                m.route.needs_parent,
             ),
-            None => (None, None, std::collections::BTreeMap::new(), false, None),
+            None => (None, None, std::collections::BTreeMap::new(), false, None, false),
         };
 
         // §8.1 route.ts / §10.2 step 7: pre-compute whether this is an
@@ -4854,9 +4856,25 @@ fn build_dispatch(
             // produce the right data in every case.
             let mut layout_data_chain: Vec<serde_json::Value> = Vec::new();
             let mut layout_side_effects: Vec<(Vec<String>, Vec<(String, String)>)> = Vec::new();
-            if let (Some(runner), true) = (loader_runner.as_ref(), !layout_module_paths.is_empty())
+            // §9.2 parallel path (v0.1): when the page does not call
+            // `parent()` (`RouteEntry.needs_parent == false`), the last
+            // layout load and the page load overlap via `tokio::join!`.
+            // Earlier layouts stay sequential (each needs its own parent's
+            // data); only the (last-layout, page) pair overlaps.
+            let run_parallel = !needs_parent
+                && has_server_module
+                && loader_runner.is_some()
+                && module_path.is_some()
+                && route_id.is_some()
+                && !layout_module_paths.is_empty();
+            let layouts_to_run: &[(String, std::path::PathBuf)] = if run_parallel {
+                &layout_module_paths[..layout_module_paths.len() - 1]
+            } else {
+                &layout_module_paths[..]
+            };
+            if let (Some(runner), true) = (loader_runner.as_ref(), !layouts_to_run.is_empty())
             {
-                for (lid, lpath) in &layout_module_paths {
+                for (lid, lpath) in layouts_to_run {
                     let mut linput = oxide_server::LoaderRunInput::new(
                         lpath.to_string_lossy().to_string(),
                         lid.clone(),
@@ -4920,7 +4938,144 @@ fn build_dispatch(
                     }
                 }
             }
-            if has_server_module {
+            if run_parallel {
+                // §9.2 parallel: last layout + page run concurrently.
+                // Layout takes precedence (matches sequential order): if
+                // either short-circuits we return its response; prior
+                // layouts' side effects live in loader_set_cookies/headers
+                // and are only applied on the eventual render response.
+                let runner = loader_runner.as_ref().unwrap();
+                let (lid, lpath) = &layout_module_paths[layout_module_paths.len() - 1];
+                let mut linput = oxide_server::LoaderRunInput::new(
+                    lpath.to_string_lossy().to_string(),
+                    lid.clone(),
+                    req_owned.url.clone(),
+                );
+                linput.method = req_owned.method.clone();
+                linput.headers = req_owned.headers.clone();
+                linput.params = params.clone();
+                linput.locals = middleware_locals.clone();
+                linput.locale = resolved_locale.clone();
+                linput.parent_data = layout_data_chain
+                    .last()
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+
+                let mp = module_path.as_ref().unwrap();
+                let rid = route_id.as_ref().unwrap();
+                let route_for_loader_page =
+                    rid.strip_suffix("/page").unwrap_or(rid).to_string();
+                let mut pinput = oxide_server::LoaderRunInput::new(
+                    mp.to_string_lossy().to_string(),
+                    route_for_loader_page,
+                    req_owned.url.clone(),
+                );
+                pinput.method = req_owned.method.clone();
+                pinput.headers = req_owned.headers.clone();
+                pinput.params = params.clone();
+                pinput.locals = middleware_locals.clone();
+                pinput.locale = resolved_locale.clone();
+                // Page does not call `parent()`, so this value is unused.
+                pinput.parent_data = serde_json::Value::Null;
+
+                let (layout_res, page_res) =
+                    tokio::join!(runner.run(linput), runner.run(pinput));
+
+                // Layout result first (precedence: matches sequential).
+                match layout_res {
+                    Ok(out) if out.short_circuits() => {
+                        let body = out
+                            .data
+                            .get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let mut resp = oxide_server::OxideResponse::new(out.status, body);
+                        if let Some(loc) = out.location {
+                            resp = resp.with_header("location", loc);
+                        }
+                        for c in &out.set_cookies {
+                            resp = resp.with_header("set-cookie", c.clone());
+                        }
+                        for (k, v) in &out.headers {
+                            resp = resp.with_header(k, v.clone());
+                        }
+                        metrics.observe(&label, started.elapsed(), out.status);
+                        return resp;
+                    }
+                    Ok(out) => {
+                        layout_data_chain.push(out.data);
+                        for c in &out.set_cookies {
+                            loader_set_cookies.push(c.clone());
+                        }
+                        for (k, v) in &out.headers {
+                            loader_headers.push((k.clone(), v.clone()));
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            code = %e.0.code,
+                            error = %e.0.message,
+                            "layout loader failed",
+                        );
+                        metrics.observe(&label, started.elapsed(), 500);
+                        return oxide_server::OxideResponse::html(
+                            500,
+                            format!(
+                                "layout loader error: {}",
+                                oxide_render::escape_text(&e.0.message)
+                            ),
+                        );
+                    }
+                }
+
+                match page_res {
+                    Ok(out) if out.short_circuits() => {
+                        let body = out
+                            .data
+                            .get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let mut resp = oxide_server::OxideResponse::new(out.status, body);
+                        if let Some(loc) = out.location {
+                            resp = resp.with_header("location", loc);
+                        }
+                        for c in &out.set_cookies {
+                            resp = resp.with_header("set-cookie", c.clone());
+                        }
+                        for (k, v) in &out.headers {
+                            resp = resp.with_header(k, v.clone());
+                        }
+                        metrics.observe(&label, started.elapsed(), out.status);
+                        return resp;
+                    }
+                    Ok(out) => {
+                        data = out.data;
+                        // NOTE (preexisting, preserved): overwrite, not
+                        // extend — matches the sequential-path behavior.
+                        loader_set_cookies = out.set_cookies;
+                        loader_headers = out.headers;
+                        deferred_values = out.deferred;
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            code = %e.0.code,
+                            error = %e.0.message,
+                            route = %label,
+                            "loader failed",
+                        );
+                        metrics.observe(&label, started.elapsed(), 500);
+                        return oxide_server::OxideResponse::html(
+                            500,
+                            format!(
+                                "loader error: {}",
+                                oxide_render::escape_text(&e.0.message)
+                            ),
+                        );
+                    }
+                }
+            } else if has_server_module {
                 if let (Some(runner), Some(module_path), Some(route_id)) =
                     (loader_runner.as_ref(), module_path, route_id)
                 {
