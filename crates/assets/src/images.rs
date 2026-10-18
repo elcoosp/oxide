@@ -14,11 +14,11 @@
 //!   same as libvips (D19); the default backend stays dependency-minimal.
 
 use crate::{
-    err, Diagnostic, ImageBackend, ImageFormat, ImageRequest, ImageResult, PlaceholderKind, Result,
+    Diagnostic, ImageBackend, ImageFormat, ImageRequest, ImageResult, PlaceholderKind, Result, err,
 };
 use blake3::Hasher;
-use image::imageops::FilterType;
 use image::ImageEncoder as _;
+use image::imageops::FilterType;
 use std::io::Cursor;
 
 /// Placeholder width in px (§16.1 LQIP convention).
