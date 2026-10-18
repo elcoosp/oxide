@@ -4927,6 +4927,55 @@ impl oxide_server::EndpointDispatcher for EndpointDispatcherImpl {
     }
 }
 
+
+/// §9.6: the URL-pattern → `socket.ts` map for the WebSocket service. A
+/// `socket.ts` at `routes/chat/[room]/socket` maps to `/chat/:room`; the
+/// root `routes/socket` maps to `/`. Params become `:name`; catch-all `[...x]`
+/// becomes `*`.
+fn cfg_socket_routes(
+    rootp: &std::path::Path,
+    cfg: &oxide_config::OxideConfig,
+    tree: &oxide_router::RouteTree,
+) -> std::collections::BTreeMap<String, std::path::PathBuf> {
+    let routes_root = rootp.join(&cfg.routes.dir);
+    let mut out = std::collections::BTreeMap::new();
+    for e in &tree.entries {
+        if !matches!(e.kind, oxide_router::RouteKind::Socket) {
+            continue;
+        }
+        // `routes/chat/[room]/socket` → segs `chat`, `[room]` → `/chat/:room`.
+        let base = e
+            .id
+            .0
+            .strip_prefix("routes")
+            .unwrap_or(&e.id.0)
+            .trim_matches('/')
+            .strip_suffix("socket")
+            .unwrap_or("")
+            .trim_matches('/');
+        let mut path = String::from("/");
+        if !base.is_empty() {
+            let segments: Vec<String> = base
+                .split('/')
+                .map(|seg| {
+                    if let Some(rest) = seg.strip_prefix("[...").and_then(|s| s.strip_suffix(']')) {
+                        format!("*{rest}")
+                    } else if let Some(name) = seg.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+                        format!(":{name}")
+                    } else if let Some(name) = seg.strip_prefix("[[").and_then(|s| s.strip_suffix("]]")) {
+                        format!(":{name}")
+                    } else {
+                        seg.to_string()
+                    }
+                })
+                .collect();
+            path.push_str(&segments.join("/"));
+        }
+        out.insert(path, routes_root.join(&e.file));
+    }
+    out
+}
+
 /// §8.1 route.ts / §10.2 step 7: build the endpoint dispatcher when a pool is present.
 fn build_endpoint_dispatcher(
     pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
@@ -4980,6 +5029,44 @@ fn build_middleware_dispatcher(
     let pool = pool?;
     Some(std::sync::Arc::new(MiddlewareDispatcherImpl {
         host: oxide_jshost::MiddlewareHost::new(std::sync::Arc::clone(pool)),
+    }))
+}
+
+/// §9.6: a bridge to the worker's `socket:run` op.
+struct SocketDispatcherImpl {
+    host: oxide_jshost::SocketHost,
+}
+
+#[async_trait::async_trait]
+impl oxide_server::SocketDispatcher for SocketDispatcherImpl {
+    async fn run(
+        &self,
+        module_path: &str,
+        phase: &str,
+        payload: serde_json::Value,
+        socket_id: &str,
+    ) -> std::result::Result<oxide_server::SocketRunResult, oxide_server::SocketRunError> {
+        match self.host.run(module_path, phase, payload, socket_id).await {
+            Ok(out) => Ok(oxide_server::SocketRunResult {
+                sends: out.sends,
+                close: out.close,
+            }),
+            Err(e) => Err(oxide_server::SocketRunError {
+                status: 500,
+                code: e.0.code.to_string().replace("JSH-SOCKET", "SOCKET"),
+                message: e.0.message.to_string(),
+            }),
+        }
+    }
+}
+
+/// §9.6: build the socket dispatcher when a pool is present.
+fn build_socket_dispatcher(
+    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
+) -> Option<std::sync::Arc<dyn oxide_server::SocketDispatcher>> {
+    let pool = pool?;
+    Some(std::sync::Arc::new(SocketDispatcherImpl {
+        host: oxide_jshost::SocketHost::new(std::sync::Arc::clone(pool)),
     }))
 }
 
@@ -5319,6 +5406,19 @@ async fn start_server_inner_full(
     let actions = build_action_dispatcher(stack.pool.as_ref());
     let endpoint_dispatcher = build_endpoint_dispatcher(stack.pool.as_ref());
     let middleware_dispatcher = build_middleware_dispatcher(stack.pool.as_ref());
+    // §9.6: the WebSocket route service. Built only when the project has
+    // any `socket.ts` routes AND a dispatcher (a pool). URL segments →
+    // `socket.ts` path, so the hot path is a map probe.
+    let socket_service: Option<std::sync::Arc<oxide_server::SocketService>> =
+        match (build_socket_dispatcher(stack.pool.as_ref()), cfg_socket_routes(&rootp, &cfg, &tree)) {
+            (Some(dispatcher), routes) if !routes.is_empty() => {
+                Some(std::sync::Arc::new(oxide_server::SocketService {
+                    dispatcher,
+                    routes: std::sync::Arc::new(routes),
+                }))
+            }
+            _ => None,
+        };
     // SEC-09: mint the dev inspector token when the inspector is attached
     // (dev only). `serve` (production) never sets an inspector, so this is
     // `None` there.
@@ -5391,6 +5491,9 @@ async fn start_server_inner_full(
         tls: tls.is_some(),
         // SEC-09: the dev inspector token (see below).
         dev_token: dev_token.clone(),
+        // §9.6: WebSocket route dispatch (None when the project has no
+        // `socket.ts` routes or no pool).
+        sockets: socket_service,
     });
     let proxy_rules: Vec<oxide_dev::ProxyRule> = proxy_rules.clone();
     let routes_root = rootp.join(&cfg.routes.dir);
