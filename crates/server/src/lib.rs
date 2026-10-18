@@ -1244,6 +1244,10 @@ pub struct Pipeline {
     /// `socket.ts` routes and a pool to run them. The service function
     /// upgrades a matching request and pumps phases through this.
     pub sockets: Option<Arc<SocketService>>,
+    /// §12.1: the UDP port the HTTP/3 listener binds, when enabled. A
+    /// non-zero value makes every HTTP/1.1+2 response advertise it via
+    /// `Alt-Svc`, so a browser upgrades to h3 on the next request.
+    pub http3_port: u16,
 }
 
 /// §9.6: the WebSocket route service. Holds the dispatcher and a lookup from
@@ -1638,6 +1642,7 @@ impl Default for Pipeline {
             tls: false,
             dev_token: None,
             sockets: None,
+            http3_port: 0,
         }
     }
 }
@@ -3102,6 +3107,16 @@ impl Pipeline {
         accept_encoding: Option<&str>,
     ) -> OxideResponse {
         let _ = accept_encoding;
+        // §12.1: advertise HTTP/3 so a browser upgrades on the next request.
+        // A 0 port means the h3 listener is disabled.
+        let mut resp = resp;
+        if self.http3_port != 0
+            && !resp.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("alt-svc"))
+        {
+            let port = self.http3_port;
+            resp = resp.with_header("alt-svc", format!("h3=\":{port}\"; ma=86400"));
+        }
+
         self.finish_response_inner(resp, rule_headers, request_id, method, cookie_header)
     }
 

@@ -65,6 +65,7 @@ fn pipeline(
         tls: false,
         dev_token: None,
         sockets: None,
+        http3_port: 0,
     }
 }
 
@@ -817,6 +818,7 @@ async fn metrics_endpoint_renders_prometheus_text() {
         tls: false,
         dev_token: None,
         sockets: None,
+        http3_port: 0,
     };
     let d = &echo_dispatch();
     let resp = p.serve_request(req("GET", "/_oxide/metrics", &[]), d).await;
@@ -865,6 +867,7 @@ async fn vitals_endpoint_records_samples_into_metrics() {
         tls: false,
         dev_token: None,
         sockets: None,
+        http3_port: 0,
     };
     let body = br#"[{"name":"LCP","value":1234.5,"route":"/home"},{"name":"CLS","value":0.05,"route":"/home"}]"#;
     let mut r = req("POST", "/_oxide/vitals", &[]);
@@ -909,6 +912,7 @@ async fn vitals_endpoint_tolerates_a_malformed_beacon() {
         tls: false,
         dev_token: None,
         sockets: None,
+        http3_port: 0,
     };
     let mut r = req("POST", "/_oxide/vitals", &[]);
     r.body = bytes::Bytes::from_static(b"not json");
@@ -939,6 +943,7 @@ async fn metrics_endpoint_404_when_not_configured() {
         tls: false,
         dev_token: None,
         sockets: None,
+        http3_port: 0,
     };
     let d = &echo_dispatch();
     let resp = p.serve_request(req("GET", "/_oxide/metrics", &[]), d).await;
@@ -973,6 +978,7 @@ async fn pipeline_observes_native_branch_requests() {
         tls: false,
         dev_token: None,
         sockets: None,
+        http3_port: 0,
     };
     let d = &echo_dispatch();
     // Health is a native-prefix branch (_native label).
@@ -1013,6 +1019,7 @@ async fn with_metrics_attaches_registry() {
         tls: false,
         dev_token: None,
         sockets: None,
+        http3_port: 0,
     };
     let p = p.with_metrics(Arc::clone(&m));
     assert!(p.metrics().is_some());
@@ -1063,6 +1070,7 @@ fn inspector_pipeline() -> Pipeline {
         tls: false,
         dev_token: None,
         sockets: None,
+        http3_port: 0,
     }
 }
 

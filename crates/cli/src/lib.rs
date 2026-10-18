@@ -6507,6 +6507,15 @@ async fn start_server_inner_full(
         // §9.6: WebSocket route dispatch (None when the project has no
         // `socket.ts` routes or no pool).
         sockets: socket_service,
+        // §12.1: advertise HTTP/3 (Alt-Svc) only when it is actually enabled.
+        // The h3 listener shares the TCP port over UDP. `port` is resolved
+        // above (a probe picks a free port for a requested 0); the h3 bind
+        // uses the same value.
+        http3_port: if cfg.server.http3 && tls.is_some() {
+            port
+        } else {
+            0
+        },
     });
     let proxy_rules: Vec<oxide_dev::ProxyRule> = proxy_rules.clone();
     let routes_root = rootp.join(&cfg.routes.dir);
