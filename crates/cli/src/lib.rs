@@ -5736,7 +5736,7 @@ async fn start_server_inner_full(
     // task drives it; the HTTP/1+2 server is untouched.
     let http3_cfg: Option<oxide_server::H3ServerConfig> = if cfg.server.http3 {
         match tls.as_ref() {
-            Some(tls_cfg) => match oxide_server::Server::h3_config_from_tls(tls_cfg.as_ref()) {
+            Some(tls_cfg) => match oxide_server::h3_config_from_tls(tls_cfg.as_ref()) {
                 Ok(c) => Some(c),
                 Err(e) => {
                     tracing::warn!(
@@ -5765,7 +5765,7 @@ async fn start_server_inner_full(
         if let Some(h3_cfg) = http3_cfg {
             let h3_task = tokio::spawn(async move {
                 if let Err(e) =
-                    oxide_server::Server::serve_http3(h3_bind, pipeline_h3, dispatch_h3, rx_h3, h3_cfg)
+                    oxide_server::serve_http3(h3_bind, pipeline_h3, dispatch_h3, rx_h3, h3_cfg)
                         .await
                 {
                     tracing::warn!(code = %e.0.code, "http3 listener stopped: {}", e.0.message);
