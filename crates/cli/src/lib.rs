@@ -4934,7 +4934,7 @@ fn build_dispatch(
                                     r#"if(h===p||h.slice(-p.length)===p){{ls[i].setAttribute('href',p+'?t='+Date.now());break;}}}}}}"#,
                                     r#"else if(m.type==='module-update'||m.type==='server-module-swap'||m.type==='full-reload'){{location.reload();}}"#,
                                     r#"else if(m.type==='route-data-update'){{var ad=function(b64){{try{{if(window.__oxide)window.__oxide.data=b64;}}catch(e){{}}"#,
-                                    r#"document.dispatchEvent(new CustomEvent('ox:data-update',{{detail:{{route:m.route||location.pathname,odf:b64}}}}));}};"#,
+                                    r#"document.dispatchEvent(new CustomEvent('ox:data',{{detail:{{route:m.route||location.pathname,odf:b64}}}}));}};"#,
                                     r#"fetch('/__data?route='+encodeURIComponent(location.pathname),{{headers:{{accept:'application/oxide+odf'}}}})"#,
                                     r#".then(function(r){{return r.ok?r.arrayBuffer():Promise.reject(0)}})"#,
                                     r#".then(function(buf){{var u=new Uint8Array(buf);var s='';for(var i=0;i<u.length;i++)s+=String.fromCharCode(u[i]);var b64=btoa(s);ad(b64);}})"#,

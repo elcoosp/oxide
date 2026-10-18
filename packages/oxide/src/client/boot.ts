@@ -330,16 +330,62 @@ export function bootWithRouter(
     loadingOverlay = undefined
   }
 
-  // §13.3: the HMR client re-fetches route data on `route-data-update` and
-  // dispatches `ox:data` with a fresh ClientInput on the document. Feed it
-  // through the same `adapter.update` path a navigation uses so a loader
-  // edit re-renders the page in place.
-  const onData = (e: Event): void => {
-    const detail = (e as CustomEvent<{ input?: unknown }>).detail
-    const input = detail?.input as
+  // §13.3: the inline dev HMR client dispatches `ox:data` on the document
+  // with `detail: { route, odf }`, where `odf` is base64 ODF (the same format
+  // `/__data` returns). A caller may also dispatch `detail: { input }` with a
+  // complete `ClientInput`. Both shapes feed the same `adapter.update` path a
+  // navigation uses, so a loader edit re-renders the page in place.
+  const onData = async (e: Event): Promise<void> => {
+    const detail = (e as CustomEvent<{ input?: unknown; route?: string; odf?: string }>).detail
+    if (!detail || typeof detail !== 'object') return
+
+    let input:
       | { route: string; url: string; params: Record<string, string | string[]>; data: unknown }
       | undefined
-    if (!input || typeof input !== 'object' || typeof input.route !== 'string') return
+
+    if ('input' in detail && detail.input) {
+      // Whole-input shape: caller already built a ClientInput.
+      const i = detail.input as {
+        route?: unknown
+        url?: unknown
+        params?: unknown
+        data?: unknown
+      }
+      if (typeof i.route !== 'string') return
+      input = {
+        route: i.route,
+        url: typeof i.url === 'string' ? i.url : (globalThis as { location?: { href: string } }).location?.href ?? '/',
+        params: (i.params as Record<string, string | string[]>) ?? {},
+        data: i.data,
+      }
+    } else if (typeof detail.odf === 'string' && detail.odf.length > 0) {
+      // Inline HMR shape: `{ route, odf }` with base64 ODF.
+      let data: unknown
+      try {
+        const bin = atob(detail.odf)
+        const bytes = new Uint8Array(bin.length)
+        for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k)
+        const decoded = decodeOdf(bytes) as Record<string, unknown>
+        // The ODF envelope is `{ route, url, params, data }`; unwrap `data`.
+        data = decoded && typeof decoded === 'object' && 'data' in decoded ? decoded.data : decoded
+      } catch (err) {
+        console.warn?.('oxide: ox:data odf decode failed', err)
+        return
+      }
+      const route = detail.route
+      if (typeof route !== 'string') return
+      const loc = (globalThis as { location?: { href: string } }).location
+      const winParams = (globalThis as { __oxide?: { params?: unknown } }).__oxide?.params
+      input = {
+        route,
+        url: loc?.href ?? '/',
+        params: (winParams as Record<string, string | string[]> | undefined) ?? {},
+        data,
+      }
+    } else {
+      return
+    }
+
     try {
       ;(adapter as unknown as { update(i: unknown): void }).update(input)
     } catch (err) {
