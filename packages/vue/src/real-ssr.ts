@@ -59,6 +59,66 @@ export async function isVueAvailable(): Promise<boolean> {
   return (await load()) !== undefined
 }
 
+/**
+ * Structural shape of a layout child descriptor (§8.2). `makeRealAdapter`
+ * hands a layout a `children` value of `{ Component, props }` — a plain
+ * descriptor, not a live vnode, so the layout chain stays framework-
+ * agnostic on the wire. Vue consumes children through SLOTS, so the
+ * expansion wraps each layer with `h(L, props, { default: () => child })`.
+ */
+interface ChildDescriptor {
+  Component: unknown
+  props: Record<string, unknown>
+}
+
+function isChildDescriptor(v: unknown): v is ChildDescriptor {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    'Component' in v &&
+    'props' in v &&
+    typeof (v as { Component: unknown }).Component !== 'undefined'
+  )
+}
+
+/**
+ * §8.2: expand a layout child descriptor chain into a real vnode, depth-
+ * first — the innermost page becomes `h(page, pageProps)` first, then each
+ * outer layout wraps it as DEFAULT SLOT content:
+ * `h(L, layoutProps, { default: () => childVnode })`. The descriptor is
+ * removed from the layout's props (a Vue layout consumes children via
+ * `<slot />`, not a prop). A page with no children renders as a plain
+ * `h(Component, props)`.
+ */
+function expandDescriptor(vue: VueAppLike, descriptor: ChildDescriptor): unknown {
+  const props: Record<string, unknown> = { ...descriptor.props }
+  if (!isChildDescriptor(props.children)) {
+    return vue.h(descriptor.Component, props)
+  }
+  const child = expandDescriptor(vue, props.children)
+  delete props.children
+  return vue.h(descriptor.Component, props, { default: () => child })
+}
+
+/**
+ * Build the SSR app for a component + props. When `props.children` is a
+ * layout child descriptor, the descriptor chain is expanded into the slot
+ * pattern and the resulting vnode is rendered as the app root through a
+ * render-closure component (a valid Vue root). Otherwise the component is
+ * used directly with the props — the pre-descriptor behavior.
+ */
+function vueAppFor(
+  vue: VueAppLike,
+  Component: unknown,
+  props: Record<string, unknown>,
+): unknown {
+  if (isChildDescriptor(props.children)) {
+    const vnode = expandDescriptor(vue, { Component, props })
+    return vue.createSSRApp({ render: () => vnode })
+  }
+  return vue.createSSRApp(Component, props)
+}
+
 /** The resolved Vue module, or undefined when not installed. */
 export async function getVue(): Promise<VueAppLike | undefined> {
   return (await load())?.vue
@@ -71,7 +131,9 @@ export async function getVueServerRenderer(): Promise<VueServerRendererLike | un
 
 /**
  * Render a Vue component (via `h`, SFC compiled output, or options object)
- * to HTML through `@vue/server-renderer`. Throws when Vue is absent.
+ * to HTML through `@vue/server-renderer`. A layout child descriptor
+ * (`props.children = { Component, props }`, §8.2) is expanded into the slot
+ * pattern first — see {@link expandDescriptor}. Throws when Vue is absent.
  */
 export async function renderVueToString(
   Component: unknown,
@@ -81,7 +143,7 @@ export async function renderVueToString(
   if (!deps) {
     throw new Error('@oxide/vue: real SSR requires `vue` and `@vue/server-renderer` to be installed')
   }
-  const app = deps.vue.createSSRApp(Component, props)
+  const app = vueAppFor(deps.vue, Component, props)
   return await deps.server.renderToString(app)
 }
 
@@ -99,7 +161,9 @@ export async function renderVueToStream(
   if (!deps) {
     throw new Error('@oxide/vue: real SSR requires `vue` and `@vue/server-renderer` to be installed')
   }
-  const app = deps.vue.createSSRApp(Component, props)
+  // Same descriptor expansion as `renderVueToString`: a layout receives
+  // `props.children` as `{ Component, props }`; Vue needs slot content.
+  const app = vueAppFor(deps.vue, Component, props)
   const server = deps.server as unknown as {
     renderToStream?: (app: unknown) => Promise<NodeJS.ReadableStream | ReadableStream<Uint8Array>>
     renderToString: (app: unknown) => Promise<string>
