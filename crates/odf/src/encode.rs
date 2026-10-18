@@ -11,7 +11,7 @@
 //! ancestor would collapse distinct structure and lose information on resolve.
 
 use crate::wire::{tags, write_varu};
-use crate::{err, Result, Value, MAX_BYTES, MAX_DEPTH, MAX_REFS};
+use crate::{MAX_BYTES, MAX_DEPTH, MAX_REFS, Result, Value, err};
 
 /// How many recently registered slots the dedup scan inspects. A fixed window
 /// keeps encoding linear and deterministic; duplicates further apart are
@@ -113,9 +113,7 @@ impl Encoder {
                 if !crate::wire::valid_object_key(k) {
                     return Err(err(
                         "ODF-KEY",
-                        format!(
-                            "reserved object key `{k}` (§17.1: use a Map for data-level keys)"
-                        ),
+                        format!("reserved object key `{k}` (§17.1: use a Map for data-level keys)"),
                     ));
                 }
                 write_varu(&mut self.out, k.len() as u32);
@@ -196,7 +194,11 @@ impl Encoder {
     ) -> Result<()> {
         // `register` trees number this container as the latest slot (the
         // dedup step just pushed it); preamble trees occupy no slots.
-        let slot_to_close = if register { Some(self.table.len() - 1) } else { None };
+        let slot_to_close = if register {
+            Some(self.table.len() - 1)
+        } else {
+            None
+        };
         stack.push(EFrame::for_value(v, depth, slot_to_close));
         Ok(())
     }
@@ -356,10 +358,22 @@ struct EFrame<'a> {
 }
 
 enum EKind<'a> {
-    Array { items: &'a [Value], idx: usize },
-    Set { items: &'a [Value], idx: usize },
-    Object { entries: Vec<(&'a str, &'a Value)>, idx: usize },
-    Map { pairs: &'a [(Value, Value)], idx: usize },
+    Array {
+        items: &'a [Value],
+        idx: usize,
+    },
+    Set {
+        items: &'a [Value],
+        idx: usize,
+    },
+    Object {
+        entries: Vec<(&'a str, &'a Value)>,
+        idx: usize,
+    },
+    Map {
+        pairs: &'a [(Value, Value)],
+        idx: usize,
+    },
 }
 
 impl<'a> EFrame<'a> {
@@ -374,7 +388,11 @@ impl<'a> EFrame<'a> {
             Value::Map(pairs) => EKind::Map { pairs, idx: 0 },
             other => unreachable!("frame built for {other:?}"),
         };
-        EFrame { depth, slot_to_close, kind }
+        EFrame {
+            depth,
+            slot_to_close,
+            kind,
+        }
     }
 
     /// Next child to visit plus, for objects, the key bytes to emit first.
