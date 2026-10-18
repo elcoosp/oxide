@@ -260,6 +260,10 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
     // so the new page's `{__deferred: id}` markers become slots. The prior
     // page's slots stay in the registry (a `dispose` clears them on unmount).
     glue?.wire(inp.data)
+    // §7.1 / §9.2: `/__data` carries the loader's already-resolved defer
+    // values; settle the matching slots so a component awaiting one gets
+    // its value (the same contract SSR's deferred script provides).
+    if (inp.deferred) glue?.resolveAll(inp.deferred)
     render(inp)
     rebind()
   }
