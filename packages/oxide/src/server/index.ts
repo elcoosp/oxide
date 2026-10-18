@@ -210,6 +210,9 @@ export interface CacheOptions {
   tags?: string[] | ((...args: unknown[]) => string[])
 }
 
+import { encodeOdf } from '../odf-encode.ts'
+import { decodeOdf } from '../client/odf-decode.ts'
+
 /** Deterministic cache key: JSON of args + normalized opts (tags sorted). */
 /** Deterministic cache key: JSON of args + normalized opts (tags sorted). */
 export function cacheKey(
@@ -326,8 +329,20 @@ export function cache<A extends unknown[], R>(
    *  Map then runs). */
   async function hostGet(key: string): Promise<unknown | undefined> {
     try {
-      const v = await globalThis.__oxide_op_request!('cache_get', { key })
-      return v === null ? undefined : v
+      const v = (await globalThis.__oxide_op_request!('cache_get', { key })) as
+        | { body_b64?: string; value?: unknown }
+        | null
+      if (v === null || v === undefined) return undefined
+      // §9.5: the cached bytes are ODF (rich types survive). Decode them.
+      // A JSON-encoded fallback (an entry written by an older runtime) is
+      // detected by the missing `body_b64` and returned as-is.
+      if (typeof v.body_b64 === 'string' && v.body_b64.length > 0) {
+        const bin = atob(v.body_b64)
+        const bytes = new Uint8Array(bin.length)
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+        return decodeOdf(bytes)
+      }
+      return v.value
     } catch {
       // A host error is not fatal — the in-process tier answers.
       return undefined
@@ -338,11 +353,29 @@ export function cache<A extends unknown[], R>(
    *  leaves the in-process Map as the only copy. */
   function hostSet(key: string, value: unknown, tags: string[]): void {
     if (!hostOpAvailable()) return
+    // §9.5: encode the value to ODF so rich types (Date/Map/Set/BigInt/…) and
+    // shared references survive the cache round-trip. The same bytes are what
+    // the wire format (§9.5) uses, so a cached value and a streamed value are
+    // bit-identical. A value that ODF cannot encode falls back to JSON with a
+    // warning rather than failing the cache write.
+    let body_b64 = ''
+    try {
+      const bytes = encodeOdf(value)
+      let bin = ''
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+      body_b64 = btoa(bin)
+    } catch (e) {
+      console.warn?.('oxide: cache value is not ODF-encodable; storing JSON', e)
+      const json = JSON.stringify(value)
+      body_b64 = btoa(
+        String.fromCharCode(...new TextEncoder().encode(json)),
+      )
+    }
     // `ttl`/`swr` are seconds on the wire (§11.3).
     void globalThis
       .__oxide_op_request!('cache_set', {
         key,
-        body: value,
+        body_b64,
         tags,
         ttl: opts.ttl ?? 0,
         swr: opts.swr,
