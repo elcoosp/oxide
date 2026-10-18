@@ -276,3 +276,120 @@ test('loading boundary: no adapter.renderLoading → hooks are no-ops', async ()
     restoreGlobals(saved)
   }
 })
+
+// ---------------------------------------------------------------------------
+// Dynamic-segment keys (§8.4): the CLI emits `[name]` segment tokens for
+// dynamic route dirs (`routes/blog/[slug]/loading` → `/blog/[slug]`). The
+// matcher treats a `[name]` / `:name` / `_name_` key segment as "exactly one
+// non-empty URL segment", keeps prefix semantics for literals, and picks the
+// longest match (most segments; ties → more literal segments).
+// ---------------------------------------------------------------------------
+
+function makeLinkTo(href: string): any {
+  const link: any = {
+    addEventListener() {}, removeEventListener() {},
+    getAttribute(n: string) { return n === 'href' ? href : null },
+    setAttribute() {}, hasAttribute(n: string) { return n === 'href' },
+    querySelector() { return null }, querySelectorAll() { return [] },
+  }
+  link.closest = (s: string) => (s === 'a' ? link : null)
+  return link
+}
+
+/** Boot + click `path`; returns the loading components renderLoading saw. */
+async function clickAndCollect(loading: Record<string, unknown>, path: string): Promise<unknown[]> {
+  const saved = saveGlobals()
+  try {
+    const root = makeRoot()
+    const link = makeLinkTo(path)
+    const odf = encodeLite({ route: path, url: path, params: {}, data: {} })
+    const { doc } = install({
+      root, link,
+      oxide: { route: '/', data: '' },
+      oxideBoot: { loadChunk: async () => ({}) },
+      fetchResult: odf,
+    })
+    const seen: unknown[] = []
+    const adapter: any = {
+      hydrate() {}, update() {}, hydrateIsland() { return () => {} },
+      renderLoading(_o: unknown, _i: unknown, Component: unknown) {
+        seen.push(Component)
+        return () => {}
+      },
+    }
+    const dispose = bootWithRouter(adapter, { loading } as never)
+    doc._fireClick(link)
+    await new Promise((r) => setTimeout(r, 20))
+    dispose()
+    return seen
+  } finally {
+    restoreGlobals(saved)
+  }
+}
+
+const BLOG = { name: 'BlogLoading' }
+const SLUG = { name: 'SlugLoading' }
+const COMMENTS = { name: 'CommentsLoading' }
+const ROOT = { name: 'RootLoading' }
+
+test('loading boundary: [name] key matches exactly one URL segment', async () => {
+  const seen = await clickAndCollect({ '/blog/[slug]': SLUG }, '/blog/hello')
+  assert.equal(seen.length, 1, 'renderLoading fired')
+  assert.equal(seen[0], SLUG, '/blog/[slug] matched /blog/hello')
+})
+
+test('loading boundary: [name] key does not match a URL missing that segment', async () => {
+  const seen = await clickAndCollect({ '/blog/[slug]': SLUG }, '/blog')
+  assert.equal(seen.length, 0, 'param segment needs its one URL segment')
+})
+
+test('loading boundary: :name and _name_ key spellings match like [name]', async () => {
+  const colon = await clickAndCollect({ '/docs/:id': SLUG }, '/docs/42')
+  assert.equal(colon.length, 1)
+  assert.equal(colon[0], SLUG)
+  const underscore = await clickAndCollect({ '/docs/_id_': SLUG }, '/docs/42')
+  assert.equal(underscore.length, 1)
+  assert.equal(underscore[0], SLUG)
+})
+
+test('loading boundary: longest key wins across a dynamic chain', async () => {
+  const seen = await clickAndCollect(
+    { '/blog': BLOG, '/blog/[slug]': SLUG, '/blog/[slug]/comments': COMMENTS },
+    '/blog/hello/comments',
+  )
+  assert.equal(seen.length, 1)
+  assert.equal(seen[0], COMMENTS, 'most segments wins')
+})
+
+test('loading boundary: shorter dynamic key wins over the static parent for its depth', async () => {
+  const seen = await clickAndCollect({ '/blog': BLOG, '/blog/[slug]': SLUG }, '/blog/hello')
+  assert.equal(seen.length, 1)
+  assert.equal(seen[0], SLUG, '2-segment key beats the 1-segment prefix')
+})
+
+test('loading boundary: literal key prefix still covers deeper URLs', async () => {
+  const seen = await clickAndCollect({ '/blog': BLOG }, '/blog/x/y/z')
+  assert.equal(seen.length, 1)
+  assert.equal(seen[0], BLOG, 'layout-level loading covers the routes below it')
+})
+
+test('loading boundary: trailing slash on a dynamic key is normalized', async () => {
+  const seen = await clickAndCollect({ '/blog/[slug]/': SLUG }, '/blog/hello')
+  assert.equal(seen.length, 1)
+  assert.equal(seen[0], SLUG)
+})
+
+test('loading boundary: root key still matches everything, lowest priority', async () => {
+  const everywhere = await clickAndCollect({ '/': ROOT }, '/anything/at/all')
+  assert.equal(everywhere.length, 1)
+  assert.equal(everywhere[0], ROOT)
+  const fallback = await clickAndCollect({ '/': ROOT, '/blog/[slug]': SLUG }, '/blog/hello')
+  assert.equal(fallback[0], SLUG, 'the deeper key beats the root key')
+})
+
+test('loading boundary: ties at the same depth resolve to more literal segments', async () => {
+  // Both keys match /blog/hello at depth 2; the literal one is preferred.
+  const seen = await clickAndCollect({ '/[x]/[y]': SLUG, '/blog/[slug]': BLOG }, '/blog/hello')
+  assert.equal(seen.length, 1)
+  assert.equal(seen[0], BLOG, 'more literal segments wins the tie')
+})
