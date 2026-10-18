@@ -12,8 +12,8 @@
 //! framework adapter it imports, not only a pre-bundled `dist/server` graph.
 
 use deno_core::{
-    ModuleLoadOptions, ModuleLoadReferrer, ModuleLoadResponse, ModuleLoader,
-    ModuleResolveResponse, ModuleSource, ModuleType, ResolutionKind,
+    ModuleLoadOptions, ModuleLoadReferrer, ModuleLoadResponse, ModuleLoader, ModuleResolveResponse,
+    ModuleSource, ModuleType, ResolutionKind,
 };
 use std::path::{Path, PathBuf};
 
@@ -201,7 +201,10 @@ pub fn requires_node_backend(specifier: &str) -> Option<String> {
         return Some(format!("native addon `{specifier}`"));
     }
     if let Some(name) = specifier.strip_prefix("node:") {
-        let shimmed = matches!(name, "module" | "path" | "url" | "buffer" | "events" | "util" | "stream");
+        let shimmed = matches!(
+            name,
+            "module" | "path" | "url" | "buffer" | "events" | "util" | "stream"
+        );
         if !shimmed {
             return Some(format!("node:{name} builtin"));
         }
@@ -283,8 +286,9 @@ impl ModuleLoader for TranspileLoader {
         let path = match deno_core::ModuleSpecifier::parse(spec_no_query)
             .map_err(|_| deno_error::JsErrorBox::generic("module specifier is not a file path"))
             .and_then(|u| {
-                u.to_file_path()
-                    .map_err(|_| deno_error::JsErrorBox::generic("module specifier is not a file path"))
+                u.to_file_path().map_err(|_| {
+                    deno_error::JsErrorBox::generic("module specifier is not a file path")
+                })
             }) {
             Ok(p) => p,
             Err(e) => {
@@ -296,19 +300,16 @@ impl ModuleLoader for TranspileLoader {
         let spec = module_specifier.clone();
         let jsx = self.jsx_import_source.clone();
         let fut = async move {
-            let src = std::fs::read_to_string(&path)
-                .map_err(|e| deno_error::JsErrorBox::generic(format!("read {}: {e}", path.display())))?;
+            let src = std::fs::read_to_string(&path).map_err(|e| {
+                deno_error::JsErrorBox::generic(format!("read {}: {e}", path.display()))
+            })?;
             // BUG-08: CSS is a server side-effect import — resolve to an
             // empty module (SSR never applies styles; the client bundle's
             // CssPlugin handles the real CSS).
-            if path.extension().and_then(|e| e.to_str())
-                == Some("css")
-            {
+            if path.extension().and_then(|e| e.to_str()) == Some("css") {
                 return Ok(ModuleSource::new(
                     ModuleType::JavaScript,
-                    deno_core::ModuleSourceCode::String(
-                        "export default \"\";".to_string().into(),
-                    ),
+                    deno_core::ModuleSourceCode::String("export default \"\";".to_string().into()),
                     &spec,
                     None,
                 ));
