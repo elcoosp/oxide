@@ -113,6 +113,57 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
   }
   doc.addEventListener(eventName, onSwap as EventListener)
 
+  // §7.1 / §9.2: the server injects a `<script type="application/oxide-deferred">`
+  // with the resolved `defer()` values as JSON `{ "<id>": value, ... }`. Parse
+  // it now (or on DOMContentLoaded if the script is below the glue's attach
+  // point) and resolve every matching slot. A rejected defer is serialized
+  // as `{ "__oxide_deferred_error": "..." }` — recognized here and rejects
+  // the slot instead of resolving it to a shape the page did not expect.
+  const resolveFromScripts = (): void => {
+    const querySelectorAll = (doc as unknown as {
+      querySelectorAll?: (sel: string) => ArrayLike<Element>
+    }).querySelectorAll
+    if (typeof querySelectorAll !== 'function') return
+    const scripts = querySelectorAll('script[type="application/oxide-deferred"]')
+    for (let i = 0; i < scripts.length; i++) {
+      const script = scripts[i] as unknown as { textContent?: string | null }
+      const raw = script.textContent ?? ''
+      if (raw.length === 0) continue
+      let parsed: Record<string, unknown>
+      try {
+        parsed = JSON.parse(raw) as Record<string, unknown>
+      } catch {
+        // A malformed deferred payload must not break hydration; skip it.
+        continue
+      }
+      for (const [idStr, value] of Object.entries(parsed)) {
+        const id = Number(idStr)
+        if (!Number.isFinite(id)) continue
+        const slot = registry.get(id)
+        if (!slot) continue
+        if (
+          value &&
+          typeof value === 'object' &&
+          '__oxide_deferred_error' in (value as Record<string, unknown>)
+        ) {
+          const err = (value as Record<string, unknown>).__oxide_deferred_error
+          slot.reject(new Error(String(err)))
+        } else {
+          slot.resolve(value)
+        }
+      }
+    }
+  }
+  // Try synchronously, then again on DOMContentLoaded in case the script
+  // element had not yet been parsed when the glue attached (the glue attaches
+  // during the boot module's execution, which the browser runs after the HTML
+  // but a `<script>` below the boot script loads later).
+  resolveFromScripts()
+  const onReady = (): void => resolveFromScripts()
+  if ((doc as unknown as { readyState?: string }).readyState === 'loading') {
+    doc.addEventListener('DOMContentLoaded', onReady)
+  }
+
   return {
     registry,
     resolve(id: number, value: unknown) {
@@ -123,10 +174,17 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
     },
     wire(data: unknown): void {
       wireDeferreds(data, { registry, dead })
+      // §7.1 / §9.2: the server's deferred script may have been parsed
+      // *before* this `wire()` populated the registry. Re-run the script
+      // resolution so freshly-wired slots that match a script's ids resolve
+      // immediately. Idempotent — `DeferredClient.resolve` ignores a
+      // non-pending slot.
+      resolveFromScripts()
     },
     dispose() {
       dead = true
       doc.removeEventListener(eventName, onSwap as EventListener)
+      doc.removeEventListener('DOMContentLoaded', onReady as EventListener)
       // orphan any still-pending slots so their promises settle
       for (const [id, slot] of registry) {
         if (slot.status === 'pending') {
