@@ -10,9 +10,9 @@
 //! hash on load at the artifact layer, §5.4); the store itself only handles
 //! opaque bytes, so no rkyv dependency is needed here.
 
-use crate::{err, OxideError, Result};
-use redb::{Database, ReadableTable, TableDefinition};
+use crate::{OxideError, Result, err};
 use redb::ReadableDatabase;
+use redb::{Database, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::PathBuf;
@@ -199,7 +199,7 @@ impl ContentStore {
                     return Err(err(
                         "CAS-NO-ENTRY",
                         format!("touch: key {} is not in the index", hex),
-                    ))
+                    ));
                 }
             }
         }
