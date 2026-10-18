@@ -7,7 +7,7 @@
 //! `InlineCompiler` (React/Solid) and `ToolingCompiler` (Vue/Svelte), or lets
 //! `for_path` pick by extension.
 
-use crate::{err, Env, Result};
+use crate::{Env, Result, err};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,7 +105,10 @@ impl FrameworkCompiler for ReactInline {
                 code.push_str(&format!("\n$RefreshReg$({name}, \"{name}\");"));
             }
         }
-        Ok(FrameworkOutput { code, ..Default::default() })
+        Ok(FrameworkOutput {
+            code,
+            ..Default::default()
+        })
     }
 }
 
@@ -122,7 +125,10 @@ impl FrameworkCompiler for SolidInline {
     fn compile(&self, input: &FrameworkInput) -> Result<FrameworkOutput> {
         // No text-level transform required — the Oxc JSX pass consumes the
         // `jsxImportSource` pragma and produces `solid-js/web` calls.
-        Ok(FrameworkOutput { code: input.code.clone(), ..Default::default() })
+        Ok(FrameworkOutput {
+            code: input.code.clone(),
+            ..Default::default()
+        })
     }
 }
 
