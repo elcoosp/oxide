@@ -142,7 +142,7 @@ pub fn edge_manifest_routes(tree_json: &serde_json::Value) -> Result<Vec<String>
                     "EDGE-101",
                     "routes manifest must be an array of route rows or {\"routes\": [...]} \
                      (router typegen §8.3)",
-                ))
+                ));
             }
         },
     };
