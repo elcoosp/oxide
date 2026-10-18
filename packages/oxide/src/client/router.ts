@@ -78,6 +78,13 @@ export interface RouterOptions {
   /** Concurrent prefetch cap (§8.4 "budgeted and cancelable"). Default 5. */
   prefetchBudget?: number
   /**
+   * §6.4: the URL prefix the client bundle is served from. The manifest's
+   * chunk values are bare filenames; the router prefixes them with this so a
+   * preload `import()` resolves. Defaults to `import.meta.url`'s directory
+   * (`/client/` in the built entry), falling back to `/client/`.
+   */
+  clientBase?: string
+  /**
    * §8.4 "optimistic navigation with loading boundaries": fired as soon as
    * `goto()` starts — before the `/__data` fetch — with a best-effort input
    * whose `route` is the currently-known path (the resolved route id is not
@@ -241,11 +248,37 @@ export function createRouter(opts: RouterOptions): Router {
     return result
   }
 
+  /**
+   * The base path the client bundle is served from. The boot entry is served
+   * as `/client/<boot>.js`, so `import.meta.url` is `<origin>/client/` and the
+   * manifest's `entry_chunk` / `preload` values (bare filenames like
+   * `routes/index/page.js`) resolve under it. Without this prefix a preload
+   * `import('/routes/index/page.js')` 404s silently.
+   *
+   * Tests inject `clientBase`; in the browser we derive it from
+   * `import.meta.url`, falling back to `/client/`.
+   */
+  const CLIENT_BASE: string = (() => {
+    if (opts.clientBase !== undefined) return opts.clientBase
+    try {
+      // eslint-disable-next-line no-undef
+      const u = (import.meta as { url?: string }).url
+      if (typeof u === 'string' && u.length > 0) {
+        return new URL('.', u).pathname
+      }
+    } catch {
+      // import.meta unavailable (non-module context) — fall through.
+    }
+    return '/client/'
+  })()
+
   /** Preload a route's manifest chunks via `import()`; the bundler dedupes. */
   function preloadChunks(path: string): void {
     for (const chunk of chunksFor(path)) {
       // A dynamic import warms the module cache with no execution side effects.
-      void import(/* @vite-ignore */ `/${chunk}`).catch(() => {
+      // `chunk` is a manifest filename relative to the client base.
+      const url = chunk.startsWith('/') ? chunk : `${CLIENT_BASE}${chunk}`
+      void import(/* @vite-ignore */ url).catch(() => {
         // A missing preload chunk is not fatal — the real navigation will
         // still fetch it (or 404 loudly) via the boot entry.
       })
