@@ -125,7 +125,8 @@ export async function renderSolidToString(fn: () => unknown): Promise<string> {
  * Stream a Solid component's HTML via `@solidjs/web`'s `renderToStream`.
  * Yields the shell before Suspense/resources resolve. Falls back to a
  * single-chunk stream from `renderSolidToString` when the runtime lacks
- * `renderToStream` (Solid 1.x's web runtime exposes only `renderToString`).
+ * `renderToStream` (Solid 1.x's web runtime exposes only `renderToString`)
+ * or returns an unrecognized stream shape.
  *
  * `renderToStream` takes a zero-argument factory (like `renderToString`).
  */
@@ -142,67 +143,27 @@ export async function renderSolidToStream(
   }
   if (typeof web.renderToStream === 'function') {
     const solidStream = await web.renderToStream(fn)
+    // Web `ReadableStream` (edge runtimes): return as-is.
     if (typeof (solidStream as ReadableStream<Uint8Array>).getReader === 'function') {
       return solidStream as ReadableStream<Uint8Array>
     }
+    // Node `Readable` (Node runtimes): bridge `data`/`end`/`error`.
     const nodeStream = solidStream as NodeJS.ReadableStream
-    return new ReadableStream<Uint8Array>({
-      start(controller) {
-        nodeStream.on('data', (chunk: Buffer | string) => {
-          controller.enqueue(typeof chunk === 'string' ? new TextEncoder().encode(chunk) : new Uint8Array(chunk))
-        })
-        nodeStream.on('end', () => controller.close())
-        nodeStream.on('error', (e) => controller.error(e))
-      },
-    })
-  }
-  // Fallback: single-chunk from renderToString.
-  const html = await renderSolidToString(fn)
-  const bytes = new TextEncoder().encode(html)
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(bytes)
-      controller.close()
-    },
-  })
-}
-
-/**
- * Stream a Solid component's HTML via `@solidjs/web`'s `renderToStream`.
- * Yields the shell before Suspense/resources resolve. Falls back to a
- * single-chunk stream from `renderSolidToString` when the runtime lacks
- * `renderToStream` (Solid 1.x's web runtime exposes only `renderToString`).
- *
- * `renderToStream` takes a zero-argument factory (like `renderToString`).
- */
-export async function renderSolidToStream(
-  fn: () => unknown,
-): Promise<ReadableStream<Uint8Array>> {
-  const loaded = await load()
-  if (!loaded) {
-    throw new Error('@oxide/solid: real SSR requires `@solidjs/web` (Solid 2) or `solid-js/web` (Solid 1) to be installed')
-  }
-  const web = loaded.web as unknown as {
-    renderToStream?: (fn: () => unknown) => Promise<NodeJS.ReadableStream | ReadableStream<Uint8Array>>
-    renderToString?: (fn: () => unknown) => string | Promise<string>
-  }
-  if (typeof web.renderToStream === 'function') {
-    const solidStream = await web.renderToStream(fn)
-    if (typeof (solidStream as ReadableStream<Uint8Array>).getReader === 'function') {
-      return solidStream as ReadableStream<Uint8Array>
+    if (typeof (nodeStream as { on?: unknown }).on === 'function') {
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          nodeStream.on('data', (chunk: Buffer | string) => {
+            controller.enqueue(typeof chunk === 'string' ? new TextEncoder().encode(chunk) : new Uint8Array(chunk))
+          })
+          nodeStream.on('end', () => controller.close())
+          nodeStream.on('error', (e) => controller.error(e))
+        },
+      })
     }
-    const nodeStream = solidStream as NodeJS.ReadableStream
-    return new ReadableStream<Uint8Array>({
-      start(controller) {
-        nodeStream.on('data', (chunk: Buffer | string) => {
-          controller.enqueue(typeof chunk === 'string' ? new TextEncoder().encode(chunk) : new Uint8Array(chunk))
-        })
-        nodeStream.on('end', () => controller.close())
-        nodeStream.on('error', (e) => controller.error(e))
-      },
-    })
+    // Unknown shape (a test fake, or a custom runtime): fall through to
+    // `renderToString`. The HTML is identical — only the incremental
+    // chunking is lost. Streaming is a best-effort optimization.
   }
-  // Fallback: single-chunk from renderToString.
   const html = await renderSolidToString(fn)
   const bytes = new TextEncoder().encode(html)
   return new ReadableStream<Uint8Array>({
