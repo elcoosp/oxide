@@ -442,11 +442,16 @@ pub struct EndpointHost {
 
 /// The result of a `route.ts` call: status, headers, raw body. Body is raw
 /// bytes so a route.ts can return binary (an image proxy, a CSV download).
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct EndpointOutcome {
     pub status: u16,
     pub headers: Vec<(String, String)>,
+    /// Buffered body (a small/non-streaming response).
     pub body: Vec<u8>,
+    /// §9.6: a streaming body (SSE, a long download). When `Some`, the
+    /// pipeline drives the response body from this stream and ignores
+    /// `body`.
+    pub stream: Option<tokio::sync::mpsc::Receiver<crate::Result<bytes::Bytes>>>,
 }
 
 impl EndpointHost {
@@ -498,16 +503,66 @@ impl EndpointHost {
             export: method.to_uppercase(),
         };
         let mut stream = self.pool.call(entry, call_input).await?;
-        let bytes = stream.collect().await?;
-        let v: Value = serde_json::from_slice(&bytes).map_err(|e| {
-            crate::err("JSH-ENDPOINT", format!("endpoint:run returned invalid JSON: {e}"))
-        })?;
-        if let Some(err_msg) = v.get("__oxide_error").and_then(|x| x.as_str()) {
-            return Err(crate::err("JSH-ENDPOINT", err_msg.to_string()));
+        // §9.6: a streaming `route.ts` sends a header-only first frame
+        // (`streaming: true`) then raw chunks until `call_end`. Peek the
+        // first item: `Complete` is a buffered response, `Chunked` is a
+        // stream we hand to the pipeline as the response body.
+        match &mut stream {
+            crate::CallStream::Complete(bytes) => {
+                let v: Value = serde_json::from_slice(bytes).map_err(|e| {
+                    crate::err("JSH-ENDPOINT", format!("endpoint:run returned invalid JSON: {e}"))
+                })?;
+                return Self::from_complete_json(v);
+            }
+            crate::CallStream::Chunked(rx) => {
+                // The first chunk carries the header JSON.
+                let first = match rx.recv().await {
+                    Some(Ok(b)) => b,
+                    Some(Err(e)) => return Err(e),
+                    None => {
+                        return Ok(EndpointOutcome {
+                            status: 200,
+                            headers: Vec::new(),
+                            body: Vec::new(),
+                            stream: None,
+                        })
+                    }
+                };
+                let v: Value = serde_json::from_slice(&first).map_err(|e| {
+                    crate::err("JSH-ENDPOINT", format!("endpoint:run header frame invalid: {e}"))
+                })?;
+                if let Some(err_msg) = v.get("__oxide_error").and_then(|x| x.as_str()) {
+                    return Err(crate::err("JSH-ENDPOINT", err_msg.to_string()));
+                }
+                let status = v.get("status").and_then(|x| x.as_u64()).unwrap_or(200) as u16;
+                let headers = Self::parse_headers(&v);
+                // Move the receiver out of the enum. `Chunked` is the only
+                // arm here, so a take is safe.
+                let rx = match std::mem::replace(
+                    &mut stream,
+                    crate::CallStream::Complete(bytes::Bytes::new()),
+                ) {
+                    crate::CallStream::Chunked(rx) => rx,
+                    _ => unreachable!(),
+                };
+                return Ok(EndpointOutcome {
+                    status,
+                    headers,
+                    body: Vec::new(),
+                    stream: Some(rx),
+                });
+            }
         }
-        let status = v.get("status").and_then(|x| x.as_u64()).unwrap_or(200) as u16;
-        let headers_out: Vec<(String, String)> = v
-            .get("headers")
+        // (unreachable) — kept for the compiler.
+        #[allow(unreachable_code)]
+        {
+            let v: Value = Value::Null;
+            return Self::from_complete_json(v);
+        }
+    }
+
+    fn parse_headers(v: &Value) -> Vec<(String, String)> {
+        v.get("headers")
             .and_then(|x| x.as_array())
             .map(|arr| {
                 arr.iter()
@@ -519,7 +574,16 @@ impl EndpointHost {
                     })
                     .collect()
             })
-            .unwrap_or_default();
+            .unwrap_or_default()
+    }
+
+    fn from_complete_json(v: Value) -> Result<EndpointOutcome> {
+        use base64::Engine as _;
+        if let Some(err_msg) = v.get("__oxide_error").and_then(|x| x.as_str()) {
+            return Err(crate::err("JSH-ENDPOINT", err_msg.to_string()));
+        }
+        let status = v.get("status").and_then(|x| x.as_u64()).unwrap_or(200) as u16;
+        let headers_out = Self::parse_headers(&v);
         let body_b64_out = v
             .get("body_b64")
             .and_then(|x| x.as_str())
@@ -537,6 +601,7 @@ impl EndpointHost {
             status,
             headers: headers_out,
             body,
+            stream: None,
         })
     }
 }
