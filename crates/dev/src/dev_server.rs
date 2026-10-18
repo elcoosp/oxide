@@ -14,7 +14,7 @@
 //! - `ProxyRule` / `apply_proxy` — prefix-matched reverse proxy rules.
 //! - `open_browser` — OS-level URL opener.
 
-use crate::{err, Result};
+use crate::{Result, err};
 use std::net::IpAddr;
 
 // ---------------------------------------------------------------------------
