@@ -284,9 +284,12 @@ impl HttpRemoteCache {
     ) -> Result<(u16, Vec<u8>)> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let url = format!("{}/{}.bin", self.base, key.hex());
-        let rest = url
-            .strip_prefix("http://")
-            .ok_or_else(|| err("CAS-REMOTE", format!("remote cache URL must be http:// ({url})")))?;
+        let rest = url.strip_prefix("http://").ok_or_else(|| {
+            err(
+                "CAS-REMOTE",
+                format!("remote cache URL must be http:// ({url})"),
+            )
+        })?;
         let (host_port, path) = rest.split_once('/').unwrap_or((rest, ""));
         let path = format!("/{path}");
         let mut stream = tokio::net::TcpStream::connect(host_port)
@@ -381,9 +384,10 @@ mod spec04_tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         // A one-thread mock: PUT stores the body, GET returns it (404 if absent).
-        let store = std::sync::Arc::new(std::sync::Mutex::new(
-            std::collections::HashMap::<String, Vec<u8>>::new(),
-        ));
+        let store = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
+            String,
+            Vec<u8>,
+        >::new()));
         let store2 = store.clone();
         std::thread::spawn(move || {
             for conn in listener.incoming() {
@@ -424,7 +428,9 @@ mod spec04_tests {
                 let mut store = store2.lock().unwrap();
                 if method == "PUT" {
                     store.insert(path, body);
-                    let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    let _ = s.write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    );
                 } else if let Some(b) = store.get(&path) {
                     let h = format!(
                         "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -433,7 +439,9 @@ mod spec04_tests {
                     let _ = s.write_all(h.as_bytes());
                     let _ = s.write_all(b);
                 } else {
-                    let _ = s.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    let _ = s.write_all(
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    );
                 }
             }
         });
