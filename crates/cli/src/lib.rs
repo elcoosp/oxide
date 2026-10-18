@@ -5326,10 +5326,53 @@ async fn start_server_inner_full(
         Some(tier) => tier,
         None => {
             let mut tier = oxide_cache::TieredCache::new(l0_bytes);
-            if let oxide_config::CacheHandlerConfig::Http { url } = &cfg.cache.handler {
-                tier = tier.with_remote(std::sync::Arc::new(
-                    oxide_cache::HttpCacheHandler::new(url.clone()),
-                ));
+            match &cfg.cache.handler {
+                oxide_config::CacheHandlerConfig::Memory => {}
+                oxide_config::CacheHandlerConfig::Disk => {
+                    // §11.2 L1: a durable local disk tier so a restart keeps
+                    // its cache. Failure (permissions) degrades to memory-only
+                    // with a warning rather than failing the boot.
+                    let dir = rootp.join(".oxide").join("cache").join("l1");
+                    // `with_disk` consumes `tier`; on failure it owns it. Use
+                    // a placeholder so both arms leave a usable value.
+                    match tier.with_disk(dir) {
+                        Ok(t) => tier = t,
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e.0.message,
+                                "cache.handler=disk: opening the disk tier failed; \
+                                 continuing memory-only",
+                            );
+                            tier = oxide_cache::TieredCache::new(l0_bytes);
+                        }
+                    }
+                }
+                oxide_config::CacheHandlerConfig::Http { url } => {
+                    tier = tier.with_remote(std::sync::Arc::new(
+                        oxide_cache::HttpCacheHandler::new(url.clone()),
+                    ));
+                }
+                oxide_config::CacheHandlerConfig::Redis { url } => {
+                    // A Redis driver is not shipped (the `redis` crate is not a
+                    // dependency). A configured Redis handler is honoured by
+                    // the HTTP protocol when a project fronts Redis with an
+                    // HTTP cache gateway; otherwise this is a loud no-op so the
+                    // misconfiguration is visible, not silent.
+                    tracing::warn!(
+                        url = %url,
+                        "cache.handler=redis is not implemented in this build; \
+                         use cache.handler={{type:'http',url}} against an HTTP cache \
+                         gateway, or 'disk' for a local tier",
+                    );
+                }
+                oxide_config::CacheHandlerConfig::S3 { bucket } => {
+                    tracing::warn!(
+                        bucket = %bucket,
+                        "cache.handler=s3 is not implemented in this build; \
+                         use cache.handler={{type:'http',url}} against an S3-backed \
+                         HTTP cache gateway",
+                    );
+                }
             }
             std::sync::Arc::new(tier)
         }
