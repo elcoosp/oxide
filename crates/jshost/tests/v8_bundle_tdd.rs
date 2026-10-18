@@ -51,8 +51,9 @@ async fn v8_evaluates_a_real_bundle_route_module() {
     assert_eq!(v["type"], "main", "got {v}");
     let children = v["props"]["children"].as_array().expect("children array");
     assert!(
-        children.iter().any(|c| c["type"] == "h1"
-            && c["props"]["children"].as_str() == Some("Home")),
+        children
+            .iter()
+            .any(|c| c["type"] == "h1" && c["props"]["children"].as_str() == Some("Home")),
         "expected the <h1>Home</h1> child, got {v}"
     );
 }
