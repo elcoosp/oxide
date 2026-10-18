@@ -5759,7 +5759,7 @@ async fn start_server_inner_full(
     let dispatch_h3 = std::sync::Arc::clone(&dispatch);
     let rx_h3 = rx.clone();
     let h3_bind = std::net::SocketAddr::new(bind_ip, port);
-    let mut rx_main = rx;
+    let rx_main = rx;
     tokio::spawn(async move {
         let bind_addr = std::net::SocketAddr::new(bind_ip, port);
         if let Some(h3_cfg) = http3_cfg {
@@ -5779,7 +5779,6 @@ async fn start_server_inner_full(
             tracing::error!(code = %e.0.code, "server stopped with error");
         }
     });
-    let _ = &mut rx_main;
     Ok(StartedServer {
         addr,
         shutdown: tx,
