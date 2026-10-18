@@ -9,7 +9,7 @@
 //!    subtags against the supported set.
 //! 2. Fall back to the configured default.
 
-use crate::{err, Result};
+use crate::{Result, err};
 use icu_locale_core::LanguageIdentifier;
 use std::collections::BTreeMap;
 use std::str::FromStr;
@@ -89,7 +89,9 @@ pub fn negotiate(cfg: &I18nConfig, accept_language: &str) -> String {
         if range.tag == "*" {
             return cfg.default.clone();
         }
-        let Some(range_li) = LanguageIdentifier::from_str(&range.tag).ok() else { continue };
+        let Some(range_li) = LanguageIdentifier::from_str(&range.tag).ok() else {
+            continue;
+        };
         // Exact match on the canonical form.
         if let Some(i) = supported.iter().position(|s| *s == range_li) {
             return supported_tags[i].clone();
@@ -278,7 +280,6 @@ impl Catalog {
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // ICU MessageFormat integration (spec §16.4)
 //
@@ -297,9 +298,7 @@ pub type IcuValues = std::collections::HashMap<String, IcuValue<String>>;
 /// Convert our JSON-shaped argument map into a formatjs `Values<String>`.
 /// Objects and arrays are stringified with `serde_json` so callers can pass
 /// anything without losing data.
-pub fn icu_values_from_json(
-    args: &BTreeMap<String, serde_json::Value>,
-) -> IcuValues {
+pub fn icu_values_from_json(args: &BTreeMap<String, serde_json::Value>) -> IcuValues {
     let mut out = IcuValues::with_capacity(args.len());
     for (k, v) in args {
         let value = match v {
@@ -340,12 +339,7 @@ impl MessageFormatter {
     ///
     /// Parse errors map to `AST-I18N`; runtime errors map to `AST-I18N-ARG`
     /// (missing argument or type mismatch).
-    pub fn format(
-        &self,
-        locale: &str,
-        template: &str,
-        values: &IcuValues,
-    ) -> Result<String> {
+    pub fn format(&self, locale: &str, template: &str, values: &IcuValues) -> Result<String> {
         let compiled = {
             let mut cache = self.cache.lock().unwrap_or_else(|p| p.into_inner());
             if let Some(c) = cache.get(template) {
@@ -367,18 +361,16 @@ impl MessageFormatter {
                 compiled
             }
         };
-        compiled
-            .format_to_string(locale, values)
-            .map_err(|e| {
-                let code = match e.code {
-                    formatjs_icu_messageformat::ErrorCode::Parse => "AST-I18N",
-                    formatjs_icu_messageformat::ErrorCode::MissingValue => "AST-I18N-ARG",
-                    formatjs_icu_messageformat::ErrorCode::InvalidValueType => "AST-I18N-TYPE",
-                    formatjs_icu_messageformat::ErrorCode::InvalidValue => "AST-I18N-ARG",
-                    _ => "AST-I18N",
-                };
-                err(code, format!("MessageFormat: {}", e.message))
-            })
+        compiled.format_to_string(locale, values).map_err(|e| {
+            let code = match e.code {
+                formatjs_icu_messageformat::ErrorCode::Parse => "AST-I18N",
+                formatjs_icu_messageformat::ErrorCode::MissingValue => "AST-I18N-ARG",
+                formatjs_icu_messageformat::ErrorCode::InvalidValueType => "AST-I18N-TYPE",
+                formatjs_icu_messageformat::ErrorCode::InvalidValue => "AST-I18N-ARG",
+                _ => "AST-I18N",
+            };
+            err(code, format!("MessageFormat: {}", e.message))
+        })
     }
 
     /// Drop cached templates. Useful in tests.
@@ -405,11 +397,7 @@ pub fn global_formatter() -> &'static MessageFormatter {
 
 /// Convenience: format a template directly, without a catalog. Uses the
 /// process-wide cache.
-pub fn format_icu_message(
-    locale: &str,
-    template: &str,
-    values: &IcuValues,
-) -> Result<String> {
+pub fn format_icu_message(locale: &str, template: &str, values: &IcuValues) -> Result<String> {
     global_formatter().format(locale, template, values)
 }
 
@@ -530,7 +518,6 @@ mod tests {
         assert_eq!(c.get("pt-BR", "hi", "en"), "Olá");
     }
 
-
     // ---------------- §16.4 ICU MessageFormat (formatjs) ----------------
 
     #[test]
@@ -631,8 +618,8 @@ mod tests {
     #[test]
     fn icu_messageformat_missing_argument_yields_ast_i18n_arg() {
         let values: BTreeMap<String, serde_json::Value> = BTreeMap::new();
-        let e = format_icu_message("en", "Hello, {name}!", &icu_values_from_json(&values))
-            .unwrap_err();
+        let e =
+            format_icu_message("en", "Hello, {name}!", &icu_values_from_json(&values)).unwrap_err();
         assert_eq!(e.0.code, "AST-I18N-ARG");
         assert!(e.0.message.contains("name"));
     }
@@ -641,12 +628,8 @@ mod tests {
     fn icu_messageformat_parse_error_yields_ast_i18n() {
         // Missing `other` clause is a parse error.
         let values: BTreeMap<String, serde_json::Value> = BTreeMap::new();
-        let e = format_icu_message(
-            "en",
-            "{n, plural, one {x}}",
-            &icu_values_from_json(&values),
-        )
-        .unwrap_err();
+        let e = format_icu_message("en", "{n, plural, one {x}}", &icu_values_from_json(&values))
+            .unwrap_err();
         assert_eq!(e.0.code, "AST-I18N");
     }
 
@@ -672,11 +655,18 @@ mod tests {
         let mut args = BTreeMap::new();
         args.insert("name".to_string(), serde_json::json!("Ada"));
 
-        assert_eq!(c.format_icu("en", "greeting", "x", &args).unwrap(), "Hello, Ada!");
-        assert_eq!(c.format_icu("fr", "greeting", "x", &args).unwrap(), "Bonjour, Ada !");
+        assert_eq!(
+            c.format_icu("en", "greeting", "x", &args).unwrap(),
+            "Hello, Ada!"
+        );
+        assert_eq!(
+            c.format_icu("fr", "greeting", "x", &args).unwrap(),
+            "Bonjour, Ada !"
+        );
         // Fall back through language subtag: `pt-BR` has no entry → falls to `en` via default.
         assert_eq!(
-            c.format_icu("pt-BR", "greeting", "Hello, {name}!", &args).unwrap(),
+            c.format_icu("pt-BR", "greeting", "Hello, {name}!", &args)
+                .unwrap(),
             "Hello, Ada!"
         );
     }
@@ -705,6 +695,9 @@ mod tests {
         c.insert("en", "welcome", "Welcome, {name}!");
         let mut args = BTreeMap::new();
         args.insert("name".to_string(), "Ada".to_string());
-        assert_eq!(c.format("en", "welcome", "fallback", &args), "Welcome, Ada!");
+        assert_eq!(
+            c.format("en", "welcome", "fallback", &args),
+            "Welcome, Ada!"
+        );
     }
 }
