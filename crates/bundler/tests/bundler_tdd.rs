@@ -178,15 +178,17 @@ fn client_bundle_excludes_server_only_modules_entirely() {
             .any(|m| m.server_only || m.resolved.to_string_lossy().contains(".server.")),
         "server modules leaked into the client graph"
     );
-    assert!(!out.chunks.iter().any(|c| c
-        .modules
-        .iter()
-        .any(|p| p.to_string_lossy().contains(".server."))));
+    assert!(!out.chunks.iter().any(|c| {
+        c.modules
+            .iter()
+            .any(|p| p.to_string_lossy().contains(".server."))
+    }));
     // the importer survives, but its `*.server` import statement is stripped
-    assert!(out
-        .modules
-        .iter()
-        .any(|m| m.resolved.ends_with("routes/index/page.tsx")));
+    assert!(
+        out.modules
+            .iter()
+            .any(|m| m.resolved.ends_with("routes/index/page.tsx"))
+    );
     let src = body(dir.path(), &chunk_named(&out, "index").file);
     assert!(
         !src.contains("x.server"),
@@ -232,10 +234,12 @@ fn module_used_by_two_entries_lands_in_shared_chunk() {
     let out = bundle(dir.path(), BundleEnv::Client, CLIENT_ENTRIES);
     let shared = shared_chunk(&out);
     assert_eq!(shared.name, "shared-0");
-    assert!(shared
-        .modules
-        .iter()
-        .any(|p| p.ends_with("components/Card.tsx")));
+    assert!(
+        shared
+            .modules
+            .iter()
+            .any(|p| p.ends_with("components/Card.tsx"))
+    );
     // exactly one shared chunk: the css rides with Card's chunk, not its own
     assert_eq!(
         out.chunks
@@ -265,10 +269,12 @@ fn single_entry_bundle_has_no_shared_chunk() {
     );
     assert!(!out.chunks.iter().any(|c| c.kind == ChunkKind::Shared));
     let entry = chunk_named(&out, "index");
-    assert!(entry
-        .modules
-        .iter()
-        .any(|p| p.ends_with("components/Card.tsx")));
+    assert!(
+        entry
+            .modules
+            .iter()
+            .any(|p| p.ends_with("components/Card.tsx"))
+    );
 }
 
 #[test]
@@ -301,9 +307,11 @@ fn chunks_and_css_files_are_written_non_empty_with_hashed_names() {
         let js = std::fs::read(dir.path().join("dist").join(&c.file)).unwrap();
         assert!(!js.is_empty(), "chunk {} is empty", c.file);
         for f in &c.css {
-            assert!(!std::fs::read(dir.path().join("dist").join(f))
-                .unwrap()
-                .is_empty());
+            assert!(
+                !std::fs::read(dir.path().join("dist").join(f))
+                    .unwrap()
+                    .is_empty()
+            );
         }
     }
     let entry = chunk_named(&out, "index");
@@ -470,10 +478,11 @@ fn import_cycle_completes_with_bld_cycle_diagnostic() {
             &[("cyc", "src/cyc/a.ts")],
         ))
         .unwrap();
-    assert!(out
-        .diagnostics
-        .iter()
-        .any(|d| d.code == "BLD-CYCLE" && d.message.contains("->")));
+    assert!(
+        out.diagnostics
+            .iter()
+            .any(|d| d.code == "BLD-CYCLE" && d.message.contains("->"))
+    );
     // all modules still placed (lexicographic fallback order), output non-empty
     let entry = chunk_named(&out, "cyc");
     assert!(entry.modules.iter().any(|p| p.ends_with("a.ts")));
@@ -497,10 +506,11 @@ fn unresolved_bare_import_yields_bld_resolve_but_completes() {
             &[("solo", "src/solo.ts")],
         ))
         .unwrap();
-    assert!(out
-        .diagnostics
-        .iter()
-        .any(|d| d.code == "BLD-RESOLVE" && d.message.contains("missing-pkg")));
+    assert!(
+        out.diagnostics
+            .iter()
+            .any(|d| d.code == "BLD-RESOLVE" && d.message.contains("missing-pkg"))
+    );
     assert!(out.modules.iter().any(|m| m.resolved.ends_with("solo.ts")));
     let entry = chunk_named(&out, "solo");
     assert!(!body(dir.path(), &entry.file).is_empty());
@@ -523,10 +533,11 @@ fn external_bare_import_is_silent_and_not_bundled() {
         "externals must be silent: {:?}",
         out.diagnostics
     );
-    assert!(!out
-        .modules
-        .iter()
-        .any(|m| m.resolved.to_string_lossy().contains("missing")));
+    assert!(
+        !out.modules
+            .iter()
+            .any(|m| m.resolved.to_string_lossy().contains("missing"))
+    );
     let src = body(dir.path(), &chunk_named(&out, "solo").file);
     assert!(
         src.contains("from \"missing-pkg\""),
@@ -558,11 +569,12 @@ fn sourcemap_flag_emits_map_files_and_comment() {
     o.sourcemap = true;
     let out = ChunkBundler::new(dir.path()).bundle(&o).unwrap();
     for c in &out.chunks {
-        assert!(dir
-            .path()
-            .join("dist")
-            .join(format!("{}.map", c.file))
-            .is_file());
+        assert!(
+            dir.path()
+                .join("dist")
+                .join(format!("{}.map", c.file))
+                .is_file()
+        );
         let src = body(dir.path(), &c.file);
         assert!(src.contains(&format!("//# sourceMappingURL={}.map", c.file)));
     }
@@ -630,7 +642,10 @@ fn css_transform_hook_rewrites_emitted_stylesheet() {
     let mut o = opts(dir.path(), BundleEnv::Client, CLIENT_ENTRIES);
     o.css_transform = Some(oxide_bundler::CssTransformHook::new(
         |path: &str, source: &str, is_module: bool, minify: bool| {
-            assert!(path.ends_with("card.css"), "hook saw unexpected path: {path}");
+            assert!(
+                path.ends_with("card.css"),
+                "hook saw unexpected path: {path}"
+            );
             assert!(!is_module, "card.css must not be treated as a CSS module");
             let _ = minify;
             let mut out = source.to_string();
