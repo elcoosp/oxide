@@ -112,7 +112,10 @@ impl FrameworkHost {
             has_body: false,
             request_id: format!("framework:render:{config_path}"),
             // PERF-02: affinity key = the route being rendered.
-            route: input.get("route").and_then(|v| v.as_str()).map(str::to_string),
+            route: input
+                .get("route")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
         };
         let entry = EntryRef {
             kind: "framework:render".into(),
@@ -125,13 +128,12 @@ impl FrameworkHost {
         // UTF-8 and return. Errors inside the adapter are delivered as
         // CallErr frames, which `.collect()` has already turned into Err,
         // so we do not need a `__oxide_error` sentinel in the payload.
-        String::from_utf8(bytes.to_vec())
-            .map_err(|e| {
-                crate::err(
-                    "JSH-FRAMEWORK",
-                    format!("framework:render returned non-UTF-8 bytes: {e}"),
-                )
-            })
+        String::from_utf8(bytes.to_vec()).map_err(|e| {
+            crate::err(
+                "JSH-FRAMEWORK",
+                format!("framework:render returned non-UTF-8 bytes: {e}"),
+            )
+        })
     }
 
     /// Streaming variant of [`render`]: hands back the raw [`CallStream`]
@@ -151,18 +153,17 @@ impl FrameworkHost {
     ///
     /// Callers **must** drain the stream to EOF. Leaving it un-drained keeps
     /// the channel alive, holding a worker slot in the pool.
-    pub async fn render_streaming(
-        &self,
-        config_path: &str,
-        input: Value,
-    ) -> Result<CallStream> {
+    pub async fn render_streaming(&self, config_path: &str, input: Value) -> Result<CallStream> {
         let call_input = CallInput {
             payload: serde_json::json!({ "path": config_path, "input": input }),
             headers: Default::default(),
             has_body: false,
             request_id: format!("framework:render:{config_path}"),
             // PERF-02: affinity key = the route being rendered.
-            route: input.get("route").and_then(|v| v.as_str()).map(str::to_string),
+            route: input
+                .get("route")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
         };
         let entry = EntryRef {
             kind: "framework:render".into(),
@@ -203,14 +204,12 @@ impl FrameworkHost {
         if let Some(err_msg) = v.get("__oxide_error").and_then(|x| x.as_str()) {
             return Err(crate::err("JSH-FRAMEWORK", err_msg.to_string()));
         }
-        v.get("generation")
-            .and_then(|x| x.as_u64())
-            .ok_or_else(|| {
-                crate::err(
-                    "JSH-FRAMEWORK",
-                    "framework:invalidate response missing `generation`",
-                )
-            })
+        v.get("generation").and_then(|x| x.as_u64()).ok_or_else(|| {
+            crate::err(
+                "JSH-FRAMEWORK",
+                "framework:invalidate response missing `generation`",
+            )
+        })
     }
 }
 
@@ -222,7 +221,9 @@ mod tests {
     use serde_json::json;
 
     /// A ScriptedHost that mimics the worker's responses for both ops.
-    fn host_with(kind_responses: impl Fn(&str, &Value) -> Value + Send + Sync + 'static) -> Arc<dyn Pool> {
+    fn host_with(
+        kind_responses: impl Fn(&str, &Value) -> Value + Send + Sync + 'static,
+    ) -> Arc<dyn Pool> {
         let host = ScriptedHost::with_handler(Arc::new(move |entry, input| {
             let v = kind_responses(&entry.kind, &input.payload);
             let bytes = serde_json::to_vec(&v).unwrap();
@@ -252,13 +253,17 @@ mod tests {
 
     #[tokio::test]
     async fn load_config_surfaces_worker_error() {
-        let pool = host_with(|_kind, _payload| {
-            json!({ "__oxide_error": "config at /x has no framework export" })
-        });
+        let pool = host_with(
+            |_kind, _payload| json!({ "__oxide_error": "config at /x has no framework export" }),
+        );
         let h = FrameworkHost::new(pool);
         let err = h.load_config("/x").await.unwrap_err();
         assert_eq!(err.0.code, "JSH-FRAMEWORK");
-        assert!(err.0.message.contains("no framework export"), "{}", err.0.message);
+        assert!(
+            err.0.message.contains("no framework export"),
+            "{}",
+            err.0.message
+        );
     }
 
     #[tokio::test]
@@ -374,10 +379,7 @@ mod tests {
                 buf.extend_from_slice(&c2);
                 buf.extend_from_slice(&c3);
                 assert_eq!(buf, html, "reassembled bytes match the original HTML");
-                assert_eq!(
-                    std::str::from_utf8(&buf).unwrap(),
-                    "<h1>Chunk</h1>"
-                );
+                assert_eq!(std::str::from_utf8(&buf).unwrap(), "<h1>Chunk</h1>");
             }
             other => panic!("expected Chunked, got {:?}", std::mem::discriminant(other)),
         }
@@ -388,7 +390,9 @@ mod tests {
         // The pool can return `Complete(bytes)` for small payloads. In the
         // new wire those bytes are raw HTML, not JSON.
         let host = ScriptedHost::with_handler(Arc::new(|_e, _i| {
-            Ok(CallStream::Complete(Bytes::from_static(b"<h1>complete</h1>")))
+            Ok(CallStream::Complete(Bytes::from_static(
+                b"<h1>complete</h1>",
+            )))
         }));
         let pool = host.tooling_pool(PoolConfig::default()).unwrap();
         let h = FrameworkHost::new(pool);
@@ -410,9 +414,8 @@ mod tests {
         // and `render` both surface them as Err. Verifies that a failing
         // adapter is reported to the caller rather than silently yielding
         // an empty HTML string.
-        let host = ScriptedHost::with_handler(Arc::new(|_e, _i| {
-            Err(crate::err("JSH-FRAMEWORK", "boom"))
-        }));
+        let host =
+            ScriptedHost::with_handler(Arc::new(|_e, _i| Err(crate::err("JSH-FRAMEWORK", "boom"))));
         let pool = host.tooling_pool(PoolConfig::default()).unwrap();
         let h = FrameworkHost::new(pool);
         let err = h
@@ -448,9 +451,8 @@ mod tests {
 
     #[tokio::test]
     async fn invalidate_surfaces_worker_error() {
-        let pool = host_with(|_kind, _payload| {
-            json!({ "__oxide_error": "invalidate not supported" })
-        });
+        let pool =
+            host_with(|_kind, _payload| json!({ "__oxide_error": "invalidate not supported" }));
         let h = FrameworkHost::new(pool);
         let err = h.invalidate().await.unwrap_err();
         assert_eq!(err.0.code, "JSH-FRAMEWORK");
@@ -465,5 +467,4 @@ mod tests {
         assert_eq!(err.0.code, "JSH-FRAMEWORK");
         assert!(err.0.message.contains("missing `generation`"));
     }
-
 }
