@@ -15,24 +15,29 @@ use std::path::{Path, PathBuf};
 mod content;
 pub mod content_collection;
 pub use content::{
-    parse_content_entry_with_format, parse_mdx_source, ContentFormat, MdxCompileRequest,
+    ContentFormat, MdxCompileRequest, parse_content_entry_with_format, parse_mdx_source,
 };
 pub use content_collection::{
-    build_search_index, check_references, scan_collection, search_index_to_json,
-    validate_collection, Collection, CollectionConfig, CollectionEntry, FieldType,
-    IndexedEntry, NativeSchema, SchemaKind, SearchIndex,
+    Collection, CollectionConfig, CollectionEntry, FieldType, IndexedEntry, NativeSchema,
+    SchemaKind, SearchIndex, build_search_index, check_references, scan_collection,
+    search_index_to_json, validate_collection,
 };
 mod css;
+mod font_metrics;
+pub mod i18n;
 mod images;
 mod lightningcss_backend;
-mod font_metrics;
 mod og_backend;
-pub mod i18n;
 
+pub use font_metrics::{
+    FontMetric, MetricOverrides, TIMES_NEW_ROMAN, metric_overrides, read_metrics,
+};
+pub use i18n::{
+    Catalog, I18nConfig, LanguageRange, href, locale_prefix, negotiate, parse_accept_language,
+    strip_locale_prefix,
+};
 pub use lightningcss_backend::LightningCssBackend;
-pub use font_metrics::{metric_overrides, read_metrics, FontMetric, MetricOverrides, TIMES_NEW_ROMAN};
 pub use og_backend::SvgOgBackend;
-pub use i18n::{href, locale_prefix, negotiate, parse_accept_language, strip_locale_prefix, Catalog, I18nConfig, LanguageRange};
 
 pub type Result<T> = std::result::Result<T, OxideError>;
 
@@ -117,7 +122,6 @@ pub struct CssOutput {
     pub exports: BTreeMap<String, String>,
     pub diagnostics: Vec<Diagnostic>,
 }
-
 
 /// Tailwind v4 integration point (§6.6): native plugin using the Rust scanner against
 /// graph-known files (no separate glob pass). This scanner extracts candidate utilities;
@@ -292,16 +296,16 @@ pub fn parse_image_request(query: &str) -> Result<ImageEndpointRequest> {
                 url = Some(percent_decode(v)?);
             }
             "w" => {
-                width = Some(
-                    v.parse::<u32>()
-                        .map_err(|_| err("AST-IMG-REQ", format!("`w` is not an integer: {v:?}")))?,
-                );
+                width =
+                    Some(v.parse::<u32>().map_err(|_| {
+                        err("AST-IMG-REQ", format!("`w` is not an integer: {v:?}"))
+                    })?);
             }
             "h" => {
-                height = Some(
-                    v.parse::<u32>()
-                        .map_err(|_| err("AST-IMG-REQ", format!("`h` is not an integer: {v:?}")))?,
-                );
+                height =
+                    Some(v.parse::<u32>().map_err(|_| {
+                        err("AST-IMG-REQ", format!("`h` is not an integer: {v:?}"))
+                    })?);
             }
             "format" => {
                 format = Some(match v.to_ascii_lowercase().as_str() {
@@ -310,10 +314,7 @@ pub fn parse_image_request(query: &str) -> Result<ImageEndpointRequest> {
                     "jpeg" | "jpg" => ImageFormat::Jpeg,
                     "png" => ImageFormat::Png,
                     other => {
-                        return Err(err(
-                            "AST-IMG-REQ",
-                            format!("unknown `format`: {other:?}"),
-                        ))
+                        return Err(err("AST-IMG-REQ", format!("unknown `format`: {other:?}")));
                     }
                 });
             }
@@ -334,7 +335,7 @@ pub fn parse_image_request(query: &str) -> Result<ImageEndpointRequest> {
                         return Err(err(
                             "AST-IMG-REQ",
                             format!("unknown `placeholder`: {other:?}"),
-                        ))
+                        ));
                     }
                 });
             }
@@ -420,7 +421,6 @@ pub trait FontBackend: Send + Sync {
 
 pub struct DefaultFontBackend;
 
-
 /// Compute metric overrides from the first font file that parses (skrifa). WOFF2
 /// input (compressed) or any parse failure returns `None`, so the caller falls back
 /// to a neutral 100% face.
@@ -428,7 +428,10 @@ fn metric_overrides_for(spec: &FontSpec) -> Option<font_metrics::MetricOverrides
     for p in &spec.local_paths {
         if let Ok(bytes) = std::fs::read(p) {
             if let Ok(m) = font_metrics::read_metrics(&bytes) {
-                return Some(font_metrics::metric_overrides(m, font_metrics::TIMES_NEW_ROMAN));
+                return Some(font_metrics::metric_overrides(
+                    m,
+                    font_metrics::TIMES_NEW_ROMAN,
+                ));
             }
         }
     }
@@ -515,8 +518,14 @@ impl FontBackend for DefaultFontBackend {
             Some(o) => {
                 css.push_str(&format!("  size-adjust: {:.2}%;\n", o.size_adjust));
                 css.push_str(&format!("  ascent-override: {:.2}%;\n", o.ascent_override));
-                css.push_str(&format!("  descent-override: {:.2}%;\n", o.descent_override));
-                css.push_str(&format!("  line-gap-override: {:.2}%;\n", o.line_gap_override));
+                css.push_str(&format!(
+                    "  descent-override: {:.2}%;\n",
+                    o.descent_override
+                ));
+                css.push_str(&format!(
+                    "  line-gap-override: {:.2}%;\n",
+                    o.line_gap_override
+                ));
             }
             None => {
                 // WOFF2 (compressed) or unparseable input: keep the neutral fallback.
