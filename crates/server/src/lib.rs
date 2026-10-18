@@ -8,24 +8,28 @@
 
 #![forbid(unsafe_code)]
 
+pub mod loader;
 pub mod metrics;
 pub mod page_renderer;
-pub mod loader;
 /// §12.1: the QUIC server config the CLI passes to `serve_http3`. Re-exported
 /// so the CLI does not depend on `quinn` directly.
 pub use quinn::ServerConfig as H3ServerConfig;
 
-pub use page_renderer::{EndpointDispatcher, EndpointRunError, EndpointRunResult, MiddlewareDispatcher, MiddlewareRunError, MiddlewareRunResult, PageRenderInput, PageRenderer, RenderStream, SocketDispatcher, SocketRunError, SocketRunResult};
 pub use loader::{LoaderOutput, LoaderRunInput, LoaderRunner};
+pub use page_renderer::{
+    EndpointDispatcher, EndpointRunError, EndpointRunResult, MiddlewareDispatcher,
+    MiddlewareRunError, MiddlewareRunResult, PageRenderInput, PageRenderer, RenderStream,
+    SocketDispatcher, SocketRunError, SocketRunResult,
+};
 pub mod session;
 pub use session::{Session, SessionCodec};
 pub mod trace_context;
 
 use bytes::Bytes;
 use flate2::write::GzEncoder;
+use futures::Stream;
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full, Limited};
-use futures::Stream;
 use std::pin::Pin;
 
 use hyper::body::Incoming;
@@ -35,8 +39,8 @@ use oxide_render::RequestTimings;
 use oxide_router::RulesEngine;
 use std::collections::BTreeMap;
 use std::io::Write as IoWrite;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, OxideError>;
@@ -80,15 +84,14 @@ pub fn is_secret_key(k: &str) -> bool {
 /// SPEC-24 / §20: one structured request log line with secret headers
 /// redacted. Emitted by the response finisher; under `OXIDE_LOG=json` the
 /// formatter renders it as a JSON object.
-fn log_request(
-    request_id: &str,
-    method: &str,
-    status: u16,
-    headers: &[(String, String)],
-) {
+fn log_request(request_id: &str, method: &str, status: u16, headers: &[(String, String)]) {
     let mut redacted = String::new();
     for (k, v) in headers {
-        let val = if is_secret_key(k) { "[redacted]" } else { v.as_str() };
+        let val = if is_secret_key(k) {
+            "[redacted]"
+        } else {
+            v.as_str()
+        };
         redacted.push_str(&format!("{k}={val} "));
     }
     tracing::info!(
@@ -103,14 +106,8 @@ fn log_request(
 /// A chunked response body stream. Each item is either a chunk of bytes
 /// or an I/O error that aborts the response (hyper closes the
 /// connection — a truncated 200 is never silently delivered).
-pub type BodyStream = Pin<
-    Box<
-        dyn Stream<Item = std::result::Result<Bytes, std::io::Error>>
-            + Send
-            + Sync
-            + 'static,
-    >,
->;
+pub type BodyStream =
+    Pin<Box<dyn Stream<Item = std::result::Result<Bytes, std::io::Error>> + Send + Sync + 'static>>;
 
 /// HTTP response produced by the pipeline. `body` is the collected form
 /// (used by tests, by `json()` / `html()` constructors, and by any
@@ -264,7 +261,20 @@ impl StaticAssets {
         let entry = self.index.get(path)?;
         let etag_raw = entry.etag.as_str();
         let etag_h = format!("\"{etag_raw}\"");
+        // §16.6: a service worker script must REVALIDATE on every fetch. A
+        // year-long immutable `sw.js` keeps serving the old precache list —
+        // an updated app never activates (the spec's PWA update story is
+        // dead on arrival). `pwa-register.js` is the registration shim and
+        // has the same requirement. Hashed build assets keep `immutable`
+        // (their names change with their content).
+        const SW_CACHE_CTL: &str = "public, max-age=0, must-revalidate";
         const CACHE_CTL: &str = "public, max-age=31536000, immutable";
+        let is_service_worker = path == "/sw.js" || path == "/pwa-register.js";
+        let cache_ctl: &str = if is_service_worker {
+            SW_CACHE_CTL
+        } else {
+            CACHE_CTL
+        };
 
         if let Some(inm) = req.header("if-none-match") {
             let matches = inm.split(',').map(|c| c.trim()).any(|cand| {
@@ -275,7 +285,7 @@ impl StaticAssets {
                 return Some(
                     OxideResponse::new(304, Bytes::new())
                         .with_header("ETag", etag_h)
-                        .with_header("Cache-Control", CACHE_CTL)
+                        .with_header("Cache-Control", cache_ctl)
                         .with_header("Vary", "Accept-Encoding"),
                 );
             }
@@ -300,7 +310,7 @@ impl StaticAssets {
                     // Range on a compressed variant → full 200 (no partial decode).
                     let len = body.len().to_string();
                     let mut resp = OxideResponse::new(200, Bytes::from(body));
-                    resp = with_asset_headers(resp, entry, &etag_h, CACHE_CTL);
+                    resp = with_asset_headers(resp, entry, &etag_h, cache_ctl);
                     resp.headers
                         .push(("Content-Encoding".into(), enc.to_string()));
                     resp.headers.push(("Content-Length".into(), len));
@@ -316,7 +326,7 @@ impl StaticAssets {
 
         if req.method.eq_ignore_ascii_case("HEAD") {
             let mut resp = OxideResponse::new(200, Bytes::new());
-            resp = with_asset_headers(resp, entry, &etag_h, CACHE_CTL);
+            resp = with_asset_headers(resp, entry, &etag_h, cache_ctl);
             resp.headers
                 .push(("Content-Length".into(), entry.size.to_string()));
             return Some(resp);
@@ -334,7 +344,7 @@ impl StaticAssets {
             },
             None => OxideResponse::new(200, Bytes::from(full)),
         };
-        resp = with_asset_headers(resp, entry, &etag_h, CACHE_CTL);
+        resp = with_asset_headers(resp, entry, &etag_h, cache_ctl);
         Some(resp)
     }
 }
@@ -520,13 +530,17 @@ pub fn compress_body(encoding: &str, body: &[u8], level: i32) -> Result<Bytes> {
         "gzip" => {
             let lvl = level.clamp(1, 9) as u32;
             let mut enc = GzEncoder::new(Vec::new(), flate2::Compression::new(lvl));
-            enc.write_all(body).map_err(|e| err("SRV-COMP", format!("gzip failed: {e}")))?;
-            let out = enc.finish().map_err(|e| err("SRV-COMP", format!("gzip failed: {e}")))?;
+            enc.write_all(body)
+                .map_err(|e| err("SRV-COMP", format!("gzip failed: {e}")))?;
+            let out = enc
+                .finish()
+                .map_err(|e| err("SRV-COMP", format!("gzip failed: {e}")))?;
             Ok(Bytes::from(out))
         }
         "zstd" => {
             let lvl = level.clamp(1, 19);
-            let out = zstd::bulk::compress(body, lvl).map_err(|e| err("SRV-COMP", format!("zstd failed: {e}")))?;
+            let out = zstd::bulk::compress(body, lvl)
+                .map_err(|e| err("SRV-COMP", format!("zstd failed: {e}")))?;
             Ok(Bytes::from(out))
         }
         "br" => {
@@ -534,7 +548,11 @@ pub fn compress_body(encoding: &str, body: &[u8], level: i32) -> Result<Bytes> {
             // map level 0 → quality 4 (the fastest sane setting for a per-request
             // dynamic path — the spec's `zstd`-preferred ordering is honoured by
             // the caller, brotli is the second choice).
-            let q = if level <= 0 { 4 } else { level.clamp(1, 11) as u32 };
+            let q = if level <= 0 {
+                4
+            } else {
+                level.clamp(1, 11) as u32
+            };
             let mut out = Vec::with_capacity(body.len() / 2);
             {
                 let mut w = brotli::CompressorWriter::new(&mut out, 4096, q, 22);
@@ -543,7 +561,10 @@ pub fn compress_body(encoding: &str, body: &[u8], level: i32) -> Result<Bytes> {
             }
             Ok(Bytes::from(out))
         }
-        other => Err(err("SRV-NOENC", format!("unsupported content encoding `{other}`"))),
+        other => Err(err(
+            "SRV-NOENC",
+            format!("unsupported content encoding `{other}`"),
+        )),
     }
 }
 
@@ -772,7 +793,11 @@ pub fn ip_in_cidr(ip: std::net::IpAddr, net: std::net::IpAddr, len: u8) -> bool 
         (std::net::IpAddr::V6(a), std::net::IpAddr::V6(n)) => {
             let a = u128::from(a);
             let n = u128::from(n);
-            let mask = if len == 0 { 0 } else { u128::MAX << (128 - len) };
+            let mask = if len == 0 {
+                0
+            } else {
+                u128::MAX << (128 - len)
+            };
             (a & mask) == (n & mask)
         }
         _ => false,
@@ -781,9 +806,9 @@ pub fn ip_in_cidr(ip: std::net::IpAddr, net: std::net::IpAddr, len: u8) -> bool 
 
 /// SEC-05: is `peer` inside any of the `trusted_proxies` CIDRs?
 pub fn peer_is_trusted(peer: std::net::IpAddr, trusted: &[String]) -> bool {
-    trusted.iter().any(|c| {
-        parse_cidr(c).is_some_and(|(net, len)| ip_in_cidr(peer, net, len))
-    })
+    trusted
+        .iter()
+        .any(|c| parse_cidr(c).is_some_and(|(net, len)| ip_in_cidr(peer, net, len)))
 }
 
 /// SEC-05: derive the effective client IP / scheme / host. A trusted peer has
@@ -822,10 +847,13 @@ pub fn dev_token() -> String {
         return s;
     }
     // Fallback (never on hosted platforms): the request-id counter path.
-    format!("{:016x}", std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0))
+    format!(
+        "{:016x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0)
+    )
 }
 
 /// SEC-09: does the request carry the dev session token? Accepts it as a
@@ -833,21 +861,16 @@ pub fn dev_token() -> String {
 /// compare (the token is a secret).
 fn dev_token_ok(req: &OxideRequest, want: &str) -> bool {
     let from_header = req.header("x-oxide-dev-token");
-    let from_query = req
-        .url
-        .split_once('?')
-        .map(|(_, q)| q)
-        .and_then(|q| {
-            q.split('&')
-                .find_map(|kv| kv.strip_prefix("token=").map(|v| v.to_string()))
-        });
+    let from_query = req.url.split_once('?').map(|(_, q)| q).and_then(|q| {
+        q.split('&')
+            .find_map(|kv| kv.strip_prefix("token=").map(|v| v.to_string()))
+    });
     let given = from_header.map(str::to_string).or(from_query);
     match given {
         Some(g) => {
             let a = g.as_bytes();
             let b = want.as_bytes();
-            a.len() == b.len()
-                && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+            a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
         }
         None => false,
     }
@@ -1011,14 +1034,15 @@ pub trait InspectorSnapshot: Send + Sync + std::fmt::Debug {
 
     /// Human-friendly HTML for `GET /__oxide`. Default wraps pretty JSON.
     fn render_html(&self) -> String {
-        let json = serde_json::to_string_pretty(&self.state_json())
-            .unwrap_or_else(|_| "{}".into());
+        let json = serde_json::to_string_pretty(&self.state_json()).unwrap_or_else(|_| "{}".into());
         format!(
             "<!doctype html><html><head><title>Oxide Inspector</title>\
              <style>body{{font:13px/1.5 ui-monospace,monospace;background:#0a0a0a;color:#e6e6e6;padding:24px}}\
              pre{{white-space:pre-wrap;word-break:break-word}}</style></head>\
              <body><h1>Oxide Inspector</h1><pre>{}</pre></body></html>",
-            json.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+            json.replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
         )
     }
 }
@@ -1039,7 +1063,9 @@ pub async fn forward_proxy(url: &str, req: OxideRequest) -> Result<OxideResponse
     > = OnceLock::new();
     let client = CLIENT.get_or_init(|| Client::builder(TokioExecutor::new()).build_http());
 
-    let mut builder = hyper::Request::builder().method(req.method.as_str()).uri(url);
+    let mut builder = hyper::Request::builder()
+        .method(req.method.as_str())
+        .uri(url);
     for (k, v) in &req.headers {
         builder = builder.header(k.as_str(), v.as_str());
     }
@@ -1136,7 +1162,12 @@ impl I18nPolicy {
             }
             let lang = tag.split('-').next().unwrap_or(tag);
             for loc in &self.locales {
-                if loc.split('-').next().unwrap_or(loc).eq_ignore_ascii_case(lang) {
+                if loc
+                    .split('-')
+                    .next()
+                    .unwrap_or(loc)
+                    .eq_ignore_ascii_case(lang)
+                {
                     return loc.clone();
                 }
             }
@@ -1302,7 +1333,11 @@ pub trait ServerFnDispatcher: Send + Sync {
     /// `Ok(bytes)` is the response body — the *encoded* return value, in
     /// whatever wire format the dispatcher and client agreed on. `Err` is
     /// a coded failure the pipeline turns into a 4xx/5xx envelope.
-    async fn dispatch(&self, id: &str, args_json: &[u8]) -> std::result::Result<Vec<u8>, DispatchError>;
+    async fn dispatch(
+        &self,
+        id: &str,
+        args_json: &[u8],
+    ) -> std::result::Result<Vec<u8>, DispatchError>;
 }
 
 /// A server-fn dispatch failure. The pipeline maps `status` to the HTTP
@@ -1524,10 +1559,7 @@ pub fn nonce_for(request_id: &str) -> String {
 /// tampered or unsigned request never reaches the backend. Errors carry a
 /// stable message so a client can tell "no signing secret configured" from
 /// "signature mismatch" from "unknown format".
-fn serve_image_endpoint(
-    endpoint: Option<&ImageEndpoint>,
-    raw_url: &str,
-) -> NativePrefix {
+fn serve_image_endpoint(endpoint: Option<&ImageEndpoint>, raw_url: &str) -> NativePrefix {
     let Some(endpoint) = endpoint else {
         return NativePrefix::Raw(
             OxideResponse::new(404, "image endpoint not configured")
@@ -1543,15 +1575,19 @@ fn serve_image_endpoint(
     let parsed = match crate::parse_image_query(&params_no_sig) {
         Ok(p) => p,
         Err(msg) => {
-            return NativePrefix::Raw(OxideResponse::new(400, format!("bad image request: {msg}"))
-                .with_header("content-type", "text/plain; charset=utf-8"));
+            return NativePrefix::Raw(
+                OxideResponse::new(400, format!("bad image request: {msg}"))
+                    .with_header("content-type", "text/plain; charset=utf-8"),
+            );
         }
     };
 
     if let Some(secret) = endpoint.signing_secret.as_deref() {
         let Some(sig) = parsed.signature.as_deref() else {
-            return NativePrefix::Raw(OxideResponse::new(403, "image request not signed")
-                .with_header("content-type", "text/plain; charset=utf-8"));
+            return NativePrefix::Raw(
+                OxideResponse::new(403, "image request not signed")
+                    .with_header("content-type", "text/plain; charset=utf-8"),
+            );
         };
         // Recompute exactly what the signer hashed: `path?params` with the
         // `s=` param stripped. `sign_image_url` takes the URL *before* the
@@ -1562,8 +1598,10 @@ fn serve_image_endpoint(
             format!("{path}?{params_no_sig}")
         };
         if !crate::verify_image_sig(&signed_form, secret, sig) {
-            return NativePrefix::Raw(OxideResponse::new(403, "image signature mismatch")
-                .with_header("content-type", "text/plain; charset=utf-8"));
+            return NativePrefix::Raw(
+                OxideResponse::new(403, "image signature mismatch")
+                    .with_header("content-type", "text/plain; charset=utf-8"),
+            );
         }
     }
 
@@ -1595,8 +1633,13 @@ fn serve_image_endpoint(
     }
     let path_only = parsed.url.split(['?', '#']).next().unwrap_or("");
     if !path_only.starts_with('/') {
-        return NativePrefix::Raw(OxideResponse::new(400, "image source must be a site-relative path or an https URL")
-            .with_header("content-type", "text/plain; charset=utf-8"));
+        return NativePrefix::Raw(
+            OxideResponse::new(
+                400,
+                "image source must be a site-relative path or an https URL",
+            )
+            .with_header("content-type", "text/plain; charset=utf-8"),
+        );
     }
     let rel = path_only.trim_start_matches('/');
     let abs = endpoint.asset_root.join(rel);
@@ -1604,27 +1647,35 @@ fn serve_image_endpoint(
     let canon_root = match endpoint.asset_root.canonicalize() {
         Ok(p) => p,
         Err(_) => {
-            return NativePrefix::Raw(OxideResponse::new(500, "image asset root missing")
-                .with_header("content-type", "text/plain; charset=utf-8"));
+            return NativePrefix::Raw(
+                OxideResponse::new(500, "image asset root missing")
+                    .with_header("content-type", "text/plain; charset=utf-8"),
+            );
         }
     };
     let canon_abs = match abs.canonicalize() {
         Ok(p) => p,
         Err(_) => {
-            return NativePrefix::Raw(OxideResponse::new(404, "image source not found")
-                .with_header("content-type", "text/plain; charset=utf-8"));
+            return NativePrefix::Raw(
+                OxideResponse::new(404, "image source not found")
+                    .with_header("content-type", "text/plain; charset=utf-8"),
+            );
         }
     };
     if !canon_abs.starts_with(&canon_root) {
-        return NativePrefix::Raw(OxideResponse::new(403, "image source escapes the asset root")
-            .with_header("content-type", "text/plain; charset=utf-8"));
+        return NativePrefix::Raw(
+            OxideResponse::new(403, "image source escapes the asset root")
+                .with_header("content-type", "text/plain; charset=utf-8"),
+        );
     }
 
     let source = match std::fs::read(&canon_abs) {
         Ok(b) => b,
         Err(_) => {
-            return NativePrefix::Raw(OxideResponse::new(404, "image source not readable")
-                .with_header("content-type", "text/plain; charset=utf-8"));
+            return NativePrefix::Raw(
+                OxideResponse::new(404, "image source not readable")
+                    .with_header("content-type", "text/plain; charset=utf-8"),
+            );
         }
     };
 
@@ -1646,7 +1697,10 @@ fn serve_image_endpoint(
                 .with_header("Cache-Control", "public, max-age=31536000, immutable")
                 .with_header(
                     "ETag",
-                    format!("\"{}\"", &result.cache_key[..16.min(result.cache_key.len())]),
+                    format!(
+                        "\"{}\"",
+                        &result.cache_key[..16.min(result.cache_key.len())]
+                    ),
                 )
                 .with_header("Vary", "Accept"),
         ),
@@ -1687,8 +1741,18 @@ fn parse_image_query(query: &str) -> std::result::Result<ImageQuery, String> {
                 }
                 url = Some(percent_decode(v));
             }
-            "w" => width = Some(v.parse::<u32>().map_err(|_| format!("`w` not an integer: {v:?}"))?),
-            "h" => height = Some(v.parse::<u32>().map_err(|_| format!("`h` not an integer: {v:?}"))?),
+            "w" => {
+                width = Some(
+                    v.parse::<u32>()
+                        .map_err(|_| format!("`w` not an integer: {v:?}"))?,
+                )
+            }
+            "h" => {
+                height = Some(
+                    v.parse::<u32>()
+                        .map_err(|_| format!("`h` not an integer: {v:?}"))?,
+                )
+            }
             "format" => {
                 format = Some(match v.to_ascii_lowercase().as_str() {
                     "avif" => "image/avif",
@@ -1699,7 +1763,9 @@ fn parse_image_query(query: &str) -> std::result::Result<ImageQuery, String> {
                 });
             }
             "q" | "quality" => {
-                let q = v.parse::<u32>().map_err(|_| format!("`q` not an integer: {v:?}"))?;
+                let q = v
+                    .parse::<u32>()
+                    .map_err(|_| format!("`q` not an integer: {v:?}"))?;
                 if q == 0 || q > 100 {
                     return Err(format!("`q` out of range: {q}"));
                 }
@@ -1801,12 +1867,8 @@ pub fn plan_remote_image_for_test(
         quality: None,
         signature: None,
     };
-    plan_remote_image(endpoint, &parsed).map_err(|r| {
-        (
-            r.status,
-            String::from_utf8_lossy(&r.body).into_owned(),
-        )
-    })
+    plan_remote_image(endpoint, &parsed)
+        .map_err(|r| (r.status, String::from_utf8_lossy(&r.body).into_owned()))
 }
 
 fn plan_remote_image(
@@ -1820,8 +1882,8 @@ fn plan_remote_image(
         OxideResponse::new(status, msg).with_header("content-type", "text/plain; charset=utf-8")
     };
 
-    let url = url::Url::parse(&parsed.url)
-        .map_err(|e| err(400, format!("invalid source URL: {e}")))?;
+    let url =
+        url::Url::parse(&parsed.url).map_err(|e| err(400, format!("invalid source URL: {e}")))?;
     let scheme = url.scheme().to_string();
     if scheme != "http" && scheme != "https" {
         return Err(err(400, "image URL scheme must be http or https".into()));
@@ -1835,10 +1897,16 @@ fn plan_remote_image(
         return Err(err(403, "remote image sources are not allowed".into()));
     }
     if !remote_pattern_allows(&endpoint.remote_patterns, &host, &scheme) {
-        return Err(err(403, format!("host {host:?} is not an allowed image source")));
+        return Err(err(
+            403,
+            format!("host {host:?} is not an allowed image source"),
+        ));
     }
     if !ssrf_allowed(&host, &endpoint.ssrf_allow_list) {
-        return Err(err(403, "image source resolves to a blocked network range".into()));
+        return Err(err(
+            403,
+            "image source resolves to a blocked network range".into(),
+        ));
     }
 
     // The request carries the resolved format; the fetch arm fills `source`.
@@ -1909,7 +1977,10 @@ async fn fetch_remote_image(
             .with_header("Cache-Control", "public, max-age=31536000, immutable")
             .with_header(
                 "ETag",
-                format!("\"{}\"", &result.cache_key[..16.min(result.cache_key.len())]),
+                format!(
+                    "\"{}\"",
+                    &result.cache_key[..16.min(result.cache_key.len())]
+                ),
             ),
         Err(msg) => err(400, format!("image transform failed: {msg}")),
     }
@@ -1989,7 +2060,11 @@ pub async fn ssrf_safe_fetch(
     } else {
         ip.to_string()
     };
-    let path = if current.path().is_empty() { "/" } else { current.path() };
+    let path = if current.path().is_empty() {
+        "/"
+    } else {
+        current.path()
+    };
     let query = current.query().map(|q| format!("?{q}")).unwrap_or_default();
     let connect_url = format!("{scheme}://{ip_lit}:{port}{path}{query}");
     let host_header = if (scheme == "http" && port == 80) || (scheme == "https" && port == 443) {
@@ -2092,14 +2167,14 @@ async fn fetch_remote_checked(
         } else {
             ip.to_string()
         };
-        let path = if current.path().is_empty() { "/" } else { current.path() };
-        let query = current
-            .query()
-            .map(|q| format!("?{q}"))
-            .unwrap_or_default();
+        let path = if current.path().is_empty() {
+            "/"
+        } else {
+            current.path()
+        };
+        let query = current.query().map(|q| format!("?{q}")).unwrap_or_default();
         let connect_url = format!("{scheme}://{ip_lit}:{port}{path}{query}");
-        let host_header = if (scheme == "http" && port == 80)
-            || (scheme == "https" && port == 443)
+        let host_header = if (scheme == "http" && port == 80) || (scheme == "https" && port == 443)
         {
             host.clone()
         } else {
@@ -2154,11 +2229,7 @@ async fn fetch_remote_checked(
 /// Match a remote host against `remotePatterns`. A pattern `host` matches
 /// the exact hostname (case-insensitive); `*.suffix` matches `x.suffix` and
 /// deeper. A pattern's `protocol` restricts the URL scheme.
-pub fn remote_pattern_allows(
-    patterns: &[RemoteImagePattern],
-    host: &str,
-    scheme: &str,
-) -> bool {
+pub fn remote_pattern_allows(patterns: &[RemoteImagePattern], host: &str, scheme: &str) -> bool {
     let host = host.to_ascii_lowercase();
     patterns.iter().any(|p| {
         if let Some(proto) = &p.protocol {
@@ -2212,8 +2283,9 @@ async fn run_server_fn(
             // envelope wraps it. If the dispatcher already produced a
             // full envelope (a future optimization), the double-wrap is
             // harmless because the client unwraps `data` anyway.
-            let data: serde_json::Value = serde_json::from_slice(&body)
-                .unwrap_or_else(|_| serde_json::Value::String(String::from_utf8_lossy(&body).into_owned()));
+            let data: serde_json::Value = serde_json::from_slice(&body).unwrap_or_else(|_| {
+                serde_json::Value::String(String::from_utf8_lossy(&body).into_owned())
+            });
             OxideResponse::json(200, serde_json::json!({ "ok": true, "data": data }))
         }
         Err(e) => OxideResponse::json(
@@ -2250,7 +2322,16 @@ pub async fn run_action(
         );
     };
     match dispatcher
-        .dispatch(module_path, action, form_json, params, url, method, headers, locals)
+        .dispatch(
+            module_path,
+            action,
+            form_json,
+            params,
+            url,
+            method,
+            headers,
+            locals,
+        )
         .await
     {
         Ok(out) => {
@@ -2300,7 +2381,6 @@ pub async fn run_action(
         }
     }
 }
-
 
 /// Result of the native (no-JS) prefix of the pipeline ([`Pipeline::native_prefix`]).
 enum NativePrefix {
@@ -2424,16 +2504,31 @@ impl Pipeline {
                 }
                 Box::pin(std::future::ready(finished))
             }
-            NativePrefix::RemoteImage { endpoint, request, format, rule_headers } => {
+            NativePrefix::RemoteImage {
+                endpoint,
+                request,
+                format,
+                rule_headers,
+            } => {
                 let request_id = req.request_id.clone();
                 let method = req.method.clone();
                 let cookie = req.header("cookie").map(str::to_string);
                 Box::pin(async move {
                     let resp = fetch_remote_image(endpoint, request, format).await;
-                    self.finish_response_with_request(resp, &rule_headers, &request_id, Some(&method), cookie.as_deref())
+                    self.finish_response_with_request(
+                        resp,
+                        &rule_headers,
+                        &request_id,
+                        Some(&method),
+                        cookie.as_deref(),
+                    )
                 })
             }
-            NativePrefix::ServerFn { id, args, rule_headers } => {
+            NativePrefix::ServerFn {
+                id,
+                args,
+                rule_headers,
+            } => {
                 // §9.4: the pipeline already checked method + content type
                 // + CSRF in `native_prefix`; this arm runs the user's
                 // function and builds the response envelope.
@@ -2443,7 +2538,13 @@ impl Pipeline {
                 let dispatch = self.server_fns.clone();
                 Box::pin(async move {
                     let resp = run_server_fn(dispatch.as_deref(), &id, &args).await;
-                    self.finish_response_with_request(resp, &rule_headers, &request_id, Some(&method), cookie.as_deref())
+                    self.finish_response_with_request(
+                        resp,
+                        &rule_headers,
+                        &request_id,
+                        Some(&method),
+                        cookie.as_deref(),
+                    )
                 })
             }
             NativePrefix::Dispatch(rule_headers, content_language) => {
@@ -2473,10 +2574,7 @@ impl Pipeline {
                         .any(|(k, _)| k.eq_ignore_ascii_case("server-timing"))
                     {
                         let ms = started_render.elapsed().as_secs_f64() * 1000.0;
-                        resp = resp.with_header(
-                            "Server-Timing",
-                            format!("total;dur={ms:.2}"),
-                        );
+                        resp = resp.with_header("Server-Timing", format!("total;dur={ms:.2}"));
                     }
                     // SPEC-10: the resolved locale rides the page response.
                     if let Some(loc) = &content_language {
@@ -2548,7 +2646,11 @@ impl Pipeline {
                 let neg = pol.negotiate(req.header("accept-language").unwrap_or(""));
                 if pol.prefixes(&neg) {
                     let loc = format!("/{neg}");
-                    let dest = if path == "/" { loc } else { format!("{loc}{path}") };
+                    let dest = if path == "/" {
+                        loc
+                    } else {
+                        format!("{loc}{path}")
+                    };
                     return NativePrefix::Raw(
                         OxideResponse::new(307, Bytes::new())
                             .with_header("Location", dest)
@@ -2598,15 +2700,12 @@ impl Pipeline {
                     }
                 }
             }
-            return NativePrefix::Raw(
-                OxideResponse::new(204, Bytes::new()),
-            );
+            return NativePrefix::Raw(OxideResponse::new(204, Bytes::new()));
         }
 
         // (3a.2) inspector endpoints (§13.4) — only when configured (dev only).
         if let Some(insp) = &self.inspector {
-            let is_inspector = (req.method.eq_ignore_ascii_case("GET")
-                && path == "/__oxide")
+            let is_inspector = (req.method.eq_ignore_ascii_case("GET") && path == "/__oxide")
                 || (req.method.eq_ignore_ascii_case("GET") && path == "/__oxide/state");
             if is_inspector {
                 // SEC-09: gate on the dev session token when one is set.
@@ -2639,13 +2738,8 @@ impl Pipeline {
         // (3c) image endpoint (§16.1). GET/HEAD only. The transform runs
         // in Rust, never entering JS; a missing endpoint or an invalid
         // request yields a coded 4xx that names the reason.
-        if req.method.eq_ignore_ascii_case("GET")
-            && path == "/_oxide/image"
-        {
-            return serve_image_endpoint(
-                self.image_endpoint.as_deref(),
-                &req.url,
-            );
+        if req.method.eq_ignore_ascii_case("GET") && path == "/_oxide/image" {
+            return serve_image_endpoint(self.image_endpoint.as_deref(), &req.url);
         }
 
         // (3d) server functions (§9.4): `POST /_oxide/fn/<id>`.
@@ -2721,7 +2815,11 @@ impl Pipeline {
                 oxide_router::RuleOutcome::Rewrite(_) | oxide_router::RuleOutcome::None => {}
             }
             let args = req.body.clone();
-            return NativePrefix::ServerFn { id, args, rule_headers };
+            return NativePrefix::ServerFn {
+                id,
+                args,
+                rule_headers,
+            };
         }
 
         // (4) static assets (§12.1 step 3 — BEFORE rules, per the spec order).
@@ -2852,17 +2950,12 @@ impl Pipeline {
                             // Only worth it if it actually shrank.
                             if compressed.len() < resp.body.len() {
                                 resp.body = compressed;
-                                resp.headers.retain(|(k, _)| {
-                                    !k.eq_ignore_ascii_case("content-length")
-                                });
-                                resp.headers.push((
-                                    "Content-Encoding".to_string(),
-                                    enc.clone(),
-                                ));
-                                resp.headers.push((
-                                    "Vary".to_string(),
-                                    "Accept-Encoding".to_string(),
-                                ));
+                                resp.headers
+                                    .retain(|(k, _)| !k.eq_ignore_ascii_case("content-length"));
+                                resp.headers
+                                    .push(("Content-Encoding".to_string(), enc.clone()));
+                                resp.headers
+                                    .push(("Vary".to_string(), "Accept-Encoding".to_string()));
                             }
                         }
                     }
@@ -2917,14 +3010,25 @@ impl Pipeline {
         // SPEC-24: one redacted request log line per finished response.
         log_request(request_id, method.unwrap_or(""), r.status, &r.headers);
         if self.security.csrf.eq_ignore_ascii_case("token")
-            && matches!(method.map(|m| m.to_ascii_uppercase()).as_deref(), Some("GET") | Some("HEAD"))
+            && matches!(
+                method.map(|m| m.to_ascii_uppercase()).as_deref(),
+                Some("GET") | Some("HEAD")
+            )
             && cookie_value(cookie_header.unwrap_or(""), "oxide_csrf").is_none()
         {
             use ring::rand::SecureRandom as _;
             let rng = ring::rand::SystemRandom::new();
             let mut bytes = [0u8; 16];
             if rng.fill(&mut bytes).is_ok() {
-                let hex: String = bytes.iter().flat_map(|b| [char::from_digit((b >> 4) as u32, 16).unwrap(), char::from_digit((b & 0xf) as u32, 16).unwrap()]).collect();
+                let hex: String = bytes
+                    .iter()
+                    .flat_map(|b| {
+                        [
+                            char::from_digit((b >> 4) as u32, 16).unwrap(),
+                            char::from_digit((b & 0xf) as u32, 16).unwrap(),
+                        ]
+                    })
+                    .collect();
                 r = r.with_header(
                     "Set-Cookie",
                     &format!("oxide_csrf={hex}; Path=/; SameSite=Lax"),
@@ -2948,11 +3052,7 @@ impl Pipeline {
 /// If the stream ends without a matching `close`, the tag is appended at the
 /// end (the shell is malformed HTML at that point anyway; the boot script
 /// still has to load).
-pub fn inject_before_close(
-    src: BodyStream,
-    close: &[u8],
-    tag: &[u8],
-) -> BodyStream {
+pub fn inject_before_close(src: BodyStream, close: &[u8], tag: &[u8]) -> BodyStream {
     use bytes::Bytes;
     use futures::StreamExt as _;
 
@@ -2965,8 +3065,7 @@ pub fn inject_before_close(
 
     let close_owned: Vec<u8> = close.to_vec();
     let tag_owned: Vec<u8> = tag.to_vec();
-    let (tx, mut rx) =
-        tokio::sync::mpsc::channel::<std::result::Result<Bytes, std::io::Error>>(8);
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<std::result::Result<Bytes, std::io::Error>>(8);
 
     tokio::spawn(async move {
         let close = close_owned;
@@ -3044,9 +3143,7 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 /// Convert between hyper and Oxide request/response (streaming bodies preserved via BoxBody).
-pub fn to_hyper_response(
-    resp: OxideResponse,
-) -> HyperResponse<BoxBody<Bytes, std::io::Error>> {
+pub fn to_hyper_response(resp: OxideResponse) -> HyperResponse<BoxBody<Bytes, std::io::Error>> {
     let has_len = resp
         .headers
         .iter()
@@ -3070,8 +3167,7 @@ pub fn to_hyper_response(
         BodyExt::boxed(Full::new(resp.body).map_err(|never| match never {}))
     };
 
-    let mut out: HyperResponse<BoxBody<Bytes, std::io::Error>> =
-        HyperResponse::new(boxed);
+    let mut out: HyperResponse<BoxBody<Bytes, std::io::Error>> = HyperResponse::new(boxed);
     *out.status_mut() = hyper::StatusCode::from_u16(resp.status)
         .unwrap_or(hyper::StatusCode::INTERNAL_SERVER_ERROR);
     for (k, v) in resp.headers {
@@ -3178,7 +3274,11 @@ fn next_request_id() -> String {
 fn bind_reusable(addr: std::net::SocketAddr) -> std::io::Result<tokio::net::TcpListener> {
     use socket2::{Domain, Protocol, Socket, Type};
 
-    let domain = if addr.is_ipv4() { Domain::IPV4 } else { Domain::IPV6 };
+    let domain = if addr.is_ipv4() {
+        Domain::IPV4
+    } else {
+        Domain::IPV6
+    };
     let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
     socket.set_reuse_address(true)?;
     // SO_REUSEPORT exists on Linux, macOS, and the BSDs. On Windows it does
@@ -3228,8 +3328,8 @@ impl Server {
         // §12.2: SO_REUSEPORT lets a new process bind the same port while the
         // old one is still draining, so restarts are zero-downtime. On
         // platforms where the option is unsupported, fall back to a plain bind.
-        let listener = bind_reusable(addr)
-            .map_err(|e| err("SRV-BIND", format!("cannot bind {addr}: {e}")))?;
+        let listener =
+            bind_reusable(addr).map_err(|e| err("SRV-BIND", format!("cannot bind {addr}: {e}")))?;
         let tls_acceptor = tls.map(tokio_rustls::TlsAcceptor::from);
         let mut shutdown = shutdown;
         // SEC-06: enforce the header-read timeout so a slowloris (a client
@@ -3382,10 +3482,9 @@ impl Server {
         use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
         let mut cert_reader = std::io::BufReader::new(cert_pem);
-        let certs: Vec<CertificateDer<'static>> =
-            rustls_pemfile::certs(&mut cert_reader)
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(|e| err("SRV-TLS", format!("cert parse failed: {e}")))?;
+        let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| err("SRV-TLS", format!("cert parse failed: {e}")))?;
         if certs.is_empty() {
             return Err(err(
                 "SRV-TLS",
@@ -3396,7 +3495,12 @@ impl Server {
         let mut key_reader = std::io::BufReader::new(key_pem);
         let key: PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_reader)
             .map_err(|e| err("SRV-TLS", format!("key parse failed: {e}")))?
-            .ok_or_else(|| err("SRV-TLS", "key PEM contains no PRIVATE KEY block".to_string()))?;
+            .ok_or_else(|| {
+                err(
+                    "SRV-TLS",
+                    "key PEM contains no PRIVATE KEY block".to_string(),
+                )
+            })?;
 
         let config = tokio_rustls::rustls::ServerConfig::builder()
             .with_no_client_auth()
@@ -3432,14 +3536,18 @@ fn ws_hmr_upgrade(
     };
     let on_upgrade = hyper::upgrade::on(&mut req);
     tokio::spawn(async move {
-        let Ok(upgraded) = on_upgrade.await else { return };
+        let Ok(upgraded) = on_upgrade.await else {
+            return;
+        };
         use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
         let io = hyper_util::rt::TokioIo::new(upgraded);
         let (mut rd, mut wr) = tokio::io::split(io);
         let mut rx = hub.subscribe();
         // The first message tells the client it is connected.
         let hello = format!("{{\"type\":\"connected\",\"build_id\":\"{}\"}}", "");
-        let _ = wr.write_all(&crate::ws::encode(&crate::ws::Frame::Text(hello), false)).await;
+        let _ = wr
+            .write_all(&crate::ws::encode(&crate::ws::Frame::Text(hello), false))
+            .await;
         let mut buf = [0u8; 4096];
         loop {
             tokio::select! {
@@ -3472,9 +3580,9 @@ fn ws_hmr_upgrade(
             }
         }
     });
-    let mut resp = HyperResponse::new(
-        BodyExt::boxed(Full::new(Bytes::new()).map_err(|never| match never {})),
-    );
+    let mut resp = HyperResponse::new(BodyExt::boxed(
+        Full::new(Bytes::new()).map_err(|never| match never {}),
+    ));
     *resp.status_mut() = hyper::StatusCode::SWITCHING_PROTOCOLS;
     let h = resp.headers_mut();
     h.insert(
@@ -3522,14 +3630,15 @@ fn ws_socket_upgrade(
     let on_upgrade = hyper::upgrade::on(&mut req);
     // One id per connection, so the worker can key per-socket state (a user
     // id stashed in `open` and read in `message`).
-    static NEXT_SOCKET_ID: std::sync::atomic::AtomicU64 =
-        std::sync::atomic::AtomicU64::new(1);
+    static NEXT_SOCKET_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let socket_id = format!(
         "sock-{}",
         NEXT_SOCKET_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
     tokio::spawn(async move {
-        let Ok(upgraded) = on_upgrade.await else { return };
+        let Ok(upgraded) = on_upgrade.await else {
+            return;
+        };
         use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
         let io = hyper_util::rt::TokioIo::new(upgraded);
         let (mut rd, mut wr) = tokio::io::split(io);
@@ -3537,20 +3646,40 @@ fn ws_socket_upgrade(
         let dispatcher = Arc::clone(&service.dispatcher);
 
         // `open` phase.
-        match dispatcher.run(&mp, "open", serde_json::Value::Null, &socket_id).await {
+        match dispatcher
+            .run(&mp, "open", serde_json::Value::Null, &socket_id)
+            .await
+        {
             Ok(out) => {
                 for text in &out.sends {
-                    if wr.write_all(&crate::ws::encode(&crate::ws::Frame::Text(text.clone()), false)).await.is_err() {
+                    if wr
+                        .write_all(&crate::ws::encode(
+                            &crate::ws::Frame::Text(text.clone()),
+                            false,
+                        ))
+                        .await
+                        .is_err()
+                    {
                         return;
                     }
                 }
                 if let Some((code, _)) = out.close {
-                    let _ = wr.write_all(&crate::ws::encode(&crate::ws::Frame::Close(Some(code)), false)).await;
+                    let _ = wr
+                        .write_all(&crate::ws::encode(
+                            &crate::ws::Frame::Close(Some(code)),
+                            false,
+                        ))
+                        .await;
                     return;
                 }
             }
             Err(_) => {
-                let _ = wr.write_all(&crate::ws::encode(&crate::ws::Frame::Close(Some(1011)), false)).await;
+                let _ = wr
+                    .write_all(&crate::ws::encode(
+                        &crate::ws::Frame::Close(Some(1011)),
+                        false,
+                    ))
+                    .await;
                 return;
             }
         }
@@ -3566,7 +3695,12 @@ fn ws_socket_upgrade(
             let (frames, consumed) = match crate::ws::decode(&buf) {
                 Ok(v) => v,
                 Err(_) => {
-                    let _ = wr.write_all(&crate::ws::encode(&crate::ws::Frame::Close(Some(1002)), false)).await;
+                    let _ = wr
+                        .write_all(&crate::ws::encode(
+                            &crate::ws::Frame::Close(Some(1002)),
+                            false,
+                        ))
+                        .await;
                     return;
                 }
             };
@@ -3579,7 +3713,14 @@ fn ws_socket_upgrade(
                         match dispatcher.run(&mp, "message", payload, &socket_id).await {
                             Ok(out) => {
                                 for send in &out.sends {
-                                    if wr.write_all(&crate::ws::encode(&crate::ws::Frame::Text(send.clone()), false)).await.is_err() {
+                                    if wr
+                                        .write_all(&crate::ws::encode(
+                                            &crate::ws::Frame::Text(send.clone()),
+                                            false,
+                                        ))
+                                        .await
+                                        .is_err()
+                                    {
                                         return;
                                     }
                                 }
@@ -3598,7 +3739,14 @@ fn ws_socket_upgrade(
                         let payload = serde_json::json!({ "data": b64, "binary": true });
                         if let Ok(out) = dispatcher.run(&mp, "message", payload, &socket_id).await {
                             for send in &out.sends {
-                                if wr.write_all(&crate::ws::encode(&crate::ws::Frame::Text(send.clone()), false)).await.is_err() {
+                                if wr
+                                    .write_all(&crate::ws::encode(
+                                        &crate::ws::Frame::Text(send.clone()),
+                                        false,
+                                    ))
+                                    .await
+                                    .is_err()
+                                {
                                     return;
                                 }
                             }
@@ -3608,7 +3756,9 @@ fn ws_socket_upgrade(
                         }
                     }
                     crate::ws::Frame::Ping(p) => {
-                        let _ = wr.write_all(&crate::ws::encode(&crate::ws::Frame::Pong(p), false)).await;
+                        let _ = wr
+                            .write_all(&crate::ws::encode(&crate::ws::Frame::Pong(p), false))
+                            .await;
                     }
                     crate::ws::Frame::Close(code) => {
                         close_code = Some(code.unwrap_or(1000));
@@ -3623,7 +3773,12 @@ fn ws_socket_upgrade(
                 // `close` phase before the socket goes away.
                 let payload = serde_json::json!({ "code": code, "reason": "" });
                 let _ = dispatcher.run(&mp, "close", payload, &socket_id).await;
-                let _ = wr.write_all(&crate::ws::encode(&crate::ws::Frame::Close(Some(code)), false)).await;
+                let _ = wr
+                    .write_all(&crate::ws::encode(
+                        &crate::ws::Frame::Close(Some(code)),
+                        false,
+                    ))
+                    .await;
                 return;
             }
         }
@@ -3632,9 +3787,9 @@ fn ws_socket_upgrade(
         let payload = serde_json::json!({ "code": 1006, "reason": "peer disconnected" });
         let _ = dispatcher.run(&mp, "close", payload, &socket_id).await;
     });
-    let mut resp = HyperResponse::new(
-        BodyExt::boxed(Full::new(Bytes::new()).map_err(|never| match never {})),
-    );
+    let mut resp = HyperResponse::new(BodyExt::boxed(
+        Full::new(Bytes::new()).map_err(|never| match never {}),
+    ));
     *resp.status_mut() = hyper::StatusCode::SWITCHING_PROTOCOLS;
     let h = resp.headers_mut();
     h.insert(
@@ -3657,10 +3812,7 @@ fn ws_socket_upgrade(
 /// §12.1: build a QUIC server config (quinn) from the same PEM certificate
 /// and key the TLS listener uses. HTTP/3 rides QUIC with TLS 1.3, so the
 /// cert/key are shared with the TCP/TLS listener.
-pub fn h3_config_from_pem(
-    cert_pem: &[u8],
-    key_pem: &[u8],
-) -> Result<quinn::ServerConfig> {
+pub fn h3_config_from_pem(cert_pem: &[u8], key_pem: &[u8]) -> Result<quinn::ServerConfig> {
     use quinn::crypto::rustls::QuicServerConfig;
     use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
@@ -3669,12 +3821,20 @@ pub fn h3_config_from_pem(
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|e| err("SRV-TLS", format!("h3 cert parse failed: {e}")))?;
     if certs.is_empty() {
-        return Err(err("SRV-TLS", "h3 cert PEM contains no CERTIFICATE blocks".to_string()));
+        return Err(err(
+            "SRV-TLS",
+            "h3 cert PEM contains no CERTIFICATE blocks".to_string(),
+        ));
     }
     let mut key_reader = std::io::BufReader::new(key_pem);
     let key: PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_reader)
         .map_err(|e| err("SRV-TLS", format!("h3 key parse failed: {e}")))?
-        .ok_or_else(|| err("SRV-TLS", "h3 key PEM contains no PRIVATE KEY block".to_string()))?;
+        .ok_or_else(|| {
+            err(
+                "SRV-TLS",
+                "h3 key PEM contains no PRIVATE KEY block".to_string(),
+            )
+        })?;
 
     // ALPN must advertise h3 for a QUIC client to speak HTTP/3.
     let mut tls = tokio_rustls::rustls::ServerConfig::builder()
@@ -3688,9 +3848,7 @@ pub fn h3_config_from_pem(
     // Idle timeout + keep-alive: a QUIC connection that stalls is dropped,
     // matching the TCP slowloris protection.
     let mut transport = quinn::TransportConfig::default();
-    transport.max_idle_timeout(Some(
-        std::time::Duration::from_secs(30).try_into().unwrap(),
-    ));
+    transport.max_idle_timeout(Some(std::time::Duration::from_secs(30).try_into().unwrap()));
     server.transport_config(std::sync::Arc::new(transport));
     Ok(server)
 }
@@ -3698,9 +3856,7 @@ pub fn h3_config_from_pem(
 /// §12.1: build a QUIC server config from an existing rustls `ServerConfig`
 /// (the same one the TCP/TLS listener uses). Adds the `h3` ALPN, which the
 /// TCP config does not carry.
-pub fn h3_config_from_tls(
-    tls: &tokio_rustls::rustls::ServerConfig,
-) -> Result<quinn::ServerConfig> {
+pub fn h3_config_from_tls(tls: &tokio_rustls::rustls::ServerConfig) -> Result<quinn::ServerConfig> {
     use quinn::crypto::rustls::QuicServerConfig;
     let mut tls = tls.clone();
     tls.alpn_protocols = vec![b"h3".to_vec()];
@@ -3708,9 +3864,7 @@ pub fn h3_config_from_tls(
         .map_err(|e| err("SRV-TLS", format!("h3 QUIC config failed: {e}")))?;
     let mut server = quinn::ServerConfig::with_crypto(std::sync::Arc::new(quic));
     let mut transport = quinn::TransportConfig::default();
-    transport.max_idle_timeout(Some(
-        std::time::Duration::from_secs(30).try_into().unwrap(),
-    ));
+    transport.max_idle_timeout(Some(std::time::Duration::from_secs(30).try_into().unwrap()));
     server.transport_config(std::sync::Arc::new(transport));
     Ok(server)
 }
@@ -3724,9 +3878,7 @@ pub async fn serve_http3(
     addr: std::net::SocketAddr,
     pipeline: Arc<Pipeline>,
     dispatch: Arc<
-        dyn Fn(OxideRequest) -> futures::future::BoxFuture<'static, OxideResponse>
-            + Send
-            + Sync,
+        dyn Fn(OxideRequest) -> futures::future::BoxFuture<'static, OxideResponse> + Send + Sync,
     >,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
     server_config: quinn::ServerConfig,
@@ -4117,7 +4269,10 @@ mod streaming_response_tests {
         // Streaming responses skip content-length; hyper uses chunked
         // transfer encoding.
         assert!(
-            hyper_resp.headers().get(hyper::header::CONTENT_LENGTH).is_none(),
+            hyper_resp
+                .headers()
+                .get(hyper::header::CONTENT_LENGTH)
+                .is_none(),
             "streaming response must not set content-length"
         );
 
@@ -4134,7 +4289,10 @@ mod streaming_response_tests {
         // silently.
         let items: Vec<std::result::Result<Bytes, std::io::Error>> = vec![
             Ok(Bytes::from_static(b"partial")),
-            Err(std::io::Error::new(std::io::ErrorKind::Other, "worker crashed")),
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "worker crashed",
+            )),
         ];
         let stream: BodyStream = Box::pin(stream::iter(items));
         let resp = OxideResponse::stream(200, stream);
