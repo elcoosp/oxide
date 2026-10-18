@@ -69,7 +69,11 @@ fn assert_all_chunks_parse_as_js(root: &Path) -> usize {
         node_check(&entry).unwrap_or_else(|e| panic!("{e}"));
         count += 1;
     }
-    assert!(count > 0, "no .js chunks were emitted under {}", root.display());
+    assert!(
+        count > 0,
+        "no .js chunks were emitted under {}",
+        root.display()
+    );
     count
 }
 
@@ -80,7 +84,9 @@ fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
     }
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for e in rd.flatten() {
             let p = e.path();
             if p.is_dir() {
@@ -105,7 +111,11 @@ fn ssr_chunk_emits_plain_js_for_tsx_page() {
          }\n",
     );
     let out = ChunkBundler::new(dir.path())
-        .bundle(&opts(dir.path(), BundleEnv::Ssr, &[("index", "src/routes/index/page.tsx")]))
+        .bundle(&opts(
+            dir.path(),
+            BundleEnv::Ssr,
+            &[("index", "src/routes/index/page.tsx")],
+        ))
         .unwrap();
     // no diagnostics from the compiler's parse pass
     assert!(
@@ -129,7 +139,11 @@ fn ssr_chunk_emits_plain_js_for_ts_loader() {
          }\n",
     );
     ChunkBundler::new(dir.path())
-        .bundle(&opts(dir.path(), BundleEnv::Ssr, &[("index", "src/routes/index/page.server.ts")]))
+        .bundle(&opts(
+            dir.path(),
+            BundleEnv::Ssr,
+            &[("index", "src/routes/index/page.server.ts")],
+        ))
         .unwrap();
     assert_all_chunks_parse_as_js(dir.path());
 }
@@ -145,7 +159,11 @@ fn client_chunk_emits_plain_js_for_tsx_page() {
          }\n",
     );
     ChunkBundler::new(dir.path())
-        .bundle(&opts(dir.path(), BundleEnv::Client, &[("index", "src/routes/index/page.tsx")]))
+        .bundle(&opts(
+            dir.path(),
+            BundleEnv::Client,
+            &[("index", "src/routes/index/page.tsx")],
+        ))
         .unwrap();
     assert_all_chunks_parse_as_js(dir.path());
 }
