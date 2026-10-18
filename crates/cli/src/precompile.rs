@@ -176,12 +176,21 @@ where
         if let Some(hit) = c.get(&key) {
             return Ok(hit);
         }
+        // §5.4: on a local miss, try the remote read-through before
+        // compiling. A remote hit is promoted to the local CAS so the next
+        // build is a local hit.
+        if let Some(hit) = c.get_remote(&key).await {
+            let _ = c.put(&key, &hit);
+            return Ok(hit);
+        }
     }
     let js = compile().await?;
     if let Some(c) = cache {
         if let Err(e) = c.put(&key, &js) {
             eprintln!("warn: precompile cache store failed: {}", e.0.message);
         }
+        // §5.4: write back through the remote so another job gets a hit.
+        c.put_remote(&key, &js).await;
     }
     Ok(js)
 }
