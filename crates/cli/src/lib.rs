@@ -12,11 +12,11 @@ use std::path::{Path, PathBuf};
 pub mod mcp;
 
 mod build_cache;
-mod precompile_cache;
-mod l0_cache;
-pub mod precompile;
 mod framework_shim;
+mod l0_cache;
 pub mod loader_shim;
+pub mod precompile;
+mod precompile_cache;
 /// `oxide secrets <op>` (§9.4 / BUG-05).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum SecretsOp {
@@ -247,14 +247,18 @@ fn init_tracing() {
 
     macro_rules! build {
         ($otel:expr) => {{
-            let base = tracing_subscriber::registry().with($otel).with(env_filter());
+            let base = tracing_subscriber::registry()
+                .with($otel)
+                .with(env_filter());
             if json {
-                Box::new(base.with(
-                    tracing_subscriber::fmt::layer()
-                        .with_target(false)
-                        .json()
-                        .flatten_event(true),
-                )) as Box<dyn tracing::Subscriber + Send + Sync>
+                Box::new(
+                    base.with(
+                        tracing_subscriber::fmt::layer()
+                            .with_target(false)
+                            .json()
+                            .flatten_event(true),
+                    ),
+                ) as Box<dyn tracing::Subscriber + Send + Sync>
             } else {
                 Box::new(base.with(tracing_subscriber::fmt::layer().with_target(false)))
                     as Box<dyn tracing::Subscriber + Send + Sync>
@@ -311,7 +315,11 @@ fn log_request(
 ) {
     let mut fields = String::new();
     for (k, v) in headers {
-        let val = if is_secret_key(k) { "[redacted]" } else { v.as_str() };
+        let val = if is_secret_key(k) {
+            "[redacted]"
+        } else {
+            v.as_str()
+        };
         fields.push_str(&format!("{k}={val} "));
     }
     tracing::info!(
@@ -385,7 +393,14 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
             cmd_dev(
                 &root,
                 once,
-                crate::DevFlags { host, https, qr, open, port, proxy },
+                crate::DevFlags {
+                    host,
+                    https,
+                    qr,
+                    open,
+                    port,
+                    proxy,
+                },
                 w,
             )
             .await
@@ -412,7 +427,14 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
         Command::Mcp { root } => cmd_mcp(&root, w).await,
         Command::Schema => cmd_schema(w),
         Command::Config { root, json } => cmd_config(&root, json, w).await,
-        Command::Render { root, route, url, params, data, stream } => cmd_render(&root, &route, url.as_deref(), &params, &data, stream, w).await,
+        Command::Render {
+            root,
+            route,
+            url,
+            params,
+            data,
+            stream,
+        } => cmd_render(&root, &route, url.as_deref(), &params, &data, stream, w).await,
     }
     .map_err(|e| {
         tracing::error!(error = %e, "command failed");
@@ -510,11 +532,7 @@ fn has_explicit_render_config(source: &str) -> bool {
     false
 }
 
-fn refine_render_modes_from_ast(
-    root: &Path,
-    cfg: &OxideConfig,
-    mut tree: RouteTree,
-) -> RouteTree {
+fn refine_render_modes_from_ast(root: &Path, cfg: &OxideConfig, mut tree: RouteTree) -> RouteTree {
     let routes_root = root.join(&cfg.routes.dir);
     for e in &mut tree.entries {
         if !matches!(e.kind, oxide_router::RouteKind::Page) {
@@ -526,7 +544,10 @@ fn refine_render_modes_from_ast(
             // therefore reads no request state — it is `static`. Without this
             // the mode stays `None`, and the §11 L0 layer cannot tell it can
             // be cached. An explicit mode the scanner already set is kept.
-            if matches!(e.render_mode.as_deref(), Some("static") | Some("dynamic") | None) {
+            if matches!(
+                e.render_mode.as_deref(),
+                Some("static") | Some("dynamic") | None
+            ) {
                 e.render_mode = Some("static".to_string());
             }
             continue;
@@ -544,7 +565,10 @@ fn refine_render_modes_from_ast(
         // or `dynamic` when it inferred, and the literal string from an
         // explicit `config.render` otherwise. An explicit `isr` / `spa` /
         // `islands` / `auto` is left as-is.
-        let inferred_by_scanner = matches!(e.render_mode.as_deref(), Some("static") | Some("dynamic") | None);
+        let inferred_by_scanner = matches!(
+            e.render_mode.as_deref(),
+            Some("static") | Some("dynamic") | None
+        );
         if !inferred_by_scanner {
             continue;
         }
@@ -560,9 +584,7 @@ fn scan_routes(root: &Path, cfg: &OxideConfig) -> anyhow::Result<RouteTree> {
     // (which it is when `root` itself is relative), the join produces
     // `root/root/src/routes`. An absolute override short-circuits that:
     // `PathBuf::join` returns the RHS unchanged when it's absolute.
-    let root_abs = root
-        .canonicalize()
-        .unwrap_or_else(|_| root.to_path_buf());
+    let root_abs = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let dir = root_abs.join(&cfg.routes.dir);
     RouteTree::scan_with_config(&root_abs, Some(&dir))
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))
@@ -664,16 +686,18 @@ fn generate_island_boot_entry(
     out.push_str(&format!(
         "import {{ clientAdapter }} from '@oxide/{framework}';\n"
     ));
-    out.push_str(
-        "import { bootWithRouter, installBootRuntime } from 'oxide/client/boot';\n",
-    );
+    out.push_str("import { bootWithRouter, installBootRuntime } from 'oxide/client/boot';\n");
     let mut idents: Vec<(String, String)> = Vec::new();
     for (name, src) in islands {
         let abs = root.join(src);
         let ident = format!(
             "__island_{}",
             name.chars()
-                .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+                .map(|c| if c.is_ascii_alphanumeric() || c == '_' {
+                    c
+                } else {
+                    '_'
+                })
                 .collect::<String>()
         );
         out.push_str(&format!(
@@ -689,32 +713,47 @@ fn generate_island_boot_entry(
     out.push_str("};\n\n");
     // §8.4 loading boundaries: a `route directory → loading component`
     // map. Each route's directory (e.g. `routes/`, `routes/blog/`) is
-    // emitted as a URL prefix (`/`, `/blog/`) so the client router can
-    // match the URL it is navigating to. The boot entry imports each
-    // loading module statically; a project without loading.tsx emits `{}`.
+    // emitted as a URL path key so the client router can match the URL it
+    // is navigating to. The boot entry imports each loading module
+    // statically; a project without loading.tsx emits `{}`.
+    //
+    // KEY CONTRACT (client matcher, §8.4): a key is an ABSOLUTE PATH whose
+    // segments may be `[name]` tokens (the literal bracket dir token the
+    // scanner keeps in route ids, e.g. `routes/blog/[slug]/loading` →
+    // `/blog/[slug]`). A `[name]` key segment matches exactly ONE
+    // non-empty URL segment; the longest key (most segments) wins; the
+    // root key is `/`. No trailing slash on non-root keys — the matcher
+    // compares segment-by-segment, so `/blog/[slug]` matches `/blog/x`
+    // (the old literal-prefix key `/blog/[slug]/` matched nothing).
     if !loading.is_empty() {
         let mut loading_idents: Vec<(String, String)> = Vec::new();
         for (route_id, src) in loading {
-            // `routes/blog/loading` → URL prefix `/blog/`. `routes/loading` → `/`.
-            let prefix = route_id
+            // `routes/blog/[slug]/loading` → `/blog/[slug]` (bracket tokens
+            // preserved verbatim). `routes/loading` → `/`.
+            let dir = route_id
                 .strip_suffix("/loading")
                 .unwrap_or(route_id)
                 .strip_prefix("routes")
                 .unwrap_or(route_id)
                 .to_string();
-            let url_prefix = if prefix.is_empty() { "/".to_string() } else { format!("{prefix}/") };
+            let url_key = if dir.is_empty() { "/".to_string() } else { dir };
             let abs = root.join(src);
             let ident = format!(
                 "__loading_{}",
-                route_id.chars()
-                    .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+                route_id
+                    .chars()
+                    .map(|c| if c.is_ascii_alphanumeric() || c == '_' {
+                        c
+                    } else {
+                        '_'
+                    })
                     .collect::<String>()
             );
             out.push_str(&format!(
                 "import {ident} from {:?};\n",
                 abs.to_string_lossy()
             ));
-            loading_idents.push((url_prefix, ident));
+            loading_idents.push((url_key, ident));
         }
         out.push_str("\nconst __loading_map = {\n");
         for (url_prefix, ident) in &loading_idents {
@@ -863,6 +902,90 @@ fn bundle_env_options(
 
 // ----------------------------------------------------------------- commands
 
+/// §13.3 (HMR route-data updates): map a changed `page.server.ts` back to
+/// its route's URL path pattern and re-run the route's loader so the
+/// published `route-data-update` HMR message carries REAL payload bytes.
+///
+/// Returns `(route_pattern, odf_b64)`:
+///   * `route_pattern` — the same key shape the §8.4 loading map emits: an
+///     absolute path whose segments may be `[name]` tokens (e.g.
+///     `/blog/[slug]`), derived from the route id; `/` for the root page.
+///     The previous publisher sent the FILE path, which no client matcher
+///     can compare against a URL.
+///   * `odf_b64` — the ODF-encoded `{route, url, params, data}` payload
+///     (the same `oxide_odf::encode_to_bytes` shape the live hydration
+///     payload and the L0 cache entries use), carrying the loader's FRESH
+///     data. Params are empty: a file change has no request context, and
+///     the inline HMR client re-fetches `/__data` for the concrete URL
+///     anyway — `odf_b64` is the offline fallback.
+///
+/// Any miss (not a page's server module, no loader host, loader error,
+/// encode error) degrades to `(file_path, "")` at the call site — the old
+/// shape — so a misfire is never worse than the previous behavior.
+async fn hmr_route_data_update(
+    changed: &Path,
+    rootp: &Path,
+    cfg: &OxideConfig,
+    tree: &oxide_router::RouteTree,
+    loader: Option<&std::sync::Arc<dyn oxide_server::LoaderRunner>>,
+) -> (String, String) {
+    // Only a PAGE route's `page.server.ts` triggers a data update (a
+    // `layout.server.ts` change maps to no single URL; the watcher falls
+    // back to the file-path message for those).
+    let routes_root = rootp.join(&cfg.routes.dir);
+    let owned = match tree.entries.iter().find(|e| {
+        matches!(e.kind, oxide_router::RouteKind::Page)
+            && routes_root.join(e.file.with_file_name("page.server.ts")) == changed
+    }) {
+        Some(e) => (
+            // Route id → URL path pattern (`routes/blog/[slug]/page` →
+            // `/blog/[slug]`), same derivation as the loading-map keys.
+            match e
+                .id
+                .0
+                .strip_suffix("/page")
+                .unwrap_or(&e.id.0)
+                .strip_prefix("routes")
+            {
+                Some(d) if !d.is_empty() => d.to_string(),
+                _ => "/".to_string(),
+            },
+            routes_root
+                .join(e.file.with_file_name("page.server.ts"))
+                .to_string_lossy()
+                .to_string(),
+            e.id.0.strip_suffix("/page").unwrap_or(&e.id.0).to_string(),
+        ),
+        None => return (String::new(), String::new()),
+    };
+    let (pattern, module_path, route_for_loader) = owned;
+    let Some(loader) = loader else {
+        return (pattern, String::new());
+    };
+    let input = oxide_server::LoaderRunInput::new(module_path, route_for_loader, pattern.clone());
+    match loader.run(input).await {
+        Ok(out) if out.status == 200 => {
+            let payload = serde_json::json!({
+                "route": pattern,
+                "url": pattern,
+                "params": {},
+                "data": out.data,
+            });
+            match oxide_odf::encode_to_bytes(&oxide_odf::Value::from_json(&payload)) {
+                Ok(bytes) => {
+                    use base64::Engine as _;
+                    (
+                        pattern,
+                        base64::engine::general_purpose::STANDARD.encode(&bytes),
+                    )
+                }
+                Err(_) => (pattern, String::new()),
+            }
+        }
+        _ => (pattern, String::new()),
+    }
+}
+
 /// `oxide dev` (§13). `--once` runs a single watch poll (test hook); otherwise the
 /// 200 ms poll loop runs until Ctrl-C.
 async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyhow::Result<i32> {
@@ -927,7 +1050,11 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             cert.key_pem.as_bytes(),
         )
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
-        outln!(w, "dev HTTPS enabled (self-signed; SANs: {})", cert.sans.join(", "));
+        outln!(
+            w,
+            "dev HTTPS enabled (self-signed; SANs: {})",
+            cert.sans.join(", ")
+        );
         Some(cfg)
     } else {
         None
@@ -955,8 +1082,17 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // §6.2: the plugin transform handler, attached to the render pool so the
     // worker's compile_module applies it (reaching the prerender path).
     let transform_handler = framework_shim::build_transform_handler(&rootp, &cfg);
-    let stack = framework_shim::build_framework_stack(config_path_opt.as_deref(),
-        cfg.server.backend, transform_handler).await;
+    // §11.2: thread the project's `cache.handler` into the stack so the tier
+    // the worker (and the L0 cache) actually uses honors the config — the
+    // CLI-side `stack.cache_tier == None` arm below is only for stacks built
+    // without a config (tests), so this is the only live wiring.
+    let stack = framework_shim::build_framework_stack(
+        config_path_opt.as_deref(),
+        cfg.server.backend,
+        transform_handler,
+        Some(&cfg.cache.handler),
+    )
+    .await;
     if let Some(name) = stack.renderer_name() {
         outln!(w, "framework renderer: {}", name);
     }
@@ -964,6 +1100,12 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // worker's module generation, so the next render/load re-evaluates the
     // edited module instead of serving the cached one.
     let hmr_pool: Option<std::sync::Arc<dyn oxide_jshost::Pool>> = stack.pool.clone();
+    // §13.3: keep a loader handle for the watcher too — a `page.server.ts`
+    // change re-runs the route's loader so the published HMR
+    // `route-data-update` message carries fresh ODF bytes (not an empty
+    // payload the client has to fetch itself).
+    let hmr_loader: Option<std::sync::Arc<dyn oxide_server::LoaderRunner>> =
+        stack.loader_runner.clone();
 
     // SPEC-14: the HMR hub. Created here, published to by the dev loop below,
     // and subscribed to by `/_oxide/hmr`.
@@ -1132,7 +1274,11 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         .entries
         .iter()
         .filter(|e| matches!(e.kind, oxide_router::RouteKind::Page))
-        .filter(|e| e.segments.iter().all(|s| !s.contains(':') && !s.contains('*')))
+        .filter(|e| {
+            e.segments
+                .iter()
+                .all(|s| !s.contains(':') && !s.contains('*'))
+        })
         .map(|e| {
             let path = if e.segments.is_empty() {
                 "/".to_string()
@@ -1168,13 +1314,37 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 let pstr = path.to_string_lossy().to_string();
                 let kind = oxide_dev::classify_path(&pstr);
                 match oxide_dev::hmr_behavior(kind) {
-                    HmrBehavior::StyleSwap => {
-                        hub.publish(HmrMessage::CssUpdate { path: pstr, code: String::new() })
-                    }
-                    HmrBehavior::ReloadData => hub.publish(HmrMessage::RouteDataUpdate {
-                        route: pstr,
-                        odf_b64: String::new(),
+                    HmrBehavior::StyleSwap => hub.publish(HmrMessage::CssUpdate {
+                        path: pstr,
+                        code: String::new(),
                     }),
+                    HmrBehavior::ReloadData => {
+                        // §13.3: a `page.server.ts` change re-runs the route's
+                        // loader and publishes the route's URL PATH PATTERN
+                        // (the loading-map key shape: `/blog/[slug]`) plus the
+                        // fresh ODF payload bytes. The old message carried the
+                        // FILE path + an empty payload — nothing the client
+                        // could match or apply. The inline HMR client (injected
+                        // with every dev page) fetches `/__data` for the live
+                        // URL and re-dispatches the data event; `odf_b64` is
+                        // its offline fallback. A non-page server module (e.g.
+                        // `layout.server.ts`) keeps the legacy file-path
+                        // message — `hmr_route_data_update` returns "" for it.
+                        let (route_pattern, odf_b64) =
+                            hmr_route_data_update(path, &rootp, &cfg, &tree, hmr_loader.as_ref())
+                                .await;
+                        if route_pattern.is_empty() {
+                            hub.publish(HmrMessage::RouteDataUpdate {
+                                route: pstr,
+                                odf_b64: String::new(),
+                            });
+                        } else {
+                            hub.publish(HmrMessage::RouteDataUpdate {
+                                route: route_pattern,
+                                odf_b64,
+                            });
+                        }
+                    }
                     HmrBehavior::AdapterHmr => hub.publish(HmrMessage::ModuleUpdate {
                         path: pstr,
                         boundary: String::new(),
@@ -1257,8 +1427,7 @@ fn compile_edge_wasm(root: &Path, dist: &Path) -> anyhow::Result<Option<PathBuf>
         ));
     }
     // Copy the produced .wasm next to the deploy artifact.
-    let produced = root
-        .join("target/wasm32-unknown-unknown/release/oxide_core_wasm.wasm");
+    let produced = root.join("target/wasm32-unknown-unknown/release/oxide_core_wasm.wasm");
     if produced.is_file() {
         std::fs::copy(&produced, &out)?;
         Ok(Some(out))
@@ -1266,7 +1435,6 @@ fn compile_edge_wasm(root: &Path, dist: &Path) -> anyhow::Result<Option<PathBuf>
         Ok(None)
     }
 }
-
 
 /// Emit a search index per configured content collection (§16.5). Writes
 /// `<dist>/content/<name>.index.json` — a deterministic JSON document the
@@ -1396,7 +1564,9 @@ fn emit_sitemap_and_robots(
         if f.extension().is_none_or(|x| x != "html") {
             continue;
         }
-        let Ok(rel) = f.strip_prefix(&prerendered_root) else { continue };
+        let Ok(rel) = f.strip_prefix(&prerendered_root) else {
+            continue;
+        };
         let rel_str = rel.to_string_lossy().replace('\\', "/");
         let path = url_path_from_rel(&format!("prerendered/{rel_str}"));
         let u = abs(&path);
@@ -1428,8 +1598,16 @@ fn emit_sitemap_and_robots(
         w,
         "sitemap: {} url(s){}{}",
         urls.len(),
-        if origin.is_some() { "" } else { " (relative — set siteUrl for absolute URLs)" },
-        if sitemap_url.is_some() { "" } else { " (no siteUrl; robots has no Sitemap: line)" },
+        if origin.is_some() {
+            ""
+        } else {
+            " (relative — set siteUrl for absolute URLs)"
+        },
+        if sitemap_url.is_some() {
+            ""
+        } else {
+            " (no siteUrl; robots has no Sitemap: line)"
+        },
     );
     Ok(())
 }
@@ -1446,7 +1624,12 @@ fn emit_sitemap_and_robots(
 /// rules (including the metric-override fallback faces that eliminate
 /// font-swap layout shift). A family whose files cannot be read is reported
 /// and skipped; fonts are never load-bearing for a build.
-fn emit_fonts(cfg: &oxide_config::OxideConfig, root: &Path, dist: &Path, w: Writer<'_>) -> anyhow::Result<()> {
+fn emit_fonts(
+    cfg: &oxide_config::OxideConfig,
+    root: &Path,
+    dist: &Path,
+    w: Writer<'_>,
+) -> anyhow::Result<()> {
     use oxide_assets::{DefaultFontBackend, FontBackend as _, FontSpec};
 
     if cfg.fonts.families.is_empty() {
@@ -1464,11 +1647,7 @@ fn emit_fonts(cfg: &oxide_config::OxideConfig, root: &Path, dist: &Path, w: Writ
             .iter()
             .map(|p| {
                 let pb = std::path::PathBuf::from(p);
-                if pb.is_absolute() {
-                    pb
-                } else {
-                    root.join(pb)
-                }
+                if pb.is_absolute() { pb } else { root.join(pb) }
             })
             .collect();
         let spec = FontSpec {
@@ -1546,7 +1725,13 @@ fn emit_snapshot_lint(
             .to_string_lossy()
             .to_string();
         for fx in oxide_jshost::lint_top_level_side_effects(&rel, &source) {
-            outln!(w, "warn: snapshot side effect at {}:{} — {}", fx.path, fx.line, fx.message);
+            outln!(
+                w,
+                "warn: snapshot side effect at {}:{} — {}",
+                fx.path,
+                fx.line,
+                fx.message
+            );
             count += 1;
         }
     }
@@ -1580,13 +1765,15 @@ fn emit_snapshot_blob(root: &Path, server_out: &Path, w: Writer<'_>) -> anyhow::
     // async, so run the snapshot on a dedicated thread where the inner runtime
     // is dropped outside any async context.
     let built = std::thread::spawn(oxide_jshost::snapshot_build_runtime)
-    .join()
-    .unwrap_or_else(|_| {
-        Err(oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
-            "SNP-PANIC",
-            "snapshot builder thread panicked",
-        )))
-    });
+        .join()
+        .unwrap_or_else(|_| {
+            Err(oxide_diagnostics::OxideError(
+                oxide_diagnostics::Diagnostic::error(
+                    "SNP-PANIC",
+                    "snapshot builder thread panicked",
+                ),
+            ))
+        });
 
     match built {
         Ok(snap) if !snap.blob.is_empty() => {
@@ -1731,7 +1918,11 @@ fn emit_config_bundle(
                                 if let Some(name) = src.file_name() {
                                     let dst = root.join(".oxide").join(name);
                                     std::fs::copy(&src, &dst).map_err(|err| {
-                                        anyhow::anyhow!("copy {} -> {}: {err}", src.display(), dst.display())
+                                        anyhow::anyhow!(
+                                            "copy {} -> {}: {err}",
+                                            src.display(),
+                                            dst.display()
+                                        )
                                     })?;
                                     copied += 1;
                                 }
@@ -1745,10 +1936,17 @@ fn emit_config_bundle(
                             anyhow::anyhow!("copy {} -> config.server.js: {e}", from.display())
                         })?;
                     }
-                    outln!(w, "config bundle: .oxide/config.server.js (+{} chunks)", copied.saturating_sub(1));
+                    outln!(
+                        w,
+                        "config bundle: .oxide/config.server.js (+{} chunks)",
+                        copied.saturating_sub(1)
+                    );
                 }
                 None => {
-                    outln!(w, "config bundle: no entry chunk produced; V8 will load the raw config");
+                    outln!(
+                        w,
+                        "config bundle: no entry chunk produced; V8 will load the raw config"
+                    );
                 }
             }
         }
@@ -1836,8 +2034,7 @@ self.addEventListener('fetch', (e) => {{\n\
             .and_then(|v| v.as_str())
             .unwrap_or("dev"),
     );
-    std::fs::write(dist.join("sw.js"), sw)
-        .map_err(|e| anyhow::anyhow!("write sw.js: {e}"))?;
+    std::fs::write(dist.join("sw.js"), sw).map_err(|e| anyhow::anyhow!("write sw.js: {e}"))?;
 
     let reg = "// Oxide PWA registration (§16.6).\n\
 if ('serviceWorker' in navigator) {\n\
@@ -1941,9 +2138,7 @@ fn inject_island_boot_script(shell: &str, boot_url: &str, nonce: &str) -> String
     // script tag — `'self'` alone is not enough. The prerender pass has the
     // build-time nonce (derived from build_id) in scope; the live server
     // path derives a per-request nonce and stamps it the same way.
-    let tag = format!(
-        r#"<script type="module" src="/{boot_url}" nonce="{nonce}"></script>"#
-    );
+    let tag = format!(r#"<script type="module" src="/{boot_url}" nonce="{nonce}"></script>"#);
     if let Some(idx) = shell.rfind("</body>") {
         let mut out = String::with_capacity(shell.len() + tag.len() + 1);
         out.push_str(&shell[..idx]);
@@ -1977,6 +2172,11 @@ async fn write_prerender(
     // adapter renders it on an SSR throw. Mirrors the live-dispatch
     // resolution — an error thrown while prerendering has the same
     // fallback path.
+    // STATUS NOTE (§10.2 step 5): a LIVE page that renders its error route
+    // returns HTTP 500 (the §10.2 error-status contract marker). A
+    // PRERENDERED error page is BAKED at build time into a static file and
+    // is served as a plain 200 — a static file has no status channel. This
+    // is a documented deviation, not an oversight.
     error_route_id: Option<&str>,
 ) -> anyhow::Result<String> {
     // §9.1: run the loader for this route (if the module exists and a
@@ -1984,6 +2184,12 @@ async fn write_prerender(
     // receives. Prerendered static pages previously always wrote `{}`
     // into PageRenderInput.data; they now run the real `load()`.
     let mut data = serde_json::Value::Object(Default::default());
+    // §7.1 / §10.2 step 5: resolved defer() values from the load. Prerender
+    // used to discard these — the generated page had defer slots that never
+    // resolved. They are injected as the same nonce'd script the live path
+    // emits (below).
+    let mut deferred_values: std::collections::BTreeMap<String, serde_json::Value> =
+        std::collections::BTreeMap::new();
     if let (Some(loader), Some(mp)) = (loader_runner, module_path) {
         // Match the route-id normalization the renderer will do so user
         // loaders see the same string in `event.route`.
@@ -2000,6 +2206,7 @@ async fn write_prerender(
         match loader.run(input).await {
             Ok(out) if out.status == 200 => {
                 data = out.data;
+                deferred_values = out.deferred;
             }
             Ok(out) => {
                 // Non-200 during build: emit an explicit diagnostic HTML
@@ -2094,11 +2301,26 @@ async fn write_prerender(
             "params": params,
             "data": data,
         });
-        let odf = oxide_odf::encode_to_bytes(&oxide_odf::Value::from_json(&payload))
-            .unwrap_or_default();
+        let odf =
+            oxide_odf::encode_to_bytes(&oxide_odf::Value::from_json(&payload)).unwrap_or_default();
         use base64::Engine as _;
-        injector.odf_payload_b64 =
-            Some(base64::engine::general_purpose::STANDARD.encode(&odf));
+        injector.odf_payload_b64 = Some(base64::engine::general_purpose::STANDARD.encode(&odf));
+    }
+    // §7.1 / §10.2 step 5: the resolved-deferred script, identical to the
+    // live path's (deferred_tag in build_dispatch). Serialized through
+    // serde_json (no untrusted concatenation) with `<` escaped so the
+    // content cannot break out of the tag. Without this, a prerendered
+    // page's DeferredClient slots stayed pending forever (the glue had a
+    // payload but no resolution script).
+    if !deferred_values.is_empty() {
+        let json = serde_json::to_string(&deferred_values).unwrap_or_else(|_| "{}".into());
+        // `</script>` and `<!--` inside a JSON string would terminate the
+        // tag; `<` escaping is the OWASP-recommended fix and produces valid
+        // JS (`\u003c`).
+        let safe = json.replace('<', "\\u003c");
+        injector.body_extra = format!(
+            r#"<script type="application/oxide-deferred" nonce="{nonce}">{safe}</script>"#,
+        );
     }
     let html = injector
         .inject_into_html(&shell)
@@ -2113,12 +2335,19 @@ async fn write_prerender(
     Ok(html)
 }
 
-/// PERF-01 / §8.4: answer a `/__data?route=<path>` request. Runs the
-/// matched route's loader (when one is attached) and returns the ODF-encoded
-/// `{route, url, params, data}` envelope the client router's
-/// `normalizeInput` expects. Always 200 with `application/oxide+odf` — a
-/// route with no loader returns empty data, not a 404 (the client treats a
-/// non-ok response as a navigation failure).
+/// PERF-01 / §8.4: answer a `/__data?route=<path>` request. Returns the
+/// ODF-encoded `{route, url, params, data, deferred, locale}` envelope the
+/// client router's `normalizeInput` expects (extra keys are ignored by
+/// today's client; the resolved-deferred map + locale are what make
+/// client-side navigation data MATCH the SSR render — §8.4 parity).
+///
+/// Parity contract: the dispatch re-matches `?route=` against the route
+/// tree BEFORE this runs, so the middleware phase (nearest-ancestor
+/// resolution + locals + headers) and the layout-load chain
+/// (`parent_data`) that ran for a full SSR render run here too. What is
+/// deliberately skipped is the RENDER — no adapter, no HTML, just loaders
+/// + ODF encode. Success is 200 with `application/oxide+odf`; a loader
+/// short-circuit (`error()`/`redirect()`) propagates its status/location.
 #[allow(clippy::too_many_arguments)]
 async fn route_data_response(
     req: &oxide_server::OxideRequest,
@@ -2128,6 +2357,15 @@ async fn route_data_response(
     params: &std::collections::BTreeMap<String, String>,
     metrics: &std::sync::Arc<oxide_server::Metrics>,
     started: std::time::Instant,
+    // §8.4 parity: the middleware phase ran before this branch; its locals
+    // feed the loads and its headers ride the response.
+    middleware_locals: &serde_json::Value,
+    middleware_headers: &[(String, String)],
+    // §9.2 parity: layout chain (outermost → innermost) for the data
+    // route, each entry `(layout id, layout.server.ts path)`.
+    layout_module_paths: &[(String, std::path::PathBuf)],
+    // SPEC-10: the resolved request locale.
+    locale: &str,
 ) -> oxide_server::OxideResponse {
     // `?route=<percent-encoded path>` (default `/`).
     let route_q = req
@@ -2141,7 +2379,62 @@ async fn route_data_response(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "/".to_string());
 
+    // §9.2: layout loads first (outer → inner), threading `parent_data`
+    // exactly like the render path. A layout short-circuit (redirect /
+    // error) short-circuits the data response too — client navigation must
+    // see what a full-page load would have seen.
+    let mut parent_data: serde_json::Value = serde_json::Value::Null;
+    if let Some(runner) = loader_runner {
+        for (lid, lpath) in layout_module_paths {
+            let mut linput = oxide_server::LoaderRunInput::new(
+                lpath.to_string_lossy().to_string(),
+                lid.clone(),
+                &route_q,
+            );
+            linput.method = req.method.clone();
+            linput.headers = req.headers.clone();
+            linput.params = params.clone();
+            linput.locals = middleware_locals.clone();
+            linput.locale = locale.to_string();
+            linput.parent_data = parent_data.clone();
+            match runner.run(linput).await {
+                Ok(out) if out.short_circuits() => {
+                    let body = out
+                        .data
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let mut resp = oxide_server::OxideResponse::new(out.status, body);
+                    if let Some(loc) = out.location {
+                        resp = resp.with_header("location", loc);
+                    }
+                    metrics.observe("_data", started.elapsed(), out.status);
+                    return resp;
+                }
+                Ok(out) => {
+                    parent_data = out.data;
+                }
+                Err(e) => {
+                    metrics.observe("_data", started.elapsed(), 500);
+                    return oxide_server::OxideResponse::html(
+                        500,
+                        format!(
+                            "layout loader error: {}",
+                            oxide_render::escape_text(&e.0.message)
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
     let mut data = serde_json::Value::Object(Default::default());
+    // §7.1 / §9.2: resolved defer() values — the /__data envelope carries
+    // them so the client router can resolve defer slots after a client-side
+    // navigation (previously dropped: nav data diverged from SSR data).
+    let mut deferred: std::collections::BTreeMap<String, serde_json::Value> =
+        std::collections::BTreeMap::new();
     if let (Some(runner), Some(mp), Some(rid)) = (loader_runner, module_path, route_id) {
         let route_for_loader = rid.strip_suffix("/page").unwrap_or(rid).to_string();
         let mut input = oxide_server::LoaderRunInput::new(
@@ -2149,10 +2442,37 @@ async fn route_data_response(
             route_for_loader,
             &route_q,
         );
+        input.method = req.method.clone();
+        input.headers = req.headers.clone();
         input.params = params.clone();
-        if let Ok(out) = runner.run(input).await {
-            if out.status == 200 {
+        input.locals = middleware_locals.clone();
+        input.locale = locale.to_string();
+        input.parent_data = parent_data;
+        match runner.run(input).await {
+            Ok(out) if out.short_circuits() => {
+                let body = out
+                    .data
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let mut resp = oxide_server::OxideResponse::new(out.status, body);
+                if let Some(loc) = out.location {
+                    resp = resp.with_header("location", loc);
+                }
+                metrics.observe("_data", started.elapsed(), out.status);
+                return resp;
+            }
+            Ok(out) => {
                 data = out.data;
+                deferred = out.deferred;
+            }
+            Err(e) => {
+                metrics.observe("_data", started.elapsed(), 500);
+                return oxide_server::OxideResponse::html(
+                    500,
+                    format!("loader error: {}", oxide_render::escape_text(&e.0.message)),
+                );
             }
         }
     }
@@ -2165,13 +2485,22 @@ async fn route_data_response(
         "url": route_q,
         "params": params,
         "data": data,
+        // §8.4 parity extras. `normalizeInput` ignores unknown keys today;
+        // the client re-render slice consumes them.
+        "deferred": deferred,
+        "locale": locale,
     });
     // §9.5 / D11: encode as ODF, the wire format the client decodes.
-    let body = oxide_odf::encode_to_bytes(&oxide_odf::Value::from_json(&payload))
-        .unwrap_or_default();
+    let body =
+        oxide_odf::encode_to_bytes(&oxide_odf::Value::from_json(&payload)).unwrap_or_default();
     metrics.observe("_data", started.elapsed(), 200);
-    oxide_server::OxideResponse::new(200, body)
-        .with_header("content-type", "application/oxide+odf")
+    let mut resp = oxide_server::OxideResponse::new(200, body)
+        .with_header("content-type", "application/oxide+odf");
+    // §8.5: headers the middleware phase added ride the data response too.
+    for (k, v) in middleware_headers {
+        resp = resp.with_header(k, v.clone());
+    }
+    resp
 }
 
 /// §9.4 / BUG-05: read (or create) the per-project build secret.
@@ -2247,8 +2576,14 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // §6.2: the plugin transform handler, attached to the render pool so the
     // worker's compile_module applies it (reaching the prerender path).
     let transform_handler = framework_shim::build_transform_handler(&rootp, &cfg);
-    let stack = framework_shim::build_framework_stack(config_path_opt.as_deref(),
-        cfg.server.backend, transform_handler).await;
+    // §11.2: `cache.handler` is honored inside the stack (see cmd_dev).
+    let stack = framework_shim::build_framework_stack(
+        config_path_opt.as_deref(),
+        cfg.server.backend,
+        transform_handler,
+        Some(&cfg.cache.handler),
+    )
+    .await;
     if let Some(name) = stack.renderer_name() {
         outln!(w, "framework renderer: {}", name);
     }
@@ -2281,47 +2616,67 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     use oxide_bundler::Bundler as _;
     outln!(w, "bundler: rolldown");
 
-    // §10.3 islands: if the config declares any, generate a synthetic boot
-    // entry that static-imports every island and wires the framework
-    // adapter's `hydrateIsland`. It is added as a `__boot__` client entry
-    // only — the server bundle stays island-free (server only needs to SSR
-    // the shell markup). The emitted boot chunk URL is injected into every
-    // prerendered page as `<script type="module" src="/<boot-url>">`.
+    // §10.3 islands + §8.4 client runtime: generate a synthetic boot entry
+    // whenever the project has PAGE routes (not only when it registers
+    // islands). The boot entry is the delivery vehicle for the client
+    // runtime's non-island glue: the client router (`bootWithRouter`),
+    // the §8.4 loading map, the defer glue's install (`installBootRuntime`)
+    // and the §16.6 PWA import. Gating it on islands left no-islands
+    // projects with none of those — a dynamic page hydrated nothing and
+    // navigated via full page loads. With zero islands the `modules` map
+    // is simply empty and island hydration is a no-op scan.
+    // It is added as a `__boot__` client entry only — the server bundle
+    // stays island-free (server only needs to SSR the shell markup). The
+    // emitted boot chunk URL is injected into every prerendered page as
+    // `<script type="module" src="/<boot-url>">`.
     let mut client_entries = entries.clone();
-    let boot_chunk_url: Option<String> = if cfg.framework.islands.is_empty() {
-        None
-    } else {
-        let framework = cfg
-            .framework
-            .adapter
-            .clone()
-            .or_else(|| cfg.framework.name.clone())
-            .unwrap_or_else(|| "react".to_string());
-        // §8.4 loading boundaries: route directory → on-disk loading.tsx path.
-        // `loading_entries` already has the route ids (from the entries scan);
-        // the boot generator turns each id into a URL prefix.
-        let mut loading_dir_map: BTreeMap<String, PathBuf> = BTreeMap::new();
-        for (route_id, path) in &loading_entries {
-            loading_dir_map.insert(route_id.clone(), path.clone());
+    let boot_chunk_url: Option<String> = {
+        let has_page_routes = tree
+            .entries
+            .iter()
+            .any(|e| matches!(e.kind, oxide_router::RouteKind::Page));
+        if !has_page_routes {
+            None
+        } else {
+            let framework = cfg
+                .framework
+                .adapter
+                .clone()
+                .or_else(|| cfg.framework.name.clone())
+                .unwrap_or_else(|| "react".to_string());
+            // §8.4 loading boundaries: route directory → on-disk loading.tsx path.
+            // `loading_entries` already has the route ids (from the entries scan);
+            // the boot generator turns each id into a URL path key.
+            let mut loading_dir_map: BTreeMap<String, PathBuf> = BTreeMap::new();
+            for (route_id, path) in &loading_entries {
+                loading_dir_map.insert(route_id.clone(), path.clone());
+            }
+            let boot_src = generate_island_boot_entry(
+                &rootp,
+                &framework,
+                &cfg.framework.islands,
+                &loading_dir_map,
+                cfg.manifest.is_some(),
+            );
+            let boot_dir = rootp.join(".oxide");
+            std::fs::create_dir_all(&boot_dir)?;
+            let boot_path = boot_dir.join("island-boot.mjs");
+            std::fs::write(&boot_path, boot_src)?;
+            client_entries.insert("__boot__".to_string(), boot_path);
+            if cfg.framework.islands.is_empty() {
+                outln!(
+                    w,
+                    "boot entry: __boot__ (client router + loading + defer glue, no islands)"
+                );
+            } else {
+                outln!(
+                    w,
+                    "islands: {} registered (boot entry __boot__)",
+                    cfg.framework.islands.len()
+                );
+            }
+            Some("__boot__".to_string())
         }
-        let boot_src = generate_island_boot_entry(
-            &rootp,
-            &framework,
-            &cfg.framework.islands,
-            &loading_dir_map,
-            cfg.manifest.is_some(),
-        );
-        let boot_dir = rootp.join(".oxide");
-        std::fs::create_dir_all(&boot_dir)?;
-        let boot_path = boot_dir.join("island-boot.mjs");
-        std::fs::write(&boot_path, boot_src)?;
-        client_entries.insert("__boot__".to_string(), boot_path);
-        outln!(
-            w,
-            "islands: {} registered (boot entry __boot__)",
-            cfg.framework.islands.len()
-        );
-        Some("__boot__".to_string())
     };
 
     // §6.3 precompile pass: run Vue / Svelte SFCs through the tooling pool
@@ -2392,10 +2747,18 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         emit_config_bundle(&cfg, &rootp, merged, w)?;
     }
     if !client_precompiled.is_empty() {
-        outln!(w, "precompiled {} SFC(s) for client", client_precompiled.len());
+        outln!(
+            w,
+            "precompiled {} SFC(s) for client",
+            client_precompiled.len()
+        );
     }
     if !server_precompiled.is_empty() {
-        outln!(w, "precompiled {} SFC(s) for server", server_precompiled.len());
+        outln!(
+            w,
+            "precompiled {} SFC(s) for server",
+            server_precompiled.len()
+        );
     }
 
     // §6.3: JSX runtime, resolved from the framework the config declares.
@@ -2471,7 +2834,9 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         let mut needs: Vec<String> = Vec::new();
         let mut stack = vec![rootp.clone()];
         while let Some(dir) = stack.pop() {
-            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            let Ok(rd) = std::fs::read_dir(&dir) else {
+                continue;
+            };
             for e in rd.flatten() {
                 let p = e.path();
                 if p.is_dir() {
@@ -2485,7 +2850,9 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 if !(name.ends_with(".ts") || name.ends_with(".tsx") || name.ends_with(".js")) {
                     continue;
                 }
-                let Ok(code) = std::fs::read_to_string(&p) else { continue };
+                let Ok(code) = std::fs::read_to_string(&p) else {
+                    continue;
+                };
                 for quote in ['\'', '"'] {
                     let pat = format!("{quote}node:");
                     let mut rest = code.as_str();
@@ -2495,9 +2862,9 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                             .chars()
                             .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
                             .collect();
-                        if let Some(reason) = oxide_jshost::v8_loader::requires_node_backend(
-                            &format!("node:{bname}"),
-                        ) {
+                        if let Some(reason) =
+                            oxide_jshost::v8_loader::requires_node_backend(&format!("node:{bname}"))
+                        {
                             needs.push(reason);
                         }
                         rest = &after[bname.len().min(after.len())..];
@@ -2538,7 +2905,9 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         // can live anywhere (`src/posts.server.ts`). Skip build/vendor dirs.
         let mut stack = vec![rootp.clone()];
         while let Some(dir) = stack.pop() {
-            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            let Ok(rd) = std::fs::read_dir(&dir) else {
+                continue;
+            };
             for e in rd.flatten() {
                 let p = e.path();
                 if p.is_dir() {
@@ -2573,7 +2942,10 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                             .collect();
                         // Build-time metadata the compiler consumes and never
                         // ships as a body.
-                        if matches!(ident.as_str(), "config" | "prerender" | "generateParams" | "load") {
+                        if matches!(
+                            ident.as_str(),
+                            "config" | "prerender" | "generateParams" | "load"
+                        ) {
                             continue;
                         }
                         // A function-ish RHS (`= async`, `= (`, `= function`,
@@ -2618,7 +2990,9 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         let mut client_code: Vec<(String, String)> = Vec::new();
         let mut stack = vec![client_out.clone()];
         while let Some(dir) = stack.pop() {
-            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            let Ok(rd) = std::fs::read_dir(&dir) else {
+                continue;
+            };
             for e in rd.flatten() {
                 let p = e.path();
                 if p.is_dir() {
@@ -2729,8 +3103,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     let mut seed_bodies: Vec<(String, String, String)> = Vec::new();
     // Routes with literal generateParams are effectively static regardless of
     // whether they also have a server module.
-    let mut static_override: std::collections::BTreeSet<String> =
-        std::collections::BTreeSet::new();
+    let mut static_override: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for e in &tree.entries {
         if !matches!(e.kind, oxide_router::RouteKind::Page) {
             continue;
@@ -2878,28 +3251,25 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 //
                 // When the pool isn't available (no Node), fall back to the
                 // previous honest notice — the route is skipped, not failed.
-                let params_via_worker: Option<
-                    Vec<std::collections::BTreeMap<String, String>>,
-                > = match (stack.pool.as_ref(), module_path.as_deref()) {
-                    (Some(pool), Some(mp)) => {
-                        let host = oxide_jshost::LoaderHost::new(
-                            std::sync::Arc::clone(pool),
-                        );
-                        match host.generate_params(&mp.to_string_lossy()).await {
-                            Ok(list) => Some(list),
-                            Err(e) => {
-                                outln!(
-                                    w,
-                                    "skip prerender for `{route_id}`: generateParams runtime evaluation failed: {} {}",
-                                    e.0.code,
-                                    e.0.message
-                                );
-                                None
+                let params_via_worker: Option<Vec<std::collections::BTreeMap<String, String>>> =
+                    match (stack.pool.as_ref(), module_path.as_deref()) {
+                        (Some(pool), Some(mp)) => {
+                            let host = oxide_jshost::LoaderHost::new(std::sync::Arc::clone(pool));
+                            match host.generate_params(&mp.to_string_lossy()).await {
+                                Ok(list) => Some(list),
+                                Err(e) => {
+                                    outln!(
+                                        w,
+                                        "skip prerender for `{route_id}`: generateParams runtime evaluation failed: {} {}",
+                                        e.0.code,
+                                        e.0.message
+                                    );
+                                    None
+                                }
                             }
                         }
-                    }
-                    _ => None,
-                };
+                        _ => None,
+                    };
 
                 match params_via_worker {
                     Some(params) if !params.is_empty() => {
@@ -3070,7 +3440,12 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // a separate `oxide routes` run. A typegen failure is a warning, not a
     // build failure — the app still ships.
     if let Err(e) = tree.typegen_with_root(&rootp, &rootp.join(&cfg.routes.dir)) {
-        outln!(w, "warn: typegen failed ({} {}); routes.d.ts is stale", e.0.code, e.0.message);
+        outln!(
+            w,
+            "warn: typegen failed ({} {}); routes.d.ts is stale",
+            e.0.code,
+            e.0.message
+        );
     }
 
     // Enrich the server manifest with inferred render modes + prerendered
@@ -3153,7 +3528,10 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 );
             }
             Err(e) => {
-                outln!(w, "edge wasm build failed: {e}; the Worker falls back to JS");
+                outln!(
+                    w,
+                    "edge wasm build failed: {e}; the Worker falls back to JS"
+                );
             }
         }
     }
@@ -3258,7 +3636,6 @@ impl oxide_server::InspectorSnapshot for CliInspector {
     }
 }
 
-
 /// Construct the production pipeline (§12.1) from config and start serving.
 /// The dispatch returns a placeholder page from the router match — the JS host wiring
 /// (NodeHost/isolate render) lives in oxide-jshost and plugs into this dispatch later.
@@ -3294,9 +3671,7 @@ pub async fn start_server(
 /// are preserved in the io error's text so a hyper-layer log line names
 /// the framework error. The kind is `Other` — there is no precise
 /// `ErrorKind` for "the worker crashed mid-render".
-fn render_stream_to_body_stream(
-    src: oxide_server::RenderStream,
-) -> oxide_server::BodyStream {
+fn render_stream_to_body_stream(src: oxide_server::RenderStream) -> oxide_server::BodyStream {
     render_stream_with_recovery(src, None, None, String::new())
 }
 
@@ -3360,12 +3735,63 @@ fn render_stream_with_recovery(
     Box::pin(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)))
 }
 
+/// §10.2 step 5 (error-status contract): peek the render stream's FIRST
+/// chunk and scan it for an error-status marker. Returns
+/// `(500 | 0, reassembled stream)` — the stream is byte-identical to the
+/// input (the peeked chunk is chained back in front).
+///
+/// Why only the first chunk: the response status is fixed before the body
+/// streams; HTTP cannot retroactively change a 200 to a 500 once bytes are
+/// on the wire. The adapter therefore announces an error render in the
+/// document's FIRST chunk:
+///   * `<!--oxide-status:500-->` — the canonical contract marker the
+///     adapter emits at the top of an error document (both the project's
+///     `error.tsx` render and the generic OX-500 fallback);
+///   * `data-ox-error='OX-500'` — the generic fallback boundary the adapter
+///     already emits (observable when the whole document lands in one
+///     chunk, e.g. the buffered `render_streaming` default).
+///
+/// TTFB cost: one first-chunk await — the shell chunk real adapters yield
+/// before awaiting the body stream, so the shell flush timing is unchanged.
+fn probe_render_error_status(
+    mut src: oxide_server::RenderStream,
+) -> impl std::future::Future<Output = (u16, oxide_server::RenderStream)> + Send {
+    use futures::StreamExt as _;
+    async move {
+        match src.next().await {
+            Some(Ok(first)) => {
+                let status = if chunk_signals_error(&first) { 500 } else { 0 };
+                let reassembled = futures::stream::once(async move { Ok(first) })
+                    .chain(src)
+                    .boxed();
+                (status, reassembled)
+            }
+            Some(Err(e)) => {
+                let reassembled = futures::stream::once(async move { Err(e) })
+                    .chain(src)
+                    .boxed();
+                (0, reassembled)
+            }
+            None => (0, src),
+        }
+    }
+}
+
+/// The error markers `probe_render_error_status` scans the first chunk for.
+fn chunk_signals_error(chunk: &bytes::Bytes) -> bool {
+    const CONTRACT_MARKER: &[u8] = b"<!--oxide-status:500-->";
+    const GENERIC_MARKER: &[u8] = b"data-ox-error='OX-500'";
+    fn has(hay: &[u8], needle: &[u8]) -> bool {
+        hay.windows(needle.len()).any(|w| w == needle)
+    }
+    has(chunk, CONTRACT_MARKER) || has(chunk, GENERIC_MARKER)
+}
+
 /// §10.3: splice `<script type="module" src="/<url>">` into a streaming HTML
 /// response right before the closing `</body>` tag. Works when `</body>` is
 /// split across chunk boundaries by keeping a rolling tail of the last
 /// `CLOSE.len() - 1` bytes and scanning for the tag on each new chunk.
 ///
-
 
 #[allow(clippy::too_many_arguments)]
 /// §9.3: parse an `application/x-www-form-urlencoded` body into the
@@ -3377,7 +3803,10 @@ fn parse_form_urlencoded(body: &[u8]) -> Vec<(String, String)> {
         .filter(|p| !p.is_empty())
         .map(|pair| {
             let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
-            (oxide_server::percent_decode(&k.replace('+', " ")), oxide_server::percent_decode(&v.replace('+', " ")))
+            (
+                oxide_server::percent_decode(&k.replace('+', " ")),
+                oxide_server::percent_decode(&v.replace('+', " ")),
+            )
         })
         .collect()
 }
@@ -3424,9 +3853,7 @@ fn build_dispatch(
     // (connects to `/_oxide/hmr`, swaps CSS, reloads on server updates, shows
     // the error overlay). `false` in production.
     dev_hmr: bool,
-) -> std::sync::Arc<
-    dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
-> {
+) -> std::sync::Arc<dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync> {
     let boot_script_url_for_render = boot_script_url.clone();
     let dev_hmr_for_render = dev_hmr;
     let actions_for_dispatch = actions.clone();
@@ -3438,9 +3865,7 @@ fn build_dispatch(
     let flight_map: std::sync::Arc<
         dashmap::DashMap<
             String,
-            std::sync::Arc<
-                tokio::sync::broadcast::Sender<std::sync::Arc<oxide_cache::Entry>>,
-            >,
+            std::sync::Arc<tokio::sync::broadcast::Sender<std::sync::Arc<oxide_cache::Entry>>>,
         >,
     > = std::sync::Arc::new(dashmap::DashMap::new());
     // §8.5: a middleware `{ rewrite }` re-routes the request to another path.
@@ -3450,1153 +3875,1283 @@ fn build_dispatch(
     // hop header, so the new URL goes through the normal match → loader →
     // render path. The hop header prevents an infinite rewrite loop (a
     // middleware that always rewrites to itself would otherwise spin).
-    let self_dispatch: std::sync::Arc<std::sync::OnceLock<
-        std::sync::Arc<
-            dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
+    let self_dispatch: std::sync::Arc<
+        std::sync::OnceLock<
+            std::sync::Arc<dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync>,
         >,
-    >> = std::sync::Arc::new(std::sync::OnceLock::new());
+    > = std::sync::Arc::new(std::sync::OnceLock::new());
     let self_dispatch_for_closure = std::sync::Arc::clone(&self_dispatch);
     let dispatch_fn: std::sync::Arc<
         dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
     > = std::sync::Arc::new(move |req: oxide_server::OxideRequest| {
-            let started = std::time::Instant::now();
-            // Rewrite-hop guard (§8.5): a request that already carries the
-            // rewrite header is a re-dispatch. Cap the number of hops so a
-            // middleware that unconditionally rewrites cannot loop.
-            let rewrite_hop: u32 = req
-                .header("x-oxide-rewrite-hop")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(0);
-            let _is_rewritten = rewrite_hop > 0;
-            if rewrite_hop > 8 {
+        let started = std::time::Instant::now();
+        // Rewrite-hop guard (§8.5): a request that already carries the
+        // rewrite header is a re-dispatch. Cap the number of hops so a
+        // middleware that unconditionally rewrites cannot loop.
+        let rewrite_hop: u32 = req
+            .header("x-oxide-rewrite-hop")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let _is_rewritten = rewrite_hop > 0;
+        if rewrite_hop > 8 {
+            return Box::pin(async move {
+                oxide_server::OxideResponse::html(
+                    508,
+                    "middleware rewrite loop detected (too many hops)",
+                )
+            });
+        }
+        // PERF-02: surface the pool's live gauges into the metrics registry.
+        if let Some(p) = pool.as_ref() {
+            let s = p.stats();
+            metrics.observe_pool(s.workers, s.in_flight, s.queue_wait_ms_p99);
+        }
+        let raw = req.url.split(['?', '#']).next().unwrap_or("/").to_string();
+
+        // §13.5 proxy: if the request matches a rule, forward upstream and
+        // skip routing entirely. Response is passed through unchanged.
+        if !proxy_rules.is_empty() {
+            let query = req.url.split_once('?').map(|(_, q)| q.to_string());
+            if let Some(m) = oxide_dev::apply_proxy(&proxy_rules, &raw, query.as_deref()) {
+                let url = m.url.clone();
+                let m_rule = m.rule.prefix.clone();
+                let metrics_proxy = std::sync::Arc::clone(&metrics);
+                let req_owned = req.clone();
                 return Box::pin(async move {
-                    oxide_server::OxideResponse::html(
-                        508,
-                        "middleware rewrite loop detected (too many hops)",
-                    )
-                });
-            }
-            // PERF-02: surface the pool's live gauges into the metrics registry.
-            if let Some(p) = pool.as_ref() {
-                let s = p.stats();
-                metrics.observe_pool(s.workers, s.in_flight, s.queue_wait_ms_p99);
-            }
-            let raw = req.url.split(['?', '#']).next().unwrap_or("/").to_string();
-
-            // §13.5 proxy: if the request matches a rule, forward upstream and
-            // skip routing entirely. Response is passed through unchanged.
-            if !proxy_rules.is_empty() {
-                let query = req.url.split_once('?').map(|(_, q)| q.to_string());
-                if let Some(m) = oxide_dev::apply_proxy(
-                    &proxy_rules,
-                    &raw,
-                    query.as_deref(),
-                ) {
-                    let url = m.url.clone();
-                    let m_rule = m.rule.prefix.clone();
-                    let metrics_proxy = std::sync::Arc::clone(&metrics);
-                    let req_owned = req.clone();
-                    return Box::pin(async move {
-                        match oxide_server::forward_proxy(&url, req_owned).await {
-                            Ok(r) => {
-                                metrics_proxy.observe("_proxy", started.elapsed(), r.status);
-                                r
-                            }
-                            Err(e) => {
-                                tracing::warn!(rule = %m_rule, error = %e, "proxy forward failed");
-                                let r = oxide_server::OxideResponse::new(
-                                    502,
-                                    format!("proxy upstream error: {}", e.0.message),
-                                );
-                                metrics_proxy.observe("_proxy", started.elapsed(), 502);
-                                r
-                            }
-                        }
-                    });
-                }
-            }
-            // Route conventions: the root page module is `index`, so `/` maps to
-            // the `/index` pattern (spec §8.1); trailing slashes are folded too.
-            let normalized = if raw.len() > 1 && raw.ends_with('/') {
-                raw.trim_end_matches('/').to_string()
-            } else {
-                raw
-            };
-            // §11.3 / BUG-01: remember the request path. The L0 entry for
-            // this request is tagged `path:<req_path>` so a `revalidate.path`
-            // event (which reaches the dispatch via `x-oxide-revalidate`)
-            // actually invalidates it. Without this, entries are tagged with
-            // the *route id* only, and path events match nothing.
-            let req_path = normalized.clone();
-            // SPEC-10 / §16.4: resolve the request locale when the project
-            // configures i18n — path prefix first, then `Accept-Language`,
-            // then the default. Empty when no i18n is configured.
-            // `i18n_cfg` is captured by the dispatch closure (built from config
-            // before any request); `req` supplies the header.
-            let resolved_locale: String = match i18n_cfg.as_ref() {
-                Some(a) => {
-                    let stripped = oxide_assets::i18n::strip_locale_prefix(a, &req_path);
-                    let from_path = stripped.0 != a.default && stripped.1 != req_path.as_str();
-                    if from_path {
-                        stripped.0
-                    } else {
-                        oxide_assets::i18n::negotiate(
-                            a,
-                            req.header("accept-language").unwrap_or(""),
-                        )
-                    }
-                }
-                None => String::new(),
-            };
-            let candidates = if normalized == "/" {
-                vec!["/".to_string(), "/index".to_string()]
-            } else {
-                vec![normalized]
-            };
-            let matched: Option<oxide_router::MatchResult> = match &archived {
-                Some(a) => candidates.iter().find_map(|p| a.match_path(p)),
-                None => candidates.iter().find_map(|p| tree.match_path(p)),
-            };
-            let (status, label) = match &matched {
-                Some(m) => (200u16, pattern_of(&m.route.segments)),
-                None => (404u16, "_unmatched".to_string()),
-            };
-
-            // Pre-compute the loader inputs synchronously so the async block
-            // owns plain data (no borrow of `matched`).
-            let (module_path, route_id, params, has_server_module, render_mode): (
-                Option<std::path::PathBuf>,
-                Option<String>,
-                std::collections::BTreeMap<String, String>,
-                bool,
-                Option<String>,
-            ) = match &matched {
-                Some(m) => (
-                    Some(routes_root.join(m.route.file.with_file_name("page.server.ts"))),
-                    Some(m.route.id.0.clone()),
-                    m.params.clone(),
-                    m.route.has_server_module,
-                    m.route.render_mode.clone(),
-                ),
-                None => (None, None, std::collections::BTreeMap::new(), false, None),
-            };
-
-            // §8.1 route.ts / §10.2 step 7: pre-compute whether this is an
-            // Endpoint route and, if so, the on-disk path to its `route.ts`.
-            // Endpoints bypass the loader/render phases entirely: a `route.ts`
-            // returns a Web `Response` directly.
-            let endpoint_module_path: Option<std::path::PathBuf> = match &matched {
-                Some(m) if matches!(m.route.kind, oxide_router::RouteKind::Endpoint) => {
-                    Some(routes_root.join(&m.route.file))
-                }
-                _ => None,
-            };
-
-            // §8.1 middleware.ts / §8.5: resolve the NEAREST ancestor
-            // middleware for the matched route. Like error.tsx, the
-            // middleware's directory is the scoping key; the deepest
-            // matching ancestor wraps the route (a `routes/blog/middleware`
-            // shadows `routes/middleware`). Scope to a bounded slice:
-            // middleware is executed once, before the loader/render; a
-            // rewrite is logged but not re-matched (documented gap).
-            let middleware_module_path: Option<std::path::PathBuf> = {
-                let route_id_for_mw = route_id.as_deref().unwrap_or("");
-                let mut best: Option<(std::path::PathBuf, usize)> = None;
-                for candidate in &tree.entries {
-                    if !matches!(candidate.kind, oxide_router::RouteKind::Middleware) {
-                        continue;
-                    }
-                    let base = candidate
-                        .id
-                        .0
-                        .strip_suffix("/middleware")
-                        .unwrap_or(&candidate.id.0);
-                    let wraps = if base == "routes" || base.is_empty() {
-                        true
-                    } else {
-                        route_id_for_mw.starts_with(&format!("{base}/"))
-                    };
-                    if !wraps {
-                        continue;
-                    }
-                    let len = base.len();
-                    match &best {
-                        Some((_, prev)) if *prev >= len => {}
-                        _ => {
-                            // `candidate.file` is the middleware file itself,
-                            // not its sibling — no `with_file_name` needed.
-                            best = Some((routes_root.join(&candidate.file), len));
-                        }
-                    }
-                }
-                best.map(|(p, _)| p)
-            };
-            let endpoint_params_json: serde_json::Map<String, serde_json::Value> = params
-                .iter()
-                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-                .collect();
-            let endpoint_headers: Vec<(String, String)> = req.headers.clone();
-            let endpoint_body: bytes::Bytes = req.body.clone();
-            let endpoint_method_for_dispatch: String = req.method.clone();
-            let endpoint_url_for_dispatch: String = req.url.clone();
-
-            // §10.2 step 5 / §8.3: an unmatched URL gets a 404 status (the
-            // `status` label above). To render a user-visible 404 page the
-            // request must resolve to the project's `not-found.tsx` route id
-            // (with its layout chain), not to a placeholder component that
-            // `componentFor` cannot find. Precompute both here, before
-            // `matched` is consumed, so the async render block below can use
-            // them.
-            let (unmatched_route_id, unmatched_layout_ids): (Option<String>, Vec<String>) = {
-                let not_found_entry = tree
-                    .entries
-                    .iter()
-                    .find(|e| matches!(e.kind, oxide_router::RouteKind::NotFound));
-                match not_found_entry {
-                    Some(e) => {
-                        // The adapter's `componentFor` is keyed on the route
-                        // *directory* id, which for a not-found file is
-                        // `routes/not-found` (or `routes/blog/not-found`,
-                        // etc.). That id is exactly what the scanner emits —
-                        // no stripping needed. Stripping `/not-found` would
-                        // collapse it to `routes`, which no user registers.
-                        let not_found_id = e.id.0.clone();
-                        // The layout chain that wraps the not-found route.
-                        // Same rule as the page `layout_ids` above: any layout
-                        // whose base directory is a prefix of the route id.
-                        let mut chain: Vec<(String, usize)> = Vec::new();
-                        for candidate in &tree.entries {
-                            if !matches!(candidate.kind, oxide_router::RouteKind::Layout) {
-                                continue;
-                            }
-                            let layout_base = candidate
-                                .id
-                                .0
-                                .strip_suffix("/layout")
-                                .unwrap_or(&candidate.id.0);
-                            let wraps = if layout_base == "routes" || layout_base.is_empty() {
-                                true
-                            } else {
-                                e.id.0.starts_with(&format!("{layout_base}/"))
-                            };
-                            if wraps {
-                                chain.push((candidate.id.0.clone(), layout_base.len()));
-                            }
-                        }
-                        chain.sort_by_key(|(_, len)| *len);
-                        (
-                            Some(not_found_id),
-                            chain.into_iter().map(|(id, _)| id).collect(),
-                        )
-                    }
-                    None => (None, Vec::new()),
-                }
-            };
-
-            // §10.2 step 5: resolve the NEAREST ancestor `error.tsx` for the
-            // matched route (innermost boundary wins — a `routes/blog/error`
-            // shadows `routes/error`). Precomputed here so the async render
-            // block can pass it as `input.error_route_id`. The adapter
-            // renders this component when the page throws.
-            let error_route_id: Option<String> = {
-                let route_id_for_err = route_id.as_deref().unwrap_or("");
-                let mut best: Option<(String, usize)> = None;
-                for candidate in &tree.entries {
-                    if !matches!(candidate.kind, oxide_router::RouteKind::Error) {
-                        continue;
-                    }
-                    // `routes/<dir>/error` wraps any route at or under
-                    // `routes/<dir>/`. The root `routes/error` wraps everything.
-                    let base = candidate
-                        .id
-                        .0
-                        .strip_suffix("/error")
-                        .unwrap_or(&candidate.id.0);
-                    let wraps = if base == "routes" || base.is_empty() {
-                        true
-                    } else {
-                        route_id_for_err.starts_with(&format!("{base}/"))
-                    };
-                    if !wraps {
-                        continue;
-                    }
-                    let len = base.len();
-                    match &best {
-                        Some((_, prev)) if *prev >= len => {}
-                        _ => best = Some((candidate.id.0.clone(), len)),
-                    }
-                }
-                best.map(|(id, _)| id)
-            };
-            // The URL pattern (`pattern_of(segments)`) is for metrics labels;
-            // the ROUTE ID is what the framework adapter's `componentFor`
-            // expects. Two conventions to reconcile here:
-            //
-            //   • Router ids include the file role: `routes/index/page`,
-            //     `routes/blog/[slug]/page`. That's the shape the scanner
-            //     produces (see crates/router/src/scan.rs) and what
-            //     `RouteEntry.id.0` carries.
-            //   • Adapter keys (`PAGES` in the IR renderer, `componentFor`
-            //     in a user's config) are keyed on the route directory:
-            //     `routes/index`, `routes/blog/[slug]`. Trailing role
-            //     suffix (`/page`, `/layout`) is not part of the key.
-            //
-            // Normalize by stripping a trailing `/page` (and only `/page`)
-            // before handing the id to the renderer. Layout-only ids, slot
-            // ids (`routes/@modal/page`), and group-prefixed ids all pass
-            // through untouched.
-            let route_id_for_render: Option<String> = route_id
-                .as_deref()
-                .map(|s| s.strip_suffix("/page").unwrap_or(s).to_string());
-
-            // §8.2 / §16.3: precompute the layout chain (outermost first)
-            // before `matched` is dropped. Ids carry the role suffix the
-            // scanner emits (`routes/layout`), which is also the key
-            // adapters use for `componentFor` (same convention as the page
-            // id after `/page` is stripped). An unmatched URL gets an empty
-            // chain.
-            let layout_ids: Vec<String> = match &matched {
-                Some(m) => m
-                    .layout_chain
-                    .iter()
-                    .map(|id| id.0.clone())
-                    .collect(),
-                None => Vec::new(),
-            };
-            // §9.2: layout module paths for the parallel layout-loads phase.
-            // Each layout id (`routes/blog/layout`) maps to its
-            // `layout.server.ts` on disk, in outermost → innermost order.
-            let layout_module_paths: Vec<(String, std::path::PathBuf)> = layout_ids
-                .iter()
-                .filter_map(|lid| {
-                    tree.entries
-                        .iter()
-                        .find(|e| {
-                            e.id.0 == *lid
-                                && matches!(e.kind, oxide_router::RouteKind::Layout)
-                        })
-                        .map(|e| (lid.clone(), routes_root.join(e.file.with_file_name("layout.server.ts"))))
-                })
-                .filter(|(_, p)| p.is_file())
-                .collect();
-
-            // §9.3: a form POST to `?/<name>` is an action invocation. Only a
-            // POST with a named action on a route that has a server module is
-            // eligible; everything else falls through to the loader/render path.
-            let action_name: Option<String> =
-                if req.method.eq_ignore_ascii_case("POST") {
-                    action_from_query(&req.url)
-                } else {
-                    None
-                };
-            let action_dispatcher = actions_for_dispatch.clone();
-            let action_params: serde_json::Map<String, serde_json::Value> = params
-                .iter()
-                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-                .collect();
-            let action_route = route_id_for_render.clone().unwrap_or_default();
-
-            let page_renderer = page_renderer.clone();
-            let loader_runner = loader_runner.clone();
-            let metrics = std::sync::Arc::clone(&metrics);
-            let req_owned = req.clone();
-            // Shadow so the async block moves a per-call clone rather than
-            // the outer closure's captured value (which would be E0507 —
-            // an `Fn` closure cannot surrender a captured variable).
-            let boot_script_url_for_render = boot_script_url_for_render.clone();
-            // §8.1 route.ts / §10.2 step 7: same pattern for the endpoint
-            // dispatcher — the async block below moves this per-call clone.
-            let endpoint_for_dispatch = endpoint_for_dispatch.clone();
-            // §8.1 middleware.ts / §8.5: same shadow for middleware.
-            let middleware_for_dispatch = middleware_for_dispatch.clone();
-            // §8.5: same shadow for the self-dispatch handle used by a
-            // middleware rewrite (the async block moves it per-call).
-            let self_dispatch_for_closure = self_dispatch_for_closure.clone();
-            // §11 L0: only a GET on a static/isr route is a cache candidate.
-            let l0 = l0.clone();
-            // A route with a server module may read request state the L0 key
-            // does not capture (undeclared cookies/headers); only a route with
-            // no server module is safely shareable across requests.
-            let l0_eligible = req.method.eq_ignore_ascii_case("GET")
-                && l0_cache::mode_is_cacheable(render_mode.as_deref())
-                && !has_server_module
-                && route_id.is_some();
-            let l0_route = route_id_for_render.clone().unwrap_or_default();
-            let l0_params = {
-                let mut ks: Vec<(&String, &String)> = params.iter().collect();
-                ks.sort();
-                ks.iter()
-                    .map(|(k, v)| format!("{k}={v}"))
-                    .collect::<Vec<_>>()
-                    .join("&")
-            };
-            let l0_vary = l0_cache::vary_of(&req_owned.headers);
-            // BUG-01: the path tag the L0 put site stamps alongside the route
-            // tag, so `revalidate.path` can invalidate it.
-            let l0_path = req_path;
-            // PERF-01: `/__data` is the client router's route-data endpoint
-            // (§8.4). It is answered natively (loader + ODF encode) and never
-            // reaches the framework render path. `GET` only.
-            let is_data_request =
-                req.method.eq_ignore_ascii_case("GET") && l0_path == "/__data";
-            // PERF-04: the single-flight key (matches the L0 key shape) and the
-            // shared map handle.
-            let flight_key = match l0.as_ref() {
-                Some(c) => l0_cache::L0Cache::key_for(
-                    &l0_route, &l0_params, &l0_vary, c.build_id(),
-                ),
-                None => String::new(),
-            };
-            let flight_map = std::sync::Arc::clone(&flight_map);
-
-            Box::pin(async move {
-                if is_data_request {
-                    return route_data_response(
-                        &req_owned,
-                        loader_runner.as_ref(),
-                        module_path.as_deref(),
-                        route_id.as_deref(),
-                        &params,
-                        &metrics,
-                        started,
-                    )
-                    .await;
-                }
-                // §8.1 middleware.ts / §8.5: run the route's nearest ancestor
-                // middleware BEFORE the loader/render phase. It can:
-                //   * short-circuit with a `Response` or `{ redirect }`;
-                //   * inject `locals` (delivered to the loader via
-                //     `LoaderRunInput.locals`);
-                //   * add response headers.
-                // A `{ rewrite }` is logged but not re-matched in this slice
-                // (documented gap). An error surfaces as a 500 with a
-                // `MIDDLEWARE`-coded envelope.
-                let mut middleware_locals: serde_json::Value = serde_json::json!({});
-                let mut middleware_headers: Vec<(String, String)> = Vec::new();
-                if let (Some(dispatcher), Some(mp)) =
-                    (middleware_for_dispatch.as_deref(), middleware_module_path.as_ref())
-                {
-                    let module_path_s = mp.to_string_lossy().to_string();
-                    // Pass the full request (headers + body) so an auth /
-                    // upload middleware sees what it needs.
-                    let mw_res = dispatcher
-                        .dispatch(
-                            &module_path_s,
-                            &req_owned.method,
-                            &req_owned.url,
-                            &endpoint_params_json,
-                            &endpoint_headers,
-                            endpoint_body.as_ref(),
-                            None,
-                        )
-                        .await;
-                    match mw_res {
-                        Ok(out) => {
-                            if out.short {
-                                metrics.observe(&label, started.elapsed(), out.status);
-                                let mut resp = oxide_server::OxideResponse::new(
-                                    out.status,
-                                    bytes::Bytes::from(out.body),
-                                );
-                                for (k, v) in &out.headers {
-                                    resp = resp.with_header(k, v.clone());
-                                }
-                                return resp;
-                            }
-                            // Non-short-circuit: accumulate headers and locals.
-                            for (k, v) in &out.headers {
-                                middleware_headers.push((k.clone(), v.clone()));
-                            }
-                            if let Some(l) = out.locals {
-                                if l.is_object() {
-                                    middleware_locals = l;
-                                }
-                            }
-                            if let Some(rw) = out.rewrite.as_deref() {
-                                // §8.5: honour the rewrite by re-dispatching
-                                // the request to the new URL through the
-                                // normal match → loader → render path. The
-                                // rewrite-hop header prevents an infinite
-                                // loop when a middleware always rewrites.
-                                if let Some(re_dispatch) =
-                                    self_dispatch_for_closure.get()
-                                {
-                                    let mut new_req = req_owned.clone();
-                                    new_req.url = rw.to_string();
-                                    new_req.headers.push((
-                                        "x-oxide-rewrite-hop".to_string(),
-                                        (rewrite_hop + 1).to_string(),
-                                    ));
-                                    return re_dispatch(new_req).await;
-                                }
-                                tracing::warn!(
-                                    route = %label,
-                                    rewrite = %rw,
-                                    "middleware rewrite: self-dispatch unavailable",
-                                );
-                            }
+                    match oxide_server::forward_proxy(&url, req_owned).await {
+                        Ok(r) => {
+                            metrics_proxy.observe("_proxy", started.elapsed(), r.status);
+                            r
                         }
                         Err(e) => {
-                            metrics.observe(&label, started.elapsed(), e.status);
-                            return oxide_server::OxideResponse::json(
-                                e.status,
-                                serde_json::json!({"error": {
-                                    "code": e.code,
-                                    "message": e.message,
-                                    "route": label,
-                                }}),
+                            tracing::warn!(rule = %m_rule, error = %e, "proxy forward failed");
+                            let r = oxide_server::OxideResponse::new(
+                                502,
+                                format!("proxy upstream error: {}", e.0.message),
+                            );
+                            metrics_proxy.observe("_proxy", started.elapsed(), 502);
+                            r
+                        }
+                    }
+                });
+            }
+        }
+        // Route conventions: the root page module is `index`, so `/` maps to
+        // the `/index` pattern (spec §8.1); trailing slashes are folded too.
+        let normalized = if raw.len() > 1 && raw.ends_with('/') {
+            raw.trim_end_matches('/').to_string()
+        } else {
+            raw
+        };
+        // §11.3 / BUG-01: remember the request path. The L0 entry for
+        // this request is tagged `path:<req_path>` so a `revalidate.path`
+        // event (which reaches the dispatch via `x-oxide-revalidate`)
+        // actually invalidates it. Without this, entries are tagged with
+        // the *route id* only, and path events match nothing.
+        let req_path = normalized.clone();
+        // SPEC-10 / §16.4: resolve the request locale when the project
+        // configures i18n — path prefix first, then `Accept-Language`,
+        // then the default. Empty when no i18n is configured.
+        // `i18n_cfg` is captured by the dispatch closure (built from config
+        // before any request); `req` supplies the header.
+        let resolved_locale: String = match i18n_cfg.as_ref() {
+            Some(a) => {
+                let stripped = oxide_assets::i18n::strip_locale_prefix(a, &req_path);
+                let from_path = stripped.0 != a.default && stripped.1 != req_path.as_str();
+                if from_path {
+                    stripped.0
+                } else {
+                    oxide_assets::i18n::negotiate(a, req.header("accept-language").unwrap_or(""))
+                }
+            }
+            None => String::new(),
+        };
+        // PERF-01 / §8.4: a `/__data` GET names its target route via
+        // `?route=<path>`. The endpoint re-matches THAT path against the
+        // route tree (below), so the whole prelude — route id, params,
+        // layout chain, nearest middleware, error boundary — describes
+        // the route whose data the client router is fetching. That is
+        // what makes client-side navigation data match the SSR render
+        // (§8.4 parity); previously /__data matched nothing, ran no
+        // middleware, no layout loads, and no defer resolution.
+        let data_route_q: String =
+            if req.method.eq_ignore_ascii_case("GET") && req_path == "/__data" {
+                let raw_q = req.url.split_once('?').map(|(_, q)| q).unwrap_or("");
+                raw_q
+                    .split('&')
+                    .find_map(|kv| kv.strip_prefix("route=").map(oxide_server::percent_decode))
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "/".to_string())
+            } else {
+                String::new()
+            };
+        let is_data_request = !data_route_q.is_empty();
+        // §8.4: for a data request, match the TARGET route (trailing
+        // slash folded like a real URL path); otherwise the request path.
+        let match_path = if is_data_request {
+            let stripped = data_route_q.trim_end_matches('/');
+            if stripped.is_empty() {
+                "/".to_string()
+            } else {
+                stripped.to_string()
+            }
+        } else {
+            normalized.clone()
+        };
+        let candidates = if match_path == "/" {
+            vec!["/".to_string(), "/index".to_string()]
+        } else {
+            vec![match_path]
+        };
+        let matched: Option<oxide_router::MatchResult> = match &archived {
+            Some(a) => candidates.iter().find_map(|p| a.match_path(p)),
+            None => candidates.iter().find_map(|p| tree.match_path(p)),
+        };
+        let (status, label) = match &matched {
+            Some(m) => (200u16, pattern_of(&m.route.segments)),
+            None => (404u16, "_unmatched".to_string()),
+        };
+
+        // Pre-compute the loader inputs synchronously so the async block
+        // owns plain data (no borrow of `matched`).
+        let (module_path, route_id, params, has_server_module, render_mode): (
+            Option<std::path::PathBuf>,
+            Option<String>,
+            std::collections::BTreeMap<String, String>,
+            bool,
+            Option<String>,
+        ) = match &matched {
+            Some(m) => (
+                Some(routes_root.join(m.route.file.with_file_name("page.server.ts"))),
+                Some(m.route.id.0.clone()),
+                m.params.clone(),
+                m.route.has_server_module,
+                m.route.render_mode.clone(),
+            ),
+            None => (None, None, std::collections::BTreeMap::new(), false, None),
+        };
+
+        // §8.1 route.ts / §10.2 step 7: pre-compute whether this is an
+        // Endpoint route and, if so, the on-disk path to its `route.ts`.
+        // Endpoints bypass the loader/render phases entirely: a `route.ts`
+        // returns a Web `Response` directly.
+        let endpoint_module_path: Option<std::path::PathBuf> = match &matched {
+            Some(m) if matches!(m.route.kind, oxide_router::RouteKind::Endpoint) => {
+                Some(routes_root.join(&m.route.file))
+            }
+            _ => None,
+        };
+
+        // §8.1 middleware.ts / §8.5: resolve the NEAREST ancestor
+        // middleware for the matched route. Like error.tsx, the
+        // middleware's directory is the scoping key; the deepest
+        // matching ancestor wraps the route (a `routes/blog/middleware`
+        // shadows `routes/middleware`). Scope to a bounded slice:
+        // middleware is executed once, before the loader/render; a
+        // rewrite is logged but not re-matched (documented gap).
+        let middleware_module_path: Option<std::path::PathBuf> = {
+            let route_id_for_mw = route_id.as_deref().unwrap_or("");
+            let mut best: Option<(std::path::PathBuf, usize)> = None;
+            for candidate in &tree.entries {
+                if !matches!(candidate.kind, oxide_router::RouteKind::Middleware) {
+                    continue;
+                }
+                let base = candidate
+                    .id
+                    .0
+                    .strip_suffix("/middleware")
+                    .unwrap_or(&candidate.id.0);
+                let wraps = if base == "routes" || base.is_empty() {
+                    true
+                } else {
+                    route_id_for_mw.starts_with(&format!("{base}/"))
+                };
+                if !wraps {
+                    continue;
+                }
+                let len = base.len();
+                match &best {
+                    Some((_, prev)) if *prev >= len => {}
+                    _ => {
+                        // `candidate.file` is the middleware file itself,
+                        // not its sibling — no `with_file_name` needed.
+                        best = Some((routes_root.join(&candidate.file), len));
+                    }
+                }
+            }
+            best.map(|(p, _)| p)
+        };
+        let endpoint_params_json: serde_json::Map<String, serde_json::Value> = params
+            .iter()
+            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+            .collect();
+        let endpoint_headers: Vec<(String, String)> = req.headers.clone();
+        let endpoint_body: bytes::Bytes = req.body.clone();
+        let endpoint_method_for_dispatch: String = req.method.clone();
+        let endpoint_url_for_dispatch: String = req.url.clone();
+
+        // §10.2 step 5 / §8.3: an unmatched URL gets a 404 status (the
+        // `status` label above). To render a user-visible 404 page the
+        // request must resolve to the project's `not-found.tsx` route id
+        // (with its layout chain), not to a placeholder component that
+        // `componentFor` cannot find. Precompute both here, before
+        // `matched` is consumed, so the async render block below can use
+        // them.
+        let (unmatched_route_id, unmatched_layout_ids): (Option<String>, Vec<String>) = {
+            let not_found_entry = tree
+                .entries
+                .iter()
+                .find(|e| matches!(e.kind, oxide_router::RouteKind::NotFound));
+            match not_found_entry {
+                Some(e) => {
+                    // The adapter's `componentFor` is keyed on the route
+                    // *directory* id, which for a not-found file is
+                    // `routes/not-found` (or `routes/blog/not-found`,
+                    // etc.). That id is exactly what the scanner emits —
+                    // no stripping needed. Stripping `/not-found` would
+                    // collapse it to `routes`, which no user registers.
+                    let not_found_id = e.id.0.clone();
+                    // The layout chain that wraps the not-found route.
+                    // Same rule as the page `layout_ids` above: any layout
+                    // whose base directory is a prefix of the route id.
+                    let mut chain: Vec<(String, usize)> = Vec::new();
+                    for candidate in &tree.entries {
+                        if !matches!(candidate.kind, oxide_router::RouteKind::Layout) {
+                            continue;
+                        }
+                        let layout_base = candidate
+                            .id
+                            .0
+                            .strip_suffix("/layout")
+                            .unwrap_or(&candidate.id.0);
+                        let wraps = if layout_base == "routes" || layout_base.is_empty() {
+                            true
+                        } else {
+                            e.id.0.starts_with(&format!("{layout_base}/"))
+                        };
+                        if wraps {
+                            chain.push((candidate.id.0.clone(), layout_base.len()));
+                        }
+                    }
+                    chain.sort_by_key(|(_, len)| *len);
+                    (
+                        Some(not_found_id),
+                        chain.into_iter().map(|(id, _)| id).collect(),
+                    )
+                }
+                None => (None, Vec::new()),
+            }
+        };
+
+        // §10.2 step 5: resolve the NEAREST ancestor `error.tsx` for the
+        // matched route (innermost boundary wins — a `routes/blog/error`
+        // shadows `routes/error`). Precomputed here so the async render
+        // block can pass it as `input.error_route_id`. The adapter
+        // renders this component when the page throws.
+        let error_route_id: Option<String> = {
+            let route_id_for_err = route_id.as_deref().unwrap_or("");
+            let mut best: Option<(String, usize)> = None;
+            for candidate in &tree.entries {
+                if !matches!(candidate.kind, oxide_router::RouteKind::Error) {
+                    continue;
+                }
+                // `routes/<dir>/error` wraps any route at or under
+                // `routes/<dir>/`. The root `routes/error` wraps everything.
+                let base = candidate
+                    .id
+                    .0
+                    .strip_suffix("/error")
+                    .unwrap_or(&candidate.id.0);
+                let wraps = if base == "routes" || base.is_empty() {
+                    true
+                } else {
+                    route_id_for_err.starts_with(&format!("{base}/"))
+                };
+                if !wraps {
+                    continue;
+                }
+                let len = base.len();
+                match &best {
+                    Some((_, prev)) if *prev >= len => {}
+                    _ => best = Some((candidate.id.0.clone(), len)),
+                }
+            }
+            best.map(|(id, _)| id)
+        };
+        // The URL pattern (`pattern_of(segments)`) is for metrics labels;
+        // the ROUTE ID is what the framework adapter's `componentFor`
+        // expects. Two conventions to reconcile here:
+        //
+        //   • Router ids include the file role: `routes/index/page`,
+        //     `routes/blog/[slug]/page`. That's the shape the scanner
+        //     produces (see crates/router/src/scan.rs) and what
+        //     `RouteEntry.id.0` carries.
+        //   • Adapter keys (`PAGES` in the IR renderer, `componentFor`
+        //     in a user's config) are keyed on the route directory:
+        //     `routes/index`, `routes/blog/[slug]`. Trailing role
+        //     suffix (`/page`, `/layout`) is not part of the key.
+        //
+        // Normalize by stripping a trailing `/page` (and only `/page`)
+        // before handing the id to the renderer. Layout-only ids, slot
+        // ids (`routes/@modal/page`), and group-prefixed ids all pass
+        // through untouched.
+        let route_id_for_render: Option<String> = route_id
+            .as_deref()
+            .map(|s| s.strip_suffix("/page").unwrap_or(s).to_string());
+
+        // §8.2 / §16.3: precompute the layout chain (outermost first)
+        // before `matched` is dropped. Ids carry the role suffix the
+        // scanner emits (`routes/layout`), which is also the key
+        // adapters use for `componentFor` (same convention as the page
+        // id after `/page` is stripped). An unmatched URL gets an empty
+        // chain.
+        let layout_ids: Vec<String> = match &matched {
+            Some(m) => m.layout_chain.iter().map(|id| id.0.clone()).collect(),
+            None => Vec::new(),
+        };
+        // §9.2: layout module paths for the parallel layout-loads phase.
+        // Each layout id (`routes/blog/layout`) maps to its
+        // `layout.server.ts` on disk, in outermost → innermost order.
+        let layout_module_paths: Vec<(String, std::path::PathBuf)> = layout_ids
+            .iter()
+            .filter_map(|lid| {
+                tree.entries
+                    .iter()
+                    .find(|e| e.id.0 == *lid && matches!(e.kind, oxide_router::RouteKind::Layout))
+                    .map(|e| {
+                        (
+                            lid.clone(),
+                            routes_root.join(e.file.with_file_name("layout.server.ts")),
+                        )
+                    })
+            })
+            .filter(|(_, p)| p.is_file())
+            .collect();
+
+        // §9.3: a form POST to `?/<name>` is an action invocation. Only a
+        // POST with a named action on a route that has a server module is
+        // eligible; everything else falls through to the loader/render path.
+        let action_name: Option<String> = if req.method.eq_ignore_ascii_case("POST") {
+            action_from_query(&req.url)
+        } else {
+            None
+        };
+        let action_dispatcher = actions_for_dispatch.clone();
+        let action_params: serde_json::Map<String, serde_json::Value> = params
+            .iter()
+            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+            .collect();
+        let action_route = route_id_for_render.clone().unwrap_or_default();
+
+        let page_renderer = page_renderer.clone();
+        let loader_runner = loader_runner.clone();
+        let metrics = std::sync::Arc::clone(&metrics);
+        let req_owned = req.clone();
+        // Shadow so the async block moves a per-call clone rather than
+        // the outer closure's captured value (which would be E0507 —
+        // an `Fn` closure cannot surrender a captured variable).
+        let boot_script_url_for_render = boot_script_url_for_render.clone();
+        // §8.1 route.ts / §10.2 step 7: same pattern for the endpoint
+        // dispatcher — the async block below moves this per-call clone.
+        let endpoint_for_dispatch = endpoint_for_dispatch.clone();
+        // §8.1 middleware.ts / §8.5: same shadow for middleware.
+        let middleware_for_dispatch = middleware_for_dispatch.clone();
+        // §8.5: same shadow for the self-dispatch handle used by a
+        // middleware rewrite (the async block moves it per-call).
+        let self_dispatch_for_closure = self_dispatch_for_closure.clone();
+        // §11 L0: only a GET on a cacheable-mode route is a candidate.
+        let l0 = l0.clone();
+        // §11.1: L0 caches the FULL response for cacheable modes. The
+        // layer table puts no server-module restriction on L0 ("L0 | Full
+        // response (HTML, headers, tags) | Rust, no JS on hit" — spec
+        // §11.1), and loader routes invalidate through the same
+        // revalidate.tag/path channel as every other entry (BUG-01), so
+        // the previous `!has_server_module` exclusion is gone. The
+        // render mode is the only gate: dynamic routes opt out via
+        // `mode_is_cacheable` (static | isr — §10.1). Caveat noted for
+        // reviewers: the Vary fingerprint today covers Accept-Language
+        // only (§11.2 also lists declared cookies — a follow-up).
+        // A /__data request is NEVER L0-eligible: it must re-run the
+        // loaders, not serve a route's cached HTML.
+        let l0_eligible = req.method.eq_ignore_ascii_case("GET")
+            && l0_cache::mode_is_cacheable(render_mode.as_deref())
+            && route_id.is_some()
+            && !is_data_request;
+        let l0_route = route_id_for_render.clone().unwrap_or_default();
+        let l0_params = {
+            let mut ks: Vec<(&String, &String)> = params.iter().collect();
+            ks.sort();
+            ks.iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join("&")
+        };
+        let l0_vary = l0_cache::vary_of(&req_owned.headers);
+        // BUG-01: the path tag the L0 put site stamps alongside the route
+        // tag, so `revalidate.path` can invalidate it.
+        let l0_path = req_path;
+        // PERF-04: the single-flight key (matches the L0 key shape) and the
+        // shared map handle.
+        let flight_key = match l0.as_ref() {
+            Some(c) => l0_cache::L0Cache::key_for(&l0_route, &l0_params, &l0_vary, c.build_id()),
+            None => String::new(),
+        };
+        let flight_map = std::sync::Arc::clone(&flight_map);
+
+        Box::pin(async move {
+            // §8.1 middleware.ts / §8.5: run the route's nearest ancestor
+            // middleware BEFORE the loader/render phase — and before the
+            // /__data branch (§8.4 parity: client nav data must see the
+            // same middleware locals/headers/short-circuits as SSR). It can:
+            //   * short-circuit with a `Response` or `{ redirect }`;
+            //   * inject `locals` (delivered to the loader via
+            //     `LoaderRunInput.locals`);
+            //   * add response headers.
+            // A `{ rewrite }` re-dispatches through the normal path. An
+            // error surfaces as a 500 with a `MIDDLEWARE`-coded envelope.
+            let stage_middleware_start = std::time::Instant::now();
+            let mut middleware_locals: serde_json::Value = serde_json::json!({});
+            let mut middleware_headers: Vec<(String, String)> = Vec::new();
+            if let (Some(dispatcher), Some(mp)) = (
+                middleware_for_dispatch.as_deref(),
+                middleware_module_path.as_ref(),
+            ) {
+                let module_path_s = mp.to_string_lossy().to_string();
+                // Pass the full request (headers + body) so an auth /
+                // upload middleware sees what it needs.
+                let mw_res = dispatcher
+                    .dispatch(
+                        &module_path_s,
+                        &req_owned.method,
+                        &req_owned.url,
+                        &endpoint_params_json,
+                        &endpoint_headers,
+                        endpoint_body.as_ref(),
+                        None,
+                    )
+                    .await;
+                match mw_res {
+                    Ok(out) => {
+                        if out.short {
+                            metrics.observe(&label, started.elapsed(), out.status);
+                            let mut resp = oxide_server::OxideResponse::new(
+                                out.status,
+                                bytes::Bytes::from(out.body),
+                            );
+                            for (k, v) in &out.headers {
+                                resp = resp.with_header(k, v.clone());
+                            }
+                            return resp;
+                        }
+                        // Non-short-circuit: accumulate headers and locals.
+                        for (k, v) in &out.headers {
+                            middleware_headers.push((k.clone(), v.clone()));
+                        }
+                        if let Some(l) = out.locals {
+                            if l.is_object() {
+                                middleware_locals = l;
+                            }
+                        }
+                        if let Some(rw) = out.rewrite.as_deref() {
+                            // §8.5: honour the rewrite by re-dispatching
+                            // the request to the new URL through the
+                            // normal match → loader → render path. The
+                            // rewrite-hop header prevents an infinite
+                            // loop when a middleware always rewrites.
+                            if let Some(re_dispatch) = self_dispatch_for_closure.get() {
+                                let mut new_req = req_owned.clone();
+                                new_req.url = rw.to_string();
+                                new_req.headers.push((
+                                    "x-oxide-rewrite-hop".to_string(),
+                                    (rewrite_hop + 1).to_string(),
+                                ));
+                                return re_dispatch(new_req).await;
+                            }
+                            tracing::warn!(
+                                route = %label,
+                                rewrite = %rw,
+                                "middleware rewrite: self-dispatch unavailable",
                             );
                         }
                     }
+                    Err(e) => {
+                        metrics.observe(&label, started.elapsed(), e.status);
+                        return oxide_server::OxideResponse::json(
+                            e.status,
+                            serde_json::json!({"error": {
+                                "code": e.code,
+                                "message": e.message,
+                                "route": label,
+                            }}),
+                        );
+                    }
                 }
+            }
+            // PERF-06: the middleware phase is done — record its duration
+            // so `Server-Timing` reports the real cost (§12.1 step 8).
+            let middleware_ms = stage_middleware_start.elapsed().as_secs_f64() * 1000.0;
 
-                // §9.3: a form action POST runs the route's `actions[name]`
-                // and returns its result. This precedes the loader phase — an
-                // action is its own request, not a page render.
-                if let (Some(action), Some(module_path)) =
-                    (action_name.as_deref(), module_path.as_deref())
-                {
-                    if let Some(dispatcher) = action_dispatcher.as_deref() {
-                        let form_json = {
-                            let entries = parse_form_urlencoded(&req_owned.body);
-                            serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string())
-                        };
-                        let resp = oxide_server::run_action(
-                            Some(dispatcher),
-                            &module_path.to_string_lossy(),
-                            &action_route,
-                            action,
-                            &form_json,
-                            &action_params,
-                            &req_owned.url,
-                            &req_owned.method,
-                            &req_owned.headers,
-                            &middleware_locals,
-                        )
-                        .await;
-                        // §11.3: apply any tag/path invalidations the action
-                        // asked for, then return the response.
-                        if let Some(rev) = resp.header("x-oxide-revalidate") {
-                            let events: Vec<(String, String)> = rev
-                                .split(',')
-                                .filter_map(|e| {
-                                    e.split_once(':')
-                                        .map(|(k, v)| (k.to_string(), v.to_string()))
-                                })
-                                .collect();
-                            if let Some(cache) = l0.as_ref() {
-                                // BUG-01: before this fix, `tag` events were
-                                // dropped and `path` events were passed to
-                                // `invalidate_tag` raw (no `path:` prefix), so
-                                // neither ever matched a cached entry.
-                                for (kind, value) in &events {
-                                    match kind.as_str() {
-                                        "tag" => {
-                                            cache.invalidate_tag(value, true).await;
-                                        }
-                                        "path" => {
-                                            cache.invalidate_path(value, true).await;
-                                        }
-                                        _ => {}
+            // PERF-01 / §8.4: `/__data` is the client router's route-data
+            // endpoint. The target route was re-matched in the prelude, so
+            // this branch runs with the SAME middleware locals/headers the
+            // SSR render saw, the layout-load parent chain, the page
+            // loader's data + resolved defers, and the resolved locale —
+            // no render, just loaders + ODF encode.
+            if is_data_request {
+                return route_data_response(
+                    &req_owned,
+                    loader_runner.as_ref(),
+                    module_path.as_deref(),
+                    route_id.as_deref(),
+                    &params,
+                    &metrics,
+                    started,
+                    &middleware_locals,
+                    &middleware_headers,
+                    &layout_module_paths,
+                    &resolved_locale,
+                )
+                .await;
+            }
+
+            // §9.3: a form action POST runs the route's `actions[name]`
+            // and returns its result. This precedes the loader phase — an
+            // action is its own request, not a page render.
+            if let (Some(action), Some(module_path)) =
+                (action_name.as_deref(), module_path.as_deref())
+            {
+                if let Some(dispatcher) = action_dispatcher.as_deref() {
+                    let form_json = {
+                        let entries = parse_form_urlencoded(&req_owned.body);
+                        serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string())
+                    };
+                    let resp = oxide_server::run_action(
+                        Some(dispatcher),
+                        &module_path.to_string_lossy(),
+                        &action_route,
+                        action,
+                        &form_json,
+                        &action_params,
+                        &req_owned.url,
+                        &req_owned.method,
+                        &req_owned.headers,
+                        &middleware_locals,
+                    )
+                    .await;
+                    // §11.3: apply any tag/path invalidations the action
+                    // asked for, then return the response.
+                    if let Some(rev) = resp.header("x-oxide-revalidate") {
+                        let events: Vec<(String, String)> = rev
+                            .split(',')
+                            .filter_map(|e| {
+                                e.split_once(':')
+                                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                            })
+                            .collect();
+                        if let Some(cache) = l0.as_ref() {
+                            // BUG-01: before this fix, `tag` events were
+                            // dropped and `path` events were passed to
+                            // `invalidate_tag` raw (no `path:` prefix), so
+                            // neither ever matched a cached entry.
+                            for (kind, value) in &events {
+                                match kind.as_str() {
+                                    "tag" => {
+                                        cache.invalidate_tag(value, true).await;
                                     }
+                                    "path" => {
+                                        cache.invalidate_path(value, true).await;
+                                    }
+                                    _ => {}
                                 }
                             }
                         }
-                        metrics.observe(&label, started.elapsed(), resp.status);
+                    }
+                    // §8.5: headers the middleware phase added ride the
+                    // action response (they were accumulated but never
+                    // applied — the previous drop made a CSP/security
+                    // header set in middleware vanish on POSTs).
+                    let mut resp = resp;
+                    for (k, v) in &middleware_headers {
+                        resp = resp.with_header(k, v.clone());
+                    }
+                    metrics.observe(&label, started.elapsed(), resp.status);
+                    return resp;
+                }
+            }
+
+            // §11.1 L0: a cache hit serves the stored response with the
+            // live request's CSP nonce substituted in, no JS on the path.
+            if l0_eligible {
+                if let Some(cache) = l0.as_ref() {
+                    if let Some(hit) = cache.get(&l0_route, &l0_params, &l0_vary).await {
+                        // PERF-04: a conditional request whose validator
+                        // matches the stored ETag gets a 304 (no body). The
+                        // ETag is weak-formatted so a cache can still serve
+                        // it after a nonce-only body change.
+                        let etag = format!("W/\"{}\"", hit.etag);
+                        let inm = req_owned.header("if-none-match").map(str::to_string);
+                        if inm.as_deref().is_some_and(|v| {
+                            v.split(',')
+                                .map(str::trim)
+                                .any(|t| t == etag || t == hit.etag || t == "*")
+                        }) {
+                            let mut resp = oxide_server::OxideResponse::new(304, "");
+                            resp = resp.with_header("etag", etag.clone());
+                            resp = resp.with_header("x-oxide-cache", "L0-hit");
+                            metrics.observe(&label, started.elapsed(), 304);
+                            return resp;
+                        }
+                        let nonce = oxide_server::nonce_for(&req_owned.request_id);
+                        let body = hit.materialize(&nonce);
+                        let mut resp = oxide_server::OxideResponse::new(hit.status, body);
+                        for (k, v) in &hit.headers {
+                            resp = resp.with_header(k, v.clone());
+                        }
+                        resp = resp.with_header("etag", etag);
+                        // §20: an explicit cache-outcome header makes the L0
+                        // layer observable and testable. A stale serve
+                        // (within the SWR window) is labelled so the caller
+                        // can see it; background regeneration is scoped.
+                        resp = resp.with_header(
+                            "x-oxide-cache",
+                            if hit.stale { "L0-stale" } else { "L0-hit" },
+                        );
+                        metrics.observe(&label, started.elapsed(), hit.status);
                         return resp;
                     }
                 }
+            }
 
-                // §11.1 L0: a cache hit serves the stored response with the
-                // live request's CSP nonce substituted in, no JS on the path.
-                if l0_eligible {
-                    if let Some(cache) = l0.as_ref() {
-                        if let Some(hit) =
-                            cache.get(&l0_route, &l0_params, &l0_vary).await
+            // PERF-04: single-flight. A concurrent miss for the same L0
+            // key awaits the in-flight owner instead of rendering again.
+            let mut flight_owner: Option<
+                tokio::sync::broadcast::Sender<std::sync::Arc<oxide_cache::Entry>>,
+            > = None;
+            if l0_eligible && l0.is_some() {
+                use oxide_cache::FlightSlot;
+                match oxide_cache::SingleFlight::new()
+                    .acquire(&flight_map, &flight_key)
+                    .await
+                {
+                    FlightSlot::Follower(mut rx) => {
+                        if let Ok(Ok(entry)) =
+                            tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+                                .await
                         {
-                            // PERF-04: a conditional request whose validator
-                            // matches the stored ETag gets a 304 (no body). The
-                            // ETag is weak-formatted so a cache can still serve
-                            // it after a nonce-only body change.
-                            let etag = format!("W/\"{}\"", hit.etag);
-                            let inm = req_owned
-                                .header("if-none-match")
-                                .map(str::to_string);
-                            if inm.as_deref().is_some_and(|v| {
-                                v.split(',').map(str::trim).any(|t| {
-                                    t == etag || t == hit.etag || t == "*"
-                                })
-                            }) {
-                                let mut resp = oxide_server::OxideResponse::new(304, "");
-                                resp = resp.with_header("etag", etag.clone());
-                                resp = resp.with_header("x-oxide-cache", "L0-hit");
-                                metrics.observe(&label, started.elapsed(), 304);
-                                return resp;
-                            }
                             let nonce = oxide_server::nonce_for(&req_owned.request_id);
-                            let body = hit.materialize(&nonce);
-                            let mut resp = oxide_server::OxideResponse::new(hit.status, body);
-                            for (k, v) in &hit.headers {
+                            let body = String::from_utf8_lossy(&entry.body)
+                                .replace(l0_cache::NONCE_SENTINEL, &nonce)
+                                .into_bytes();
+                            let mut resp = oxide_server::OxideResponse::new(entry.status, body);
+                            for (k, v) in &entry.headers {
                                 resp = resp.with_header(k, v.clone());
                             }
-                            resp = resp.with_header("etag", etag);
-                            // §20: an explicit cache-outcome header makes the L0
-                            // layer observable and testable. A stale serve
-                            // (within the SWR window) is labelled so the caller
-                            // can see it; background regeneration is scoped.
-                            resp = resp.with_header(
-                                "x-oxide-cache",
-                                if hit.stale { "L0-stale" } else { "L0-hit" },
-                            );
-                            metrics.observe(&label, started.elapsed(), hit.status);
+                            resp = resp.with_header("x-oxide-cache", "L0-coalesced");
+                            metrics.observe(&label, started.elapsed(), entry.status);
                             return resp;
                         }
                     }
+                    FlightSlot::Owner(tx) => flight_owner = Some(tx),
                 }
+            }
 
-                // PERF-04: single-flight. A concurrent miss for the same L0
-                // key awaits the in-flight owner instead of rendering again.
-                let mut flight_owner: Option<
-                    tokio::sync::broadcast::Sender<std::sync::Arc<oxide_cache::Entry>>,
-                > = None;
-                if l0_eligible && l0.is_some() {
-                    use oxide_cache::FlightSlot;
-                    match oxide_cache::SingleFlight::new()
-                        .acquire(&flight_map, &flight_key)
-                        .await
-                    {
-                        FlightSlot::Follower(mut rx) => {
-                            if let Ok(Ok(entry)) = tokio::time::timeout(
-                                std::time::Duration::from_secs(10),
-                                rx.recv(),
-                            )
-                            .await
-                            {
-                                let nonce = oxide_server::nonce_for(&req_owned.request_id);
-                                let body = String::from_utf8_lossy(&entry.body)
-                                    .replace(l0_cache::NONCE_SENTINEL, &nonce)
-                                    .into_bytes();
-                                let mut resp =
-                                    oxide_server::OxideResponse::new(entry.status, body);
-                                for (k, v) in &entry.headers {
-                                    resp = resp.with_header(k, v.clone());
-                                }
-                                resp = resp.with_header("x-oxide-cache", "L0-coalesced");
-                                metrics.observe(&label, started.elapsed(), entry.status);
-                                return resp;
-                            }
-                        }
-                        FlightSlot::Owner(tx) => flight_owner = Some(tx),
-                    }
-                }
+            // §9.1: loader phase. When the matched route declares a server
+            // module and a LoaderRunner is attached, run it. A non-200
+            // output (error(...) or redirect(...)) short-circuits the
+            // response; a 200 output threads `data` into the render phase.
+            let mut data = serde_json::Value::Object(Default::default());
+            // §16.6 / §9.2: cookies and headers a load set on the success
+            // path. Collected here and applied to whichever response the
+            // render phase produces (stream or error).
+            let mut loader_set_cookies: Vec<String> = Vec::new();
+            let mut loader_headers: Vec<(String, String)> = Vec::new();
+            // §7.1 / §9.2: resolved defer() values from the loader.
+            let mut deferred_values: std::collections::BTreeMap<String, serde_json::Value> =
+                std::collections::BTreeMap::new();
+            // PERF-06: per-stage timing marks. `started` is the request
+            // entry; these bracket load / render so `Server-Timing` can
+            // report real per-stage durations instead of all-zeros.
+            let stage_load_start = std::time::Instant::now();
+            let mut load_ms = 0.0f64;
 
-                // §9.1: loader phase. When the matched route declares a server
-                // module and a LoaderRunner is attached, run it. A non-200
-                // output (error(...) or redirect(...)) short-circuits the
-                // response; a 200 output threads `data` into the render phase.
-                let mut data = serde_json::Value::Object(Default::default());
-                // §16.6 / §9.2: cookies and headers a load set on the success
-                // path. Collected here and applied to whichever response the
-                // render phase produces (stream or error).
-                let mut loader_set_cookies: Vec<String> = Vec::new();
-                let mut loader_headers: Vec<(String, String)> = Vec::new();
-                // §7.1 / §9.2: resolved defer() values from the loader.
-                let mut deferred_values: std::collections::BTreeMap<String, serde_json::Value> =
-                    std::collections::BTreeMap::new();
-                // PERF-06: per-stage timing marks. `started` is the request
-                // entry; these bracket load / render so `Server-Timing` can
-                // report real per-stage durations instead of all-zeros.
-                let stage_load_start = std::time::Instant::now();
-                let mut load_ms = 0.0f64;
-
-                // §9.2: layout loads run IN PARALLEL with the page load. The
-                // layout chain is outermost → innermost; each layout gets the
-                // pre-resolved data of its own outer layout as `parent_data`
-                // (which a load reads via `await parent()`). The layouts form
-                // a chain, so their data is resolved sequentially *among
-                // themselves* (outer first) but each layout's own `load` runs
-                // concurrently with the page load and the sibling layouts.
-                //
-                // Concretely: kick off every layout's load future, await them
-                // in chain order to attach `parent_data`, then await the page
-                // load — which was started at the same instant as layout[0].
-                let mut layout_data_chain: Vec<serde_json::Value> = Vec::new();
-                let mut layout_side_effects: Vec<(Vec<String>, Vec<(String, String)>)> = Vec::new();
-                if let (Some(runner), true) = (loader_runner.as_ref(), !layout_module_paths.is_empty()) {
-                    for (lid, lpath) in &layout_module_paths {
-                        let mut linput = oxide_server::LoaderRunInput::new(
-                            lpath.to_string_lossy().to_string(),
-                            lid.clone(),
-                            req_owned.url.clone(),
-                        );
-                        linput.method = req_owned.method.clone();
-                        linput.headers = req_owned.headers.clone();
-                        linput.params = params.clone();
-                        linput.locals = middleware_locals.clone();
-                        linput.locale = resolved_locale.clone();
-                        linput.parent_data = layout_data_chain.last().cloned().unwrap_or(serde_json::Value::Null);
-                        match runner.run(linput).await {
-                            Ok(out) if out.short_circuits() => {
-                                let body = out.data.get("message").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                let mut resp = oxide_server::OxideResponse::new(out.status, body);
-                                if let Some(loc) = out.location {
-                                    resp = resp.with_header("location", loc);
-                                }
-                                for c in &out.set_cookies {
-                                    resp = resp.with_header("set-cookie", c.clone());
-                                }
-                                for (k, v) in &out.headers {
-                                    resp = resp.with_header(k, v.clone());
-                                }
-                                metrics.observe(&label, started.elapsed(), out.status);
-                                return resp;
+            // §9.2: layout loads run IN PARALLEL with the page load. The
+            // layout chain is outermost → innermost; each layout gets the
+            // pre-resolved data of its own outer layout as `parent_data`
+            // (which a load reads via `await parent()`). The layouts form
+            // a chain, so their data is resolved sequentially *among
+            // themselves* (outer first) but each layout's own `load` runs
+            // concurrently with the page load and the sibling layouts.
+            //
+            // Concretely: kick off every layout's load future, await them
+            // in chain order to attach `parent_data`, then await the page
+            // load — which was started at the same instant as layout[0].
+            let mut layout_data_chain: Vec<serde_json::Value> = Vec::new();
+            let mut layout_side_effects: Vec<(Vec<String>, Vec<(String, String)>)> = Vec::new();
+            if let (Some(runner), true) = (loader_runner.as_ref(), !layout_module_paths.is_empty())
+            {
+                for (lid, lpath) in &layout_module_paths {
+                    let mut linput = oxide_server::LoaderRunInput::new(
+                        lpath.to_string_lossy().to_string(),
+                        lid.clone(),
+                        req_owned.url.clone(),
+                    );
+                    linput.method = req_owned.method.clone();
+                    linput.headers = req_owned.headers.clone();
+                    linput.params = params.clone();
+                    linput.locals = middleware_locals.clone();
+                    linput.locale = resolved_locale.clone();
+                    linput.parent_data = layout_data_chain
+                        .last()
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    match runner.run(linput).await {
+                        Ok(out) if out.short_circuits() => {
+                            let body = out
+                                .data
+                                .get("message")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let mut resp = oxide_server::OxideResponse::new(out.status, body);
+                            if let Some(loc) = out.location {
+                                resp = resp.with_header("location", loc);
                             }
-                            Ok(out) => {
-                                layout_data_chain.push(out.data);
-                                layout_side_effects.push((out.set_cookies, out.headers));
+                            for c in &out.set_cookies {
+                                resp = resp.with_header("set-cookie", c.clone());
                             }
-                            Err(e) => {
-                                tracing::error!(code = %e.0.code, error = %e.0.message, "layout loader failed");
-                                metrics.observe(&label, started.elapsed(), 500);
-                                return oxide_server::OxideResponse::html(500, format!("layout loader error: {}", oxide_render::escape_text(&e.0.message)));
-                            }
-                        }
-                    }
-                    // Apply outer-layout side effects to the eventual response
-                    // (cookies/headers accumulate outward-in).
-                    for (cookies, headers) in &layout_side_effects {
-                        for c in cookies { loader_set_cookies.push(c.clone()); }
-                        for (k, v) in headers { loader_headers.push((k.clone(), v.clone())); }
-                    }
-                }
-                if has_server_module {
-                    if let (Some(runner), Some(module_path), Some(route_id)) =
-                        (loader_runner.as_ref(), module_path, route_id)
-                    {
-                        // Pass the normalized id (no `/page` suffix) so user
-                        // `load(event)` implementations see the route
-                        // directory they expect.
-                        let route_for_loader = route_id
-                            .strip_suffix("/page")
-                            .unwrap_or(&route_id)
-                            .to_string();
-                        let mut input = oxide_server::LoaderRunInput::new(
-                            module_path.to_string_lossy().to_string(),
-                            route_for_loader,
-                            req_owned.url.clone(),
-                        );
-                        input.method = req_owned.method.clone();
-                        input.headers = req_owned.headers.clone();
-                        input.params = params.clone();
-                        // §8.1 middleware.ts / §9.1: request-scoped locals
-                        // injected by the middleware that just ran. `{}` when
-                        // no middleware executed.
-                        input.locals = middleware_locals.clone();
-                        // SPEC-10: expose the resolved locale to `load()`.
-                        input.locale = resolved_locale.clone();
-                        // §9.2: the innermost layout's data — what `parent()`
-                        // reads in a page load.
-                        input.parent_data = layout_data_chain.last().cloned().unwrap_or(serde_json::Value::Null);
-
-                        match runner.run(input).await {
-                            Ok(out) if out.short_circuits() => {
-                                let body = out
-                                    .data
-                                    .get("message")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                let mut resp =
-                                    oxide_server::OxideResponse::new(out.status, body);
-                                if let Some(loc) = out.location {
-                                    resp = resp.with_header("location", loc);
-                                }
-                                // §16.6 / §9.2: cookies the load set and headers
-                                // it added ride the short-circuiting response
-                                // (a redirect that also sets a session cookie).
-                                for c in &out.set_cookies {
-                                    resp = resp.with_header("set-cookie", c.clone());
-                                }
-                                for (k, v) in &out.headers {
-                                    resp = resp.with_header(k, v.clone());
-                                }
-                                metrics.observe(&label, started.elapsed(), out.status);
-                                return resp;
-                            }
-                            Ok(out) => {
-                                data = out.data;
-                                loader_set_cookies = out.set_cookies;
-                                loader_headers = out.headers;
-                                // §7.1 / §9.2: resolved defer() values. Injected
-                                // as a `<script>` so the client's DeferredClient
-                                // slots (wired from the ODF payload's
-                                // `{__deferred: id}` markers) resolve.
-                                deferred_values = out.deferred;
-                            }
-                            Err(e) => {
-                                tracing::error!(
-                                    code = %e.0.code,
-                                    error = %e.0.message,
-                                    route = %label,
-                                    "loader failed",
-                                );
-                                metrics.observe(&label, started.elapsed(), 500);
-                                return oxide_server::OxideResponse::html(
-                                    500,
-                                    format!("loader error: {}", oxide_render::escape_text(&e.0.message)),
-                                );
-                            }
-                        }
-                    }
-                }
-
-                // §8.1 route.ts / §10.2 step 7: an Endpoint route returns a
-                // Web `Response` directly, bypassing the loader + render
-                // phases. The dispatcher is a worker op (`endpoint:run`),
-                // async but bounded; the response bytes are the raw body
-                // from the `Response` (a `route.ts` can serve a download).
-                let endpoint_for_dispatch_inner = endpoint_for_dispatch.clone();
-                if let (Some(dispatcher), Some(mp)) =
-                    (endpoint_for_dispatch_inner.as_deref(), endpoint_module_path.as_ref())
-                {
-                    let module_path_s = mp.to_string_lossy().to_string();
-                    match dispatcher
-                        .dispatch(
-                            &module_path_s,
-                            &endpoint_method_for_dispatch,
-                            &endpoint_url_for_dispatch,
-                            &endpoint_params_json,
-                            &endpoint_headers,
-                            endpoint_body.as_ref(),
-                            &middleware_locals,
-                        )
-                        .await
-                    {
-                        Ok(out) => {
-                            metrics.observe(&label, started.elapsed(), out.status);
-                            // §9.6: a streaming route.ts (SSE, downloads)
-                            // drives the response body from `out.stream`;
-                            // a buffered one uses `out.body`.
-                            let mut resp = match out.stream {
-                                Some(stream) => oxide_server::OxideResponse::stream(out.status, stream),
-                                None => oxide_server::OxideResponse::new(
-                                    out.status,
-                                    bytes::Bytes::from(out.body),
-                                ),
-                            };
                             for (k, v) in &out.headers {
                                 resp = resp.with_header(k, v.clone());
                             }
+                            metrics.observe(&label, started.elapsed(), out.status);
                             return resp;
                         }
+                        Ok(out) => {
+                            layout_data_chain.push(out.data);
+                            layout_side_effects.push((out.set_cookies, out.headers));
+                        }
                         Err(e) => {
-                            metrics.observe(&label, started.elapsed(), e.status);
-                            return oxide_server::OxideResponse::json(
-                                e.status,
-                                serde_json::json!({"error": {
-                                    "code": e.code,
-                                    "message": e.message,
-                                    "route": label,
-                                }}),
+                            tracing::error!(code = %e.0.code, error = %e.0.message, "layout loader failed");
+                            metrics.observe(&label, started.elapsed(), 500);
+                            return oxide_server::OxideResponse::html(
+                                500,
+                                format!(
+                                    "layout loader error: {}",
+                                    oxide_render::escape_text(&e.0.message)
+                                ),
                             );
                         }
                     }
                 }
-
-                // §7: render phase. Attached renderer wins; otherwise IR placeholder.
-                // PERF-06: the loader phase is done; record its duration.
-                load_ms = stage_load_start.elapsed().as_secs_f64() * 1000.0;
-                let stage_render_start = std::time::Instant::now();
-
-                if let Some(renderer) = page_renderer.as_ref() {
-                    // §10.2 step 5: an unmatched URL is a 404 with the
-                    // project's `not-found.tsx` as the body, when one exists.
-                    // Matched routes resolve to their own id + layout chain;
-                    // only the no-match branch substitutes the not-found id.
-                    let (route_for_render, effective_layouts) = match &route_id_for_render {
-                        Some(id) => (id.clone(), layout_ids.clone()),
-                        None => match &unmatched_route_id {
-                            Some(nf) => (nf.clone(), unmatched_layout_ids.clone()),
-                            None => ("_unmatched".to_string(), Vec::new()),
-                        },
-                    };
-                    let mut input = oxide_server::PageRenderInput::new(
-                        route_for_render,
+                // Apply outer-layout side effects to the eventual response
+                // (cookies/headers accumulate outward-in).
+                for (cookies, headers) in &layout_side_effects {
+                    for c in cookies {
+                        loader_set_cookies.push(c.clone());
+                    }
+                    for (k, v) in headers {
+                        loader_headers.push((k.clone(), v.clone()));
+                    }
+                }
+            }
+            if has_server_module {
+                if let (Some(runner), Some(module_path), Some(route_id)) =
+                    (loader_runner.as_ref(), module_path, route_id)
+                {
+                    // Pass the normalized id (no `/page` suffix) so user
+                    // `load(event)` implementations see the route
+                    // directory they expect.
+                    let route_for_loader = route_id
+                        .strip_suffix("/page")
+                        .unwrap_or(&route_id)
+                        .to_string();
+                    let mut input = oxide_server::LoaderRunInput::new(
+                        module_path.to_string_lossy().to_string(),
+                        route_for_loader,
                         req_owned.url.clone(),
                     );
-                    input.params = params;
-                    input.data = data;
-                    // §8.2: hand the layout chain to the adapter so it can
-                    // nest the page. The adapter renders
-                    // `L1( L2( ...( page ) ) )` using `componentFor(layoutId)`.
-                    input.layouts = effective_layouts;
-                    // §10.2 step 5: nearest ancestor `error.tsx` — the adapter
-                    // renders it on an SSR throw instead of the generic 500.
-                    input.error_route_id = error_route_id.clone();
-                    match renderer.render_streaming(input).await {
-                        Ok(render_stream) => {
-                            metrics.observe(&label, started.elapsed(), 200);
-                            // Bridge the renderer's Send-only stream to the
-                            // transport's Send + Sync body stream. If the
-                            // project registered islands, splice the boot
-                            // script tag right before `</body>` — the sliding
-                            // window in `oxide_server::inject_before_close` buffers
-                            // at most `len("</body>") - 1` bytes so a tag
-                            // split across chunks still lands in the right
-                            // place and every other chunk flushes untouched.
-                            // SPEC-11: pass boundary + nonce so a mid-stream
-                            // error emits the recovery boundary instead of
-                            // truncating the response.
-                            let bridged = render_stream_with_recovery(
-                                render_stream,
-                                Some(label.clone()),
-                                Some(oxide_server::nonce_for(&req_owned.request_id)),
-                                label.clone(),
-                            );
-                            // §17.1: a script without the matching nonce is
-                            // blocked by the response's `strict-dynamic` CSP.
-                            // The pipeline derives a per-request nonce in
-                            // `finish_response`; we compute the same value here
-                            // from the request id. Both the deferred script and
-                            // (when present) the boot module share it.
-                            let nonce = oxide_server::nonce_for(&req_owned.request_id);
-                            // §7.1 / §9.2: resolved defer() values ride a JSON
-                            // script element so the boot module can dispatch
-                            // `ox:swap` for each. Serialized through serde_json
-                            // (no untrusted string concatenation) and `<` escaped
-                            // so the content cannot break out of the tag.
-                            let deferred_tag = if deferred_values.is_empty() {
-                                String::new()
-                            } else {
-                                let json = serde_json::to_string(&deferred_values)
-                                    .unwrap_or_else(|_| "{}".into());
-                                // `</script>` and `<!--` inside a JSON string
-                                // would terminate the tag; `<` escaping is the
-                                // OWASP-recommended fix and produces valid JS
-                                // (`\u003c`).
-                                let safe = json.replace('<', "\\u003c");
-                                format!(
-                                    r#"<script type="application/oxide-deferred" nonce="{nonce}">{safe}</script>"#,
-                                )
-                            };
-                            // §13.3: a self-contained dev HMR client. It
-                            // connects to `/_oxide/hmr`, swaps the matching
-                            // <link> on a CSS update, and reloads the page on
-                            // a module/server update. Inlined (not a bundled
-                            // module) so it works in dev without a build step.
-                            let hmr_tag = if dev_hmr_for_render {
-                                format!(
-                                    concat!(
-                                        r#"<script nonce="{n}">(function(){{"#,
-                                        r#"try{{var ws=new WebSocket((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/_oxide/hmr');"#,
-                                        r#"ws.onmessage=function(ev){{try{{var m=JSON.parse(ev.data);"#,
-                                        r#"if(m.type==='css-update'){{var p=(m.path||'').split('?')[0];var ls=document.querySelectorAll('link[rel=stylesheet]');"#,
-                                        r#"for(var i=0;i<ls.length;i++){{var h=(ls[i].getAttribute('href')||'').split('?')[0];"#,
-                                        r#"if(h===p||h.slice(-p.length)===p){{ls[i].setAttribute('href',p+'?t='+Date.now());break;}}}}}}"#,
-                                        r#"else if(m.type==='module-update'||m.type==='server-module-swap'||m.type==='full-reload'){{location.reload();}}"#,
-                                        r#"else if(m.type==='error'){{var d=document.createElement('div');"#,
-                                        r#"d.setAttribute('data-oxide-error','');d.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);color:#fff;font:14px/1.4 monospace;padding:2rem;z-index:2147483647;overflow:auto';"#,
-                                        r#"d.textContent=(m.diagnostic&&(m.diagnostic.code+': '+m.diagnostic.message))||'Oxide error';document.body.appendChild(d);"#,
-                                        r#"d.addEventListener('click',function(){{d.remove();}});}}}}catch(e){{}}}};"#,
-                                        r#"ws.onclose=function(){{setTimeout(function(){{location.reload();}},2000);}};}}catch(e){{}}}})();</script>"#,
-                                    ),
-                                    n = nonce,
-                                )
-                            } else {
-                                String::new()
-                            };
-                            let body = match boot_script_url_for_render.as_deref() {
-                                Some(url) => {
-                                    let tag = format!(
-                                        r#"{deferred_tag}{hmr_tag}<script type="module" src="/{url}" nonce="{nonce}"></script>"#,
-                                    );
-                                    oxide_server::inject_before_close(
-                                        bridged,
-                                        b"</body>",
-                                        tag.as_bytes(),
-                                    )
-                                }
-                                None => {
-                                    let extra = format!("{deferred_tag}{hmr_tag}");
-                                    if extra.is_empty() {
-                                        bridged
-                                    } else {
-                                        oxide_server::inject_before_close(
-                                            bridged,
-                                            b"</body>",
-                                            extra.as_bytes(),
-                                        )
-                                    }
-                                }
-                            };
-                            // §11 L0: when this response is cacheable, collect
-                            // the streamed body once so it can be stored, then
-                            // serve it from memory. The body was rendered with
-                            // the live request's nonce; replace it with the
-                            // sentinel before storing so any request can reuse
-                            // it. A response that set a cookie is NOT cached
-                            // (it varies per user).
-                            // PERF-04: streaming-preserving fill. Tee the
-                            // rendered body: each chunk flushes to the client
-                            // immediately AND accumulates. On stream end the
-                            // sender is dropped FIRST (so the client sees EOF
-                            // at once, not after the store), then the body is
-                            // stored (live nonce → sentinel) and published for
-                            // single-flight followers. The next request is an
-                            // L0 hit.
-                            if l0_eligible && loader_set_cookies.is_empty() {
-                                if let Some(cache) = l0.as_ref() {
-                                    let nonce =
-                                        oxide_server::nonce_for(&req_owned.request_id);
-                                    let cache = std::sync::Arc::clone(cache);
-                                    let l0_route = l0_route.clone();
-                                    let l0_params = l0_params.clone();
-                                    let l0_vary = l0_vary.clone();
-                                    let l0_path = l0_path.clone();
-                                    let headers_for_store = loader_headers.clone();
-                                    let flight_map = std::sync::Arc::clone(&flight_map);
-                                    let flight_key = flight_key.clone();
-                                    let flight_owner = flight_owner.take();
-                                    let render_ms =
-                                        stage_render_start.elapsed().as_secs_f64() * 1000.0;
-                                    let (tx, mut rx) = tokio::sync::mpsc::channel::<
-                                        std::result::Result<bytes::Bytes, std::io::Error>,
-                                    >(8);
-                                    tokio::spawn(async move {
-                                        use futures::StreamExt as _;
-                                        let mut src = body;
-                                        let mut collected: Vec<u8> = Vec::new();
-                                        while let Some(item) = src.next().await {
-                                            match item {
-                                                Ok(chunk) => {
-                                                    collected.extend_from_slice(&chunk);
-                                                    if tx.send(Ok(chunk)).await.is_err() {
-                                                        // Client gone: no store
-                                                        // (the render did not
-                                                        // finish).
-                                                        return;
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    let _ = tx.send(Err(e)).await;
-                                                    return;
-                                                }
-                                            }
-                                        }
-                                        // Close the client stream NOW — the
-                                        // store below must not delay EOF.
-                                        drop(tx);
-                                        let sentineled = String::from_utf8_lossy(&collected)
-                                            .replace(&nonce, l0_cache::NONCE_SENTINEL)
-                                            .into_bytes();
-                                        let mut store_headers = vec![(
-                                            "content-type".to_string(),
-                                            "text/html; charset=utf-8".to_string(),
-                                        )];
-                                        for (k, v) in &headers_for_store {
-                                            store_headers.push((k.clone(), v.clone()));
-                                        }
-                                        let entry = cache.make_entry(
-                                            200,
-                                            store_headers,
-                                            sentineled,
-                                            vec![
-                                                l0_route.clone(),
-                                                format!("path:{}", l0_path),
-                                            ],
-                                        );
-                                        let key = cache.key_of(
-                                            &l0_route, &l0_params, &l0_vary,
-                                        );
-                                        cache.store_entry(&key, entry.clone()).await;
-                                        if let Some(tx) = flight_owner {
-                                            let _ = oxide_cache::SingleFlight::new()
-                                                .publish_and_cleanup(
-                                                    &flight_map,
-                                                    &flight_key,
-                                                    oxide_cache::FlightSlot::Owner(tx),
-                                                    Some(std::sync::Arc::new(entry)),
-                                                )
-                                                .await;
-                                        }
-                                    });
-                                    let stream: oxide_server::BodyStream =
-                                        Box::pin(futures::stream::poll_fn(move |cx| {
-                                            rx.poll_recv(cx)
-                                        }));
-                                    let t = oxide_render::RequestTimings {
-                                        middleware_ms: 0.0,
-                                        cache_ms: 0.0,
-                                        load_ms,
-                                        render_ms,
-                                        inject_ms: 0.0,
-                                    };
-                                    let mut resp = oxide_server::OxideResponse::stream(200, stream)
-                                        .with_header("content-type", "text/html; charset=utf-8")
-                                        .with_header("x-oxide-cache", "L0-miss")
-                                        .with_header("Server-Timing", t.server_timing());
-                                    for (k, v) in &loader_headers {
-                                        resp = resp.with_header(k, v.clone());
-                                    }
-                                    return resp;
-                                }
+                    input.method = req_owned.method.clone();
+                    input.headers = req_owned.headers.clone();
+                    input.params = params.clone();
+                    // §8.1 middleware.ts / §9.1: request-scoped locals
+                    // injected by the middleware that just ran. `{}` when
+                    // no middleware executed.
+                    input.locals = middleware_locals.clone();
+                    // SPEC-10: expose the resolved locale to `load()`.
+                    input.locale = resolved_locale.clone();
+                    // §9.2: the innermost layout's data — what `parent()`
+                    // reads in a page load.
+                    input.parent_data = layout_data_chain
+                        .last()
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+
+                    match runner.run(input).await {
+                        Ok(out) if out.short_circuits() => {
+                            let body = out
+                                .data
+                                .get("message")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let mut resp = oxide_server::OxideResponse::new(out.status, body);
+                            if let Some(loc) = out.location {
+                                resp = resp.with_header("location", loc);
                             }
-                            // §10.2 step 5 / §8.3: the framework render path
-                            // always used to emit a hardcoded 200 regardless of
-                            // the computed `status`. That made an unmatched URL
-                            // return `HTTP 200` with a page body, breaking both
-                            // the status code and any client HTTP check
-                            // (curl, monitoring, browser dev tools). Use the
-                            // same `status` the metrics label already carries:
-                            // 200 for a matched route, 404 for `_unmatched`.
-                            let mut resp = oxide_server::OxideResponse::stream(status, body)
-                                .with_header("content-type", "text/html; charset=utf-8")
-                                .with_header("x-oxide-cache", "bypass");
-                            // PERF-06: real per-stage Server-Timing.
-                            let render_ms =
-                                stage_render_start.elapsed().as_secs_f64() * 1000.0;
-                            let t = oxide_render::RequestTimings {
-                                middleware_ms: 0.0,
-                                cache_ms: 0.0,
-                                load_ms,
-                                render_ms,
-                                inject_ms: 0.0,
-                            };
-                            resp = resp.with_header("Server-Timing", t.server_timing());
-                            for c in &loader_set_cookies {
+                            // §16.6 / §9.2: cookies the load set and headers
+                            // it added ride the short-circuiting response
+                            // (a redirect that also sets a session cookie).
+                            for c in &out.set_cookies {
                                 resp = resp.with_header("set-cookie", c.clone());
                             }
-                            for (k, v) in &loader_headers {
+                            for (k, v) in &out.headers {
                                 resp = resp.with_header(k, v.clone());
                             }
-                            resp
+                            metrics.observe(&label, started.elapsed(), out.status);
+                            return resp;
+                        }
+                        Ok(out) => {
+                            data = out.data;
+                            loader_set_cookies = out.set_cookies;
+                            loader_headers = out.headers;
+                            // §7.1 / §9.2: resolved defer() values. Injected
+                            // as a `<script>` so the client's DeferredClient
+                            // slots (wired from the ODF payload's
+                            // `{__deferred: id}` markers) resolve.
+                            deferred_values = out.deferred;
                         }
                         Err(e) => {
                             tracing::error!(
                                 code = %e.0.code,
                                 error = %e.0.message,
                                 route = %label,
-                                "framework render failed",
+                                "loader failed",
                             );
                             metrics.observe(&label, started.elapsed(), 500);
-                            oxide_server::OxideResponse::html(
+                            return oxide_server::OxideResponse::html(
                                 500,
-                                format!("render error: {}", oxide_render::escape_text(&e.0.message)),
-                            )
+                                format!(
+                                    "loader error: {}",
+                                    oxide_render::escape_text(&e.0.message)
+                                ),
+                            );
                         }
                     }
-                } else {
-                    metrics.observe(&label, started.elapsed(), status);
-                    oxide_server::OxideResponse::html(
-                        status,
-                        format!(
-                            "<!doctype html><html><head><title>Oxide</title></head>\
-                             <body><main>Oxide serving {label}</main></body></html>"
-                        ),
-                    )
                 }
-            })
-        });
+            }
+
+            // §8.1 route.ts / §10.2 step 7: an Endpoint route returns a
+            // Web `Response` directly, bypassing the loader + render
+            // phases. The dispatcher is a worker op (`endpoint:run`),
+            // async but bounded; the response bytes are the raw body
+            // from the `Response` (a `route.ts` can serve a download).
+            let endpoint_for_dispatch_inner = endpoint_for_dispatch.clone();
+            if let (Some(dispatcher), Some(mp)) = (
+                endpoint_for_dispatch_inner.as_deref(),
+                endpoint_module_path.as_ref(),
+            ) {
+                let module_path_s = mp.to_string_lossy().to_string();
+                match dispatcher
+                    .dispatch(
+                        &module_path_s,
+                        &endpoint_method_for_dispatch,
+                        &endpoint_url_for_dispatch,
+                        &endpoint_params_json,
+                        &endpoint_headers,
+                        endpoint_body.as_ref(),
+                        &middleware_locals,
+                    )
+                    .await
+                {
+                    Ok(out) => {
+                        metrics.observe(&label, started.elapsed(), out.status);
+                        // §9.6: a streaming route.ts (SSE, downloads)
+                        // drives the response body from `out.stream`;
+                        // a buffered one uses `out.body`.
+                        let mut resp = match out.stream {
+                            Some(stream) => oxide_server::OxideResponse::stream(out.status, stream),
+                            None => oxide_server::OxideResponse::new(
+                                out.status,
+                                bytes::Bytes::from(out.body),
+                            ),
+                        };
+                        for (k, v) in &out.headers {
+                            resp = resp.with_header(k, v.clone());
+                        }
+                        // §8.5: headers the middleware phase added ride the
+                        // endpoint response (previously accumulated and
+                        // dropped).
+                        for (k, v) in &middleware_headers {
+                            resp = resp.with_header(k, v.clone());
+                        }
+                        return resp;
+                    }
+                    Err(e) => {
+                        metrics.observe(&label, started.elapsed(), e.status);
+                        return oxide_server::OxideResponse::json(
+                            e.status,
+                            serde_json::json!({"error": {
+                                "code": e.code,
+                                "message": e.message,
+                                "route": label,
+                            }}),
+                        );
+                    }
+                }
+            }
+
+            // §7: render phase. Attached renderer wins; otherwise IR placeholder.
+            // PERF-06: the loader phase is done; record its duration.
+            load_ms = stage_load_start.elapsed().as_secs_f64() * 1000.0;
+            let stage_render_start = std::time::Instant::now();
+
+            if let Some(renderer) = page_renderer.as_ref() {
+                // §10.2 step 5: an unmatched URL is a 404 with the
+                // project's `not-found.tsx` as the body, when one exists.
+                // Matched routes resolve to their own id + layout chain;
+                // only the no-match branch substitutes the not-found id.
+                let (route_for_render, effective_layouts) = match &route_id_for_render {
+                    Some(id) => (id.clone(), layout_ids.clone()),
+                    None => match &unmatched_route_id {
+                        Some(nf) => (nf.clone(), unmatched_layout_ids.clone()),
+                        None => ("_unmatched".to_string(), Vec::new()),
+                    },
+                };
+                // PERF-01 / §8.4: the ODF hydration payload needs the same
+                // route/url/params/data the render input carries, but those
+                // fields move into `PageRenderInput` below — clone the
+                // payload's copies first.
+                let route_for_odf = route_for_render.clone();
+                let odf_params = params.clone();
+                let odf_data = data.clone();
+                let odf_url = req_owned.url.clone();
+                let mut input =
+                    oxide_server::PageRenderInput::new(route_for_render, req_owned.url.clone());
+                input.params = params;
+                input.data = data;
+                // §8.2: hand the layout chain to the adapter so it can
+                // nest the page. The adapter renders
+                // `L1( L2( ...( page ) ) )` using `componentFor(layoutId)`.
+                input.layouts = effective_layouts;
+                // §10.2 step 5: nearest ancestor `error.tsx` — the adapter
+                // renders it on an SSR throw instead of the generic 500.
+                input.error_route_id = error_route_id.clone();
+                match renderer.render_streaming(input).await {
+                    Ok(render_stream) => {
+                        // §10.2 step 5 (error-status contract): peek the
+                        // FIRST chunk and scan it for an error-status
+                        // marker BEFORE the response status is fixed. The
+                        // adapter renders the error route with a 200 on
+                        // the wire today (no status channel in the worker
+                        // protocol); the contract is that an error
+                        // document announces itself in its first chunk —
+                        // `<!--oxide-status:500-->` (canonical) or the
+                        // generic OX-500 boundary attribute. HTTP cannot
+                        // change the status after the first byte is sent,
+                        // so a marker in a LATER chunk is unobservable
+                        // here (documented; the adapter must emit the
+                        // marker before the shell).
+                        let (error_status, render_stream) =
+                            probe_render_error_status(render_stream).await;
+                        let final_status = if error_status == 500 { 500 } else { status };
+                        metrics.observe(&label, started.elapsed(), final_status);
+                        // Bridge the renderer's Send-only stream to the
+                        // transport's Send + Sync body stream. If the
+                        // project registered islands, splice the boot
+                        // script tag right before `</body>` — the sliding
+                        // window in `oxide_server::inject_before_close` buffers
+                        // at most `len("</body>") - 1` bytes so a tag
+                        // split across chunks still lands in the right
+                        // place and every other chunk flushes untouched.
+                        // SPEC-11: pass boundary + nonce so a mid-stream
+                        // error emits the recovery boundary instead of
+                        // truncating the response.
+                        let bridged = render_stream_with_recovery(
+                            render_stream,
+                            Some(label.clone()),
+                            Some(oxide_server::nonce_for(&req_owned.request_id)),
+                            label.clone(),
+                        );
+                        // §17.1: a script without the matching nonce is
+                        // blocked by the response's `strict-dynamic` CSP.
+                        // The pipeline derives a per-request nonce in
+                        // `finish_response`; we compute the same value here
+                        // from the request id. Both the deferred script and
+                        // (when present) the boot module share it.
+                        let nonce = oxide_server::nonce_for(&req_owned.request_id);
+                        // PERF-01 / §8.4: the SAME `window.__oxide` ODF
+                        // payload prerendered pages embed, injected into
+                        // the live streamed shell (the sliding-window
+                        // injector above). Previously only write_prerender
+                        // set it, so a dynamic page's boot module found no
+                        // payload and skipped hydration + the router
+                        // entirely (`if (root && payload)` in boot.ts).
+                        let odf_tag = {
+                            let payload = serde_json::json!({
+                                "route": route_for_odf,
+                                "url": odf_url,
+                                "params": odf_params,
+                                "data": odf_data,
+                            });
+                            let odf =
+                                oxide_odf::encode_to_bytes(&oxide_odf::Value::from_json(&payload))
+                                    .unwrap_or_default();
+                            use base64::Engine as _;
+                            let odf_b64 = base64::engine::general_purpose::STANDARD.encode(&odf);
+                            oxide_render::hydration_bootstrap(&odf_b64, &route_for_odf, &nonce)
+                        };
+                        // §7.1 / §9.2: resolved defer() values ride a JSON
+                        // script element so the boot module can dispatch
+                        // `ox:swap` for each. Serialized through serde_json
+                        // (no untrusted string concatenation) and `<` escaped
+                        // so the content cannot break out of the tag.
+                        let deferred_tag = if deferred_values.is_empty() {
+                            String::new()
+                        } else {
+                            let json = serde_json::to_string(&deferred_values)
+                                .unwrap_or_else(|_| "{}".into());
+                            // `</script>` and `<!--` inside a JSON string
+                            // would terminate the tag; `<` escaping is the
+                            // OWASP-recommended fix and produces valid JS
+                            // (`\u003c`).
+                            let safe = json.replace('<', "\\u003c");
+                            format!(
+                                r#"<script type="application/oxide-deferred" nonce="{nonce}">{safe}</script>"#,
+                            )
+                        };
+                        // §13.3: a self-contained dev HMR client. It
+                        // connects to `/_oxide/hmr`, swaps the matching
+                        // <link> on a CSS update, and reloads the page on
+                        // a module/server update. Inlined (not a bundled
+                        // module) so it works in dev without a build step.
+                        let hmr_tag = if dev_hmr_for_render {
+                            format!(
+                                concat!(
+                                    r#"<script nonce="{n}">(function(){{"#,
+                                    r#"try{{var ws=new WebSocket((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/_oxide/hmr');"#,
+                                    r#"ws.onmessage=function(ev){{try{{var m=JSON.parse(ev.data);"#,
+                                    r#"if(m.type==='css-update'){{var p=(m.path||'').split('?')[0];var ls=document.querySelectorAll('link[rel=stylesheet]');"#,
+                                    r#"for(var i=0;i<ls.length;i++){{var h=(ls[i].getAttribute('href')||'').split('?')[0];"#,
+                                    r#"if(h===p||h.slice(-p.length)===p){{ls[i].setAttribute('href',p+'?t='+Date.now());break;}}}}}}"#,
+                                    r#"else if(m.type==='module-update'||m.type==='server-module-swap'||m.type==='full-reload'){{location.reload();}}"#,
+                                    r#"else if(m.type==='route-data-update'){{var ad=function(b64){{try{{if(window.__oxide)window.__oxide.data=b64;}}catch(e){{}}"#,
+                                    r#"document.dispatchEvent(new CustomEvent('ox:data-update',{{detail:{{route:m.route||location.pathname,odf:b64}}}}));}};"#,
+                                    r#"fetch('/__data?route='+encodeURIComponent(location.pathname),{{headers:{{accept:'application/oxide+odf'}}}})"#,
+                                    r#".then(function(r){{return r.ok?r.arrayBuffer():Promise.reject(0)}})"#,
+                                    r#".then(function(buf){{var u=new Uint8Array(buf);var s='';for(var i=0;i<u.length;i++)s+=String.fromCharCode(u[i]);var b64=btoa(s);ad(b64);}})"#,
+                                    r#".catch(function(){{ad(m.odf_b64||'');}});}}"#,
+                                    r#"else if(m.type==='error'){{var d=document.createElement('div');"#,
+                                    r#"d.setAttribute('data-oxide-error','');d.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);color:#fff;font:14px/1.4 monospace;padding:2rem;z-index:2147483647;overflow:auto';"#,
+                                    r#"d.textContent=(m.diagnostic&&(m.diagnostic.code+': '+m.diagnostic.message))||'Oxide error';document.body.appendChild(d);"#,
+                                    r#"d.addEventListener('click',function(){{d.remove();}});}}}}catch(e){{}}}};"#,
+                                    r#"ws.onclose=function(){{setTimeout(function(){{location.reload();}},2000);}};}}catch(e){{}}}})();</script>"#,
+                                ),
+                                n = nonce,
+                            )
+                        } else {
+                            String::new()
+                        };
+                        let body = match boot_script_url_for_render.as_deref() {
+                            Some(url) => {
+                                let tag = format!(
+                                    r#"{odf_tag}{deferred_tag}{hmr_tag}<script type="module" src="/{url}" nonce="{nonce}"></script>"#,
+                                );
+                                oxide_server::inject_before_close(
+                                    bridged,
+                                    b"</body>",
+                                    tag.as_bytes(),
+                                )
+                            }
+                            None => {
+                                let extra = format!("{odf_tag}{deferred_tag}{hmr_tag}");
+                                if extra.is_empty() {
+                                    bridged
+                                } else {
+                                    oxide_server::inject_before_close(
+                                        bridged,
+                                        b"</body>",
+                                        extra.as_bytes(),
+                                    )
+                                }
+                            }
+                        };
+                        // §11 L0: when this response is cacheable, collect
+                        // the streamed body once so it can be stored, then
+                        // serve it from memory. The body was rendered with
+                        // the live request's nonce; replace it with the
+                        // sentinel before storing so any request can reuse
+                        // it. A response that set a cookie is NOT cached
+                        // (it varies per user).
+                        // PERF-04: streaming-preserving fill. Tee the
+                        // rendered body: each chunk flushes to the client
+                        // immediately AND accumulates. On stream end the
+                        // sender is dropped FIRST (so the client sees EOF
+                        // at once, not after the store), then the body is
+                        // stored (live nonce → sentinel) and published for
+                        // single-flight followers. The next request is an
+                        // L0 hit.
+                        if l0_eligible
+                                && loader_set_cookies.is_empty()
+                                // §10.2 step 5: an error-status render is never
+                                // cached — a 500 is per-request state, not a
+                                // shareable response.
+                                && error_status == 0
+                        {
+                            if let Some(cache) = l0.as_ref() {
+                                let nonce = oxide_server::nonce_for(&req_owned.request_id);
+                                let cache = std::sync::Arc::clone(cache);
+                                let l0_route = l0_route.clone();
+                                let l0_params = l0_params.clone();
+                                let l0_vary = l0_vary.clone();
+                                let l0_path = l0_path.clone();
+                                let headers_for_store = loader_headers.clone();
+                                let flight_map = std::sync::Arc::clone(&flight_map);
+                                let flight_key = flight_key.clone();
+                                let flight_owner = flight_owner.take();
+                                let render_ms = stage_render_start.elapsed().as_secs_f64() * 1000.0;
+                                let (tx, mut rx) = tokio::sync::mpsc::channel::<
+                                    std::result::Result<bytes::Bytes, std::io::Error>,
+                                >(8);
+                                tokio::spawn(async move {
+                                    use futures::StreamExt as _;
+                                    let mut src = body;
+                                    let mut collected: Vec<u8> = Vec::new();
+                                    while let Some(item) = src.next().await {
+                                        match item {
+                                            Ok(chunk) => {
+                                                collected.extend_from_slice(&chunk);
+                                                if tx.send(Ok(chunk)).await.is_err() {
+                                                    // Client gone: no store
+                                                    // (the render did not
+                                                    // finish).
+                                                    return;
+                                                }
+                                            }
+                                            Err(e) => {
+                                                let _ = tx.send(Err(e)).await;
+                                                return;
+                                            }
+                                        }
+                                    }
+                                    // Close the client stream NOW — the
+                                    // store below must not delay EOF.
+                                    drop(tx);
+                                    let sentineled = String::from_utf8_lossy(&collected)
+                                        .replace(&nonce, l0_cache::NONCE_SENTINEL)
+                                        .into_bytes();
+                                    let mut store_headers = vec![(
+                                        "content-type".to_string(),
+                                        "text/html; charset=utf-8".to_string(),
+                                    )];
+                                    for (k, v) in &headers_for_store {
+                                        store_headers.push((k.clone(), v.clone()));
+                                    }
+                                    let entry = cache.make_entry(
+                                        200,
+                                        store_headers,
+                                        sentineled,
+                                        vec![l0_route.clone(), format!("path:{}", l0_path)],
+                                    );
+                                    let key = cache.key_of(&l0_route, &l0_params, &l0_vary);
+                                    cache.store_entry(&key, entry.clone()).await;
+                                    if let Some(tx) = flight_owner {
+                                        let _ = oxide_cache::SingleFlight::new()
+                                            .publish_and_cleanup(
+                                                &flight_map,
+                                                &flight_key,
+                                                oxide_cache::FlightSlot::Owner(tx),
+                                                Some(std::sync::Arc::new(entry)),
+                                            )
+                                            .await;
+                                    }
+                                });
+                                let stream: oxide_server::BodyStream =
+                                    Box::pin(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)));
+                                let t = oxide_render::RequestTimings {
+                                    middleware_ms,
+                                    cache_ms: 0.0,
+                                    load_ms,
+                                    render_ms,
+                                    inject_ms: 0.0,
+                                };
+                                let mut resp =
+                                    oxide_server::OxideResponse::stream(final_status, stream)
+                                        .with_header("content-type", "text/html; charset=utf-8")
+                                        .with_header("x-oxide-cache", "L0-miss")
+                                        .with_header("Server-Timing", t.server_timing());
+                                for (k, v) in &loader_headers {
+                                    resp = resp.with_header(k, v.clone());
+                                }
+                                // §8.5: middleware headers ride the teed
+                                // response too.
+                                for (k, v) in &middleware_headers {
+                                    resp = resp.with_header(k, v.clone());
+                                }
+                                return resp;
+                            }
+                        }
+                        // §10.2 step 5 / §8.3: the framework render path
+                        // always used to emit a hardcoded 200 regardless of
+                        // the computed `status`. That made an unmatched URL
+                        // return `HTTP 200` with a page body, breaking both
+                        // the status code and any client HTTP check
+                        // (curl, monitoring, browser dev tools). Use the
+                        // computed status: 200 for a matched route, 404 for
+                        // `_unmatched` — overridden to 500 when the error
+                        // document announced itself in the first chunk
+                        // (§10.2 error-status contract).
+                        let mut resp = oxide_server::OxideResponse::stream(final_status, body)
+                            .with_header("content-type", "text/html; charset=utf-8")
+                            .with_header("x-oxide-cache", "bypass");
+                        // PERF-06: real per-stage Server-Timing.
+                        let render_ms = stage_render_start.elapsed().as_secs_f64() * 1000.0;
+                        let t = oxide_render::RequestTimings {
+                            middleware_ms,
+                            cache_ms: 0.0,
+                            load_ms,
+                            render_ms,
+                            inject_ms: 0.0,
+                        };
+                        resp = resp.with_header("Server-Timing", t.server_timing());
+                        for c in &loader_set_cookies {
+                            resp = resp.with_header("set-cookie", c.clone());
+                        }
+                        for (k, v) in &loader_headers {
+                            resp = resp.with_header(k, v.clone());
+                        }
+                        // §8.5: headers the middleware phase added ride the
+                        // page response (previously accumulated into a dead
+                        // variable and dropped).
+                        for (k, v) in &middleware_headers {
+                            resp = resp.with_header(k, v.clone());
+                        }
+                        resp
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            code = %e.0.code,
+                            error = %e.0.message,
+                            route = %label,
+                            "framework render failed",
+                        );
+                        metrics.observe(&label, started.elapsed(), 500);
+                        oxide_server::OxideResponse::html(
+                            500,
+                            format!("render error: {}", oxide_render::escape_text(&e.0.message)),
+                        )
+                    }
+                }
+            } else {
+                metrics.observe(&label, started.elapsed(), status);
+                oxide_server::OxideResponse::html(
+                    status,
+                    format!(
+                        "<!doctype html><html><head><title>Oxide</title></head>\
+                             <body><main>Oxide serving {label}</main></body></html>"
+                    ),
+                )
+            }
+        })
+    });
     // §8.5: publish the dispatch closure so middleware `{ rewrite }` can
     // re-enter it with a rewritten URL. The OnceLock is set once; subsequent
     // calls are no-ops (a running dispatch is already published).
@@ -4750,7 +5305,11 @@ fn build_image_endpoint(
     let signing_secret = std::env::var("OXIDE_IMAGE_SECRET")
         .ok()
         .filter(|s| !s.is_empty())
-        .or_else(|| std::env::var("OXIDE_IMAGE_UNSIGNED").is_ok().then(|| String::new()))
+        .or_else(|| {
+            std::env::var("OXIDE_IMAGE_UNSIGNED")
+                .is_ok()
+                .then(|| String::new())
+        })
         .or_else(|| build_secret(&rootp).ok());
     let _ = &cfg.images; // reserved: remotePatterns gating lands with the fetch path
 
@@ -4804,11 +5363,7 @@ impl oxide_server::ServerFnDispatcher for ServerFnDispatcherImpl {
         id: &str,
         args_json: &[u8],
     ) -> std::result::Result<Vec<u8>, oxide_server::DispatchError> {
-        match self
-            .host
-            .run_coded(id, args_json, &self.entry_path)
-            .await
-        {
+        match self.host.run_coded(id, args_json, &self.entry_path).await {
             Ok(v) => {
                 // The worker op returns `{value: <fn result>}` — a stable
                 // envelope it can extend later (streaming, diagnostics). The
@@ -4817,9 +5372,7 @@ impl oxide_server::ServerFnDispatcher for ServerFnDispatcherImpl {
                 // and not `{value: …}`.
                 let value = v.get("value").cloned().unwrap_or(v);
                 serde_json::to_vec(&value).map_err(|e| {
-                    oxide_server::DispatchError::internal(format!(
-                        "serialize fn result: {e}"
-                    ))
+                    oxide_server::DispatchError::internal(format!("serialize fn result: {e}"))
                 })
             }
             Err(e) => {
@@ -4887,7 +5440,16 @@ impl oxide_server::ActionDispatcher for ActionDispatcherImpl {
     ) -> std::result::Result<oxide_server::ActionRunResult, oxide_server::DispatchError> {
         match self
             .host
-            .run(module_path, action, form_json, params, url, method, headers, locals)
+            .run(
+                module_path,
+                action,
+                form_json,
+                params,
+                url,
+                method,
+                headers,
+                locals,
+            )
             .await
         {
             Ok(out) => Ok(oxide_server::ActionRunResult {
@@ -4901,9 +5463,7 @@ impl oxide_server::ActionDispatcher for ActionDispatcherImpl {
                     .into_iter()
                     .map(|ev| match ev {
                         oxide_jshost::RevalidateEvent::Tag { tag } => ("tag".to_string(), tag),
-                        oxide_jshost::RevalidateEvent::Path { path } => {
-                            ("path".to_string(), path)
-                        }
+                        oxide_jshost::RevalidateEvent::Path { path } => ("path".to_string(), path),
                     })
                     .collect(),
             }),
@@ -4947,7 +5507,11 @@ impl oxide_server::EndpointDispatcher for EndpointDispatcherImpl {
         body: &[u8],
         locals: &serde_json::Value,
     ) -> std::result::Result<oxide_server::EndpointRunResult, oxide_server::EndpointRunError> {
-        match self.host.run(module_path, method, url, params, headers, body, locals).await {
+        match self
+            .host
+            .run(module_path, method, url, params, headers, body, locals)
+            .await
+        {
             Ok(out) => {
                 // §9.6: a streaming outcome's receiver becomes a `BodyStream`.
                 let stream: Option<oxide_server::BodyStream> = out.stream.map(|mut rx| {
@@ -4968,9 +5532,8 @@ impl oxide_server::EndpointDispatcher for EndpointDispatcherImpl {
                             }
                         }
                     });
-                    Box::pin(futures::stream::poll_fn(move |cx| {
-                        out_rx.poll_recv(cx)
-                    })) as oxide_server::BodyStream
+                    Box::pin(futures::stream::poll_fn(move |cx| out_rx.poll_recv(cx)))
+                        as oxide_server::BodyStream
                 });
                 Ok(oxide_server::EndpointRunResult {
                     status: out.status,
@@ -4988,7 +5551,6 @@ impl oxide_server::EndpointDispatcher for EndpointDispatcherImpl {
     }
 }
 
-
 /// §9.6: the URL-pattern → `socket.ts` map for the WebSocket service. A
 /// `socket.ts` at `routes/chat/[room]/socket` maps to `/chat/:room`; the
 /// root `routes/socket` maps to `/`. Params become `:name`; catch-all `[...x]`
@@ -5005,15 +5567,14 @@ fn cfg_socket_routes(
             continue;
         }
         // `routes/chat/[room]/socket` → segs `chat`, `[room]` → `/chat/:room`.
-        let base = e
-            .id
-            .0
-            .strip_prefix("routes")
-            .unwrap_or(&e.id.0)
-            .trim_matches('/')
-            .strip_suffix("socket")
-            .unwrap_or("")
-            .trim_matches('/');
+        let base =
+            e.id.0
+                .strip_prefix("routes")
+                .unwrap_or(&e.id.0)
+                .trim_matches('/')
+                .strip_suffix("socket")
+                .unwrap_or("")
+                .trim_matches('/');
         let mut path = String::from("/");
         if !base.is_empty() {
             let segments: Vec<String> = base
@@ -5021,9 +5582,13 @@ fn cfg_socket_routes(
                 .map(|seg| {
                     if let Some(rest) = seg.strip_prefix("[...").and_then(|s| s.strip_suffix(']')) {
                         format!("*{rest}")
-                    } else if let Some(name) = seg.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+                    } else if let Some(name) =
+                        seg.strip_prefix('[').and_then(|s| s.strip_suffix(']'))
+                    {
                         format!(":{name}")
-                    } else if let Some(name) = seg.strip_prefix("[[").and_then(|s| s.strip_suffix("]]")) {
+                    } else if let Some(name) =
+                        seg.strip_prefix("[[").and_then(|s| s.strip_suffix("]]"))
+                    {
                         format!(":{name}")
                     } else {
                         seg.to_string()
@@ -5063,8 +5628,13 @@ impl oxide_server::MiddlewareDispatcher for MiddlewareDispatcherImpl {
         headers: &[(String, String)],
         body: &[u8],
         locals: Option<&serde_json::Value>,
-    ) -> std::result::Result<oxide_server::MiddlewareRunResult, oxide_server::MiddlewareRunError> {
-        match self.host.run(module_path, method, url, params, headers, body, locals).await {
+    ) -> std::result::Result<oxide_server::MiddlewareRunResult, oxide_server::MiddlewareRunError>
+    {
+        match self
+            .host
+            .run(module_path, method, url, params, headers, body, locals)
+            .await
+        {
             Ok(out) => Ok(oxide_server::MiddlewareRunResult {
                 short: out.short,
                 status: out.status,
@@ -5196,7 +5766,9 @@ fn build_js_plugin_hook(
         if p.get("kind").and_then(|v| v.as_str()) != Some("js") {
             continue;
         }
-        let Some(rel) = p.get("path").and_then(|v| v.as_str()) else { continue };
+        let Some(rel) = p.get("path").and_then(|v| v.as_str()) else {
+            continue;
+        };
         let abs = if Path::new(rel).is_absolute() {
             PathBuf::from(rel)
         } else {
@@ -5302,10 +5874,12 @@ fn build_js_plugin_hook(
                 })
                 .join()
                 .unwrap_or_else(|_| {
-                    Err(oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
-                        "PLG-BRIDGE",
-                        "plugin bridge thread panicked",
-                    )))
+                    Err(oxide_diagnostics::OxideError(
+                        oxide_diagnostics::Diagnostic::error(
+                            "PLG-BRIDGE",
+                            "plugin bridge thread panicked",
+                        ),
+                    ))
                 })
         })
     }))
@@ -5381,7 +5955,10 @@ fn build_transform_hook(root: &Path, cfg: &OxideConfig) -> Option<oxide_bundler:
             }
         };
         // Only a plugin that declares *and* exports `transform` gets a hook.
-        if !plugin.available_hooks().contains(&oxide_plugin::Hook::Transform) {
+        if !plugin
+            .available_hooks()
+            .contains(&oxide_plugin::Hook::Transform)
+        {
             continue;
         }
         let plugin = std::sync::Mutex::new(plugin);
@@ -5470,16 +6047,18 @@ async fn start_server_inner_full(
     // §9.6: the WebSocket route service. Built only when the project has
     // any `socket.ts` routes AND a dispatcher (a pool). URL segments →
     // `socket.ts` path, so the hot path is a map probe.
-    let socket_service: Option<std::sync::Arc<oxide_server::SocketService>> =
-        match (build_socket_dispatcher(stack.pool.as_ref()), cfg_socket_routes(&rootp, &cfg, &tree)) {
-            (Some(dispatcher), routes) if !routes.is_empty() => {
-                Some(std::sync::Arc::new(oxide_server::SocketService {
-                    dispatcher,
-                    routes: std::sync::Arc::new(routes),
-                }))
-            }
-            _ => None,
-        };
+    let socket_service: Option<std::sync::Arc<oxide_server::SocketService>> = match (
+        build_socket_dispatcher(stack.pool.as_ref()),
+        cfg_socket_routes(&rootp, &cfg, &tree),
+    ) {
+        (Some(dispatcher), routes) if !routes.is_empty() => {
+            Some(std::sync::Arc::new(oxide_server::SocketService {
+                dispatcher,
+                routes: std::sync::Arc::new(routes),
+            }))
+        }
+        _ => None,
+    };
     // SEC-09: mint the dev inspector token when the inspector is attached
     // (dev only). `serve` (production) never sets an inspector, so this is
     // `None` there.
@@ -5567,15 +6146,13 @@ async fn start_server_inner_full(
             .ok()
             .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
     };
-    let boot_script_url: Option<String> = client_manifest_json
-        .as_ref()
-        .and_then(|v| {
-            v.get("routes")
-                .and_then(|r| r.get("__boot__"))
-                .and_then(|r| r.get("entry_chunk"))
-                .and_then(|e| e.as_str())
-                .map(|f| format!("client/{f}"))
-        });
+    let boot_script_url: Option<String> = client_manifest_json.as_ref().and_then(|v| {
+        v.get("routes")
+            .and_then(|r| r.get("__boot__"))
+            .and_then(|r| r.get("entry_chunk"))
+            .and_then(|e| e.as_str())
+            .map(|f| format!("client/{f}"))
+    });
     // §11 L0: a response cache for static/isr routes. The build id scopes
     // entries to this deployment, so a rebuild invalidates them; it comes from
     // the client manifest, falling back to a source-derived hash when no build
@@ -5600,14 +6177,13 @@ async fn start_server_inner_full(
         );
         512 * 1024 * 1024
     });
-    // §11.2: `cache.handler` selects the L2 remote. A configured `http`
-    // handler attaches to the tiered cache; an explicit `stack.cache_tier`
-    // (a test or a caller-provided cache) wins over config. Memory/disk
-    // are the local tiers every handler gets.
-    let l0_tier: std::sync::Arc<dyn oxide_cache::CacheHandler> = match stack
-        .cache_tier
-        .clone()
-    {
+    // §11.2: `cache.handler` selects the L2 remote. The LIVE wiring is in
+    // `build_framework_stack` (every `cmd_*` site threads `cfg.cache.handler`
+    // in, so the worker's tier honors the config); this arm only fires for a
+    // stack built WITHOUT a tier (tests, `FrameworkStack::empty()`) — it
+    // keeps the same handler mapping so a test stack still exercises the
+    // config path. Memory/disk are the local tiers every handler gets.
+    let l0_tier: std::sync::Arc<dyn oxide_cache::CacheHandler> = match stack.cache_tier.clone() {
         Some(tier) => tier,
         None => {
             let mut tier = oxide_cache::TieredCache::new(l0_bytes);
@@ -5815,10 +6391,12 @@ async fn cmd_serve(
     let cfg = load_config_or_default(&rootp, "production");
     let config_path_opt = find_config_file(&rootp).ok();
     let transform_handler = framework_shim::build_transform_handler(&rootp, &cfg);
+    // §11.2: `cache.handler` is honored inside the stack (see cmd_dev).
     let stack = framework_shim::build_framework_stack(
         config_path_opt.as_deref(),
         cfg.server.backend,
         transform_handler,
+        Some(&cfg.cache.handler),
     )
     .await;
     if let Some(name) = stack.renderer_name() {
@@ -5914,7 +6492,11 @@ async fn cmd_analyze(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     // project that names only a total budget still gets every route checked
     // against it). The total check below is separate and always uses
     // `clientJs`.
-    let route_src = cfg.budgets.route_js.as_deref().or(cfg.budgets.client_js.as_deref());
+    let route_src = cfg
+        .budgets
+        .route_js
+        .as_deref()
+        .or(cfg.budgets.client_js.as_deref());
     let route_budget: Option<u64> = match route_src {
         Some(s) => Some(
             oxide_config::parse_size(s)
@@ -5937,7 +6519,9 @@ async fn cmd_analyze(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     {
         let mut stack = vec![client_dir.clone()];
         while let Some(d) = stack.pop() {
-            let Ok(rd) = std::fs::read_dir(&d) else { continue };
+            let Ok(rd) = std::fs::read_dir(&d) else {
+                continue;
+            };
             for e in rd.flatten() {
                 let p = e.path();
                 if p.is_dir() {
@@ -6028,11 +6612,8 @@ async fn cmd_why(root: &str, module: &str, w: Writer<'_>) -> anyhow::Result<i32>
                 .get("modules")
                 .and_then(|m| m.as_array())
                 .map(|arr| {
-                    arr.iter().any(|v| {
-                        v.as_str()
-                            .map(|s| s.contains(module))
-                            .unwrap_or(false)
-                    })
+                    arr.iter()
+                        .any(|v| v.as_str().map(|s| s.contains(module)).unwrap_or(false))
                 })
                 .unwrap_or(false);
             let references = recorded
@@ -6123,9 +6704,17 @@ async fn cmd_doctor(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     if cfg.security.cookie_keys.is_empty() {
         outln!(w, "[--] cookie keys: none set (derived from .oxide/secret)");
     } else if weak.is_empty() {
-        outln!(w, "[ok] cookie keys: {} key(s), all ≥ 32 bytes", cfg.security.cookie_keys.len());
+        outln!(
+            w,
+            "[ok] cookie keys: {} key(s), all ≥ 32 bytes",
+            cfg.security.cookie_keys.len()
+        );
     } else {
-        outln!(w, "[fail] cookie keys: {} key(s) shorter than 32 bytes", weak.len());
+        outln!(
+            w,
+            "[fail] cookie keys: {} key(s) shorter than 32 bytes",
+            weak.len()
+        );
         all_ok = false;
     }
     Ok(if all_ok { 0 } else { 1 })
@@ -6138,7 +6727,11 @@ async fn cmd_secrets(root: &str, op: SecretsOp, w: Writer<'_>) -> anyhow::Result
         SecretsOp::Rotate => {
             let f = rootp.join(".oxide/secret");
             match std::fs::remove_file(&f) {
-                Ok(()) => outln!(w, "[ok] removed {} — next build mints a new secret", f.display()),
+                Ok(()) => outln!(
+                    w,
+                    "[ok] removed {} — next build mints a new secret",
+                    f.display()
+                ),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     outln!(w, "[--] no secret at {} (nothing to rotate)", f.display())
                 }
@@ -6465,8 +7058,7 @@ async fn cmd_render(
         .join("page.server.ts");
     if page_server_path.is_file() {
         let loader_host = LoaderHost::new(std::sync::Arc::clone(&pool));
-        let params_for_loader: serde_json::Value =
-            serde_json::Value::Object(params_json.clone());
+        let params_for_loader: serde_json::Value = serde_json::Value::Object(params_json.clone());
         match loader_host
             .run(
                 &page_server_path.to_string_lossy(),
@@ -6486,7 +7078,11 @@ async fn cmd_render(
                     let loc = out.get("location").and_then(|v| v.as_str()).unwrap_or("");
                     anyhow::bail!(
                         "loader short-circuited with status {status}{}",
-                        if loc.is_empty() { String::new() } else { format!(" -> {loc}") }
+                        if loc.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" -> {loc}")
+                        }
                     );
                 }
                 if let Some(d) = out.get("data") {
@@ -6529,7 +7125,8 @@ async fn cmd_render(
             oxide_jshost::CallStream::Complete(bytes) => {
                 w.write_all(bytes)
                     .map_err(|e| anyhow::anyhow!("write stdout: {e}"))?;
-                w.flush().map_err(|e| anyhow::anyhow!("flush stdout: {e}"))?;
+                w.flush()
+                    .map_err(|e| anyhow::anyhow!("flush stdout: {e}"))?;
             }
             oxide_jshost::CallStream::Chunked(rx) => {
                 while let Some(item) = rx.recv().await {
@@ -6537,7 +7134,8 @@ async fn cmd_render(
                         item.map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
                     w.write_all(&bytes)
                         .map_err(|e| anyhow::anyhow!("write stdout: {e}"))?;
-                    w.flush().map_err(|e| anyhow::anyhow!("flush stdout: {e}"))?;
+                    w.flush()
+                        .map_err(|e| anyhow::anyhow!("flush stdout: {e}"))?;
                 }
             }
         }
@@ -6545,7 +7143,8 @@ async fn cmd_render(
         // `\n`; the stream path writes bytes directly, so add it here.
         w.write_all(b"\n")
             .map_err(|e| anyhow::anyhow!("write stdout: {e}"))?;
-        w.flush().map_err(|e| anyhow::anyhow!("flush stdout: {e}"))?;
+        w.flush()
+            .map_err(|e| anyhow::anyhow!("flush stdout: {e}"))?;
     } else {
         let html = fw
             .render(&path_str, input)
