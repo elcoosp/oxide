@@ -4072,6 +4072,9 @@ fn build_dispatch(
     // §11.2 / §14.1: the request headers the L0 key is fingerprinted by
     // (`cache.l0.vary`). Empty disables header variance.
     vary_headers: Vec<String>,
+    // §20: the per-request waterfall recorder. `None` for a non-inspector
+    // server; the dispatch then skips recording.
+    waterfall: Option<oxide_dev::WaterfallRecorder>,
 ) -> std::sync::Arc<dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync> {
     let boot_script_url_for_render = boot_script_url.clone();
     let dev_hmr_for_render = dev_hmr;
@@ -4478,6 +4481,9 @@ fn build_dispatch(
         // §8.5: same shadow for the self-dispatch handle used by a
         // middleware rewrite (the async block moves it per-call).
         let self_dispatch_for_closure = self_dispatch_for_closure.clone();
+        // §20: the waterfall recorder (Arc inside, cheap to clone) is moved
+        // by the async block; shadow it per call like the dispatchers above.
+        let waterfall = waterfall.clone();
         // §11 L0: only a GET on a cacheable-mode route is a candidate.
         let l0 = l0.clone();
         // §11.1: L0 caches the FULL response for cacheable modes. The
@@ -5311,6 +5317,16 @@ fn build_dispatch(
                                     render_ms,
                                     inject_ms: 0.0,
                                 };
+                                if let Some(rec) = waterfall.as_ref() {
+                                    rec.record(
+                                        &req_owned.request_id,
+                                        vec![
+                                            ("middleware".to_string(), middleware_ms),
+                                            ("load".to_string(), load_ms),
+                                            ("render".to_string(), render_ms),
+                                        ],
+                                    );
+                                }
                                 let mut resp =
                                     oxide_server::OxideResponse::stream(final_status, stream)
                                         .with_header("content-type", "text/html; charset=utf-8")
@@ -6352,6 +6368,13 @@ async fn start_server_inner_full(
         .map(str::to_string)
         .unwrap_or_else(|| "dev".to_string());
 
+    // §20: the per-request waterfall recorder the inspector renders. Created
+    // here so the dispatch closure (which records) and the inspector (which
+    // reads) share one instance. `None` for a non-inspector server — the
+    // dispatch then skips recording (a branch, not an allocation).
+    let waterfall_recorder: Option<oxide_dev::WaterfallRecorder> =
+        with_inspector.then(oxide_dev::WaterfallRecorder::new);
+
     let pipeline = std::sync::Arc::new(oxide_server::Pipeline {
         rules,
         assets,
@@ -6408,9 +6431,16 @@ async fn start_server_inner_full(
         metrics_path: "/_oxide/metrics".to_string(),
         metrics: Some(std::sync::Arc::clone(&metrics)),
         inspector: if with_inspector {
-            Some(std::sync::Arc::new(CliInspector {
-                state: oxide_dev::RouteTableInspector::from_router_table(tree.table()).state(),
-            }))
+            // §20: with a recorder wired, the inspector's waterfall table
+            // reflects the live per-request timings instead of staying empty.
+            let rt = match waterfall_recorder.clone() {
+                Some(rec) => oxide_dev::RouteTableInspector::from_router_table_with_recorder(
+                    tree.table(),
+                    rec,
+                ),
+                None => oxide_dev::RouteTableInspector::from_router_table(tree.table()),
+            };
+            Some(std::sync::Arc::new(CliInspector { state: rt.state() }))
         } else {
             None
         },
@@ -6578,6 +6608,8 @@ async fn start_server_inner_full(
         hmr.is_some(),
         // §11.2: the L0 Vary fingerprint set from `cache.l0.vary`.
         cfg.cache.l0.vary.clone(),
+        // §20: the waterfall recorder (None for a non-inspector server).
+        waterfall_recorder.clone(),
     );
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (tx, rx) = tokio::sync::watch::channel(false);

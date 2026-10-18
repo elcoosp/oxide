@@ -225,6 +225,7 @@ async fn dispatch_routes_through_page_renderer_when_attached() {
         None,
         false,
         Vec::new(),
+        None, // no waterfall recorder in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -271,6 +272,7 @@ async fn dispatch_uses_ir_placeholder_when_no_renderer() {
         None,
         false,
         Vec::new(),
+        None, // no waterfall recorder in tests
     );
 
     let resp = dispatch(test_request("GET", "/some/page")).await;
@@ -316,6 +318,7 @@ async fn dispatch_propagates_renderer_error_as_500() {
         None,
         false,
         Vec::new(),
+        None, // no waterfall recorder in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -474,6 +477,7 @@ async fn loader_feeds_data_to_renderer() {
         None,
         false,
         Vec::new(),
+        None, // no waterfall recorder in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -521,6 +525,7 @@ async fn loader_404_short_circuits_render() {
         None,
         false,
         Vec::new(),
+        None, // no waterfall recorder in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -568,6 +573,7 @@ async fn loader_redirect_short_circuits_with_location() {
         None,
         false,
         Vec::new(),
+        None, // no waterfall recorder in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -627,6 +633,7 @@ async fn no_server_module_skips_loader() {
         None,
         false,
         Vec::new(),
+        None, // no waterfall recorder in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -3044,6 +3051,7 @@ async fn live_render_injects_odf_payload_script() {
         None,
         false,
         Vec::new(),
+        None, // no waterfall recorder in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -3130,6 +3138,7 @@ async fn error_status_marker_yields_http_500() {
             None,
             false,
             Vec::new(),
+            None, // no waterfall recorder in tests
         );
         let resp = dispatch(test_request("GET", "/")).await;
         assert_eq!(resp.status, 500, "{name} → HTTP 500");
@@ -3344,6 +3353,7 @@ async fn middleware_headers_ride_page_and_data_responses() {
         mw.clone(),
         false,
         Vec::new(),
+        None, // no waterfall recorder in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
     assert_eq!(resp.status, 200);
@@ -3381,6 +3391,7 @@ async fn middleware_headers_ride_page_and_data_responses() {
         mw,
         false,
         Vec::new(),
+        None, // no waterfall recorder in tests
     );
     let resp = dispatch(test_request("GET", "/__data?route=%2F")).await;
     assert_eq!(resp.status, 200, "data response for a matched route");
@@ -3484,6 +3495,7 @@ async fn middleware_headers_ride_l0_hits() {
         mw,
         false,
         Vec::new(),
+        None, // no waterfall recorder in tests
     );
 
     // First request: an L0 miss. It renders and stores the entry; the

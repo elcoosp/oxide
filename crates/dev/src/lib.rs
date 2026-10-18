@@ -583,6 +583,18 @@ impl RouteTableInspector {
         }
     }
 
+    /// Like [`Self::from_router_table`] but wired to a shared
+    /// [`WaterfallRecorder`], so the inspector's waterfall table reflects the
+    /// live per-request timings the dispatch records (§20).
+    pub fn from_router_table_with_recorder(
+        table: Vec<(String, String, Vec<String>)>,
+        recorder: WaterfallRecorder,
+    ) -> Self {
+        let mut me = Self::from_router_table(table);
+        me.waterfalls = Some(recorder);
+        me
+    }
+
     /// Produce the inspector state. Module-graph / cache / pool fields stay
     /// empty until those subsystems feed them; the waterfall is populated
     /// from the shared recorder (§20).
