@@ -113,17 +113,22 @@ export async function renderVueToStream(
     if (typeof (vueStream as ReadableStream<Uint8Array>).getReader === 'function') {
       return vueStream as ReadableStream<Uint8Array>
     }
-    // Node Readable → web ReadableStream.
+    // Node Readable → web ReadableStream. Guard `on` — an unknown stream
+    // shape (a test fake, a custom runtime) has neither `getReader` nor `on`;
+    // fall through to the `renderToString` fallback below so the caller still
+    // gets valid HTML (only the incremental chunking is lost).
     const nodeStream = vueStream as NodeJS.ReadableStream
-    return new ReadableStream<Uint8Array>({
-      start(controller) {
-        nodeStream.on('data', (chunk: Buffer | string) => {
-          controller.enqueue(typeof chunk === 'string' ? new TextEncoder().encode(chunk) : new Uint8Array(chunk))
-        })
-        nodeStream.on('end', () => controller.close())
-        nodeStream.on('error', (e) => controller.error(e))
-      },
-    })
+    if (typeof (nodeStream as { on?: unknown }).on === 'function') {
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          nodeStream.on('data', (chunk: Buffer | string) => {
+            controller.enqueue(typeof chunk === 'string' ? new TextEncoder().encode(chunk) : new Uint8Array(chunk))
+          })
+          nodeStream.on('end', () => controller.close())
+          nodeStream.on('error', (e) => controller.error(e))
+        },
+      })
+    }
   }
   // No streaming API: single-chunk fallback.
   const html = await server.renderToString(app)
@@ -135,10 +140,3 @@ export async function renderVueToStream(
     },
   })
 }
-
-/**
- * Stream a Vue component's HTML via `@vue/server-renderer`'s `renderToStream`.
- * Yields the shell before async setup/suspense resolves — the TTFB property
- * streaming exists for. Falls back to a single-chunk stream from
- * `renderVueToString` when the runtime lacks `renderToStream`.
- */
