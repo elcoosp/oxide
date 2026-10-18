@@ -258,11 +258,26 @@ pub trait EndpointDispatcher: Send + Sync {
 }
 
 /// The result of a `route.ts` run.
-#[derive(Debug, Clone, Default)]
+#[derive(Default)]
 pub struct EndpointRunResult {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+    /// §9.6: a streaming body (SSE, downloads). When `Some`, the pipeline
+    /// builds a streaming response and ignores `body`.
+    pub stream: Option<crate::BodyStream>,
+}
+
+
+impl std::fmt::Debug for EndpointRunResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EndpointRunResult")
+            .field("status", &self.status)
+            .field("headers", &self.headers)
+            .field("body_len", &self.body.len())
+            .field("streaming", &self.stream.is_some())
+            .finish()
+    }
 }
 
 /// A dispatch failure the pipeline maps to an HTTP status + a JSON envelope.

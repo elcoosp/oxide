@@ -409,6 +409,10 @@ pub struct BuildConfig {
     /// from ~950 KB to a few KB. Externals are matched exactly on the
     /// specifier, so subpaths (`vue/server-renderer`) must be listed too.
     pub ssr_externals: Vec<String>,
+    /// §5.4: a remote build-cache URL (`http://…`). When set, the precompile
+    /// pass reads through it on a local miss and writes back on a store, so a
+    /// CI job reuses another job's artifacts. `None` disables the remote.
+    pub remote_cache: Option<String>,
 }
 impl Default for BuildConfig {
     fn default() -> Self {
@@ -416,6 +420,7 @@ impl Default for BuildConfig {
             target: "baseline-widely-available".into(),
             sourcemap: "hidden".into(),
             ssr_externals: Vec::new(),
+            remote_cache: None,
         }
     }
 }
