@@ -41,13 +41,17 @@ pub fn extract_generate_params(source: &str) -> GenerateParamsResult {
     // Walk forward to the RHS.
     let bytes = source.as_bytes();
     let mut i = binding.end;
-    while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'\n' || bytes[i] == b'\r') {
+    while i < bytes.len()
+        && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'\n' || bytes[i] == b'\r')
+    {
         i += 1;
     }
     // Skip past `=` if we're right before it.
     if i < bytes.len() && bytes[i] == b'=' {
         i += 1;
-        while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'\n' || bytes[i] == b'\r') {
+        while i < bytes.len()
+            && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'\n' || bytes[i] == b'\r')
+        {
             i += 1;
         }
     }
