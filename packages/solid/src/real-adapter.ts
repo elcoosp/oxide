@@ -16,7 +16,7 @@ import type { RenderInput, HeadTags, RenderCtx } from '../../oxide/src/types.ts'
 import { render as irRender, head as irHead, mergeHead } from './render.ts'
 import { hydrate, hydrateIsland, mount, update } from './hydrate.ts'
 import { solidHydrateIsland } from './hydrate-island-real.ts'
-import { isSolidAvailable, renderSolidToString, renderSolidToStream, getLastLoadError } from './real-ssr.ts'
+import { isSolidAvailable, renderSolidToString, renderSolidToStream, expandSolidChildren, getLastLoadError } from './real-ssr.ts'
 
 export type { RealAdapterOptions }
 
@@ -61,21 +61,25 @@ export function createRealAdapter(opts: RealAdapterOptions) {
     // component OUTSIDE solid's async machinery so a synchronous throw
     // propagates immediately (otherwise renderToStringAsync hangs and
     // reports "renderToString timed out"). The built tree is then handed
-    // back to solid as a stable value.
+    // back to solid as a stable value. §8.2: a layout's `children` arrives
+    // as a `{ Component, props }` descriptor — expanded into a real element
+    // (createComponent + props.children) before the pre-invocation.
     renderBody: async (Component, props) => {
       if (typeof Component !== 'function') return String(Component ?? '')
+      const expanded = await expandSolidChildren(props)
       // Solid's renderer takes a zero-argument factory. Pre-invoke the
       // component OUTSIDE solid's async machinery so a synchronous throw
       // propagates immediately (otherwise renderToStringAsync hangs and
       // reports "renderToString timed out"). The built tree is then handed
       // back to solid as a stable value.
-      const tree = (Component as (p: Record<string, unknown>) => unknown)(props)
+      const tree = (Component as (p: Record<string, unknown>) => unknown)(expanded)
       return renderSolidToString(() => tree)
     },
     // §7.1: Solid 2's `@solidjs/web` exposes `renderToStream`, so the shell
     // can reach the client before resources resolve. Same pre-invocation
     // pattern as `renderBody` — build the tree outside the streaming
-    // machinery so a synchronous throw propagates.
+    // machinery so a synchronous throw propagates, with the same §8.2
+    // descriptor expansion for layout children.
     renderStream: async (Component, props) => {
       if (typeof Component !== 'function') {
         const bytes = new TextEncoder().encode(String(Component ?? ''))
@@ -86,7 +90,8 @@ export function createRealAdapter(opts: RealAdapterOptions) {
           },
         })
       }
-      const tree = (Component as (p: Record<string, unknown>) => unknown)(props)
+      const expanded = await expandSolidChildren(props)
+      const tree = (Component as (p: Record<string, unknown>) => unknown)(expanded)
       return renderSolidToStream(() => tree)
     },
     rootAttrs: ' id="root" data-solid=""',
