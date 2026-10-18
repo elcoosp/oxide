@@ -6,7 +6,7 @@ use std::sync::{OnceLock, RwLock};
 
 use regex::Regex;
 
-use crate::segment::{classify, seg_priority, split_path, SegKind};
+use crate::segment::{SegKind, classify, seg_priority, split_path};
 use crate::{MatchResult, RouteEntry, RouteId, RouteKind, RouteTree};
 
 /// Uniform read-only view over owned [`RouteEntry`] and the rkyv-archived entry type,
