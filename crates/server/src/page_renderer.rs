@@ -319,3 +319,34 @@ pub struct MiddlewareRunError {
     pub message: String,
 }
 
+
+// ---------------------------------------------------------------------------
+// Socket dispatch (§9.6)
+// ---------------------------------------------------------------------------
+
+/// The seam between the HTTP pipeline and whichever runtime executes a
+/// route's `socket.ts` WebSocket handlers. Rust owns the upgrade, framing,
+/// ping/pong and backpressure; this trait is one phase call.
+#[async_trait::async_trait]
+pub trait SocketDispatcher: Send + Sync {
+    async fn run(
+        &self,
+        module_path: &str,
+        phase: &str,
+        payload: serde_json::Value,
+        socket_id: &str,
+    ) -> std::result::Result<SocketRunResult, SocketRunError>;
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SocketRunResult {
+    pub sends: Vec<String>,
+    pub close: Option<(u16, String)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SocketRunError {
+    pub status: u16,
+    pub code: String,
+    pub message: String,
+}
