@@ -4228,3 +4228,13 @@ Six of seven user-visible Bucket-2 gaps closed and end-to-end proven
 (router boot, nested layouts, not-found, error.tsx, route.ts, middleware).
 Loading boundaries remain open. Full detail in
 `docs/HANDOFF-bucket2-session.md`.
+
+## Session 2026-10-17 (bucket-2 COMPLETE)
+
+All seven user-visible Bucket-2 gaps plus every deferred partial item
+are implemented and tested: router boot, nested layouts, not-found,
+error.tsx, route.ts, middleware (incl. rewrite + locals everywhere),
+defer data resolution, non-React hydration, loading boundaries,
+streaming SSR (React/Vue/Solid), and manifest chunk preloading.
+260 Rust tests + 240 TS tests green. Detail in
+`docs/HANDOFF-bucket2-complete.md`.
