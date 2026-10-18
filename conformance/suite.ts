@@ -433,5 +433,45 @@ export async function runSuite(adapter: Adapter, opts: SuiteOptions = {}): Promi
     return 'goto → update → DOM swap'
   })
 
+  // --- §8.4 prefetch --------------------------------------------------------
+
+  await push('router: prefetch fetches /__data and a later goto reuses it (§8.4)', async () => {
+    let fetches = 0
+    const listeners = new Map<string, Array<(e: unknown) => void>>()
+    const doc = {
+      addEventListener(type: string, fn: (e: unknown) => void) { listeners.set(type, [...(listeners.get(type) ?? []), fn]) },
+      removeEventListener(type: string, fn: (e: unknown) => void) { listeners.set(type, (listeners.get(type) ?? []).filter((f) => f !== fn)) },
+      querySelectorAll() { return [] },
+    }
+    const history = { state: null as unknown, pushState(s: unknown) { history.state = s }, replaceState(s: unknown) { history.state = s } }
+    const location = { href: 'http://atlas.test/', pathname: '/', search: '' }
+    const fetchStub = (async () => {
+      fetches++
+      return new Response(encodeLite({
+        route: 'routes/blog/[slug]', url: '/blog/pf', params: { slug: 'pf' },
+        data: { title: 'Prefetched', author: 'Ada', body: 'x' },
+      }), { headers: { 'content-type': 'application/oxide+odf' } })
+    }) as typeof fetch
+    const updates: Array<Record<string, unknown>> = []
+    const router = createRouter({
+      adapter: { update(input) { updates.push(input as unknown as Record<string, unknown>) } },
+      manifest: { routes: {} },
+      doc: doc as never,
+      history: history as never,
+      location: location as never,
+      fetch: fetchStub,
+    })
+    const dispose = router.attach()
+    // Prefetch warms the data cache; the subsequent goto must not re-fetch.
+    router.prefetch('/blog/pf')
+    await new Promise((r) => setTimeout(r, 20))
+    assert(fetches === 1, 'prefetch issued exactly one /__data fetch')
+    await router.goto('/blog/pf')
+    assert(fetches === 1, 'goto reused the prefetched data (no second fetch)')
+    assert(updates.length === 1, 'goto still dispatched adapter.update')
+    dispose()
+    return 'prefetch → cache hit'
+  })
+
   return results
 }
