@@ -16,7 +16,7 @@ import type { RenderInput, HeadTags, RenderCtx } from '../../oxide/src/types.ts'
 import { render as irRender, head as irHead, mergeHead } from './render.ts'
 import { hydrate, hydrateIsland, mount, update } from './hydrate.ts'
 import { solidHydrateIsland } from './hydrate-island-real.ts'
-import { isSolidAvailable, renderSolidToString, getLastLoadError } from './real-ssr.ts'
+import { isSolidAvailable, renderSolidToString, renderSolidToStream, getLastLoadError } from './real-ssr.ts'
 
 export type { RealAdapterOptions }
 
@@ -71,6 +71,23 @@ export function createRealAdapter(opts: RealAdapterOptions) {
       // back to solid as a stable value.
       const tree = (Component as (p: Record<string, unknown>) => unknown)(props)
       return renderSolidToString(() => tree)
+    },
+    // §7.1: Solid 2's `@solidjs/web` exposes `renderToStream`, so the shell
+    // can reach the client before resources resolve. Same pre-invocation
+    // pattern as `renderBody` — build the tree outside the streaming
+    // machinery so a synchronous throw propagates.
+    renderStream: async (Component, props) => {
+      if (typeof Component !== 'function') {
+        const bytes = new TextEncoder().encode(String(Component ?? ''))
+        return new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(bytes)
+            c.close()
+          },
+        })
+      }
+      const tree = (Component as (p: Record<string, unknown>) => unknown)(props)
+      return renderSolidToStream(() => tree)
     },
     rootAttrs: ' id="root" data-solid=""',
     hydrate: hydrate as never,
