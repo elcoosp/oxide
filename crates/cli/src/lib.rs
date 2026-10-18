@@ -3977,6 +3977,9 @@ fn build_dispatch(
                 // render phase produces (stream or error).
                 let mut loader_set_cookies: Vec<String> = Vec::new();
                 let mut loader_headers: Vec<(String, String)> = Vec::new();
+                // §7.1 / §9.2: resolved defer() values from the loader.
+                let mut deferred_values: std::collections::BTreeMap<String, serde_json::Value> =
+                    std::collections::BTreeMap::new();
                 // PERF-06: per-stage timing marks. `started` is the request
                 // entry; these bracket load / render so `Server-Timing` can
                 // report real per-stage durations instead of all-zeros.
@@ -4038,6 +4041,11 @@ fn build_dispatch(
                                 data = out.data;
                                 loader_set_cookies = out.set_cookies;
                                 loader_headers = out.headers;
+                                // §7.1 / §9.2: resolved defer() values. Injected
+                                // as a `<script>` so the client's DeferredClient
+                                // slots (wired from the ODF payload's
+                                // `{__deferred: id}` markers) resolve.
+                                deferred_values = out.deferred;
                             }
                             Err(e) => {
                                 tracing::error!(
@@ -4153,18 +4161,36 @@ fn build_dispatch(
                                 Some(oxide_server::nonce_for(&req_owned.request_id)),
                                 label.clone(),
                             );
+                            // §17.1: a script without the matching nonce is
+                            // blocked by the response's `strict-dynamic` CSP.
+                            // The pipeline derives a per-request nonce in
+                            // `finish_response`; we compute the same value here
+                            // from the request id. Both the deferred script and
+                            // (when present) the boot module share it.
+                            let nonce = oxide_server::nonce_for(&req_owned.request_id);
+                            // §7.1 / §9.2: resolved defer() values ride a JSON
+                            // script element so the boot module can dispatch
+                            // `ox:swap` for each. Serialized through serde_json
+                            // (no untrusted string concatenation) and `<` escaped
+                            // so the content cannot break out of the tag.
+                            let deferred_tag = if deferred_values.is_empty() {
+                                String::new()
+                            } else {
+                                let json = serde_json::to_string(&deferred_values)
+                                    .unwrap_or_else(|_| "{}".into());
+                                // `</script>` and `<!--` inside a JSON string
+                                // would terminate the tag; `<` escaping is the
+                                // OWASP-recommended fix and produces valid JS
+                                // (`\u003c`).
+                                let safe = json.replace('<', "\\u003c");
+                                format!(
+                                    r#"<script type="application/oxide-deferred" nonce="{nonce}">{safe}</script>"#,
+                                )
+                            };
                             let body = match boot_script_url_for_render.as_deref() {
                                 Some(url) => {
-                                    // §17.1: the response's CSP is `strict-
-                                    // dynamic`; a script without the matching
-                                    // nonce is blocked by the browser. The
-                                    // pipeline derives a per-request nonce
-                                    // in `finish_response`; we compute the
-                                    // same value here from the request id.
-                                    let nonce =
-                                        oxide_server::nonce_for(&req_owned.request_id);
                                     let tag = format!(
-                                        r#"<script type="module" src="/{url}" nonce="{nonce}"></script>"#,
+                                        r#"{deferred_tag}<script type="module" src="/{url}" nonce="{nonce}"></script>"#,
                                     );
                                     oxide_server::inject_before_close(
                                         bridged,
@@ -4172,7 +4198,21 @@ fn build_dispatch(
                                         tag.as_bytes(),
                                     )
                                 }
-                                None => bridged,
+                                None => {
+                                    // No boot module, but a loader may still have
+                                    // deferred values to resolve on the client
+                                    // (an islands-only or a plain page using
+                                    // `defer`). Inject only the deferred script.
+                                    if deferred_tag.is_empty() {
+                                        bridged
+                                    } else {
+                                        oxide_server::inject_before_close(
+                                            bridged,
+                                            b"</body>",
+                                            deferred_tag.as_bytes(),
+                                        )
+                                    }
+                                }
                             };
                             // §11 L0: when this response is cacheable, collect
                             // the streamed body once so it can be stored, then
