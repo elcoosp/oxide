@@ -33,18 +33,26 @@ use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
-pub mod tooling;
-pub mod v8_ops;
 pub mod snapshot;
+pub mod tooling;
 pub mod v8_loader;
-pub use snapshot::{lint_top_level_side_effects, loader_options, snapshot_build, snapshot_build_bundle, snapshot_build_runtime, AppSnapshot, SideEffect, SNAPSHOT_FORMAT};
-pub mod tooling_pool;
+pub mod v8_ops;
+pub use snapshot::{
+    AppSnapshot, SNAPSHOT_FORMAT, SideEffect, lint_top_level_side_effects, loader_options,
+    snapshot_build, snapshot_build_bundle, snapshot_build_runtime,
+};
 pub mod framework_host;
 pub mod framework_renderer;
 pub mod loader_host;
+pub mod tooling_pool;
 pub use framework_host::{FrameworkDescriptor, FrameworkHost};
-pub use framework_renderer::{FrameworkHostRenderer, FrameworkRenderInput, FrameworkRenderer, RenderStream};
-pub use loader_host::{ActionHost, ActionOutcome, EndpointHost, EndpointOutcome, LoaderHost, MiddlewareHost, MiddlewareOutcome, RevalidateEvent, ServerFnError, ServerFnHost, SocketHost, SocketOutcome};
+pub use framework_renderer::{
+    FrameworkHostRenderer, FrameworkRenderInput, FrameworkRenderer, RenderStream,
+};
+pub use loader_host::{
+    ActionHost, ActionOutcome, EndpointHost, EndpointOutcome, LoaderHost, MiddlewareHost,
+    MiddlewareOutcome, RevalidateEvent, ServerFnError, ServerFnHost, SocketHost, SocketOutcome,
+};
 pub use tooling_pool::{ModuleCall, ToolingModules};
 
 pub type Result<T> = std::result::Result<T, OxideError>;
@@ -1128,8 +1136,9 @@ globalThis.__oxideDispatch = async function (kind, moduleUrl, exportName, payloa
 
 // loader:run — import a route's `page.server.ts` (transpiled by the Rust
 // loader) and call its `load(event)`. Mirrors the Node worker's
-// dispatchLoaderRun: a full LoadEvent (cookies, setHeaders, parent, defer),
-// with `error()`/`redirect()` sentinels turned into status + location.
+// dispatchLoaderRun: a full LoadEvent (cookies, setHeaders, locals, locale,
+// parent, defer) with `error()`/`redirect()` sentinels turned into status +
+// location, and the defer registry awaited + returned as `deferred`.
 globalThis.__oxideLoaderRun = async function (moduleUrl, input) {
   try {
     const mod = await import(globalThis.__oxideVersioned(moduleUrl));
@@ -1170,15 +1179,25 @@ globalThis.__oxideLoaderRun = async function (moduleUrl, input) {
     const extra = [];
     const setHeaders = (h) => { if (h && typeof h === 'object') for (const [k, v] of Object.entries(h)) extra.push([String(k), String(v)]); };
 
+    // §8.1 / §9.1: locals from the payload (worker parity — this fork used to
+    // hardcode `{}`).
+    const locals = input.locals && typeof input.locals === 'object' ? input.locals : {};
+    // §9.2: `parent()` returns the pre-resolved outer-layout data the Rust
+    // whitelist forwards as `parent_data` (worker parity — was hardcoded {}).
+    const parentData = input.parent_data || {};
+    // SPEC-10 / §16.4: the pipeline's resolved locale (worker parity).
+    const locale = typeof input.locale === 'string' ? input.locale : '';
+
     const event = {
       route: input.route || '',
       params: input.params || {},
       url: input.url || '/',
       request: { method: input.method || 'GET', url: input.url || '/', headers: hdrs },
-      locals: {},
+      locals,
+      locale,
       cookies,
       setHeaders,
-      parent: async () => ({}),
+      parent: async () => parentData,
       defer,
       __oxideDeferredRegistry: registry,
     };
@@ -1187,12 +1206,24 @@ globalThis.__oxideLoaderRun = async function (moduleUrl, input) {
       result = await load(event);
     } catch (err) {
       if (err && typeof err.status === 'number') {
-        return JSON.stringify({ status: err.status, location: err.location ?? null,
+        return JSON.stringify({ ok: true, status: err.status, location: err.location ?? null,
           data: { message: err.message ?? '' }, setCookies: [...pending.values()], headers: extra });
       }
       throw err;
     }
-    return JSON.stringify({ status: 200, location: null, data: result ?? {},
+    // §7.1 / §9.2: await every `defer(promise)` marker and serialize
+    // `{ id: value }`; a rejection surfaces as `{ __oxide_deferred_error }`
+    // so a partially-ready loader still renders (worker parity — this fork
+    // used to drop the registry entirely).
+    const deferred = {};
+    for (const [id, p] of registry) {
+      try {
+        deferred[String(id)] = await p;
+      } catch (e) {
+        deferred[String(id)] = { __oxide_deferred_error: String(e?.message ?? e) };
+      }
+    }
+    return JSON.stringify({ ok: true, status: 200, location: null, deferred, data: result ?? {},
       setCookies: [...pending.values()], headers: extra });
   } catch (e) {
     return JSON.stringify({ __oxide_error: 'loader:run failed: ' + ((e && e.message) || e) });
@@ -1648,10 +1679,9 @@ fn spawn_v8_worker(
                             // PERF-03: if this call opened a streaming render,
                             // hand the receiver to the caller FIRST, then drive
                             // the stashed promise so chunks flow while it runs.
-                            let streaming = crate::v8_ops::PENDING_STREAM
-                                .with(|s| s.borrow_mut().take());
-                            let pending =
-                                handle_for_thread.pending.lock().unwrap().remove(&id);
+                            let streaming =
+                                crate::v8_ops::PENDING_STREAM.with(|s| s.borrow_mut().take());
+                            let pending = handle_for_thread.pending.lock().unwrap().remove(&id);
                             if let Some(p) = pending {
                                 let _ = p.tx.send(res);
                             }
@@ -1760,7 +1790,8 @@ async fn v8_dispatch(
     js: &mut JsRuntime,
     entry: &EntryRef,
     input: &CallInput,
-) -> Result<CallStream> {    // Kinds the Node worker special-cases are handled Rust-side so semantics
+) -> Result<CallStream> {
+    // Kinds the Node worker special-cases are handled Rust-side so semantics
     // match without burdening the JS dispatch.
     if entry.kind == "boom" {
         return Err(err(
@@ -1824,7 +1855,10 @@ async fn v8_dispatch(
         } else {
             let p = serde_json::to_string(&path).unwrap_or_else(|_| "\"\"".into());
             let inp = serde_json::to_string(
-                input.payload.get("input").unwrap_or(&serde_json::Value::Null),
+                input
+                    .payload
+                    .get("input")
+                    .unwrap_or(&serde_json::Value::Null),
             )
             .unwrap_or_else(|_| "null".into());
             format!("globalThis.__oxideFrameworkRender({p}, {inp})")
@@ -1975,8 +2009,7 @@ async fn v8_dispatch(
     let url = serde_json::to_string(&module_url).unwrap_or_else(|_| "\"\"".into());
     let exp = serde_json::to_string(export_name).unwrap_or_else(|_| "\"\"".into());
     let payload = serde_json::to_string(&input.payload).unwrap_or_else(|_| "null".into());
-    let script =
-        format!("globalThis.__oxideDispatch({kind}, {url}, {exp}, {payload})");
+    let script = format!("globalThis.__oxideDispatch({kind}, {url}, {exp}, {payload})");
 
     // `__oxideDispatch` returns a promise; drive the event loop until it
     // settles, then read the resolved string.
@@ -2005,8 +2038,8 @@ async fn v8_dispatch(
         return Err(err("JSH-V8", msg.to_string()));
     }
     let out = v.get("value").cloned().unwrap_or(serde_json::Value::Null);
-    let bytes = serde_json::to_vec(&out)
-        .map_err(|e| err("JSH-V8", format!("serialize result: {e}")))?;
+    let bytes =
+        serde_json::to_vec(&out).map_err(|e| err("JSH-V8", format!("serialize result: {e}")))?;
     Ok(CallStream::Complete(Bytes::from(bytes)))
 }
 
@@ -2084,10 +2117,7 @@ impl V8Host {
     }
 
     /// PERF-05: attach the fetch handler each worker installs for the `fetch` op.
-    pub fn with_fetch_handler(
-        mut self,
-        handler: std::sync::Arc<dyn FetchHandler>,
-    ) -> Self {
+    pub fn with_fetch_handler(mut self, handler: std::sync::Arc<dyn FetchHandler>) -> Self {
         self.fetch_handler = Some(handler);
         self
     }
@@ -2095,10 +2125,7 @@ impl V8Host {
     /// §6.2 / §15: attach the plugin `transform` hook applied to every
     /// module the worker's `compile_module` op loads (so a plugin transform
     /// reaches the prerender path, not just the bundler).
-    pub fn with_transform_handler(
-        mut self,
-        handler: std::sync::Arc<dyn TransformHandler>,
-    ) -> Self {
+    pub fn with_transform_handler(mut self, handler: std::sync::Arc<dyn TransformHandler>) -> Self {
         self.transform_handler = Some(handler);
         self
     }
@@ -2142,8 +2169,14 @@ impl V8Host {
                 ),
             )
         })?;
-        let format = env.get("format").and_then(|v| v.as_u64()).unwrap_or(u64::MAX);
-        let version = env.get("oxide_version").and_then(|v| v.as_str()).unwrap_or("<missing>");
+        let format = env
+            .get("format")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(u64::MAX);
+        let version = env
+            .get("oxide_version")
+            .and_then(|v| v.as_str())
+            .unwrap_or("<missing>");
         if format != crate::SNAPSHOT_FORMAT as u64 || version != env!("CARGO_PKG_VERSION") {
             return Err(err(
                 "JSH-SNAPVER",
@@ -2174,8 +2207,7 @@ impl V8Host {
         // tooling pool + every warm replacement) share one allocation.
         *self.leaked.get_or_init(|| {
             self.snapshot.as_ref().map(|b| {
-                let leaked: &'static [u8] =
-                    Box::leak(b.as_slice().to_vec().into_boxed_slice());
+                let leaked: &'static [u8] = Box::leak(b.as_slice().to_vec().into_boxed_slice());
                 leaked
             })
         })
@@ -2189,7 +2221,11 @@ impl V8Host {
     ) -> Result<Arc<V8Pool>> {
         let mut workers = Vec::with_capacity(cfg.size.max(1));
         for _ in 0..cfg.size.max(1) {
-            workers.push(spawn_v8_worker(snapshot, cache.clone(), fetch_handler.clone())?);
+            workers.push(spawn_v8_worker(
+                snapshot,
+                cache.clone(),
+                fetch_handler.clone(),
+            )?);
         }
         Ok(Arc::new(V8Pool {
             cfg,
@@ -2207,12 +2243,22 @@ impl V8Host {
 
 impl JsHost for V8Host {
     fn render_pool(&self, cfg: PoolConfig) -> Result<Arc<dyn Pool>> {
-        Self::build_pool(cfg, self.static_snapshot(), self.cache_handler.clone(), self.fetch_handler.clone())
-            .map(|p| p as Arc<dyn Pool>)
+        Self::build_pool(
+            cfg,
+            self.static_snapshot(),
+            self.cache_handler.clone(),
+            self.fetch_handler.clone(),
+        )
+        .map(|p| p as Arc<dyn Pool>)
     }
     fn tooling_pool(&self, cfg: PoolConfig) -> Result<Arc<dyn Pool>> {
-        Self::build_pool(cfg, self.static_snapshot(), self.cache_handler.clone(), self.fetch_handler.clone())
-            .map(|p| p as Arc<dyn Pool>)
+        Self::build_pool(
+            cfg,
+            self.static_snapshot(),
+            self.cache_handler.clone(),
+            self.fetch_handler.clone(),
+        )
+        .map(|p| p as Arc<dyn Pool>)
     }
     fn backend_name(&self) -> &'static str {
         "v8"
@@ -2437,8 +2483,10 @@ impl Pool for V8Pool {
                     let cache = self.cache_handler.clone();
                     let fetch = self.fetch_handler.clone();
                     tokio::spawn(async move {
-                        V8Pool::spawn_replacement(workers, counters, worker_idx, snapshot, cache, fetch)
-                            .await
+                        V8Pool::spawn_replacement(
+                            workers, counters, worker_idx, snapshot, cache, fetch,
+                        )
+                        .await
                     });
                 }
                 Ok(stream)
@@ -2548,20 +2596,20 @@ struct Worker {
 /// creation always happens there (§4.2 pools are built from async host code).
 fn spawn_child(node_bin: &str, worker_script: &Path) -> Result<(Child, ChildStdin, ChildStdout)> {
     let mut cmd = tokio::process::Command::new(node_bin);
-        // Register the TSX loader hook so `import './page.tsx'` resolves
-        // via sucrase (JSX lowering). Node's built-in type stripper handles
-        // .ts but not .tsx; the loader bridges the gap.
-        //
-        // We use `--import <register-hooks.mjs>` (which calls `register()`)
-        // rather than `--experimental-loader`, because the latter is
-        // deprecated as of Node 22 and emits a warning on every worker
-        // spawn. The shim and the loader are siblings of the worker script,
-        // so all three ship together with the jshost crate.
-        let register_hooks = worker_script
-            .parent()
-            .map(|p| p.join("register-hooks.mjs"))
-            .unwrap_or_else(|| std::path::PathBuf::from("register-hooks.mjs"));
-        cmd.arg("--import").arg(&register_hooks);
+    // Register the TSX loader hook so `import './page.tsx'` resolves
+    // via sucrase (JSX lowering). Node's built-in type stripper handles
+    // .ts but not .tsx; the loader bridges the gap.
+    //
+    // We use `--import <register-hooks.mjs>` (which calls `register()`)
+    // rather than `--experimental-loader`, because the latter is
+    // deprecated as of Node 22 and emits a warning on every worker
+    // spawn. The shim and the loader are siblings of the worker script,
+    // so all three ship together with the jshost crate.
+    let register_hooks = worker_script
+        .parent()
+        .map(|p| p.join("register-hooks.mjs"))
+        .unwrap_or_else(|| std::path::PathBuf::from("register-hooks.mjs"));
+    cmd.arg("--import").arg(&register_hooks);
 
     cmd.arg(worker_script)
         .stdin(std::process::Stdio::piped())
@@ -2598,10 +2646,7 @@ pub struct NodePool {
 impl NodePool {
     /// §9.3: attach the Rust cache tier. Also propagates to workers spawned
     /// later by `replace_worker`, so a recycled worker keeps the handler.
-    pub fn with_cache_handler(
-        self: &Arc<Self>,
-        handler: Arc<dyn oxide_cache::CacheHandler>,
-    ) {
+    pub fn with_cache_handler(self: &Arc<Self>, handler: Arc<dyn oxide_cache::CacheHandler>) {
         for w in &self.workers {
             *w.cache.lock().unwrap() = Some(Arc::clone(&handler));
         }
@@ -2674,7 +2719,9 @@ impl NodePool {
         {
             return Err(err(
                 "JSH-NODE",
-                format!("node binary `{node_bin}` is not available: {e} — install Node.js or pick another runtime (§4.6 tier 3)"),
+                format!(
+                    "node binary `{node_bin}` is not available: {e} — install Node.js or pick another runtime (§4.6 tier 3)"
+                ),
             ));
         }
         if !worker_script.is_file() {
@@ -2947,10 +2994,7 @@ impl NodeHost {
 
     /// §9.3: attach a cache tier. Workers spawned by this host dispatch
     /// `cache_get` / `cache_set` / `cache_tag` to it.
-    pub fn with_cache_handler(
-        mut self,
-        handler: Arc<dyn oxide_cache::CacheHandler>,
-    ) -> Self {
+    pub fn with_cache_handler(mut self, handler: Arc<dyn oxide_cache::CacheHandler>) -> Self {
         self.cache_handler = Some(handler);
         self
     }
@@ -3053,11 +3097,7 @@ fn spawn_reader(
 
 /// Fail every pending call (worker exit / protocol error). `streams` senders are
 /// dropped, which closes any chunked collector's stream.
-fn fail_all(
-    worker: &Worker,
-    code: String,
-    message: String,
-) {
+fn fail_all(worker: &Worker, code: String, message: String) {
     worker.streams.lock().unwrap().clear();
     let mut pending = worker.pending.lock().unwrap();
     for (_, p) in pending.drain() {
@@ -3126,8 +3166,7 @@ async fn op_dispatch(
                     // representation; JSON was lossy (it flattened every rich
                     // type).
                     use base64::Engine as _;
-                    let body_b64 =
-                        base64::engine::general_purpose::STANDARD.encode(&entry.body);
+                    let body_b64 = base64::engine::general_purpose::STANDARD.encode(&entry.body);
                     Ok(serde_json::json!({
                         "body_b64": body_b64,
                         // Keep the tags on the response for a caller that wants
@@ -3166,7 +3205,11 @@ async fn op_dispatch(
             let tags: Vec<String> = args
                 .get("tags")
                 .and_then(|v| v.as_array())
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
                 .unwrap_or_default();
             let ttl_secs = args.get("ttl").and_then(|v| v.as_u64()).unwrap_or(0);
             let swr_secs = args.get("swr").and_then(|v| v.as_u64());
@@ -3305,12 +3348,11 @@ async fn op_dispatch(
                 .unwrap_or_default();
             // Memoize GETs only (a POST with a body is already keyed by the
             // body hash, but a side-effecting request should not be replayed).
-            let memo_key = (method == "GET")
-                .then(|| oxide_cache::memo_key(&method, url, &body));
+            let memo_key = (method == "GET").then(|| oxide_cache::memo_key(&method, url, &body));
             if let (Some(m), Some(k)) = (memo, memo_key.as_deref()) {
                 if let Some(hit) = m.get(k) {
-                    let v: serde_json::Value = serde_json::from_slice(&hit)
-                        .unwrap_or(serde_json::Value::Null);
+                    let v: serde_json::Value =
+                        serde_json::from_slice(&hit).unwrap_or(serde_json::Value::Null);
                     return Ok(v);
                 }
             }
@@ -3322,7 +3364,10 @@ async fn op_dispatch(
                 "body_b64": base64::engine::general_purpose::STANDARD.encode(&resp.body),
             });
             if let (Some(m), Some(k)) = (memo, memo_key.as_deref()) {
-                m.insert(k, bytes::Bytes::from(serde_json::to_vec(&out).unwrap_or_default()));
+                m.insert(
+                    k,
+                    bytes::Bytes::from(serde_json::to_vec(&out).unwrap_or_default()),
+                );
             }
             Ok(out)
         }
@@ -3366,7 +3411,10 @@ async fn op_dispatch(
         Op::RequestBodyRead => Ok(serde_json::json!({ "done": true })),
         _ => Err(err(
             "JSH-OP",
-            format!("worker op `{}` is not implemented on this host", op_name(op)),
+            format!(
+                "worker op `{}` is not implemented on this host",
+                op_name(op)
+            ),
         )),
     }
 }
@@ -3512,7 +3560,11 @@ mod tests {
 mod bug12_tests {
     use super::*;
 
-    fn write_envelope(dir: &std::path::Path, name: &str, val: &serde_json::Value) -> std::path::PathBuf {
+    fn write_envelope(
+        dir: &std::path::Path,
+        name: &str,
+        val: &serde_json::Value,
+    ) -> std::path::PathBuf {
         let p = dir.join(name);
         std::fs::write(&p, serde_json::to_vec(val).unwrap()).unwrap();
         p
@@ -3533,7 +3585,9 @@ mod bug12_tests {
         let dir = std::env::temp_dir().join(format!("ox-bug12-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = write_envelope(&dir, "snap.bin", &envelope_of(b"hello-blob"));
-        let out = V8Host::load_snapshot_envelope(&p).unwrap().expect("blob present");
+        let out = V8Host::load_snapshot_envelope(&p)
+            .unwrap()
+            .expect("blob present");
         assert_eq!(out, b"hello-blob");
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -3572,22 +3626,33 @@ mod perf01_tests {
     #[tokio::test]
     async fn serialize_op_encodes_odf() {
         let args = serde_json::json!({ "value": { "a": 1, "b": [true, null] } });
-        let out = op_dispatch(None, None, None, None, None, Op::Serialize, &args).await.expect("serialize ok");
+        let out = op_dispatch(None, None, None, None, None, Op::Serialize, &args)
+            .await
+            .expect("serialize ok");
         let b64 = out["b64"].as_str().expect("b64 field");
-        let bytes = base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            b64,
-        )
-        .expect("valid base64");
+        let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)
+            .expect("valid base64");
         assert_eq!(&bytes[..4], b"ODF1", "ODF magic present");
         // Round-trip through the decoder to prove it is real ODF.
         let decoded = oxide_odf::decode(&bytes).expect("decodes");
-        assert_eq!(decoded.to_json(), serde_json::json!({ "a": 1, "b": [true, null] }));
+        assert_eq!(
+            decoded.to_json(),
+            serde_json::json!({ "a": 1, "b": [true, null] })
+        );
     }
 
     #[tokio::test]
     async fn serialize_op_requires_a_value() {
-        let out = op_dispatch(None, None, None, None, None, Op::Serialize, &serde_json::json!({})).await;
+        let out = op_dispatch(
+            None,
+            None,
+            None,
+            None,
+            None,
+            Op::Serialize,
+            &serde_json::json!({}),
+        )
+        .await;
         assert!(out.is_err(), "missing value is an error");
     }
 }
@@ -3633,7 +3698,11 @@ mod perf05_tests {
     #[tokio::test]
     async fn fetch_op_without_a_handler_errors() {
         let args = serde_json::json!({ "url": "https://x.test/" });
-        assert!(op_dispatch(None, None, None, None, None, Op::Fetch, &args).await.is_err());
+        assert!(
+            op_dispatch(None, None, None, None, None, Op::Fetch, &args)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -3641,9 +3710,13 @@ mod perf05_tests {
         let h = Echo;
         let memo = oxide_cache::FetchMemo::default();
         let args = serde_json::json!({ "url": "https://x.test/memo", "method": "GET" });
-        let _ = op_dispatch(None, Some(&h), None, Some(&memo), None, Op::Fetch, &args).await.unwrap();
+        let _ = op_dispatch(None, Some(&h), None, Some(&memo), None, Op::Fetch, &args)
+            .await
+            .unwrap();
         // A second call for the same GET hits the memo (same body).
-        let out = op_dispatch(None, Some(&h), None, Some(&memo), None, Op::Fetch, &args).await.unwrap();
+        let out = op_dispatch(None, Some(&h), None, Some(&memo), None, Op::Fetch, &args)
+            .await
+            .unwrap();
         assert_eq!(out["status"], 200);
     }
 }
