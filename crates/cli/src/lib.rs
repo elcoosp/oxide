@@ -5731,14 +5731,55 @@ async fn start_server_inner_full(
     );
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (tx, rx) = tokio::sync::watch::channel(false);
+    // §12.1: HTTP/3 rides QUIC over UDP on the same port. Enabled by
+    // `server.http3` + TLS (QUIC has no plaintext mode). A second listener
+    // task drives it; the HTTP/1+2 server is untouched.
+    let http3_cfg: Option<quinn::ServerConfig> = if cfg.server.http3 {
+        match tls.as_ref() {
+            Some(tls_cfg) => match oxide_server::Server::h3_config_from_tls(tls_cfg.as_ref()) {
+                Ok(c) => Some(c),
+                Err(e) => {
+                    tracing::warn!(
+                        code = %e.0.code,
+                        msg = %e.0.message,
+                        "http3: could not build the QUIC config; continuing HTTP/1+2 only",
+                    );
+                    None
+                }
+            },
+            None => {
+                tracing::warn!("http3: requires TLS; continuing HTTP/1+2 only");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let pipeline_h3 = std::sync::Arc::clone(&pipeline);
+    let dispatch_h3 = std::sync::Arc::clone(&dispatch);
+    let rx_h3 = rx.clone();
+    let h3_bind = std::net::SocketAddr::new(bind_ip, port);
+    let mut rx_main = rx;
     tokio::spawn(async move {
         let bind_addr = std::net::SocketAddr::new(bind_ip, port);
+        if let Some(h3_cfg) = http3_cfg {
+            let h3_task = tokio::spawn(async move {
+                if let Err(e) =
+                    oxide_server::Server::serve_http3(h3_bind, pipeline_h3, dispatch_h3, rx_h3, h3_cfg)
+                        .await
+                {
+                    tracing::warn!(code = %e.0.code, "http3 listener stopped: {}", e.0.message);
+                }
+            });
+            let _ = h3_task;
+        }
         if let Err(e) =
-            oxide_server::Server::serve_with_tls(bind_addr, pipeline, dispatch, rx, tls).await
+            oxide_server::Server::serve_with_tls(bind_addr, pipeline, dispatch, rx_main, tls).await
         {
             tracing::error!(code = %e.0.code, "server stopped with error");
         }
     });
+    let _ = &mut rx_main;
     Ok(StartedServer {
         addr,
         shutdown: tx,

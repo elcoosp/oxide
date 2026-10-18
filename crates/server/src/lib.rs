@@ -3691,6 +3691,26 @@ pub fn h3_config_from_pem(
     Ok(server)
 }
 
+/// §12.1: build a QUIC server config from an existing rustls `ServerConfig`
+/// (the same one the TCP/TLS listener uses). Adds the `h3` ALPN, which the
+/// TCP config does not carry.
+pub fn h3_config_from_tls(
+    tls: &tokio_rustls::rustls::ServerConfig,
+) -> Result<quinn::ServerConfig> {
+    use quinn::crypto::rustls::QuicServerConfig;
+    let mut tls = tls.clone();
+    tls.alpn_protocols = vec![b"h3".to_vec()];
+    let quic = QuicServerConfig::try_from(tls)
+        .map_err(|e| err("SRV-TLS", format!("h3 QUIC config failed: {e}")))?;
+    let mut server = quinn::ServerConfig::with_crypto(std::sync::Arc::new(quic));
+    let mut transport = quinn::TransportConfig::default();
+    transport.max_idle_timeout(Some(
+        std::time::Duration::from_secs(30).try_into().unwrap(),
+    ));
+    server.transport_config(std::sync::Arc::new(transport));
+    Ok(server)
+}
+
 /// §12.1: the HTTP/3 listener. Binds a UDP socket on the same port as the
 /// TCP listener, accepts QUIC connections, and drives each through `h3`.
 /// Requests are converted to the same `OxideRequest` shape the HTTP/1+2 path
