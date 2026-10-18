@@ -64,7 +64,15 @@ export const atlasRoutes: Record<string, AtlasRoute> = {
     params: {},
     // RenderInput data may carry promise-likes for deferred slots (§7.1);
     // the adapter streams the resolution via the core boundary protocol.
-    data: { comments: Promise.resolve(COMMENTS) },
+    //
+    // §7.1 out-of-order fixture: `comments` is declared FIRST but resolves
+    // LAST (30 ms), `meta` is declared SECOND but resolves FIRST (0 ms). A
+    // sequential renderer emits comments-then-meta; a concurrent one emits
+    // meta-then-comments — which is what the assertion checks.
+    data: {
+      comments: new Promise((resolve) => setTimeout(() => resolve(COMMENTS), 30)),
+      meta: new Promise((resolve) => setTimeout(() => resolve('meta-ready'), 0)),
+    },
     head: HEAD('Streaming'),
   },
   streamingError: {
@@ -150,6 +158,8 @@ export const expect = {
   streaming: {
     fallback: 'Loading comments…',
     resolved: 'First comment',
+    metaFallback: 'Loading meta…',
+    metaResolved: 'meta-ready',
   },
   error: {
     boundary: "<div class='ox-error' data-ox-error='OX-500'>",

@@ -314,6 +314,14 @@ function StreamingPage(props: PageProps): Node {
           comments.map((c) => el('li', { class: 'comment' }, el('strong', {}, t(c.author)), t(` ${c.body}`))))
       },
     ),
+    // §7.1 out-of-order streaming fixture: a SECOND deferred boundary,
+    // declared after `comments` but resolving sooner. A sequential renderer
+    // yields comments-then-meta; the concurrent renderer yields meta first.
+    deferred(
+      props.data.meta as DeferSource,
+      el('p', { class: 'fallback' }, t('Loading meta…')),
+      (resolved) => el('span', { class: 'meta' }, t(String(resolved ?? ''))),
+    ),
   )
 }
 
@@ -595,17 +603,42 @@ export function render(input: RenderInput): ReadableStream<Uint8Array> {
   const it = (async function* (): AsyncGenerator<Uint8Array> {
     yield encoder.encode(shell.headHtml)
     yield encoder.encode(shell.bodyHtml)
+    // §7.1 out-of-order streaming: kick every defer off concurrently and
+    // yield each boundary as soon as IT settles — not in declaration order.
+    // A slow boundary no longer delays a fast one, which is the whole point
+    // of the deferred-boundary protocol. The swapper matches by id, so the
+    // resolution chunks are order-independent on the client side.
+    const resolved: Array<{ id: number; html: string }> = []
+    let wakeup: (() => void) | undefined
+    const wake = (): void => {
+      const w = wakeup
+      wakeup = undefined
+      w?.()
+    }
     for (const d of shell.defers) {
-      let html: string
-      try {
-        // Fresh state per resolution: resolution markup is deterministic and
-        // independent of the shell walk (hydration re-binds swapped content
-        // after the ox:swap event, §7.1).
-        html = walk(d.render(await deferPromise(d.value)), newRenderState(input.route), 1, true).html
-      } catch (err) {
-        html = errorBoundary('OX-500', err instanceof Error ? err.message : String(err))
+      void (async () => {
+        let html: string
+        try {
+          // Fresh state per resolution: resolution markup is deterministic
+          // and independent of the shell walk (hydration re-binds swapped
+          // content after the ox:swap event, §7.1).
+          html = walk(d.render(await deferPromise(d.value)), newRenderState(input.route), 1, true).html
+        } catch (err) {
+          html = errorBoundary('OX-500', err instanceof Error ? err.message : String(err))
+        }
+        resolved.push({ id: d.id, html })
+        wake()
+      })()
+    }
+    const total = shell.defers.length
+    for (let i = 0; i < total; i++) {
+      while (resolved.length === 0) {
+        await new Promise<void>((r) => {
+          wakeup = r
+        })
       }
-      yield encoder.encode(boundaryContent(d.id, html))
+      const r = resolved.shift()!
+      yield encoder.encode(boundaryContent(r.id, r.html))
     }
   })()
   return new ReadableStream<Uint8Array>({

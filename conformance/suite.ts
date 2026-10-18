@@ -433,6 +433,51 @@ export async function runSuite(adapter: Adapter, opts: SuiteOptions = {}): Promi
     return 'goto → update → DOM swap'
   })
 
+  // --- §7.1 out-of-order deferred streaming ---------------------------------
+
+  await push('streaming: deferred boundaries resolve out of declaration order (§7.1)', async () => {
+    // The streaming route declares `comments` then `meta`. To prove the
+    // adapter streams each boundary AS IT SETTLES (not in declaration order),
+    // resolve `meta` (declared 2nd) BEFORE `comments` (declared 1st) via real
+    // timers: a concurrent renderer yields meta-then-comments, a sequential
+    // one yields comments-then-meta. Already-resolved promises cannot test
+    // this — they settle in creation order.
+    //
+    // `comments` must resolve to an ARRAY of `{author, body}` — the page maps
+    // over it; a bare string would throw (and the boundary would render the
+    // OX-500 box instead of a comment body).
+    const comments = new Promise((resolve) =>
+      setTimeout(
+        () =>
+          resolve([
+            { author: 'Grace Hopper', body: 'First comment' },
+            { author: 'Alan Turing', body: 'Second comment' },
+          ]),
+        30,
+      ),
+    )
+    const meta = new Promise((resolve) =>
+      setTimeout(() => resolve(expect.streaming.metaResolved), 0),
+    )
+    const input = asRenderInput({
+      route: 'routes/streaming',
+      url: '/streaming',
+      params: {},
+      data: { comments, meta },
+      head: { title: 'Streaming', meta: [], link: [], style: [], script: [] },
+    })
+    const { html } = await drain(adapter.render(input))
+    const commentsAt = html.indexOf('First comment')
+    const metaAt = html.indexOf(expect.streaming.metaResolved)
+    assert(commentsAt > 0, `the comments boundary resolved: ${html.slice(-600)}`)
+    assert(metaAt > 0, `the meta boundary resolved: ${html.slice(-600)}`)
+    assert(
+      metaAt < commentsAt,
+      `meta (settles first) streams before comments (settles second): meta@${metaAt} comments@${commentsAt}`,
+    )
+    return 'resolution order follows settlement order'
+  })
+
   // --- §8.4 prefetch --------------------------------------------------------
 
   await push('router: prefetch fetches /__data and a later goto reuses it (§8.4)', async () => {
