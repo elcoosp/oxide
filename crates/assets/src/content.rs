@@ -2,7 +2,7 @@
 //! frontmatter for typed collections, and build-time highlighting via
 //! `syntect`. No in-house CommonMark renderer or tokenizer.
 
-use crate::{err, ContentEntry, Result};
+use crate::{ContentEntry, Result, err};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -122,7 +122,7 @@ fn syntect_theme() -> &'static syntect::highlighting::Theme {
 /// `<pre><code>`.
 pub fn highlight(code: &str, lang: &str) -> String {
     use syntect::easy::HighlightLines;
-    use syntect::html::{styled_line_to_highlighted_html, IncludeBackground};
+    use syntect::html::{IncludeBackground, styled_line_to_highlighted_html};
     use syntect::util::LinesWithEndings;
 
     let ss = syntect_set();
@@ -150,7 +150,6 @@ fn escape_html(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
 }
-
 
 // ---------------------------------------------------------------------------
 // §16.5 MDX bridging
@@ -262,7 +261,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(e.slug, "hello");
-        assert_eq!(e.frontmatter.get("title").unwrap(), &serde_json::json!("Hi"));
+        assert_eq!(
+            e.frontmatter.get("title").unwrap(),
+            &serde_json::json!("Hi")
+        );
         assert_eq!(e.frontmatter.get("count").unwrap(), &serde_json::json!(3));
     }
 }
