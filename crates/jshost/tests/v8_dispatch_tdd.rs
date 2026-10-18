@@ -87,9 +87,16 @@ export const actions = {
     assert_eq!(v["status"], 200, "action envelope: {v}");
     assert_eq!(v["data"]["hello"], "Ada");
     assert_eq!(v["data"]["p"], "x");
-    assert_eq!(v["revalidate"], serde_json::json!([{"type":"tag","tag":"posts"}]));
+    assert_eq!(
+        v["revalidate"],
+        serde_json::json!([{"type":"tag","tag":"posts"}])
+    );
     assert!(
-        v["setCookies"].as_array().unwrap().iter().any(|c| c.as_str().unwrap().starts_with("sess=abc")),
+        v["setCookies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c.as_str().unwrap().starts_with("sess=abc")),
         "cookie set: {v}"
     );
 
@@ -108,7 +115,11 @@ export const actions = {
         )
         .await;
     match res {
-        Err(e) => assert_eq!(e.0.code, "JSH-ACTION-NOT-FOUND", "coded 404: {}", e.0.message),
+        Err(e) => assert_eq!(
+            e.0.code, "JSH-ACTION-NOT-FOUND",
+            "coded 404: {}",
+            e.0.message
+        ),
         Ok(mut s) => {
             let bytes = s.collect().await.unwrap();
             panic!("expected Err, got: {}", String::from_utf8_lossy(&bytes));
@@ -138,10 +149,17 @@ async fn v8_action_missing_maps_to_not_found_code() {
         )
         .await;
     match res {
-        Err(e) => assert_eq!(e.0.code, "JSH-ACTION-NOT-FOUND", "coded 404: {}", e.0.message),
+        Err(e) => assert_eq!(
+            e.0.code, "JSH-ACTION-NOT-FOUND",
+            "coded 404: {}",
+            e.0.message
+        ),
         Ok(mut s) => {
             let bytes = s.collect().await.unwrap();
-            panic!("expected Err, got bytes: {}", String::from_utf8_lossy(&bytes));
+            panic!(
+                "expected Err, got bytes: {}",
+                String::from_utf8_lossy(&bytes)
+            );
         }
     }
 }
@@ -218,7 +236,11 @@ globalThis.__oxide_fn_registry = {
 async fn v8_generate_params_envelope_and_invalidate() {
     let dir = tempfile::tempdir().unwrap();
     let module = dir.path().join("page.server.mjs");
-    std::fs::write(&module, "export function generateParams() { return [{ slug: 'a' }]; }\n").unwrap();
+    std::fs::write(
+        &module,
+        "export function generateParams() { return [{ slug: 'a' }]; }\n",
+    )
+    .unwrap();
     let m = module.to_string_lossy().to_string();
     let pool = pool1();
 
@@ -231,7 +253,11 @@ async fn v8_generate_params_envelope_and_invalidate() {
         serde_json::json!({ "module_path": m }),
     )
     .await;
-    assert_eq!(v["params"], serde_json::json!([{ "slug": "a" }]), "envelope: {v}");
+    assert_eq!(
+        v["params"],
+        serde_json::json!([{ "slug": "a" }]),
+        "envelope: {v}"
+    );
 
     // Cached: rewrite the file, re-run → still the old value.
     std::fs::write(
@@ -247,7 +273,11 @@ async fn v8_generate_params_envelope_and_invalidate() {
         serde_json::json!({ "module_path": m }),
     )
     .await;
-    assert_eq!(v["params"], serde_json::json!([{ "slug": "a" }]), "cached: {v}");
+    assert_eq!(
+        v["params"],
+        serde_json::json!([{ "slug": "a" }]),
+        "cached: {v}"
+    );
 
     // framework:invalidate bumps the generation...
     let v = call(&pool, "framework:invalidate", "", "", serde_json::json!({})).await;
@@ -262,7 +292,11 @@ async fn v8_generate_params_envelope_and_invalidate() {
         serde_json::json!({ "module_path": m }),
     )
     .await;
-    assert_eq!(v["params"], serde_json::json!([{ "slug": "b" }]), "invalidated: {v}");
+    assert_eq!(
+        v["params"],
+        serde_json::json!([{ "slug": "b" }]),
+        "invalidated: {v}"
+    );
 }
 
 #[tokio::test]
@@ -283,7 +317,10 @@ async fn v8_tooling_module_refused_loudly() {
         Err(e) => assert_eq!(e.0.code, "JSH-V8KIND"),
         Ok(mut s) => {
             let bytes = s.collect().await.unwrap();
-            panic!("expected JSH-V8KIND refusal, got: {}", String::from_utf8_lossy(&bytes));
+            panic!(
+                "expected JSH-V8KIND refusal, got: {}",
+                String::from_utf8_lossy(&bytes)
+            );
         }
     }
 }
