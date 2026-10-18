@@ -165,6 +165,8 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
     current = inp
     render(inp)
     rebind()
+    // §7.1 / §9.2: re-wire the new page's deferred markers on navigation.
+    glue?.wire(inp.data)
   }
 
   // Hydration: the server markup is already in the root — do NOT rewrite it
@@ -173,6 +175,9 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
   if (root.innerHTML === '') render(current)
   rebind()
   glue = attachDeferGlue({ doc: doc as unknown as Document, onSwap: (d) => opts.onSwap?.(d) })
+  // §7.1 / §9.2: rewrite `{__deferred: id}` markers in the loader data into
+  // `DeferredClient` slots so the adapter's components can await them.
+  glue.wire(current.data)
 
   const handle: ClientHandle = {
     update,
