@@ -2922,6 +2922,9 @@ pub struct NodeHost {
     pub cache_handler: Option<Arc<dyn oxide_cache::CacheHandler>>,
     /// PERF-05: the fetch handler a worker's `fetch` op dispatches to.
     pub fetch_handler: Option<Arc<dyn FetchHandler>>,
+    /// §6.2 / §15: the plugin `transform` hook a worker's `compile_module`
+    /// op applies (reaching the prerender path).
+    pub transform_handler: Option<Arc<dyn TransformHandler>>,
 }
 
 impl NodeHost {
@@ -2932,6 +2935,7 @@ impl NodeHost {
             request_counter: AtomicU64::new(0),
             cache_handler: None,
             fetch_handler: None,
+            transform_handler: None,
         }
     }
 
@@ -2950,6 +2954,14 @@ impl NodeHost {
         self.cache_handler = Some(handler);
         self
     }
+
+    /// §6.2 / §15: attach the plugin `transform` hook a worker's
+    /// `compile_module` op applies (reaching the prerender path).
+    pub fn with_transform_handler(mut self, handler: Arc<dyn TransformHandler>) -> Self {
+        self.transform_handler = Some(handler);
+        self
+    }
+
     /// Locate the bundled worker script relative to this crate.
     pub fn worker_script_default() -> std::path::PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("worker/oxide-worker.mjs")
@@ -2965,6 +2977,9 @@ impl JsHost for NodeHost {
         if let Some(h) = &self.fetch_handler {
             p.with_fetch_handler(Arc::clone(h));
         }
+        if let Some(h) = &self.transform_handler {
+            p.with_transform_handler(Arc::clone(h));
+        }
         Ok(p as Arc<dyn Pool>)
     }
     fn tooling_pool(&self, cfg: PoolConfig) -> Result<Arc<dyn Pool>> {
@@ -2974,6 +2989,9 @@ impl JsHost for NodeHost {
         }
         if let Some(h) = &self.fetch_handler {
             p.with_fetch_handler(Arc::clone(h));
+        }
+        if let Some(h) = &self.transform_handler {
+            p.with_transform_handler(Arc::clone(h));
         }
         Ok(p as Arc<dyn Pool>)
     }

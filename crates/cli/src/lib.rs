@@ -952,8 +952,11 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // project's oxide.config.{ts,mjs,js}. Both fall back gracefully when the
     // config is absent or the worker can't start.
     let config_path_opt = find_config_file(&rootp).ok();
+    // §6.2: the plugin transform handler, attached to the render pool so the
+    // worker's compile_module applies it (reaching the prerender path).
+    let transform_handler = framework_shim::build_transform_handler(&rootp, &cfg);
     let stack = framework_shim::build_framework_stack(config_path_opt.as_deref(),
-        cfg.server.backend).await;
+        cfg.server.backend, transform_handler).await;
     if let Some(name) = stack.renderer_name() {
         outln!(w, "framework renderer: {}", name);
     }
@@ -2241,8 +2244,11 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // is used for prerendering static routes; loader is present but not
     // consumed during build (build-time loader evaluation is a follow-up).
     let config_path_opt = find_config_file(&rootp).ok();
+    // §6.2: the plugin transform handler, attached to the render pool so the
+    // worker's compile_module applies it (reaching the prerender path).
+    let transform_handler = framework_shim::build_transform_handler(&rootp, &cfg);
     let stack = framework_shim::build_framework_stack(config_path_opt.as_deref(),
-        cfg.server.backend).await;
+        cfg.server.backend, transform_handler).await;
     if let Some(name) = stack.renderer_name() {
         outln!(w, "framework renderer: {}", name);
     }
@@ -5713,9 +5719,11 @@ async fn cmd_serve(
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| std::path::PathBuf::from(root));
     let cfg = load_config_or_default(&rootp, "production");
     let config_path_opt = find_config_file(&rootp).ok();
+    let transform_handler = framework_shim::build_transform_handler(&rootp, &cfg);
     let stack = framework_shim::build_framework_stack(
         config_path_opt.as_deref(),
         cfg.server.backend,
+        transform_handler,
     )
     .await;
     if let Some(name) = stack.renderer_name() {
