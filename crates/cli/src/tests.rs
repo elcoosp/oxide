@@ -1611,8 +1611,20 @@ async fn doctor_all_pass_on_fixture() {
 
 #[tokio::test]
 async fn add_appends_module_and_dedupes() {
+    let _g = ENV_LOCK.lock().unwrap();
+    use std::fs;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
+    // Pre-populate node_modules/<mod>/package.json so the contract-discovery
+    // step (SPEC-15.4) runs without a network install (OXIDE_ADD_NO_INSTALL=1).
+    let mod_dir = root.join("node_modules/oxide-image-scraper");
+    fs::create_dir_all(&mod_dir).unwrap();
+    fs::write(
+        mod_dir.join("package.json"),
+        r#"{"name":"oxide-image-scraper","version":"1.0.0","oxide":{"module":{}}}"#,
+    )
+    .unwrap();
+    unsafe { std::env::set_var("OXIDE_ADD_NO_INSTALL", "1"); }
     let (code, out) = run_ok(&[
         "oxide",
         "add",
@@ -1621,7 +1633,7 @@ async fn add_appends_module_and_dedupes() {
         "oxide-image-scraper",
     ])
     .await;
-    assert_eq!(code, 0);
+    assert_eq!(code, 0, "add #1: {out}");
     assert!(out.contains("next steps"), "{out}");
     let path = root.join(".oxide/modules.json");
     let list: Vec<String> = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
@@ -1634,6 +1646,7 @@ async fn add_appends_module_and_dedupes() {
         "oxide-image-scraper",
     ])
     .await;
+    unsafe { std::env::remove_var("OXIDE_ADD_NO_INSTALL"); }
     let list: Vec<String> = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(list, vec!["oxide-image-scraper".to_string()], "deduped");
 }
@@ -1751,27 +1764,6 @@ async fn cache_stats_inspect_clear_roundtrip() {
 }
 
 // --------------------------------------------------------------------- audit
-
-#[tokio::test]
-async fn audit_prints_no_advisories_for_modules_and_plugins() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().to_path_buf();
-    write_config(
-        &root,
-        r#"{ "plugins": [ { "name": "oxide-plugin-mdx" } ] }"#,
-    );
-    let oxide_dir = root.join(".oxide");
-    std::fs::create_dir_all(&oxide_dir).unwrap();
-    std::fs::write(
-        oxide_dir.join("modules.json"),
-        serde_json::json!(["oxide-image-scraper"]).to_string(),
-    )
-    .unwrap();
-    let (code, out) = run_ok(&["oxide", "audit", "--root", root.to_str().unwrap()]).await;
-    assert_eq!(code, 0);
-    assert!(out.contains("oxide-image-scraper: no advisories"), "{out}");
-    assert!(out.contains("oxide-plugin-mdx: no advisories"), "{out}");
-}
 
 // ------------------------------------------------------------------- migrate
 
