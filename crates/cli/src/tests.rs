@@ -4377,3 +4377,28 @@ async fn dev_fails_fast_on_unknown_native_plugin() {
     assert!(msg.contains("unknown native plugin"), "message: {msg}");
 }
 
+#[test]
+fn extract_img_w_spec_parses_png_with_widths() {
+    use crate::extract_img_w_spec;
+    let line = r#"import hero from './hero.png?w=400,800,1200'"#;
+    let (spec, widths) = extract_img_w_spec(line).expect("parse");
+    assert_eq!(spec, "./hero.png?w=400,800,1200");
+    assert_eq!(widths, vec![400, 800, 1200]);
+}
+
+#[test]
+fn extract_img_w_spec_rejects_non_image() {
+    use crate::extract_img_w_spec;
+    assert!(extract_img_w_spec(r#"import x from './doc.pdf?w=400'"#).is_none());
+    assert!(extract_img_w_spec(r#"import x from './hero.png'"#).is_none());
+    assert!(extract_img_w_spec(r#"import x from './hero.png?w=abc'"#).is_none());
+}
+
+#[test]
+fn extract_img_w_spec_handles_jpeg() {
+    use crate::extract_img_w_spec;
+    let line = r#"import x from './photo.jpeg?w=800'"#;
+    let (_spec, widths) = extract_img_w_spec(line).expect("parse");
+    assert_eq!(widths, vec![800]);
+}
+

@@ -3250,6 +3250,94 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 }
             }
         }
+        // SPEC-16-A: scan for `img?w=400,800,1200` imports and emit a
+        // virtual metadata module exporting `{ src, srcset, sizes, width,
+        // height }`. The URLs point at the existing `/_oxide/image` endpoint
+        // (runtime resize), so the variant modules are pure metadata — no
+        // build-time rasterization cost. A user's `<img>` becomes:
+        //
+        //   import hero from './hero.png?w=400,800,1200'
+        //   <img src={hero.src} srcset={hero.srcset} width={hero.width}
+        //        height={hero.height} sizes="100vw" />
+        let mut seen_imgs: std::collections::BTreeMap<PathBuf, (String, String)> =
+            std::collections::BTreeMap::new(); // abs-img-path → (synthetic-path, module-source)
+        for entry in client_opts.entries.values() {
+            let Ok(source) = std::fs::read_to_string(entry) else {
+                continue;
+            };
+            let base = entry.parent().unwrap_or(std::path::Path::new("."));
+            for line in source.lines() {
+                if let Some((spec, widths)) = extract_img_w_spec(line) {
+                    let img_path = base.join(spec.split('?').next().unwrap_or(spec));
+                    if seen_imgs.contains_key(&img_path) {
+                        continue;
+                    }
+                    let Ok(dims) = image::image_dimensions(&img_path) else {
+                        continue;
+                    };
+                    let (w0, h0) = dims;
+                    // The runtime URL. The `src` attribute uses the max width;
+                    // `srcset` has one entry per requested width.
+                    let rel_url = spec.split('?').next().unwrap_or(spec);
+                    // Strip leading `./` from the relative URL.
+                    let rel_url = rel_url.strip_prefix("./").unwrap_or(rel_url);
+                    let url_base = format!("/_oxide/image?src={rel_url}");
+                    let srcset = oxide_assets::srcset(&widths, &url_base);
+                    let max_w = widths.iter().copied().max().unwrap_or(w0);
+                    let src = format!("{url_base}&w={max_w}");
+                    let module = format!(
+                        "export const src = {};\nexport const srcset = {};\nexport const width = {};\nexport const height = {};\n",
+                        serde_json::to_string(&src).unwrap_or_else(|_| "\"\"".into()),
+                        serde_json::to_string(&srcset).unwrap_or_else(|_| "\"\"".into()),
+                        w0, h0,
+                    );
+                    // Synthetic path: `.img.js` extension so the bundler
+                    // treats it as a normal module (no JSX/TSX precompile
+                    // needed).
+                    let h = {
+                        let mut hh = blake3::Hasher::new();
+                        hh.update(img_path.to_string_lossy().as_bytes());
+                        hh.update(&[0u8]);
+                        for w in &widths {
+                            hh.update(&w.to_le_bytes());
+                        }
+                        hh.finalize().to_hex()[..12].to_string()
+                    };
+                    let synthetic = img_path.with_extension(format!("img.{h}.js"));
+                    client_opts
+                        .precompiled
+                        .insert(synthetic.clone(), module.clone());
+                    seen_imgs.insert(
+                        img_path.clone(),
+                        (
+                            synthetic.to_string_lossy().to_string(),
+                            module,
+                        ),
+                    );
+                    let _ = (w0, h0);
+                }
+            }
+        }
+
+        // Second pass for img?w=: register every specifier form we saw.
+        for entry in client_opts.entries.values() {
+            let Ok(source) = std::fs::read_to_string(entry) else {
+                continue;
+            };
+            let base = entry.parent().unwrap_or(std::path::Path::new("."));
+            for line in source.lines() {
+                if let Some((spec, _widths)) = extract_img_w_spec(line) {
+                    let img_path = base.join(spec.split('?').next().unwrap_or(spec));
+                    if let Some((synth_str, module_src)) = seen_imgs.get(&img_path) {
+                        let synth_path = PathBuf::from(synth_str);
+                        client_opts
+                            .virtual_modules
+                            .insert(spec.to_string(), (synth_path, module_src.clone()));
+                    }
+                }
+            }
+        }
+
         // Build the virtual_modules map keyed by the ORIGINAL specifier so
         // the resolve hook (which sees `./icon.svg?react`) finds them.
         // We iterate `seen` here to build specifier keys. `seen` is
@@ -3935,6 +4023,34 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             e.0.code,
             e.0.message
         );
+    }
+    // SPEC-16.4 / §16-D: load the message catalogs from `locales/` and
+    // write `.oxide/types/messages.d.ts` (typed MessageKey union + per-
+    // locale LocaleMessages + DefaultLocale). No-op when there's no
+    // `locales/` dir; a parse error is a warning (same convention as
+    // routes.d.ts).
+    {
+        let locales_root = rootp.join("locales");
+        match oxide_assets::i18n::load_catalog_from_dir(&locales_root) {
+            Ok(cat) if !cat.entries.is_empty() => {
+                let out_path = rootp.join(".oxide/types/messages.d.ts");
+                if let Err(e) = oxide_assets::i18n::write_messages_dts(&cat, &out_path) {
+                    outln!(
+                        w,
+                        "warn: messages.d.ts typegen failed ({} {}); stale",
+                        e.0.code,
+                        e.0.message,
+                    );
+                }
+            }
+            Ok(_) => { /* no locales/ dir — nothing to typegen */ }
+            Err(e) => outln!(
+                w,
+                "warn: catalog load failed ({} {}); messages.d.ts skipped",
+                e.0.code,
+                e.0.message,
+            ),
+        }
     }
 
     // Enrich the server manifest with inferred render modes + prerendered
@@ -7119,6 +7235,43 @@ fn load_client_assets(rootp: &Path) -> Option<oxide_server::StaticAssets> {
 /// SPEC-16.6: extract the `.svg?react` specifier from an import line.
 /// Matches `import X from './foo.svg?react'` and `import './foo.svg?react'`
 /// in either quote style, then returns the specifier (still with `?react`).
+/// SPEC-16-A: extract `./hero.png?w=400,800` from an import line, returning
+/// `(specifier, widths)`. Only matches relative specifiers ending in an
+/// image extension (`.png`, `.jpg`, `.jpeg`, `.webp`, `.avif`, `.gif`)
+/// followed by `?w=<comma-separated ints>`.
+fn extract_img_w_spec(line: &str) -> Option<(&str, Vec<u32>)> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with("import") {
+        return None;
+    }
+    for q in ['"', '\''] {
+        if let Some(start) = line.find(&format!("{q}.")) {
+            let after = &line[start + 1..];
+            if let Some(end) = after.find(q) {
+                let candidate = &after[..end];
+                if let Some((path, query)) = candidate.split_once("?w=") {
+                    let is_img = path.ends_with(".png")
+                        || path.ends_with(".jpg")
+                        || path.ends_with(".jpeg")
+                        || path.ends_with(".webp")
+                        || path.ends_with(".avif")
+                        || path.ends_with(".gif");
+                    if is_img {
+                        let widths: Vec<u32> = query
+                            .split(',')
+                            .filter_map(|s| s.trim().parse::<u32>().ok())
+                            .collect();
+                        if !widths.is_empty() {
+                            return Some((candidate, widths));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 fn extract_svg_react_spec(line: &str) -> Option<&str> {
     let trimmed = line.trim();
     if !trimmed.starts_with("import") {
