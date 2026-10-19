@@ -257,36 +257,53 @@ fn backend_str(b: JsBackend) -> &'static str {
 }
 
 /// §11.2 / SPEC-12: map the project's `cache.handler` selection onto the
-/// shared TieredCache. Only the `http` handler has a Rust driver today: it
-/// attaches as the REMOTE tier (`TieredCache::with_remote`) so `'use cache'`
-/// and the L0 response cache read through / write through it. `redis`/`s3`
-/// are warn-and-no-op (no driver shipped); `memory`/`disk` are the local
-/// tiers the caller already materialized.
+/// shared TieredCache. `http`, `redis`, and `s3` each build a real driver
+/// and attach as the REMOTE tier (`TieredCache::with_remote`) so `'use
+/// cache'` and the L0 response cache read/write through it. `memory`/`disk`
+/// are the local tiers the caller already materialized — no remote driver.
 ///
-/// Pure so the decision is unit testable without a worker pool — this is
-/// the seam that USED to be dead: the CLI's own `cache.handler` arm only
-/// ran when `stack.cache_tier` was `None`, which never happens for a
-/// stack this function builds.
-pub fn remote_cache_url(handler: Option<&oxide_config::CacheHandlerConfig>) -> Option<String> {
+/// Async because `RedisCacheHandler::new` opens a connection at build time.
+/// A construction failure logs and degrades to the local tier only —
+/// §11.2's "remote cache is an optimization" contract: the build must not
+/// fail because a cache is down.
+///
+/// This is the seam that USED to be dead: the CLI's own `cache.handler`
+/// arm in `start_server` only ran when `stack.cache_tier` was `None`,
+/// which never happens for a stack this function builds.
+pub async fn remote_cache_handler(
+    handler: Option<&oxide_config::CacheHandlerConfig>,
+) -> Option<Arc<dyn oxide_cache::CacheHandler>> {
     match handler {
-        Some(oxide_config::CacheHandlerConfig::Http { url }) => Some(url.clone()),
+        Some(oxide_config::CacheHandlerConfig::Http { url }) => Some(Arc::new(
+            oxide_cache::HttpCacheHandler::new(url.clone()),
+        ) as Arc<dyn oxide_cache::CacheHandler>),
         Some(oxide_config::CacheHandlerConfig::Redis { url }) => {
-            tracing::warn!(
-                url = %url,
-                "cache.handler=redis is not implemented in this build; \
-                 use cache.handler={{type:'http',url}} against an HTTP cache \
-                 gateway, or 'disk' for a local tier",
-            );
-            None
+            match oxide_cache::RedisCacheHandler::new(url.clone()).await {
+                Ok(h) => Some(Arc::new(h) as Arc<dyn oxide_cache::CacheHandler>),
+                Err(e) => {
+                    tracing::warn!(
+                        url = %url,
+                        error = %e.0.message,
+                        "cache.handler=redis: connection failed; \
+                         continuing with local tier only",
+                    );
+                    None
+                }
+            }
         }
         Some(oxide_config::CacheHandlerConfig::S3 { bucket }) => {
-            tracing::warn!(
-                bucket = %bucket,
-                "cache.handler=s3 is not implemented in this build; \
-                 use cache.handler={{type:'http',url}} against an S3-backed \
-                 HTTP cache gateway",
-            );
-            None
+            match oxide_cache::S3CacheHandler::new(bucket.clone()) {
+                Ok(h) => Some(Arc::new(h) as Arc<dyn oxide_cache::CacheHandler>),
+                Err(e) => {
+                    tracing::warn!(
+                        bucket = %bucket,
+                        error = %e.0.message,
+                        "cache.handler=s3: client build failed; \
+                         continuing with local tier only",
+                    );
+                    None
+                }
+            }
         }
         // `memory` needs no remote; `disk` is attached by the caller below.
         _ => None,
@@ -350,12 +367,11 @@ pub async fn build_framework_stack(
             Some(c) => c,
             None => oxide_cache::TieredCache::new(512 * 1024 * 1024),
         };
-        // §11.2: the remote tier. `remote_cache_url` warns-and-no-ops for
-        // redis/s3 (no driver in this build) and returns the url for http.
-        match remote_cache_url(cache_handler) {
-            Some(url) => {
-                Arc::new(tier.with_remote(Arc::new(oxide_cache::HttpCacheHandler::new(url))))
-            }
+        // §11.2: the remote tier. `remote_cache_handler` builds the real
+        // driver for http/redis/s3; memory/disk fall through to the local
+        // tier the caller already materialized (None).
+        match remote_cache_handler(cache_handler).await {
+            Some(remote) => Arc::new(tier.with_remote(remote)),
             None => Arc::new(tier),
         }
     };

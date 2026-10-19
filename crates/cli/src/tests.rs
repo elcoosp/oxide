@@ -3199,34 +3199,27 @@ fn loading_map_keys_preserve_dynamic_tokens() {
     assert!(out.contains("\"/\""), "root loading key is /: {out}");
 }
 
-#[test]
-fn remote_cache_url_maps_handler_config() {
-    // §11.2 / SPEC-12: only `cache.handler=http` attaches a remote tier;
-    // redis/s3 warn-and-no-op; memory/disk are the local tiers. Regression
-    // guard for the shadowing bug: this mapping used to live ONLY in an
-    // unreachable CLI arm (build_framework_stack always returned
-    // cache_tier: Some), so a configured http handler never attached.
+#[tokio::test]
+async fn remote_cache_handler_maps_handler_config() {
+    // §11.2 / SPEC-12: `remote_cache_handler` is the live seam between
+    // `cache.handler` config and the tier the WORKER sees. HTTP yields a
+    // real driver; memory/disk fall through to the local tiers the caller
+    // already built (None here). Redis and S3 drivers exist but construct
+    // async / may reach the network — their own unit tests exercise the
+    // protocol; asserting them here would make this test non-hermetic.
     use oxide_config::CacheHandlerConfig;
-    let f = crate::framework_shim::remote_cache_url;
-    assert_eq!(
+    let f = crate::framework_shim::remote_cache_handler;
+    assert!(
         f(Some(&CacheHandlerConfig::Http {
             url: "https://cache.example".into()
-        })),
-        Some("https://cache.example".to_string())
+        }))
+        .await
+        .is_some(),
+        "http handler produces a remote driver"
     );
-    assert_eq!(f(Some(&CacheHandlerConfig::Memory)), None);
-    assert_eq!(f(Some(&CacheHandlerConfig::Disk)), None);
-    assert_eq!(
-        f(Some(&CacheHandlerConfig::Redis {
-            url: "redis://x".into()
-        })),
-        None
-    );
-    assert_eq!(
-        f(Some(&CacheHandlerConfig::S3 { bucket: "b".into() })),
-        None
-    );
-    assert_eq!(f(None), None);
+    assert!(f(Some(&CacheHandlerConfig::Memory)).await.is_none());
+    assert!(f(Some(&CacheHandlerConfig::Disk)).await.is_none());
+    assert!(f(None).await.is_none());
 }
 
 // -------------------------------- §8.1/§8.4 middleware parity (headers+locals)
