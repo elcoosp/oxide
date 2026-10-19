@@ -4738,3 +4738,66 @@ fn modules_loader_missing_package_is_skipped_not_fatal() {
     let mods = crate::modules_loader::load(&root, &cfg);
     assert!(mods.is_empty(), "missing package must not surface a module");
 }
+
+#[tokio::test]
+async fn add_reports_module_contributions() {
+    let _g = ENV_LOCK.lock().unwrap();
+    use std::fs;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let mod_dir = root.join("node_modules/full-mod");
+    fs::create_dir_all(mod_dir.join("routes")).unwrap();
+    fs::write(
+        mod_dir.join("routes/page.tsx"),
+        "export default function P() { return <main>m</main>; }\n",
+    )
+    .unwrap();
+    fs::write(mod_dir.join("index.mjs"), "export default {};\n").unwrap();
+    fs::write(
+        mod_dir.join("package.json"),
+        r#"{"name":"full-mod","version":"1.0.0","main":"./index.mjs","oxide":{"module":{"routes":"./routes","hooks":["transform","resolveId"],"adapters":["node"],"configDefaults":{"build":{"minify":true}}}}}"#,
+    )
+    .unwrap();
+
+    unsafe { std::env::set_var("OXIDE_ADD_NO_INSTALL", "1"); }
+    let (code, out) = run_ok(&[
+        "oxide", "add", "full-mod", "--root", root.to_str().unwrap(),
+    ]).await;
+    unsafe { std::env::remove_var("OXIDE_ADD_NO_INSTALL"); }
+    assert_eq!(code, 0, "add: {out}");
+    // The report is structured — every contribution the contract has is
+    // enumerated, and each is tagged merged or deferred honestly.
+    assert!(out.contains("oxide module detected — contributes:"), "{out}");
+    assert!(out.contains("routes: 1 page(s) under /modules/full-mod/"), "{out}");
+    assert!(out.contains("transform (merged)"), "{out}");
+    assert!(out.contains("resolveId (not yet merged)"), "{out}");
+    assert!(out.contains("adapters: node"), "{out}");
+    assert!(out.contains("configDefaults: present (not merged"), "{out}");
+}
+
+#[tokio::test]
+async fn add_warns_on_adapter_mismatch() {
+    let _g = ENV_LOCK.lock().unwrap();
+    use std::fs;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    // Project configured with the binary adapter (default); a module that
+    // only supports `cloudflare` must produce MOD-ADAPTER.
+    write_config(&root, r#"{ "adapter": "binary" }"#);
+    let mod_dir = root.join("node_modules/cf-mod");
+    fs::create_dir_all(&mod_dir).unwrap();
+    fs::write(
+        mod_dir.join("package.json"),
+        r#"{"name":"cf-mod","version":"1.0.0","oxide":{"module":{"adapters":["cloudflare"]}}}"#,
+    )
+    .unwrap();
+
+    unsafe { std::env::set_var("OXIDE_ADD_NO_INSTALL", "1"); }
+    let (code, out) = run_ok(&[
+        "oxide", "add", "cf-mod", "--root", root.to_str().unwrap(),
+    ]).await;
+    unsafe { std::env::remove_var("OXIDE_ADD_NO_INSTALL"); }
+    assert_eq!(code, 0, "add: {out}");
+    assert!(out.contains("MOD-ADAPTER"), "adapter mismatch warning: {out}");
+    assert!(out.contains("binary"), "project adapter named: {out}");
+}

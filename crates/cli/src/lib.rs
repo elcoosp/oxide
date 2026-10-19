@@ -8468,26 +8468,17 @@ async fn cmd_add(root: &str, module: &str, w: Writer<'_>) -> anyhow::Result<i32>
         outln!(w, "OXIDE_ADD_NO_INSTALL=1 — skipping the install step");
     }
 
-    // SPEC-15.4: read the module's `oxide.module` field from its
-    // package.json (present → real module; absent → a plain npm package,
-    // warning + still record it so `audit` sees it).
+    // SPEC-15.4: read the module's `oxide.module` contract. A package with
+    // no such field is recorded (audit sees it) but contributes nothing.
     let node_mods = rootp.join("node_modules").join(module);
     let pkg_json = node_mods.join("package.json");
-    let mut is_oxide_module = false;
-    if pkg_json.is_file() {
-        if let Ok(bytes) = std::fs::read(&pkg_json) {
-            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                if v.get("oxide").and_then(|o| o.get("module")).is_some() {
-                    is_oxide_module = true;
-                }
-            }
-        }
-    } else if !no_install {
+    if !pkg_json.is_file() && !no_install {
         outln!(
             w,
             "warn: node_modules/{module}/package.json missing after install —              recording anyway, `oxide build` will fail with a clear diagnostic"
         );
     }
+    let resolved = crate::modules_loader::resolve_one(&node_mods, module.to_string());
 
     // Persist to `.oxide/modules.json` (what `audit` reads).
     let mut list: Vec<String> = read_json(&modules_path)
@@ -8510,19 +8501,82 @@ async fn cmd_add(root: &str, module: &str, w: Writer<'_>) -> anyhow::Result<i32>
     )?;
     outln!(w, "[ok] added {module} to .oxide/modules.json");
 
-    // Report what the module contributes (SPEC-15.4).
-    if is_oxide_module {
-        outln!(
-            w,
-            "  oxide module detected — hooks/routes/config will be merged on the \
-             next `oxide build` / `oxide dev`"
-        );
-    } else {
-        outln!(
-            w,
-            "  note: `{module}` has no `oxide.module` export — it is an ordinary \
-             npm package and will not contribute hooks/routes"
-        );
+    // §15-E: report what the module actually contributes. Routes and the
+    // transform hook ARE merged now; everything else is enumerated as
+    // resolved-but-deferred so a user is never promised a merge that does
+    // not happen yet.
+    match &resolved {
+        None => {
+            outln!(
+                w,
+                "  note: `{module}` has no `oxide.module` export — it is an ordinary \
+                 npm package and will not contribute hooks/routes"
+            );
+        }
+        Some(m) => {
+            outln!(w, "  oxide module detected — contributes:");
+            match &m.routes_dir {
+                Some(p) if p.is_dir() => {
+                    let pages = oxide_router::RouteTree::scan(p)
+                        .map(|t| {
+                            t.entries
+                                .iter()
+                                .filter(|e| {
+                                    matches!(e.kind, oxide_router::RouteKind::Page)
+                                })
+                                .count()
+                        })
+                        .unwrap_or(0);
+                    outln!(w, "    routes: {pages} page(s) under /modules/{module}/");
+                }
+                _ => outln!(w, "    routes: (none)"),
+            }
+            if m.hooks.is_empty() {
+                outln!(w, "    hooks:  (none)");
+            } else {
+                let merged: Vec<&str> = m
+                    .hooks
+                    .iter()
+                    .filter(|h| h.as_str() == "transform")
+                    .map(|s| s.as_str())
+                    .collect();
+                let deferred: Vec<&str> = m
+                    .hooks
+                    .iter()
+                    .filter(|h| h.as_str() != "transform")
+                    .map(|s| s.as_str())
+                    .collect();
+                let mut parts = Vec::new();
+                if !merged.is_empty() {
+                    parts.push(format!("{} (merged)", merged.join(", ")));
+                }
+                if !deferred.is_empty() {
+                    parts.push(format!("{} (not yet merged)", deferred.join(", ")));
+                }
+                outln!(w, "    hooks:  {}", parts.join("; "));
+            }
+            if !m.adapters.is_empty() {
+                outln!(w, "    adapters: {}", m.adapters.join(", "));
+                let cfg = load_config_or_default(&rootp, "development");
+                if !m.adapters.iter().any(|a| a == &cfg.adapter) {
+                    outln!(
+                        w,
+                        "    warn MOD-ADAPTER: module supports [{}], project adapter is `{}`",
+                        m.adapters.join(", "),
+                        cfg.adapter,
+                    );
+                }
+            }
+            if m.typegen.is_some() {
+                outln!(w, "    typegen: present (not merged — deferred to a follow-up)");
+            }
+            if m.config_defaults.is_some() {
+                outln!(
+                    w,
+                    "    configDefaults: present (not merged — deferred to a follow-up)"
+                );
+            }
+        }
     }
     outln!(
         w,
