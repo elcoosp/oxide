@@ -20,7 +20,7 @@ async function loadSolid(): Promise<{
   try {
     web = (await import('@solidjs/web')) as unknown as SolidWebLike
   } catch {
-    web = (await import('solid-js/web')) as unknown as SolidWebLike
+    web = (await import('@solidjs/web')) as unknown as SolidWebLike
   }
   const solid = (await import('solid-js')) as unknown as {
     createElement?: (type: unknown, props: unknown) => unknown

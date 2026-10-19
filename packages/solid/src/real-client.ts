@@ -46,7 +46,7 @@ async function load(): Promise<{
     web = (await import('@solidjs/web')) as unknown as SolidWebClientLike
   } catch {
     try {
-      web = (await import('solid-js/web')) as unknown as SolidWebClientLike
+      web = (await import('@solidjs/web')) as unknown as SolidWebClientLike
     } catch {
       return undefined
     }

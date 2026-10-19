@@ -4566,8 +4566,27 @@ fn build_dispatch(
         // only (§11.2 also lists declared cookies — a follow-up).
         // A /__data request is NEVER L0-eligible: it must re-run the
         // loaders, not serve a route's cached HTML.
+        // §11.1 / §10.1: normalize `render_mode` the same way the persisted
+        // server manifest does (cmd_build line ~3681): `None` + no server
+        // module → static, `None` + server module → dynamic. Without this,
+        // a page route whose scanner left `render_mode = None` (no
+        // page.server.ts AND no explicit config.render) reaches dispatch
+        // with `None`; `mode_is_cacheable(None)` returns false → the L0
+        // branch is skipped entirely and every request answers
+        // `x-oxide-cache: bypass` (the manifest, meanwhile, shows `static`).
+        // Making dispatch agree with the manifest is the fix.
+        let effective_mode: &str = match render_mode.as_deref() {
+            Some(m) => m,
+            None => {
+                if has_server_module {
+                    "dynamic"
+                } else {
+                    "static"
+                }
+            }
+        };
         let l0_eligible = req.method.eq_ignore_ascii_case("GET")
-            && l0_cache::mode_is_cacheable(render_mode.as_deref())
+            && l0_cache::mode_is_cacheable(Some(effective_mode))
             && route_id.is_some()
             && !is_data_request;
         let l0_route = route_id_for_render.clone().unwrap_or_default();
