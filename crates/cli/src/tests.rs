@@ -3860,3 +3860,177 @@ async fn write_prerender_carries_200_status_for_clean_body() {
     .expect("write_prerender succeeds");
     assert_eq!(status, 200, "no marker → 200");
 }
+
+
+// ---- §8.5 middleware chain (outer→inner) ------------------------------
+//
+// `build_dispatch` runs EVERY ancestor middleware in order (was: nearest
+// only). These tests are load-bearing: reverting to nearest-ancestor
+// resolution drops `seen.len()` to 1, and dropping the locals-threading
+// drops `seen[1].1` to `None`.
+
+/// Records the `(module_path, locals_param)` each dispatch sees, and
+/// returns the module path inside its `locals` output so an inner
+/// middleware (and the test) can prove threading.
+struct ChainProbeMiddleware {
+    seen: std::sync::Arc<std::sync::Mutex<Vec<(String, Option<serde_json::Value>)>>>,
+}
+
+impl ChainProbeMiddleware {
+    fn new() -> Self {
+        Self {
+            seen: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl oxide_server::MiddlewareDispatcher for ChainProbeMiddleware {
+    async fn dispatch(
+        &self,
+        module_path: &str,
+        _method: &str,
+        _url: &str,
+        _params: &serde_json::Map<String, serde_json::Value>,
+        _headers: &[(String, String)],
+        _body: &[u8],
+        locals: Option<&serde_json::Value>,
+    ) -> std::result::Result<
+        oxide_server::MiddlewareRunResult,
+        oxide_server::MiddlewareRunError,
+    > {
+        self.seen
+            .lock()
+            .unwrap()
+            .push((module_path.to_string(), locals.cloned()));
+        Ok(oxide_server::MiddlewareRunResult {
+            short: false,
+            status: 200,
+            headers: vec![(
+                "x-mw".to_string(),
+                std::path::Path::new(module_path)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("mw")
+                    .to_string(),
+            )],
+            body: Vec::new(),
+            redirect: None,
+            rewrite: None,
+            locals: Some(serde_json::json!({ "mw": module_path })),
+        })
+    }
+}
+
+fn tree_with_page_and_middleware_chain() -> std::sync::Arc<oxide_router::RouteTree> {
+    use std::sync::Arc;
+    let mut tree = oxide_router::RouteTree::new();
+    tree.insert(oxide_router::RouteEntry {
+        id: oxide_router::RouteId("routes/blog/post/page".into()),
+        kind: oxide_router::RouteKind::Page,
+        segments: vec!["blog".into(), "post".into()],
+        file: std::path::PathBuf::from("blog/post/page.tsx"),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: false,
+        slot: None,
+        needs_parent: false,
+    });
+    tree.insert(oxide_router::RouteEntry {
+        id: oxide_router::RouteId("routes/middleware".into()),
+        kind: oxide_router::RouteKind::Middleware,
+        segments: vec![],
+        file: std::path::PathBuf::from("middleware.ts"),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: false,
+        slot: None,
+        needs_parent: false,
+    });
+    tree.insert(oxide_router::RouteEntry {
+        id: oxide_router::RouteId("routes/blog/middleware".into()),
+        kind: oxide_router::RouteKind::Middleware,
+        segments: vec![],
+        file: std::path::PathBuf::from("blog/middleware.ts"),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: false,
+        slot: None,
+        needs_parent: false,
+    });
+    Arc::new(tree)
+}
+
+#[tokio::test]
+async fn middleware_chain_runs_outer_to_inner_and_threads_locals() {
+    use std::sync::Arc;
+
+    let probe = Arc::new(ChainProbeMiddleware::new());
+    let seen = Arc::clone(&probe.seen);
+    let mw: Option<Arc<dyn oxide_server::MiddlewareDispatcher>> = Some(probe);
+
+    let dispatch = build_dispatch(
+        tree_with_page_and_middleware_chain(),
+        Arc::new(oxide_server::Metrics::new()),
+        Vec::new(),
+        Some(Arc::new(DataCapturingRenderer::new())),
+        None,
+        routes_root(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None, // endpoint_dispatcher
+        mw,   // middleware_dispatcher
+        false,
+        Vec::new(),
+        None, // no waterfall recorder
+        None, // no session codec
+    );
+    let resp = dispatch(test_request("GET", "/blog/post")).await;
+    assert_eq!(resp.status, 200, "matched page renders");
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(
+        seen.len(),
+        2,
+        "both root and blog middleware ran (§8.5 full chain, not nearest only)"
+    );
+    // Outer→inner order: root middleware first.
+    assert!(
+        seen[0].0.ends_with("middleware.ts") && !seen[0].0.contains("/blog/"),
+        "first is the root middleware: {}",
+        seen[0].0
+    );
+    assert!(
+        seen[1].0.contains("/blog/") && seen[1].0.ends_with("middleware.ts"),
+        "second is the blog middleware: {}",
+        seen[1].0
+    );
+    // Locals threading: the first sees no accumulated locals; the second
+    // sees the first's contribution.
+    let first_locals = seen[0].1.as_ref();
+    assert!(
+        first_locals.is_none()
+            || first_locals
+                .and_then(|v| v.as_object())
+                .map_or(false, |o| o.is_empty()),
+        "outer middleware sees empty locals: {:?}",
+        first_locals
+    );
+    let second_locals = seen[1]
+        .1
+        .as_ref()
+        .and_then(|v| v.as_object())
+        .expect("inner middleware sees the outer's locals");
+    let mw_path = second_locals
+        .get("mw")
+        .and_then(|v| v.as_str())
+        .expect("inner locals carry the outer's `mw`");
+    assert!(
+        mw_path.ends_with("middleware.ts") && !mw_path.contains("/blog/"),
+        "inner locals point at the ROOT middleware: {mw_path}"
+    );
+}

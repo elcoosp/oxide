@@ -4289,18 +4289,22 @@ fn build_dispatch(
             _ => None,
         };
 
-        // §8.1 middleware.ts / §8.5: resolve the NEAREST ancestor
-        // middleware for the matched route. Like error.tsx, the
-        // middleware's directory is the scoping key; the deepest
-        // matching ancestor wraps the route (a `routes/blog/middleware`
-        // shadows `routes/middleware`). Scope to a bounded slice:
-        // middleware runs once, before the loader/render. A middleware
-        // `{ rewrite }` re-dispatches the request through the normal
-        // match → loader → render path via the self_dispatch closure
-        // (see the §8.5 rewrite notes in `build_dispatch`).
-        let middleware_module_path: Option<std::path::PathBuf> = {
+        // §8.1 middleware.ts / §8.5: resolve the full ancestor middleware
+        // chain for the matched route, OUTERMOST first. Every middleware
+        // whose directory is an ancestor of the route's directory runs, in
+        // outer→inner order — a `routes/middleware` wraps
+        // `routes/blog/middleware`, which wraps the page. (Previously only
+        // the nearest ancestor ran, which dropped outer auth/security
+        // middleware; §8.5 requires the chain.)
+        //
+        // Ordering key: ancestor-directory length. `routes` (len 6) sorts
+        // before `routes/blog` (len 11), i.e. outer before inner. Ties
+        // cannot happen (each directory yields at most one middleware
+        // file). An unmatched URL still gets the root middleware, matching
+        // the previous behaviour.
+        let middleware_module_paths: Vec<std::path::PathBuf> = {
             let route_id_for_mw = route_id.as_deref().unwrap_or("");
-            let mut best: Option<(std::path::PathBuf, usize)> = None;
+            let mut hits: Vec<(std::path::PathBuf, usize)> = Vec::new();
             for candidate in &tree.entries {
                 if !matches!(candidate.kind, oxide_router::RouteKind::Middleware) {
                     continue;
@@ -4318,17 +4322,10 @@ fn build_dispatch(
                 if !wraps {
                     continue;
                 }
-                let len = base.len();
-                match &best {
-                    Some((_, prev)) if *prev >= len => {}
-                    _ => {
-                        // `candidate.file` is the middleware file itself,
-                        // not its sibling — no `with_file_name` needed.
-                        best = Some((routes_root.join(&candidate.file), len));
-                    }
-                }
+                hits.push((routes_root.join(&candidate.file), base.len()));
             }
-            best.map(|(p, _)| p)
+            hits.sort_by_key(|(_, len)| *len);
+            hits.into_iter().map(|(p, _)| p).collect()
         };
         let endpoint_params_json: serde_json::Map<String, serde_json::Value> = params
             .iter()
@@ -4554,14 +4551,16 @@ fn build_dispatch(
         let flight_map = std::sync::Arc::clone(&flight_map);
 
         Box::pin(async move {
-            // §8.1 middleware.ts / §8.5: run the route's nearest ancestor
-            // middleware BEFORE the loader/render phase — and before the
-            // /__data branch (§8.4 parity: client nav data must see the
-            // same middleware locals/headers/short-circuits as SSR). It can:
+            // §8.1 middleware.ts / §8.5: run the route's FULL ancestor
+            // middleware chain, OUTERMOST first, BEFORE the loader/render
+            // phase — and before the /__data branch (§8.4 parity: client
+            // nav data must see the same middleware locals/headers/
+            // short-circuits as SSR). Each middleware can:
             //   * short-circuit with a `Response` or `{ redirect }`;
-            //   * inject `locals` (delivered to the loader via
+            //   * inject `locals` (merged into the accumulated map,
+            //     delivered to the next middleware AND the loader via
             //     `LoaderRunInput.locals`);
-            //   * add response headers.
+            //   * add response headers (accumulated).
             // A `{ rewrite }` re-dispatches through the normal path. An
             // error surfaces as a 500 with a `MIDDLEWARE`-coded envelope.
             let stage_middleware_start = std::time::Instant::now();
@@ -4577,78 +4576,94 @@ fn build_dispatch(
                 }
             }
             let mut middleware_headers: Vec<(String, String)> = Vec::new();
-            if let (Some(dispatcher), Some(mp)) = (
-                middleware_for_dispatch.as_deref(),
-                middleware_module_path.as_ref(),
-            ) {
-                let module_path_s = mp.to_string_lossy().to_string();
-                // Pass the full request (headers + body) so an auth /
-                // upload middleware sees what it needs.
-                let mw_res = dispatcher
-                    .dispatch(
-                        &module_path_s,
-                        &req_owned.method,
-                        &req_owned.url,
-                        &endpoint_params_json,
-                        &endpoint_headers,
-                        endpoint_body.as_ref(),
-                        None,
-                    )
-                    .await;
-                match mw_res {
-                    Ok(out) => {
-                        if out.short {
-                            metrics.observe(&label, started.elapsed(), out.status);
-                            let mut resp = oxide_server::OxideResponse::new(
-                                out.status,
-                                bytes::Bytes::from(out.body),
-                            );
+            if let Some(dispatcher) = middleware_for_dispatch.as_deref() {
+                for mp in &middleware_module_paths {
+                    let module_path_s = mp.to_string_lossy().to_string();
+                    // Pass the full request (headers + body) so an auth /
+                    // upload middleware sees what it needs, plus the
+                    // locals accumulated by outer middlewares (None when
+                    // nothing has accumulated — see the trait doc).
+                    let locals_for_call: Option<&serde_json::Value> = if middleware_locals
+                        .as_object()
+                        .map_or(false, |o| !o.is_empty())
+                    {
+                        Some(&middleware_locals)
+                    } else {
+                        None
+                    };
+                    let mw_res = dispatcher
+                        .dispatch(
+                            &module_path_s,
+                            &req_owned.method,
+                            &req_owned.url,
+                            &endpoint_params_json,
+                            &endpoint_headers,
+                            endpoint_body.as_ref(),
+                            locals_for_call,
+                        )
+                        .await;
+                    match mw_res {
+                        Ok(out) => {
+                            if out.short {
+                                metrics.observe(&label, started.elapsed(), out.status);
+                                let mut resp = oxide_server::OxideResponse::new(
+                                    out.status,
+                                    bytes::Bytes::from(out.body),
+                                );
+                                for (k, v) in &out.headers {
+                                    resp = resp.with_header(k, v.clone());
+                                }
+                                return resp;
+                            }
+                            // Non-short-circuit: accumulate headers, and
+                            // MERGE locals so an inner middleware refines
+                            // (rather than erases) what an outer one set.
                             for (k, v) in &out.headers {
-                                resp = resp.with_header(k, v.clone());
+                                middleware_headers.push((k.clone(), v.clone()));
                             }
-                            return resp;
-                        }
-                        // Non-short-circuit: accumulate headers and locals.
-                        for (k, v) in &out.headers {
-                            middleware_headers.push((k.clone(), v.clone()));
-                        }
-                        if let Some(l) = out.locals {
-                            if l.is_object() {
-                                middleware_locals = l;
+                            if let Some(l) = out.locals {
+                                if let Some(src) = l.as_object() {
+                                    let dst = middleware_locals
+                                        .as_object_mut()
+                                        .expect("middleware_locals is always an object");
+                                    for (k, v) in src {
+                                        dst.insert(k.clone(), v.clone());
+                                    }
+                                }
+                            }
+                            if let Some(rw) = out.rewrite.as_deref() {
+                                // §8.5: honour the rewrite by re-dispatching
+                                // the request to the new URL through the
+                                // normal match → loader → render path. The
+                                // rewrite-hop header prevents an infinite
+                                // loop when a middleware always rewrites.
+                                if let Some(re_dispatch) = self_dispatch_for_closure.get() {
+                                    let mut new_req = req_owned.clone();
+                                    new_req.url = rw.to_string();
+                                    new_req.headers.push((
+                                        "x-oxide-rewrite-hop".to_string(),
+                                        (rewrite_hop + 1).to_string(),
+                                    ));
+                                    return re_dispatch(new_req).await;
+                                }
+                                tracing::warn!(
+                                    route = %label,
+                                    rewrite = %rw,
+                                    "middleware rewrite: self-dispatch unavailable",
+                                );
                             }
                         }
-                        if let Some(rw) = out.rewrite.as_deref() {
-                            // §8.5: honour the rewrite by re-dispatching
-                            // the request to the new URL through the
-                            // normal match → loader → render path. The
-                            // rewrite-hop header prevents an infinite
-                            // loop when a middleware always rewrites.
-                            if let Some(re_dispatch) = self_dispatch_for_closure.get() {
-                                let mut new_req = req_owned.clone();
-                                new_req.url = rw.to_string();
-                                new_req.headers.push((
-                                    "x-oxide-rewrite-hop".to_string(),
-                                    (rewrite_hop + 1).to_string(),
-                                ));
-                                return re_dispatch(new_req).await;
-                            }
-                            tracing::warn!(
-                                route = %label,
-                                rewrite = %rw,
-                                "middleware rewrite: self-dispatch unavailable",
+                        Err(e) => {
+                            metrics.observe(&label, started.elapsed(), e.status);
+                            return oxide_server::OxideResponse::json(
+                                e.status,
+                                serde_json::json!({"error": {
+                                    "code": e.code,
+                                    "message": e.message,
+                                    "route": label,
+                                }}),
                             );
                         }
-                    }
-                    Err(e) => {
-                        metrics.observe(&label, started.elapsed(), e.status);
-                        return oxide_server::OxideResponse::json(
-                            e.status,
-                            serde_json::json!({"error": {
-                                "code": e.code,
-                                "message": e.message,
-                                "route": label,
-                            }}),
-                        );
                     }
                 }
             }
