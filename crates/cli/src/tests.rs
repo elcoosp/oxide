@@ -4027,3 +4027,23 @@ async fn middleware_chain_runs_outer_to_inner_and_threads_locals() {
         "inner locals point at the ROOT middleware: {mw_path}"
     );
 }
+
+
+#[test]
+fn build_transform_hook_returns_none_when_no_wasm_plugin_configured() {
+    // §15.1 / §17.2: `build_transform_hook` returns `None` when no wasm
+    // transform plugin is configured — the bundler must not be given a
+    // hook that would call into nothing. Load-bearing for the negative
+    // arm; the positive arm (a real string-ABI component firing the
+    // transform) is covered at the plugin crate level by
+    // `wasm_tdd::real_component_transform_add_one_roundtrips`, and its
+    // CLI-level fixture (a hand-authored string-ABI WAT) is a documented
+    // Wave-4 follow-up.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let cfg = crate::load_config_or_default(&root, "development");
+    assert!(
+        crate::build_transform_hook(&root, &cfg).is_none(),
+        "no plugins configured → no transform hook"
+    );
+}
