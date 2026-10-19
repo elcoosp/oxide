@@ -16,6 +16,7 @@
 import process from "node:process";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { readFileSync } from "node:fs";
 
 const require = createRequire(import.meta.url);
 const sucrase = (() => { try { return require('sucrase') } catch { return null } })();
@@ -46,9 +47,28 @@ let moduleGeneration = 0;
  * `file:///x.mjs?v=0` and every subsequent bump produces a fresh URL, so
  * Node treats each generation as a distinct module.
  */
+// SPEC-14: the generation is written to `.oxide/hmr-generation` by the
+// Rust watcher on every invalidate. Reading it fresh on EVERY versioned()
+// call is what makes HMR work across the pool: NodePool dispatches renders
+// to any of N workers by least-loaded, so an in-memory counter bumped on
+// ONE worker by `framework:invalidate` leaves the other N-1 on the old
+// generation. Reading from disk means every worker sees every edit.
+const HMR_GEN_PATH = process.env.OXIDE_ROOT
+  ? `${process.env.OXIDE_ROOT}/.oxide/hmr-generation`
+  : null;
+function currentGeneration() {
+  if (!HMR_GEN_PATH) return moduleGeneration;
+  try {
+    const v = readFileSync(HMR_GEN_PATH, "utf8").trim();
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) && n > 0 ? n : moduleGeneration;
+  } catch {
+    return moduleGeneration;
+  }
+}
 function versioned(url) {
   const sep = url.includes("?") ? "&" : "?";
-  return `${url}${sep}v=${moduleGeneration}`;
+  return `${url}${sep}v=${currentGeneration()}`;
 }
 // PERF-12: frame = [4-byte len LE][1-byte kind][payload]. len covers
 // kind+payload. kind 0 = JSON, kind 1 = binary chunk ([8-byte id LE][raw]).

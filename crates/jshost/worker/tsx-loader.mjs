@@ -16,7 +16,9 @@
 // install handles that). Absence of a given package degrades gracefully:
 // the loader falls through to `nextLoad` and Node's native .ts stripping.
 import { readFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
@@ -38,6 +40,54 @@ const solidJsxOxc = (() => {
 // config): `react` (default) or `solid`. Vue and Svelte entries have their
 // own SFC compilers below.
 const FRAMEWORK = (process.env.OXIDE_FRAMEWORK ?? 'react').toLowerCase()
+
+// §13.3 / SPEC-14: HMR module-graph versioning.
+//
+// The config file imports page/layout components STATICALLY:
+//   import Home from './src/routes/index/page.tsx'
+// When dev re-imports the config at `config.ts?v=<gen>`, that produces a
+// fresh config module — but its STATIC imports still resolve to the SAME
+// URL as before, so Node's ESM cache serves the old module.
+//
+// Fix: in dev, version every component file under <OXIDE_ROOT>/src/ with
+// a `?v=<gen>` suffix, mirroring what the loader path already does for
+// page.server.ts via content-hashed temp files. The generation is written
+// by the Rust watcher on each `framework:invalidate` (see
+// `crates/cli/src/lib.rs::invalidate_framework_modules`), so every file
+// edit produces a fresh URL for the transitively-imported components.
+const OXIDE_DEV = process.env.OXIDE_DEV === '1'
+const OXIDE_ROOT = process.env.OXIDE_ROOT || ''
+
+function currentGeneration() {
+  if (!OXIDE_ROOT) return '0'
+  try {
+    return readFileSync(join(OXIDE_ROOT, '.oxide/hmr-generation'), 'utf8').trim() || '0'
+  } catch {
+    return '0'
+  }
+}
+
+// A component file the loader can meaningfully re-evaluate. If it's not
+// one of these, or it already has a `?v=`, leave the URL alone.
+function isDevComponentUrl(url) {
+  if (!url.startsWith('file://')) return false
+  if (url.includes('node_modules')) return false
+  if (url.includes('?v=')) return false
+  if (!/\.(tsx|jsx|vue|svelte)(\?|$)/.test(url)) return false
+  if (!OXIDE_ROOT) return false
+  // Must be under <root>/src/
+  const srcPrefix = 'file://' + OXIDE_ROOT.replace(/\/+$/, '') + '/src/'
+  return url.startsWith(srcPrefix)
+}
+
+export async function resolve(specifier, context, nextResolve) {
+  const result = await nextResolve(specifier, context)
+  if (!OXIDE_DEV) return result
+  if (!isDevComponentUrl(result.url)) return result
+  const gen = currentGeneration()
+  const sep = result.url.includes('?') ? '&' : '?'
+  return { ...result, url: result.url + sep + 'v=' + gen }
+}
 
 function compileTsx(source, path) {
   // Solid's JSX compiles to `ssr`/template calls, not React's `jsx()`
@@ -128,18 +178,23 @@ function compileSvelte(source, path) {
 }
 
 export async function load(url, context, nextLoad) {
+  // SPEC-14: the resolve() hook appends `?v=<gen>` to component URLs for
+  // HMR cache-busting. The extension checks below must use the BARE path —
+  // `url.endsWith('.tsx')` on `page.tsx?v=35` is false.
+  const queryAt = url.indexOf('?')
+  const bareUrl = queryAt >= 0 ? url.slice(0, queryAt) : url
   // BUG-08: CSS is a server side-effect import — evaluate to an empty
   // module (SSR never applies styles; the client bundle handles real CSS).
-  if (url.endsWith('.css')) {
+  if (bareUrl.endsWith('.css')) {
     return { format: 'module', shortCircuit: true, source: 'export default "";' }
   }
-  const isTsx = url.endsWith('.tsx') || url.endsWith('.jsx')
-  const isVue = url.endsWith('.vue')
-  const isSvelte = url.endsWith('.svelte')
+  const isTsx = bareUrl.endsWith('.tsx') || bareUrl.endsWith('.jsx')
+  const isVue = bareUrl.endsWith('.vue')
+  const isSvelte = bareUrl.endsWith('.svelte')
   if (!isTsx && !isVue && !isSvelte) {
     return nextLoad(url, context)
   }
-  const path = fileURLToPath(url)
+  const path = fileURLToPath(bareUrl)
   const source = await readFile(path, 'utf8')
   let code
   if (isTsx) {

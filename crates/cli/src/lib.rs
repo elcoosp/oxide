@@ -1207,6 +1207,19 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // §6.2: the plugin transform handler, attached to the render pool so the
     // worker's compile_module applies it (reaching the prerender path).
     let transform_handler = framework_shim::build_transform_handler(&rootp, &cfg);
+    // §13.3 / SPEC-14: HMR env for the loader hook (`tsx-loader.mjs`).
+    // `OXIDE_DEV` gates the versioned-resolve behavior; `OXIDE_ROOT` lets
+    // the loader find `.oxide/hmr-generation` (written by the watcher on
+    // each `framework:invalidate`). Both are inherited by the worker
+    // subprocess at spawn.
+    // Edition 2024 makes `set_var` unsafe (env vars are process-global and
+    // not thread-safe in general). This runs at cmd_dev entry, before any
+    // worker thread is spawned, and the only other reader is the worker
+    // subprocess after fork.
+    unsafe {
+        std::env::set_var("OXIDE_DEV", "1");
+        std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref());
+    }
     // §11.2: thread the project's `cache.handler` into the stack so the tier
     // the worker (and the L0 cache) actually uses honors the config — the
     // CLI-side `stack.cache_tier == None` arm below is only for stacks built
@@ -1336,11 +1349,25 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // §13.3: on any file-change event, bump the worker's module generation
     // so the next render/load sees fresh code. Best-effort: log a warning
     // if the worker is unavailable; never fails the dev loop.
-    async fn invalidate_framework_modules(pool: &Option<std::sync::Arc<dyn oxide_jshost::Pool>>) {
+    async fn invalidate_framework_modules(
+        pool: &Option<std::sync::Arc<dyn oxide_jshost::Pool>>,
+        root: &std::path::Path,
+    ) {
         if let Some(pool) = pool.as_ref() {
             let host = oxide_jshost::FrameworkHost::new(std::sync::Arc::clone(pool));
             match host.invalidate().await {
                 Ok(generation) => {
+                    // SPEC-14: publish the new generation to disk so the
+                    // loader's `resolve()` hook (`tsx-loader.mjs`) can
+                    // version the config's transitive component imports
+                    // with `?v=<generation>`. The generation number matches
+                    // the worker's in-memory counter, so versioned imports
+                    // hit the correct eval graph on every edit.
+                    let gen_path = root.join(".oxide").join("hmr-generation");
+                    if let Some(parent) = gen_path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(&gen_path, generation.to_string());
                     tracing::debug!(generation, "framework modules invalidated")
                 }
                 Err(e) => tracing::warn!(
@@ -1392,7 +1419,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
         let any = events.iter().any(|e| graph_invalidated(&dev_graph, e));
         if any {
-            invalidate_framework_modules(&hmr_pool).await;
+            invalidate_framework_modules(&hmr_pool, &rootp).await;
         }
         outln!(w, "dev ready — {} change(s) in first poll", events.len());
         let _ = started.shutdown.send(true);
@@ -1427,11 +1454,28 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     let mut warmed = true; // nothing to do until the first quiet period
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        let events = watcher
+        let events_raw = watcher
             .poll(&mut seen)
             .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+        // SPEC-14: writing `.oxide/hmr-generation` on every invalidate
+        // triggers another watcher event — a pathological loop. The notify
+        // backend sees every path under the root (SKIP_DIRS only applies
+        // to the walk_root path, not the notify callback). Filter BEFORE
+        // `invalidate_framework_modules` — filtering after it left the
+        // invalidate→write→notify→invalidate loop running.
+        let events: Vec<_> = events_raw
+            .into_iter()
+            .filter(|ev| {
+                let p = match ev {
+                    oxide_dev::FileEvent::Modified(p)
+                    | oxide_dev::FileEvent::Created(p)
+                    | oxide_dev::FileEvent::Removed(p) => p,
+                };
+                !p.components().any(|c| c.as_os_str() == ".oxide")
+            })
+            .collect();
         if !events.is_empty() {
-            invalidate_framework_modules(&hmr_pool).await;
+            invalidate_framework_modules(&hmr_pool, &rootp).await;
             idle_since = std::time::Instant::now();
             warmed = false;
         }

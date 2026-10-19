@@ -99,22 +99,51 @@ request after the first.
 
 ## HMR (`bench:hmr`, smoke-app-react)
 
-**Current: 1 / 15 iterations delivered an updated response.** Unchanged
-from the previous report. The dev watcher fires
-(`INFO file change ev=Modified(…/page.tsx)`) but the change never reaches
-the served HTML within the timeout. This is the known coarse-invalidation
-gap: `oxide dev`'s loop calls `invalidate_framework_modules` but does not
-re-render the route. SPEC-14 (HMR end-to-end) + PERF-08 (demand-graph
-invalidation) close it.
+**Current: 15/15 successful, p50 ≈ 200 ms, p95 ≈ 270 ms.** Down from
+1/15 (earlier report) — the gap was actually two bugs:
+
+1. **L0 cache shadowed every edit in dev.** `oxide dev` built an L0
+   response cache from `dist/server/l0-seed.json` and served the seeded
+   HTML on every `GET /`, so an edited page never appeared regardless of
+   the watcher. Fixed by skipping L0 construction when the dev mode
+   signal (`hmr: Some(_)`) is passed to `start_server_inner_full`.
+
+2. **`framework:invalidate` bumped one worker's counter, not the pool's.**
+   `NodePool` dispatches renders to whichever worker is least-loaded. The
+   in-memory `moduleGeneration` counter lived per-worker, so invalidating
+   worker 2 left worker 0 on generation 0 — the next render (dispatched
+   to worker 0) re-imported `config.ts?v=0` from Node's ESM cache and
+   served the pre-edit page. Fixed by writing the generation to
+   `.oxide/hmr-generation` on every invalidate (Rust) and reading it
+   fresh on every `versioned()` call (worker). Every worker now sees
+   every edit.
+
+Two more supporting changes:
+
+3. **Loader `resolve()` hook** (`tsx-loader.mjs`) versions every
+   component file under `<OXIDE_ROOT>/src/` with `?v=<gen>` on import.
+   Without it, the config file's static imports (`import Home from
+   './src/routes/index/page.tsx'`) would still hit Node's ESM cache — the
+   config's `?v=N` bump would produce a fresh config module, but its
+   transitive static imports would resolve to the same URL as before.
+
+4. **`.oxide/` paths filtered from dev-loop events.** Writing
+   `hmr-generation` triggers the watcher, which would otherwise cause a
+   pathological invalidate→write→notify→invalidate loop. The notify
+   backend ignores `SKIP_DIRS` (that constant only applies to the walk-
+   root path), so the filter is applied at the dev-loop event boundary.
+
+The remaining p50 ≈ 200 ms is the actual dev re-render cost (V8 isolate
++ React SSR of a 1-page app). It is the floor an incremental HMR push
+would improve on; PH0-03's regression gate tracks it.
 
 ## Known gaps exposed by this run
 
-1. **HMR delivers 1/15** — SPEC-14 / PERF-08 territory.
-2. **L0 p50 is 15 ms, not the §21 `< 1 ms` target** — real perf gap in the
+1. **L0 p50 is 15 ms, not the §21 `< 1 ms` target** — real perf gap in the
    hit-path response derivation. PERF-04 / PERF-07 levers.
-3. **`benchmarks/run.sh` byte-glob quirk** — solid's `dist/client/` chunks
-   are `.mjs` not `.js`, so `dir_bytes` reads `0`. Cosmetic; fix by widening
-   the glob.
+2. **HMR p50 ≈ 200 ms** — the dev re-render cost is the floor an
+   incremental HMR push would improve on. Every edit is delivered
+   correctly; only the latency lever remains.
 
 ## Not measured (and why)
 

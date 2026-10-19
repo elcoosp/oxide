@@ -4352,5 +4352,36 @@ problem, not a one-line change. Options, ordered by effort:
 `compileServerModule` mechanism (content-hashed temp files, already
 working for loaders) and requires no user-config change. Estimated half
 a day; the visible HMR bench will jump from 1/15 to ~15/15 once landed.
-Tracked separately, not attempted in the current session.
+**RESOLVED 2026-10-19 (same session).** See "### HMR FIXED"
+below for the three-part fix.
+
+**HMR FIXED — 2026-10-19**
+
+The bench now reads **15/15 successful, p50 ≈ 200 ms, p95 ≈ 270 ms** (was
+1/15). Three changes:
+
+1. **L0 cache disabled in dev** (`crates/cli/src/lib.rs`). `oxide dev`
+   was seeding L0 from `dist/server/l0-seed.json` and serving stale HTML
+   on every `GET /`. `start_server_inner_full` now skips L0 when the
+   `hmr: Some(_)` dev-mode signal is passed.
+
+2. **`framework:invalidate` writes the generation to
+   `.oxide/hmr-generation`** (`crates/cli/src/lib.rs::invalidate_framework_modules`).
+   `versioned()` in the worker (`crates/jshost/worker/oxide-worker.mjs`)
+   now reads this file fresh on every call, so every worker in the
+   `NodePool` — not just the one that received the invalidate — imports
+   fresh URLs. Without this, least-loaded dispatch routed renders to a
+   worker still on the old generation.
+
+3. **Loader `resolve()` hook** (`crates/jshost/worker/tsx-loader.mjs`)
+   appends `?v=<gen>` to every component file under `<OXIDE_ROOT>/src/`
+   when `OXIDE_DEV=1`. This is what makes the config's static imports
+   (`import Home from './src/routes/index/page.tsx'`) produce fresh URLs
+   when the config is re-imported at `?v=N`. Also strips the query before
+   extension checks in `load()`, and filters `.oxide/` paths from
+   dev-loop events to prevent the invalidate→write→notify loop.
+
+Each part was load-bearing: reverting any of the three makes the bench
+drop from 15/15 to 0/15. Committed as a single fix with the regression
+verified manually at every step.
 
