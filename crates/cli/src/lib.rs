@@ -7267,15 +7267,25 @@ async fn cmd_routes(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
             }
         }
     }
-    outln!(w, "PATTERN | KIND | MODE | TAGS");
+    outln!(w, "PATTERN | KIND | MODE | CACHE | TAGS");
     for (pattern, kind, tags) in tree.table() {
         let mode = modes.get(&pattern).map(String::as_str).unwrap_or("-");
+        // SPEC-19C / §19.1: the CACHE column names the L0 eligibility a
+        // request for this route will hit. Mirrors the runtime predicate
+        // at `l0_cache::mode_is_cacheable` — a route whose mode is
+        // `static` or `isr` will serve from L0 on the second request; a
+        // `dynamic` / `spa` / `islands` route bypasses.
+        let cache = if crate::l0_cache::mode_is_cacheable(Some(mode)) {
+            "L0"
+        } else {
+            "none"
+        };
         let tags = if tags.is_empty() {
             "-".to_string()
         } else {
             tags.join(",")
         };
-        outln!(w, "{pattern} | {kind} | {mode} | {tags}");
+        outln!(w, "{pattern} | {kind} | {mode} | {cache} | {tags}");
     }
     Ok(0)
 }
@@ -7358,7 +7368,7 @@ async fn cmd_analyze(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
             }
         }
     }
-    outln!(w, "ROUTE | JS BYTES | BUDGET | OK");
+    outln!(w, "ROUTE | JS BYTES | SHARE% | BUDGET | OK");
     let mut any_over = false;
     for (route, bytes) in &rows {
         let (budget_str, limit) = match route_budget {
@@ -7370,7 +7380,12 @@ async fn cmd_analyze(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
             any_over = true;
         }
         let status = if ok { "ok" } else { "OVER" };
-        outln!(w, "{route} | {bytes} | {budget_str} | {status}");
+        let share = if total_bytes == 0 {
+            0.0
+        } else {
+            (*bytes as f64) * 100.0 / (total_bytes as f64)
+        };
+        outln!(w, "{route} | {bytes} | {share:.1} | {budget_str} | {status}");
     }
     if let Some(limit) = total_budget {
         let ok = total_bytes <= limit;
