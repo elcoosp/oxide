@@ -15,6 +15,7 @@ pub mod mcp;
 
 mod build_cache;
 mod build_graph;
+mod modules_loader;
 mod framework_shim;
 mod l0_cache;
 pub mod loader_shim;
