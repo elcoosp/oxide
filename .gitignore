@@ -21,3 +21,5 @@ examples/.v8-*/
 fuzz/target/
 
 dump.txt
+test-results/
+tests/playwright/test-results/
