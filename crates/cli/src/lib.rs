@@ -1475,6 +1475,28 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             })
             .collect();
         if !events.is_empty() {
+            // SPEC-5E: a lockfile change is a resolver-epoch change. The
+            // worker-generation bump makes every versioned() import pick up
+            // a fresh URL, so the next resolve re-reads the lockfile. The
+            // explicit log is the audit trail §5.5 asks for.
+            let has_lockfile = events.iter().any(|ev| {
+                let p = match ev {
+                    oxide_dev::FileEvent::Modified(p)
+                    | oxide_dev::FileEvent::Created(p)
+                    | oxide_dev::FileEvent::Removed(p) => p,
+                };
+                matches!(
+                    p.file_name().and_then(|n| n.to_str()),
+                    Some("package-lock.json")
+                        | Some("pnpm-lock.yaml")
+                        | Some("yarn.lock")
+                        | Some("bun.lockb")
+                        | Some("Cargo.lock")
+                )
+            });
+            if has_lockfile {
+                tracing::info!("lockfile change — resolver epoch bump");
+            }
             invalidate_framework_modules(&hmr_pool, &rootp).await;
             idle_since = std::time::Instant::now();
             warmed = false;

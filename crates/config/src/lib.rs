@@ -447,6 +447,10 @@ pub struct BuildConfig {
     /// pass reads through it on a local miss and writes back on a store, so a
     /// CI job reuses another job's artifacts. `None` disables the remote.
     pub remote_cache: Option<String>,
+    /// SPEC-5D: branches that may WRITE to the remote cache (§5.4
+    /// trusted-branch write). Reads `GIT_BRANCH` at build time.
+    #[serde(default)]
+    pub write_branches: Option<Vec<String>>,
 }
 impl Default for BuildConfig {
     fn default() -> Self {
@@ -455,6 +459,7 @@ impl Default for BuildConfig {
             sourcemap: "hidden".into(),
             ssr_externals: Vec::new(),
             remote_cache: None,
+                write_branches: None,
         }
     }
 }

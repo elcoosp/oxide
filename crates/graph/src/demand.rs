@@ -49,6 +49,12 @@ impl InputId {
             Input::ConfigKey { key, .. } => Self::Config(key.clone()),
             Input::ToolVersion { name, .. } => Self::Tool(name.clone()),
             Input::Node(k, _) => Self::Node(k.clone()),
+            // SPEC-5B: resolver edges and plugin-option edges collapse to
+            // their nearest existing id kind — a resolver change is a
+            // "configuration" change (the spec's §5.5 lockfile rule treats
+            // it that way), and plugin options are a config key.
+            Input::Resolver { specifier, .. } => Self::Config(specifier.clone()),
+            Input::PluginOptions { plugin, .. } => Self::Config(plugin.clone()),
         }
     }
 }

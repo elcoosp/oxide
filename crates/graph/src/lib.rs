@@ -8,6 +8,11 @@
 //! Layout: [`demand`] holds the Tier A engine, [`cas`] the Tier B store,
 //! [`trackers`] the concrete input trackers handed to computations.
 
+pub mod artifacts;
+#[cfg(feature = "s3")]
+pub mod remote_s3;
+
+
 mod cas;
 mod demand;
 mod trackers;
@@ -67,6 +72,19 @@ pub enum Input {
     ToolVersion { name: String, version: String },
     /// Another node's output hash (node dependency).
     Node(NodeKey, blake3::Hash),
+    /// SPEC-5B: a bare module specifier was resolved to a concrete path.
+    /// Hash covers `resolved-path + package-version + matched conditions`.
+    Resolver {
+        specifier: String,
+        from: String,
+        resolved_hash: blake3::Hash,
+    },
+    /// SPEC-5B: a plugin's options (from config) were observed by a
+    /// transform node. Changing the options invalidates the plugin's outputs.
+    PluginOptions {
+        plugin: String,
+        options_hash: blake3::Hash,
+    },
 }
 
 impl PartialOrd for Input {
@@ -85,6 +103,8 @@ impl Ord for Input {
                 Input::ConfigKey { .. } => 3,
                 Input::ToolVersion { .. } => 4,
                 Input::Node(..) => 5,
+                Input::Resolver { .. } => 6,
+                Input::PluginOptions { .. } => 7,
             }
         }
         fn hash_bytes(h: &blake3::Hash) -> [u8; 32] {
@@ -137,6 +157,31 @@ impl Ord for Input {
             (Input::Node(a, ha), Input::Node(b, hb)) => {
                 a.cmp(b).then(hash_bytes(ha).cmp(&hash_bytes(hb)))
             }
+            (
+                Input::Resolver {
+                    specifier: sa,
+                    from: fa,
+                    resolved_hash: ha,
+                },
+                Input::Resolver {
+                    specifier: sb,
+                    from: fb,
+                    resolved_hash: hb,
+                },
+            ) => sa
+                .cmp(sb)
+                .then(fa.cmp(fb))
+                .then(hash_bytes(ha).cmp(&hash_bytes(hb))),
+            (
+                Input::PluginOptions {
+                    plugin: pa,
+                    options_hash: ha,
+                },
+                Input::PluginOptions {
+                    plugin: pb,
+                    options_hash: hb,
+                },
+            ) => pa.cmp(pb).then(hash_bytes(ha).cmp(&hash_bytes(hb))),
             _ => tag(self).cmp(&tag(other)),
         }
     }
