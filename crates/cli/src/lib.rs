@@ -598,8 +598,31 @@ fn scan_routes(root: &Path, cfg: &OxideConfig) -> anyhow::Result<RouteTree> {
     // `PathBuf::join` returns the RHS unchanged when it's absolute.
     let root_abs = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let dir = root_abs.join(&cfg.routes.dir);
-    RouteTree::scan_with_config(&root_abs, Some(&dir))
-        .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))
+    let mut tree = RouteTree::scan_with_config(&root_abs, Some(&dir))
+        .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+    // §15-E: merge every `oxide.module` package's routes into the tree. This
+    // is the single seam every command funnels through (build, dev, routes,
+    // analyze, check) — patching it here makes a module's routes visible
+    // everywhere without further plumbing. A module's route `file` is
+    // rewritten to an absolute path under `node_modules/<name>/`, and its
+    // `id` is namespaced `modules/<name>/…` so a project route cannot shadow
+    // it. A broken module is reported on stderr and skipped — a module the
+    // user did not write must never fail their build (a future tightening
+    // pass can make `cfg.modules` strict).
+    let mods = crate::modules_loader::load(&root_abs, cfg);
+    let merged = crate::modules_loader::inject_routes(&mut tree, &mods);
+    if merged > 0 {
+        eprintln!("modules: merged {merged} route entr(y/ies) from {} module(s)", mods.len());
+    }
+    for m in crate::modules_loader::has_unmerged_hooks(&mods) {
+        eprintln!(
+            "modules: `{}` declares hook(s) [{}] — hook merging is not yet wired; \
+             only its routes are honored",
+            m.name,
+            m.hooks.join(", "),
+        );
+    }
+    Ok(tree)
 }
 
 /// URL pattern for display (§19.1 table): `/` for the root, `/a/b` otherwise.
@@ -8471,8 +8494,9 @@ async fn cmd_add(root: &str, module: &str, w: Writer<'_>) -> anyhow::Result<i32>
     }
     outln!(
         w,
-        "next steps: ensure `{module}` appears in `modules: []` in your \
-         oxide.config.ts (or let a native plugin register it), then run `oxide dev`"
+        "next steps: `oxide build` / `oxide dev` will pick up `{module}` from \
+         .oxide/modules.json automatically. To enable it explicitly in config, \
+         add it to `modules: []` in oxide.config.ts"
     );
     Ok(0)
 }
