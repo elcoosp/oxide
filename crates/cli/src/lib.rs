@@ -4182,6 +4182,65 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         written.len(),
         target.as_str()
     );
+    // §5-A: record a DemandGraph over this build's inputs and persist it so
+    // `oxide analyze` and the MCP `oxide_graph` tool can report real
+    // recompute counts (node granularity: module / chunk / manifest /
+    // typegen). The conservative landing: the pipeline still runs to
+    // completion — the graph is what a future incremental build diffs
+    // against. Best-effort: a persistence failure logs, does not fail.
+    {
+        let mut client_chunks: Vec<std::path::PathBuf> = Vec::new();
+        {
+            let mut stack = vec![client_out.clone()];
+            while let Some(d) = stack.pop() {
+                let Ok(rd) = std::fs::read_dir(&d) else { continue };
+                for e in rd.flatten() {
+                    let p = e.path();
+                    if p.is_dir() {
+                        stack.push(p);
+                    } else if p.extension().and_then(|x| x.to_str()) == Some("js") {
+                        client_chunks.push(p);
+                    }
+                }
+            }
+        }
+        let mut server_chunks: Vec<std::path::PathBuf> = Vec::new();
+        {
+            let mut stack = vec![server_out.clone()];
+            while let Some(d) = stack.pop() {
+                let Ok(rd) = std::fs::read_dir(&d) else { continue };
+                for e in rd.flatten() {
+                    let p = e.path();
+                    if p.is_dir() {
+                        stack.push(p);
+                    } else if p.extension().and_then(|x| x.to_str()) == Some("js") {
+                        server_chunks.push(p);
+                    }
+                }
+            }
+        }
+        let cm_path = client_out.join("client.manifest.json");
+        let sm_path = server_out.join("server.manifest.json");
+        let inputs = crate::build_graph::RecordInputs {
+            rootp: &rootp,
+            entries: &entries,
+            client_chunks: &client_chunks,
+            server_chunks: &server_chunks,
+            client_manifest_path: &cm_path,
+            server_manifest_path: &sm_path,
+            build_id: &build_id,
+        };
+        match crate::build_graph::record_and_persist(inputs) {
+            Ok(snap) => outln!(
+                w,
+                "graph: {} nodes, {} recomputed (previous snapshot: {} nodes)",
+                snap.node_count,
+                snap.recomputed_count,
+                snap.previous_node_count,
+            ),
+            Err(e) => eprintln!("warn: graph snapshot could not be written: {e}"),
+        }
+    }
     // §5.1: remember this build's inputs so an unchanged re-run can skip.
     let fp = build_cache::fingerprint(&rootp, "production", r#static);
     if let Err(e) = build_cache::store(&rootp, &fp) {
@@ -8013,6 +8072,21 @@ async fn cmd_analyze(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
             w,
             "total client JS | {total_bytes} | {limit} | {}",
             if ok { "ok" } else { "OVER" }
+        );
+    }
+    // §5-A: report the last build's graph recompute counts. A user editing
+    // one component sees how many graph nodes that touch actually dirtied —
+    // the concrete measurement a future incremental build is tuned against.
+    let snap = crate::build_graph::load_snapshot(&rootp);
+    if snap.node_count > 0 {
+        outln!(w, "--");
+        outln!(
+            w,
+            "graph (last build `{}`): {} nodes, {} recomputed ({} in the previous build)",
+            snap.build_id,
+            snap.node_count,
+            snap.recomputed_count,
+            snap.previous_node_count,
         );
     }
     Ok(if any_over { 1 } else { 0 })
