@@ -16,27 +16,20 @@ gap.
 
 | fixture          | cold(ms) | warm(ms) | client(B) | server(B) | pages | start(ms) | rss(MB) | ttfb(ms) |
 | ---------------- | -------: | -------: | --------: | --------: | ----: | --------: | ------: | -------: |
-| smoke-app-react  |     **4004** | **410** | **269689** | **51384** | **11** | **641** | **39** | **445** |
-| smoke-app-vue    |     **4174** | **215** | **312872** | **951082** | **2**  | **1104** | **39** | **309** |
-| smoke-app-svelte |     **2405** | **224** | **89536**  | **1468**   | **2**  | **682**  | **38** | **499** |
-| smoke-app-solid  |     **1813** | **1399**| **0***     | **0***     | **2**  | **671**  | **37** | **717** |
-
-\* Solid's client/server byte columns still read `0` because the harness's
-`dir_bytes` glob is `*.js` and the solid bundle's chunks land under
-`dist/client/` with the same pattern — the discrepancy is a harness glob
-quirk (module entry is `.js` but the bundler's output for a 1-route project
-emits a single `.mjs`, not `.js`). The number that matters — `pages = 2` and
-a successful build — is correct. The empty byte columns are cosmetic; fix
-by widening the glob to `*.js *.mjs` in a follow-up `benchmarks/run.sh`
-patch.
+| smoke-app-react  |     3480 |       32 |    269689 |     51384 |    11 |       247 |      39 |      373 |
+| smoke-app-vue    |     3495 |       26 |    312872 |    951082 |     2 |       263 |      41 |      476 |
+| smoke-app-svelte |     1457 |       26 |     89536 |      1468 |     2 |       195 |      37 |      475 |
+| smoke-app-solid  |     1840 |       26 |    191092 |     12015 |     2 |       192 |      38 |      393 |
 
 **Cold build is dominated by the V8 target the CLI links** (a fresh ~340 MB
 debug binary against a warm OS cache) — a release build and a persistent
 build cache are the two levers later PERF tasks pull.
 
-**`start(ms)` is 640–1100 ms** — this run started from a clean checkout, so
-the numbers include first-touch OS-cache cost that a warm re-run hides.
-Re-run on a quiet, warm host before comparing to any prior report.
+**`start(ms)` is 190–260 ms and `warm(ms)` is 26–32 ms** — measured on a warm
+OS cache after the previous build. A cold-disk run has `start(ms)` up near
+640–1100 ms and `warm(ms)` near 215–410 ms (the earlier same-day report
+captured that). Both numbers are real; only the ratio to whichever baseline
+the gate compares against matters.
 
 ## Cold-start ladder (`bench:cold`, 5 runs/fixture)
 
