@@ -16,6 +16,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod svg_react;
 mod minify;
 mod resolve;
 mod rolldown_backend;
@@ -131,6 +132,18 @@ pub struct BundleOptions {
     /// undefined) while still giving `react-dom/server` a browser-compatible
     /// build with no `require('stream')`.
     pub resolve_conditions: Option<Vec<String>>,
+    /// SPEC-16.6: virtual modules — the CLI generates a synthetic file (e.g.
+    /// `.oxide/virtual/<hash>.svg.react.tsx` for a `.svg?react` import) and
+    /// registers its content here. The bundler treats these paths as normal
+    /// entries (reads from `precompiled` because the file does not exist on
+    /// disk) and `resolve.rs` maps `.svg?react` specifiers to their virtual
+    /// paths before the resolver runs.
+    ///
+    /// Key: the ORIGINAL specifier as written (`"./icon.svg?react"`). Value:
+    /// `(absolute-virtual-path, generated-source)`. Two files importing the
+    /// same relative spec are rare and, in that case, both resolve to the
+    /// same virtual file — which is correct.
+    pub virtual_modules: BTreeMap<String, (std::path::PathBuf, String)>,
 }
 
 /// §6.6: a CSS transform the CLI supplies. Called with
@@ -373,6 +386,20 @@ impl ChunkBundler {
         resolve::resolve(&self.root, specifier, from, env, paths)
     }
 
+    /// Same as [`Self::resolve`] but with a `virtual_modules` table consulted
+    /// before any disk resolution (SPEC-16.6). Callers that consume virtual
+    /// modules (`.svg?react` and future `?w=` variants) use this entry point.
+    pub fn resolve_with_virtual(
+        &self,
+        specifier: &str,
+        from: &Path,
+        env: BundleEnv,
+        paths: &BTreeMap<String, Vec<String>>,
+        virtual_modules: &BTreeMap<String, (std::path::PathBuf, String)>,
+    ) -> Result<PathBuf> {
+        resolve::resolve_with_virtual(&self.root, specifier, from, env, paths, virtual_modules)
+    }
+
     /// Shared-chunk decision: module used by ≥ `threshold` entries → shared chunk.
     pub fn shared_threshold(&self) -> usize {
         2
@@ -501,7 +528,7 @@ impl ChunkBundler {
                     if options.externals.iter().any(|x| x == &sp.specifier) {
                         continue;
                     }
-                    match self.resolve(&sp.specifier, &rp, options.env, &options.tsconfig_paths) {
+                    match self.resolve_with_virtual(&sp.specifier, &rp, options.env, &options.tsconfig_paths, &options.virtual_modules) {
                         Ok(dep) => {
                             if options.env == BundleEnv::Client
                                 && is_server_module_path(&dep.to_string_lossy())

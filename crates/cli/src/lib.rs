@@ -905,6 +905,7 @@ fn bundle_env_options(
         css_transform: Some(css_transform),
         inline_dynamic_imports: false,
         resolve_conditions: None,
+        virtual_modules: Default::default(),
     }
 }
 
@@ -2095,6 +2096,7 @@ fn emit_config_bundle(
             "module".into(),
             "default".into(),
         ]),
+        virtual_modules: Default::default(),
     };
     use oxide_bundler::Bundler as _;
     let backend = oxide_bundler::RolldownBundler::new(root);

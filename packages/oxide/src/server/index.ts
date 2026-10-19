@@ -598,3 +598,30 @@ export const revalidate = {
     return ev
   },
 }
+
+/**
+ * §16.1: build a `srcset` attribute string from a base image URL and a set
+ * of widths. Pairs with the `/_oxide/image` endpoint or a pre-generated
+ * `?w=` variant set. A leading `./` or `/` URL is passed through verbatim;
+ * `signImageUrl` (below) appends a signature when the project uses signed
+ * image URLs.
+ *
+ * @example
+ *   <img
+ *     src="/_oxide/image?src=/hero.png&w=1280"
+ *     srcset={srcset([640, 1024, 1280, 1920], '/_oxide/image?src=/hero.png')}
+ *     sizes="(min-width: 1280px) 1280px, 100vw"
+ *     alt="Hero"
+ *   />
+ */
+export function srcset(widths: ReadonlyArray<number>, baseUrl: string): string {
+  const seen = new Set<number>()
+  const sorted = [...widths].filter((w) => {
+    if (!Number.isFinite(w) || w <= 0) return false
+    if (seen.has(w)) return false
+    seen.add(w)
+    return true
+  }).sort((a, b) => a - b)
+  const sep = baseUrl.includes('?') ? '&' : '?'
+  return sorted.map((w) => `${baseUrl}${sep}w=${w} ${w}w`).join(', ')
+}

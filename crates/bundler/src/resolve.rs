@@ -21,6 +21,26 @@ pub fn resolve(
     env: BundleEnv,
     paths: &BTreeMap<String, Vec<String>>,
 ) -> Res<PathBuf> {
+    resolve_with_virtual(root, specifier, from, env, paths, &BTreeMap::new())
+}
+
+/// Same as [`resolve`] but consults `virtual_modules` first. The CLI uses
+/// this for `.svg?react` and other specifiers that map to generated content
+/// the bundler will read from `precompile`-like storage rather than from disk.
+pub fn resolve_with_virtual(
+    root: &Path,
+    specifier: &str,
+    from: &Path,
+    env: BundleEnv,
+    paths: &BTreeMap<String, Vec<String>>,
+    virtual_modules: &BTreeMap<String, (std::path::PathBuf, String)>,
+) -> Res<PathBuf> {
+    // SPEC-16.6: a specifier that names a virtual module resolves to its
+    // synthetic path. The generated content rides in `BundleOptions::
+    // precompiled` (the CLI inserts it alongside `virtual_modules`).
+    if let Some((vpath, _)) = virtual_modules.get(specifier) {
+        return Ok(vpath.clone());
+    }
     // Asset queries (`./hero.png?w=640`) resolve the path before the `?` (§6.7).
     let spec = specifier.split('?').next().unwrap_or(specifier).trim();
     if spec.is_empty() {

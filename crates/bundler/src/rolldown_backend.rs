@@ -886,7 +886,8 @@ mod bug_solid_tests {
             out_dir: PathBuf::from("/tmp/oxide-test-out"),
             resolve_conditions: conds,
             ..Default::default()
-        }
+        
+}
     }
 
     #[test]
