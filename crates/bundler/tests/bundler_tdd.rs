@@ -131,6 +131,8 @@ fn opts(root: &Path, env: BundleEnv, entries: &[(&str, &str)]) -> BundleOptions 
         precompiled: BTreeMap::new(),
         jsx_import_source: None,
         transform_hook: None,
+        resolve_hook: None,
+        load_hook: None,
         css_transform: None,
         inline_dynamic_imports: false,
         resolve_conditions: None,
@@ -671,3 +673,134 @@ fn css_transform_hook_rewrites_emitted_stylesheet() {
         "original css must still be present, got:\n{css}"
     );
 }
+
+// ---- SPEC-15.2: resolve_hook + load_hook --------------------------------
+
+#[test]
+fn resolve_hook_can_alias_an_import() {
+    use oxide_bundler::{LoadHook, ResolveHook};
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    // Entry imports `./from-alias` (which does not exist on disk);
+    // the resolve hook maps it to `./actual.ts`.
+    write(root, "src/actual.ts", "export const x = 42;\n");
+    write(
+        root,
+        "src/entry.ts",
+        "import { x } from './from-alias';\nexport const y = x + 1;\n",
+    );
+    let mut opts = opts(
+        root,
+        BundleEnv::Client,
+        &[("routes/index", "src/entry.ts")],
+    );
+    let actual = root.join("src/actual.ts");
+    let mut resolve_calls = 0usize;
+    opts.resolve_hook = Some(ResolveHook::new({
+        let actual = actual.clone();
+        move |spec: &str, _from: &str| {
+            if spec == "./from-alias" {
+                Ok(Some(actual.clone()))
+            } else {
+                Ok(None)
+            }
+        }
+    }));
+    let _ = &mut resolve_calls;
+    // Sanity: no load hook needed
+    opts.load_hook = None::<LoadHook>;
+    let b = ChunkBundler::new(root);
+    let out = b.bundle(&opts).expect("bundle ok");
+    // The bundle wrote its chunks; read them back from disk and look for
+    // the aliased source's content (42 from actual.ts).
+    let joined: String = out
+        .chunks
+        .iter()
+        .map(|c| std::fs::read_to_string(opts.out_dir.join(&c.file)).unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        joined.contains("42"),
+        "aliased source landed in the bundle:\n{joined}"
+    );
+}
+
+#[test]
+fn load_hook_overrides_an_existing_file() {
+    use oxide_bundler::LoadHook;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    // The target file EXISTS on disk with one content; the load hook
+    // overrides it with another. This proves the hook is consulted before
+    // disk when both are present — the common case for a plugin that
+    // synthesizes a replacement for a real file.
+    write(root, "src/message.ts", "export const msg = 'from-disk';\n");
+    write(
+        root,
+        "src/entry.ts",
+        "import { msg } from './message';\nexport const s = msg;\n",
+    );
+    let mut opts = opts(
+        root,
+        BundleEnv::Client,
+        &[("routes/index", "src/entry.ts")],
+    );
+    opts.load_hook = Some(LoadHook::new(move |id: &str| {
+        if id.ends_with("message.ts") {
+            Ok(Some("export const msg = 'from-plugin';\n".to_string()))
+        } else {
+            Ok(None)
+        }
+    }));
+    let b = ChunkBundler::new(root);
+    let out = b.bundle(&opts).expect("bundle ok");
+    // `c.file` is relative to `out_dir` (e.g. `routes-index-abc.js`), so
+    // join against it. `out_dir` is the tempdir's `dist/` (see `opts()`).
+    let joined: String = out
+        .chunks
+        .iter()
+        .map(|c| std::fs::read_to_string(opts.out_dir.join(&c.file)).unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        joined.contains("from-plugin"),
+        "plugin content replaced the on-disk content:\n{joined}"
+    );
+    assert!(
+        !joined.contains("from-disk"),
+        "on-disk content must be gone once the hook fires:\n{joined}"
+    );
+}
+
+#[test]
+fn load_hook_returning_none_falls_through_to_disk() {
+    use oxide_bundler::LoadHook;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    write(root, "src/message.ts", "export const msg = 'from-disk';\n");
+    write(
+        root,
+        "src/entry.ts",
+        "import { msg } from './message';\nexport const s = msg;\n",
+    );
+    let mut opts = opts(
+        root,
+        BundleEnv::Client,
+        &[("routes/index", "src/entry.ts")],
+    );
+    // Hook returns None for every id — the bundler must read from disk.
+    opts.load_hook = Some(LoadHook::new(|_id: &str| Ok(None)));
+    let b = ChunkBundler::new(root);
+    let out = b.bundle(&opts).expect("bundle ok");
+    let joined: String = out
+        .chunks
+        .iter()
+        .map(|c| std::fs::read_to_string(opts.out_dir.join(&c.file)).unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        joined.contains("from-disk"),
+        "None → fall through to disk:\n{joined}"
+    );
+}
+

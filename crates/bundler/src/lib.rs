@@ -112,6 +112,13 @@ pub struct BundleOptions {
     /// diagnostic surfaces through the normal `BundleOutput::diagnostics`
     /// path.
     pub transform_hook: Option<TransformHook>,
+    /// SPEC-15.2: an optional plugin `resolveId` hook. Consulted before the
+    /// default resolver; a returned `Some(path)` overrides disk resolution.
+    /// `None` (the common case) means no plugins are loaded.
+    pub resolve_hook: Option<ResolveHook>,
+    /// SPEC-15.2: an optional plugin `load` hook. Consulted before the
+    /// disk read; a returned `Some(source)` overrides (virtual modules).
+    pub load_hook: Option<LoadHook>,
     /// §6.6: an optional CSS transform. The bundler does not depend on
     /// `oxide-assets` (which pulls lightningcss + the image/font stack);
     /// the CLI builds a closure over `LightningCssBackend` and hands it in.
@@ -209,6 +216,81 @@ impl TransformHook {
     /// Run the hook.
     pub fn call(&self, id: &str, source: &str) -> Result<String> {
         (self.0)(id, source)
+    }
+}
+
+/// SPEC-15.2: a plugin's `resolveId` hook. Returns `Some(path)` to OVERRIDE
+/// the bundler's default resolution (the caller's path wins), or `None` to
+/// let the resolver run. A plugin uses this to alias or virtualize modules.
+///
+/// Chaining semantics are in the CLI: the `JsPluginChain` calls every
+/// plugin's `resolveId` in declaration order; the FIRST `Some(_)` wins
+/// (Vite convention — a plugin that resolves wins over later plugins and
+/// over the default).
+pub struct ResolveHook(
+    #[allow(clippy::type_complexity)]
+    pub  std::sync::Arc<dyn Fn(&str, &str) -> Result<Option<PathBuf>> + Send + Sync>,
+);
+
+impl ResolveHook {
+    pub fn new<F>(f: F) -> Self
+    where
+        F: Fn(&str, &str) -> Result<Option<PathBuf>> + Send + Sync + 'static,
+    {
+        Self(std::sync::Arc::new(f))
+    }
+
+    /// Run the hook. `id` is the specifier (as written in the source),
+    /// `from` is the importing file's absolute path.
+    pub fn call(&self, id: &str, from: &str) -> Result<Option<PathBuf>> {
+        (self.0)(id, from)
+    }
+}
+
+/// SPEC-15.2: a plugin's `load` hook. Returns `Some(source)` to override the
+/// disk read (a virtual module), or `None` to let the bundler read the file.
+/// The FIRST `Some(_)` wins across the chain; a plugin that returns `None`
+/// passes to the next plugin and then to disk.
+pub struct LoadHook(
+    #[allow(clippy::type_complexity)]
+    pub  std::sync::Arc<dyn Fn(&str) -> Result<Option<String>> + Send + Sync>,
+);
+
+impl LoadHook {
+    pub fn new<F>(f: F) -> Self
+    where
+        F: Fn(&str) -> Result<Option<String>> + Send + Sync + 'static,
+    {
+        Self(std::sync::Arc::new(f))
+    }
+
+    /// Run the hook. `id` is the resolved absolute path.
+    pub fn call(&self, id: &str) -> Result<Option<String>> {
+        (self.0)(id)
+    }
+}
+
+impl Clone for ResolveHook {
+    fn clone(&self) -> Self {
+        Self(std::sync::Arc::clone(&self.0))
+    }
+}
+
+impl std::fmt::Debug for ResolveHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ResolveHook(..)")
+    }
+}
+
+impl Clone for LoadHook {
+    fn clone(&self) -> Self {
+        Self(std::sync::Arc::clone(&self.0))
+    }
+}
+
+impl std::fmt::Debug for LoadHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LoadHook(..)")
     }
 }
 
@@ -475,8 +557,35 @@ impl ChunkBundler {
             // `.svelte` file arrives here without a precompiled entry, the
             // caller skipped that pass — record a diagnostic naming the
             // reason rather than silently emitting the raw source.
+            // SPEC-15.2: plugin `load` hook — consulted AFTER precompiled
+            // (a Svelte SFC's precompiled JS is the source for that path),
+            // but BEFORE disk. A `Some(src)` overrides the disk read entirely
+            // (a virtual module).
+            let load_hook_source = if options.precompiled.get(&rp).is_none() {
+                if let Some(hook) = options.load_hook.as_ref() {
+                    match hook.call(&rp.to_string_lossy()) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            diagnostics.push(Diagnostic::error(
+                                "BLD-PLUGIN",
+                                format!(
+                                    "plugin load({:?}) failed: {} {}",
+                                    rp.display(), e.0.code, e.0.message
+                                ),
+                            ));
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
             let source = if let Some(s) = options.precompiled.get(&rp) {
                 s.clone()
+            } else if let Some(s) = load_hook_source {
+                s
             } else {
                 match std::fs::read_to_string(&rp) {
                     Ok(s) => {
@@ -528,7 +637,31 @@ impl ChunkBundler {
                     if options.externals.iter().any(|x| x == &sp.specifier) {
                         continue;
                     }
-                    match self.resolve_with_virtual(&sp.specifier, &rp, options.env, &options.tsconfig_paths, &options.virtual_modules) {
+                    // SPEC-15.2: consult the plugin resolveId hook first.
+                    // A `Some(path)` short-circuits the default resolver.
+                    let rp_for_hook = rp.to_string_lossy().to_string();
+                    let plugin_resolved = if let Some(hook) = options.resolve_hook.as_ref() {
+                        match hook.call(&sp.specifier, &rp_for_hook) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                diagnostics.push(Diagnostic::error(
+                                    "BLD-PLUGIN",
+                                    format!(
+                                        "plugin resolveId({:?}, {:?}) failed: {} {}",
+                                        sp.specifier, rp_for_hook, e.0.code, e.0.message
+                                    ),
+                                ));
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    };
+                    let resolved = match plugin_resolved {
+                        Some(p) => Ok(p),
+                        None => self.resolve_with_virtual(&sp.specifier, &rp, options.env, &options.tsconfig_paths, &options.virtual_modules),
+                    };
+                    match resolved {
                         Ok(dep) => {
                             if options.env == BundleEnv::Client
                                 && is_server_module_path(&dep.to_string_lossy())
