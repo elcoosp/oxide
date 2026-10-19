@@ -5845,6 +5845,19 @@ fn build_dispatch(
                                             ("render".to_string(), render_ms),
                                         ],
                                     );
+                                    // SPEC-19.3 / §19-D: also persist the
+                                    // snapshot to disk so the MCP server (a
+                                    // separate process) can read the live
+                                    // waterfalls via `oxide_state`. The
+                                    // dispatch closure doesn't have `rootp`
+                                    // in scope (it's captured at server
+                                    // construction), so we capture the path
+                                    // via the existing `routes_root` prefix
+                                    // resolution — but that's per-dispatch.
+                                    // Simpler: use the CWD, which is the
+                                    // project root for the dev server.
+                                    let waterfall_path = std::path::PathBuf::from(".oxide/last-waterfalls.json");
+                                    rec.persist_to(&waterfall_path);
                                 }
                                 let mut resp =
                                     oxide_server::OxideResponse::stream(final_status, stream)

@@ -61,6 +61,21 @@ pub struct GraphReport {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct StateReport {
+    pub root: String,
+    pub source: Option<String>,
+    pub waterfall_count: usize,
+    pub waterfalls: Vec<WaterfallEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct WaterfallEntry {
+    pub request_id: String,
+    /// Ordered (stage, ms) pairs — mirrors the Server-Timing header.
+    pub stages: Vec<(String, f64)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ErrorsReport {
     pub root: String,
     pub source: Option<String>,
@@ -223,6 +238,61 @@ impl OxideMcp {
     }
 
     #[tool(
+        description = "Live request wateraflls from the running `oxide dev` server: \
+                       the last 50 requests, each with per-stage timings \
+                       (middleware / load / render ms). Read from the dev \
+                       server's persistent `.oxide/last-waterfalls.json`. \
+                       Returns an empty list when no dev server is running."
+    )]
+    pub async fn oxide_state(
+        &self,
+        Parameters(NoArgs {}): Parameters<NoArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let path = self.root.join(".oxide/last-waterfalls.json");
+        let mut report = StateReport {
+            root: self.root.to_string_lossy().into_owned(),
+            source: None,
+            waterfall_count: 0,
+            waterfalls: Vec::new(),
+        };
+        let Ok(bytes) = std::fs::read(&path) else {
+            return json_result(&report);
+        };
+        report.source = Some(path.to_string_lossy().into_owned());
+        // The recorder writes `Vec<RequestTimingsRow>`: each row is
+        // `{ request_id, waterfall_ms: [(stage, ms), ...] }`.
+        if let Ok(rows) = serde_json::from_slice::<Vec<serde_json::Value>>(&bytes) {
+            for row in rows {
+                let rid = row
+                    .get("request_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let stages = row
+                    .get("waterfall_ms")
+                    .and_then(|w| w.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|pair| {
+                                let arr = pair.as_array()?;
+                                let name = arr.first()?.as_str()?.to_string();
+                                let ms = arr.get(1)?.as_f64()?;
+                                Some((name, ms))
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                report.waterfalls.push(WaterfallEntry {
+                    request_id: rid,
+                    stages,
+                });
+            }
+        }
+        report.waterfall_count = report.waterfalls.len();
+        json_result(&report)
+    }
+
+    #[tool(
         description = "Diagnostics from the last `oxide build` run: error code, severity, \
                        message, and the suggested fix."
     )]
@@ -279,8 +349,9 @@ impl ServerHandler for OxideMcp {
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info.server_info = Implementation::from_build_env();
         info.instructions = Some(
-            "Oxide MCP server — query project facts (routes, cache, graph, diagnostics) \
-             for the project rooted at the path passed to `oxide mcp --root`."
+            "Oxide MCP server — query project facts (routes, cache, graph, diagnostics, \
+             live request waterfalls) for the project rooted at the path passed to \
+             `oxide mcp --root`."
                 .into(),
         );
         info

@@ -4141,3 +4141,135 @@ fn js_hook_name_roundtrips_through_parse_hook_name() {
     }
 }
 
+// ---- SPEC-16.6: session codec reaches `locals.session` ---------------------
+
+/// A LoaderRunner that captures the `locals.session` its load() saw.
+struct SessionCaptureLoader {
+    last_session: std::sync::Arc<std::sync::Mutex<serde_json::Value>>,
+}
+
+impl SessionCaptureLoader {
+    fn new() -> Self {
+        Self {
+            last_session: std::sync::Arc::new(std::sync::Mutex::new(
+                serde_json::Value::Null,
+            )),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl oxide_server::LoaderRunner for SessionCaptureLoader {
+    fn name(&self) -> &str {
+        "session-capture"
+    }
+    async fn run(
+        &self,
+        input: oxide_server::LoaderRunInput,
+    ) -> oxide_server::Result<oxide_server::LoaderOutput> {
+        let sess = input
+            .locals
+            .get("session")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        *self.last_session.lock().unwrap() = sess;
+        Ok(oxide_server::LoaderOutput::ok(serde_json::json!({})))
+    }
+}
+
+#[tokio::test]
+async fn session_codec_decodes_into_locals_session() {
+    use std::sync::Arc;
+
+    // 32 bytes of deterministic key material (test-only).
+    let key = vec![0x42u8; 32];
+    let codec = Arc::new(oxide_server::SessionCodec::new(&[key]).expect("codec"));
+
+    // Encode a session with a known `user` field.
+    let mut sess = oxide_server::Session::new();
+    sess.insert("user", serde_json::json!("ada"));
+    let cookie = sess.encode(&codec).expect("encode");
+
+    // Build a dispatch with the codec attached + a session-capturing loader.
+    let loader = Arc::new(SessionCaptureLoader::new());
+    let captured = Arc::clone(&loader.last_session);
+    let dispatch = build_dispatch(
+        tree_with_server_route(),
+        Arc::new(oxide_server::Metrics::new()),
+        Vec::new(),
+        Some(Arc::new(DataCapturingRenderer::new())),
+        Some(loader as Arc<dyn oxide_server::LoaderRunner>),
+        routes_root(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        Vec::new(),
+        None,
+        Some(codec),
+    );
+
+    // Request with the encoded cookie.
+    let mut req = test_request("GET", "/");
+    req.headers.push(("oxide_session".to_string(), cookie));
+    let resp = dispatch(req).await;
+    assert_eq!(resp.status, 200, "request served");
+
+    // The loader saw `locals.session.user == "ada"` — the codec path works.
+    let s = captured.lock().unwrap();
+    assert_eq!(
+        s.get("user").and_then(|v| v.as_str()),
+        Some("ada"),
+        "session.user from cookie reached the loader via locals.session: {s:?}"
+    );
+}
+
+#[tokio::test]
+async fn session_codec_tampered_cookie_yields_empty_session() {
+    use std::sync::Arc;
+
+    let key = vec![0x42u8; 32];
+    let codec = Arc::new(oxide_server::SessionCodec::new(&[key]).expect("codec"));
+
+    let loader = Arc::new(SessionCaptureLoader::new());
+    let captured = Arc::clone(&loader.last_session);
+    let dispatch = build_dispatch(
+        tree_with_server_route(),
+        Arc::new(oxide_server::Metrics::new()),
+        Vec::new(),
+        Some(Arc::new(DataCapturingRenderer::new())),
+        Some(loader as Arc<dyn oxide_server::LoaderRunner>),
+        routes_root(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        Vec::new(),
+        None,
+        Some(codec),
+    );
+
+    let mut req = test_request("GET", "/");
+    req.headers
+        .push(("oxide_session".to_string(), "not-a-real-token".to_string()));
+    let resp = dispatch(req).await;
+    assert_eq!(resp.status, 200, "tampered cookie must not fail the request");
+
+    // The loader saw an EMPTY session (no `session` key), never a 500.
+    let s = captured.lock().unwrap();
+    assert!(
+        s.is_null() || s.as_object().map_or(true, |o| o.is_empty()),
+        "tampered cookie → empty session, not error: {s:?}"
+    );
+}
+

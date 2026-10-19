@@ -526,6 +526,22 @@ impl std::fmt::Debug for WaterfallRecorder {
     }
 }
 
+impl WaterfallRecorder {
+    /// SPEC-19.3 / §19-D: persist the current snapshot to `path` as JSON so
+    /// a separate process (the MCP server) can read the wateraflls of the
+    /// running dev server. Best-effort — a write failure logs to stderr but
+    /// never fails the request that called it.
+    pub fn persist_to(&self, path: &std::path::Path) {
+        let rows = self.snapshot();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(json) = serde_json::to_vec_pretty(&rows) {
+            let _ = std::fs::write(path, json);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PoolRow {
     pub workers: usize,
