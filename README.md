@@ -14,8 +14,8 @@
     <img src="https://img.shields.io/badge/Node-%E2%89%A524-339933?style=flat-square&logo=node.js" alt="Node"/>
     <img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/>
     <img src="https://img.shields.io/badge/Workspace-17%20crates%20%2B%206%20packages-6F4E37?style=flat-square" alt="Workspace"/>
-    <img src="https://img.shields.io/badge/Code-%E2%89%8878k%20lines-9CF?style=flat-square" alt="Lines of code"/>
-    <img src="https://img.shields.io/badge/Tests-945%20Rust%20%7C%20229%20TS-brightgreen?style=flat-square" alt="Tests"/>
+    <img src="https://img.shields.io/badge/Code-%E2%89%8888k%20lines-9CF?style=flat-square" alt="Lines of code"/>
+    <img src="https://img.shields.io/badge/Tests-980%20Rust%20%7C%20293%20TS-brightgreen?style=flat-square" alt="Tests"/>
     <img src="https://img.shields.io/badge/ODF-16%20golden%20fixtures-00BFFF?style=flat-square" alt="ODF golden fixtures"/>
     <img src="https://img.shields.io/badge/TS%20runtime-zero%20npm%20deps-228B22?style=flat-square" alt="Zero dependencies"/>
   </p>
@@ -40,15 +40,18 @@
   Typed config is statically extracted from `oxide.config.ts` — the config path itself never
   evaluates JavaScript.
 - **One wire format.** ODF, the Oxide Data Format, is a devalue-compatible superset encoded
-  natively in Rust and decoded by a single-file, zero-dependency TypeScript module. The same
-  bytes go to the cache and to the wire: `'use cache'` values are stored ODF-encoded, so
-  `Date`, `Map`, `Set` and `BigInt` survive a cache round trip. Sixteen golden fixtures lock
-  the format byte-exactly on both sides.
+  natively in Rust and decoded — and now re-encoded — by a single-file, zero-dependency
+  TypeScript module. The same bytes go to the cache and to the wire: `'use cache'` values are
+  stored ODF-encoded, so `Date`, `Map`, `Set` and `BigInt` survive a cache round trip, on the
+  Node and V8 backends alike. Sixteen golden fixtures lock the format byte-exactly on both
+  sides, and eight encoder goldens lock the client-side `Date` / `BigInt` / `Map` / `Set` /
+  `URL` / `RegExp` / typed-array layout against the Rust encoder byte for byte.
 - **Content-addressed to the byte.** A demand-driven incremental graph with early cutoff, a
   `blake3` content-addressed store on disk (`redb` index, `zstd` blobs), byte-stable manifests
   and typegen, and a three-tier cache — L0 in-process response cache, L1 data cache, L2
   pluggable remote handler — with tags, stale-while-revalidate, single-flight and build seeding.
-- **A single binary.** A `hyper` 1.x + `rustls` server (HTTP/1 + HTTP/2) with precompressed
+- **A single binary.** A `hyper` 1.x + `rustls` server (HTTP/1 + HTTP/2, with HTTP/3 over
+  QUIC and automatic `Alt-Svc` advertisement on the TLS listener) with precompressed
   static serving (zstd › brotli › gzip), range requests, streaming responses with dynamic
   compression and `Server-Timing`. Everything that must run JavaScript does so behind one
   `JsHost` trait: a `deno_core` V8 isolate pool with build-time startup snapshots, or a Node
@@ -57,9 +60,13 @@
   Cloudflare Pages, Lambda, Vercel, Vercel Functions, Netlify, Deno, Bun — behind a capability
   matrix that refuses at build time a configuration the target cannot honor.
 - **Security and observability built in.** CSP and CSRF modes, SSRF allow-lists, trusted
-  proxies, token-bucket rate limits, ChaCha20-Poly1305 AEAD session cookies with key rotation,
-  ODF decode hardening with prototype-pollution guards. Prometheus-format metrics, W3C trace
-  context propagation, stage spans and opt-in OTLP export.
+  proxies, token-bucket rate limits, encrypted session cookies (ChaCha20-Poly1305 AEAD with
+  key rotation, decoded into `locals.session`), ODF decode hardening with
+  prototype-pollution guards. Prometheus-format metrics, W3C trace-context propagation into
+  outgoing fetches, stage spans and opt-in OTLP export.
+- **Platform services included.** Service-worker auto-registration with a fixed cache
+  strategy, i18n content negotiation, signed image-transform URLs, and an Open Graph image
+  endpoint — `/_oxide/og` renders title/subtitle cards to PNG through a swappable backend.
 - **Conformance-gated.** One reference app (Atlas), one assertion set, all four adapters.
   A release is blocked the moment any adapter drifts.
 
@@ -121,7 +128,7 @@ One binary, twenty subcommands:
 | | `render <route>` | Dispatch a page render, HTML to stdout (`--url --param --data --stream`) |
 | **Introspection** | `routes` | Scan routes, infer render modes, emit typegen, print the route table |
 | | `analyze` | Per-route JS bytes vs `config.budgets` — exits non-zero on breach |
-| | `check` | Config load + route scan diagnostics |
+| | `check` | Config + route diagnostics; typechecks (tsgo) and lints (oxlint) when on PATH — loud `SKIPPED` otherwise |
 | | `why <module>` | Which routes import a module, which chunks contain it |
 | | `doctor` | 7 environment checks: node, cargo, config, routes dir, cache dir, secrets, cookie keys |
 | **Authoring** | `generate` | Scaffold route / layout / action files per framework |
@@ -146,8 +153,9 @@ request → hyper 1.x → limits + request id → static assets (precompressed, 
         → route match (rkyv archive, memory-mapped)
         → L0 response cache (weak-ETag 304s · stale-while-revalidate · single-flight · build-seeded)
         → JS middleware (runs before loaders/actions, injects event.locals, may short-circuit or rewrite)
-        → loaders: layout chain outer→inner (await parent()), then the page load; deferred
-          values resolve and reach the client as a nonce'd script
+        → loaders: layout chain outer→inner (await parent()), then the page load — the last
+          layout and the page load run in parallel when the page never calls parent();
+          deferred values resolve and reach the client as a nonce'd script
         → dispatch: render | action | endpoint (route.ts) | server fn
         → streaming response (real SSR chunks) + Server-Timing + dynamic compression
         → cache fill + tag invalidation
@@ -208,16 +216,19 @@ typed arrays, `undefined`, cyclic and shared references, `Error` and deferred pr
 The repository is built test-first: each crate's `*_tdd.rs` suites were written against its
 contract before the implementation.
 
-- **945 Rust test functions** across 17 crates (43 of them engine-dependent e2e tests gated
-  behind `#[ignore]`), including `proptest` property suites on the router and graph engines.
-- **229 TypeScript test cases** across 35 files on Node's built-in test runner — including
+- **980 Rust test functions** across 17 crates (46 of them engine-dependent e2e tests gated
+  behind `#[ignore]`), including `proptest` property suites on the router and graph engines
+  and `cargo-fuzz` harnesses for the ODF decoder, router matcher, config extractor and path
+  splitter.
+- **293 TypeScript test cases** across 38 files on Node's built-in test runner — including
   the ODF decoder against the same golden fixtures as the Rust encoder, router / island
   tests against a hand-rolled fake DOM (no jsdom, no deps), and suites for the defer script
   protocol and client-side loading boundaries.
-- **Conformance gate** — the Atlas reference app runs one 22-assertion set (contract shape,
+- **Conformance gate** — the Atlas reference app runs one 24-assertion set (contract shape,
   SSR content + framework markers, merged head, deterministic markup, streaming boundaries,
-  error / not-found, islands, actions JS-on/off, server functions, cache shapes, client
-  router) against all four adapters: 88 checks per release.
+  deferred boundaries in settle order, error / not-found, islands, actions JS-on/off, server
+  functions, cache shapes, client router, prefetch) against all four adapters: 96 checks per
+  release, and 21 Rust snapshot tests lock the emitted HTML and deploy artifacts byte-for-byte.
 - **Playwright** — Chromium specs that boot the real binary and click an island 3 → 4 → 5,
   asserting zero console errors.
 
@@ -232,25 +243,31 @@ build on >5% regression** against `benchmarks/report.md`.
 > [spec v0.1](docs/Oxide%20Technical%20Specification%20v0.1.md). The adapter contract is
 > versioned and treated as frozen; everything else may churn.
 
-**Shipped and gated today** — the production pipeline (hyper + rustls, rules, L0 cache,
-streaming SSR as the primary live path on both backends), `oxide build` with prerender /
-snapshots / 12 deploy targets, real framework SSR and real island hydration on all four
-adapters, the ODF wire format (including ODF-encoded `'use cache'` values), six-layer config
-extraction, cache semantics with tags and single-flight, JS middleware execution with
-`event.locals`, `route.ts` endpoint dispatch, layout loaders with short-circuits, client
-loading boundaries, PWA auto-registration, connected dev HMR, and the introspection tooling
-(`doctor`, `why`, `analyze`, `schema`, `mcp`).
+**Shipped and gated today** — the production pipeline (hyper + rustls HTTP/1+2 with HTTP/3
+discovery via `Alt-Svc`, native rules, L0 response cache with configurable Vary, streaming
+SSR as the primary live path on both backends), `oxide build` with prerender that runs full
+layout chains (`await parent()` threading, last layout + page load in parallel when the page
+doesn't call `parent()`, real error statuses seeded into the cache), snapshots and 12 deploy
+targets, real framework SSR and real island hydration on all four adapters, client navigation
+that resolves deferred values on all four adapters, the ODF wire format with byte-parity
+encoders on both sides (including ODF-encoded `'use cache'` on Node and V8), six-layer config
+extraction, cache semantics with tags / single-flight / Vary, JS middleware with
+`event.locals` whose headers ride cached responses too, `route.ts` endpoint dispatch, socket
+routes (RFC6455 handshake through `socket:run`), connected dev HMR including the loader-edit
+round trip and a one-time client bundle on fresh dev, `/_oxide/og` Open Graph images,
+`oxide check` with tsgo + oxlint, and the introspection tooling (`doctor`, `why`, `analyze`,
+`schema`, `mcp`).
 
-**Built, wiring in progress** — the client router still only attaches where a page carries
-its ODF payload (prerendered / L0-seeded; dynamic pages get no `window.__oxide`, which keeps
-SPA navigation, the defer glue and loading overlays dark there), client-side `update()` still
-swaps the neutral IR registry instead of the real component tree, `error.tsx` renders but
-ships HTTP 200 instead of 500, `await parent()` returns `{}` pending a two-line payload
-forward in `LoaderHost`, `/__data` skips middleware and layout loads, and sockets,
-state-preserving HMR, SPEC-17 plugin transforms on prerender, font subsetting and partial
-prerendering (PPR) are built-but-unwired. See
-[`docs/HANDOFF-bucket2-complete.md`](docs/HANDOFF-bucket2-complete.md) for the current
-thread list.
+**Built, wiring in progress** — partial prerendering (the shell splitter and assembler are
+tested; no render path constructs shells yet), session-cookie *writing* (the decode path is
+live, `Set-Cookie` is not), HTTP/3 request bodies and streamed responses (HTTP/1+2
+unaffected), the edge build (`dist/edge.wasm` emission is dormant and the edge handler does
+not call ODF decode yet), socket fan-out / presence (sends reach only the calling socket),
+the full outer→inner middleware chain (nearest-ancestor runs today), font subsetting (metrics
+only), MDX compilation (collections scan + search), `searchParams` runtime values behind the
+typegen types, and the neutral IR renderer's layout nesting (dev-fixture path only). See
+[`docs/HANDOFF-wave2-complete.md`](docs/HANDOFF-wave2-complete.md) for the current thread
+list and what remains.
 
 ## Documentation
 
