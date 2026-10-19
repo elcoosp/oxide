@@ -7,6 +7,8 @@ license.workspace = true
 description = "clap entry, commands (spec 19)"
 
 [dependencies]
+chrono = { workspace = true }
+reqwest = { workspace = true }
 image = { workspace = true }
 mimalloc = { workspace = true }
 bytes = { workspace = true }

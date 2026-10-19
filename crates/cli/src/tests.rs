@@ -75,6 +75,10 @@ fn manifest_fixture(routes: serde_json::Value) -> String {
 
 // ---------------------------------------------------------- parse surface (§19.1)
 
+/// SPEC-19.1 / §19-B: process-global env-var tests take this lock so
+/// they don't race each other (nextest runs tests in parallel by default).
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[tokio::test]
 #[ignore]
 async fn cli_render_dispatches_real_react_ssr() {
@@ -4400,5 +4404,88 @@ fn extract_img_w_spec_handles_jpeg() {
     let line = r#"import x from './photo.jpeg?w=800'"#;
     let (_spec, widths) = extract_img_w_spec(line).expect("parse");
     assert_eq!(widths, vec![800]);
+}
+
+// ---- SPEC-19.1 / §19-B: oxide add + oxide audit ----------------------------
+
+#[tokio::test]
+async fn add_records_oxide_module() {
+    let _g = ENV_LOCK.lock().unwrap();
+    use std::fs;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    // Pre-populate node_modules/<mod>/package.json with an `oxide.module`
+    // field, then run `oxide add` with OXIDE_ADD_NO_INSTALL=1.
+    let mod_dir = root.join("node_modules/@acme/plugin");
+    fs::create_dir_all(&mod_dir).unwrap();
+    fs::write(
+        mod_dir.join("package.json"),
+        r#"{"name":"@acme/plugin","version":"1.0.0","oxide":{"module":{"hooks":["transform"]}}}"#,
+    ).unwrap();
+    unsafe { std::env::set_var("OXIDE_ADD_NO_INSTALL", "1"); }
+    let (code, out) = run_ok(&[
+        "oxide", "add", "@acme/plugin", "--root", &root.to_string_lossy(),
+    ]).await;
+    unsafe { std::env::remove_var("OXIDE_ADD_NO_INSTALL"); }
+    assert_eq!(code, 0, "add passed: {out}");
+    assert!(out.contains("oxide module detected"), "contract found: {out}");
+    let modules_json = root.join(".oxide/modules.json");
+    let v: serde_json::Value =
+        serde_json::from_slice(&fs::read(&modules_json).unwrap()).unwrap();
+    assert_eq!(v, serde_json::json!(["@acme/plugin"]));
+}
+
+#[tokio::test]
+async fn add_records_plain_npm_package_with_note() {
+    use std::fs;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let mod_dir = root.join("node_modules/left-pad");
+    fs::create_dir_all(&mod_dir).unwrap();
+    fs::write(
+        mod_dir.join("package.json"),
+        r#"{"name":"left-pad","version":"1.3.0"}"#,
+    ).unwrap();
+    unsafe { std::env::set_var("OXIDE_ADD_NO_INSTALL", "1"); }
+    let (code, out) = run_ok(&[
+        "oxide", "add", "left-pad", "--root", &root.to_string_lossy(),
+    ]).await;
+    unsafe { std::env::remove_var("OXIDE_ADD_NO_INSTALL"); }
+    assert_eq!(code, 0, "add passed: {out}");
+    assert!(out.contains("ordinary npm package"), "note present: {out}");
+}
+
+#[tokio::test]
+async fn audit_offline_without_cache_is_a_clear_error() {
+    let _g = ENV_LOCK.lock().unwrap();
+    use std::fs;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    // A minimal package-lock so the lockfile step passes.
+    fs::write(
+        root.join("package-lock.json"),
+        r#"{"lockfileVersion":3,"packages":{"":{"name":"root","version":"1.0.0"},"node_modules/x":{"version":"1.0.0"}}}"#,
+    ).unwrap();
+    unsafe { std::env::set_var("OXIDE_AUDIT_OFFLINE", "1"); }
+    let (code, out) = run_ok(&[
+        "oxide", "audit", "--root", &root.to_string_lossy(),
+    ]).await;
+    unsafe { std::env::remove_var("OXIDE_AUDIT_OFFLINE"); }
+    assert_eq!(code, 2, "offline without cache exits 2: {out}");
+    assert!(out.contains("AUDIT-OFFLINE"), "coded diagnostic: {out}");
+}
+
+#[tokio::test]
+async fn audit_no_lockfile_is_a_clear_error() {
+    let _g = ENV_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    unsafe { std::env::set_var("OXIDE_AUDIT_OFFLINE", "1"); }
+    let (code, out) = run_ok(&[
+        "oxide", "audit", "--root", &root.to_string_lossy(),
+    ]).await;
+    unsafe { std::env::remove_var("OXIDE_AUDIT_OFFLINE"); }
+    assert_eq!(code, 2, "no lockfile exits 2: {out}");
+    assert!(out.contains("AUDIT-LOCKFORMAT"), "coded: {out}");
 }
 

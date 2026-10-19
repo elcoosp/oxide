@@ -9,6 +9,7 @@ use oxide_router::RouteTree;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+mod audit;
 mod native_plugins;
 pub mod mcp;
 
@@ -8268,8 +8269,70 @@ async fn cmd_secrets(root: &str, op: SecretsOp, w: Writer<'_>) -> anyhow::Result
 /// `oxide add <module>` (§15.4): records the module in `.oxide/modules.json` and
 /// prints next steps. (TS config writes are fragile; the list file is the contract.)
 async fn cmd_add(root: &str, module: &str, w: Writer<'_>) -> anyhow::Result<i32> {
-    let path = PathBuf::from(root).join(".oxide/modules.json");
-    let mut list: Vec<String> = read_json(&path)
+    let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
+    let modules_path = rootp.join(".oxide/modules.json");
+
+    // SPEC-15.4 / §19-B: install the module unless the caller opted out
+    // (`OXIDE_ADD_NO_INSTALL=1`) — tests use the opt-out with a
+    // pre-populated `node_modules/<mod>/package.json` to exercise the
+    // contract-discovery half without a network round-trip.
+    let no_install = std::env::var_os("OXIDE_ADD_NO_INSTALL").is_some();
+    if !no_install {
+        // Detect the project's package manager from its lockfile.
+        // The tuple is `(&str, Vec<&str>)`. Explicit types keep the
+        // compiler from inferring among `AsRef<[u8]>`, `AsRef<Path>`, etc.
+        let pm: (&str, Vec<&str>) = if rootp.join("pnpm-lock.yaml").is_file() {
+            ("pnpm", vec!["add", module])
+        } else if rootp.join("yarn.lock").is_file() {
+            ("yarn", vec!["add", module])
+        } else if rootp.join("bun.lockb").is_file() {
+            ("bun", vec!["add", module])
+        } else {
+            // npm is the fallback (also covers a project with no lockfile).
+            ("npm", vec!["install", module])
+        };
+        outln!(w, "installing {} via {}", module, pm.0);
+        let status = tokio::process::Command::new(pm.0)
+            .args(&pm.1)
+            .current_dir(&rootp)
+            .status()
+            .await
+            .map_err(|e| anyhow::anyhow!("spawn `{} {}`: {e}", pm.0, module))?;
+        if !status.success() {
+            anyhow::bail!(
+                "`{} {}` exited {}; not recording the module",
+                pm.0,
+                module,
+                status.code().unwrap_or(-1),
+            );
+        }
+    } else {
+        outln!(w, "OXIDE_ADD_NO_INSTALL=1 — skipping the install step");
+    }
+
+    // SPEC-15.4: read the module's `oxide.module` field from its
+    // package.json (present → real module; absent → a plain npm package,
+    // warning + still record it so `audit` sees it).
+    let node_mods = rootp.join("node_modules").join(module);
+    let pkg_json = node_mods.join("package.json");
+    let mut is_oxide_module = false;
+    if pkg_json.is_file() {
+        if let Ok(bytes) = std::fs::read(&pkg_json) {
+            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                if v.get("oxide").and_then(|o| o.get("module")).is_some() {
+                    is_oxide_module = true;
+                }
+            }
+        }
+    } else if !no_install {
+        outln!(
+            w,
+            "warn: node_modules/{module}/package.json missing after install —              recording anyway, `oxide build` will fail with a clear diagnostic"
+        );
+    }
+
+    // Persist to `.oxide/modules.json` (what `audit` reads).
+    let mut list: Vec<String> = read_json(&modules_path)
         .and_then(|v| v.as_array().cloned())
         .map(|a| {
             a.into_iter()
@@ -8282,12 +8345,31 @@ async fn cmd_add(root: &str, module: &str, w: Writer<'_>) -> anyhow::Result<i32>
     }
     list.sort();
     list.dedup();
-    std::fs::create_dir_all(path.parent().unwrap_or(Path::new(".")))?;
-    std::fs::write(&path, serde_json::to_string_pretty(&list)? + "\n")?;
+    std::fs::create_dir_all(modules_path.parent().unwrap_or(Path::new(".")))?;
+    std::fs::write(
+        &modules_path,
+        serde_json::to_string_pretty(&list)? + "\n",
+    )?;
     outln!(w, "[ok] added {module} to .oxide/modules.json");
+
+    // Report what the module contributes (SPEC-15.4).
+    if is_oxide_module {
+        outln!(
+            w,
+            "  oxide module detected — hooks/routes/config will be merged on the \
+             next `oxide build` / `oxide dev`"
+        );
+    } else {
+        outln!(
+            w,
+            "  note: `{module}` has no `oxide.module` export — it is an ordinary \
+             npm package and will not contribute hooks/routes"
+        );
+    }
     outln!(
         w,
-        "next steps: import it in your code and run `oxide dev` (§15.4)"
+        "next steps: ensure `{module}` appears in `modules: []` in your \
+         oxide.config.ts (or let a native plugin register it), then run `oxide dev`"
     );
     Ok(0)
 }
@@ -8453,30 +8535,44 @@ async fn cmd_cache(root: &str, op: CacheOp, w: Writer<'_>) -> anyhow::Result<i32
 /// plugins. The real registry feed plugs in behind the same output shape.
 async fn cmd_audit(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = PathBuf::from(root);
-    let cfg = load_config_or_default(&rootp, "development");
-    let mut names: Vec<String> = read_json(&rootp.join(".oxide/modules.json"))
-        .and_then(|v| v.as_array().cloned())
-        .map(|a| {
-            a.into_iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-    for p in &cfg.plugins {
-        if let Some(n) = p.get("name").and_then(|v| v.as_str()) {
-            names.push(n.to_string());
+    let offline = std::env::var_os("OXIDE_AUDIT_OFFLINE").is_some();
+
+    // SPEC-19.1 / §19-B: the real advisory scan reads the lockfile's
+    // installed packages and queries OSV for each. `offline` (env var) is
+    // the CI-safe mode — a fresh cache hit is served, a miss is
+    // AUDIT-OFFLINE.
+    let pkgs = match crate::audit::read_package_lock(&rootp) {
+        Ok(p) => p,
+        Err(e) => {
+            outln!(w, "{e:#}");
+            return Ok(2);
         }
-    }
-    if names.is_empty() {
-        outln!(w, "no modules or plugins to audit");
+    };
+    outln!(w, "auditing {} installed npm package(s) via OSV", pkgs.len());
+
+    let advisories = match crate::audit::query_osv(&rootp, &pkgs, offline).await {
+        Ok(a) => a,
+        Err(e) => {
+            outln!(w, "{e:#}");
+            return Ok(2);
+        }
+    };
+    if advisories.is_empty() {
+        outln!(w, "[ok] no advisories");
         return Ok(0);
     }
-    names.sort();
-    names.dedup();
-    for n in &names {
-        outln!(w, "{n}: no advisories (static registry check)");
+    outln!(w, "{} advisor{} found:", advisories.len(), if advisories.len() == 1 { "y" } else { "ies" });
+    for a in &advisories {
+        let sev = if a.severity.is_empty() { "?" } else { a.severity.as_str() };
+        outln!(w, "  {} {}@{}  [{}]  {}", a.id, a.package, a.version, sev, a.summary);
     }
-    Ok(0)
+    // Exit 1 when any HIGH/CRITICAL is present (CI gate convention); a
+    // low/moderate advisory is a warning-not-a-failure so a transitive
+    // unfixable LOW doesn't block every build.
+    let fatal = advisories.iter().any(|a| {
+        matches!(a.severity.as_str(), "HIGH" | "CRITICAL")
+    });
+    Ok(if fatal { 1 } else { 0 })
 }
 
 /// `oxide migrate <source>` (§19.2): dry-run plan; never writes.
