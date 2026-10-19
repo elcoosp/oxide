@@ -62,6 +62,8 @@ pub(crate) fn typegen_impl(
     tree: &RouteTree,
     out_dir: &Path,
     routes_root: Option<&Path>,
+    locales: Option<&[String]>,
+    default_locale: Option<&str>,
 ) -> Result<String> {
     let types_dir = out_dir.join(".oxide").join("types");
     fs::create_dir_all(&types_dir).map_err(|e| {
@@ -155,19 +157,51 @@ pub(crate) fn typegen_impl(
         }
         dts.push_str("};\n");
         dts.push_str("\nexport type LoaderInput<R extends OxideRoutes> = LoaderEvent[R];\n");
+        // SPEC-16.4 / §16-D: emit a `locale` variant of each `href`
+        // overload when the project has i18n enabled. The locale parameter
+        // sits LAST so an existing `href('/blog', {slug})` call still
+        // compiles — no breaking change to non-i18n projects.
+        let locales_literal: Option<String> = locales.filter(|l| !l.is_empty()).map(|l| {
+            l.iter()
+                .map(|s| ts_lit(s))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        });
+        let default_literal: Option<String> = default_locale.map(ts_lit);
         for (ts, _, params, _) in &rows {
             if params.is_empty() {
                 dts.push_str(&format!(
                     "export declare function href(route: {}): string;\n",
                     ts_lit(ts)
                 ));
+                if let Some(loc) = &locales_literal {
+                    dts.push_str(&format!(
+                        "export declare function href(route: {}, locale: {}): string;\n",
+                        ts_lit(ts),
+                        loc
+                    ));
+                }
             } else {
                 dts.push_str(&format!(
                     "export declare function href(route: {}, params: {}): string;\n",
                     ts_lit(ts),
                     params_object(params)
                 ));
+                if let Some(loc) = &locales_literal {
+                    dts.push_str(&format!(
+                        "export declare function href(route: {}, params: {}, locale: {}): string;\n",
+                        ts_lit(ts),
+                        params_object(params),
+                        loc
+                    ));
+                }
             }
+        }
+        // If i18n is enabled, also export a `Locale` union + `DefaultLocale`
+        // alias for the project to reference directly.
+        if let (Some(loc), Some(def)) = (&locales_literal, &default_literal) {
+            dts.push_str(&format!("\nexport type Locale = {};\n", loc));
+            dts.push_str(&format!("export type DefaultLocale = {};\n", def));
         }
     }
     // SPEC-09: per-route loader data. A `page.server.ts` that exports
@@ -595,4 +629,42 @@ mod tests {
         assert_eq!(rows[2].1, "page");
         assert_eq!(rows[2].2, vec!["x".to_string()]);
     }
+
+    #[test]
+    fn href_gains_locale_overload_with_i18n() {
+        let tmp = tempfile::tempdir().unwrap();
+        let t = tree(vec![
+            entry("routes/index/page", RouteKind::Page, &[]),
+            entry("routes/about/page", RouteKind::Page, &["about"]),
+        ]);
+        let locales = vec!["en".to_string(), "fr".to_string(), "pt-BR".to_string()];
+        let dts_path = t
+            .typegen_with_i18n(tmp.path(), Some(&locales), Some("en"))
+            .unwrap();
+        let dts = std::fs::read_to_string(&dts_path).unwrap();
+        // Locale union emitted.
+        assert!(dts.contains(r#"export type Locale = "en" | "fr" | "pt-BR";"#), "{dts}");
+        assert!(dts.contains(r#"export type DefaultLocale = "en";"#), "{dts}");
+        // href gains a locale parameter on both no-params and with-params routes.
+        assert!(
+            dts.contains(r#"href(route: "/", locale: "en" | "fr" | "pt-BR"): string"#),
+            "{dts}"
+        );
+        assert!(
+            dts.contains(r#"href(route: "/about", locale: "en" | "fr" | "pt-BR"): string"#),
+            "{dts}"
+        );
+    }
+
+    #[test]
+    fn href_has_no_locale_overload_without_i18n() {
+        let tmp = tempfile::tempdir().unwrap();
+        let t = tree(vec![entry("routes/index/page", RouteKind::Page, &[])]);
+        let dts_path = t.typegen(tmp.path()).unwrap();
+        let dts = std::fs::read_to_string(&dts_path).unwrap();
+        assert!(!dts.contains("export type Locale"), "{dts}");
+        assert!(!dts.contains("locale:"), "{dts}");
+    }
+
+
 }

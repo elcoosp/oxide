@@ -4017,7 +4017,24 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // route tree so `href()`/`PageProps` stay in sync with the routes without
     // a separate `oxide routes` run. A typegen failure is a warning, not a
     // build failure — the app still ships.
-    if let Err(e) = tree.typegen_with_root(&rootp, &rootp.join(&cfg.routes.dir)) {
+    // SPEC-16.4: when i18n is configured, typegen emits the locale-aware
+    // `href` overloads (route, params, locale) + a Locale union.
+    let i18n_for_typegen: Option<&[String]> = match cfg.i18n.strategy.as_str() {
+        "none" => None,
+        _ if cfg.i18n.locales.is_empty() => None,
+        _ => Some(&cfg.i18n.locales),
+    };
+    let default_for_typegen: Option<&str> = if i18n_for_typegen.is_some() {
+        Some(cfg.i18n.default_locale.as_str())
+    } else {
+        None
+    };
+    if let Err(e) = tree.typegen_with_root_and_i18n(
+        &rootp,
+        &rootp.join(&cfg.routes.dir),
+        i18n_for_typegen,
+        default_for_typegen,
+    ) {
         outln!(
             w,
             "warn: typegen failed ({} {}); routes.d.ts is stale",
@@ -7839,7 +7856,17 @@ async fn cmd_routes(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     // (Without it, a loader with `'…cookies…'` in a string literal reads
     // as dynamic here while the build treats it as static.)
     let tree = refine_render_modes_from_ast(&rootp, &cfg, scan_routes(&rootp, &cfg)?);
-    tree.typegen(&rootp)
+    let i18n_for_typegen: Option<&[String]> = match cfg.i18n.strategy.as_str() {
+        "none" => None,
+        _ if cfg.i18n.locales.is_empty() => None,
+        _ => Some(&cfg.i18n.locales),
+    };
+    let default_for_typegen: Option<&str> = if i18n_for_typegen.is_some() {
+        Some(cfg.i18n.default_locale.as_str())
+    } else {
+        None
+    };
+    tree.typegen_with_i18n(&rootp, i18n_for_typegen, default_for_typegen)
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
     // Join render modes from the machine-readable manifest typegen just wrote.
     let mut modes: BTreeMap<String, String> = BTreeMap::new();

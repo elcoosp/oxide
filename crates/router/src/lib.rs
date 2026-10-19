@@ -196,15 +196,41 @@ impl RouteTree {
     /// Also writes a machine-readable `.oxide/types/routes.json` manifest used by
     /// `oxide routes` (§19.1). Returns the path of the generated `.d.ts`.
     pub fn typegen(&self, out_dir: &Path) -> Result<String> {
-        typegen::typegen_impl(self, out_dir, None)
+        typegen::typegen_impl(self, out_dir, None, None, None)
     }
 
     /// §8.3 like [`typegen`](Self::typegen), but with the routes root so a
     /// per-route `page.server.ts` `LoaderData` annotation can be read (the
     /// entry's `file` is routes-root-relative).
     pub fn typegen_with_root(&self, out_dir: &Path, routes_root: &Path) -> Result<String> {
-        typegen::typegen_impl(self, out_dir, Some(routes_root))
+        typegen::typegen_impl(self, out_dir, Some(routes_root), None, None)
     }
+
+    /// SPEC-16.4 / §16-D: locale-aware typegen. When `locales` is `Some`,
+    /// the emitted `href()` overloads gain an optional trailing locale
+    /// parameter (`href(route, params, locale)`), and every `loc` annotation
+    /// documents the supported set. When `None`, behavior matches
+    /// [`Self::typegen_with_root`].
+    pub fn typegen_with_i18n(
+        &self,
+        out_dir: &Path,
+        locales: Option<&[String]>,
+        default_locale: Option<&str>,
+    ) -> Result<String> {
+        typegen::typegen_impl(self, out_dir, None, locales, default_locale)
+    }
+
+    /// Locale-aware variant of [`Self::typegen_with_root`].
+    pub fn typegen_with_root_and_i18n(
+        &self,
+        out_dir: &Path,
+        routes_root: &Path,
+        locales: Option<&[String]>,
+        default_locale: Option<&str>,
+    ) -> Result<String> {
+        typegen::typegen_impl(self, out_dir, Some(routes_root), locales, default_locale)
+    }
+
 
     /// Sorted deterministic listing for `oxide routes` (§19.1) incl. inferred modes.
     pub fn table(&self) -> Vec<(String, String, Vec<String>)> {
