@@ -4801,3 +4801,63 @@ async fn add_warns_on_adapter_mismatch() {
     assert!(out.contains("MOD-ADAPTER"), "adapter mismatch warning: {out}");
     assert!(out.contains("binary"), "project adapter named: {out}");
 }
+
+#[tokio::test]
+async fn mcp_graph_tool_reports_demand_graph_snapshot() {
+    use rmcp::handler::server::wrapper::Parameters;
+    let (_d, root) = fixture_project();
+    // No build yet: the graph section must be absent (serde skip).
+    {
+        let server = crate::mcp::OxideMcp::new(root.clone());
+        let result = server
+            .oxide_graph(Parameters(crate::mcp::NoArgs {}))
+            .await
+            .expect("tool call");
+        let text = result
+            .content
+            .iter()
+            .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let v: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+        assert!(
+            v.get("graph").is_none() || v["graph"].is_null(),
+            "no build means no graph section: {v}",
+        );
+    }
+
+    // Build so the snapshot is written, then the MCP tool surfaces it.
+    let (code, _out) =
+        run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
+    assert_eq!(code, 0);
+
+    let server = crate::mcp::OxideMcp::new(root.clone());
+    let result = server
+        .oxide_graph(Parameters(crate::mcp::NoArgs {}))
+        .await
+        .expect("tool call");
+    let text = result
+        .content
+        .iter()
+        .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let v: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+    let g = &v["graph"];
+    assert!(!g.is_null(), "graph section present after build: {v}");
+    assert_eq!(g["version"], "v1");
+    let count = g["node_count"].as_u64().unwrap();
+    assert!(count > 0, "node_count positive (got {count})");
+    let kinds = g["nodes_by_kind"].as_object().expect("nodes_by_kind object");
+    for expected in ["module", "chunk", "manifest"] {
+        assert!(
+            kinds.contains_key(expected),
+            "kind {expected} in breakdown: {:?}",
+            kinds.keys().collect::<Vec<_>>(),
+        );
+    }
+    // A cold build recomputes every node.
+    assert_eq!(g["recomputed_count"].as_u64().unwrap(), count);
+    // The manifest summary is unchanged.
+    assert!(v["routes"].is_object(), "routes summary unchanged");
+}

@@ -52,12 +52,49 @@ pub struct CacheReport {
     pub blob_count: u64,
 }
 
+/// §5-A: compact view of the last build's `.oxide/graph.json`. The full
+/// node list is large for a real project — the MCP consumer wants counts
+/// and a per-kind breakdown, not 5000 module rows over the wire.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct GraphSummary {
+    pub version: String,
+    pub build_id: String,
+    pub generated_at_unix_ms: u64,
+    pub node_count: usize,
+    pub recomputed_count: usize,
+    pub previous_node_count: usize,
+    /// Count of nodes by kind (`module` / `chunk` / `manifest` / `typegen`).
+    pub nodes_by_kind: BTreeMap<String, usize>,
+}
+
+impl GraphSummary {
+    fn from_snapshot(snap: &crate::build_graph::GraphSnapshot) -> Self {
+        let mut by_kind: BTreeMap<String, usize> = BTreeMap::new();
+        for n in &snap.nodes {
+            *by_kind.entry(n.kind.clone()).or_insert(0) += 1;
+        }
+        Self {
+            version: snap.version.clone(),
+            build_id: snap.build_id.clone(),
+            generated_at_unix_ms: snap.generated_at_unix_ms,
+            node_count: snap.node_count,
+            recomputed_count: snap.recomputed_count,
+            previous_node_count: snap.previous_node_count,
+            nodes_by_kind: by_kind,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GraphReport {
     pub root: String,
     pub server_manifest: Option<String>,
     pub routes: BTreeMap<String, String>,
     pub chunks: BTreeMap<String, usize>,
+    /// §5-A: the last build's DemandGraph snapshot, when one exists. `None`
+    /// before a first `oxide build`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph: Option<GraphSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -212,11 +249,24 @@ impl OxideMcp {
         Parameters(NoArgs {}): Parameters<NoArgs>,
     ) -> Result<CallToolResult, ErrorData> {
         let sm_path = self.root.join("dist/server/server.manifest.json");
+        // §5-A: load the DemandGraph snapshot the last build wrote. Done
+        // BEFORE the manifest check so a consumer still sees the graph
+        // even if the manifest read fails (both are written in the same
+        // build, but a partial copy shouldn't lose the graph report too).
+        let graph = {
+            let snap = crate::build_graph::load_snapshot(&self.root);
+            if snap.node_count > 0 {
+                Some(GraphSummary::from_snapshot(&snap))
+            } else {
+                None
+            }
+        };
         let mut report = GraphReport {
             root: self.root.to_string_lossy().into_owned(),
             server_manifest: None,
             routes: BTreeMap::new(),
             chunks: BTreeMap::new(),
+            graph,
         };
         let Ok(bytes) = std::fs::read(&sm_path) else {
             return json_result(&report);
