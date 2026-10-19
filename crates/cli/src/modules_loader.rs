@@ -176,7 +176,18 @@ pub fn inject_routes(tree: &mut RouteTree, mods: &[ResolvedModule]) -> usize {
         let prefix = format!("modules/{}/", m.name);
         let mut count = 0usize;
         for mut entry in subtree.entries {
+            // The subtree scan already produced a `segments` vector relative
+            // to the module's own routes dir (e.g. `["blog", ":slug"]`). The
+            // matcher keys on `segments`, so prepend the module namespace to
+            // make the URL `/modules/<name>/blog/<slug>` — a module route
+            // can never shadow a project route.
+            let mut new_segs = vec!["modules".to_string(), m.name.clone()];
+            new_segs.append(&mut entry.segments);
+            entry.segments = new_segs;
+            // Namespace the id too, so log output and manifests distinguish a
+            // module route from a project route with the same shape.
             entry.id.0 = format!("{}{}", prefix, entry.id.0);
+            // Absolute path so the bundler/prerender can join it directly.
             entry.file = routes_dir.join(&entry.file);
             tree.insert(entry);
             count += 1;

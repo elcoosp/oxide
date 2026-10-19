@@ -4548,3 +4548,89 @@ async fn second_build_recomputes_nothing() {
     );
     assert_eq!(second["previous_node_count"].as_u64().unwrap(), first_nodes);
 }
+
+// ─── §15-E: module route injection ────────────────────────────────────────
+
+/// A user adds a module, and its route is served by the build. The test
+/// writes the module's package on disk (no network), records it via
+/// `oxide add` with `OXIDE_ADD_NO_INSTALL=1`, runs a build, and asserts the
+/// route's prerendered HTML exists with the module's marker.
+#[tokio::test]
+async fn module_route_is_injected_and_built() {
+    let _g = ENV_LOCK.lock().unwrap();
+    use std::fs;
+    let (_d, root) = fixture_project();
+
+    // The module package on disk.
+    let mod_dir = root.join("node_modules/oxide-test-mod");
+    fs::create_dir_all(mod_dir.join("routes")).unwrap();
+    fs::write(
+        mod_dir.join("package.json"),
+        r#"{"name":"oxide-test-mod","version":"1.0.0","main":"./index.mjs","oxide":{"module":{"routes":"./routes"}}}"#,
+    )
+    .unwrap();
+    fs::write(
+        mod_dir.join("routes/page.tsx"),
+        "export default function ModPage() {\n  return <main data-route=\"/modules/oxide-test-mod\">from-module</main>;\n}\n",
+    )
+    .unwrap();
+    fs::write(mod_dir.join("index.mjs"), "export const noop = () => {};\n").unwrap();
+
+    // Record the module. `oxide add` normally installs it; the opt-out +
+    // a pre-populated `node_modules/` lets us exercise the full path
+    // (install-skip + contract discovery + modules.json) offline.
+    unsafe { std::env::set_var("OXIDE_ADD_NO_INSTALL", "1"); }
+    let (add_code, add_out) = run_ok(&[
+        "oxide", "add", "oxide-test-mod",
+        "--root", root.to_str().unwrap(),
+    ]).await;
+    unsafe { std::env::remove_var("OXIDE_ADD_NO_INSTALL"); }
+    assert_eq!(add_code, 0, "add: {add_out}");
+    assert!(add_out.contains("oxide module detected"), "{add_out}");
+
+    // Build. A route in a module must be picked up by the scan and
+    // prerendered exactly like a project route.
+    let (build_code, build_out) =
+        run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
+    assert_eq!(build_code, 0, "build: {build_out}");
+    // "3 routes, 2 prerendered" — the two static project pages (`/`, plus the
+    // isr route which the fixture declares) plus the module route. The route
+    // count in the line proves the module route entered the tree; the
+    // prerender check below proves it actually rendered.
+    assert!(
+        build_out.contains("3 routes") && build_out.contains("2 prerendered"),
+        "module route counted + prerendered in build output: {build_out}",
+    );
+
+    // The prerender path is `<segments.join('/')>.html` (see `cmd_build`'s
+    // `rel` calculation). Module segments are `["modules", "oxide-test-mod"]`,
+    // so the file lands at `dist/prerendered/modules/oxide-test-mod.html`.
+    let prerendered = root.join("dist/prerendered/modules/oxide-test-mod.html");
+    assert!(
+        prerendered.is_file(),
+        "module page prerendered at {}",
+        prerendered.display(),
+    );
+    // The fixture has no framework renderer attached, so prerender uses the
+    // IR placeholder (same path `build_produces_dist_and_deploy_artifacts`
+    // exercises). The placeholder echoes the computed URL pattern, which is
+    // what proves the module route entered the tree and prerendered with
+    // the right segments.
+    let html = std::fs::read_to_string(&prerendered).unwrap();
+    assert!(
+        html.contains(r#"data-route="/modules/oxide-test-mod""#),
+        "module URL pattern in prerendered placeholder: {html}",
+    );
+
+    // Sanity: the server manifest carries the module's namespaced route id.
+    let server_manifest = root.join("dist/server/server.manifest.json");
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&server_manifest).unwrap(),
+    ).unwrap();
+    let routes = manifest["routes"].as_object().expect("manifest routes");
+    assert!(
+        routes.keys().any(|k| k.contains("modules/oxide-test-mod")),
+        "route namespaced in server manifest: keys={:?}",
+        routes.keys().collect::<Vec<_>>(),
+    );
+}
