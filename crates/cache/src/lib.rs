@@ -24,6 +24,16 @@ pub use http_handler::HttpCacheHandler;
 pub use single_flight::{FlightSlot, SingleFlight};
 pub use tiers::{CacheStats, DiskTier, MemoryTier, TieredCache};
 
+#[cfg(feature = "redis")]
+pub mod redis_handler;
+#[cfg(feature = "redis")]
+pub use redis_handler::RedisCacheHandler;
+
+#[cfg(feature = "s3")]
+pub mod s3_handler;
+#[cfg(feature = "s3")]
+pub use s3_handler::S3CacheHandler;
+
 use blake3::Hasher;
 use oxide_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};

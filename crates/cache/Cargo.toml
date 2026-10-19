@@ -7,6 +7,8 @@ license.workspace = true
 description = "L0/L1/L2 tiers, tags, handlers (spec 11)"
 
 [dependencies]
+redis = { workspace = true, optional = true }
+object_store = { workspace = true, optional = true }
 async-trait = { workspace = true }
 oxide-diagnostics = { workspace = true }
 oxide-odf = { workspace = true }
@@ -23,3 +25,7 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+
+[features]
+redis = ["dep:redis"]
+s3 = ["dep:object_store"]

@@ -49,6 +49,10 @@ oxide-core-wasm = { path = "crates/core-wasm", version = "0.1.0" }
 
 # Async / HTTP / TLS (spec Appendix A: stable, direct use)
 tokio = { version = "1.52.3", features = ["full"] }
+# §11.2 cache.handler=redis / cache.handler=s3 (optional drivers;
+# feature-gated in oxide-cache so the default build stays lean)
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+object_store = { version = "0.11", features = ["aws"] }
 hyper = { version = "1.12.0", features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1.21", features = ["tokio", "server", "http1", "http2", "client-legacy"] }
 http-body-util = "0.1.5"

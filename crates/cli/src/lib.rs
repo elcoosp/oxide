@@ -6768,25 +6768,48 @@ async fn start_server_inner_full(
                     ));
                 }
                 oxide_config::CacheHandlerConfig::Redis { url } => {
-                    // A Redis driver is not shipped (the `redis` crate is not a
-                    // dependency). A configured Redis handler is honoured by
-                    // the HTTP protocol when a project fronts Redis with an
-                    // HTTP cache gateway; otherwise this is a loud no-op so the
-                    // misconfiguration is visible, not silent.
-                    tracing::warn!(
-                        url = %url,
-                        "cache.handler=redis is not implemented in this build; \
-                         use cache.handler={{type:'http',url}} against an HTTP cache \
-                         gateway, or 'disk' for a local tier",
-                    );
+                    // §11.2: a real Redis L2 tier (oxide-cache/redis). A
+                    // connection failure logs and stays memory-only — the
+                    // build must not fail because a cache is down.
+                    match oxide_cache::RedisCacheHandler::new(url.clone()).await {
+                        Ok(h) => {
+                            tier = tier.with_remote(std::sync::Arc::new(h));
+                            tracing::info!(
+                                url = %url,
+                                "cache.handler=redis: attached remote tier",
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                url = %url,
+                                error = %e.0.message,
+                                "cache.handler=redis: connection failed; \
+                                 continuing with local tier only",
+                            );
+                        }
+                    }
                 }
                 oxide_config::CacheHandlerConfig::S3 { bucket } => {
-                    tracing::warn!(
-                        bucket = %bucket,
-                        "cache.handler=s3 is not implemented in this build; \
-                         use cache.handler={{type:'http',url}} against an S3-backed \
-                         HTTP cache gateway",
-                    );
+                    // §11.2: a real S3 L2 tier (oxide-cache/s3). Same
+                    // failure-tolerance as Redis: a bad bucket logs and stays
+                    // memory-only. Credentials/region come from AWS_* env vars.
+                    match oxide_cache::S3CacheHandler::new(bucket.clone()) {
+                        Ok(h) => {
+                            tier = tier.with_remote(std::sync::Arc::new(h));
+                            tracing::info!(
+                                bucket = %bucket,
+                                "cache.handler=s3: attached remote tier",
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                bucket = %bucket,
+                                error = %e.0.message,
+                                "cache.handler=s3: client build failed; \
+                                 continuing with local tier only",
+                            );
+                        }
+                    }
                 }
             }
             std::sync::Arc::new(tier)
