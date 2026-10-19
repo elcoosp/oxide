@@ -4190,3 +4190,30 @@ defer data resolution, non-React hydration, loading boundaries,
 streaming SSR (React/Vue/Solid), and manifest chunk preloading.
 260 Rust tests + 240 TS tests green. Detail in
 `docs/HANDOFF-bucket2-complete.md`.
+
+## Session 2026-10-19 — Wave 3 close-out
+
+Wave 3 of `oxide-v0.1-implementation-plan.md` is now complete (item 5
+partial). Commits: `05da397` (test fix) → `f5a9208` (Playwright specs).
+See `HANDOFF.md` for the full commit table + per-item test references.
+
+**Key fixes that were NOT in the previous handoff:**
+
+- `crates/server/tests/inject_before_close_tdd.rs` needed `trace: None` —
+  the "0 failed targets" claim in the old handoff was stale; the tree did
+  not compile at `7e0c659` once you added the `trace` field.
+- `CI push.branches` is already `[main]` (the plan's "broken `ain]`" was
+  stale).
+- Root `Cargo.toml` repository URL was `https://example.com/oxide/oxide`;
+  fixed to `github.com/elcoosp/oxide`.
+
+**Item 5 (WASM plugin e2e fixture)** — negative arm only. Positive arm
+needs a pre-compiled `.wasm` string-ABI component; hand-authored WAT that
+implements canonical-ABI string return is fragile under `wasmtime/wat`.
+The `wasmtime/wat` feature is enabled (`665dba5`) so a pre-compiled
+fixture will load cleanly when checked in.
+
+**Wave 4 hygiene** — items 4.2/4.3/4.6/4.7 done; 4.1 (benchmarks), 4.4
+(HANDOFF refresh — this session), 4.5 (architecture.md regenerate)
+remaining.
+
