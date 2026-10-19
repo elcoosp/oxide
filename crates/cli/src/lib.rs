@@ -615,11 +615,16 @@ fn scan_routes(root: &Path, cfg: &OxideConfig) -> anyhow::Result<RouteTree> {
         eprintln!("modules: merged {merged} route entr(y/ies) from {} module(s)", mods.len());
     }
     for m in crate::modules_loader::has_unmerged_hooks(&mods) {
+        let unmerged: Vec<&str> = m
+            .hooks
+            .iter()
+            .filter(|h| h.as_str() != "transform")
+            .map(|s| s.as_str())
+            .collect();
         eprintln!(
-            "modules: `{}` declares hook(s) [{}] — hook merging is not yet wired; \
-             only its routes are honored",
+            "modules: `{}` declares hook(s) [{}] — only `transform` is merged today",
             m.name,
-            m.hooks.join(", "),
+            unmerged.join(", "),
         );
     }
     Ok(tree)
@@ -6855,6 +6860,33 @@ fn build_js_plugin_hook(
             continue;
         }
         plugins.push(abs.to_string_lossy().to_string());
+    }
+    // §15-E: modules declaring `hooks: ["transform"]` contribute their entry
+    // to the same chain — a module is a plugin that happens to also ship
+    // routes. Each is loaded the same way `plugin:call` loads a kind:js
+    // plugin (`<entry>` imported, `<hook>` invoked). `load_quiet` keeps the
+    // missing-package / no-contract warnings from printing twice:
+    // `scan_routes` already warned once during the route-merge pass.
+    for m in crate::modules_loader::load_quiet(root, cfg) {
+        if !m.hooks.iter().any(|h| h == "transform") {
+            continue;
+        }
+        let Some(ref entry) = m.entry else {
+            eprintln!(
+                "warn: module `{}` declares `transform` but has no entry file; skipping",
+                m.name,
+            );
+            continue;
+        };
+        if !entry.is_file() {
+            eprintln!(
+                "warn: module `{}` entry {} is missing; skipping transform",
+                m.name,
+                entry.display(),
+            );
+            continue;
+        }
+        plugins.push(entry.to_string_lossy().to_string());
     }
     if plugins.is_empty() {
         return None;

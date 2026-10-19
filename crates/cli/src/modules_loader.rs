@@ -114,17 +114,33 @@ fn read_contract(pkg_dir: &Path) -> Option<(Option<String>, Option<String>, Vec<
 /// the caller only ever sees modules that at least declare an
 /// `oxide.module`.
 pub fn load(rootp: &Path, cfg: &OxideConfig) -> Vec<ResolvedModule> {
+    load_impl(rootp, cfg, true)
+}
+
+/// Same as [`load`], but with warnings suppressed. Callers that run inside
+/// another loader (e.g. `build_js_plugin_hook`, called after
+/// `scan_routes` has already warned once) use this to avoid duplicate
+/// noise for the same module list.
+pub fn load_quiet(rootp: &Path, cfg: &OxideConfig) -> Vec<ResolvedModule> {
+    load_impl(rootp, cfg, false)
+}
+
+fn load_impl(rootp: &Path, cfg: &OxideConfig, warn: bool) -> Vec<ResolvedModule> {
     let mut out = Vec::new();
     for name in names_to_load(rootp, cfg) {
         let dir = rootp.join("node_modules").join(&name);
         if !dir.is_dir() {
-            eprintln!("warn: module `{name}` is not installed at node_modules/{name}; skipping");
+            if warn {
+                eprintln!("warn: module `{name}` is not installed at node_modules/{name}; skipping");
+            }
             continue;
         }
         let Some((routes_rel, entry_rel, hooks)) = read_contract(&dir) else {
-            eprintln!(
-                "warn: module `{name}` has no `oxide.module` field in package.json; skipping"
-            );
+            if warn {
+                eprintln!(
+                    "warn: module `{name}` has no `oxide.module` field in package.json; skipping"
+                );
+            }
             continue;
         };
         let routes_dir = match routes_rel {
@@ -198,8 +214,12 @@ pub fn inject_routes(tree: &mut RouteTree, mods: &[ResolvedModule]) -> usize {
 }
 
 /// True when the module declares hooks the loader does NOT yet merge.
-/// Build/dev print a one-line notice so "I added my module, why is my
-/// transform not firing?" is not a silent dead end.
+/// `transform` is now wired (`build_js_plugin_hook`), so a module with
+/// ONLY `transform` no longer triggers the notice. Any other hook name
+/// still does — an honest signal that enabling it in config will not
+/// make it fire yet.
 pub fn has_unmerged_hooks(mods: &[ResolvedModule]) -> Vec<&ResolvedModule> {
-    mods.iter().filter(|m| !m.hooks.is_empty()).collect()
+    mods.iter()
+        .filter(|m| m.hooks.iter().any(|h| h != "transform"))
+        .collect()
 }
