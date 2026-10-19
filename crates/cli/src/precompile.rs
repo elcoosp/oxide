@@ -327,7 +327,6 @@ pub async fn precompile_entries(
                     }
                 }
             }
-            _ => { /* JS/TS/TSX handled by the bundler's Oxc lowering */ }
             "mdx" => {
                 // SPEC-16-C: compile via @mdx-js/mdx in the tooling pool.
                 match compile_mdx(pool, &path).await {
@@ -336,6 +335,7 @@ pub async fn precompile_entries(
                     Err(e) => eprintln!("warn: mdx compile {}: {e}", path.display()),
                 }
             }
+            _ => { /* JS/TS/TSX handled by the bundler's Oxc lowering */ }
         }
     }
     out
