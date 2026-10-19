@@ -26,6 +26,7 @@
 #
 # Output: a markdown table on stdout and to `benchmarks/report.md`.
 set -uo pipefail
+set +m   # silence 'Killed' job-control noise from kill -9
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 CLI="$ROOT/target/debug/oxide-cli"

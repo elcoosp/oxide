@@ -25,7 +25,7 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `cache` | L0/L1/L2 tiers, weighted LRU memory tier, redb disk tier, tags, TTL/SWR/stale-if-error, single-flight, build seeding, HTTP conditional semantics | §11 |
 | `compiler` | Transform passes behind `Transformer` (D4): import scan, `'use cache'` (§9.3), server-fn stubs (§9.4), forbidden-import guard (§6.4), HMR injection | §6.2–6.4, §9 |
 | `bundler` | `Bundler` trait (D3) + functional ESM bundler: resolution with `exports` conditions, route-based splitting, shared-chunk heuristic, content hashing, client/server manifests | §6.4 |
-| `jshost` | `JsHost`/`Pool` traits (§4.2), NodeHost with real child workers speaking the op protocol (§4.5), ScriptedHost, V8Host fail-fast stub | §4, D2 |
+| `jshost` | `JsHost`/`Pool` traits (§4.2), NodeHost with real child workers speaking the op protocol (§4.5), ScriptedHost, V8Host (deno_core, full dispatch + `compile_module`) | §4, D2 |
 | `plugin` | Hook model, pre/post ordering, JS bridge messages, WASM plugin manifest validation, module manifests | §15 |
 | `render` | Streaming pipeline, head merge, HTML injection (lol_html), deferred-boundary protocol (§7.1), islands markup (§10.3), hydration bootstrap, error recovery | §7.1, §10 |
 | `server` | Hyper 1.x pipeline, static assets (range/304/precompressed), dynamic compression, security defaults (§17.1), CSRF/SSRF/host checks, rate limiting, cookies, RFC6455 codec, graceful shutdown | §12, §17, D7 |
@@ -34,6 +34,40 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `adapters` | Deploy targets + capability matrix + refusal rule, `_headers`/`_redirects`, Dockerfile, Worker/node/serverless entries | §18 |
 | `core-wasm` | Edge subset: cache keys, head merge, ODF re-encode (D18) | §2 D18 |
 | `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/add/generate/cache/audit/migrate/test | §19 |
+## What changed since 2026-10-12
+
+- **`jshost`**: V8Host is no longer a fail-fast stub — `compile_module` runs
+  the Oxc passes in-process (through `transform_handler`) so the V8 backend
+  reaches the prerender path without a Node worker. See
+  `crates/jshost/src/v8_ops.rs::compile_module_impl` and
+  `packages/react/src/real-client.ts::mountReactPageRoot`.
+- **`router`**: `RouteEntry.needs_parent` gates the §9.2 parallel layout-page
+  load. A page whose `page.server.ts` never calls `parent()` runs its loader
+  concurrently with the last layout's; pages that do stay sequential.
+- **`cache`**: Redis and S3 L2 handlers are feature-gated (`oxide-cache/redis`,
+  `oxide-cache/s3`). Both are wired through `remote_cache_handler` in
+  `framework_shim` so `'use cache'` and the L0 response cache see the same
+  remote tier.
+- **`server`**: `ws_socket_upgrade` (the §9.6 WebSocket route handler) now
+  treats `close: null` from the worker as "no close" instead of the previous
+  implicit `Some((1000, ""))` — a client send after `open` was previously
+  hitting a Close frame before the read loop was entered.
+- **`cli` + TS client**: `/__data` carries the layout-id chain and
+  `RealPageRoot.update` takes the new Component (not props only), so a
+  client-side navigation actually swaps to the new route (previously it
+  re-rendered the original page).
+- **`tests/playwright`**: real-browser E2E over `oxide start` now covers
+  smoke, middleware, island hydration, loading boundary, WebSocket, and SSE
+  (14 specs).
+
+## Testing beyond unit tests
+
+- `cargo test --workspace` — Rust crates
+- `node --test packages/*/test/*.test.ts` — TS adapter + runtime packages
+- `node --test conformance/test/*.test.ts` — 24 assertions × 4 adapters
+- `pnpm --filter @oxide/playwright test` — real-browser E2E over
+  `oxide start` (requires `pnpm --filter @oxide/playwright install-browsers`
+  once, then a built `examples/smoke-app-react`)
 
 ## TypeScript packages
 

@@ -4217,3 +4217,76 @@ fixture will load cleanly when checked in.
 (HANDOFF refresh — this session), 4.5 (architecture.md regenerate)
 remaining.
 
+
+## Wave 4 close-out — 2026-10-19
+
+Three items from `oxide-v0.1-implementation-plan.md` §Wave 4 landed this
+session:
+
+### 4.2 `.github/workflows/ci.yml` `push.branches`
+**Already `[main]`** — the plan's "byte-verified broken `ain]`" claim was
+stale. No change needed.
+
+### 4.3 Root `Cargo.toml` repository URL
+Fixed in `61a71f4` — was `https://example.com/oxide/oxide`, now
+`https://github.com/elcoosp/oxide`.
+
+### 4.4 `HANDOFF.md`
+Replaced with the session-end summary at `70e9195` (two commits back from
+this one). Points at the current wave state and the two client-runtime
+bugs that were fixed in this same window.
+
+### 4.6 `WORKLOG.md` dedupe
+Byte-identical `SPEC-09` and `SPEC-17` entries removed in `6eae760`.
+
+### 4.7 Stale comments
+- `crates/jshost/src/v8_ops.rs` header — the "cache ops are not registered"
+  claim was wrong (they are, via `CACHE_HANDLER`). The "cites nonexistent
+  `docs/deviations.md`" line is gone.
+- `crates/cli/src/lib.rs` middleware-rewrite comment at the resolution site
+  — the "rewrite is logged but not re-matched" claim was wrong (the code
+  re-dispatches through `self_dispatch`).
+
+### 4.1 `benchmarks/report.md` (re-measured)
+Re-ran the full harness plus the three sub-harnesses on HEAD `2c6e6ec`.
+The numbers are now honest about three product gaps that this run
+surfaced:
+
+- **`smoke-app-solid` does not build** — `solid-js/web` cannot resolve
+  because `pnpm install` does not auto-install peer deps and the workspace
+  does not hoist `solid-js` into the smoke app's `node_modules`. Fix in
+  CI: add `auto-install-peers=true` to `.npmrc`, or `pnpm add solid-js`
+  explicitly. Reported as a known gap in `report.md`.
+- **L0 cache never hits** — every request returns `x-oxide-cache: bypass`,
+  not `L0-hit`/`L0-miss`, even though the persisted server manifest reports
+  `routes/index/page: mode=static`. The in-memory tree the dispatch sees
+  must have `render_mode = None` (a `refine_render_modes_from_ast` gap at
+  `start` time) or an earlier handler writes `bypass` without touching L0.
+  §21's "L0 p99 < 1 ms" target is unmeasurable today. Tracked as an open
+  §11 item.
+- **HMR delivers 1/15** — unchanged from the previous report's 0/8. SPEC-14
+  + PERF-08 territory.
+
+The report also now documents that `oxide start` numbers jumped from
+~130 ms to ~640–1100 ms *because the previous report's measurements were
+against a warm OS file cache*; this run started from a clean checkout,
+so the numbers are more honest about first-touch cost.
+
+### 4.5 `docs/architecture.md` (refresh)
+The file was 58 lines and referenced a "V8Host fail-fast stub" that no
+longer exists — the V8 backend runs full workers with `compile_module`
+in-process. Added a "What changed since 2026-10-12" section that covers
+everything from this session's fixes plus the Wave 3 work (`needs_parent`,
+Redis/S3 handlers, socket close:null fix, layout-chain / Component-swap on
+client nav, Playwright E2E). The crate table's `jshost` row is corrected.
+
+### Deferred to a future session
+
+- **Wave 3 item 5 positive arm** — a real `.wasm` string-ABI component
+  fixture (the negative-arm test is committed and load-bearing; the
+  positive-arm WAT was fragile under `wasmtime/wat`).
+- **L0 `bypass`-on-static root cause** — needs a dedicated look at
+  `refine_render_modes_from_ast` at `start` time.
+- **`smoke-app-solid` peer install** — needs `.npmrc` `auto-install-peers`
+  or a CI step.
+
