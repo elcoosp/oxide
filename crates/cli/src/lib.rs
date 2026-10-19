@@ -217,6 +217,14 @@ pub enum CacheOp {
     Inspect,
     Clear,
     Stats,
+    /// SPEC-5D: GC idle + over-cap entries from `.oxide/cache/`. Defaults:
+    /// idle > 7 days, cap = 1 GiB. `--idle-secs` / `--max-bytes` override.
+    Gc {
+        #[arg(long, default_value_t = 7 * 24 * 3600)]
+        idle_secs: u64,
+        #[arg(long, default_value_t = 1024 * 1024 * 1024)]
+        max_bytes: u64,
+    },
 }
 
 /// Entry point used by both `main.rs` and tests.
@@ -2986,25 +2994,60 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // §5.4: a configured `build.remoteCache` makes the precompile cache
     // read-through/write-through against a remote HTTP cache. A missing/failed
     // remote degrades to local-only (open_with_remote falls back).
+    // SPEC-5D: gate remote write on the current git branch. Reads `GIT_BRANCH`
+    // (falls back to `GITHUB_REF_NAME`, `CI_COMMIT_REF_NAME`) and checks against
+    // `build.writeBranches`. When the branch is not trusted, the remote cache is
+    // NOT attached — the build uses the local cache only. This prevents an
+    // untrusted push from poisoning the shared cache with a bad artifact.
+    let branch = std::env::var("GIT_BRANCH")
+        .or_else(|_| std::env::var("GITHUB_REF_NAME"))
+        .or_else(|_| std::env::var("CI_COMMIT_REF_NAME"))
+        .ok();
+    let trusted_branch = match (&cfg.build.remote_cache, &cfg.build.write_branches, &branch) {
+        (Some(_), Some(list), Some(b)) => list.iter().any(|t| t == b),
+        (Some(_), None, _) => {
+            // No explicit list — default trusted: main + release/*.
+            matches!(branch.as_deref(), Some("main") | Some("master"))
+                || branch.as_deref().map(|b| b.starts_with("release/")).unwrap_or(false)
+        }
+        (Some(_), _, None) => {
+            eprintln!(
+                "warn: build.remoteCache configured but no GIT_BRANCH / GITHUB_REF_NAME \
+                 env var; not attaching remote (writeBranches policy)"
+            );
+            false
+        }
+        _ => false,
+    };
     let precompile_cache = {
         let local = precompile_cache::PrecompileCache::open_soft(&rootp);
-        match (&cfg.build.remote_cache, local) {
-            (Some(url), Some(c)) => {
-                let remote: std::sync::Arc<dyn oxide_graph::RemoteCache> =
-                    std::sync::Arc::new(oxide_graph::HttpRemoteCache::new(url.clone()));
-                // Re-open with the remote attached, keeping the local CAS.
-                match precompile_cache::PrecompileCache::open_with_remote(&rootp, remote) {
-                    Ok(rc) => Some(rc),
-                    Err(e) => {
-                        eprintln!(
-                            "warn: remote build cache unavailable ({}); using local only",
-                            e.0.message
-                        );
-                        Some(c)
+        if trusted_branch {
+            match (&cfg.build.remote_cache, local) {
+                (Some(url), Some(c)) => {
+                    let remote: std::sync::Arc<dyn oxide_graph::RemoteCache> =
+                        std::sync::Arc::new(oxide_graph::HttpRemoteCache::new(url.clone()));
+                    match precompile_cache::PrecompileCache::open_with_remote(&rootp, remote) {
+                        Ok(rc) => Some(rc),
+                        Err(e) => {
+                            eprintln!(
+                                "warn: remote build cache unavailable ({}); using local only",
+                                e.0.message
+                            );
+                            Some(c)
+                        }
                     }
                 }
+                (_, l) => l,
             }
-            (_, l) => l,
+        } else {
+            if cfg.build.remote_cache.is_some() {
+                eprintln!(
+                    "cache: remote attached only for trusted branches (writeBranches); \
+                     current branch = {:?}, using local only",
+                    branch
+                );
+            }
+            local
         }
     };
     let tool_version = env!("CARGO_PKG_VERSION");
@@ -3883,6 +3926,60 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     let fp = build_cache::fingerprint(&rootp, "production", r#static);
     if let Err(e) = build_cache::store(&rootp, &fp) {
         eprintln!("warn: could not write build fingerprint: {e}");
+    }
+    // SPEC-5D: GC the on-disk artifact cache after every build. Default
+    // policy: idle > 7 days, cap 1 GiB. Overridable via env (a long-running
+    // CI image would set `OXIDE_CACHE_GC_IDLE_SECS` / `OXIDE_CACHE_GC_MAX_BYTES`).
+    // Best-effort — a gc failure logs but does not fail the build.
+    {
+        let idle_secs: u64 = std::env::var("OXIDE_CACHE_GC_IDLE_SECS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(7 * 24 * 3600);
+        let max_bytes: u64 = std::env::var("OXIDE_CACHE_GC_MAX_BYTES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1024 * 1024 * 1024);
+        let cache_dir = rootp.join(".oxide/cache");
+        if cache_dir.is_dir() {
+            let mut files = Vec::new();
+            walk_files(&cache_dir, &mut files);
+            let now = std::time::SystemTime::now();
+            let idle = std::time::Duration::from_secs(idle_secs);
+            let mut removed = 0usize;
+            let mut kept: Vec<(std::path::PathBuf, u64, std::time::SystemTime)> = Vec::new();
+            for f in &files {
+                if let Ok(meta) = std::fs::metadata(f) {
+                    let is_idle = meta
+                        .modified()
+                        .ok()
+                        .and_then(|m| now.duration_since(m).ok())
+                        .map(|d| d > idle)
+                        .unwrap_or(false);
+                    if is_idle && std::fs::remove_file(f).is_ok() {
+                        removed += 1;
+                    } else if let Ok(m) = meta.modified() {
+                        kept.push((f.clone(), meta.len(), m));
+                    }
+                }
+            }
+            let mut total: u64 = kept.iter().map(|(_, b, _)| *b).sum();
+            if total > max_bytes {
+                kept.sort_by_key(|(_, _, m)| *m);
+                for (path, bytes, _) in &kept {
+                    if total <= max_bytes {
+                        break;
+                    }
+                    if std::fs::remove_file(path).is_ok() {
+                        total = total.saturating_sub(*bytes);
+                        removed += 1;
+                    }
+                }
+            }
+            if removed > 0 {
+                tracing::info!(removed, "cache gc: evicted idle/over-cap entries");
+            }
+        }
     }
     Ok(0)
 }
@@ -7675,6 +7772,59 @@ async fn cmd_cache(root: &str, op: CacheOp, w: Writer<'_>) -> anyhow::Result<i32
                 .sum();
             outln!(w, "files: {}", files.len());
             outln!(w, "total_bytes: {total}");
+        }
+        CacheOp::Gc { idle_secs, max_bytes } => {
+            // SPEC-5D: two-phase GC — first drop entries older than the idle
+            // window, then if still over cap, drop the OLDEST remaining
+            // entries until under `max_bytes`. The pipeline never reads a GC'd
+            // entry back (they are content-addressed; a re-compute re-creates
+            // the same key), so eviction is safe mid-build.
+            let now = std::time::SystemTime::now();
+            let idle = std::time::Duration::from_secs(idle_secs);
+            let mut sizes: Vec<(std::path::PathBuf, u64, std::time::SystemTime)> = files
+                .iter()
+                .filter_map(|f| {
+                    let meta = std::fs::metadata(f).ok()?;
+                    Some((f.clone(), meta.len(), meta.modified().ok()?))
+                })
+                .collect();
+            // Phase 1: idle eviction.
+            let mut idle_removed = 0usize;
+            let mut idle_bytes = 0u64;
+            sizes.retain(|(path, bytes, mtime)| {
+                if now.duration_since(*mtime).map(|d| d > idle).unwrap_or(false) {
+                    if std::fs::remove_file(path).is_ok() {
+                        idle_removed += 1;
+                        idle_bytes += *bytes;
+                    }
+                    false
+                } else {
+                    true
+                }
+            });
+            // Phase 2: cap eviction (oldest first).
+            let mut total: u64 = sizes.iter().map(|(_, b, _)| *b).sum();
+            let mut cap_removed = 0usize;
+            let mut cap_bytes = 0u64;
+            if total > max_bytes {
+                sizes.sort_by_key(|(_, _, m)| *m);
+                for (path, bytes, _) in &sizes {
+                    if total <= max_bytes {
+                        break;
+                    }
+                    if std::fs::remove_file(path).is_ok() {
+                        total = total.saturating_sub(*bytes);
+                        cap_removed += 1;
+                        cap_bytes += *bytes;
+                    }
+                }
+            }
+            outln!(
+                w,
+                "[ok] gc: idle_removed={idle_removed} ({idle_bytes} B), cap_removed={cap_removed} ({cap_bytes} B), remaining={} ({} B)",
+                sizes.len().saturating_sub(cap_removed),
+                total,
+            );
         }
     }
     Ok(0)
