@@ -230,7 +230,11 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
       }
       try {
         if (realRoot) {
-          realRoot.update(realProps(inp))
+          // §7 / §8.4: client navigation to a DIFFERENT route needs a
+          // different Component. The previous signature took props only,
+          // so realRoot.update re-rendered the ORIGINAL page — the URL
+          // changed but the DOM stayed on the old route.
+          realRoot.update(Component, realProps(inp))
           return
         }
         // §8.2: resolve the layout chain first — SSR rendered

@@ -47,17 +47,7 @@ test.afterAll(() => {
   server?.kill('SIGTERM')
 })
 
-// FIXME: client router navigation does not swap the DOM.
-// Diagnostic (2026-10-19): clicking an anchor to `/slow` DOES update
-// `location.href` and DOES fire `GET /__data?route=%2Fslow` (server returns
-// 200), but `root.firstElementChild` is still the home page's `<main>` after
-// 3+ seconds and no `[data-loading-slow]` overlay ever appears. So the
-// router's `onData` handler receives the ODF envelope but never calls
-// `adapter.update(...)`. Root cause is in
-// `packages/oxide/src/client/router.ts` (the `onData`/swap path); needs a
-// dedicated debugging session. Pre-existing bug — masked earlier by the
-// React #418 hydration mismatch this session fixed.
-test.fixme('client navigation shows the loading overlay then the real page', async ({ page }) => {
+test('client navigation shows the loading overlay then the real page', async ({ page }) => {
   const errors: string[] = []
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
   page.on('pageerror', (e) => errors.push(e.message))

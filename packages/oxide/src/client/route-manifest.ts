@@ -205,7 +205,16 @@ function chunkUrl(chunk: string): string {
 export async function componentFor(routeRef: string): Promise<unknown> {
   const src = source
   if (!src) return undefined
-  const key = routeIdFor(routeRef, src.manifest)
+  // §8.2: layouts (`routes/layout`, no `/page` suffix) live in the manifest
+  // under their direct id. `routeIdFor` intentionally only normalizes PAGE
+  // ids (`routes/foo/page` / `routes/index` → `routes/foo/page`), so it
+  // rejects a bare `routes/layout` even though the bundler now emits that
+  // chunk. A direct-key hit takes precedence and makes layouts hydratable —
+  // which lets the client rebuild the server's `<RootLayout><Page/></RootLayout>`
+  // tree instead of wiping the SSR markup with a fresh `createRoot` mount.
+  const directKey =
+    src.manifest.routes[routeRef] !== undefined ? routeRef : undefined
+  const key = directKey ?? routeIdFor(routeRef, src.manifest)
   if (key === undefined) return undefined
   const entry = src.manifest.routes[key]
   if (!entry) return undefined

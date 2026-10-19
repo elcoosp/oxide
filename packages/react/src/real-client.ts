@@ -34,8 +34,12 @@ export interface ReactDomClientLike {
 
 /** Uniform handle the page path drives regardless of framework. */
 export interface RealPageRoot {
-  /** Re-render the current component with fresh props (navigation swap). */
-  update(props: Record<string, unknown>): void
+  /** Re-render with a NEW component + props (navigation swap). A navigation
+   *  to a different route needs a different Component; the closure from
+   *  `mountReactPageRoot` captured the ORIGINAL one, so the previous
+   *  `update(props)` signature re-rendered the old component with new
+   *  props — a client nav never changed the page. */
+  update(Component: unknown, props: Record<string, unknown>): void
   /** Unmount the tree (route teardown / client-root dispose). */
   dispose(): void
 }
@@ -106,8 +110,8 @@ export async function mountReactPageRoot(
   // by wrapping the page then each layout from the inside out. The SSR
   // adapter produces this exact tree; a bare page here throws React #418
   // on the layout markup.
-  function buildTree(p: Record<string, unknown>): unknown {
-    let node: unknown = rt.react.createElement(Component, p)
+  function buildTree(C: unknown, p: Record<string, unknown>): unknown {
+    let node: unknown = rt.react.createElement(C, p)
     for (let i = layouts.length - 1; i >= 0; i--) {
       node = rt.react.createElement(layouts[i].Component, { children: node })
     }
@@ -115,14 +119,14 @@ export async function mountReactPageRoot(
   }
   let root: ReactRootLike
   if (opts.hydrate) {
-    root = rt.client.hydrateRoot(container, buildTree(props))
+    root = rt.client.hydrateRoot(container, buildTree(Component, props))
   } else {
     root = rt.client.createRoot(container)
-    root.render(buildTree(props))
+    root.render(buildTree(Component, props))
   }
   return {
-    update(next: Record<string, unknown>): void {
-      root.render(buildTree(next))
+    update(C: unknown, next: Record<string, unknown>): void {
+      root.render(buildTree(C, next))
     },
     dispose(): void {
       try {

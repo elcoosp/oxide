@@ -2687,15 +2687,24 @@ async fn route_data_response(
     let route_label = route_id
         .map(|r| r.strip_suffix("/page").unwrap_or(r).to_string())
         .unwrap_or_else(|| route_q.clone());
+    // §8.2: emit the layout-id chain so the client re-render can nest the
+    // new page inside the same layout components the SSR rendered it in.
+    // Without this, a client nav hydrates a fresh bare `<Page>` against the
+    // SSR `<RootLayout><Page/></RootLayout>` tree — the DOM shows the OLD
+    // page because `realRoot.update` re-rendered the ORIGINAL Component
+    // with new props instead of swapping in the new route.
+    let layout_ids: Vec<String> = layout_module_paths
+        .iter()
+        .map(|(lid, _)| lid.clone())
+        .collect();
     let payload = serde_json::json!({
         "route": route_label,
         "url": route_q,
         "params": params,
         "data": data,
-        // §8.4 parity extras. `normalizeInput` ignores unknown keys today;
-        // the client re-render slice consumes them.
         "deferred": deferred,
         "locale": locale,
+        "layouts": layout_ids,
     });
     // §9.5 / D11: encode as ODF, the wire format the client decodes.
     let body =

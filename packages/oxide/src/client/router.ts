@@ -202,6 +202,14 @@ export function createRouter(opts: RouterOptions): Router {
     if (typeof d.locale === 'string' && d.locale.length > 0) {
       input.locale = d.locale
     }
+    // §8.2: the layout-id chain the new page nests inside — passed to the
+    // adapter's `update` so the client re-renders `RootLayout(Slow)` matching
+    // the SSR tree instead of a bare page.
+    if (Array.isArray((d as { layouts?: unknown }).layouts)) {
+      input.layouts = (d as { layouts: unknown[] }).layouts.filter(
+        (x): x is string => typeof x === 'string',
+      )
+    }
     return input
   }
 
