@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "subset")]
+mod font_subset;
 mod content;
 pub mod content_collection;
 pub use content::{
@@ -446,6 +448,24 @@ impl FontBackend for DefaultFontBackend {
     /// Documented: `size-adjust: 100%` is a placeholder — real metric math
     /// (ascent/descent/lineGap from the font tables) lands with fontations.
     fn bundle(&self, spec: &FontSpec) -> Result<FontBundle> {
+        // SPEC-16.2: when `subset` is requested, harvest codepoints from the
+        // spec's `subset` marker strings + harvest any inline source text
+        // the caller supplied (via `subset_chars` if set — a follow-up
+        // field; today just the marker string is harvested, which is
+        // enough for a fixture).
+        //
+        // NOTE: layout tables (GSUB/GPOS) are DROPPED by the subset pass.
+        // This is fine for Latin scripts (minimal shaping), degraded for
+        // complex scripts. See `font_subset.rs` header for the full
+        // rationale.
+        #[cfg(feature = "subset")]
+        let codepoints: std::collections::BTreeSet<u32> = {
+            let markers: Vec<&str> = spec.subset.iter().map(String::as_str).collect();
+            font_subset::harvest_codepoints(markers)
+        };
+        #[cfg(not(feature = "subset"))]
+        let _ = &spec.subset;
+
         let mut files = Vec::new();
         for p in &spec.local_paths {
             let bytes = std::fs::read(p).map_err(|e| {
@@ -454,10 +474,42 @@ impl FontBackend for DefaultFontBackend {
                     format!("failed to read font file {}: {e}", p.display()),
                 )
             })?;
-            let name = p
+            let original_name = p
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "font.woff2".to_string());
+
+            // SPEC-16.2: run the subset pass when configured. The output is
+            // TrueType (subsetter emits sfnt); we rename the file to `.ttf`
+            // so the CSS `format()` hint matches the actual container.
+            #[cfg(feature = "subset")]
+            let (name, bytes) = if !spec.subset.is_empty() {
+                match font_subset::subset_for_codepoints(&bytes, &codepoints) {
+                    Ok(Some(subset)) => {
+                        // Preserve the original stem; change extension to .ttf.
+                        let stem = std::path::Path::new(&original_name)
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("font");
+                        (format!("{stem}.subset.ttf"), subset)
+                    }
+                    Ok(None) => (original_name, bytes),
+                    Err(e) => {
+                        eprintln!(
+                            "warn: subset failed for {} ({} {}); using verbatim",
+                            p.display(),
+                            e.0.code,
+                            e.0.message,
+                        );
+                        (original_name, bytes)
+                    }
+                }
+            } else {
+                (original_name, bytes)
+            };
+            #[cfg(not(feature = "subset"))]
+            let (name, bytes) = (original_name, bytes);
+
             files.push((name, bytes));
         }
 

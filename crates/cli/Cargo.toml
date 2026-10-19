@@ -26,7 +26,7 @@ dashmap = { workspace = true }
 oxide-render = { workspace = true }
 oxide-server = { workspace = true }
 tokio-rustls = { workspace = true }
-oxide-assets = { workspace = true }
+oxide-assets = { workspace = true, features = ["subset"] }
 oxide-dev = { workspace = true }
 oxide-plugin = { workspace = true }
 oxide-adapters = { workspace = true }
