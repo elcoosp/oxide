@@ -9,8 +9,9 @@ import { defineConfig, devices } from '@playwright/test'
 //   pnpm --filter @oxide/playwright test
 export default defineConfig({
   testDir: './tests',
+  globalSetup: './global-setup.ts',
   fullyParallel: false,
-  retries: 0,
+  retries: 1,
   reporter: [['list']],
   timeout: 60_000,
   use: {

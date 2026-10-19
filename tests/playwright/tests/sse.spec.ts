@@ -64,7 +64,7 @@ test('GET /api/events streams three `tick N` events with SSE headers', async ({ 
 })
 
 test('browser receives the events progressively (no full-body buffering)', async ({ page }) => {
-  await page.goto('/')
+  await page.goto('http://127.0.0.1:3105/')
   const chunkCount = await page.evaluate(async () => {
     const resp = await fetch('/api/events')
     if (!resp.body) throw new Error('no body')
