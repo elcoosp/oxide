@@ -80,6 +80,25 @@ fn fetch_handler() -> Option<Arc<dyn crate::FetchHandler>> {
 }
 
 thread_local! {
+    /// §6.2 / §15: the plugin `transform` hook a worker's `compile_module`
+    /// op applies before the Oxc passes. Mirrors `CACHE_HANDLER` /
+    /// `FETCH_HANDLER`: a `JsRuntime` is `!Send`, so a thread-local is the
+    /// right scope, and a fresh worker installs it before any user module
+    /// runs (`spawn_v8_worker`).
+    static TRANSFORM_HANDLER: RefCell<Option<Arc<dyn crate::TransformHandler>>> =
+        const { RefCell::new(None) };
+}
+
+/// Install the transform handler for this V8 worker thread.
+pub fn set_transform_handler(handler: Option<Arc<dyn crate::TransformHandler>>) {
+    TRANSFORM_HANDLER.with(|c| *c.borrow_mut() = handler);
+}
+
+fn transform_handler() -> Option<Arc<dyn crate::TransformHandler>> {
+    TRANSFORM_HANDLER.with(|c| c.borrow().clone())
+}
+
+thread_local! {
     /// PERF-03: the in-flight streaming render's promise, stashed by
     /// `v8_dispatch` and driven by the worker loop after the `Chunked` stream
     /// has been handed to the caller. `None` when no stream render is running.
@@ -311,6 +330,69 @@ pub async fn op_oxide_cache_tag(#[string] tag: String) -> String {
     h.invalidate_tag(&tag, true).await.unwrap_or(0).to_string()
 }
 
+/// §6.2 / §15: the plain (non-`#[op2]`) implementation of the V8
+/// `compile_module` op. Extracted so it can be unit-tested directly —
+/// `#[op2]` turns the decorated wrapper into a 0-arg `OpDecl` generator,
+/// which cannot be invoked as a normal async function.
+pub async fn compile_module_impl(path: String, code: String, lang: String) -> String {
+    let source = if let Some(h) = transform_handler() {
+        match h.transform(&path, &code).await {
+            Ok(s) => s,
+            Err(e) => {
+                return serde_json::json!({
+                    "code": e.0.code,
+                    "error": format!("plugin transform failed for {path}: {}", e.0.message),
+                })
+                .to_string();
+            }
+        }
+    } else {
+        code
+    };
+    let lang_str = match lang.as_str() {
+        "tsx" => "tsx",
+        "jsx" => "jsx",
+        "js" | "mjs" => "mjs",
+        _ => "ts",
+    };
+    let input = oxide_compiler::TransformInput {
+        path: path.clone(),
+        code: source,
+        env: oxide_compiler::Env::Ssr,
+        lang: lang_str,
+        build_secret: String::new(),
+        dev: true,
+        jsx_import_source: None,
+    };
+    match oxide_compiler::OxcTransformer.transform_passes_only(&input) {
+        Ok(out) => serde_json::json!({ "code": out }).to_string(),
+        Err(e) => serde_json::json!({
+            "code": e.0.code,
+            "error": format!("compile_module failed for {path}: {}", e.0.message),
+        })
+        .to_string(),
+    }
+}
+
+/// §6.2 / §15: compile a user server module (TS/TSX/MJS) — the V8 parity
+/// of the Node worker's `compile_server_module` path. Applies the plugin
+/// `transform` hook FIRST (matching the Node `Op::CompileModule` arm), then
+/// runs the Oxc passes; the emitted code stays in source form (the loader
+/// transports it as `.ts`).
+///
+/// Returns a JSON object: `{ "code": "<compiled>" }` on success,
+/// `{ "code": "<ERR-CODE>", "error": "<message>" }` on failure. The
+/// prelude throws when `error` is present.
+#[op2]
+#[string]
+pub async fn op_oxide_compile_module(
+    #[string] path: String,
+    #[string] code: String,
+    #[string] lang: String,
+) -> String {
+    compile_module_impl(path, code, lang).await
+}
+
 fn base64_encode(bytes: &[u8]) -> String {
     use base64::Engine as _;
     base64::engine::general_purpose::STANDARD.encode(bytes)
@@ -339,5 +421,39 @@ pub fn op_decls() -> Vec<deno_core::OpDecl> {
         op_oxide_cache_tag(),
         op_oxide_fetch(),
         op_oxide_stream_write(),
+        // Appended in §6.2 / §15 — a snapshot built before this op still
+        // restores (deno_core only compares against the baked table; the
+        // new op simply has no external reference until the next build).
+        op_oxide_compile_module(),
     ]
+}
+
+
+#[cfg(test)]
+mod compile_module_tests {
+    use super::*;
+
+    /// §6.2 / §15: the V8 `compile_module` op runs the Oxc passes over a
+    /// raw TS module. Load-bearing for the prelude bridge — if the op were
+    /// missing or its ABI wrong, this test fails.
+    #[tokio::test]
+    async fn op_oxide_compile_module_roundtrips() {
+        set_transform_handler(None); // explicit: no plugin transform
+        let out = compile_module_impl(
+            "src/routes/index/page.server.ts".into(),
+            "export const n: number = 1;\nexport async function load() { return { n }; }\n".into(),
+            "ts".into(),
+        )
+        .await;
+        let v: serde_json::Value = serde_json::from_str(&out).expect("JSON response");
+        assert!(
+            v.get("error").is_none(),
+            "no error on a clean TS module: {v}"
+        );
+        let code = v.get("code").and_then(|c| c.as_str()).expect("code field");
+        assert!(
+            code.contains("load"),
+            "load fn survives the Oxc passes: {code}"
+        );
+    }
 }

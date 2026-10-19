@@ -1100,6 +1100,20 @@ globalThis.__oxide_op_request = async (op, args = {}) => {
       const raw = await Deno.core.ops.op_oxide_cache_tag(String(args.tag ?? ''));
       return Number(raw) || 0;
     }
+    case 'compile_module': {
+      // §6.2 / §15: same shape the Node worker's `compile_server_module`
+      // expects. Returns `{ code }` or throws on `error`.
+      const raw = await Deno.core.ops.op_oxide_compile_module(
+        String(args.path ?? ''),
+        String(args.code ?? ''),
+        String(args.lang ?? 'ts'),
+      );
+      const v = JSON.parse(raw);
+      if (v && typeof v.error === 'string') {
+        throw new Error(v.error);
+      }
+      return v;
+    }
     default:
       throw new Error(
         'oxide_op_request: op `' + String(op) + '` is not implemented on the V8 backend');
@@ -1623,6 +1637,7 @@ fn spawn_v8_worker(
     snapshot: Option<&'static [u8]>,
     cache: Option<Arc<dyn oxide_cache::CacheHandler>>,
     fetch_handler: Option<Arc<dyn FetchHandler>>,
+    transform_handler: Option<Arc<dyn crate::TransformHandler>>,
 ) -> Result<Arc<V8WorkerHandle>> {
     let (tx, mut rx) = mpsc::channel::<V8Msg>(64);
     let (init_tx, init_rx) = std::sync::mpsc::channel::<Result<()>>();
@@ -1654,6 +1669,7 @@ fn spawn_v8_worker(
             // see it. Thread-local because a `JsRuntime` is `!Send`.
             crate::v8_ops::set_cache_handler(cache);
             crate::v8_ops::set_fetch_handler(fetch_handler);
+            crate::v8_ops::set_transform_handler(transform_handler);
             let local = tokio::task::LocalSet::new();
             local.block_on(&rt, async move {
                 // The one shared extension: bootstrap js_file + oxide ops.
@@ -2247,6 +2263,7 @@ impl V8Host {
         snapshot: Option<&'static [u8]>,
         cache: Option<std::sync::Arc<dyn oxide_cache::CacheHandler>>,
         fetch_handler: Option<std::sync::Arc<dyn FetchHandler>>,
+        transform_handler: Option<std::sync::Arc<dyn crate::TransformHandler>>,
     ) -> Result<Arc<V8Pool>> {
         let mut workers = Vec::with_capacity(cfg.size.max(1));
         for _ in 0..cfg.size.max(1) {
@@ -2254,6 +2271,7 @@ impl V8Host {
                 snapshot,
                 cache.clone(),
                 fetch_handler.clone(),
+                transform_handler.clone(),
             )?);
         }
         Ok(Arc::new(V8Pool {
@@ -2266,6 +2284,7 @@ impl V8Host {
             snapshot,
             cache_handler: cache,
             fetch_handler,
+            transform_handler,
         }))
     }
 }
@@ -2277,6 +2296,7 @@ impl JsHost for V8Host {
             self.static_snapshot(),
             self.cache_handler.clone(),
             self.fetch_handler.clone(),
+            self.transform_handler.clone(),
         )
         .map(|p| p as Arc<dyn Pool>)
     }
@@ -2286,6 +2306,7 @@ impl JsHost for V8Host {
             self.static_snapshot(),
             self.cache_handler.clone(),
             self.fetch_handler.clone(),
+            self.transform_handler.clone(),
         )
         .map(|p| p as Arc<dyn Pool>)
     }
@@ -2312,6 +2333,9 @@ pub struct V8Pool {
     cache_handler: Option<std::sync::Arc<dyn oxide_cache::CacheHandler>>,
     /// PERF-05: the fetch handler every worker (and each replacement) installs.
     fetch_handler: Option<std::sync::Arc<dyn FetchHandler>>,
+    /// §6.2 / §15: the plugin transform handler every worker's
+    /// `compile_module` op applies before the Oxc passes.
+    transform_handler: Option<std::sync::Arc<dyn crate::TransformHandler>>,
 }
 
 impl V8Pool {
@@ -2338,6 +2362,7 @@ impl V8Pool {
         snapshot: Option<&'static [u8]>,
         cache: Option<std::sync::Arc<dyn oxide_cache::CacheHandler>>,
         fetch_handler: Option<std::sync::Arc<dyn FetchHandler>>,
+        transform_handler: Option<std::sync::Arc<dyn crate::TransformHandler>>,
     ) {
         let old = {
             let guard = workers.read().unwrap_or_else(|p| p.into_inner());
@@ -2355,7 +2380,7 @@ impl V8Pool {
         }
 
         // Spawn fresh worker BEFORE signalling the old one (§4.3).
-        let fresh = match spawn_v8_worker(snapshot, cache, fetch_handler) {
+        let fresh = match spawn_v8_worker(snapshot, cache, fetch_handler, transform_handler) {
             Ok(w) => w,
             Err(_) => {
                 // Could not replace — clear the retire flag so the pool can
@@ -2459,8 +2484,9 @@ impl Pool for V8Pool {
                 let snapshot = self.snapshot;
                 let cache = self.cache_handler.clone();
                 let fetch = self.fetch_handler.clone();
+                let transform = self.transform_handler.clone();
                 tokio::spawn(async move {
-                    V8Pool::spawn_replacement(workers, counters, worker_idx, snapshot, cache, fetch)
+                    V8Pool::spawn_replacement(workers, counters, worker_idx, snapshot, cache, fetch, transform)
                         .await
                 });
             }
@@ -2511,9 +2537,10 @@ impl Pool for V8Pool {
                     let snapshot = self.snapshot; // Copy (&'static [u8])
                     let cache = self.cache_handler.clone();
                     let fetch = self.fetch_handler.clone();
+                    let transform = self.transform_handler.clone();
                     tokio::spawn(async move {
                         V8Pool::spawn_replacement(
-                            workers, counters, worker_idx, snapshot, cache, fetch,
+                            workers, counters, worker_idx, snapshot, cache, fetch, transform,
                         )
                         .await
                     });
