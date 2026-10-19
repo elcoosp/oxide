@@ -4481,3 +4481,70 @@ async fn audit_no_lockfile_is_a_clear_error() {
     assert!(out.contains("AUDIT-LOCKFORMAT"), "coded: {out}");
 }
 
+
+// ─── §5-A: build_graph snapshot tests ─────────────────────────────────────
+
+#[tokio::test]
+async fn build_writes_graph_snapshot() {
+    let (_d, root) = fixture_project();
+    let (code, out) = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
+    assert_eq!(code, 0, "build: {out}");
+    assert!(out.contains("graph:"), "graph line: {out}");
+    let snap_path = root.join(".oxide/graph.json");
+    assert!(snap_path.is_file(), "snapshot written");
+    let snap: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&snap_path).unwrap()).unwrap();
+    assert_eq!(snap["version"], "v1");
+    let n = snap["node_count"].as_u64().unwrap();
+    assert!(n > 0, "at least one node recorded (got {n})");
+    // The build consumed the page sources — at least a module node exists.
+    let kinds: Vec<&str> = snap["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["kind"].as_str())
+        .collect();
+    assert!(kinds.iter().any(|k| *k == "module"), "module nodes present");
+    assert!(kinds.iter().any(|k| *k == "chunk"), "chunk nodes present");
+    assert!(kinds.iter().any(|k| *k == "manifest"), "manifest nodes present");
+}
+
+#[tokio::test]
+async fn second_build_recomputes_nothing() {
+    let (_d, root) = fixture_project();
+    let (code1, _out1) = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
+    assert_eq!(code1, 0);
+    let first: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(root.join(".oxide/graph.json")).unwrap(),
+    )
+    .unwrap();
+    let first_nodes = first["node_count"].as_u64().unwrap();
+    let first_recomputed = first["recomputed_count"].as_u64().unwrap();
+    // A cold build recomputes every node.
+    assert_eq!(first_recomputed, first_nodes, "cold: all recomputed");
+
+    // Second build without any source change: the fingerprint early-cutoff
+    // makes `cmd_build` return before writing a new snapshot. To exercise
+    // the graph path itself (not the fingerprint skip), force a rebuild
+    // and assert every node SURVIVED (0 recomputed).
+    let (code2, out2) = {
+        // Set OXIDE_FORCE_BUILD=1 so the fingerprint skip does not fire.
+        unsafe { std::env::set_var("OXIDE_FORCE_BUILD", "1"); }
+        let r = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
+        unsafe { std::env::remove_var("OXIDE_FORCE_BUILD"); }
+        r
+    };
+    assert_eq!(code2, 0, "forced rebuild: {out2}");
+    let second: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(root.join(".oxide/graph.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(second["node_count"].as_u64().unwrap(), first_nodes);
+    assert_eq!(
+        second["recomputed_count"].as_u64().unwrap(),
+        0,
+        "no source change → no node hash changed: {}",
+        second["recomputed_count"],
+    );
+    assert_eq!(second["previous_node_count"].as_u64().unwrap(), first_nodes);
+}
