@@ -877,15 +877,23 @@ impl SocketHost {
                 .collect(),
             _ => Vec::new(),
         };
-        let close = v.get("close").and_then(|c| {
-            let code = c.get("code").and_then(|x| x.as_u64()).unwrap_or(1000) as u16;
-            let reason = c
-                .get("reason")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .to_string();
-            Some((code, reason))
-        });
+        let close = match v.get("close") {
+            // Worker returns `close: null` for a phase that does NOT want
+            // to end the socket (the smoke app's `open` calls `send` only).
+            // Treat any non-object / missing `code` as `None` so the read
+            // loop continues.
+            Some(serde_json::Value::Object(obj)) => {
+                obj.get("code").and_then(|c| c.as_u64()).map(|code| {
+                    let reason = obj
+                        .get("reason")
+                        .and_then(|r| r.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    (code as u16, reason)
+                })
+            }
+            _ => None,
+        };
         Ok(SocketOutcome { sends, close })
     }
 }
