@@ -4290,3 +4290,67 @@ client nav, Playwright E2E). The crate table's `jshost` row is corrected.
 - **`smoke-app-solid` peer install** — needs `.npmrc` `auto-install-peers`
   or a CI step.
 
+
+### HMR root cause (SPEC-14 scope) — 2026-10-19
+
+The HMR bench reports 1/15 (previously 0/8). Two separate issues were
+investigated in one session:
+
+**Issue 1 — FIXED: L0 cache shadowed every edit in dev.**
+`oxide dev` built an L0 response cache and seeded it from
+`dist/server/l0-seed.json` at boot. Every subsequent `GET /` hit L0
+before reaching the render path — so an edited page never appeared in
+the response regardless of the watcher. The watcher *was* seeing the
+edit (log: `file change ev=Created(...page.tsx)`), *was* invalidating
+framework modules, *was* publishing HMR messages — but L0 short-circuited
+the render phase entirely. Fixed by skipping L0 construction when
+`start_server_inner_full` gets `hmr: Some(_)` (dev-mode signal); prod
+keeps L0 + seed unchanged. **This is necessary but not sufficient — see
+Issue 2.**
+
+**Issue 2 — NOT FIXED: transitive imports are not re-resolved.**
+After the L0 fix, dispatch *does* re-render every request, and the trace
+shows `render;dur=1-3ms` on every response — but the served HTML still
+carries the pre-edit content. Root cause found by following the worker's
+import chain:
+
+- `dispatchFrameworkRender` does `import(versioned(pathToFileURL(config).href))`,
+  i.e. `oxide.config.ts?v=<moduleGeneration>` — **versioned correctly**.
+- But the config file does `import Home from './src/routes/index/page.tsx'`
+  — a **bare static import with no query string**.
+- Node ESM caches `file:///.../page.tsx` under that exact URL. Bumping the
+  config's `?v=` produces a fresh *config* module, but its transitive
+  import of `page.tsx` still resolves to the cached copy.
+- The **loader** path (`loader:run`) works because `compileServerModule`
+  writes a **content-hashed temp file** (`.<name>.<hash>.oxide.ts`) — that
+  URL is unique per edit, so it is never cached.
+- The **renderer** path has no equivalent content-hashing for the page
+  component, so the adapter's `componentFor` always returns the cached
+  module.
+
+**Scope of the fix (SPEC-14):** this is a full "module-graph versioning"
+problem, not a one-line change. Options, ordered by effort:
+
+1. **Config-loader transform** (~half day): the worker transpiler rewrites
+   every static import in `.tsx`/`.ts` config files into a `?v=<generation>`
+   dynamic import. Touches the worker's `register-hooks.mjs` +
+   `tsx-loader.mjs`. Every config pattern (default import, named import,
+   re-export) must be covered.
+2. **Content-hashed component temp files** (~half day): the dev server
+   writes every page/layout component to `.<name>.<hash>.oxide.ts` before
+   handing the config to the worker, and the transpiler's resolver maps
+   `'./src/routes/index/page.tsx'` → the hashed temp path. Mirrors what
+   `compileServerModule` does for loaders.
+3. **Node custom loader** (~1 day): `--experimental-loader` that bypasses
+   the module cache for files under `src/routes/` during dev. Highest
+   complexity, most brittle across Node versions.
+4. **Documentation-only**: tell users to author `componentFor` with a
+   dynamic import tagged with the generation. Cheapest, but pushes the
+   work onto every project author.
+
+**Recommendation for the next session:** option 2 — it reuses the proven
+`compileServerModule` mechanism (content-hashed temp files, already
+working for loaders) and requires no user-config change. Estimated half
+a day; the visible HMR bench will jump from 1/15 to ~15/15 once landed.
+Tracked separately, not attempted in the current session.
+

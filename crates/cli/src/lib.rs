@@ -6882,11 +6882,20 @@ async fn start_server_inner_full(
             std::sync::Arc::new(tier)
         }
     };
-    let l0 = Some(std::sync::Arc::new(l0_cache::L0Cache::new(
-        l0_tier,
-        build_id.clone(),
-        std::time::Duration::from_secs(60),
-    )));
+    // §13 / HMR: `dev` must always re-render — a stale L0 entry would shadow
+    // every file edit (the watcher bumps the worker generation but L0 short-
+    // circuits the render path entirely). `hmr: Some(_)` is the "dev mode"
+    // signal in this function (production call sites pass `None`).
+    let is_dev = hmr.is_some();
+    let l0 = if is_dev {
+        None
+    } else {
+        Some(std::sync::Arc::new(l0_cache::L0Cache::new(
+            l0_tier,
+            build_id.clone(),
+            std::time::Duration::from_secs(60),
+        )))
+    };
     // PERF-04: seed L0 from the build manifest so a prerendered route is an
     // L0 hit on the very first request (no warm-up miss). A missing manifest
     // (dev, or a build with no prerendered pages) is a no-op.

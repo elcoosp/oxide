@@ -69,8 +69,10 @@ ms_vals=()
 timeouts=0
 for i in $(seq 1 "$N"); do
     # Revert any previous edit, then set the new one: <h1>Home</h1> -> <h1>Home <i></h1>
-    sed -i '' -E 's|<h1>Home[^<]*</h1>|<h1>Home</h1>|' "$PAGE"
-    sed -i '' -E "s|<h1>Home</h1>|<h1>Home $i</h1>|" "$PAGE"
+    # Portable in-place edit: BSD sed needs `-i ''`, GNU sed needs `-i`
+    # with no arg — `perl -i -pe` is the common denominator.
+    perl -i -pe 's|<h1>Home[^<]*</h1>|<h1>Home</h1>|' "$PAGE"
+    perl -i -pe "s|<h1>Home</h1>|<h1>Home $i</h1>|" "$PAGE"
     marker="Home $i"
 
     t0=$(now_ms)
