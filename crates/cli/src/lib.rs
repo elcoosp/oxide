@@ -1020,6 +1020,14 @@ async fn ensure_dev_client_bundle(
                 loading_entries
                     .insert(e.id.0.clone(), rootp.join(&cfg.routes.dir).join(&e.file));
             }
+            // §8.2: layouts must be client entries too — the client hydrate
+            // rebuilds the server's `<RootLayout><Page/></RootLayout>` tree
+            // via `componentFor`, which needs the layout chunk in
+            // `client.manifest.json`. Without this the client can only
+            // hydrate the bare page and React reports #418.
+            oxide_router::RouteKind::Layout => {
+                entries.insert(e.id.0.clone(), rootp.join(&cfg.routes.dir).join(&e.file));
+            }
             oxide_router::RouteKind::Page | oxide_router::RouteKind::Endpoint => {
                 entries.insert(e.id.0.clone(), rootp.join(&cfg.routes.dir).join(&e.file));
             }
@@ -2494,6 +2502,11 @@ async fn write_prerender(
             "url": url_path,
             "params": params,
             "data": data,
+            // §8.2: the layout chain the client must re-nest on hydration
+            // (SSR rendered `<RootLayout><Page/></RootLayout>`; without
+            // this, `hydrateRoot` sees the layout markup as unexpected and
+            // throws React #418).
+            "layouts": layouts,
         });
         let odf =
             oxide_odf::encode_to_bytes(&oxide_odf::Value::from_json(&payload)).unwrap_or_default();
@@ -2793,6 +2806,12 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             oxide_router::RouteKind::Page
                 | oxide_router::RouteKind::Endpoint
                 | oxide_router::RouteKind::Loading
+                // §8.2: layouts are client entries too — the client hydrate
+                // rebuilds the server's `<RootLayout><Page/></RootLayout>`
+                // tree via `componentFor`, which needs the layout chunk in
+                // `client.manifest.json`. Without this the client can only
+                // hydrate a bare page and React reports #418.
+                | oxide_router::RouteKind::Layout
         ) {
             if matches!(e.kind, oxide_router::RouteKind::Loading) {
                 loading_entries.insert(e.id.0.clone(), rootp.join(&cfg.routes.dir).join(&e.file));
@@ -4267,14 +4286,28 @@ fn build_dispatch(
             Option<String>,
             bool,
         ) = match &matched {
-            Some(m) => (
-                Some(routes_root.join(m.route.file.with_file_name("page.server.ts"))),
-                Some(m.route.id.0.clone()),
-                m.params.clone(),
-                m.route.has_server_module,
-                m.route.render_mode.clone(),
-                m.route.needs_parent,
-            ),
+            Some(m) => {
+                let has_srv = m.route.has_server_module;
+                // BUG: only produce a module_path when the route actually
+                // declares a server module. Setting it unconditionally made
+                // `route_data_response` (and any consumer that keyed on
+                // `module_path.is_some()` rather than `has_server_module`)
+                // fire the loader for routes whose sibling `page.server.ts`
+                // does not exist — a 500 with `ENOENT` from `/__data`.
+                let mp = if has_srv {
+                    Some(routes_root.join(m.route.file.with_file_name("page.server.ts")))
+                } else {
+                    None
+                };
+                (
+                    mp,
+                    Some(m.route.id.0.clone()),
+                    m.params.clone(),
+                    has_srv,
+                    m.route.render_mode.clone(),
+                    m.route.needs_parent,
+                )
+            }
             None => (None, None, std::collections::BTreeMap::new(), false, None, false),
         };
 
@@ -5285,7 +5318,7 @@ fn build_dispatch(
                 // §8.2: hand the layout chain to the adapter so it can
                 // nest the page. The adapter renders
                 // `L1( L2( ...( page ) ) )` using `componentFor(layoutId)`.
-                input.layouts = effective_layouts;
+                input.layouts = effective_layouts.clone();
                 // §10.2 step 5: nearest ancestor `error.tsx` — the adapter
                 // renders it on an SSR throw instead of the generic 500.
                 input.error_route_id = error_route_id.clone();
@@ -5345,6 +5378,12 @@ fn build_dispatch(
                                 "url": odf_url,
                                 "params": odf_params,
                                 "data": odf_data,
+                                // §8.2: the layout chain the client must re-nest
+                                // on hydration — SSR rendered `<RootLayout>
+                                // <Page/></RootLayout>`; without this, the
+                                // client hydrate produces a bare page and
+                                // React reports mismatch #418.
+                                "layouts": effective_layouts,
                             });
                             let odf =
                                 oxide_odf::encode_to_bytes(&oxide_odf::Value::from_json(&payload))

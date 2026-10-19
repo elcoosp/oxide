@@ -185,7 +185,14 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
   /** The props a REAL page component receives — the same shape the server's
    * real SSR path (`makeRealAdapter`) renders with, so hydration matches. */
   function realProps(inp: ClientInput): Record<string, unknown> {
-    return { route: inp.route, url: inp.url, params: inp.params, data: inp.data }
+    return {
+      route: inp.route,
+      url: inp.url,
+      params: inp.params,
+      data: inp.data,
+      // §8.2: the layout chain the page nests inside (outermost first).
+      layouts: inp.layouts ?? [],
+    }
   }
 
   /** Synchronous IR fallback paint (also the real path's failure mode). */
@@ -226,13 +233,40 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
           realRoot.update(realProps(inp))
           return
         }
-        // First real mount: hydrate the SSR markup when present, fresh-mount
-        // into an empty root (SPA mode).
+        // §8.2: resolve the layout chain first — SSR rendered
+        // `<RootLayout><Page/></RootLayout>`; the client must hydrate the
+        // same tree or React reports mismatch #418.
+        const layoutComponents: Array<{ id: string; Component: unknown }> = []
+        for (const lid of inp.layouts ?? []) {
+          const lc = await componentFor(lid)
+          if (lc) layoutComponents.push({ id: lid, Component: lc })
+        }
+        if (disposed || seq !== renderSeq) return
+        // Whether we can `hydrateRoot` depends on whether we can rebuild the
+        // EXACT server tree. That needs every layout's client component;
+        // today only `routes/*/page` entries are in the client manifest, so
+        // a route with a layout yields an empty `layoutComponents` and a
+        // bare-page client tree — `hydrateRoot` sees the server's layout
+        // markup as unexpected and throws React #418. Until layouts are
+        // bundled client-side, mount fresh instead of hydrating: the DOM
+        // ends up correct (client tree wins), there is no mismatch, and
+        // custom elements (`<ox-island>`) survive so island hydration still
+        // finds its hosts.
+        const declaredLayouts = inp.layouts ?? []
+        const canHydrate =
+          declaredLayouts.length === layoutComponents.length &&
+          (root.innerHTML ?? '') !== ''
+        // First real mount: hydrate when the SSR markup can be reproduced,
+        // fresh-mount otherwise (SPA mode, or a layout chain the client
+        // manifest cannot supply).
         const mounted = await mountReactPageRoot(
           root as unknown as Element,
           Component,
           realProps(inp),
-          { hydrate: (root.innerHTML ?? '') !== '' },
+          {
+            hydrate: canHydrate,
+            layouts: layoutComponents,
+          },
         )
         if (disposed || seq !== renderSeq) {
           mounted?.dispose()

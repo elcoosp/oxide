@@ -62,10 +62,17 @@ test('server HTML carries the island markup and boot script', async ({ request }
   expect(html).toMatch(/<script type="module" src="\/client\/[^"]+" nonce="[a-f0-9]+"><\/script>/)
 })
 
-// FIXME: client boot currently throws `TypeError: Illegal invocation`
-// before hydration completes, so `data-ox-hydrated` never flips to `done`.
-// The wire-level island assertions above (island.spec.ts:51) still cover
-// the markup shape. Quarantined until the boot bug is fixed.
+// FIXME: island hydration scheduler does not fire in this build.
+// Diagnostic (2026-10-19): the client boot bundle contains `hydrateIslands`,
+// the island host (`<ox-island data-ox-chunk="Counter">`) is in the DOM, the
+// chunk loader resolves (`Counter` is in the registry map), and there are
+// ZERO console errors — but `data-ox-hydrated` is never set to `done`,
+// meaning the strategy scheduler never invokes hydration. Root cause is in
+// `packages/oxide/src/client/islands.ts` (the `schedule()` branch for
+// `strategy: "load"`); needs a dedicated debugging session with a browser
+// console. Pre-existing bug — masked earlier by the React #418 hydration
+// mismatch this session fixed. The wire-level island assertion (island.spec.ts:51)
+// still covers the markup shape.
 test.fixme('browser hydrates the counter island and a click advances it', async ({ page }) => {
   const errors: string[] = []
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })

@@ -147,7 +147,7 @@ export function bootWithRouter(
   const doc = opts.doc ?? (globalThis as { document?: Document }).document
   if (!doc) return () => {}
   const w = globalThis as {
-    __oxide?: { route?: string; data?: string }
+    __oxide?: { route?: string; data?: string; layouts?: string[] }
     __oxideBoot?: BootState
     location?: { pathname: string; search: string }
   }
@@ -180,12 +180,17 @@ export function bootWithRouter(
   let payloadData: unknown
   if (root && payload) {
     let data: unknown = {}
+    // §8.2: the ODF envelope carries `{ route, params, data, layouts }`. The
+    // `layouts` field is required to build the same component tree the
+    // server rendered (`<RootLayout><Page/></RootLayout>`) — without it
+    // React reports a mismatch (#418) on the server markup.
+    let decoded: Record<string, unknown> | undefined
     if (typeof payload.data === 'string' && payload.data.length > 0) {
       try {
         const bin = atob(payload.data)
         const bytes = new Uint8Array(bin.length)
         for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-        const decoded = decodeOdf(bytes) as Record<string, unknown>
+        decoded = decodeOdf(bytes) as Record<string, unknown>
         data = decoded && typeof decoded === 'object' && 'data' in decoded ? decoded.data : decoded
       } catch (e) {
         // Not fatal: the page still hydrates with empty data; navigation works.
@@ -193,11 +198,20 @@ export function bootWithRouter(
       }
     }
     payloadData = data
+    const odfLayouts =
+      decoded && Array.isArray((decoded as { layouts?: unknown }).layouts)
+        ? ((decoded as { layouts?: unknown }).layouts as string[])
+        : []
+    const jsLayouts = Array.isArray((payload as { layouts?: unknown }).layouts)
+      ? ((payload as { layouts?: unknown }).layouts as string[])
+      : []
+    const layouts = odfLayouts.length > 0 ? odfLayouts : jsLayouts
     const input = {
       route: payload.route ?? '/',
       url: (w.location?.pathname ?? '/') + (w.location?.search ?? ''),
       params: {} as Record<string, string>,
       data,
+      layouts,
     }
     try {
       adapter.hydrate(root, input as never)

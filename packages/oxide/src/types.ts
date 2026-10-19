@@ -74,6 +74,13 @@ export interface ClientInput {
   params: Record<string, string | string[]>
   data: unknown
   /**
+   * §8.2: the layout chain the page nests inside (outermost first). The SSR
+   * rendered `<RootLayout><Page/></RootLayout>`; the client hydrate must
+   * produce the same tree or React reports a mismatch (#418). `boot.ts`
+   * reads this from `window.__oxide.layouts` (emitted by the server).
+   */
+  layouts?: string[]
+  /**
    * §7.1 / §9.2: resolved `defer()` values for this route, keyed by the
    * numeric id the loader assigned. `/__data` carries them so a client-side
    * navigation resolves its defer slots exactly as the SSR bootstrap does.

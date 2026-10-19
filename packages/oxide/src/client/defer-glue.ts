@@ -128,11 +128,15 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
   // as `{ "__oxide_deferred_error": "..." }` — recognized here and rejects
   // the slot instead of resolving it to a shape the page did not expect.
   const resolveFromScripts = (): void => {
-    const querySelectorAll = (doc as unknown as {
+    // Call querySelectorAll ON `doc` — extracting it as a bare value loses
+    // its `this`, and Chrome throws `TypeError: Illegal invocation` on the
+    // next call. The other call sites in the tree already call it on the
+    // receiver directly; only this one detached it.
+    const qsa = (doc as unknown as {
       querySelectorAll?: (sel: string) => ArrayLike<Element>
     }).querySelectorAll
-    if (typeof querySelectorAll !== 'function') return
-    const scripts = querySelectorAll('script[type="application/oxide-deferred"]')
+    if (typeof qsa !== "function") return
+    const scripts = qsa.call(doc as unknown as Node, 'script[type="application/oxide-deferred"]')
     for (let i = 0; i < scripts.length; i++) {
       const script = scripts[i] as unknown as { textContent?: string | null }
       const raw = script.textContent ?? ''

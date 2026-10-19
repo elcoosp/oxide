@@ -67,12 +67,7 @@ test('GET /_oxide/health returns 200 with a small JSON body', async ({ request }
   expect(Number(r.headers()['content-length'])).toBeGreaterThan(0)
 })
 
-// FIXME: client hydration currently throws `TypeError: Illegal invocation`
-// inside `__boot__.js` (see WORKLOG 2026-10-19). The SSR HTML is correct and
-// the `h1` renders, but the console-error assertion fires. Quarantined until
-// the boot bug is fixed; the SSR assertions above (smoke.spec.ts:56) still
-// cover the wire-level contract end-to-end.
-test.fixme('browser renders the same HTML the server sent', async ({ page }) => {
+test('browser renders the same HTML the server sent', async ({ page }) => {
   const consoleErrors: string[] = []
   page.on('console', (m) => {
     if (m.type() === 'error') consoleErrors.push(m.text())

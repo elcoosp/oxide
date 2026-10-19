@@ -69,11 +69,7 @@ test('middleware `redirect` short-circuits with 307 + location', async ({ reques
   expect(r.headers()['location']).toBe('/login')
 })
 
-// FIXME: depends on client hydration which currently throws
-// `TypeError: Illegal invocation` in `__boot__.js`. The HTTP+SSR assertions
-// above (middleware.spec.ts:50 / :63) prove middleware locals reach the
-// loader and the redirect short-circuits — those are the spec's core claims.
-test.fixme('browser renders the middleware-fed greeting', async ({ page }) => {
+test('browser renders the middleware-fed greeting', async ({ page }) => {
   const errors: string[] = []
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
   page.on('pageerror', (e) => errors.push(e.message))

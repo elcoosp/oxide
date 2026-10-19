@@ -49,7 +49,7 @@ test.afterAll(() => {
 })
 
 test('GET /api/events streams three `tick N` events with SSE headers', async ({ request }) => {
-  const r = await request.get('/api/events')
+  const r = await request.get('http://127.0.0.1:3105/api/events')
   expect(r.status()).toBe(200)
   expect(r.headers()['content-type']).toContain('text/event-stream')
   expect(r.headers()['cache-control']).toContain('no-cache')
@@ -66,7 +66,7 @@ test('GET /api/events streams three `tick N` events with SSE headers', async ({ 
 test('browser receives the events progressively (no full-body buffering)', async ({ page }) => {
   await page.goto('http://127.0.0.1:3105/')
   const chunkCount = await page.evaluate(async () => {
-    const resp = await fetch('/api/events')
+    const resp = await fetch('http://127.0.0.1:3105/api/events')
     if (!resp.body) throw new Error('no body')
     const reader = resp.body.getReader()
     const dec = new TextDecoder()

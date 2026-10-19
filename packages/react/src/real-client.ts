@@ -93,20 +93,36 @@ export async function mountReactPageRoot(
   container: Element,
   Component: unknown,
   props: Record<string, unknown>,
-  opts: { hydrate?: boolean } = {},
+  opts: {
+    hydrate?: boolean
+    // §8.2: layout components to nest, OUTERMOST first. Empty ⇒ page only.
+    layouts?: Array<{ id: string; Component: unknown }>
+  } = {},
 ): Promise<RealPageRoot | undefined> {
   const rt = await load()
   if (!rt) return undefined
+  const layouts = opts.layouts ?? []
+  // Build `<Outer><Inner>…<Page props/></Inner></Outer>` — outermost first
+  // by wrapping the page then each layout from the inside out. The SSR
+  // adapter produces this exact tree; a bare page here throws React #418
+  // on the layout markup.
+  function buildTree(p: Record<string, unknown>): unknown {
+    let node: unknown = rt.react.createElement(Component, p)
+    for (let i = layouts.length - 1; i >= 0; i--) {
+      node = rt.react.createElement(layouts[i].Component, { children: node })
+    }
+    return node
+  }
   let root: ReactRootLike
   if (opts.hydrate) {
-    root = rt.client.hydrateRoot(container, rt.react.createElement(Component, props))
+    root = rt.client.hydrateRoot(container, buildTree(props))
   } else {
     root = rt.client.createRoot(container)
-    root.render(rt.react.createElement(Component, props))
+    root.render(buildTree(props))
   }
   return {
     update(next: Record<string, unknown>): void {
-      root.render(rt.react.createElement(Component, next))
+      root.render(buildTree(next))
     },
     dispose(): void {
       try {
