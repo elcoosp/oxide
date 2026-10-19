@@ -1,126 +1,283 @@
-# Oxide handoff — Session 2026-10-19 (Wave 3 + partial Wave 4)
+# Oxide handoff — Session 2026-10-19 (post-§5-A + §15-E)
 
 **Date:** 2026-10-19
-**HEAD:** `f5a9208` (see `git log --oneline -10` for the full session)
-**Gates at handoff:** `cargo test --workspace` green · all node packages green ·
-`conformance/run.ts` green (24×4).
+**HEAD:** `98f02d4` (`feat(modules): §15-E add reports merged vs deferred contributions + MOD-ADAPTER check`)
+**Baseline:** `origin/main` = `98f02d4` — **fully pushed, nothing ahead.**
+**Working tree:** clean
+**Gates:** Rust workspace **1006/1006** (40 skipped) · node packages **305/305** ·
+Playwright **17/17** · conformance **24×4 ALL GREEN**
 
-This document replaces the previous "Wave 1 + Wave 2 complete" handoff.
-That session ended at `7e0c659`; this one began there, fixed a stale
-compile break, then executed the **complete Wave 3 backlog** and started
-Wave 4 hygiene. All items below have load-bearing tests.
-
----
-
-## Session summary — commits (oldest → newest)
-
-| Commit | Wave | What |
-| --- | --- | --- |
-| `05da397` | fix | `inject_before_close_tdd` initializer missing `OxideRequest.trace` |
-| `61a71f4` | chore | Point `Cargo.toml` repository at `github.com/elcoosp/oxide` |
-| `c6000a5` | W3-1 | `RouteEntry.needs_parent` field (scanner heuristic + archive + 21 literals) |
-| `035aba2` | W3-1 | Last-layout + page load run in parallel when `needs_parent = false` |
-| `2c1782d` | W3-1 | Peak-concurrency probe test (load-bearing: `max_active == 2` / `== 1`) |
-| `10458e2` | W3-2 | Prerender error-status carried through L0 seed manifest |
-| `6eae760` | W4.7 | Correct stale middleware + `v8_ops` comments; dedupe WORKLOG |
-| `88c9aa2` | W3-7 | Middleware chain runs outer→inner and threads `locals` |
-| `2e2983f` | W3-8 | `searchParams` exposed on `load(event)` / `action(event)` at runtime |
-| `bd7adfe` | W3-4 | Redis + S3 L2 cache handlers (feature-gated) |
-| `32a51d6` | W3-4 | `build_framework_stack` attaches real drivers (worker path) |
-| `c86cafb` | W3-5 | `build_transform_hook` returns `None` without a wasm plugin (negative arm) |
-| `665dba5` | chore | Enable `wasmtime/wat` for future wasm fixtures |
-| `29f5485` | W3-6 | V8 `compile_module` op wired through `transform_handler` |
-| `f5a9208` | W3-3 | Playwright specs: middleware / loading / socket / SSE |
+> If any claim in this doc contradicts the tree, trust the tree.
 
 ---
 
-## Wave 3 — status
+## 0. Read this first
 
-| # | Item | Status | Test |
-| --- | --- | --- | --- |
-| 1 | Parallel layout loads (§9.2) | ✅ done | `layout_and_page_overlap_when_page_does_not_call_parent` + sequential twin |
-| 2 | Prerender error-status sidecar (§10.2 step 5) | ✅ done | `write_prerender_carries_500_status_for_marker_body` + 200 twin |
-| 3 | Playwright specs for 4 smoke fixtures | ✅ specs authored; runs on demand | `tests/playwright/tests/{middleware,loading,socket,sse}.spec.ts` |
-| 4 | Redis / S3 cache handlers | ✅ done | `s3_handler_roundtrips_with_in_memory_store` + `redis_roundtrip_and_tag_invalidation` (skips w/o env) + `remote_cache_handler_maps_handler_config` |
-| 5 | WASM plugin e2e fixture | 🟡 negative-arm only | `build_transform_hook_returns_none_when_no_wasm_plugin_configured` |
-| 6 | V8Host `compile_module` | ✅ done | `op_oxide_compile_module_roundtrips` |
-| 7 | Middleware chain (§8.5) | ✅ done | `middleware_chain_runs_outer_to_inner_and_threads_locals` |
-| 8 | typegen `searchParams` (runtime) | ✅ done (typegen was already done) | `loader_event_includes_parsed_search_params` |
+**The build is green. Nothing is broken.** The prior handoff opened with
+"the build is currently broken — three bundler test files need
+`resolve_hook: None, load_hook: None,` re-applied." That was fixed first
+this session (`b79550f`) and the CLI add/audit test rewrites followed
+(`ac87c29`). Both were pushed before any new work started.
 
-**Item 5 — the positive-arm test.** The negative arm is committed and
-load-bearing. The positive arm (a real string-ABI component firing the
-transform) needs a pre-compiled `.wasm` fixture. Hand-authored WAT that
-implements the canonical ABI string return has proven fragile — the
-current `MUTATE_WAT` gets rejected by `wasmtime/wat` with an opaque
-syntax error. The plan: check in a pre-built `.wasm` binary (compiled once
-with `cargo component build` from a Rust crate under `crates/plugin/fixtures/`)
-and load it in the test. Not attempted this session (bounded scope).
+Two plan items landed this session:
+
+- **§5-A** — conservative landing: a `DemandGraph` over a build's inputs,
+  persisted to `.oxide/graph.json`, surfaced in `oxide analyze`. The full
+  incremental-build wiring (drive the bundler node-by-node) is the
+  documented follow-up.
+- **§15-E** — the module load side. `oxide add` records; the build
+  now **merges** the module's routes and `transform` hook.
 
 ---
 
-## Wave 4 — status
+## 1. Commits landed this session (oldest → newest, all pushed)
 
-| # | Item | Status |
-| --- | --- | --- |
-| 4.2 | `.github/workflows/ci.yml` `push.branches` | ✅ already `[main]` (the "broken `ain]`" claim was stale) |
-| 4.3 | Root `Cargo.toml` repository URL | ✅ fixed in `61a71f4` |
-| 4.6 | `WORKLOG.md` dedupe (SPEC-09, SPEC-17) | ✅ done in `6eae760` |
-| 4.7 | Stale comments (`v8_ops.rs`, `cli/lib.rs` middleware) | ✅ done in `6eae760` |
-| 4.1 | `benchmarks/report.md` | ⏳ not re-measured (needs `benchmarks/run.sh` + a quiet host) |
-| 4.4 | `HANDOFF.md` | ✅ this document |
-| 4.5 | `docs/architecture.md` regenerate | ⏳ not done (large, 1100+ commits stale) |
-| 4.8 | Commit-message policy | ✅ being observed this session |
-
-**Wave 4.5 (`docs/architecture.md`)** is the one remaining mechanical
-item. It needs the whole workspace walked and prose re-written from
-current `crates/` layout — a dedicated session's worth of work, not a
-drive-by. The stale file is at `docs/architecture.md`; the plan is to
-regenerate from `cargo metadata` + a manual pass over each `crates/*/src/lib.rs`
-module docstring.
+| Commit | Section | What |
+|---|---|---|
+| `b79550f` | §2a fix | Re-applied `resolve_hook`/`load_hook` to 3 bundler test `BundleOptions` literals. Bundler 54/54. |
+| `ac87c29` | §2b fix | Updated `add_appends_module_and_dedupes` (ENV_LOCK + `OXIDE_ADD_NO_INSTALL`); deleted obsolete `audit_prints_no_advisories…`. CLI lib 140/140. |
+| `ff4028c` | §5-A | New `crates/cli/src/build_graph.rs` — `DemandGraph` over module/chunk/manifest/typegen nodes; manifests `ctx.dep` on chunks (real edges, not a flat list). |
+| `c6337b6` | §5-A | Wire `record_and_persist` into `cmd_build`; `oxide analyze` reports node/recompute counts. |
+| `3b271f6` | §5-A | Test: build writes snapshot; `OXIDE_FORCE_BUILD=1` rebuild with no source change → 0 recomputed. |
+| `c34289b` | §15-E | New `crates/cli/src/modules_loader.rs` — resolve `oxide.module` packages, scan their routes, inject into the tree. |
+| `b22094f` | §15-E | Wire `inject_routes` into `scan_routes` — the single seam every command (build/dev/routes/analyze/check) funnels through. |
+| `ef2e574` | §15-E | Acceptance: module route prerendered under `/modules/<name>/…`; segments prefixed so it can't shadow a project route. |
+| `24bfb17` | §15-E | Wire module `transform` into `build_js_plugin_hook` — a module declaring `hooks:["transform"]` runs its entry through the same `plugin:call` machinery a `kind:js` plugin uses. |
+| `ad7b1e4` | §15-E | Loader unit tests: contract resolution, routes-dir fallback, `has_unmerged_hooks` semantics. |
+| `98f02d4` | §15-E | `oxide add` reports merged vs deferred contributions + `MOD-ADAPTER` warning when the module's declared adapters don't include the project's. |
 
 ---
 
-## How to run the full gate set
+## 2. What each landed item actually does
 
-    cargo test --workspace --no-fail-fast
-    for p in oxide react vue svelte solid; do (cd packages/$p && node --test test/*.test.ts); done
-    (cd conformance && node run.ts)
-    cargo build -p oxide-cli
-    pnpm --filter @oxide/playwright install-browsers
-    pnpm --filter @oxide/playwright test
+### §5-A — conservative landing (not full incremental)
 
-`README.md` is currently dirty from a user edit (badge counts) — not
-staged by this session's commits; commit or discard as you see fit.
+`crates/cli/src/build_graph.rs` records a `DemandGraph` **after** every build,
+then persists a snapshot:
+
+```
+.oxide/graph.json
+{
+  "version": "v1", "build_id": "<id>", "generated_at_unix_ms": …,
+  "node_count": N, "recomputed_count": M, "previous_node_count": K,
+  "nodes": [{ "key": "module:<abs>", "kind": "module", "hash": "<blake3>", "dep_count": 0 }, …]
+}
+```
+
+Node kinds:
+- `module:<abs-path>` — one per route source file + the boot entry.
+- `chunk:<env>/<abs-path>` — one per emitted `.js` (client + SSR).
+- `manifest:<env>` — one per manifest JSON. Its hash transitively covers every
+  chunk node (recorded via `ctx.dep`), so the graph has real edges.
+- `typegen:<name>` — routes.d.ts, routes.json, messages.d.ts.
+
+`oxide build` prints `graph: N nodes, M recomputed (previous: K nodes)`.
+`oxide analyze` re-prints the same line at the bottom of its table.
+
+**What this enables today:** measure how many graph nodes a source change
+dirties. A forced rebuild with no source change reports **0 recomputed** — the
+acceptance test asserts this.
+
+**What this does NOT do (the documented follow-up):** drive the bundler
+node-by-node so that touching one component re-bundles exactly one chunk.
+The pipeline still runs to completion; the graph is the measurement substrate
+that a future incremental build diffs against.
+
+### §15-E — module load side
+
+The module contract (`oxide.module` in `package.json`):
+
+```json
+{
+  "name": "…", "main": "./index.mjs",
+  "oxide": { "module": {
+    "routes": "./routes",
+    "hooks": ["transform"],
+    "adapters": ["node"],
+    "typegen": "./types.d.ts",
+    "configDefaults": { … }
+  } }
+}
+```
+
+Resolution path:
+1. Names come from `cfg.modules` ∪ `.oxide/modules.json` (so `oxide add`
+   alone is enough — no config edit required).
+2. `modules_loader::load` resolves each against `<root>/node_modules/<name>/`.
+3. `inject_routes` scans each module's routes dir, prefixes `segments` with
+   `["modules", "<name>"]` (so the URL is `/modules/<name>/…`) and namespaces
+   the id. `file` becomes absolute so downstream bundler/prerender join it
+   directly.
+4. `build_js_plugin_hook` picks up every module declaring `hooks:["transform"]`
+   and appends its `entry` to the same plugin chain a `kind:js` plugin uses.
+
+`oxide add <module>` now prints a structured report:
+
+```
+  oxide module detected — contributes:
+    routes: 1 page(s) under /modules/full-mod/
+    hooks:  transform (merged); resolveId (not yet merged)
+    adapters: node
+    configDefaults: present (not merged — deferred to a follow-up)
+```
+
+**Honest limits:** only `transform` is merged. `resolveId`, `load`,
+`renderChunk`, `generateBundle`, `transformHtml`, and every other hook name
+print as "not yet merged" in the `add` report and in a one-line build notice.
+`typegen` and `configDefaults` are resolved-and-reported, not merged. None of
+those are silent misses — they're honest deferrals.
 
 ---
 
-## Gotchas learned this session
+## 3. What remains in the plan (all "L", all deferrable)
 
-1. **`#[op2]` changes the function's call signature** — you cannot invoke
-   a decorated op as a normal async fn. Extract the body into a plain
-   `fn_impl` and have both the op and the test call it.
-2. **`wasmtime/wat` feature must be enabled** for `Component::new` to
-   accept WAT text; without it, "extra tokens remaining after parse".
-   Even with it, hand-authored canonical-ABI string WAT is fragile.
-3. **`redis` needs `connection-manager` feature** for `ConnectionManager`
-   — `tokio-comp` alone is not enough.
-4. **`object_store` v0.11 `PutPayload`** wraps `bytes::Bytes`, not a
-   plain `Vec<u8>`.
-5. **Deno's `#[op2]` `#[string]`** on an async fn returning `Result<T, JsErrorBox>`
-   is the shape `op_oxide_fetch` uses — the `compile_module` op should
-   match it if it needs a fallible return.
-6. **V8 prelude is a string literal in `lib.rs`** — a JS syntax error in
-   it fails at runtime, not compile time. Test via the prelude test path
-   (`v8_prelude_tdd` with `--ignored`).
+From `oxide-v0.1-plan-graph-plugins-platform-dx.md`:
+
+### §5-A full incremental — **L (follow-up)**
+The conservative landing is done. Full incremental means:
+1. Persist the node table **before** the build (so invalidation has something
+   to diff), then `invalidate()` on the next run and only re-run non-survivors.
+2. Introduce chunk-level compute so a change re-hashes exactly the affected
+   chunk, not all of them.
+3. Wire the dev watcher to the same node kinds (§5.5 shared semantics).
+
+Effort: a half-day-plus. The measurement substrate (§5-A conservative) is
+what makes this tractable.
+
+### §15-E remaining hooks — **L (follow-up)**
+`resolveId`, `load`, `renderChunk`, `generateBundle`, `transformHtml` merging.
+The wiring seam (`build_js_plugin_hook`) and the load-side plumbing (the
+`ResolvedModule.hooks` list) are both in place; extending to more hooks is
+mechanical (add the hook name to the accepted set + the corresponding
+`plugin:call` args shape). Not started.
+
+### §19-B `migrate` codemods — **L (deferred)**
+Still dry-run plan only (no AST transforms). Both the plan and the prior
+handoff mark this as reasonable to defer past v0.1: each source
+(Next/Nuxt/SvelteKit/Vite) needs its own codemod engine, roughly half a day
+per source.
+
+### Also untouched (from the master plan, not this plan)
+- §19-A `check` = tsgo + oxlint (still config+routes only)
+- §16-B WOFF2 encoder (currently documented deviation: TrueType output, CSS
+  `format('truetype')` hint — universally supported since IE9)
+- §16 layout tables (GSUB/GPOS dropped by `subsetter::Profile::pdf`; fine for
+  Latin, degraded for complex scripts — `Profile::web` is a follow-up)
+- §16-C MDX call site (precompile extension added; the compile is already
+  wired through the tooling pool via `precompile.rs`; the collections typed
+  schema is partially there)
+- §19-D MCP `oxide_graph` reading the new snapshot — **actually done
+  implicitly**: the MCP tool reads `dist/server/server.manifest.json`, which
+  is unchanged by §5-A; wiring it to `.oxide/graph.json` is a 10-line follow-up.
 
 ---
 
-## Where to start next
+## 4. Deviations recorded (carry into `docs/deviations.md` if created)
 
-1. `git status` — confirm clean (except `README.md`).
-2. Finish Wave 4.5 (`docs/architecture.md`) — the largest remaining item.
-3. Then Wave 4.1 (`benchmarks/report.md`) — needs a quiet host.
-4. Optional: item 5 positive arm (WASM fixture) — see §"Item 5" above.
+- **WOFF2 encoder** — no published crate exists. Subset output is TrueType,
+  CSS `format()` hint `truetype`. Universally supported.
+- **Layout tables** — `subsetter::Profile::pdf` drops GSUB/GPOS. Fine for
+  Latin, degraded for complex scripts.
+- **Pure virtual plugin modules** — a `load_hook` that supplies a file with no
+  on-disk backing is dropped by the bundler's file-existence filter. Overriding
+  an existing file works. `.svg?react` and `img?w=` use `virtual_modules`
+  instead.
+- **`oxide audit` lockfile format** — `package-lock.json` v2/v3 only. `pnpm` /
+  `yarn` lockfiles → `AUDIT-LOCKFORMAT` diagnostic; fix is
+  `npm i --package-lock-only`.
+- **`oxide migrate`** — dry-run plan only.
+- **Module hooks** — only `transform` merged; the rest enumerated at `add`
+  time.
 
-If a claim here is contradicted by the tree, **trust the tree** and update
-this file.
+---
+
+## 5. How to run the gates
+
+```bash
+# Per-crate (fast, use these during dev):
+cargo nextest run -p oxide-bundler      # 54/54
+cargo nextest run -p oxide-router       # 60+
+cargo nextest run -p oxide-graph        # artifacts, cas, demand
+cargo nextest run -p oxide-assets       # fonts, i18n, content
+cargo nextest run -p oxide-cli --lib    # 149 (some have #[ignore] for Node)
+cargo nextest run -p oxide-server
+cargo nextest run -p oxide-jshost
+
+# Full workspace (~35s):
+cargo nextest run --workspace           # 1006/1006
+
+# Node + Playwright:
+for p in oxide react vue svelte solid create-oxide; do
+    ( cd packages/$p && node --test test/*.test.ts )
+done
+( cd tests/playwright && pnpm exec playwright test --timeout=15000 )
+
+# Conformance:
+( cd conformance && node run.ts )
+```
+
+---
+
+## 6. Gotchas learned this session
+
+1. **`OxideConfig.modules: Vec<String>` exists** at `crates/config/src/lib.rs:68`.
+   This is the config-declared module list; `.oxide/modules.json` is the
+   add-recorded list. Both are read (union). Use either.
+2. **`RouteTree::insert(entry)` is a plain push** (`router/src/lib.rs:166`).
+   No dedupe. Injecting the same module twice would double routes. The current
+   wiring calls it once per module per `scan_routes` — safe because
+   `scan_routes` is only called once per command.
+3. **The scanner derives ids from the scanned dir's basename** (usually
+   `routes`). A module's subtree scan produces ids like `routes/page`; the
+   `inject_routes` rewrite namespaces them `modules/<name>/routes/page`.
+   **But `segments` is what the matcher uses** — so the URL is controlled by
+   `entry.segments`, which the injector prefixes with `["modules", "<name>"]`.
+4. **The prerender file path is `<segments.join('/')>.html`, not
+   `<segments>/index.html`.** A page at segments `["modules", "oxide-test-mod"]`
+   writes `dist/prerendered/modules/oxide-test-mod.html`. The acceptance test
+   asserts this exact path.
+5. **The IR placeholder is what prerender emits without a framework renderer.**
+   It echoes `data-route="<pattern>"` — that's the assertion
+   `build_produces_dist_and_deploy_artifacts` uses, and the module acceptance
+   test follows the same convention.
+6. **`build_js_plugin_hook` runs on every build even without JS plugins**
+   (it needs a pool). The module transform is appended to the same `plugins`
+   vec; if no plugin declares transform and no module does either, it returns
+   `None` — the bundler skips the transform stage.
+7. **The `plugin:call` worker op takes `{path, hook, args}`** and calls
+   `mod[hook](ctx, args)`. A module's entry is loaded the same way a
+   `kind:js` plugin's is. No new worker op needed.
+8. **`has_unmerged_hooks` filters out `transform`** — a module declaring only
+   `transform` doesn't trigger the "not yet merged" warning. Extend the filter
+   when more hooks land.
+9. **`modules_loader::load_quiet` exists** so `build_js_plugin_hook` (which
+   runs after `scan_routes` already warned about a bad module) doesn't print
+   the same warning twice.
+10. **The graph snapshot is written even on a fingerprint-skipped build** (the
+    snapshot block sits before the `build_cache::fingerprint` call). A
+    fingerprint-skip returns `Ok(0)` early — the graph from the previous
+    build remains on disk. The `graph:` line in the output is only printed
+    on an actual build.
+
+---
+
+## 7. Where to start next session
+
+1. **Decide: pursue the §5-A full incremental follow-up or defer past v0.1.**
+   The conservative landing is done and tested; the full version is a
+   half-day-plus of focused work. Both are reasonable. If deferring, say so
+   in this doc.
+2. **If a fast win is desired: wire §19-D MCP `oxide_graph` to `.oxide/graph.json`.**
+   Ten lines: `let snap = build_graph::load_snapshot(&self.root); … attach
+   to the report`. Gives the MCP tool real recompute counts instead of a
+   manifest summary. Doesn't require any other plan item.
+3. **If a bigger win: extend module hooks.** Add `resolveId` to the accepted
+   set in `build_js_plugin_hook`, define the args shape (`{specifier, from}`
+   in, `{id: null|string}` out), thread it through the bundler's resolve path.
+   The seams are all in place; the shape of the work is mechanical.
+4. **Otherwise: §19-B `migrate` codemods.** Both this plan and the prior
+   handoff mark it as the least-blocking deferred item.
+
+**If you can only do one thing:** run the full gate set (see §5) and confirm
+1006/1006. The build is green as of `98f02d4` — verifying before starting new
+work costs nothing and catches any drift.
