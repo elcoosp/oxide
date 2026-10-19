@@ -21,7 +21,15 @@ test('scaffolds every framework × shape combo with required files', async () =>
       for (const shape of SHAPES) {
         const dir = join(base, `${fw}-${shape}`);
         const files = await scaffold(shape, fw, dir);
-        assert.equal(files.length, 6, `${fw}/${shape}: 6 files`);
+        // SPEC-19.2: shape-specific extras — minimal=6 (the base set),
+        // blog=8 (blog/[slug]/page + page.server), dashboard=8, storefront=8.
+        const expectedFiles =
+          shape === 'minimal' ? 6 : 8;
+        assert.equal(
+          files.length,
+          expectedFiles,
+          `${fw}/${shape}: ${expectedFiles} files`,
+        );
         const pkg = JSON.parse(await readFile(join(dir, 'package.json'), 'utf8'));
         assert.equal(pkg.scripts.dev, 'oxide dev');
         assert.equal(pkg.scripts.build, 'oxide build');
@@ -49,6 +57,55 @@ test('scaffolds every framework × shape combo with required files', async () =>
     await rm(base, { recursive: true, force: true });
   }
 });
+
+test('shape-specific extra routes are real files with shape-specific loaders', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'oxide-shape-extras-'));
+  try {
+    // blog → blog/[slug] with ISR + generateParams
+    const blogDir = join(base, 'blog');
+    await scaffold('blog', 'react', blogDir);
+    const blogServer = await readFile(
+      join(blogDir, 'src', 'routes', 'blog', '[slug]', 'page.server.ts'),
+      'utf8',
+    );
+    assert.ok(blogServer.includes('generateParams'), 'blog has generateParams');
+    assert.ok(blogServer.includes("render: 'isr'"), 'blog is ISR');
+    const blogPage = await readFile(
+      join(blogDir, 'src', 'routes', 'blog', '[slug]', 'page.tsx'),
+      'utf8',
+    );
+    assert.ok(blogPage.includes('Post'), 'blog page exists and is titled Post');
+
+    // dashboard → dashboard/ with actions
+    const dashDir = join(base, 'dashboard');
+    await scaffold('dashboard', 'react', dashDir);
+    const dashServer = await readFile(
+      join(dashDir, 'src', 'routes', 'dashboard', 'page.server.ts'),
+      'utf8',
+    );
+    assert.ok(dashServer.includes('defineAction'), 'dashboard has actions');
+    assert.ok(dashServer.includes('locals.session'), 'dashboard reads session');
+
+    // storefront → products/[id] with ISR + generateParams
+    const storeDir = join(base, 'storefront');
+    await scaffold('storefront', 'react', storeDir);
+    const storeServer = await readFile(
+      join(storeDir, 'src', 'routes', 'products', '[id]', 'page.server.ts'),
+      'utf8',
+    );
+    assert.ok(storeServer.includes('generateParams'), 'storefront has generateParams');
+    assert.ok(storeServer.includes("tags: ['products']"), 'storefront is tagged');
+
+    // minimal → no extras
+    const minDir = join(base, 'minimal');
+    await scaffold('minimal', 'react', minDir);
+    const minEntries = await readdir(join(minDir, 'src', 'routes'));
+    assert.equal(minEntries.length, 3, 'minimal has 3 route entries (layout, page, page.server)');
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 
 test('refuses to scaffold into a non-empty directory (exit 3)', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'oxide-create-occupied-'));

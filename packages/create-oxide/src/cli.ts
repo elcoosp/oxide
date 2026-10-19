@@ -35,7 +35,19 @@ export default defineConfig({
 
 /** Page component per framework flavor (spec §8.1 page.*). */
 export function pageComponent(framework, shape) {
-  const title = shape === 'minimal' ? 'Home' : shape[0].toUpperCase() + shape.slice(1);
+  // Shape-specific titles keep the scaffolded pages meaningful without
+  // changing the template body; shape-specific pages (blog/dashboard/
+  // storefront) surface the loader data their page.server.ts provides.
+  const titles = {
+    minimal: 'Home',
+    blog: 'Blog',
+    dashboard: 'Dashboard',
+    storefront: 'Storefront',
+    'blog-post': 'Post',
+    'dashboard-home': 'Dashboard',
+    product: 'Product',
+  };
+  const title = titles[shape] || shape[0].toUpperCase() + shape.slice(1);
   if (framework === 'vue') {
     return `<script setup>
 import { computed } from 'vue'
@@ -177,6 +189,102 @@ Conventions live in \`src/routes\` — see the Oxide spec §8.
 }
 
 /** Scaffold one project. Throws on non-empty target dir. */
+/**
+ * SPEC-19.2: each non-minimal shape gets a REAL extra route (beyond `/`)
+ * that exercises its defining feature — the starter tree is where a user
+ * looks first when they want to see what "dashboard" or "storefront" means.
+ * Only the framework-specific page component is templated per framework;
+ * the accompanying `page.server.ts` is framework-agnostic (loaders run in
+ * the worker, not in the framework runtime).
+ */
+function blogExtras(framework, ext) {
+  return [
+    [
+      join('src', 'routes', 'blog', '[slug]', 'page.' + ext),
+      pageComponent(framework, 'blog-post'),
+    ],
+    [
+      join('src', 'routes', 'blog', '[slug]', 'page.server.ts'),
+      `import { defineLoad } from 'oxide/server'
+
+export const config = { render: 'isr', revalidate: 60, tags: ['posts'] }
+
+export const load = defineLoad(async ({ params }) => {
+  const slug = String(params.slug ?? 'welcome')
+  return { title: 'Post: ' + slug, body: 'Content for ' + slug, tags: ['posts'] }
+})
+
+export async function generateParams() {
+  return [{ slug: 'welcome' }, { slug: 'hello-world' }]
+}
+`,
+    ],
+  ]
+}
+
+function dashboardExtras(framework, ext) {
+  return [
+    [
+      join('src', 'routes', 'dashboard', 'page.' + ext),
+      pageComponent(framework, 'dashboard-home'),
+    ],
+    [
+      join('src', 'routes', 'dashboard', 'page.server.ts'),
+      `import { defineLoad, defineAction } from 'oxide/server'
+
+export const load = defineLoad(async ({ locals }) => {
+  // §16.6: the runtime decodes the session cookie into \`locals.session\`
+  // before the loader runs; a project that configures \`security.sessionKeys\`
+  // sees real values here. This starter falls back to a demo id.
+  const user = (locals && locals.session && locals.session.user) || 'guest'
+  return { greeting: 'Hello, ' + user, stats: { visits: 3 } }
+})
+
+export const actions = {
+  save: defineAction({
+    async run({ input }) {
+      await Promise.resolve(input)
+      return { ok: true, savedAt: Date.now() }
+    },
+  }),
+}
+`,
+    ],
+  ]
+}
+
+function storefrontExtras(framework, ext) {
+  return [
+    [
+      join('src', 'routes', 'products', '[id]', 'page.' + ext),
+      pageComponent(framework, 'product'),
+    ],
+    [
+      join('src', 'routes', 'products', '[id]', 'page.server.ts'),
+      `import { defineLoad } from 'oxide/server'
+
+export const config = { render: 'isr', revalidate: 30, tags: ['products'] }
+
+export const load = defineLoad(async ({ params }) => {
+  const id = String(params.id ?? 'sample')
+  return { id, name: 'Product ' + id, priceCents: 1999, tags: ['products'] }
+})
+
+export async function generateParams() {
+  return [{ id: 'sample' }, { id: 'featured' }]
+}
+`,
+    ],
+  ]
+}
+
+function shapeExtras(framework, shape, ext) {
+  if (shape === 'blog') return blogExtras(framework, ext)
+  if (shape === 'dashboard') return dashboardExtras(framework, ext)
+  if (shape === 'storefront') return storefrontExtras(framework, ext)
+  return []
+}
+
 export async function scaffold(template, framework, dir) {
   if (!FRAMEWORKS.includes(framework)) {
     throw new Error(`unknown framework "${framework}" (expected one of ${FRAMEWORKS.join(', ')})`);
@@ -206,6 +314,13 @@ export async function scaffold(template, framework, dir) {
     [join(dir, 'src', 'routes', 'page.' + ext), pageComponent(framework, template)],
     [join(dir, 'src', 'routes', 'page.server.ts'), pageServerTs(template)],
   ];
+  // SPEC-19.2: each non-minimal shape ships an EXTRA route (blog/[slug],
+  // dashboard/, products/[id]) with its own page + page.server.ts, so the
+  // scaffolded tree actually demonstrates the shape's feature rather than
+  // just differing in the config body.
+  for (const [rel, content] of shapeExtras(framework, template, ext)) {
+    writes.push([join(dir, rel), content]);
+  }
   for (const [path, content] of writes) {
     await mkdir(join(path, '..'), { recursive: true });
     await writeFile(path, content, 'utf8');
