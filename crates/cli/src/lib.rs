@@ -14,6 +14,7 @@ mod native_plugins;
 pub mod mcp;
 
 mod build_cache;
+mod build_graph;
 mod framework_shim;
 mod l0_cache;
 pub mod loader_shim;
