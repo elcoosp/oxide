@@ -33,6 +33,7 @@ fn resolve_relative(from_file: &Path, spec: &str) -> Option<PathBuf> {
         base.clone(),
         base.with_extension("vue"),
         base.with_extension("svelte"),
+        base.with_extension("mdx"),
         base.with_extension("tsx"),
         base.with_extension("ts"),
         base.with_extension("js"),
@@ -42,7 +43,7 @@ fn resolve_relative(from_file: &Path, spec: &str) -> Option<PathBuf> {
         }
     }
     // Try ./Dir/index.vue style.
-    for ext in ["vue", "svelte", "ts", "tsx", "js"] {
+    for ext in ["vue", "svelte", "mdx", "ts", "tsx", "js"] {
         let idx = base.join(format!("index.{ext}"));
         if idx.is_file() {
             return Some(idx);
@@ -60,6 +61,42 @@ fn scan_import_specs(src: &str) -> Vec<String> {
         .into_iter()
         .map(|sp| sp.specifier)
         .collect()
+}
+
+/// SPEC-16-C: compile a `.mdx` file via \`@mdx-js/mdx\` in the tooling pool.
+/// Returns `None` when the compile failed (best-effort — same convention as
+/// \`.vue\`/\`.svelte\`).
+async fn compile_mdx(pool: &Arc<dyn Pool>, path: &Path) -> anyhow::Result<Option<String>> {
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("read {}: {e}", path.display()))?;
+    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("input.mdx");
+    let out = call_pool(
+        pool,
+        "tooling:module",
+        serde_json::json!({
+            "module": "@mdx-js/mdx",
+            "export": "compile",
+            "args": [
+                source,
+                {
+                    "outputFormat": "program",
+                    "jsx": true,
+                    "jsxImportSource": "react"
+                }
+            ],
+        }),
+    )
+    .await?;
+    if let Some(s) = out.get("code").and_then(|v| v.as_str()) {
+        return Ok(Some(s.to_string()));
+    }
+    if let Some(s) = out.as_str() {
+        return Ok(Some(s.to_string()));
+    }
+    if let Some(v) = out.get("value").and_then(|v| v.as_str()) {
+        return Ok(Some(v.to_string()));
+    }
+    Ok(None)
 }
 
 async fn call_pool(
@@ -291,6 +328,14 @@ pub async fn precompile_entries(
                 }
             }
             _ => { /* JS/TS/TSX handled by the bundler's Oxc lowering */ }
+            "mdx" => {
+                // SPEC-16-C: compile via @mdx-js/mdx in the tooling pool.
+                match compile_mdx(pool, &path).await {
+                    Ok(Some(js)) => { out.insert(path, js); }
+                    Ok(None) => { /* empty */ }
+                    Err(e) => eprintln!("warn: mdx compile {}: {e}", path.display()),
+                }
+            }
         }
     }
     out
