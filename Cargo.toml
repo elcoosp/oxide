@@ -150,7 +150,7 @@ tiny-skia = { version = "0.12" }
 usvg = { version = "0.48.1" }
 taffy = { version = "0.14.0" }
 parley = { version = "0.11.0" }
-wasmtime = { version = "48.0.1", features = ["component-model"] }
+wasmtime = { version = "48.0.1", features = ["component-model", "wat"] }
 local-ip-address = "0.5.7"
 qrcode = { version = "0.14.1", default-features = false }
 rcgen = { version = "0.14.10", default-features = false, features = ["ring", "pem"] }
