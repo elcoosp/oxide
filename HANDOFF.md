@@ -1,10 +1,10 @@
 # Oxide handoff — Session 2026-10-19 (post-§5-A + §15-E)
 
 **Date:** 2026-10-19
-**HEAD:** `98f02d4` (`feat(modules): §15-E add reports merged vs deferred contributions + MOD-ADAPTER check`)
-**Baseline:** `origin/main` = `98f02d4` — **fully pushed, nothing ahead.**
+**HEAD:** `4e38dec` (`feat(mcp): §19-D oxide_graph reads the last build's DemandGraph snapshot`)
+**Baseline:** `origin/main` = `4e38dec` — **fully pushed, nothing ahead.**
 **Working tree:** clean
-**Gates:** Rust workspace **1006/1006** (40 skipped) · node packages **305/305** ·
+**Gates:** Rust workspace **1007/1007** (40 skipped) · node packages **305/305** ·
 Playwright **17/17** · conformance **24×4 ALL GREEN**
 
 > If any claim in this doc contradicts the tree, trust the tree.
@@ -45,6 +45,8 @@ Two plan items landed this session:
 | `24bfb17` | §15-E | Wire module `transform` into `build_js_plugin_hook` — a module declaring `hooks:["transform"]` runs its entry through the same `plugin:call` machinery a `kind:js` plugin uses. |
 | `ad7b1e4` | §15-E | Loader unit tests: contract resolution, routes-dir fallback, `has_unmerged_hooks` semantics. |
 | `98f02d4` | §15-E | `oxide add` reports merged vs deferred contributions + `MOD-ADAPTER` warning when the module's declared adapters don't include the project's. |
+| `3141c8c` | docs | Refreshed HANDOFF.md to reflect session state at 98f02d4. |
+| `4e38dec` | §19-D | MCP `oxide_graph` reads `.oxide/graph.json` and returns a `graph` summary (version, counts, per-kind breakdown). `GraphSummary::from_snapshot` keeps the response compact. |
 
 ---
 
@@ -166,9 +168,10 @@ per source.
 - §16-C MDX call site (precompile extension added; the compile is already
   wired through the tooling pool via `precompile.rs`; the collections typed
   schema is partially there)
-- §19-D MCP `oxide_graph` reading the new snapshot — **actually done
-  implicitly**: the MCP tool reads `dist/server/server.manifest.json`, which
-  is unchanged by §5-A; wiring it to `.oxide/graph.json` is a 10-line follow-up.
+- §19-D MCP `oxide_graph` reading the snapshot — **done** (`4e38dec`). The
+  tool returns a compact `graph` section (`version`, `build_id`, counts,
+  `nodes_by_kind`) alongside the manifest summary. `GraphSummary::from_snapshot`
+  is the adapter between the on-disk snapshot and the response shape.
 
 ---
 
@@ -263,21 +266,24 @@ done
 
 ## 7. Where to start next session
 
-1. **Decide: pursue the §5-A full incremental follow-up or defer past v0.1.**
-   The conservative landing is done and tested; the full version is a
-   half-day-plus of focused work. Both are reasonable. If deferring, say so
-   in this doc.
-2. **If a fast win is desired: wire §19-D MCP `oxide_graph` to `.oxide/graph.json`.**
-   Ten lines: `let snap = build_graph::load_snapshot(&self.root); … attach
-   to the report`. Gives the MCP tool real recompute counts instead of a
-   manifest summary. Doesn't require any other plan item.
-3. **If a bigger win: extend module hooks.** Add `resolveId` to the accepted
-   set in `build_js_plugin_hook`, define the args shape (`{specifier, from}`
-   in, `{id: null|string}` out), thread it through the bundler's resolve path.
-   The seams are all in place; the shape of the work is mechanical.
-4. **Otherwise: §19-B `migrate` codemods.** Both this plan and the prior
-   handoff mark it as the least-blocking deferred item.
+The two "fast win" candidates from the previous revision of this doc — §19-D
+MCP `oxide_graph` reading `.oxide/graph.json`, and the §5-A conservative
+landing itself — are now landed and tested. Every item listed below is a
+fresh decision, not a leftover.
+
+1. **Decide on §5-A full incremental.** The conservative landing is done;
+   the full node-by-node build driver is ~half a day+. Both the plan and
+   the prior handoff note that deferring is reasonable. If deferring, say
+   so here.
+2. **Next mechanical win: extend module hooks.** Add `resolveId` to
+   the accepted set in `build_js_plugin_hook`, define the args shape
+   (`{specifier, from}` in, `{id: null|string}` out), thread it through the
+   bundler's resolve path. The seams are all in place — the shape of the
+   work is mechanical.
+3. **Then: §19-B `migrate` codemods.** Both the plan and the prior handoff
+   mark this as the least-blocking deferred item. Roughly half a day per
+   source (Next / Nuxt / SvelteKit / Vite).
 
 **If you can only do one thing:** run the full gate set (see §5) and confirm
-1006/1006. The build is green as of `98f02d4` — verifying before starting new
-work costs nothing and catches any drift.
+1007/1007. The build is green as of `4e38dec` — verifying before starting
+new work costs nothing and catches any drift.
