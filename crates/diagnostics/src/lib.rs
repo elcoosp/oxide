@@ -113,6 +113,37 @@ impl Diagnostic {
     }
 }
 
+/// SPEC-19E: render a code frame for a diagnostic. Returns a snippet with a
+/// marker (`^`) under the offending line + a 1-based line number gutter. The
+/// `source` is the whole module; the `line` is 1-based. `col` is optional (a
+/// diagnostic with only a line produces a line gutter with no underline).
+pub fn render_code_frame(source: &str, line: usize, col: Option<usize>) -> String {
+    let lines: Vec<&str> = source.lines().collect();
+    if lines.is_empty() || line == 0 || line > lines.len() {
+        return String::new();
+    }
+    let target = lines[line - 1];
+    let gutter_width = line.to_string().len();
+    let mut out = String::new();
+    out.push_str(&format!("{:width$} | {target}\n", line, width = gutter_width));
+    if let Some(c) = col {
+        // Column is 1-based; underline the character at that column.
+        let prefix_width = c.saturating_sub(1);
+        // Count characters (not bytes) up to the col for the space prefix.
+        let spaces: String = target
+            .chars()
+            .take(prefix_width)
+            .map(|ch| if ch == '\t' { '\t' } else { ' ' })
+            .collect();
+        out.push_str(&format!(
+            "{:width$} | {spaces}^\n",
+            "",
+            width = gutter_width
+        ));
+    }
+    out
+}
+
 impl std::fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "[{}] {}", self.code, self.message)?;
@@ -120,6 +151,15 @@ impl std::fmt::Display for Diagnostic {
             if let Some(file) = &loc.file {
                 write!(f, " at {file}:{}", loc.line)?;
             }
+        }
+        // SPEC-19E: a code frame (source snippet with a marker) is displayed
+        // when the diagnostic carries one. Producers populate this when the
+        // upstream span is available (Oxc compile diagnostics already flow
+        // through `Location`; this formatter uses the pre-rendered frame
+        // rather than re-reading the file, so it works for a diagnostic
+        // replayed from a worker).
+        if let Some(frame) = &self.code_frame {
+            write!(f, "\n{frame}")?;
         }
         if let Some(fix) = &self.fix {
             write!(f, "\n  fix: {fix}")?;
@@ -176,3 +216,29 @@ mod tests {
         assert!(s.contains("create connections lazily"));
     }
 }
+
+    #[test]
+    fn render_code_frame_formats_with_gutter() {
+        let src = "line one\nline two\nline three\n";
+        let frame = render_code_frame(src, 2, Some(5));
+        assert!(frame.contains("2 | line two"), "gutter line: {frame}");
+        assert!(frame.contains("^"), "caret present: {frame}");
+    }
+
+    #[test]
+    fn render_code_frame_line_only_has_no_caret() {
+        let src = "a\nb\n";
+        let frame = render_code_frame(src, 1, None);
+        assert!(frame.contains("1 | a"));
+        assert!(!frame.contains("^"));
+    }
+
+    #[test]
+    fn diagnostic_display_includes_code_frame() {
+        let d = Diagnostic::error("TEST-E", "boom")
+            .with_code_frame("2 | error here\n  |     ^");
+        let rendered = format!("{d}");
+        assert!(rendered.contains("[TEST-E] boom"));
+        assert!(rendered.contains("2 | error here"), "frame: {rendered}");
+    }
+

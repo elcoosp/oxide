@@ -3155,6 +3155,83 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         cfg.build.sourcemap != "off",
     );
     let rb = oxide_bundler::RolldownBundler::new(&rootp);
+    // SPEC-16.6 / §16-A: scan every route entry for `.svg?react` imports
+    // and register a generated React component for each unique file. The
+    // import `./icon.svg?react` then resolves to a synthetic path whose
+    // content is the generated TSX, which the bundler reads from
+    // `precompiled` rather than disk.
+    let mut client_opts = client_opts;
+    if client_opts.virtual_modules.is_empty() {
+        let mut seen: std::collections::BTreeMap<PathBuf, String> = std::collections::BTreeMap::new();
+        for entry in client_opts.entries.values() {
+            // Scan the entry module (and transitively? No — scan every route
+            // file referenced by the manifest's `modules` field is better,
+            // but a simpler first cut: scan just the immediate entry).
+            let Ok(source) = std::fs::read_to_string(entry) else {
+                continue;
+            };
+            for line in source.lines() {
+                // Match `import X from './foo.svg?react'` (any quote style).
+                if let Some(spec) = extract_svg_react_spec(line) {
+                    // Resolve the specifier relative to the entry.
+                    let base = entry.parent().unwrap_or(std::path::Path::new("."));
+                    let svg_path = base.join(spec.trim_end_matches("?react"));
+                    if seen.contains_key(&svg_path) {
+                        continue;
+                    }
+                    let Ok(raw) = std::fs::read_to_string(&svg_path) else {
+                        continue;
+                    };
+                    let display = svg_path.to_string_lossy().to_string();
+                    match oxide_bundler::svg_react::svg_to_react_component(&raw, &display) {
+                        Ok(tsx) => {
+                            // Synthetic path: same dir as the SVG, with
+                            // `.react.tsx` appended so the resolver's `.tsx`
+                            // extension handler picks it up.
+                            let synthetic =
+                                svg_path.with_extension("svg.react.tsx");
+                            // Register in BOTH `virtual_modules` (for
+                            // resolution) and `precompiled` (so the bundler
+                            // reads the generated TSX, not the (nonexistent)
+                            // disk file).
+                            client_opts.precompiled.insert(synthetic.clone(), tsx);
+                            seen.insert(svg_path, synthetic.to_string_lossy().to_string());
+                        }
+                        Err(e) => {
+                            tracing::warn!(code = %e.0.code, msg = %e.0.message, "svg?react: generate failed");
+                        }
+                    }
+                }
+            }
+        }
+        // Build the virtual_modules map keyed by the ORIGINAL specifier so
+        // the resolve hook (which sees `./icon.svg?react`) finds them.
+        // We iterate `seen` here to build specifier keys. `seen` is
+        // svg_path → synthetic_path; the specifier is `./<basename>?react`
+        // relative to each entry. Since multiple entries can reference the
+        // same SVG with different relative paths, we key by BOTH the
+        // resolved synthetic path AND the spec forms we encountered.
+        // Simplest correct version: re-scan and register every form.
+        for entry in client_opts.entries.values() {
+            let Ok(source) = std::fs::read_to_string(entry) else {
+                continue;
+            };
+            let base = entry.parent().unwrap_or(std::path::Path::new("."));
+            for line in source.lines() {
+                if let Some(spec) = extract_svg_react_spec(line) {
+                    let svg_path = base.join(spec.trim_end_matches("?react"));
+                    if let Some(synthetic_str) = seen.get(&svg_path) {
+                        let synthetic_path = PathBuf::from(synthetic_str);
+                        if let Some(tsx) = client_opts.precompiled.get(&synthetic_path) {
+                            client_opts
+                                .virtual_modules
+                                .insert(spec.to_string(), (synthetic_path, tsx.clone()));
+                        }
+                    }
+                }
+            }
+        }
+    }
     let client_outcome = rb.bundle(&client_opts).map_err(|e| {
         persist_diagnostics(&rootp, &[e.0.clone()]);
         anyhow::anyhow!("{} {}", e.0.code, e.0.message)
@@ -6708,6 +6785,30 @@ fn load_client_assets(rootp: &Path) -> Option<oxide_server::StaticAssets> {
 /// (all interfaces). A hostname that is not an IP literal is a config error a
 /// operator should see, but binding must still work — we warn and fall back to
 /// loopback rather than fail to start.
+/// SPEC-16.6: extract the `.svg?react` specifier from an import line.
+/// Matches `import X from './foo.svg?react'` and `import './foo.svg?react'`
+/// in either quote style, then returns the specifier (still with `?react`).
+fn extract_svg_react_spec(line: &str) -> Option<&str> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with("import") {
+        return None;
+    }
+    for q in ['"', '\''] {
+        // Find last `q` before a closing `q`; the specifier is between them
+        // ONLY if it ends with `.svg?react`.
+        if let Some(start) = line.find(&format!("{q}.")) {
+            let after = &line[start + 1..];
+            if let Some(end) = after.find(q) {
+                let candidate = &after[..end];
+                if candidate.ends_with(".svg?react") {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn resolve_bind_host(host: &str) -> std::net::IpAddr {
     let h = host.trim();
     if h.is_empty() || h.eq_ignore_ascii_case("localhost") {
