@@ -36,10 +36,10 @@ wait_health() {
     return 1
 }
 
-printf '%-22s %10s %10s %10s %10s %10s\n' \
-    "fixture" "hits" "misses" "mean(us)" "p50(us)" "p99(us)"
-printf '%-22s %10s %10s %10s %10s %10s\n' \
-    "-------" "----" "------" "--------" "-------" "-------"
+printf '%-22s %10s %10s %10s %10s %10s %10s\n' \
+    "fixture" "hits" "misses" "bypass" "mean(us)" "p50(us)" "p99(us)"
+printf '%-22s %10s %10s %10s %10s %10s %10s\n' \
+    "-------" "----" "------" "------" "--------" "-------" "-------"
 
 for fx in smoke-app-react smoke-app-vue smoke-app-svelte smoke-app-solid; do
     dir="$ROOT/examples/$fx"
@@ -71,9 +71,14 @@ for fx in smoke-app-react smoke-app-vue smoke-app-svelte smoke-app-solid; do
         state=$(printf '%s\n' "$line" | awk 'tolower($1)=="x-oxide-cache:" { print tolower($2); exit }')
         lat=$(printf '%s\n' "$line" | awk -F: '/^LAT:/ { print $2; exit }')
         case "$state" in
-            *l0-hit*) hits=$((hits+1)) ;;
-            *l0-miss*) misses=$((misses+1)) ;;
-            *bypass*) bypass=$((bypass+1)) ;;
+            # §11: an SWR window hit is still a hit — the response came from
+            # the cache (no loader/render ran), it is just past the strict
+            # TTL. Counting it as bypass hid the fact that the cache was
+            # serving on every request.
+            *l0-hit*)   hits=$((hits+1)) ;;
+            *l0-stale*) hits=$((hits+1)) ;;
+            *l0-miss*)  misses=$((misses+1)) ;;
+            *bypass*)   bypass=$((bypass+1)) ;;
         esac
         # time_total is in seconds (float); turn into microseconds (integer).
         us=$(awk -v t="$lat" 'BEGIN { printf "%d\n", t * 1000000 }')
@@ -94,8 +99,8 @@ for fx in smoke-app-react smoke-app-vue smoke-app-svelte smoke-app-solid; do
     p99=$(echo "$stats" | awk '{print $3}')
     rm -f "$tmp"
 
-    printf '%-22s %10s %10s %10s %10s %10s\n' \
-        "$fx" "$hits" "$misses" "$mean" "$p50" "$p99"
+    printf '%-22s %10s %10s %10s %10s %10s %10s\n' \
+        "$fx" "$hits" "$misses" "$bypass" "$mean" "$p50" "$p99"
 
     { kill -9 "$sp"; } 2>/dev/null
     ( pkill -9 -f "target/debug/oxide-cli" ) 2>/dev/null
