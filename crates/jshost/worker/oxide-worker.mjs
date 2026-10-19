@@ -716,6 +716,39 @@ async function compileServerModule(entryPath) {
   return { url: entryInfo.tmpUrl, isTemp: true };
 }
 
+/**
+ * §8.3 / §9.1: parse a URL's query string into a `Record<string, string |
+ * string[]>`. A repeated key (`?tag=a&tag=b`) becomes an array, matching
+ * `URLSearchParams.getAll` semantics. The `LoaderSearchParams` type emitted
+ * by `oxide-router` typegen declares exactly this shape.
+ */
+function parseSearchParams(url) {
+  const out = Object.create(null);
+  if (typeof url !== "string") return out;
+  const q = url.indexOf("?");
+  if (q < 0) return out;
+  const hashAt = url.indexOf("#", q);
+  const query = hashAt >= 0 ? url.slice(q + 1, hashAt) : url.slice(q + 1);
+  if (!query) return out;
+  for (const part of query.split("&")) {
+    if (!part) continue;
+    const eq = part.indexOf("=");
+    const rawK = eq < 0 ? part : part.slice(0, eq);
+    const rawV = eq < 0 ? "" : part.slice(eq + 1);
+    const k = decodeURIComponentSafe(rawK.replace(/\+/g, " "));
+    const v = decodeURIComponentSafe(rawV.replace(/\+/g, " "));
+    if (!k) continue;
+    if (k in out) {
+      const prev = out[k];
+      if (Array.isArray(prev)) prev.push(v);
+      else out[k] = [prev, v];
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
 function decodeURIComponentSafe(s) {
   try {
     return decodeURIComponent(s);
@@ -817,6 +850,9 @@ async function dispatchLoaderRun(id, input) {
     const event = {
       route: route ?? "",
       params: params ?? {},
+      params: params ?? {},// §8.3 / §9.1: parsed search params — the `LoaderSearchParams`
+      params: params ?? {},// type declared in `routes.d.ts` (repeated key → `string[]`).
+      params: params ?? {},searchParams: parseSearchParams(url ?? "/"),
       url: url ?? "/",
       request: {
         method: method ?? "GET",
@@ -1017,6 +1053,8 @@ async function dispatchActionRun(id, input) {
 
     const event = {
       params: params ?? {},
+        // §8.3 / §9.1: parsed search params (parity with loader:run).
+        searchParams: parseSearchParams(url ?? "/"),
       request: {
         method: method ?? "POST",
         url: url ?? "/",

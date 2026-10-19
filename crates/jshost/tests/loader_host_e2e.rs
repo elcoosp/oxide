@@ -195,3 +195,47 @@ async fn missing_module_surfaces_jsh_loader() {
         "message: {msg}"
     );
 }
+
+
+// ---- §8.3 / §9.1: searchParams on the load(event) ----------------------
+//
+// The typegen emits `LoaderEvent[R].searchParams: LoaderSearchParams` — a
+// runtime that omits it produces a type-vs-runtime drift (`undefined.foo`
+// inside a `load`). This test is load-bearing for that contract: reverting
+// the worker's `searchParams` injection makes the assertion fail.
+
+#[tokio::test]
+#[ignore = "spawns a Node worker — run with `--ignored`"]
+async fn loader_event_includes_parsed_search_params() {
+    let m = TempModule::write(
+        "export async function load(event) {\n  return { sp: event.searchParams };\n}\n",
+    );
+    let host = make_host();
+    let out = host
+        .run(
+            &m.path_str(),
+            json!({
+                "route": "routes/index",
+                "params": {},
+                // Repeated `tag` key exercises the array branch; single
+                // keys stay strings. Plus-encoding (`+`) decodes to space.
+                "url": "/?q=hello+world&tag=a&tag=b&empty=",
+                "method": "GET",
+                "headers": [],
+            }),
+        )
+        .await
+        .expect("loader runs");
+    let sp = &out["data"]["sp"];
+    assert_eq!(sp["q"], "hello world", "single key decodes as string: {sp}");
+    assert_eq!(
+        sp["tag"],
+        json!(["a", "b"]),
+        "repeated key becomes array: {sp}"
+    );
+    assert_eq!(sp["empty"], "", "empty value preserved: {sp}");
+    assert!(
+        sp.get("absent").is_none(),
+        "keys not in the query are absent: {sp}"
+    );
+}
