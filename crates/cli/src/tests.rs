@@ -4273,3 +4273,38 @@ async fn session_codec_tampered_cookie_yields_empty_session() {
     );
 }
 
+#[tokio::test]
+async fn dev_writes_plugin_registry() {
+    use std::fs;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    fs::create_dir_all(root.join("src/routes")).unwrap();
+    fs::write(
+        root.join("src/routes/page.tsx"),
+        "export default function Page() { return null }",
+    ).unwrap();
+    fs::write(root.join("plugin.mjs"), "export async function transform() {}").unwrap();
+    write_config(
+        &root,
+        r#"{"plugins":[
+            {"kind":"js","path":"./plugin.mjs"},
+            {"kind":"wasm","path":"./ignored.wasm"}
+        ]}"#,
+    );
+    let _ = run_ok(&[
+        "oxide",
+        "dev",
+        "--root",
+        &root.to_string_lossy(),
+        "--once",
+    ]).await;
+    let registry = root.join(".oxide/dev-plugins.json");
+    assert!(registry.is_file(), "registry written at {}", registry.display());
+    let v: serde_json::Value =
+        serde_json::from_slice(&fs::read(&registry).unwrap()).unwrap();
+    let arr = v.as_array().expect("registry is an array");
+    assert_eq!(arr.len(), 1, "only the js plugin: {v}");
+    let p = arr[0].get("path").and_then(|v| v.as_str()).unwrap_or("");
+    assert!(p.ends_with("plugin.mjs"), "path points at js plugin: {p}");
+}
+

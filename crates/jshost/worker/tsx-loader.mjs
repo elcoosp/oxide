@@ -17,7 +17,7 @@
 // the loader falls through to `nextLoad` and Node's native .ts stripping.
 import { readFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 
@@ -87,6 +87,89 @@ export async function resolve(specifier, context, nextResolve) {
   const gen = currentGeneration()
   const sep = result.url.includes('?') ? '&' : '?'
   return { ...result, url: result.url + sep + 'v=' + gen }
+}
+
+// SPEC-15-C: dev-time plugin transform. `oxide dev` writes the list of
+// `kind: "js"` plugins to `.oxide/dev-plugins.json` at start. Each is a
+// Node ESM module; we import it ONCE (cache by path) and call its
+// `transform` hook on every `.ts/.tsx/.js/.jsx` file under `<root>/src/`.
+//
+// This closes the dev-vs-build gap: without it, `oxide dev` compiles
+// user code with sucrase only, while `oxide build` runs the plugin chain
+// via the bundler's `transform_hook` — two paths that can diverge.
+//
+// Signature parity: the worker's `dispatchPluginCall` calls
+// `fn.call(ctx, args)` where `args = { code, id }`. We do the same here
+// so a plugin sees the same shape in dev and build.
+let __devPluginCache = null; // { plugins: [{path, mod}] } | null
+let __devPluginLoading = false;
+
+async function loadDevPlugins() {
+  if (__devPluginCache !== null) return __devPluginCache;
+  if (__devPluginLoading) return null; // re-entrancy guard: a plugin transform importing another module
+  if (!OXIDE_DEV || !OXIDE_ROOT) {
+    __devPluginCache = { plugins: [] };
+    return __devPluginCache;
+  }
+  __devPluginLoading = true;
+  try {
+    const registryPath = join(OXIDE_ROOT, '.oxide/dev-plugins.json');
+    let entries = [];
+    try {
+      entries = JSON.parse(readFileSync(registryPath, 'utf8'));
+    } catch {
+      __devPluginCache = { plugins: [] };
+      return __devPluginCache;
+    }
+    if (!Array.isArray(entries)) entries = [];
+    const plugins = [];
+    for (const entry of entries) {
+      const path = entry && entry.path;
+      if (typeof path !== 'string') continue;
+      try {
+        const mod = await import(pathToFileURL(path).href);
+        const plugin = mod.default ?? mod;
+        if (plugin && typeof plugin.transform === 'function') {
+          plugins.push({ path, mod: plugin });
+        }
+      } catch (e) {
+        process.stderr.write(
+          '[oxide] plugin load failed for ' + path + ': ' + (e?.message ?? e) + '\n',
+        );
+      }
+    }
+    __devPluginCache = { plugins };
+    return __devPluginCache;
+  } finally {
+    __devPluginLoading = false;
+  }
+}
+
+async function runPluginTransforms(code, id) {
+  const cache = await loadDevPlugins();
+  if (!cache || cache.plugins.length === 0) return code;
+  let out = code;
+  for (const { path, mod } of cache.plugins) {
+    try {
+      const ctx = {
+        warn: (m) => process.stderr.write('[plugin ' + path + '] ' + String(m) + '\n'),
+        error: (m) => { throw new Error(String(m)); },
+        resolve: async (spec) => spec,
+      };
+      const result = await mod.transform.call(ctx, { code: out, id });
+      if (typeof result === 'string') {
+        out = result;
+      } else if (result && typeof result.code === 'string') {
+        out = result.code;
+      }
+    } catch (e) {
+      process.stderr.write(
+        '[oxide] plugin transform failed for ' + path + ' on ' + id + ': ' +
+          (e?.message ?? e) + '\n',
+      );
+    }
+  }
+  return out;
 }
 
 function compileTsx(source, path) {
@@ -195,7 +278,18 @@ export async function load(url, context, nextLoad) {
     return nextLoad(url, context)
   }
   const path = fileURLToPath(bareUrl)
-  const source = await readFile(path, 'utf8')
+  let source = await readFile(path, 'utf8')
+  // SPEC-15-C: run the dev-time plugin transform on the RAW source (before
+  // the framework compile) so a plugin sees the source a user authored —
+  // same order as the bundler (`TransformHook` runs before Oxc passes).
+  // Restricted to `<root>/src/` so a plugin never transforms framework
+  // internals or node_modules.
+  if (OXIDE_DEV && OXIDE_ROOT) {
+    const srcPrefix = OXIDE_ROOT.replace(/\/+$/, '') + '/src/'
+    if (path.startsWith(srcPrefix)) {
+      source = await runPluginTransforms(source, path)
+    }
+  }
   let code
   if (isTsx) {
     code = compileTsx(source, path)

@@ -902,6 +902,8 @@ fn bundle_env_options(
         precompiled,
         jsx_import_source,
         transform_hook,
+        resolve_hook: None,
+        load_hook: None,
         css_transform: Some(css_transform),
         inline_dynamic_imports: false,
         resolve_conditions: None,
@@ -1228,6 +1230,37 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     unsafe {
         std::env::set_var("OXIDE_DEV", "1");
         std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref());
+    }
+    // SPEC-15-C: write a plugin registry the loader reads. The
+    // `tsx-loader.mjs` runs in the app's Node process — it does NOT have
+    // access to the worker's `__oxide_op_request` bridge, so it imports
+    // plugin modules directly (they are Node ESM) and calls their
+    // `transform` hook on every `.ts/.tsx/.js/.jsx` file under
+    // `<root>/src/`. This closes the dev-vs-build gap: a plugin transform
+    // now applies in BOTH dev and build (the bundler path uses
+    // `BundleOptions::transform_hook`).
+    {
+        let plugins: Vec<serde_json::Value> = cfg
+            .plugins
+            .iter()
+            .filter(|p| p.get("kind").and_then(|v| v.as_str()) == Some("js"))
+            .filter_map(|p| p.get("path").and_then(|v| v.as_str()))
+            .map(|rel| {
+                let abs = if std::path::Path::new(rel).is_absolute() {
+                    std::path::PathBuf::from(rel)
+                } else {
+                    rootp.join(rel)
+                };
+                serde_json::json!({ "path": abs.to_string_lossy() })
+            })
+            .collect();
+        let path = rootp.join(".oxide/dev-plugins.json");
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(bytes) = serde_json::to_vec_pretty(&plugins) {
+            let _ = std::fs::write(&path, bytes);
+        }
     }
     // §11.2: thread the project's `cache.handler` into the stack so the tier
     // the worker (and the L0 cache) actually uses honors the config — the
@@ -2078,6 +2111,8 @@ fn emit_config_bundle(
         precompiled,
         jsx_import_source: None,
         transform_hook: None,
+        resolve_hook: None,
+        load_hook: None,
         css_transform: None,
         // §4.2: one self-contained file. A code-split bundle needs its sibling
         // chunks copied alongside and its `__toESM` dynamic-import wrappers
