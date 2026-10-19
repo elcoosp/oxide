@@ -4634,3 +4634,107 @@ async fn module_route_is_injected_and_built() {
         routes.keys().collect::<Vec<_>>(),
     );
 }
+
+// ─── §15-E: modules_loader unit tests ─────────────────────────────────────
+
+#[test]
+fn modules_loader_resolves_entry_and_routes_from_contract() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let pkg = root.join("node_modules/acme-mod");
+    std::fs::create_dir_all(pkg.join("routes")).unwrap();
+    std::fs::write(
+        pkg.join("package.json"),
+        r#"{"name":"acme-mod","version":"1.0.0","main":"./index.mjs","oxide":{"module":{"routes":"./routes","hooks":["transform"]}}}"#,
+    )
+    .unwrap();
+    std::fs::write(pkg.join("index.mjs"), "export default {};\n").unwrap();
+
+    let cfg = crate::load_config_or_default(&root, "development");
+    // `load_config_or_default` reads `modules` from config; the modules list
+    // is empty here, so the loader must fall back to `.oxide/modules.json` —
+    // which we did not write either. Pass the module name via config directly.
+    let mut cfg = cfg;
+    cfg.modules = vec!["acme-mod".to_string()];
+
+    let mods = crate::modules_loader::load(&root, &cfg);
+    assert_eq!(mods.len(), 1, "one module resolved");
+    let m = &mods[0];
+    assert_eq!(m.name, "acme-mod");
+    assert!(m.routes_present(), "routes dir detected");
+    assert_eq!(m.hooks, vec!["transform".to_string()]);
+    let entry = m.entry.as_ref().expect("entry resolved from package.json main");
+    assert!(entry.ends_with("index.mjs"), "entry path: {}", entry.display());
+}
+
+#[test]
+fn modules_loader_falls_back_to_routes_dir_convention() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let pkg = root.join("node_modules/convention-mod");
+    std::fs::create_dir_all(pkg.join("routes")).unwrap();
+    std::fs::write(
+        pkg.join("package.json"),
+        r#"{"name":"convention-mod","version":"1.0.0","oxide":{"module":{}}}"#,
+    )
+    .unwrap();
+
+    let mut cfg = crate::load_config_or_default(&root, "development");
+    cfg.modules = vec!["convention-mod".to_string()];
+
+    let mods = crate::modules_loader::load(&root, &cfg);
+    assert_eq!(mods.len(), 1);
+    // No `routes` field in the contract, so the loader falls back to
+    // `<pkg>/routes/` (documented in the module doc comment).
+    assert!(mods[0].routes_present());
+    assert!(mods[0].hooks.is_empty());
+    assert!(mods[0].entry.is_none(), "no `main` and no `entry` field");
+}
+
+#[test]
+fn has_unmerged_hooks_ignores_transform_only_modules() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let pkg = root.join("node_modules/transform-mod");
+    std::fs::create_dir_all(&pkg).unwrap();
+    std::fs::write(
+        pkg.join("package.json"),
+        r#"{"name":"transform-mod","version":"1.0.0","main":"./i.mjs","oxide":{"module":{"hooks":["transform"]}}}"#,
+    )
+    .unwrap();
+    std::fs::write(pkg.join("i.mjs"), "export default {};\n").unwrap();
+
+    let mut cfg = crate::load_config_or_default(&root, "development");
+    cfg.modules = vec!["transform-mod".to_string()];
+
+    let mods = crate::modules_loader::load(&root, &cfg);
+    assert!(
+        crate::modules_loader::has_unmerged_hooks(&mods).is_empty(),
+        "a transform-only module must NOT appear in unmerged (transform is wired)",
+    );
+
+    // Now a module declaring a non-transform hook: it must be reported.
+    cfg.modules.push("resolve-mod".to_string());
+    let pkg2 = root.join("node_modules/resolve-mod");
+    std::fs::create_dir_all(&pkg2).unwrap();
+    std::fs::write(
+        pkg2.join("package.json"),
+        r#"{"name":"resolve-mod","version":"1.0.0","main":"./i.mjs","oxide":{"module":{"hooks":["resolveId"]}}}"#,
+    )
+    .unwrap();
+    std::fs::write(pkg2.join("i.mjs"), "export default {};\n").unwrap();
+    let mods = crate::modules_loader::load(&root, &cfg);
+    let unmerged = crate::modules_loader::has_unmerged_hooks(&mods);
+    assert_eq!(unmerged.len(), 1, "only the resolve-mod is unmerged");
+    assert_eq!(unmerged[0].name, "resolve-mod");
+}
+
+#[test]
+fn modules_loader_missing_package_is_skipped_not_fatal() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let mut cfg = crate::load_config_or_default(&root, "development");
+    cfg.modules = vec!["nonexistent".to_string()];
+    let mods = crate::modules_loader::load(&root, &cfg);
+    assert!(mods.is_empty(), "missing package must not surface a module");
+}
