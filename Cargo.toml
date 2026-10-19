@@ -147,6 +147,8 @@ arcstr = "1"
 lightningcss = { version = "1.0.0-alpha.72", features = ["bundler", "sourcemap"] }
 ravif = { version = "0.13.0" }
 skrifa = { version = "0.48.0" }
+# SPEC-16.2: font subsetting.
+subsetter = "0.1"
 read-fonts = { version = "0.45.0" }
 write-fonts = { version = "0.52.0" }
 resvg = { version = "0.48.1" }

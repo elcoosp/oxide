@@ -16,6 +16,7 @@ icu_locale_core = { workspace = true }
 formatjs_icu_messageformat = "0.3.0"
 read-fonts = { workspace = true }
 skrifa = { workspace = true }
+subsetter = { workspace = true, optional = true }
 ravif = { workspace = true }
 usvg = { workspace = true }
 tiny-skia = { workspace = true }
@@ -27,3 +28,6 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+
+[features]
+subset = ["dep:subsetter"]
