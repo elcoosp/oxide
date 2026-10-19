@@ -4308,3 +4308,72 @@ async fn dev_writes_plugin_registry() {
     assert!(p.ends_with("plugin.mjs"), "path points at js plugin: {p}");
 }
 
+// ---- SPEC-15.1 / §15.2: native plugin registry through `oxide check` ------
+
+#[tokio::test]
+async fn check_reports_native_plugins() {
+    use std::fs;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    fs::create_dir_all(root.join("src/routes")).unwrap();
+    fs::write(
+        root.join("src/routes/page.tsx"),
+        "export default function Page() { return null }",
+    ).unwrap();
+    write_config(
+        &root,
+        r#"{"plugins":[
+            {"kind":"native","name":"images"},
+            {"kind":"native","name":"fonts"},
+            {"kind":"native","name":"i18n"}
+        ]}"#,
+    );
+    let (code, out) = run_ok(&[
+        "oxide", "check", "--root", &root.to_string_lossy(),
+    ]).await;
+    assert_eq!(code, 0, "check passed: {out}");
+    assert!(
+        out.contains("native plugins: images, fonts, i18n"),
+        "declared plugins listed in order: {out}"
+    );
+}
+
+#[tokio::test]
+async fn check_rejects_unknown_native_plugin() {
+    use std::fs;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    fs::create_dir_all(root.join("src/routes")).unwrap();
+    fs::write(
+        root.join("src/routes/page.tsx"),
+        "export default function Page() { return null }",
+    ).unwrap();
+    write_config(&root, r#"{"plugins":[{"kind":"native","name":"bogus"}]}"#);
+    let (code, out) = run_ok(&[
+        "oxide", "check", "--root", &root.to_string_lossy(),
+    ]).await;
+    assert_eq!(code, 1, "check fails: {out}");
+    assert!(out.contains("OX-PLUGIN"), "coded diagnostic: {out}");
+    assert!(out.contains("unknown native plugin"), "message: {out}");
+    assert!(out.contains("images"), "alternatives listed: {out}");
+}
+
+#[tokio::test]
+async fn dev_fails_fast_on_unknown_native_plugin() {
+    use std::fs;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    fs::create_dir_all(root.join("src/routes")).unwrap();
+    fs::write(
+        root.join("src/routes/page.tsx"),
+        "export default function Page() { return null }",
+    ).unwrap();
+    write_config(&root, r#"{"plugins":[{"kind":"native","name":"oops"}]}"#);
+    let err = run_err(&[
+        "oxide", "dev", "--root", &root.to_string_lossy(), "--once",
+    ]).await;
+    let msg = format!("{err:#}");
+    assert!(msg.contains("OX-PLUGIN"), "coded: {msg}");
+    assert!(msg.contains("unknown native plugin"), "message: {msg}");
+}
+

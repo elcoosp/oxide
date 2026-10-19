@@ -9,6 +9,7 @@ use oxide_router::RouteTree;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+mod native_plugins;
 pub mod mcp;
 
 mod build_cache;
@@ -1135,6 +1136,10 @@ async fn ensure_dev_client_bundle(
 async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
     let cfg = load_config_or_default(&rootp, "development");
+    // SPEC-15.1 / §15.2: fail at load for an unknown `kind:"native"` plugin.
+    if let Err(e) = crate::native_plugins::parse_native_plugins(&cfg) {
+        anyhow::bail!("{} {}", e.0.code, e.0.message);
+    }
     let tree = scan_routes(&rootp, &cfg)?;
     // Prebundle decision (§6.5): key by lockfile hash.
     let lockfile = [
@@ -2891,6 +2896,12 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     }
 
     let cfg = load_config_strict(&rootp, "production")?;
+    // SPEC-15.1 / §15.2: fail at load for an unknown `kind:"native"` plugin.
+    // Doing it in build means `oxide build` alone catches a typo'd plugin
+    // name, not just `oxide check`.
+    if let Err(e) = crate::native_plugins::parse_native_plugins(&cfg) {
+        anyhow::bail!("{} {}", e.0.code, e.0.message);
+    }
     let tree = refine_render_modes_from_ast(&rootp, &cfg, scan_routes(&rootp, &cfg)?);
     let routes_root = rootp.join(&cfg.routes.dir);
     // §4.4: report top-level side effects that would break a V8 snapshot.
@@ -7845,6 +7856,23 @@ async fn cmd_check(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
         Ok(tree) => outln!(w, "routes: OK ({} entries)", tree.entries.len()),
         Err(e) => {
             outln!(w, "routes: {e:#}");
+            ok = false;
+        }
+    }
+    // SPEC-15.1 / §15.2: validate every `kind:"native"` entry in
+    // `config.plugins`. An unknown name fails the check (fail-at-load).
+    match crate::native_plugins::parse_native_plugins(&cfg) {
+        Ok(plugins) => {
+            if plugins.is_empty() {
+                outln!(w, "native plugins: (none declared)");
+            } else {
+                let names: Vec<&str> = plugins.iter().map(|p| p.name()).collect();
+                outln!(w, "native plugins: {}", names.join(", "));
+            }
+        }
+        Err(e) => {
+            outln!(w, "native plugins: {} {}", e.0.code, e.0.message);
+            diags.push(e.0.clone());
             ok = false;
         }
     }
