@@ -3543,6 +3543,9 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // structurally impossible. The secret lives in `.oxide/secret` (rotated
     // only on demand via `oxide secrets rotate`), never in the repo.
     let build_secret = build_secret(&rootp)?;
+    // The env fingerprint needs the secret too, but `build_secret` is
+    // moved into `server_opts` below. Clone once at creation.
+    let build_secret_for_fp = build_secret.clone();
 
     // §15.1: a WASM component plugin's transform hook, if the config
     // declares one. Built once, shared by both envs.
@@ -3795,10 +3798,50 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             }
         }
     }
-    let client_outcome = rb.bundle(&client_opts).map_err(|e| {
-        persist_diagnostics(&rootp, &[e.0.clone()]);
-        anyhow::anyhow!("{} {}", e.0.code, e.0.message)
-    })?;
+    // §5-A: skip the client bundle when nothing it depends on changed. The
+    // env fingerprint excludes `*.server.*` (never in the client bundle), so
+    // a server-only edit leaves this env valid. The manifests are read from
+    // disk below either way, so a skip is safe only when they exist.
+    let client_fp = build_cache::env_fingerprint(
+        &rootp,
+        "client",
+        &client_opts
+            .entries
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect::<Vec<_>>(),
+        &[&client_out.to_string_lossy(), build_secret_for_fp.as_str()],
+    );
+    let client_manifest_on_disk = client_out.join("client.manifest.json");
+    // `OXIDE_FORCE_BUNDLE` forces a re-bundle; `OXIDE_FORCE_BUILD` forces
+    // the whole build (which includes every env). The two are separate
+    // because "the whole-build fingerprint said nothing changed" and "this
+    // env's bundle is still valid" are different questions — a developer
+    // forcing a rebuild to re-run a later phase should not also pay for
+    // re-bundling an unchanged env.
+    let force_bundle = std::env::var_os("OXIDE_FORCE_BUNDLE").is_some();
+    let skip_client = client_manifest_on_disk.is_file()
+        && !force_bundle
+        && build_cache::env_is_up_to_date(&rootp, "client", &client_fp);
+    let client_outcome = if skip_client {
+        outln!(w, "bundle: client unchanged (env fingerprint match) — skipped");
+        oxide_bundler::BundleOutput {
+            modules: Vec::new(),
+            chunks: Vec::new(),
+            client_manifest: None,
+            server_manifest: None,
+            diagnostics: Vec::new(),
+        }
+    } else {
+        let o = rb.bundle(&client_opts).map_err(|e| {
+            persist_diagnostics(&rootp, &[e.0.clone()]);
+            anyhow::anyhow!("{} {}", e.0.code, e.0.message)
+        })?;
+        if let Err(e) = build_cache::env_store(&rootp, "client", &client_fp) {
+            eprintln!("warn: could not store client env fingerprint: {e}");
+        }
+        o
+    };
     // SPEC-02 / §4.6.3: a V8 build whose server modules need Node (a `.node`
     // addon or an unshimmed `node:` builtin) must fail loudly. The bundler
     // externalizes `node:` specifiers, so scanning the emitted JS misses them;
