@@ -2671,6 +2671,16 @@ fn spawn_child(node_bin: &str, worker_script: &Path) -> Result<(Child, ChildStdi
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::inherit());
+    // Bind the child's stdin/stdout to the reader runtime (C), NOT the
+    // caller's runtime. `tokio::process::Command::spawn()` registers the
+    // pipes with whichever reactor is current at spawn time; a caller whose
+    // runtime is later blocked — the sync plugin-hook bridge blocks its
+    // runtime with `std::thread::scope` — would then starve that reactor,
+    // and neither the write to stdin nor the read from stdout would make
+    // progress. Entering C's context first makes every pipe operation wait
+    // on C's reactor, which has its own thread and is never blocked.
+    let handle = reader_runtime_handle();
+    let _enter = handle.enter();
     let mut child = cmd.spawn().map_err(|e| {
         err(
             "JSH-NODE",
@@ -3110,20 +3120,25 @@ impl JsHost for NodeHost {
 /// - `CallErr` resolves the pending call with the worker's diagnostic.
 /// - stdout EOF (worker exit) fails all pending calls with `JSH-CRASH` and bumps
 ///   the `crashed` counter (§4.3 failure isolation).
-/// The runtime the worker reader tasks live on.
+/// The runtime the worker's child process (and its reader task) live on.
 ///
-/// A **dedicated** runtime, separate from whatever the caller is using. This
-/// is what makes `oxide build` work under a `current_thread` runtime: the
-/// sync plugin-hook bridge (`std::thread::scope` in `build_js_plugin_hook`)
-/// blocks the calling thread, and if the reader task lived on that same
-/// runtime it would never be polled — the worker's stdout would never be
-/// read, no response would arrive, and the build would hang. On a
-/// multi-thread runtime the extra worker threads hide this; on a
-/// current-thread runtime it is a hard deadlock.
+/// A **dedicated** runtime, separate from whatever the caller is using. A
+/// worker's stdin/stdout pipes are bound to this runtime at spawn time
+/// (`spawn_child` enters this context before `Command::spawn`), and its
+/// stdout reader is spawned on it. The reason is the sync plugin-hook
+/// bridge: `build_js_plugin_hook` (and its five siblings) call
+/// `std::thread::scope`, which blocks the calling thread and therefore the
+/// caller's runtime. If the child's I/O lived on that runtime, no reactor
+/// would be polled while the build is inside a hook — the write to stdin
+/// would stall, no response would arrive, and `oxide build` would hang.
+///
+/// With the child bound here, every pipe operation waits on this runtime's
+/// reactor, which has its own thread that is never blocked. A
+/// current-thread caller is therefore fine.
 ///
 /// One runtime per process, created lazily on first use. A fresh
 /// `std::thread` builds it because `Builder::build()` panics if called from
-/// within another async context (which `spawn_reader` may be).
+/// within another async context (which `spawn_child` often is).
 fn reader_runtime_handle() -> tokio::runtime::Handle {
     use std::sync::OnceLock;
     static HANDLE: OnceLock<tokio::runtime::Handle> = OnceLock::new();
