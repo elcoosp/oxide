@@ -193,7 +193,9 @@ fn test_request(method: &str, url: &str) -> oxide_server::OxideRequest {
         headers: Vec::new(),
         body: bytes::Bytes::new(),
         request_id: "dispatch-test".into(),
-            trace: None,
+        trace: None,
+        peer: None,
+        rewrite_hops: 0,
     }
 }
 
@@ -4860,4 +4862,419 @@ async fn mcp_graph_tool_reports_demand_graph_snapshot() {
     assert_eq!(g["recomputed_count"].as_u64().unwrap(), count);
     // The manifest summary is unchanged.
     assert!(v["routes"].is_object(), "routes summary unchanged");
+}
+
+// ─── §19-B: migrate codemod tests ────────────────────────────────────────
+
+#[tokio::test]
+async fn migrate_next_pages_converts_to_oxide_routes() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    std::fs::write(root.join("next.config.js"), "module.exports = {};\n").unwrap();
+    std::fs::create_dir_all(root.join("pages/blog")).unwrap();
+    std::fs::create_dir_all(root.join("pages/api")).unwrap();
+    std::fs::write(
+        root.join("pages/index.tsx"),
+        "export default function Home() { return <main>home</main>; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("pages/blog/post.tsx"),
+        "export default function Post() { return <main>post</main>; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("pages/api/hello.ts"),
+        "export default function handler(req, res) { res.end('hi'); }\n",
+    )
+    .unwrap();
+
+    let (code, out) = run_ok(&[
+        "oxide", "migrate", "--root", root.to_str().unwrap(), "next",
+    ])
+    .await;
+    assert_eq!(code, 0, "dry run: {out}");
+    // Dry run — no writes.
+    assert!(!root.join("src/routes/page.tsx").exists(), "dry run writes nothing");
+    // Both conventional pages are planned.
+    assert!(out.contains("pages/index.tsx"), "{out}");
+    assert!(out.contains("src/routes/page.tsx"), "{out}");
+    assert!(out.contains("pages/blog/post.tsx"), "{out}");
+    assert!(out.contains("src/routes/blog/post/page.tsx"), "{out}");
+    // API route planned as a route.ts.
+    assert!(out.contains("pages/api/hello.ts"), "{out}");
+    assert!(out.contains("route.ts"), "{out}");
+
+    // Now write.
+    let (code, out) = run_ok(&[
+        "oxide", "migrate", "--write", "--root", root.to_str().unwrap(), "next",
+    ])
+    .await;
+    assert_eq!(code, 0, "write: {out}");
+    assert!(root.join("src/routes/page.tsx").is_file(), "index written");
+    assert!(
+        root.join("src/routes/blog/post/page.tsx").is_file(),
+        "blog page written"
+    );
+    assert!(
+        root.join("src/routes/api/hello/route.ts").is_file(),
+        "api route written"
+    );
+    // Original files untouched (migrate copies, not moves).
+    assert!(root.join("pages/index.tsx").is_file(), "source preserved");
+
+    // Re-running refuses to overwrite.
+    let (code, out) = run_ok(&[
+        "oxide", "migrate", "--write", "--root", root.to_str().unwrap(), "next",
+    ])
+    .await;
+    assert_eq!(code, 1, "second write must refuse: {out}");
+    assert!(out.contains("refusing to overwrite"), "{out}");
+}
+
+#[tokio::test]
+async fn migrate_next_gssp_becomes_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    std::fs::write(root.join("next.config.js"), "module.exports = {};\n").unwrap();
+    std::fs::create_dir_all(root.join("pages/posts")).unwrap();
+    std::fs::write(
+        root.join("pages/posts/[id].tsx"),
+        r#"import { useRouter } from 'next/router';
+export async function getServerSideProps(context) {
+  const post = await fetchPost(context.params.id);
+  return { props: { post } };
+}
+export default function Post({ post }) { return <main>{post.title}</main>; }
+"#,
+    )
+    .unwrap();
+
+    let (code, out) = run_ok(&[
+        "oxide", "migrate", "--write", "--root", root.to_str().unwrap(), "next",
+    ])
+    .await;
+    assert_eq!(code, 0, "{out}");
+    let written = root.join("src/routes/posts/[id]/page.tsx");
+    assert!(written.is_file(), "{out}");
+    let body = std::fs::read_to_string(&written).unwrap();
+    // `getServerSideProps` was rewritten to an Oxide `load`.
+    assert!(body.contains("export async function load("), "load emitted: {body}");
+    assert!(!body.contains("export async function getServerSideProps"), "GSSP removed: {body}");
+    // The internal fetch is preserved.
+    assert!(body.contains("fetchPost("), "body preserved: {body}");
+}
+
+#[tokio::test]
+async fn migrate_next_gssp_with_redirect_is_skipped() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    std::fs::write(root.join("next.config.js"), "module.exports = {};\n").unwrap();
+    std::fs::create_dir_all(root.join("pages/admin")).unwrap();
+    std::fs::write(
+        root.join("pages/admin/index.tsx"),
+        r#"export async function getServerSideProps(ctx) {
+  if (!ctx.req.cookies.auth) {
+    return { redirect: { destination: '/login', permanent: false } };
+  }
+  return { props: {} };
+}
+export default function Admin() { return <main>admin</main>; }
+"#,
+    )
+    .unwrap();
+
+    let (code, out) = run_ok(&[
+        "oxide", "migrate", "--root", root.to_str().unwrap(), "next",
+    ])
+    .await;
+    assert_eq!(code, 0, "{out}");
+    // Redirect uses are reported as follow-ups, not silently mangled.
+    assert!(out.contains("redirect/notFound"), "{out}");
+    assert!(out.contains("port by hand") || out.contains("skipped"), "{out}");
+}
+
+#[tokio::test]
+async fn migrate_next_app_router_path_rewrite() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    std::fs::write(root.join("next.config.js"), "module.exports = {};\n").unwrap();
+    std::fs::create_dir_all(root.join("app/dashboard")).unwrap();
+    std::fs::write(
+        root.join("app/page.tsx"),
+        "export default function Home() { return null; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("app/layout.tsx"),
+        "export default function RootLayout({ children }) { return <html>{children}</html>; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("app/dashboard/page.tsx"),
+        "export default function D() { return null; }\n",
+    )
+    .unwrap();
+
+    let (code, _) = run_ok(&[
+        "oxide", "migrate", "--write", "--root", root.to_str().unwrap(), "next",
+    ])
+    .await;
+    assert_eq!(code, 0);
+    assert!(root.join("src/routes/page.tsx").is_file(), "root page");
+    assert!(root.join("src/routes/layout.tsx").is_file(), "root layout");
+    assert!(
+        root.join("src/routes/dashboard/page.tsx").is_file(),
+        "nested page"
+    );
+}
+
+#[tokio::test]
+async fn migrate_sveltekit_renames_plus_prefixed_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    std::fs::write(root.join("svelte.config.js"), "export default {};\n").unwrap();
+    std::fs::create_dir_all(root.join("src/routes/blog")).unwrap();
+    std::fs::write(
+        root.join("src/routes/+page.svelte"),
+        "<main>home</main>\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/routes/blog/+page.svelte"),
+        "<main>blog</main>\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/routes/blog/+page.server.ts"),
+        "export async function load() { return {}; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/routes/+layout.svelte"),
+        "<slot />\n",
+    )
+    .unwrap();
+    // A non-route file (a component) — should not be renamed.
+    std::fs::write(root.join("src/routes/MyComponent.svelte"), "<p>x</p>\n").unwrap();
+
+    let (code, out) = run_ok(&[
+        "oxide", "migrate", "--write", "--root", root.to_str().unwrap(), "sveltekit",
+    ])
+    .await;
+    assert_eq!(code, 0, "{out}");
+    assert!(root.join("src/routes/page.svelte").is_file(), "root page");
+    assert!(
+        root.join("src/routes/blog/page.svelte").is_file(),
+        "blog page"
+    );
+    assert!(
+        root.join("src/routes/blog/page.server.ts").is_file(),
+        "blog server"
+    );
+    assert!(root.join("src/routes/layout.svelte").is_file(), "layout");
+    // The non-route component stays untouched.
+    assert!(
+        root.join("src/routes/MyComponent.svelte").is_file(),
+        "component untouched"
+    );
+    // Originals are gone? No — `apply` copies; the source `+page.svelte`
+    // remains alongside the destination.
+    assert!(
+        root.join("src/routes/+page.svelte").is_file(),
+        "source preserved"
+    );
+}
+
+#[tokio::test]
+async fn migrate_unknown_source_and_missing_marker() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    std::fs::write(root.join("vite.config.ts"), "export default {}\n").unwrap();
+
+    // Unknown source → exit 2.
+    let (code, out) = run_ok(&[
+        "oxide", "migrate", "--root", root.to_str().unwrap(), "angular",
+    ])
+    .await;
+    assert_eq!(code, 2, "{out}");
+    assert!(out.contains("unknown source"), "{out}");
+
+    // Nuxt without markers → exit 2.
+    let (code, out) = run_ok(&[
+        "oxide", "migrate", "--root", root.to_str().unwrap(), "nuxt",
+    ])
+    .await;
+    assert_eq!(code, 2, "{out}");
+    assert!(out.contains("no Nuxt project detected"), "{out}");
+
+    // Vite with a config but no entry: config is the marker, entry missing
+    // is a reported follow-up, not an error.
+    let (code, out) = run_ok(&[
+        "oxide", "migrate", "--root", root.to_str().unwrap(), "vite",
+    ])
+    .await;
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("Vite"), "{out}");
+    assert!(out.contains("no src/main"), "entry missing is reported: {out}");
+}
+
+// ─── §5-A full incremental: per-route prerender reuse ────────────────────
+
+/// A second build with no source change reuses every prerendered route
+/// (skipping the render). A source change to one route re-renders exactly
+/// that route and reuses the rest. Both assertions read the build's own
+/// `incremental: reused N …` line — the same line a user sees.
+#[tokio::test]
+async fn incremental_build_reuses_unchanged_prerenders() {
+    use std::fs;
+    let (_d, root) = fixture_project();
+    // Two static pages so "touch one, reuse the other" is observable. The
+    // fixture already has `src/routes/page.tsx` (index) and a `blog` route
+    // whose `page.server.ts` declares isr — that route is prerendered too.
+    // Add a third static page so we have three independent cases.
+    fs::create_dir_all(root.join("src/routes/about")).unwrap();
+    fs::write(
+        root.join("src/routes/about/page.tsx"),
+        "export default function About() { return <main data-route=\"/about\">about</main>; }\n",
+    )
+    .unwrap();
+
+    // Build 1 — cold. Nothing to reuse.
+    let (c1, out1) = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
+    assert_eq!(c1, 0, "build 1: {out1}");
+    assert!(
+        !out1.contains("incremental: reused"),
+        "cold build has nothing to reuse: {out1}",
+    );
+    // The snapshot now carries route_prerenders.
+    let snap1: serde_json::Value = serde_json::from_slice(
+        &fs::read(root.join(".oxide/graph.json")).unwrap(),
+    )
+    .unwrap();
+    let recs1 = snap1["route_prerenders"].as_array().expect("route_prerenders array");
+    let n1 = recs1.len();
+    assert!(n1 >= 2, "at least two prerendered routes recorded (got {n1})");
+    // Every record has the fields the reuse check needs.
+    for r in recs1 {
+        assert!(r["route_id"].is_string());
+        assert!(r["url"].is_string());
+        assert!(r["source_hash"].is_string());
+        assert!(r["nonce"].is_string(), "nonce recorded for reuse");
+        assert!(r["rel_out"].is_string());
+    }
+
+    // Build 2 — forced (bypass the whole-build fingerprint skip so the
+    // incremental path itself runs) with no source change.
+    let (c2, out2) = {
+        unsafe { std::env::set_var("OXIDE_FORCE_BUILD", "1"); }
+        let r = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
+        unsafe { std::env::remove_var("OXIDE_FORCE_BUILD"); }
+        r
+    };
+    assert_eq!(c2, 0, "build 2: {out2}");
+    let reused2: usize = parse_reused(&out2);
+    assert_eq!(
+        reused2, n1,
+        "second build with no change reuses every prerender (got {reused2}, expected {n1}): {out2}",
+    );
+
+    // Build 3 — touch ONE page. Only that page's prerender re-renders; the
+    // rest are reused.
+    fs::write(
+        root.join("src/routes/about/page.tsx"),
+        "export default function About() { return <main data-route=\"/about\">about v2</main>; }\n",
+    )
+    .unwrap();
+    let (c3, out3) = {
+        unsafe { std::env::set_var("OXIDE_FORCE_BUILD", "1"); }
+        let r = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
+        unsafe { std::env::remove_var("OXIDE_FORCE_BUILD"); }
+        r
+    };
+    assert_eq!(c3, 0, "build 3: {out3}");
+    let reused3: usize = parse_reused(&out3);
+    assert!(
+        reused3 < n1,
+        "editing one page re-renders that page; reuse drops (got {reused3}, was {n1}): {out3}",
+    );
+    assert_eq!(
+        reused3, n1 - 1,
+        "exactly one route re-rendered (got {reused3}, expected {}): {out3}",
+        n1 - 1,
+    );
+}
+
+/// Parse the `incremental: reused N prerendered route(s)` line. Returns 0
+/// when the line is absent (cold build, nothing to reuse).
+fn parse_reused(out: &str) -> usize {
+    for line in out.lines() {
+        if let Some(rest) = line.strip_prefix("incremental: reused ") {
+            if let Some(n) = rest.split_whitespace().next() {
+                return n.parse().unwrap_or(0);
+            }
+        }
+    }
+    0
+}
+
+// ─── §15-E: resolveId + load hook collectors ─────────────────────────────
+
+/// A module declaring `hooks: ["resolveId", "load"]` shows up in both
+/// collectors. A module that declares only `transform` does NOT.
+#[test]
+fn collect_plugin_paths_includes_module_entries_per_hook() {
+    use std::fs;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let pkg = root.join("node_modules/alias-mod");
+    fs::create_dir_all(&pkg).unwrap();
+    fs::write(pkg.join("index.mjs"), "export function resolveId() {}\nexport function load() {}\n").unwrap();
+    fs::write(
+        pkg.join("package.json"),
+        r#"{"name":"alias-mod","main":"./index.mjs","oxide":{"module":{"hooks":["resolveId","load"]}}}"#,
+    )
+    .unwrap();
+
+    let mut cfg = crate::load_config_or_default(&root, "development");
+    cfg.modules = vec!["alias-mod".to_string()];
+
+    let resolve = crate::collect_plugin_paths_for_hook(&root, &cfg, "resolveId");
+    assert_eq!(resolve.len(), 1, "resolveId collector includes the module");
+    assert!(resolve[0].ends_with("index.mjs"), "resolved entry: {resolve:?}");
+
+    let load = crate::collect_plugin_paths_for_hook(&root, &cfg, "load");
+    assert_eq!(load.len(), 1, "load collector includes the module");
+
+    // A hook the module did not declare is empty.
+    let transform = crate::collect_plugin_paths_for_hook(&root, &cfg, "transform");
+    assert!(
+        transform.is_empty(),
+        "transform collector does NOT include a module that did not declare it: {transform:?}",
+    );
+
+    // A hook not backed by any plugin/module is empty.
+    let render_chunk = crate::collect_plugin_paths_for_hook(&root, &cfg, "renderChunk");
+    assert!(render_chunk.is_empty());
+}
+
+/// A `kind:js` plugin whose path is NOT present does not enter the
+/// collector (the same `confine_plugin_path` + `is_file` check applies).
+#[test]
+fn collect_plugin_paths_skips_missing_js_plugin_files() {
+    use std::fs;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    fs::write(
+        root.join("oxide.config.ts"),
+        r#"export default { plugins: [{ kind: "js", path: "./does-not-exist.mjs" }] };"#,
+    )
+    .unwrap();
+
+    let cfg = crate::load_config_or_default(&root, "development");
+    // The config's `plugins` is `Vec<serde_json::Value>`; a `kind:js` entry
+    // with a missing path is skipped (the collector emits a warning and
+    // continues).
+    let got = crate::collect_plugin_paths_for_hook(&root, &cfg, "resolveId");
+    assert!(got.is_empty(), "missing plugin path skipped: {got:?}");
 }
