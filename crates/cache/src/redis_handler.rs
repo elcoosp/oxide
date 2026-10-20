@@ -136,9 +136,13 @@ impl CacheHandler for RedisCacheHandler {
         let verified: &[u8] = match auth::open_entry(&raw) {
             Some(body) => body,
             None => {
-                // Tolerate a legacy (unsealed) entry rather than dropping the
-                // cache on upgrade; a real tamper is caught on the next set.
-                if codec::decode_entry(&raw).is_ok() {
+                // S-06 / A1: MAC failure is a miss. The legacy tolerance is
+                // opt-in for one migration window only — see
+                // `auth::legacy_sealing_allowed`.
+                if auth::legacy_sealing_allowed() && codec::decode_entry(&raw).is_ok() {
+                    tracing::warn!(
+                        "L2 (redis) entry is unsealed; serving under OXIDE_CACHE_SEALING=legacy"
+                    );
                     &raw
                 } else {
                     tracing::warn!("L2 (redis) entry failed MAC verification — treated as miss");
