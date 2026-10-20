@@ -186,7 +186,16 @@ impl Bundler for RolldownBundler {
         // pass below needs its own handle.
         let out_dir_for_hooks = out_dir.clone();
         let env = options.env;
-        let plugins = oxide_plugins(options, &self.root);
+        // The plugin sink: a failed Oxc pass records the full diagnostic
+        // (location, code frame, fix) here, since Rolldown's hook error
+        // channel only carries a string. Drained into the result below.
+        let diagnostics_sink: std::sync::Arc<std::sync::Mutex<Vec<Diagnostic>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let plugins = oxide_plugins_with_sink(
+            options,
+            &self.root,
+            std::sync::Arc::clone(&diagnostics_sink),
+        );
         // SPEC-15.2: clone the post-emit hooks out of `options` so the
         // scoped thread closure captures owned handles rather than a
         // borrow of `BundleOptions`.
@@ -226,6 +235,20 @@ impl Bundler for RolldownBundler {
                 .join()
                 .map_err(|_| err("BLD-ROLLDOWN", "rolldown worker thread panicked"))?
         });
+
+    // A plugin pass that failed recorded the structured diagnostic (with
+    // location, code frame and fix) in the sink. Rolldown's hook error
+    // channel carries only a string, so the generic `BLD-ROLLDOWN` wrapper
+    // has none of that. When the sink has an entry, surface it as the
+    // error — the caller persists diagnostics from the error's own
+    // `Diagnostic`, so the frame reaches `.oxide/last-build-diagnostics.json`.
+    let plugin_failure: Option<Diagnostic> = diagnostics_sink
+        .lock()
+        .ok()
+        .and_then(|sink| sink.first().cloned());
+    if let Some(d) = plugin_failure {
+        return Err(crate::OxideError(d));
+    }
 
     // SPEC-15.2: run `renderChunk` over every emitted chunk file, then
     // `generateBundle` once over the final file list. Rolldown's `write()`
@@ -681,7 +704,11 @@ impl Plugin for CssPlugin {
 
 /// The plugin list for a Rolldown run: the oxide passes (always) and the
 /// precompiled-SFC server (only when the CLI supplied precompiled JS).
-fn oxide_plugins(options: &BundleOptions, root: &Path) -> Vec<std::sync::Arc<Pluginable>> {
+fn oxide_plugins_with_sink(
+    options: &BundleOptions,
+    root: &Path,
+    diagnostics_sink: std::sync::Arc<std::sync::Mutex<Vec<Diagnostic>>>,
+) -> Vec<std::sync::Arc<Pluginable>> {
     let mut plugins: Vec<std::sync::Arc<Pluginable>> =
         vec![Pluginable::new_shared(OxidePassesPlugin::new(
             // The compiler's `Env` mirrors the bundler's `BundleEnv`
@@ -695,6 +722,7 @@ fn oxide_plugins(options: &BundleOptions, root: &Path) -> Vec<std::sync::Arc<Plu
             root.to_path_buf(),
             options.precompiled.clone(),
             options.transform_hook.clone(),
+            diagnostics_sink,
         ))];
     // §6.6: the CSS plugin runs for every project. Rolldown 1.2.x refuses
     // `.css` modules at `module_task.rs`; intercepting them in the `load`
@@ -708,6 +736,18 @@ fn oxide_plugins(options: &BundleOptions, root: &Path) -> Vec<std::sync::Arc<Plu
         )));
     }
     plugins
+}
+
+/// The plugin list for a run whose diagnostics are not collected (tests, or a
+/// caller that only needs the transform). Production goes through
+/// [`oxide_plugins_with_sink`] so a pass failure keeps its location and code
+/// frame.
+fn oxide_plugins(options: &BundleOptions, root: &Path) -> Vec<std::sync::Arc<Pluginable>> {
+    oxide_plugins_with_sink(
+        options,
+        root,
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+    )
 }
 
 /// §6.2 steps 4-6: the framework passes Rolldown's own Oxc lowering does
@@ -737,6 +777,12 @@ pub struct OxidePassesPlugin {
     /// module as its author wrote it, before the `'use cache'` / server-fn
     /// passes rewrite it.
     transform_hook: Option<crate::TransformHook>,
+    /// A sink for the *full* diagnostic a failed pass produces. Rolldown's
+    /// hook error channel carries only a string, so a diagnostic's location,
+    /// code frame and fix would be lost. The plugin records the structured
+    /// form here; the bundler drains it into `BundleOutput::diagnostics`,
+    /// which the CLI persists.
+    diagnostics: std::sync::Arc<std::sync::Mutex<Vec<Diagnostic>>>,
 }
 
 impl OxidePassesPlugin {
@@ -746,6 +792,7 @@ impl OxidePassesPlugin {
         root: PathBuf,
         precompiled: BTreeMap<PathBuf, String>,
         transform_hook: Option<crate::TransformHook>,
+        diagnostics: std::sync::Arc<std::sync::Mutex<Vec<Diagnostic>>>,
     ) -> Self {
         Self {
             env,
@@ -753,6 +800,7 @@ impl OxidePassesPlugin {
             root,
             precompiled,
             transform_hook,
+            diagnostics,
         }
     }
 
@@ -889,6 +937,13 @@ impl Plugin for OxidePassesPlugin {
                 // the client bundle). Propagate a `CMP-PASS` diagnostic and
                 // fail the build loudly.
                 Err(e) => {
+                    // Record the structured diagnostic (location, code frame,
+                    // fix) before flattening it into the string Rolldown's
+                    // hook error channel requires. The bundler drains the
+                    // sink into `BundleOutput::diagnostics`.
+                    if let Ok(mut sink) = self.diagnostics.lock() {
+                        sink.push(e.0.clone());
+                    }
                     pass_error = Some(format!("CMP-PASS {}: {}", args.id, e.0.message));
                     None
                 }
