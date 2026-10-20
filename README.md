@@ -15,7 +15,7 @@
     <img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/>
     <img src="https://img.shields.io/badge/Workspace-17%20crates%20%2B%206%20packages-6F4E37?style=flat-square" alt="Workspace"/>
     <img src="https://img.shields.io/badge/Code-%E2%89%8899k%20lines-9CF?style=flat-square" alt="Lines of code"/>
-    <img src="https://img.shields.io/badge/Tests-1078%20Rust%20%7C%20306%20TS-brightgreen?style=flat-square" alt="Tests"/>
+    <img src="https://img.shields.io/badge/Tests-1087%20Rust%20%7C%20342%20TS-brightgreen?style=flat-square" alt="Tests"/>
     <img src="https://img.shields.io/badge/ODF-16%20golden%20fixtures-00BFFF?style=flat-square" alt="ODF golden fixtures"/>
     <img src="https://img.shields.io/badge/TS%20runtime-zero%20npm%20deps-228B22?style=flat-square" alt="Zero dependencies"/>
   </p>
@@ -127,7 +127,7 @@ One binary, twenty subcommands:
 | | `start` · `preview` | Production server (pipeline below); health at `/_oxide/health` |
 | | `render <route>` | Dispatch a page render, HTML to stdout (`--url --param --data --stream`) |
 | **Introspection** | `routes` | Scan routes, infer render modes, emit typegen, print the route table |
-| | `analyze` | Per-route JS bytes vs `config.budgets` — exits non-zero on breach |
+| | `analyze` | Per-route JS bytes vs `config.budgets` — exits non-zero on breach; top modules by reachable bytes |
 | | `check` | Config + route diagnostics; typechecks (tsgo) and lints (oxlint) when on PATH — loud `SKIPPED` otherwise |
 | | `why <module>` | Which routes import a module, which chunks contain it |
 | | `doctor` | 7 environment checks: node, cargo, config, routes dir, cache dir, secrets, cookie keys |
@@ -135,7 +135,7 @@ One binary, twenty subcommands:
 | | `add <module>` | Register a module in `.oxide/modules.json` |
 | | `schema` | JSON Schema for `oxide.config.{ts,json}` |
 | | `config` | Load the resolved config, print the framework adapter descriptor |
-| | `migrate <source>` | Dry-run migration plan for Next, Nuxt, SvelteKit, Vite |
+| | `migrate <source>` | Migration codemods for Next, Nuxt, SvelteKit, Vite (`--write` to apply on disk) |
 | **Operations** | `secrets rotate` | Drop the build secret; the next build mints a fresh one |
 | | `cache inspect\|clear\|stats` | Inspect, clear or measure `.oxide/cache` |
 | | `audit` | Static advisory pass over registered modules and plugins |
@@ -216,15 +216,16 @@ typed arrays, `undefined`, cyclic and shared references, `Error` and deferred pr
 The repository is built test-first: each crate's `*_tdd.rs` suites were written against its
 contract before the implementation.
 
-- **1078 Rust test functions** across 17 crates (48 of them engine-dependent e2e tests gated
+- **1087 Rust test functions** across 17 crates (48 of them engine-dependent e2e tests gated
   behind `#[ignore]`), including `proptest` property suites on the router and graph engines
   and `cargo-fuzz` harnesses for the ODF decoder, router matcher, config extractor and path
   splitter.
-- **306 TypeScript test cases** across 39 files on Node's built-in test runner — including
+- **342 TypeScript test cases** across 46 files on Node's built-in test runner — including
   the ODF decoder against the same golden fixtures as the Rust encoder (typed values:
   `BigInt`, `Date`, `Map`, `Set`, `URL`, `RegExp`, typed arrays), router / island
-  tests against a hand-rolled fake DOM (no jsdom, no deps), and suites for the defer script
-  protocol and client-side loading boundaries.
+  tests against a hand-rolled fake DOM (no jsdom, no deps), suites for the defer script
+  protocol and client-side loading boundaries, the per-adapter `<Image>` components,
+  and the client message-catalog loader.
 - **Conformance gate** — the Atlas reference app runs one 24-assertion set (contract shape,
   SSR content + framework markers, merged head, deterministic markup, streaming boundaries,
   deferred boundaries in settle order, error / not-found, islands, actions JS-on/off, server
@@ -261,14 +262,20 @@ ancestor chains with threaded `event.locals` whose headers ride cached responses
 connected dev HMR including the loader-edit round trip and a one-time client bundle on
 fresh dev, `/_oxide/og` config-gated Open Graph PNG rendering (SVG → resvg → PNG with an
 MP area cap), module packages (`oxide.module`) that inject routes under `/modules/<name>`
-and run `transform` / `resolveId` / `load` hooks through the real bundler, real
+and dispatch **all 19 plugin hooks** through the real bundler and pipeline (build-time
+effects of six hooks gated by the fixture CI job), per-adapter `<Image>` components over
+the signed AVIF/WebP/JPEG/PNG pipeline (build-time `srcset` + intrinsic dimensions,
+runtime `/_oxide/image` with `remotePatterns` + SSRF guards), per-locale message catalogs
+emitted at build with a client-side loader, `content.d.ts` typed-content emission, real
 `oxide add` (package-manager-detected installs), `oxide audit` (live OSV queries with a
-24h cache) and `oxide migrate` with working codemods, per-route prerender reuse backed by
-the persisted DemandGraph (`.oxide/graph.json`, surfaced in `analyze` and `mcp`), zero-copy
-L0 cache hits over `Arc` entries with MAC-sealed Redis/S3 payloads, a moka asset-body cache,
-build-time font subsetting, locale-aware `href()` typegen, constant-time Basic-auth checks
-and a middleware rewrite-loop guard (508), `oxide check` with tsgo + oxlint, and the
-introspection tooling (`doctor`, `why`, `analyze`, `schema`, `mcp`).
+24h cache) and `oxide migrate` with working `--write` codemods, per-route prerender reuse
+backed by the persisted DemandGraph (`.oxide/graph.json`, surfaced in `analyze` and `mcp`),
+analyze's top-modules-by-reachable-bytes report, parse-error diagnostics with line/column
+and persisted code frames, zero-copy L0 cache hits over `Arc` entries with MAC-sealed
+Redis/S3 payloads, a moka asset-body cache, build-time font subsetting, locale-aware
+`href()` typegen, constant-time Basic-auth checks and a middleware rewrite-loop guard
+(508), `oxide check` with tsgo + oxlint, and the introspection tooling (`doctor`, `why`,
+`analyze`, `schema`, `mcp`).
 
 **Built, wiring in progress** — streaming deferred values (today the worker awaits every
 `defer()` before the response flushes, so one slow `defer()` stalls TTFB), partial
@@ -276,12 +283,20 @@ prerendering (the shell splitter and assembler are tested; no render path constr
 yet), session-cookie *writing* (the decode path is live, `Set-Cookie` is not), HTTP/3
 request bodies and streamed responses (HTTP/1+2 unaffected), the edge build
 (`dist/edge.wasm` emission is dormant and the edge handler does not call ODF decode yet),
-socket fan-out / presence (sends reach only the calling socket), plugin
-`renderChunk` / `generateBundle` / `transformHtml` hooks (declared, never invoked) and
-plugin transforms on the V8 render path (the compile op exists; V8 bypasses it), strict MAC
-enforcement for L2 cache entries (a legacy-JSON fallback still accepts unsealed payloads),
-single-flight cleanup when a follower subscribes before the owner short-circuits, MDX
-compilation beyond the reachable compile arm (collections typed schema is partial), and the
+socket fan-out / presence (sends reach only the calling socket), the *last mile* of the
+plugin hook surface (`handleHotUpdate` fires on the once-probe path only, 8 hooks receive
+arguments via a positional fallback table, module `routes` / `serverMiddleware` pools are
+passed only at serve boot, and `cacheHandler` is consulted in dev+build but not in
+`start`), plugin transforms on the V8 render path (the compile op exists; V8 bypasses it),
+client-side i18n hydration (the server resolves the locale but never emits `<html lang>`,
+so the client catalog loader always falls back to `'en'`; ICU formatting is not yet
+evaluated at render time), image-result caching and concurrency limits (every request
+re-transforms; `sizes` is user-supplied and the LQIP placeholder arm is unreachable), the
+collections runtime query surface (`content.d.ts` emits inferred types; declared schemas
+and typed queries are not wired), route `meta` exports (title path wired; the flat shape
+drops richer head fields), strict MAC enforcement for L2 cache entries (a legacy-JSON
+fallback still accepts unsealed payloads), single-flight cleanup when a follower subscribes
+before the owner short-circuits, MDX compilation beyond the reachable compile arm, and the
 neutral IR renderer's layout nesting (dev-fixture path only). See
 [`HANDOFF.md`](HANDOFF.md) for the current thread list and what remains.
 
