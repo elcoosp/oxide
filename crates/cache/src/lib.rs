@@ -12,22 +12,26 @@
 
 #![forbid(unsafe_code)]
 
+pub mod auth;
+pub mod codec;
 pub mod http;
 pub mod http_handler;
 pub mod single_flight;
 pub mod tiers;
 
+pub use auth::{MAC_LEN, open_entry, seal_entry};
+pub use codec::{MAX_ENTRY_BYTES, decode_entry, encode_entry};
 pub use http::{
     FetchMemo, cache_control, conditional_response, http_date, memo_key, parse_http_date,
 };
 pub use http_handler::HttpCacheHandler;
-pub use single_flight::{FlightSlot, SingleFlight};
+pub use single_flight::{FlightOwnerGuard, FlightSlot, SingleFlight};
 pub use tiers::{CacheStats, DiskTier, MemoryTier, TieredCache};
 
 #[cfg(feature = "redis")]
 pub mod redis_handler;
 #[cfg(feature = "redis")]
-pub use redis_handler::RedisCacheHandler;
+pub use redis_handler::{RedisCacheHandler, redacted_url};
 
 #[cfg(feature = "s3")]
 pub mod s3_handler;
@@ -121,16 +125,34 @@ impl CacheKey {
     /// The NUL separators make the encoding prefix-free (component boundaries are part
     /// of the digest).
     pub fn canonical(&self) -> String {
+        Self::canonical_parts(
+            self.layer,
+            &self.route,
+            &self.params,
+            &self.vary,
+            &self.build_id,
+        )
+    }
+
+    /// P-04: same digest as [`CacheKey::canonical`] but from borrowed parts —
+    /// no intermediate `String` allocations on the hot key path.
+    pub fn canonical_parts(
+        layer: Layer,
+        route: &str,
+        params: &str,
+        vary: &str,
+        build_id: &str,
+    ) -> String {
         let mut h = Hasher::new();
-        h.update(self.layer.as_str().as_bytes());
+        h.update(layer.as_str().as_bytes());
         h.update(b"\x00");
-        h.update(self.route.as_bytes());
+        h.update(route.as_bytes());
         h.update(b"\x00");
-        h.update(self.params.as_bytes());
+        h.update(params.as_bytes());
         h.update(b"\x00");
-        h.update(self.vary.as_bytes());
+        h.update(vary.as_bytes());
         h.update(b"\x00");
-        h.update(self.build_id.as_bytes());
+        h.update(build_id.as_bytes());
         h.finalize().to_hex().to_string()
     }
 }
@@ -165,6 +187,14 @@ pub enum Hit {
 #[async_trait::async_trait]
 pub trait CacheHandler: Send + Sync {
     async fn get(&self, key: &str) -> Result<Option<Entry>>;
+    /// P-03: like [`CacheHandler::get`] but returns the shared `Arc<Entry>` so
+    /// a hot L0/L1 hit does not copy the body out of the memory tier. The
+    /// default impl delegates to `get` (one copy) for handlers that cannot
+    /// hand back a shared entry (L2 drivers deserialize anyway); `TieredCache`
+    /// overrides it to stay zero-copy.
+    async fn get_arc(&self, key: &str) -> Result<Option<Arc<Entry>>> {
+        Ok(self.get(key).await?.map(Arc::new))
+    }
     async fn set(&self, key: &str, entry: Entry) -> Result<()>;
     async fn delete(&self, key: &str) -> Result<()>;
     async fn tag_keys(&self, tag: &str) -> Result<Vec<String>>;
