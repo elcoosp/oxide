@@ -112,9 +112,10 @@ export function showOverlay(diag: { code?: string; message?: string; fix?: strin
 
 /**
  * §13.3 `route-data-update`: a page loader changed in dev. The dev server
- * publishes the route as a FILE path (not a URL) and an empty `odf_b64`
- * today, so the actionable refresh is: decode a non-empty `odf_b64` inline,
- * otherwise re-fetch `/__data` for the CURRENT location, then dispatch
+ * publishes the route as a FILE path (not a URL) alongside the freshly
+ * rendered loader payload as `odf_b64`, so the refresh prefers decoding that
+ * payload inline and only falls back to re-fetching `/__data` for the CURRENT
+ * location when it is absent, then dispatches
  * `ox:data` on the document with the normalized ClientInput — the same
  * event `bootWithRouter` consumes to call `adapter.update` (the same data
  * path a navigation uses, §8.4). All failures are silent: an HMR data
