@@ -152,7 +152,8 @@ impl OxideMcp {
         Parameters(NoArgs {}): Parameters<NoArgs>,
     ) -> Result<CallToolResult, ErrorData> {
         let cfg = super::load_config_or_default(&self.root, "development");
-        let tree = super::scan_routes(&self.root, &cfg)
+        let tree = super::scan_routes(&self.root, &cfg, None)
+            .await
             .map_err(|e| ErrorData::internal_error(format!("scan failed: {e}"), None))?;
 
         // Join modes + tags from the machine-readable manifest (only exists

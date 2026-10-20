@@ -596,7 +596,11 @@ fn refine_render_modes_from_ast(root: &Path, cfg: &OxideConfig, mut tree: RouteT
     tree
 }
 
-fn scan_routes(root: &Path, cfg: &OxideConfig) -> anyhow::Result<RouteTree> {
+async fn scan_routes(
+    root: &Path,
+    cfg: &OxideConfig,
+    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
+) -> anyhow::Result<RouteTree> {
     // Canonicalize `root` first so `dir` is absolute. `RouteTree::scan_with_config`
     // joins the override onto `dir`; if the override is already root-relative
     // (which it is when `root` itself is relative), the join produces
@@ -606,6 +610,62 @@ fn scan_routes(root: &Path, cfg: &OxideConfig) -> anyhow::Result<RouteTree> {
     let dir = root_abs.join(&cfg.routes.dir);
     let mut tree = RouteTree::scan_with_config(&root_abs, Some(&dir))
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+    // §15.2: `serverMiddleware` — a plugin contributes middleware source.
+    // Each result is `{ name, source }`. The source is written under
+    // `.oxide/plugins/` and registered as a synthetic root middleware
+    // entry, so the existing chain (which joins a route's ancestor
+    // middleware files) runs it for every route.
+    if let Some(pool) = pool {
+        if !collect_plugin_paths_for_hook(&root_abs, cfg, "serverMiddleware").is_empty() {
+            let results = call_js_plugin_hook(
+                &root_abs,
+                cfg,
+                pool,
+                "serverMiddleware",
+                serde_json::json!({ "root": root_abs.to_string_lossy() }),
+            )
+            .await;
+            let plugins_dir = root_abs.join(".oxide/plugins");
+            let _ = std::fs::create_dir_all(&plugins_dir);
+            for (i, r) in results.iter().enumerate() {
+                let Some(src) = r.get("source").and_then(|s| s.as_str()) else {
+                    continue;
+                };
+                let name = r
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("plugin-{i}"));
+                let safe: String = name
+                    .chars()
+                    .map(|c| {
+                        if c.is_alphanumeric() || c == '-' || c == '_' {
+                            c
+                        } else {
+                            '_'
+                        }
+                    })
+                    .collect();
+                let file = plugins_dir.join(format!("{safe}.middleware.mjs"));
+                if std::fs::write(&file, src).is_err() {
+                    continue;
+                }
+                tree.insert(oxide_router::RouteEntry {
+                    // A root middleware: base dir `routes`, so it wraps every
+                    // route (the chain rule is a prefix match).
+                    id: oxide_router::RouteId(format!("routes/{safe}.plugin-middleware")),
+                    kind: oxide_router::RouteKind::Middleware,
+                    segments: Vec::new(),
+                    file,
+                    render_mode: None,
+                    tags: Vec::new(),
+                    has_server_module: false,
+                    needs_parent: false,
+                    slot: None,
+                });
+            }
+        }
+    }
     // §15-E: merge every `oxide.module` package's routes into the tree. This
     // is the single seam every command funnels through (build, dev, routes,
     // analyze, check) — patching it here makes a module's routes visible
@@ -633,6 +693,60 @@ fn scan_routes(root: &Path, cfg: &OxideConfig) -> anyhow::Result<RouteTree> {
             unmerged.join(", "),
         );
     }
+    // §15.2: `routes` hook — a plugin contributes route entries. Each
+    // result is `{ entries: [{ id, file, kind?, segments? }] }`. The file
+    // must exist inside the project; the id is used as given (a plugin is
+    // expected to namespace it). A malformed entry is reported and skipped.
+    if let Some(pool) = pool {
+        if !collect_plugin_paths_for_hook(&root_abs, cfg, "routes").is_empty() {
+            let results = call_js_plugin_hook(
+                &root_abs,
+                cfg,
+                pool,
+                "routes",
+                serde_json::json!({ "root": root_abs.to_string_lossy() }),
+            )
+            .await;
+            for r in results {
+                let Some(list) = r.get("entries").and_then(|e| e.as_array()) else {
+                    continue;
+                };
+                for e in list {
+                    let Some(id) = e.get("id").and_then(|v| v.as_str()) else { continue };
+                    let Some(rel) = e.get("file").and_then(|v| v.as_str()) else { continue };
+                    let file = root_abs.join(rel);
+                    if !file.starts_with(&root_abs) || !file.is_file() {
+                        eprintln!("warn: routes hook entry `{id}` has no readable file; skipped");
+                        continue;
+                    }
+                    let kind = match e.get("kind").and_then(|v| v.as_str()).unwrap_or("page") {
+                        "layout" => oxide_router::RouteKind::Layout,
+                        "endpoint" | "route" => oxide_router::RouteKind::Endpoint,
+                        "loading" => oxide_router::RouteKind::Loading,
+                        "error" => oxide_router::RouteKind::Error,
+                        _ => oxide_router::RouteKind::Page,
+                    };
+                    let segments: Vec<String> = e
+                        .get("segments")
+                        .and_then(|v| v.as_array())
+                        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                        .unwrap_or_default();
+                    tree.insert(oxide_router::RouteEntry {
+                        id: oxide_router::RouteId(id.to_string()),
+                        kind,
+                        segments,
+                        file,
+                        render_mode: None,
+                        tags: Vec::new(),
+                        has_server_module: false,
+                        needs_parent: false,
+                        slot: None,
+                    });
+                }
+            }
+        }
+    }
+
     Ok(tree)
 }
 
@@ -1181,7 +1295,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     if let Err(e) = crate::native_plugins::parse_native_plugins(&cfg) {
         anyhow::bail!("{} {}", e.0.code, e.0.message);
     }
-    let tree = scan_routes(&rootp, &cfg)?;
+    let tree = scan_routes(&rootp, &cfg, None).await?;
     // Prebundle decision (§6.5): key by lockfile hash.
     let lockfile = [
         "package-lock.json",
@@ -1345,7 +1459,29 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
         .and_then(|v| v.get("build_id").and_then(|x| x.as_str()).map(str::to_string))
         .unwrap_or_else(|| "dev".to_string());
-    let hmr_hub = std::sync::Arc::new(oxide_dev::HmrHub::with_build_id(hmr_build_id));
+    let hmr_hub = std::sync::Arc::new(oxide_dev::HmrHub::with_build_id(hmr_build_id.clone()));
+    // §15.2: `configureServer` — a plugin gets the dev server's handles and
+    // may contribute HMR behaviour. Each result may carry
+    // `{ reload: bool }` to force a full reload on a config-shaped change;
+    // the hub already reloads on module updates, so the hook's value today
+    // is the notification plus a place for a plugin to install its own
+    // listeners against the hub.
+    if !collect_plugin_paths_for_hook(&rootp, &cfg, "configureServer").is_empty() {
+        if let Some(pool) = hmr_pool.as_ref() {
+            let _ = call_js_plugin_hook(
+                &rootp,
+                &cfg,
+                pool,
+                "configureServer",
+                serde_json::json!({
+                    "root": rootp.to_string_lossy(),
+                    "hmrUrl": "/_oxide/hmr",
+                    "buildId": hmr_build_id.clone(),
+                }),
+            )
+            .await;
+        }
+    }
     let started = start_dev_server_full(
         root,
         flags.port,
@@ -1555,6 +1691,39 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         let events = watcher
             .poll(&mut seen)
             .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+        // §15.2: `handleHotUpdate` gets every changed file and may return
+        // `{reload: bool}`. A plugin that wants a full reload (a config
+        // change, a new dependency) forces one; the default is the graph
+        // invalidation below.
+        let mut force_reload = false;
+        if let Some(pool) = hmr_pool.as_ref() {
+            for ev in &events {
+                let p = match ev {
+                    oxide_dev::FileEvent::Modified(p)
+                    | oxide_dev::FileEvent::Created(p)
+                    | oxide_dev::FileEvent::Removed(p) => p.clone(),
+                };
+                let results = call_js_plugin_hook(
+                    &rootp,
+                    &cfg,
+                    pool,
+                    "handleHotUpdate",
+                    serde_json::json!({ "path": p.to_string_lossy() }),
+                )
+                .await;
+                for r in results {
+                    if r.get("reload").and_then(|b| b.as_bool()) == Some(true) {
+                        force_reload = true;
+                    }
+                }
+            }
+        }
+        if force_reload {
+            // The dev loop's own reload path is the `server-module-swap`
+            // event; a hook that asked for a reload gets it by invalidating
+            // everything (an empty invalidate bumps the epoch).
+            let _ = dev_graph.invalidate(&[]);
+        }
         let any = events.iter().any(|e| graph_invalidated(&dev_graph, e));
         if any {
             invalidate_framework_modules(&hmr_pool, &rootp).await;
@@ -1865,6 +2034,7 @@ fn emit_content_search_indexes(
     }
     Ok(())
 }
+
 
 /// Derive the request URL from a prerender output path. `prerendered/index.html`
 /// → `/`; `prerendered/blog/hello.html` → `/blog/hello`; `prerendered/foo.html`
@@ -2563,6 +2733,10 @@ async fn write_prerender(
     // L0 seed manifest so `oxide start` serves it with the real status.
     // (Wave 3 fix — was a documented "baked 200" deviation.)
     error_route_id: Option<&str>,
+    // §15.2: `renderHead` — the neutral head model a plugin contributed for
+    // this route. Merged into the model the adapter receives. Empty for a
+    // build with no `renderHead` plugin.
+    plugin_head: &serde_json::Value,
 ) -> anyhow::Result<(String, u16)> {
     // §9.1: run the loader for this route (if the module exists and a
     // loader runner is attached) to obtain the data the render phase
@@ -2708,6 +2882,17 @@ async fn write_prerender(
         // §10.2 step 5: mirror the live-dispatch resolution on the prerender
         // path so a throw in `page.tsx` renders the project's `error.tsx`.
         input.error_route_id = error_route_id.map(str::to_string);
+        // §15.2: merge the plugin's `renderHead` contribution into the
+        // neutral model. The adapter's own `head()` output and the plugin's
+        // both land in `PageRenderInput.head`, which the adapter's head
+        // merge walks.
+        if plugin_head
+            .as_object()
+            .map(|o| o.values().any(|v| v.as_array().is_some_and(|a| !a.is_empty())))
+            .unwrap_or(false)
+        {
+            input.head = plugin_head.clone();
+        }
         renderer
             .render(input)
             .await
@@ -3025,14 +3210,51 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         }
     }
 
-    let cfg = load_config_strict(&rootp, "production")?;
+    let mut cfg = load_config_strict(&rootp, "production")?;
+    // §15.2: `config` runs before the build uses the config; a plugin may
+    // return a patch object. `configResolved` runs after, read-only. Both
+    // need a pool, which the build has not built yet — so they fire through
+    // a throwaway tooling pool created here, before the framework stack.
+    // The pool is cheap (one Node child) and only built when a plugin
+    // declares either hook.
+    if plugin_declares_any(&rootp, &cfg, &["config", "configResolved"]) {
+        // `tooling_pool` is a method on the `JsHost` trait, not an inherent
+        // method — the trait must be in scope.
+        use oxide_jshost::JsHost as _;
+        let host = oxide_jshost::NodeHost::new(oxide_jshost::NodeHost::worker_script_default());
+        if let Ok(pool) = host.tooling_pool(oxide_jshost::PoolConfig::default()) {
+            let patches = fire_lifecycle_hook(
+                &rootp,
+                &cfg,
+                Some(&pool),
+                "config",
+                serde_json::json!({ "config": cfg }),
+            )
+            .await;
+            for patch in patches {
+                let _ = apply_config_patch(&mut cfg, &patch, w);
+            }
+            let _ = fire_lifecycle_hook(
+                &rootp,
+                &cfg,
+                Some(&pool),
+                "configResolved",
+                serde_json::json!({ "config": cfg }),
+            )
+            .await;
+        }
+    }
     // SPEC-15.1 / §15.2: fail at load for an unknown `kind:"native"` plugin.
     // Doing it in build means `oxide build` alone catches a typo'd plugin
     // name, not just `oxide check`.
     if let Err(e) = crate::native_plugins::parse_native_plugins(&cfg) {
         anyhow::bail!("{} {}", e.0.code, e.0.message);
     }
-    let tree = refine_render_modes_from_ast(&rootp, &cfg, scan_routes(&rootp, &cfg)?);
+    let tree = refine_render_modes_from_ast(
+        &rootp,
+        &cfg,
+        scan_routes(&rootp, &cfg, None).await?,
+    );
     let routes_root = rootp.join(&cfg.routes.dir);
     // §4.4: report top-level side effects that would break a V8 snapshot.
     emit_snapshot_lint(&cfg, &rootp, &tree, w)?;
@@ -3332,6 +3554,19 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         cfg.build.sourcemap != "off",
         true, // production build minifies
     );
+    // §15.2: `buildStart` fires once, before the first module is bundled.
+    // `buildEnd` fires after the last, with a summary. Both are
+    // notifications — a failure is logged by the dispatcher and skipped.
+    if plugin_declares_any(&rootp, &cfg, &["buildStart"]) {
+        let _ = fire_lifecycle_hook(
+            &rootp,
+            &cfg,
+            stack.tooling_pool.as_ref(),
+            "buildStart",
+            serde_json::json!({ "root": rootp.to_string_lossy() }),
+        )
+        .await;
+    }
     let rb = oxide_bundler::RolldownBundler::new(&rootp);
     // SPEC-16.6 / §16-A: scan every route entry for `.svg?react` imports
     // and register a generated React component for each unique file. The
@@ -3943,6 +4178,16 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         // this hash matches the previous build's record for the same
         // (route_id, url). Computed once per entry — the hash covers file
         // contents + config, not the per-URL params.
+        // §15.2: `renderHead` — a plugin's contribution to the neutral head
+        // model for THIS route. Called once per route entry (not per
+        // generateParams path): the head is route-shaped, not URL-shaped.
+        let plugin_head = plugin_render_head(
+            &rootp,
+            &cfg,
+            stack.tooling_pool.as_ref(),
+            &route_id,
+        )
+        .await;
         let route_src_hash = route_source_hash(
             &rootp,
             &cfg,
@@ -3999,6 +4244,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                                     boot_script_url.as_deref(),
                                     &layout_ids, &prerender_layout_modules,
                                     prerender_error_route_id.as_deref(),
+                                    &plugin_head,
                                 ).await?
                             }
                         }
@@ -4011,6 +4257,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                             boot_script_url.as_deref(),
                             &layout_ids, &prerender_layout_modules,
                             prerender_error_route_id.as_deref(),
+                            &plugin_head,
                         ).await?,
                     };
                     seed_bodies.push((
@@ -4105,6 +4352,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                                             boot_script_url.as_deref(),
                                             &layout_ids, &prerender_layout_modules,
                                             prerender_error_route_id.as_deref(),
+                                            &plugin_head,
                                         ).await?
                                     }
                                 }
@@ -4117,6 +4365,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                                     boot_script_url.as_deref(),
                                     &layout_ids, &prerender_layout_modules,
                                     prerender_error_route_id.as_deref(),
+                                    &plugin_head,
                                 ).await?,
                             };
                             seed_bodies.push((
@@ -4217,6 +4466,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                                 boot_script_url.as_deref(),
                                 &layout_ids, &prerender_layout_modules,
                                 prerender_error_route_id.as_deref(),
+                                &plugin_head,
                             ).await?
                         }
                     }
@@ -4229,6 +4479,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                         boot_script_url.as_deref(),
                         &layout_ids, &prerender_layout_modules,
                         prerender_error_route_id.as_deref(),
+                        &plugin_head,
                     ).await?,
                 };
                 seed_bodies.push((
@@ -4453,10 +4704,31 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             .map_err(|e| anyhow::anyhow!("serialize enriched manifest: {e}"))?,
     )?;
 
+    // §15.2: `adapter` hook — a plugin may force an adapter target (a
+    // deploy plugin that knows the platform). The LAST plugin to return a
+    // target wins. An unknown target is reported and the config's choice
+    // stands.
+    let mut plugin_adapter: Option<String> = None;
+    if plugin_declares_any(&rootp, &cfg, &["adapter"]) {
+        let results = fire_lifecycle_hook(
+            &rootp,
+            &cfg,
+            stack.tooling_pool.as_ref(),
+            "adapter",
+            serde_json::json!({ "target": cfg.adapter }),
+        )
+        .await;
+        for r in results {
+            if let Some(t) = r.get("target").and_then(|v| v.as_str()) {
+                plugin_adapter = Some(t.to_string());
+            }
+        }
+    }
+    let effective_adapter = plugin_adapter.as_deref().unwrap_or(&cfg.adapter);
     let target = if r#static {
         oxide_adapters::Target::Static
     } else {
-        oxide_adapters::Target::parse(&cfg.adapter).ok_or_else(|| {
+        oxide_adapters::Target::parse(effective_adapter).ok_or_else(|| {
             anyhow::anyhow!(
                 "unknown adapter `{}`; expected one of binary|node|static|docker|cloudflare|lambda|vercel|netlify|deno|bun (§18)",
                 cfg.adapter
@@ -4512,6 +4784,23 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     emit_fonts(&cfg, &rootp, &dist, w)?;
     // §4.4: build a V8 startup snapshot from the server bundle.
     emit_snapshot_blob(&rootp, &server_out, w)?;
+    // §15.2: `buildEnd` — the build finished successfully; a plugin gets the
+    // summary. Fired before the "build ok" line so a plugin's own output
+    // appears above the summary.
+    if plugin_declares_any(&rootp, &cfg, &["buildEnd"]) {
+        let _ = fire_lifecycle_hook(
+            &rootp,
+            &cfg,
+            stack.tooling_pool.as_ref(),
+            "buildEnd",
+            serde_json::json!({
+                "routes": tree.entries.len(),
+                "prerendered": artifact.prerendered.len(),
+                "target": target.as_str(),
+            }),
+        )
+        .await;
+    }
     outln!(
         w,
         "build ok — {} routes, {} prerendered, {} deploy file(s) for `{}` in dist/deploy",
@@ -7735,7 +8024,7 @@ async fn start_server_inner_full(
     let tree = std::sync::Arc::new(refine_render_modes_from_ast(
         &rootp,
         &cfg,
-        scan_routes(&rootp, &cfg)?,
+        scan_routes(&rootp, &cfg, stack.tooling_pool.as_ref()).await?,
     ));
     let (bind_ip, requested_port) = match bind {
         // A caller-supplied port is honoured verbatim — including 0, which
@@ -8262,7 +8551,11 @@ async fn cmd_routes(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     // authoritative mode rather than the scanner's line-oriented guess.
     // (Without it, a loader with `'…cookies…'` in a string literal reads
     // as dynamic here while the build treats it as static.)
-    let tree = refine_render_modes_from_ast(&rootp, &cfg, scan_routes(&rootp, &cfg)?);
+    let tree = refine_render_modes_from_ast(
+        &rootp,
+        &cfg,
+        scan_routes(&rootp, &cfg, None).await?,
+    );
     let i18n_for_typegen: Option<&[String]> = match cfg.i18n.strategy.as_str() {
         "none" => None,
         _ if cfg.i18n.locales.is_empty() => None,
@@ -8318,7 +8611,7 @@ async fn cmd_routes(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
 async fn cmd_analyze(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = PathBuf::from(root);
     let cfg = load_config_or_default(&rootp, "production");
-    let tree = scan_routes(&rootp, &cfg)?;
+    let tree = scan_routes(&rootp, &cfg, None).await?;
     let manifest =
         read_json(&rootp.join("dist/client/client.manifest.json")).unwrap_or(serde_json::json!({}));
     let manifest_routes = manifest
@@ -8455,7 +8748,7 @@ async fn cmd_check(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
         }
     }
     let cfg = load_config_or_default(&rootp, "development");
-    match scan_routes(&rootp, &cfg) {
+    match scan_routes(&rootp, &cfg, None).await {
         Ok(tree) => outln!(w, "routes: OK ({} entries)", tree.entries.len()),
         Err(e) => {
             outln!(w, "routes: {e:#}");
@@ -8535,6 +8828,44 @@ async fn cmd_check(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
         }
     }
 
+    // §15.2: `diagnostics` — a plugin adds to the check report. Each result
+    // is `{ diagnostics: [{ code, message, severity? }] }`; an error-severity
+    // entry fails the check. A plugin that cannot be reached (no pool) is
+    // skipped rather than failing `check`.
+    if plugin_declares_any(&rootp, &cfg, &["diagnostics"]) {
+        use oxide_jshost::JsHost as _;
+        let host = oxide_jshost::NodeHost::new(oxide_jshost::NodeHost::worker_script_default());
+        if let Ok(pool) = host.tooling_pool(oxide_jshost::PoolConfig::default()) {
+            let results = call_js_plugin_hook(
+                &rootp,
+                &cfg,
+                &pool,
+                "diagnostics",
+                serde_json::json!({ "root": rootp.to_string_lossy() }),
+            )
+            .await;
+            for r in results {
+                let Some(list) = r.get("diagnostics").and_then(|d| d.as_array()) else {
+                    continue;
+                };
+                for d in list {
+                    let code = d.get("code").and_then(|c| c.as_str()).unwrap_or("PLUGIN");
+                    let message = d.get("message").and_then(|m| m.as_str()).unwrap_or("");
+                    let severity = d.get("severity").and_then(|s| s.as_str()).unwrap_or("error");
+                    outln!(w, "plugin diagnostic {code}: {message}");
+                    let diag = if severity == "warning" {
+                        oxide_diagnostics::Diagnostic::warning(code, message)
+                    } else {
+                        oxide_diagnostics::Diagnostic::error(code, message)
+                    };
+                    diags.push(diag);
+                    if severity != "warning" {
+                        ok = false;
+                    }
+                }
+            }
+        }
+    }
     // §19.4: every check result lands in the shared diagnostic file so the
     // editor/CI read one artifact.
     if !diags.is_empty() {
@@ -10185,3 +10516,185 @@ fn hook_result_str_array(v: &serde_json::Value, field: &str) -> Option<Vec<Strin
             .collect(),
     )
 }
+
+// ─── §15: generic plugin hook dispatch ─────────────────────────────────────
+//
+// The six "structural" hooks (transform, resolveId, load, renderChunk,
+// generateBundle, transformHtml) each have a bespoke builder because their
+// chaining rules differ. The rest are notifications or single-shot
+// contributions: load each candidate, call the hook, collect the results.
+// `call_js_plugin_hook` is that shape.
+
+/// Call `hook_name` across every plugin/module that declares it. Returns the
+/// per-plugin results in declaration order. An empty vec means no plugin
+/// declared it — the caller skips. A plugin whose call fails is skipped, not
+/// fatal: a lifecycle notification must not fail a build.
+///
+/// Loads each candidate first (`plugin:load` is idempotent on the worker —
+/// it replaces the cached module). A lifecycle hook is called once per build
+/// per plugin, so the load cost is negligible.
+async fn call_js_plugin_hook(
+    root: &Path,
+    cfg: &OxideConfig,
+    pool: &std::sync::Arc<dyn oxide_jshost::Pool>,
+    hook_name: &str,
+    args: serde_json::Value,
+) -> Vec<serde_json::Value> {
+    let plugins = collect_plugin_paths_for_hook(root, cfg, hook_name);
+    if plugins.is_empty() {
+        return Vec::new();
+    }
+    let mut results = Vec::new();
+    for path in &plugins {
+        let load = oxide_jshost::CallInput {
+            payload: serde_json::json!({ "path": path }),
+            headers: Default::default(),
+            has_body: false,
+            request_id: format!("plugin:load:{path}"),
+            route: None,
+        };
+        let load_entry = oxide_jshost::EntryRef {
+            kind: "plugin:load".into(),
+            module: path.clone(),
+            export: "default".into(),
+        };
+        let _ = pool.call(load_entry, load).await;
+
+        let req = oxide_jshost::CallInput {
+            payload: serde_json::json!({
+                "path": path,
+                "hook": hook_name,
+                "args": args,
+            }),
+            headers: Default::default(),
+            has_body: false,
+            request_id: format!("plugin:call:{path}:{hook_name}"),
+            route: None,
+        };
+        let entry = oxide_jshost::EntryRef {
+            kind: "plugin:call".into(),
+            module: path.clone(),
+            export: hook_name.to_string(),
+        };
+        let Ok(mut stream) = pool.call(entry, req).await else {
+            continue;
+        };
+        let Ok(bytes) = stream.collect().await else {
+            continue;
+        };
+        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+            results.push(v);
+        }
+    }
+    results
+}
+
+/// Fire a lifecycle hook from an async `cmd_*`. Async (not `block_on`):
+/// every caller is already inside a runtime, and blocking on a future from
+/// within a runtime panics.
+async fn fire_lifecycle_hook(
+    root: &Path,
+    cfg: &OxideConfig,
+    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
+    hook_name: &str,
+    args: serde_json::Value,
+) -> Vec<serde_json::Value> {
+    let Some(pool) = pool else {
+        return Vec::new();
+    };
+    call_js_plugin_hook(root, cfg, pool, hook_name, args).await
+}
+
+/// True when any configured `kind:js` plugin (or module entry) exports
+/// `hook_name`. Used to skip building a tooling pool for a hook nothing
+/// declares — the pool costs one Node child.
+fn plugin_declares_any(root: &Path, cfg: &OxideConfig, hook_names: &[&str]) -> bool {
+    hook_names.iter().any(|h| !collect_plugin_paths_for_hook(root, cfg, h).is_empty())
+}
+
+/// Merge a `config` hook's returned patch into the live config.
+///
+/// The patch is a partial JSON object whose keys match the config's own.
+/// Only the fields a plugin would realistically set are honored — a
+/// wholesale re-serialize would lose every field this CLI does not model.
+/// An unknown key is reported and skipped (a plugin targeting a newer config
+/// field should not fail a build).
+fn apply_config_patch(
+    cfg: &mut OxideConfig,
+    patch: &serde_json::Value,
+    w: Writer<'_>,
+) -> anyhow::Result<()> {
+    let Some(obj) = patch.as_object() else { return Ok(()) };
+    for (key, value) in obj {
+        match key.as_str() {
+            "adapter" => {
+                if let Some(s) = value.as_str() {
+                    cfg.adapter = s.to_string();
+                }
+            }
+            "siteUrl" | "site_url" => {
+                if let Some(s) = value.as_str() {
+                    cfg.site_url = Some(s.to_string());
+                }
+            }
+            "routes" => {
+                if let Some(dir) = value.get("dir").and_then(|d| d.as_str()) {
+                    cfg.routes.dir = dir.to_string();
+                }
+            }
+            "build" => {
+                if let Some(t) = value.get("target").and_then(|v| v.as_str()) {
+                    cfg.build.target = t.to_string();
+                }
+            }
+            other => {
+                outln!(
+                    w,
+                    "warn: plugin config patch key `{other}` is not modeled by this CLI; ignored"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// §15.2: `renderHead` — a plugin contributes to the neutral head model.
+/// Each result is `{ meta?: [...], link?: [...], style?: [...], script?: [...] }`,
+/// merged into the model the adapter receives. Called once per prerendered
+/// route (the hook sees the route id), not per request.
+async fn plugin_render_head(
+    root: &Path,
+    cfg: &OxideConfig,
+    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
+    route_id: &str,
+) -> serde_json::Value {
+    let mut merged = serde_json::json!({
+        "meta": [], "link": [], "style": [], "script": []
+    });
+    let Some(pool) = pool else { return merged };
+    if collect_plugin_paths_for_hook(root, cfg, "renderHead").is_empty() {
+        return merged;
+    }
+    let results = call_js_plugin_hook(
+        root,
+        cfg,
+        pool,
+        "renderHead",
+        serde_json::json!({ "route": route_id }),
+    )
+    .await;
+    let Some(obj) = merged.as_object_mut() else {
+        return merged;
+    };
+    for r in results {
+        for field in ["meta", "link", "style", "script"] {
+            if let Some(arr) = r.get(field).and_then(|v| v.as_array()) {
+                if let Some(slot) = obj.get_mut(field).and_then(|v| v.as_array_mut()) {
+                    slot.extend(arr.iter().cloned());
+                }
+            }
+        }
+    }
+    merged
+}
+

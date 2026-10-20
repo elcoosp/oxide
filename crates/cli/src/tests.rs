@@ -706,6 +706,8 @@ async fn write_prerender_threads_loader_data_into_renderer() {
         &[],  // no layouts in this test
         &[],  // no layout chain in this test
         None, // no error.tsx in this test
+    
+        &serde_json::json!({"meta":[],"link":[],"style":[],"script":[]}),
     )
     .await
     .expect("write_prerender ok");
@@ -750,6 +752,8 @@ async fn write_prerender_without_loader_uses_empty_data() {
         &[],  // no layouts
         &[],  // no layout chain
         None, // no error.tsx
+    
+        &serde_json::json!({"meta":[],"link":[],"style":[],"script":[]}),
     )
     .await
     .expect("write_prerender ok");
@@ -3811,6 +3815,8 @@ async fn write_prerender_carries_500_status_for_marker_body() {
         &[],  // no layouts
         &[],  // no layout server modules
         None, // no error_route
+    
+        &serde_json::json!({"meta":[],"link":[],"style":[],"script":[]}),
     )
     .await
     .expect("write_prerender succeeds");
@@ -3846,6 +3852,8 @@ async fn write_prerender_carries_200_status_for_clean_body() {
         &[],
         &[],
         None,
+    
+        &serde_json::json!({"meta":[],"link":[],"style":[],"script":[]}),
     )
     .await
     .expect("write_prerender succeeds");
