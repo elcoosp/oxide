@@ -90,6 +90,10 @@ pub fn output_from_raw(raw: &Value) -> oxide_server::Result<LoaderOutput> {
                 .collect::<std::collections::BTreeMap<String, serde_json::Value>>()
         })
         .unwrap_or_default();
+    // A `meta = defineMeta(fn)` export is evaluated by the worker against
+    // this load's data. Absent for a route whose server module has no `meta`
+    // export, which is the common case.
+    let meta = raw.get("meta").filter(|v| !v.is_null()).cloned();
     Ok(LoaderOutput {
         status,
         location,
@@ -97,6 +101,7 @@ pub fn output_from_raw(raw: &Value) -> oxide_server::Result<LoaderOutput> {
         set_cookies,
         headers,
         deferred,
+        meta,
     })
 }
 

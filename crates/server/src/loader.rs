@@ -107,6 +107,12 @@ pub struct LoaderOutput {
     /// when the load had no deferred data.
     #[serde(default)]
     pub deferred: std::collections::BTreeMap<String, serde_json::Value>,
+    /// The neutral head model a `meta = defineMeta(fn)` export produced,
+    /// evaluated against this load's data. `None` when the route's server
+    /// module has no `meta` export (the common case). The pipeline merges it
+    /// into the render input's head.
+    #[serde(default)]
+    pub meta: Option<serde_json::Value>,
 }
 
 impl LoaderOutput {
@@ -253,6 +259,7 @@ mod tests {
             ],
             headers: vec![("x-oxide-visits".into(), "7".into())],
             deferred: std::collections::BTreeMap::new(),
+            meta: None,
         };
         let s = serde_json::to_string(&out).unwrap();
         let back: LoaderOutput = serde_json::from_str(&s).unwrap();

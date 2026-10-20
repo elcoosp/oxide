@@ -2749,6 +2749,9 @@ async fn write_prerender(
     // receives. Prerendered static pages previously always wrote `{}`
     // into PageRenderInput.data; they now run the real `load()`.
     let mut data = serde_json::Value::Object(Default::default());
+    // 16-G: the loader's `meta` contribution, if its server module exports
+    // one. Merged into the render input's head below.
+    let mut route_meta: Option<serde_json::Value> = None;
     // §7.1 / §10.2 step 5: resolved defer() values from the load. Prerender
     // used to discard these — the generated page had defer slots that never
     // resolved. They are injected as the same nonce'd script the live path
@@ -2829,6 +2832,9 @@ async fn write_prerender(
             Ok(out) if out.status == 200 => {
                 data = out.data;
                 deferred_values = out.deferred;
+                // 16-G: a `meta = defineMeta(fn)` export, evaluated by the
+                // worker against this load's data.
+                route_meta = out.meta;
             }
             Ok(out) => {
                 // Non-200 during build: emit an explicit diagnostic HTML
@@ -2899,19 +2905,30 @@ async fn write_prerender(
         {
             input.head = plugin_head.clone();
         }
+        // 16-G: the route's own `meta` (from `page.server.ts`) joins the
+        // same neutral model. Route-level head is the more specific intent,
+        // so its entries land after a plugin's.
+        if let Some(meta) = route_meta.as_ref() {
+            input.head = merge_neutral_head(input.head, meta.clone());
+        }
         renderer
             .render(input)
             .await
             .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?
     } else {
         // No framework renderer attached (a project without a
-        // `componentFor`). The placeholder is the whole document — but a
-        // plugin's `renderHead` contribution still belongs in it, so the
-        // head is built from `plugin_head` rather than hardcoded empty.
+        // `componentFor`). The placeholder is the whole document — but both
+        // a plugin's `renderHead` and the route's own `meta` contribution
+        // belong in it, so the head is built from their merged model rather
+        // than hardcoded empty.
+        let head_model = match route_meta.as_ref() {
+            Some(meta) => merge_neutral_head(plugin_head.clone(), meta.clone()),
+            None => plugin_head.clone(),
+        };
         format!(
             "<!doctype html><html><head>{}</head><body>\
              <main data-route=\"{pattern}\">placeholder</main></body></html>",
-            neutral_head_to_html(plugin_head),
+            neutral_head_to_html(&head_model),
         )
     };
     // §10.3: `<Island chunk="X">` emits `data-ox-chunk="X"` — a logical island
@@ -6022,6 +6039,9 @@ fn build_dispatch(
             // output (error(...) or redirect(...)) short-circuits the
             // response; a 200 output threads `data` into the render phase.
             let mut data = serde_json::Value::Object(Default::default());
+            // 16-G: the route's `meta = defineMeta(fn)` contribution, if its
+            // server module exports one. Merged into the render input's head.
+            let mut route_meta: Option<serde_json::Value> = None;
             // §16.6 / §9.2: cookies and headers a load set on the success
             // path. Collected here and applied to whichever response the
             // render phase produces (stream or error).
@@ -6248,6 +6268,9 @@ fn build_dispatch(
                     }
                     Ok(out) => {
                         data = out.data;
+                        // 16-G: the route's `meta = defineMeta(fn)` export,
+                        // evaluated by the worker against this load's data.
+                        route_meta = out.meta;
                         // NOTE (preexisting, preserved): overwrite, not
                         // extend — matches the sequential-path behavior.
                         loader_set_cookies = out.set_cookies;
@@ -6329,6 +6352,8 @@ fn build_dispatch(
                         }
                         Ok(out) => {
                             data = out.data;
+                            // 16-G: the route's `meta` contribution.
+                            route_meta = out.meta;
                             loader_set_cookies = out.set_cookies;
                             loader_headers = out.headers;
                             // §7.1 / §9.2: resolved defer() values. Injected
@@ -6453,6 +6478,13 @@ fn build_dispatch(
                 // §10.2 step 5: nearest ancestor `error.tsx` — the adapter
                 // renders it on an SSR throw instead of the generic 500.
                 input.error_route_id = error_route_id.clone();
+                // 16-G: the route's own `meta` joins the neutral head model.
+                // The live path has no plugin `renderHead` contribution to
+                // merge with here (that is a build-time hook); the route's
+                // meta is the whole contribution.
+                if let Some(meta) = route_meta.as_ref() {
+                    input.head = merge_neutral_head(input.head, meta.clone());
+                }
                 match renderer.render_streaming(input).await {
                     Ok(render_stream) => {
                         // §10.2 step 5 (error-status contract): peek the
@@ -10880,6 +10912,11 @@ fn neutral_head_to_html(head: &serde_json::Value) -> String {
     let Some(obj) = head.as_object() else {
         return out;
     };
+    // `title` is a scalar, not an array — a route's `meta` sets it and it
+    // belongs first in the head.
+    if let Some(t) = obj.get("title").and_then(|v| v.as_str()) {
+        out.push_str(&format!("<title>{}</title>", html_escape(t)));
+    }
     for field in ["meta", "link", "style", "script"] {
         let Some(arr) = obj.get(field).and_then(|v| v.as_array()) else {
             continue;
@@ -10900,8 +10937,16 @@ fn neutral_head_to_html(head: &serde_json::Value) -> String {
                 "script" => "script",
                 _ => continue,
             };
-            // A `<style>` / `<script>` entry may carry `content` as body text.
-            let body = attrs.get("content").and_then(|c| c.as_str());
+            // A `<style>` / `<script>` entry may carry `content` as body
+            // text. For any other tag (`meta`, `link`) `content` is a normal
+            // attribute — `<meta name="description" content="...">` is the
+            // common case, and skipping it there emitted an attribute-less
+            // tag.
+            let body = if matches!(tag, "style" | "script") {
+                attrs.get("content").and_then(|c| c.as_str())
+            } else {
+                None
+            };
             let mut tag_out = format!("<{tag}");
             let mut keys: Vec<&String> = attrs.keys().collect();
             keys.sort();
@@ -10931,4 +10976,35 @@ fn html_escape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+/// Merge one neutral head model into another.
+///
+/// The shape is `{meta: [...], link: [...], style: [...], script: [...],
+/// title?: "..."}`. Arrays concatenate with `inner` last, so a route's entry
+/// lands after a plugin's and a consumer reading the last match sees the page
+/// author's value. `title` is inner-wins.
+fn merge_neutral_head(outer: serde_json::Value, inner: serde_json::Value) -> serde_json::Value {
+    let mut out = match outer {
+        serde_json::Value::Object(o) => o,
+        _ => serde_json::Map::new(),
+    };
+    let Some(inner_obj) = inner.as_object() else {
+        return serde_json::Value::Object(out);
+    };
+    for field in ["meta", "link", "style", "script"] {
+        match (out.get_mut(field), inner_obj.get(field)) {
+            (Some(serde_json::Value::Array(a)), Some(serde_json::Value::Array(b))) => {
+                a.extend(b.iter().cloned());
+            }
+            (None, Some(v)) => {
+                out.insert(field.to_string(), v.clone());
+            }
+            _ => {}
+        }
+    }
+    if let Some(t) = inner_obj.get("title") {
+        out.insert("title".to_string(), t.clone());
+    }
+    serde_json::Value::Object(out)
 }

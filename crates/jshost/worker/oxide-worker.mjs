@@ -990,12 +990,33 @@ async function dispatchLoaderRun(id, input) {
         deferred[String(did)] = { __oxide_deferred_error: String(e?.message ?? e) };
       }
     }
+    // §16-G: a `page.server.ts` may export
+    // `meta = defineMeta(({ data }) => ({ title, description, ... }))`.
+    // `defineMeta` tags the function; calling it with the load result gives
+    // the neutral head model. Evaluated AFTER the load (its `data` argument
+    // is what the load returned) and kept separate from `data` so a route's
+    // loader result and its head contribution do not collide.
+    let meta = null;
+    if (typeof mod.meta === "function") {
+      try {
+        const m = await mod.meta({ data: result ?? {}, params: params ?? {} });
+        if (m && typeof m === "object") meta = m;
+      } catch (e) {
+        // A throwing meta must not fail the route's render — the page body
+        // and its data are what the user came for; the head is decoration.
+        process.stderr.write(
+          '[oxide] meta() threw for ' + module_path + ': ' + (e?.message ?? e) + '\n',
+        );
+      }
+    }
+
     callOk(id, {
       ok: true,
       status: 200,
       location: null,
       deferred,
       data: result ?? {},
+      meta,
       setCookies: [...pendingCookies.values()],
       headers: extraHeaders,
     });

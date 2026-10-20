@@ -3295,6 +3295,7 @@ impl oxide_server::LoaderRunner for LocalsCapturingLoader {
             set_cookies: Vec::new(),
             headers: Vec::new(),
             deferred,
+            meta: None,
         })
     }
 }
