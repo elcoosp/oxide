@@ -27,12 +27,12 @@ hooks each kind supports and whether the support is wired end-to-end
 | `configResolved` | 15.2 | 🟡 | 🚫 | 🚫 | After the config is frozen; read-only view. |
 | `buildStart` | 15.2 | 🟡 | 🚫 | 🚫 | Once per build. |
 | `buildEnd` | 15.2 | 🟡 | 🚫 | 🚫 | Once per build, with the final result summary. |
-| `resolveId` | 15.2 | 🟡 | 🚫 | 🚫 | `(specifier, from) → id \| null`. |
-| `load` | 15.2 | 🟡 | 🚫 | 🚫 | `(id) → code \| null`; a virtual-module plugin uses this. |
+| `resolveId` | 15.2 | ✅ | 🚫 | 🚫 | `(specifier, from) → id \| null`. |
+| `load` | 15.2 | ✅ | 🚫 | 🚫 | `(id) → code \| null`; a virtual-module plugin uses this. |
 | `transform` | 15.2 | ✅ | ✅ | ✅ | `(code, id) → code`. **The one hook wired end-to-end today.** |
-| `renderChunk` | 15.2 | 🟡 | 🚫 | 🚫 | `(chunk) → chunk`. |
-| `generateBundle` | 15.2 | 🟡 | 🚫 | 🚫 | Called with the final bundle. |
-| `transformHtml` | 15.2 | 🟡 | 🚫 | 🚫 | `(html, ctx) → html`; runs in the prerender finalizer. |
+| `renderChunk` | 15.2 | ✅ | 🚫 | 🚫 | `(chunk) → chunk`. |
+| `generateBundle` | 15.2 | ✅ | 🚫 | 🚫 | Called with the final bundle. |
+| `transformHtml` | 15.2 | ✅ | 🚫 | 🚫 | `(html, ctx) → html`; runs in the prerender finalizer. |
 | `handleHotUpdate` | 15.2 | 🟡 | 🚫 | 🚫 | `({path, content}) → {reload: bool}`. |
 | `routes` | 15.2 | 🟡 | 🚫 | 🚫 | Contributes route entries at scan time. |
 | `typegen` | 15.2 | 🟡 | 🚫 | 🚫 | Contributes `.d.ts` fragments. |
