@@ -474,3 +474,16 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod side_effect_frame_tests {
+    use super::*;
+
+    #[test]
+    fn lint_reports_a_line_number() {
+        let src = "const a = 1;\nsetTimeout(() => {}, 100);\n";
+        let hits = lint_top_level_side_effects("x.ts", src);
+        assert!(!hits.is_empty(), "setTimeout is flagged");
+        assert!(hits[0].line >= 1, "line is 1-based, got {}", hits[0].line);
+    }
+}
