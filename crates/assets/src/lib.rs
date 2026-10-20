@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 mod font_subset;
 mod content;
 pub mod content_collection;
+pub mod content_typegen;
 pub use content::{
     ContentFormat, MdxCompileRequest, parse_content_entry_with_format, parse_mdx_source,
 };
