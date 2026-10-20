@@ -46,7 +46,27 @@ function detectLocale(): string {
   return activeLocale
 }
 
-/** Load (and cache) the active locale's catalog. Resolves to an empty map on
+/** Derive the route key the build uses for a per-route subset. The build
+ *  keys on the route directory with any trailing `/page` stripped and slashes
+ *  replaced by underscores (`routes/blog/[slug]` → `blog_[slug]`); this
+ *  reproduces it from the ODF payload's `route` field, or from
+ *  `location.pathname` when the payload is absent. */
+function routeKeyFromPage(): string | null {
+  const g = globalThis as {
+    __oxide?: { route?: string }
+  }
+  const route = g.__oxide?.route
+  if (typeof route === 'string' && route.length > 0) {
+    const stripped = route.endsWith('/page') ? route.slice(0, -5) : route
+    const rel = stripped.startsWith('routes/') ? stripped.slice(7) : stripped
+    return rel.replace(/\//g, '_')
+  }
+  return null
+}
+
+/** Load (and cache) the active locale's catalog. Tries the per-route subset
+ *  first (`/client/messages/<locale>/<route>.json`), falling back to the full
+ *  catalog (`/client/messages/<locale>.json`). Resolves to an empty map on
  *  any failure — a missing catalog must not break a page; `t()` then returns
  *  the key, which is a visible-and-recoverable degradation, not a crash. */
 export async function loadMessages(locale?: string): Promise<Messages> {
@@ -56,6 +76,25 @@ export async function loadMessages(locale?: string): Promise<Messages> {
   if (inflight) return inflight
   inflight = (async () => {
     try {
+      // Per-route subset first: a route that named its keys ships only
+      // those. A 404 means this route has no subset, and the full catalog
+      // is the fallback.
+      const routeKey = routeKeyFromPage()
+      if (routeKey) {
+        try {
+          const sub = await globalThis.fetch(
+            `/client/messages/${encodeURIComponent(l)}/${encodeURIComponent(routeKey)}.json`,
+          )
+          if (sub.ok) {
+            const body = (await sub.json()) as CatalogFile
+            const msgs: Messages = Object.freeze({ ...(body.messages ?? {}) })
+            cache.set(l, msgs)
+            return msgs
+          }
+        } catch {
+          // fall through to the full catalog
+        }
+      }
       const res = await globalThis.fetch(`/client/messages/${encodeURIComponent(l)}.json`)
       if (!res.ok) return {}
       const body = (await res.json()) as CatalogFile
