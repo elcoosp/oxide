@@ -33,12 +33,36 @@ impl Transformer for OxcTransformer {
         let source_type = source_type_for(input.lang);
         let parsed = Parser::new(&allocator, &input.code, source_type).parse();
 
+        // §19-E: a parse error carries a real span. Turn it into a
+        // line/column `Location` plus a rendered code frame, so the message
+        // names the offending line rather than dumping an Oxc debug struct.
         let mut diagnostics: Vec<Diagnostic> = parsed
             .diagnostics
             .iter()
             .map(|e| {
-                Diagnostic::error("CMP-PARSE", format!("{e:?}"))
-                    .with_fix("fix the syntax error reported by the Oxc parser")
+                let msg = e.message.to_string();
+                let mut d = Diagnostic::error("CMP-PARSE", msg)
+                    .with_fix("fix the syntax error reported by the Oxc parser");
+                if let Some(span) = e.labels.first().map(|l| l.span()) {
+                    let start = span.start as usize;
+                    // Byte offset -> 1-based (line, column). Column is a
+                    // character count within the line, not a byte count, so
+                    // a multi-byte character does not shift the caret.
+                    let before = &input.code[..start.min(input.code.len())];
+                    let line = before.matches('\n').count() + 1;
+                    let line_start = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
+                    let col = before[line_start..].chars().count() + 1;
+                    d = d.at(oxidation_location(&input.path, line, col));
+                    let frame = oxide_diagnostics::render_code_frame(
+                        &input.code,
+                        line,
+                        Some(col),
+                    );
+                    if !frame.is_empty() {
+                        d = d.with_code_frame(frame);
+                    }
+                }
+                d
             })
             .collect();
 
@@ -192,14 +216,40 @@ impl OxcTransformer {
         let source_type = source_type_for(input.lang);
         let parsed = Parser::new(&allocator, &input.code, source_type).parse();
         if !parsed.diagnostics.is_empty() {
-            return Err(crate::err(
+            // §19-E: carry the first error's span as a `Location` plus a
+            // rendered code frame, so the message names the offending line
+            // instead of only the file and a count. The first error is the
+            // primary one — Oxc emits follow-on diagnostics that cascade from
+            // it, and pointing at the second one is unhelpful.
+            let first = &parsed.diagnostics[0];
+            let mut d = Diagnostic::error(
                 "CMP-PARSE",
                 format!(
-                    "`{}` failed to parse: {} error(s)",
+                    "`{}` failed to parse: {} error(s): {}",
                     input.path,
-                    parsed.diagnostics.len()
+                    parsed.diagnostics.len(),
+                    first.message,
                 ),
-            ));
+            )
+            .with_fix("fix the syntax error reported by the Oxc parser");
+            if let Some(span) = first.labels.first().map(|l| l.span()) {
+                let start = span.start as usize;
+                let before = &input.code[..start.min(input.code.len())];
+                let line = before.matches('\n').count() + 1;
+                let line_start = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
+                let col = before[line_start..].chars().count() + 1;
+                d = d.at(oxide_diagnostics::Location::file(
+                    &input.path,
+                    line as u32,
+                    col as u32,
+                ));
+                let frame =
+                    oxide_diagnostics::render_code_frame(&input.code, line, Some(col));
+                if !frame.is_empty() {
+                    d = d.with_code_frame(frame);
+                }
+            }
+            return Err(crate::OxideError(d));
         }
 
         let mut code = input.code.clone();
@@ -822,3 +872,8 @@ fn code_escape(s: &str) -> String {
 // Silence the unused-import warnings from `AstBTreeMap`.
 #[allow(dead_code)]
 type _UnusedAstMap = AstBTreeMap<String, String>;
+
+/// Build a `Location` for a 1-based (line, column) in `path`.
+fn oxidation_location(path: &str, line: usize, col: usize) -> oxide_diagnostics::Location {
+    oxide_diagnostics::Location::file(path, line as u32, col as u32)
+}
