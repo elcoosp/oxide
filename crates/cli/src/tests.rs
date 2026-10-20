@@ -5325,12 +5325,20 @@ async fn build_records_resolver_edges_for_bare_imports() {
 /// `Input::PluginOptions` edge on every module whose source path equals a
 /// plugin entry. A module that is *not* a plugin entry records no
 /// plugin-options edge.
-// The sync plugin-hook bridge uses `std::thread::scope`, which blocks the
-// calling thread. On a current-thread runtime (the `#[tokio::test]` default)
-// that is the ONLY thread polling the pool's futures — the build deadlocks.
-// The production CLI uses a multi-thread runtime (`Runtime::new()`), so the
-// same code runs fine there; this test uses the same flavor the real binary
-// uses.
+// KNOWN LIMITATION: the sync plugin-hook bridge (`std::thread::scope` in
+// `build_js_plugin_hook`) blocks the thread that polls the caller's runtime.
+// On a multi-thread runtime that is fine — other worker threads poll the
+// `pool.call` future. On a current-thread runtime it deadlocks: the blocked
+// thread is the only one that could poll the very future being awaited.
+//
+// The production CLI uses `Runtime::new()` (multi-thread), so `oxide build`
+// works. This test uses the same flavour so it exercises the real path. The
+// worker's stdout reader now runs on its own dedicated runtime
+// (`reader_runtime_handle` in `oxide-jshost`) — that is a genuine robustness
+// win, but it cannot fix a hang caused by the WAITER's runtime being blocked.
+//
+// Fixing the current-thread case needs the bridge rewritten to not block the
+// caller (spawn the call, await a channel). Tracked; not done here.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn build_records_plugin_options_for_plugin_entries_only() {
     use std::fs;
