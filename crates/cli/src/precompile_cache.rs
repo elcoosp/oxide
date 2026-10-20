@@ -117,6 +117,15 @@ impl PrecompileCache {
         let ptr = std::fs::read_to_string(self.ptr_path(&digest)).ok()?;
         let hex = ptr.trim();
         let bytes = hex_to_key(hex)?;
+        // §5-C: prefer the sealed envelope. A pre-envelope (raw) blob is
+        // still readable — the CAS key covers whatever bytes are on disk, so
+        // a cache written before this change falls through to the plain
+        // read. `GRAPH-CORRUPT` on the sealed path is a real error (a
+        // partial write or bit-flip); it is surfaced as a miss here so the
+        // caller recompiles and overwrites, rather than serving bad bytes.
+        if let Ok(Some(env)) = self.store.get_sealed(&bytes) {
+            return String::from_utf8(env.body).ok();
+        }
         let blob = self.store.get(&bytes).ok()??;
         String::from_utf8(blob).ok()
     }
@@ -132,7 +141,12 @@ impl PrecompileCache {
             ],
             kind: "precompile",
         };
-        let cas_key = self.store.put(js.as_bytes(), &meta)?;
+        // §5-C: a compiled-JS artifact goes through the rkyv envelope so a
+        // corrupt or tampered blob is caught by `archived_hash` on read, in
+        // addition to the CAS's own key check.
+        let cas_key = self
+            .store
+            .put_sealed(oxide_graph::artifacts::ArtifactKind::CompiledJs, js.as_bytes(), &meta)?;
         let ptr = self.ptr_path(&key.digest());
         // Atomic write: a half-written pointer would be a permanent miss, not a
         // corruption, but a rename keeps a concurrent reader from seeing it.
