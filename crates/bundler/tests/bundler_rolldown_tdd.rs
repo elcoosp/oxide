@@ -34,6 +34,9 @@ fn opts(root: &Path, env: BundleEnv, entries: &[(&str, &str)]) -> BundleOptions 
         transform_hook: None,
         resolve_hook: None,
         load_hook: None,
+        render_chunk_hook: None,
+        generate_bundle_hook: None,
+        transform_html_hook: None,
         css_transform: None,
         inline_dynamic_imports: false,
         resolve_conditions: None,
@@ -598,4 +601,67 @@ fn rolldown_without_a_css_import_is_unaffected() {
         .expect("pure-JS bundle");
     assert_eq!(out.chunks.len(), 1);
     assert!(out.client_manifest.is_some());
+}
+
+#[test]
+fn render_chunk_hook_rewrites_emitted_files() {
+    // A renderChunk hook receives the emitted chunk file name + its source
+    // and returns the rewritten source; the bundler writes it back.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/main.ts"), "export const x = 1;\n").unwrap();
+
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let seen_for_hook = seen.clone();
+    let hook = oxide_bundler::RenderChunkHook::new(move |file, src| {
+        seen_for_hook.lock().unwrap().push(file.to_string());
+        Ok(Some(format!("// renderChunk was here\n{src}")))
+    });
+
+    let mut o = opts(root, BundleEnv::Client, &[("main", "src/main.ts")]);
+    o.render_chunk_hook = Some(hook);
+
+    let rb = oxide_bundler::RolldownBundler::new(root);
+    use oxide_bundler::Bundler as _;
+    let _ = rb.bundle(&o).expect("bundle");
+
+    assert!(
+        !seen.lock().unwrap().is_empty(),
+        "hook saw at least one chunk",
+    );
+    let mut found = false;
+    for entry in std::fs::read_dir(root.join("dist")).unwrap().flatten() {
+        if entry.path().extension().and_then(|e| e.to_str()) == Some("js") {
+            let body = std::fs::read_to_string(entry.path()).unwrap();
+            if body.contains("// renderChunk was here") {
+                found = true;
+                break;
+            }
+        }
+    }
+    assert!(found, "at least one emitted .js carries the renderChunk marker");
+}
+
+#[test]
+fn generate_bundle_hook_can_veto_a_chunk() {
+    // A generateBundle hook returns the file list the build should expose.
+    // The bundler keeps only chunks whose file is in the returned list.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/main.ts"), "export const x = 1;\n").unwrap();
+
+    let hook = oxide_bundler::GenerateBundleHook::new(|_files| Ok(Some(Vec::new())));
+    let mut o = opts(root, BundleEnv::Client, &[("main", "src/main.ts")]);
+    o.generate_bundle_hook = Some(hook);
+
+    let rb = oxide_bundler::RolldownBundler::new(root);
+    use oxide_bundler::Bundler as _;
+    let outcome = rb.bundle(&o).expect("bundle");
+    assert!(
+        outcome.chunks.is_empty(),
+        "a hook returning an empty list keeps no chunk in the manifest; got {}",
+        outcome.chunks.len(),
+    );
 }
