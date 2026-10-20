@@ -60,15 +60,9 @@ impl L0Cache {
     }
 
     /// Build the canonical key for a route + params + Vary dimensions (§11.2).
+    /// P-04: hashes borrowed parts directly — no intermediate `String` clones.
     fn key(&self, route: &str, params: &str, vary: &str) -> String {
-        CacheKey {
-            layer: Layer::L0,
-            route: route.to_string(),
-            params: params.to_string(),
-            vary: vary.to_string(),
-            build_id: self.build_id.clone(),
-        }
-        .canonical()
+        CacheKey::canonical_parts(Layer::L0, route, params, vary, &self.build_id)
     }
 
     /// Look up a fresh cached response for `route`. Returns `None` on a miss
@@ -79,23 +73,15 @@ impl L0Cache {
     /// surfaced so the caller can answer a conditional request with 304.
     pub async fn get(&self, route: &str, params: &str, vary: &str) -> Option<CachedResponse> {
         let key = self.key(route, params, vary);
-        let entry = self.handler.get(&key).await.ok()??;
+        // P-03: fetch the shared `Arc<Entry>` — a hot hit no longer copies the
+        // body out of the memory tier.
+        let entry = self.handler.get_arc(&key).await.ok()??;
         let now = now_ms();
         if now > entry.stale_until() {
             return None; // beyond TTL + SWR
         }
         let stale = !entry.is_fresh(now);
-        Some(CachedResponse {
-            status: entry.status,
-            headers: entry
-                .headers
-                .into_iter()
-                .filter(|(k, _)| !k.eq_ignore_ascii_case("content-security-policy"))
-                .collect(),
-            body: entry.body,
-            etag: entry.etag,
-            stale,
-        })
+        Some(CachedResponse { entry, stale })
     }
 
     /// Store a response. The caller passes the body with [`NONCE_SENTINEL`] in
@@ -190,14 +176,7 @@ impl L0Cache {
     /// PERF-04: build the canonical L0 key without an `L0Cache` instance
     /// (the dispatch needs the single-flight key before it has the cache).
     pub fn key_for(route: &str, params: &str, vary: &str, build_id: &str) -> String {
-        CacheKey {
-            layer: Layer::L0,
-            route: route.to_string(),
-            params: params.to_string(),
-            vary: vary.to_string(),
-            build_id: build_id.to_string(),
-        }
-        .canonical()
+        CacheKey::canonical_parts(Layer::L0, route, params, vary, build_id)
     }
 
     /// Invalidate one route's cached responses by tag (§11.3).
@@ -218,40 +197,74 @@ impl L0Cache {
 }
 
 /// A cached response ready to serve, with the nonce still a sentinel.
+///
+/// P-03: holds the shared `Arc<Entry>` (no body copy on a hit) and
+/// materializes the live-nonce body in a single pass.
 #[derive(Debug, Clone)]
 pub struct CachedResponse {
-    pub status: u16,
-    pub headers: Vec<(String, String)>,
-    pub body: Vec<u8>,
-    /// PERF-04: the stored ETag, for a conditional-request 304.
-    pub etag: String,
+    pub entry: std::sync::Arc<Entry>,
     /// PERF-04: true when served within the SWR window past the TTL — the
     /// caller should trigger a background revalidation.
     pub stale: bool,
 }
 
 impl CachedResponse {
-    /// Replace the nonce sentinel with `nonce` and build the final body.
-    pub fn materialize(&self, nonce: &str) -> Vec<u8> {
-        if !self
-            .body
+    pub fn status(&self) -> u16 {
+        self.entry.status
+    }
+    /// Response headers with the CSP header removed (the live request's CSP is
+    /// applied per request).
+    pub fn headers(&self) -> Vec<(String, String)> {
+        self.entry
+            .headers
+            .iter()
+            .filter(|(k, _)| !k.eq_ignore_ascii_case("content-security-policy"))
+            .cloned()
+            .collect()
+    }
+    /// PERF-04: the stored ETag, for a conditional-request 304.
+    pub fn etag(&self) -> &str {
+        &self.entry.etag
+    }
+
+    /// Replace the nonce sentinel with `nonce` and build the final body in a
+    /// single allocation (zero allocations when no sentinel is present).
+    pub fn materialize(&self, nonce: &str) -> bytes::Bytes {
+        let body = &self.entry.body;
+        if !body
             .windows(NONCE_SENTINEL.len())
             .any(|w| w == NONCE_SENTINEL.as_bytes())
         {
-            return self.body.clone();
+            return bytes::Bytes::copy_from_slice(body);
         }
-        String::from_utf8_lossy(&self.body)
-            .replace(NONCE_SENTINEL, nonce)
-            .into_bytes()
+        let pat = NONCE_SENTINEL.as_bytes();
+        let mut out = Vec::with_capacity(body.len());
+        let mut rest = &body[..];
+        while let Some(i) = find_subslice(rest, pat) {
+            out.extend_from_slice(&rest[..i]);
+            out.extend_from_slice(nonce.as_bytes());
+            rest = &rest[i + pat.len()..];
+        }
+        out.extend_from_slice(rest);
+        bytes::Bytes::from(out)
     }
 
     /// True when the body still carries the sentinel (i.e. it was stored with
     /// a substitutable nonce).
     pub fn has_sentinel(&self) -> bool {
-        self.body
+        self.entry
+            .body
             .windows(NONCE_SENTINEL.len())
             .any(|w| w == NONCE_SENTINEL.as_bytes())
     }
+}
+
+/// P-03: first index of `needle` in `hay`, or `None`.
+fn find_subslice(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return None;
+    }
+    hay.windows(needle.len()).position(|w| w == needle)
 }
 
 /// A Vary fingerprint: the normalized dimensions a cached response depends on
@@ -293,7 +306,22 @@ pub fn vary_of(headers: &[(String, String)], vary_headers: &[String]) -> String 
         };
         parts.push(format!("{lower}={value}"));
     }
-    parts.join(";")
+    // S-16: the values are attacker-controlled, so a unique header value per
+    // request would mint unlimited cache keys (cache-fill DoS that evicts real
+    // entries). Bound cardinality structurally: cap each component and, when
+    // the whole fingerprint still carries too much entropy, collapse to a
+    // single hash of the raw vary set.
+    for p in &mut parts {
+        if p.len() > 64 {
+            p.truncate(64);
+        }
+    }
+    let joined = parts.join(";");
+    if joined.len() > 512 {
+        let h = blake3::hash(joined.as_bytes());
+        return format!("vary-hash={}", &h.to_hex()[..32]);
+    }
+    joined
 }
 
 /// True when a route's inferred/explicit mode is safe to cache at L0.
@@ -325,9 +353,9 @@ mod tests {
         )
         .await;
         let got = c.get("routes/index", "{}", "lang=").await.expect("hit");
-        assert_eq!(got.status, 200);
-        assert_eq!(got.body, b"<html>body</html>");
-        assert_eq!(got.headers.len(), 1);
+        assert_eq!(got.status(), 200);
+        assert_eq!(got.entry.body, b"<html>body</html>");
+        assert_eq!(got.headers().len(), 1);
     }
 
     #[tokio::test]
@@ -363,6 +391,7 @@ mod tests {
             c.get("routes/blog/[slug]", "{\"slug\":\"a\"}", "lang=")
                 .await
                 .unwrap()
+                .entry
                 .body,
             b"A"
         );
@@ -370,6 +399,7 @@ mod tests {
             c.get("routes/blog/[slug]", "{\"slug\":\"b\"}", "lang=")
                 .await
                 .unwrap()
+                .entry
                 .body,
             b"B"
         );
@@ -396,7 +426,7 @@ mod tests {
         .await;
         let got = c.get("r", "", "").await.unwrap();
         assert!(
-            !got.headers
+            !got.headers()
                 .iter()
                 .any(|(k, _)| k.eq_ignore_ascii_case("content-security-policy")),
             "the CSP header must be re-derived per request, never cached"
@@ -411,9 +441,46 @@ mod tests {
             .await;
         let got = c.get("r", "", "").await.unwrap();
         assert!(got.has_sentinel());
-        let served = String::from_utf8(got.materialize("REALNONCE")).unwrap();
+        let served = String::from_utf8(got.materialize("REALNONCE").to_vec()).unwrap();
         assert!(served.contains("nonce=\"REALNONCE\""));
         assert!(!served.contains(NONCE_SENTINEL));
+    }
+
+    #[test]
+    fn materialize_single_pass_matches_string_replace() {
+        // P-03: the byte-level single-pass replace must be equivalent to the
+        // old String::replace, including multiple sentinels and a nonce with
+        // regex-special characters.
+        let mk = |body: &[u8]| CachedResponse {
+            entry: Arc::new(Entry {
+                body: body.to_vec(),
+                status: 200,
+                headers: vec![],
+                tags: vec![],
+                policy: Policy {
+                    ttl: Duration::from_secs(1),
+                    swr: None,
+                    stale_if_error: None,
+                    soft_tags: true,
+                },
+                stored_at: 0,
+                etag: String::new(),
+            }),
+            stale: false,
+        };
+        for nonce in ["abc", "$1\\x[", "n\u{00e9}"] {
+            for body in [
+                "".to_string(),
+                "plain".to_string(),
+                format!("a{NONCE_SENTINEL}b"),
+                format!("{NONCE_SENTINEL}{NONCE_SENTINEL}"),
+                format!("x{NONCE_SENTINEL}y{NONCE_SENTINEL}z"),
+            ] {
+                let got = mk(body.as_bytes()).materialize(nonce);
+                let want = body.replace(NONCE_SENTINEL, nonce);
+                assert_eq!(got.as_ref(), want.as_bytes(), "nonce={nonce:?} body={body:?}");
+            }
+        }
     }
 
     #[tokio::test]
@@ -517,8 +584,8 @@ mod tests {
         .unwrap();
         let hit = c.get("r", "", "").await.expect("stale hit within SWR");
         assert!(hit.stale, "flagged stale");
-        assert_eq!(hit.body, b"BODY");
-        assert_eq!(hit.etag, "abc");
+        assert_eq!(hit.entry.body, b"BODY");
+        assert_eq!(hit.etag(), "abc");
 
         // Stored 10 000 s ago → past TTL + SWR → miss.
         tier.set(
@@ -550,7 +617,7 @@ mod tests {
         c.put("r", "", "", 200, vec![], b"BODY".to_vec(), vec![])
             .await;
         let hit = c.get("r", "", "").await.unwrap();
-        assert!(!hit.etag.is_empty(), "etag present");
+        assert!(!hit.etag().is_empty(), "etag present");
         assert!(!hit.stale, "fresh");
     }
 
@@ -572,6 +639,22 @@ fn vary_tracks_the_configured_headers() {
     );
     // An empty configured list disables header variance entirely.
     assert_eq!(vary_of(&[("accept-language".into(), "fr".into())], &[]), "");
+}
+
+#[test]
+fn vary_bounds_cardinality_for_attacker_values() {
+    // S-16: a huge attacker-controlled header value must not become an
+    // unbounded key component.
+    let hdrs = vec!["x-junk".to_string()];
+    let big = "a".repeat(10_000);
+    let v = vary_of(&[("x-junk".into(), big)], &hdrs);
+    assert!(v.len() <= 512, "vary fingerprint too long: {}", v.len());
+    // Two distinct long values collapse to (possibly) the same hashed shape,
+    // but the result must always be bounded.
+    let v2 = vary_of(&[("x-junk".into(), "b".repeat(10_000))], &hdrs);
+    assert!(v2.len() <= 512);
+    // A short value is preserved verbatim.
+    assert_eq!(vary_of(&[("x-junk".into(), "small".into())], &hdrs), "x-junk=small");
 }
 
 #[test]
