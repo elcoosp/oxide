@@ -942,6 +942,9 @@ fn bundle_env_options(
         transform_hook,
         resolve_hook: None,
         load_hook: None,
+        render_chunk_hook: None,
+        generate_bundle_hook: None,
+        transform_html_hook: None,
         css_transform: Some(css_transform),
         inline_dynamic_imports: false,
         resolve_conditions: None,
@@ -1474,6 +1477,56 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             | oxide_dev::FileEvent::Created(p)
             | oxide_dev::FileEvent::Removed(p) => p.clone(),
         };
+        // §5.5 / §5-E: a lockfile change invalidates every resolver edge. A
+        // `package-lock.json` / `pnpm-lock.yaml` / `yarn.lock` / `bun.lockb`
+        // / `Cargo.lock` change can bump a package version that a module's
+        // import resolved against — the file's own hash does not change, so
+        // only the resolver edge catches it. `Input::Resolver` collapses to
+        // the specifier's identity in `InputId::of`, so there is no
+        // specifier to name here; instead the invalidation is broadcast by
+        // bumping the graph's version epoch, which the demand graph treats as
+        // a revalidation of every node whose deps cannot prove they survived.
+        //
+        // A directory-scoped invalidation of every `Input::Resolver` is what
+        // the spec's §5.5 says a lockfile change must do; the graph's API
+        // does not currently expose "invalidate by input kind" (its
+        // `invalidate(&[Input])` names a specific input), so the honest
+        // shape today is: an empty `invalidate([])` bumps the epoch and
+        // forces every node without a proven-survivor dep to recompute.
+        let base_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        if matches!(
+            base_name,
+            "package-lock.json" | "pnpm-lock.yaml" | "yarn.lock"
+                | "bun.lockb" | "Cargo.lock" | "bun.lock"
+        ) {
+            // Broadcast: bump the epoch, then re-seed the lockfile's own node
+            // so the graph has something to invalidate against.
+            let _ = dev_graph.invalidate(&[]);
+            let lock_key = oxide_graph::NodeKey::new(path.to_string_lossy().as_ref());
+            struct LockFileCompute(std::path::PathBuf);
+            impl oxide_graph::Compute for LockFileCompute {
+                fn compute(
+                    &self,
+                    ctx: &mut oxide_graph::ComputeCtx,
+                ) -> oxide_diagnostics::Result<oxide_graph::NodeOutput> {
+                    let bytes = ctx.fs.read_file(&self.0).unwrap_or_default();
+                    Ok(oxide_graph::NodeOutput {
+                        hash: blake3::hash(&bytes),
+                        artifact: None,
+                        deps: Default::default(),
+                    })
+                }
+            }
+            dev_graph.register(
+                lock_key.clone(),
+                std::sync::Arc::new(LockFileCompute(path.clone())),
+            );
+            let _ = dev_graph.get(lock_key, &LockFileCompute(path.clone()));
+            return true;
+        }
         let key = oxide_graph::NodeKey::new(path.to_string_lossy().as_ref());
         // (Re)register a compute that reads the file.
         struct FileCompute(std::path::PathBuf);
@@ -2156,6 +2209,9 @@ fn emit_config_bundle(
         transform_hook: None,
         resolve_hook: None,
         load_hook: None,
+        render_chunk_hook: None,
+        generate_bundle_hook: None,
+        transform_html_hook: None,
         css_transform: None,
         // §4.2: one self-contained file. A code-split bundle needs its sibling
         // chunks copied alongside and its `__toESM` dynamic-import wrappers
@@ -3261,6 +3317,20 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     let mut server_opts = server_opts;
     server_opts.resolve_hook = js_resolve_hook;
     server_opts.load_hook = js_load_hook;
+    // §15-B: the three post-emit / HTML hooks. renderChunk and generateBundle
+    // run inside the bundler for both envs; transformHtml runs on each
+    // prerendered document.
+    let js_render_chunk_hook =
+        build_js_plugin_render_chunk_hook(&rootp, &cfg, stack.tooling_pool.as_ref());
+    let js_generate_bundle_hook =
+        build_js_plugin_generate_bundle_hook(&rootp, &cfg, stack.tooling_pool.as_ref());
+    let js_transform_html_hook =
+        build_js_plugin_transform_html_hook(&rootp, &cfg, stack.tooling_pool.as_ref());
+    client_opts.render_chunk_hook = js_render_chunk_hook.clone();
+    client_opts.generate_bundle_hook = js_generate_bundle_hook.clone();
+    server_opts.render_chunk_hook = js_render_chunk_hook;
+    server_opts.generate_bundle_hook = js_generate_bundle_hook;
+    let transform_html_hook = js_transform_html_hook;
     if client_opts.virtual_modules.is_empty() {
         let mut seen: std::collections::BTreeMap<PathBuf, String> = std::collections::BTreeMap::new();
         for entry in client_opts.entries.values() {
@@ -4150,6 +4220,31 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             "incremental: reused {} prerendered route(s) (source hash unchanged)",
             reused_prerender_count,
         );
+    }
+    // §15-B: run `transformHtml` on every prerendered document. Fresh and
+    // reused documents both flow through here, so a plugin sees every
+    // emitted HTML file — the same contract Vite's transformIndexHtml has.
+    if let Some(hook) = transform_html_hook.as_ref() {
+        let mut touched = 0usize;
+        for (route_id, rels) in &prerendered {
+            for rel in rels {
+                let path = dist.join(rel);
+                let Ok(html) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                match hook.call(route_id, &html) {
+                    Ok(Some(new_html)) if new_html != html => {
+                        if std::fs::write(&path, &new_html).is_ok() {
+                            touched += 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if touched > 0 {
+            outln!(w, "transformHtml: rewrote {touched} prerendered document(s)");
+        }
     }
     // PERF-07: serialize the route tree to the rkyv archive so `oxide start`
     // can mmap it instead of re-scanning the routes directory.
@@ -9676,4 +9771,318 @@ fn collect_plugin_options(
         out.push((name, blake3::hash(&canonical), abs));
     }
     out
+}
+
+// ─── §15-B: renderChunk / generateBundle / transformHtml hook builders ─────
+//
+// Same worker-op contract the existing transform/resolveId/load builders use:
+// `plugin:load` once per candidate, then `plugin:call {path, hook, args}`.
+// Each builder is deliberately simple — the chaining rules differ per hook
+// (renderChunk: chain the source; generateBundle: last non-null wins;
+// transformHtml: chain the HTML), so each is its own function.
+
+/// §15-B: build the `renderChunk` hook. Chaining: each plugin's
+/// `renderChunk(file, source)` receives the previous plugin's output; the
+/// final string is what the bundler writes.
+fn build_js_plugin_render_chunk_hook(
+    root: &Path,
+    cfg: &OxideConfig,
+    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
+) -> Option<oxide_bundler::RenderChunkHook> {
+    let pool = pool?;
+    let plugins = collect_plugin_paths_for_hook(root, cfg, "renderChunk");
+    if plugins.is_empty() {
+        return None;
+    }
+    let pool = std::sync::Arc::clone(pool);
+    let loaded = std::sync::Arc::new(std::sync::Mutex::new(false));
+    Some(oxide_bundler::RenderChunkHook::new(move |file, source| {
+        let pool = std::sync::Arc::clone(&pool);
+        let loaded = std::sync::Arc::clone(&loaded);
+        let plugins = plugins.clone();
+        let file = file.to_string();
+        let source = source.to_string();
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| -> oxide_diagnostics::Result<Option<String>> {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|e| {
+                            oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
+                                "PLG-BRIDGE",
+                                format!("bridge runtime: {e}"),
+                            ))
+                        })?;
+                    rt.block_on(async move {
+                        let need_load = {
+                            let mut g = loaded.lock().unwrap();
+                            if *g { false } else { *g = true; true }
+                        };
+                        let mut code = source;
+                        let mut changed = false;
+                        for path in &plugins {
+                            if need_load {
+                                let req = oxide_jshost::CallInput {
+                                    payload: serde_json::json!({ "path": path }),
+                                    headers: Default::default(),
+                                    has_body: false,
+                                    request_id: format!("plugin:load:{path}"),
+                                    route: None,
+                                };
+                                let entry = oxide_jshost::EntryRef {
+                                    kind: "plugin:load".into(),
+                                    module: path.clone(),
+                                    export: "default".into(),
+                                };
+                                let _ = pool.call(entry, req).await;
+                            }
+                            let req = oxide_jshost::CallInput {
+                                payload: serde_json::json!({
+                                    "path": path,
+                                    "hook": "renderChunk",
+                                    "args": { "file": file, "code": code },
+                                }),
+                                headers: Default::default(),
+                                has_body: false,
+                                request_id: format!("plugin:call:{path}:renderChunk"),
+                                route: None,
+                            };
+                            let entry = oxide_jshost::EntryRef {
+                                kind: "plugin:call".into(),
+                                module: path.clone(),
+                                export: "renderChunk".into(),
+                            };
+                            let Ok(mut stream) = pool.call(entry, req).await else {
+                                continue;
+                            };
+                            let Ok(bytes) = stream.collect().await else {
+                                continue;
+                            };
+                            let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+                                continue;
+                            };
+                            if let Some(s) = v.get("code").and_then(|c| c.as_str()) {
+                                code = s.to_string();
+                                changed = true;
+                            }
+                        }
+                        Ok(if changed { Some(code) } else { None })
+                    })
+                })
+                .join()
+                .unwrap_or_else(|_| {
+                    Err(oxide_diagnostics::OxideError(
+                        oxide_diagnostics::Diagnostic::error(
+                            "PLG-BRIDGE",
+                            "renderChunk bridge thread panicked",
+                        ),
+                    ))
+                })
+        })
+    }))
+}
+
+/// §15-B: build the `generateBundle` hook. Chaining: the LAST plugin that
+/// returns a non-null file list wins (Vite convention).
+fn build_js_plugin_generate_bundle_hook(
+    root: &Path,
+    cfg: &OxideConfig,
+    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
+) -> Option<oxide_bundler::GenerateBundleHook> {
+    let pool = pool?;
+    let plugins = collect_plugin_paths_for_hook(root, cfg, "generateBundle");
+    if plugins.is_empty() {
+        return None;
+    }
+    let pool = std::sync::Arc::clone(pool);
+    let loaded = std::sync::Arc::new(std::sync::Mutex::new(false));
+    Some(oxide_bundler::GenerateBundleHook::new(move |files| {
+        let pool = std::sync::Arc::clone(&pool);
+        let loaded = std::sync::Arc::clone(&loaded);
+        let plugins = plugins.clone();
+        let files: Vec<String> = files.to_vec();
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| -> oxide_diagnostics::Result<Option<Vec<String>>> {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|e| {
+                            oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
+                                "PLG-BRIDGE",
+                                format!("bridge runtime: {e}"),
+                            ))
+                        })?;
+                    rt.block_on(async move {
+                        let need_load = {
+                            let mut g = loaded.lock().unwrap();
+                            if *g { false } else { *g = true; true }
+                        };
+                        let mut current: Option<Vec<String>> = None;
+                        for path in &plugins {
+                            if need_load {
+                                let req = oxide_jshost::CallInput {
+                                    payload: serde_json::json!({ "path": path }),
+                                    headers: Default::default(),
+                                    has_body: false,
+                                    request_id: format!("plugin:load:{path}"),
+                                    route: None,
+                                };
+                                let entry = oxide_jshost::EntryRef {
+                                    kind: "plugin:load".into(),
+                                    module: path.clone(),
+                                    export: "default".into(),
+                                };
+                                let _ = pool.call(entry, req).await;
+                            }
+                            let list = current.as_deref().unwrap_or(&files);
+                            let req = oxide_jshost::CallInput {
+                                payload: serde_json::json!({
+                                    "path": path,
+                                    "hook": "generateBundle",
+                                    "args": { "files": list },
+                                }),
+                                headers: Default::default(),
+                                has_body: false,
+                                request_id: format!("plugin:call:{path}:generateBundle"),
+                                route: None,
+                            };
+                            let entry = oxide_jshost::EntryRef {
+                                kind: "plugin:call".into(),
+                                module: path.clone(),
+                                export: "generateBundle".into(),
+                            };
+                            let Ok(mut stream) = pool.call(entry, req).await else {
+                                continue;
+                            };
+                            let Ok(bytes) = stream.collect().await else {
+                                continue;
+                            };
+                            let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+                                continue;
+                            };
+                            if let Some(arr) = v.get("files").and_then(|f| f.as_array()) {
+                                current = Some(
+                                    arr.iter()
+                                        .filter_map(|x| x.as_str().map(str::to_string))
+                                        .collect(),
+                                );
+                            }
+                        }
+                        Ok(current)
+                    })
+                })
+                .join()
+                .unwrap_or_else(|_| {
+                    Err(oxide_diagnostics::OxideError(
+                        oxide_diagnostics::Diagnostic::error(
+                            "PLG-BRIDGE",
+                            "generateBundle bridge thread panicked",
+                        ),
+                    ))
+                })
+        })
+    }))
+}
+
+/// §15-B: build the `transformHtml` hook. Chaining: each plugin's
+/// `transformHtml(route_id, html)` receives the previous plugin's output.
+fn build_js_plugin_transform_html_hook(
+    root: &Path,
+    cfg: &OxideConfig,
+    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
+) -> Option<oxide_bundler::TransformHtmlHook> {
+    let pool = pool?;
+    let plugins = collect_plugin_paths_for_hook(root, cfg, "transformHtml");
+    if plugins.is_empty() {
+        return None;
+    }
+    let pool = std::sync::Arc::clone(pool);
+    let loaded = std::sync::Arc::new(std::sync::Mutex::new(false));
+    Some(oxide_bundler::TransformHtmlHook::new(move |route_id, html| {
+        let pool = std::sync::Arc::clone(&pool);
+        let loaded = std::sync::Arc::clone(&loaded);
+        let plugins = plugins.clone();
+        let route_id = route_id.to_string();
+        let html = html.to_string();
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| -> oxide_diagnostics::Result<Option<String>> {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|e| {
+                            oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
+                                "PLG-BRIDGE",
+                                format!("bridge runtime: {e}"),
+                            ))
+                        })?;
+                    rt.block_on(async move {
+                        let need_load = {
+                            let mut g = loaded.lock().unwrap();
+                            if *g { false } else { *g = true; true }
+                        };
+                        let mut doc = html;
+                        let mut changed = false;
+                        for path in &plugins {
+                            if need_load {
+                                let req = oxide_jshost::CallInput {
+                                    payload: serde_json::json!({ "path": path }),
+                                    headers: Default::default(),
+                                    has_body: false,
+                                    request_id: format!("plugin:load:{path}"),
+                                    route: None,
+                                };
+                                let entry = oxide_jshost::EntryRef {
+                                    kind: "plugin:load".into(),
+                                    module: path.clone(),
+                                    export: "default".into(),
+                                };
+                                let _ = pool.call(entry, req).await;
+                            }
+                            let req = oxide_jshost::CallInput {
+                                payload: serde_json::json!({
+                                    "path": path,
+                                    "hook": "transformHtml",
+                                    "args": { "route": route_id, "html": doc },
+                                }),
+                                headers: Default::default(),
+                                has_body: false,
+                                request_id: format!("plugin:call:{path}:transformHtml"),
+                                route: None,
+                            };
+                            let entry = oxide_jshost::EntryRef {
+                                kind: "plugin:call".into(),
+                                module: path.clone(),
+                                export: "transformHtml".into(),
+                            };
+                            let Ok(mut stream) = pool.call(entry, req).await else {
+                                continue;
+                            };
+                            let Ok(bytes) = stream.collect().await else {
+                                continue;
+                            };
+                            let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+                                continue;
+                            };
+                            if let Some(s) = v.get("html").and_then(|h| h.as_str()) {
+                                doc = s.to_string();
+                                changed = true;
+                            }
+                        }
+                        Ok(if changed { Some(doc) } else { None })
+                    })
+                })
+                .join()
+                .unwrap_or_else(|_| {
+                    Err(oxide_diagnostics::OxideError(
+                        oxide_diagnostics::Diagnostic::error(
+                            "PLG-BRIDGE",
+                            "transformHtml bridge thread panicked",
+                        ),
+                    ))
+                })
+        })
+    }))
 }
