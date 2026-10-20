@@ -139,17 +139,29 @@ pub(crate) fn load_impl(path: &Path) -> Result<ArchivedTree> {
             "ensure the archive is a regular file on a local filesystem",
         )
     })?;
-    // Validate once at boot so corruption surfaces with a clear code, not a silent
-    // None on the first request.
-    access(&mmap[..])?;
-    Ok(ArchivedTree { _mmap: mmap })
+    // P-01: validate exactly once here, then keep a pointer to the archived
+    // root for the process lifetime. The mapping is read-only, so the bytes
+    // cannot change underneath the pointer.
+    let root = access(&mmap[..])?;
+    let root = std::ptr::from_ref(root);
+    Ok(ArchivedTree { _mmap: mmap, root })
+}
+
+impl ArchivedTree {
+    /// O(1) access to the validated archived root (no re-validation).
+    #[inline]
+    pub(crate) fn root(&self) -> &ArchivedArchiveRoot {
+        // SAFETY: struct invariant — `root` points into the read-only `_mmap`
+        // and was validated by `access()` in `load_impl`; it is never mutated.
+        unsafe { &*self.root }
+    }
 }
 
 pub(crate) fn arch_match_impl(tree: &ArchivedTree, path: &str) -> Option<MatchResult> {
-    // Safe access validates on every call (no unsafe aliasing is allowed in this
-    // crate); strings and segments are read in place from the mapping and only the
-    // matched entry is materialized into an owned `RouteEntry`.
-    let root = access(&tree._mmap[..]).ok()?;
+    // P-01: no per-request validation — `root()` aliases the already-validated
+    // mapping. Strings/segments are read in place; only the matched entry is
+    // materialized into an owned `RouteEntry`.
+    let root = tree.root();
     let entries = root.entries.as_slice();
     let (idx, params, score) = match_in(entries, path)?;
     let a = &entries[idx];
@@ -162,9 +174,7 @@ pub(crate) fn arch_match_impl(tree: &ArchivedTree, path: &str) -> Option<MatchRe
 }
 
 pub(crate) fn arch_len_impl(tree: &ArchivedTree) -> usize {
-    access(&tree._mmap[..])
-        .map(|root| root.entries.len())
-        .unwrap_or(0)
+    tree.root().entries.len()
 }
 
 impl EntryLike for ArchivedArchEntry {
