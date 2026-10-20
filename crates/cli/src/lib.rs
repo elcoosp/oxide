@@ -8785,6 +8785,50 @@ async fn cmd_analyze(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
             snap.previous_node_count,
         );
     }
+    // §19-C: the top modules by bytes. The manifest records each route's
+    // reachable module list (PERF-09). A module shared by many routes is
+    // counted once per route, so its number is "bytes paid by the routes
+    // that include it" — the useful figure when deciding what to split out.
+    if !manifest_routes.is_empty() {
+        // The manifest records canonicalized module paths; `rootp` here is
+        // whatever `--root` was (often relative or via a symlink), so
+        // canonicalize before stripping or the prefix never matches.
+        let root_canon = rootp.canonicalize().unwrap_or_else(|_| rootp.clone());
+        let mut module_bytes: BTreeMap<String, u64> = BTreeMap::new();
+        for row in manifest_routes.values() {
+            let Some(mods) = row.get("modules").and_then(|m| m.as_array()) else {
+                continue;
+            };
+            for m in mods {
+                let Some(p) = m.as_str() else { continue };
+                let display = std::path::Path::new(p)
+                    .strip_prefix(&root_canon)
+                    .map(|x| x.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| p.to_string());
+                let size = std::fs::metadata(p).map(|x| x.len()).unwrap_or(0);
+                *module_bytes.entry(display).or_insert(0) += size;
+            }
+        }
+        let mut sorted: Vec<(String, u64)> = module_bytes.into_iter().collect();
+        sorted.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        let top_n = std::env::var("OXIDE_ANALYZE_TOP")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(20);
+        // The share is over the sum of *module source* bytes, not the
+        // emitted-chunk total — those are different denominators (a module
+        // is counted once per route, and chunk bytes are post-minification),
+        // and mixing them produced shares over 100%.
+        let module_total: u64 = sorted.iter().map(|(_, b)| *b).sum();
+        let denom = module_total.max(1);
+        outln!(w, "--");
+        outln!(w, "top {top_n} module(s) by reachable source bytes:");
+        outln!(w, "MODULE | BYTES | SHARE%");
+        for (module, bytes) in sorted.iter().take(top_n) {
+            let share = (*bytes as f64) * 100.0 / (denom as f64);
+            outln!(w, "{module} | {bytes} | {share:.1}");
+        }
+    }
     Ok(if any_over { 1 } else { 0 })
 }
 
