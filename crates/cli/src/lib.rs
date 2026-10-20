@@ -4366,6 +4366,39 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                         e.0.message,
                     );
                 }
+                // §16-D: ship the catalog. Without this a client island has
+                // no messages at all — the typed keys exist, the values do
+                // not reach the browser. One JSON file per locale under
+                // `dist/client/messages/`; the client loader fetches the
+                // active locale's file lazily.
+                //
+                // Per-route splitting (only the keys a route uses) is a
+                // size optimization on top: a route that names its keys can
+                // ship a subset. The full-catalog file is the baseline that
+                // makes the feature work; splitting lands when a route's
+                // key usage is recorded at scan time.
+                let messages_dir = dist.join("client/messages");
+                if let Err(e) = std::fs::create_dir_all(&messages_dir) {
+                    outln!(w, "warn: cannot create dist/client/messages: {e}");
+                } else {
+                    let mut emitted = 0usize;
+                    for (locale, entries) in &cat.entries {
+                        let body = serde_json::json!({
+                            "locale": locale,
+                            "messages": entries,
+                        });
+                        let path = messages_dir.join(format!("{locale}.json"));
+                        if std::fs::write(
+                            &path,
+                            serde_json::to_vec(&body).unwrap_or_default(),
+                        )
+                        .is_ok()
+                        {
+                            emitted += 1;
+                        }
+                    }
+                    outln!(w, "i18n: emitted {emitted} message catalog(s) -> dist/client/messages/");
+                }
             }
             Ok(_) => { /* no locales/ dir — nothing to typegen */ }
             Err(e) => outln!(
