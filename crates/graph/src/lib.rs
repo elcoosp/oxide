@@ -253,6 +253,34 @@ impl<'a> ComputeCtx<'a> {
             version: version.to_string(),
         });
     }
+
+    /// Record a resolver edge (§5.2 / SPEC-5B): the computation resolved
+    /// `specifier` from `from` to something whose identity hashes to
+    /// `resolved_hash` (path + package version + matched conditions). A later
+    /// [`DemandGraph::invalidate`] with a matching `Input::Resolver` (e.g. a
+    /// lockfile bump that changes the resolved package) invalidates this node.
+    pub fn record_resolver(
+        &mut self,
+        specifier: &str,
+        from: &str,
+        resolved_hash: blake3::Hash,
+    ) {
+        self.deps.borrow_mut().insert(Input::Resolver {
+            specifier: specifier.to_string(),
+            from: from.to_string(),
+            resolved_hash,
+        });
+    }
+
+    /// Record a plugin-options edge (§5.2 / SPEC-5B): the computation depends
+    /// on the JSON options a plugin was configured with. A change to the
+    /// plugin's options invalidates this node.
+    pub fn record_plugin_options(&mut self, plugin: &str, options_hash: blake3::Hash) {
+        self.deps.borrow_mut().insert(Input::PluginOptions {
+            plugin: plugin.to_string(),
+            options_hash,
+        });
+    }
 }
 
 pub trait FileTracker {

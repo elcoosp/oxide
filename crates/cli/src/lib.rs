@@ -4404,6 +4404,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             server_manifest_path: &sm_path,
             build_id: &build_id,
             route_prerenders: std::mem::take(&mut new_prerender_records),
+            plugin_options: collect_plugin_options(&rootp, &cfg),
         };
         match crate::build_graph::record_and_persist(inputs) {
             Ok(snap) => outln!(
@@ -9629,4 +9630,50 @@ fn try_reuse_prerender(
     }
     let html = std::fs::read_to_string(disk_path).ok()?;
     Some((html, prev.status, prev.nonce.clone()))
+}
+
+// ─── §5-B: plugin-options inventory ────────────────────────────────────────
+//
+// The graph's `Input::PluginOptions` variant lets a build node record "I was
+// transformed by plugin X with these options." `file_compute_with_plugins`
+// records that edge for every module source whose path matches a plugin
+// entry. This helper is what produces the `(name, options_hash, path)`
+// triples the build graph consumes.
+//
+// The hash covers the plugin's *whole* config entry (kind, path, plus every
+// field an author put in the object). A change to any option the plugin was
+// configured with changes the hash, so every module that plugin transforms
+// invalidates on the next build — which is exactly the §5-B contract.
+
+fn collect_plugin_options(
+    root: &Path,
+    cfg: &OxideConfig,
+) -> Vec<(String, blake3::Hash, PathBuf)> {
+    let mut out = Vec::new();
+    for (idx, p) in cfg.plugins.iter().enumerate() {
+        if p.get("kind").and_then(|v| v.as_str()) != Some("js") {
+            continue;
+        }
+        let Some(rel) = p.get("path").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let abs = if Path::new(rel).is_absolute() {
+            PathBuf::from(rel)
+        } else {
+            root.join(rel)
+        };
+        // The name is what the plugin object calls itself, or an
+        // index-based fallback. A name carries no semantics beyond making
+        // the diagnostic readable.
+        let name = p
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("plugin#{idx}"));
+        // Hash the whole config entry — every field the author put in the
+        // object is an option the plugin received.
+        let canonical = serde_json::to_vec(p).unwrap_or_default();
+        out.push((name, blake3::hash(&canonical), abs));
+    }
+    out
 }

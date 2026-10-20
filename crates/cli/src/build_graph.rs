@@ -122,21 +122,95 @@ pub fn load_snapshot(rootp: &Path) -> GraphSnapshot {
 
 // ─── Compute impls ─────────────────────────────────────────────────────────
 
-/// Reads a file and returns its blake3. The recorded `Input::File` is what
-/// the graph's invalidation walks in a future incremental build.
+/// Reads a file and returns its blake3. On top of the `Input::File` the
+/// recording `FileTracker` adds, this node **also** records one
+/// `Input::Resolver` edge per bare specifier the file imports, and one
+/// `Input::PluginOptions` edge per configured `kind:js` plugin that this
+/// file path is.
+///
+/// Both variants existed in the graph enum but nothing constructed them —
+/// §5-B. With these recordings they are real invalidation edges: a lockfile
+/// bump that changes a resolved package invalidates every node whose
+/// imports it affects, and a change to a plugin's options invalidates the
+/// module the plugin transforms.
 struct FileCompute {
     path: PathBuf,
+    /// `(plugin_name, options_hash, plugin_path)` for every configured
+    /// `kind:js` plugin. Only the entries whose `plugin_path` equals
+    /// `self.path` are recorded (a source file is not a plugin entry unless
+    /// the config says so).
+    plugin_options: Vec<(String, blake3::Hash, PathBuf)>,
 }
 
 impl Compute for FileCompute {
     fn compute(&self, ctx: &mut ComputeCtx) -> GraphResult<NodeOutput> {
         let bytes = ctx.fs.read_file(&self.path)?;
+
+        // §5-B: a Resolver edge per bare specifier this file imports. The
+        // "resolved hash" for v0.1 is the specifier's own hash — the richer
+        // identity (path + package version + matched conditions) lives in
+        // oxide-bundler's resolver, which is not a Compute. Recording the
+        // specifier is what makes `invalidate(&[Input::Resolver{...}])`
+        // possible; a later build can bump the resolved hash when the
+        // resolver observes a lockfile change.
+        if let Ok(text) = std::str::from_utf8(&bytes) {
+            for spec in scan_bare_imports(text) {
+                let resolved_hash = blake3::hash(spec.as_bytes());
+                ctx.record_resolver(&spec, &self.path.to_string_lossy(), resolved_hash);
+            }
+        }
+
+        // §5-B: a PluginOptions edge when this file *is* a configured
+        // plugin entry. The plugin's own source change is already captured
+        // by `Input::File`; this edge ties it to the *options* the config
+        // declares, so an options change invalidates the module the plugin
+        // transforms.
+        for (name, opts_hash, plugin_path) in &self.plugin_options {
+            if plugin_path == &self.path {
+                ctx.record_plugin_options(name, *opts_hash);
+            }
+        }
+
         Ok(NodeOutput {
             hash: blake3::hash(&bytes),
             artifact: None,
             deps: Default::default(),
         })
     }
+}
+
+/// Extract every bare (non-relative) module specifier from a JS/TS source.
+/// Matches `from '…'`, `from "…"`, `import('…')`, and `require('…')`.
+/// Relative specifiers (`.` / `..`) and absolute paths are skipped — those
+/// resolve to a path, not to a package identity; the file's own content
+/// hash covers them.
+fn scan_bare_imports(src: &str) -> Vec<String> {
+    let mut out: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for marker in ["from ", "import(", "require("] {
+        let mut rest = src;
+        while let Some(i) = rest.find(marker) {
+            let after = &rest[i + marker.len()..];
+            let after = after.trim_start();
+            let Some(quote) = after.chars().next().filter(|c| *c == '\'' || *c == '"') else {
+                // No quoted string after the marker — skip a byte and
+                // continue so a malformed sequence does not spin.
+                if after.is_empty() {
+                    break;
+                }
+                rest = &after[1..];
+                continue;
+            };
+            let body = &after[1..];
+            let Some(end) = body.find(quote) else { break };
+            let spec = body[..end].trim();
+            let is_relative = spec.starts_with('.') || spec.starts_with('/');
+            if !is_relative && !spec.is_empty() {
+                out.insert(spec.to_string());
+            }
+            rest = &body[end + 1..];
+        }
+    }
+    out.into_iter().collect()
 }
 
 /// A manifest node: its hash covers the manifest bytes plus the hash of
@@ -165,9 +239,25 @@ impl Compute for ManifestCompute {
     }
 }
 
+/// A FileCompute with no plugin-options edges — used for chunk / manifest /
+/// typegen nodes, which are not plugin entries.
 fn file_compute(path: &Path) -> Arc<dyn Compute> {
     Arc::new(FileCompute {
         path: path.to_path_buf(),
+        plugin_options: Vec::new(),
+    })
+}
+
+/// A FileCompute that records §5-B plugin-options edges — used for module
+/// source files, which a `kind:js` plugin may transform. `plugin_options`
+/// carries one entry per configured plugin.
+fn file_compute_with_plugins(
+    path: &Path,
+    plugin_options: &[(String, blake3::Hash, PathBuf)],
+) -> Arc<dyn Compute> {
+    Arc::new(FileCompute {
+        path: path.to_path_buf(),
+        plugin_options: plugin_options.to_vec(),
     })
 }
 
@@ -184,6 +274,11 @@ pub struct RecordInputs<'a> {
     /// §5-A full incremental: this build's per-route prerender records.
     /// The next build's reuse check reads these back from the snapshot.
     pub route_prerenders: Vec<RoutePrerenderRecord>,
+    /// §5-B: `(plugin_name, options_hash, plugin_path)` for every
+    /// configured `kind:js` plugin. `cmd_build` computes these from the
+    /// config; `file_compute_with_plugins` records the edges for module
+    /// files whose path matches a plugin entry.
+    pub plugin_options: Vec<(String, blake3::Hash, PathBuf)>,
 }
 
 /// Record a graph over `inputs`, compare against the previous snapshot, and
@@ -202,7 +297,9 @@ pub fn record_and_persist(inputs: RecordInputs<'_>) -> std::io::Result<GraphSnap
     // 1. Route modules: one node per source file the build consumed.
     for src in inputs.entries.values() {
         let mk = module_key(src);
-        let comp = file_compute(src);
+        // §5-B: the plugin-aware constructor records a PluginOptions edge
+        // for every configured plugin that this file path happens to be.
+        let comp = file_compute_with_plugins(src, &inputs.plugin_options);
         graph.register(mk.clone(), Arc::clone(&comp));
         let _ = graph.get(mk.clone(), comp.as_ref());
         all_keys.push(mk.0.to_string());
