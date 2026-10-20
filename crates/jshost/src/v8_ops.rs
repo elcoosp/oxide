@@ -5,15 +5,17 @@
 //! - `op_oxide_trace`     — deterministic short trace id (stub for OTLP spans)
 //! - `op_oxide_serialize` — encode a JSON value with the ODF wire format (§9.5)
 //! - `op_oxide_random`    — `len` bytes from the OS CSPRNG (ring)
+//! - `op_oxide_sleep`     — async sleep for the isolate
+//! - `op_oxide_stream_write` — append a base64 chunk to the streamed response
+//! - `op_oxide_fetch`     — the SSRF-guarded fetch bridge (§7.6)
+//! - `op_oxide_cache_*`   — `cache_get`/`cache_set`/`cache_tag` (BUG-02)
+//! - `op_oxide_compile_module` — the bundler/plugin module transform (§15)
 //!
-//! The request-scoped ops (`stream_write`, `response_head`,
-//! `request_body_read`, `cache_get/set/tag`, `fetch`, `ws_*`) belong to
-//! per-request state that only exists once the JS render path produces
-//! streaming output. The cache ops (`cache_get/set/tag`) are wired via
-//! the `CACHE_HANDLER` thread-local below (BUG-02); the streaming ops
-//! (`stream_write`, `response_head`, `request_body_read`, `fetch`,
-//! `ws_*`) are still pending — a JS caller gets `Op not found` from
-//! deno_core until they land.
+//! The cache ops are wired via the `CACHE_HANDLER` thread-local below; the
+//! fetch op via `FETCH_HANDLER`; `compile_module` via `TRANSFORM_HANDLER`.
+//! `response_head`/`request_body_read`/`ws_*` belong to per-request state
+//! produced by the JS render path and land with the streaming render wiring;
+//! a JS caller for those still gets `Op not found` from deno_core.
 
 use deno_core::op2;
 use std::cell::RefCell;
