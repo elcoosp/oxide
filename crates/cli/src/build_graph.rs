@@ -68,6 +68,30 @@ pub struct NodeRow {
 }
 
 /// The full snapshot persisted to `.oxide/graph.json`.
+/// One prerender record: a route + the on-disk output it produced + the
+/// source hash that produced it. A matching hash + existing file lets the
+/// next build skip the render entirely (§5-A full incremental).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RoutePrerenderRecord {
+    pub route_id: String,
+    pub url: String,
+    pub status: u16,
+    /// Path relative to the project root (`dist/prerendered/...`).
+    pub rel_out: String,
+    /// blake3 of every source that fed this route's render: the serialized
+    /// `OxideConfig` (a config change flushes every route — conservative
+    /// but correct), the page file, its `page.server.ts`, every layout in
+    /// the chain (both `layout.*` and `layout.server.*`), and the error
+    /// boundary when one wraps the route.
+    pub source_hash: String,
+    /// The build-nonce the saved HTML was rendered with. On reuse, replace
+    /// this with the current build's nonce so the file's `nonce="…"`
+    /// attributes stay in sync with the CSP header the server emits. A
+    /// reuse that skips this step would serve HTML whose inline scripts
+    /// the browser blocks.
+    pub nonce: String,
+}
+
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct GraphSnapshot {
     pub version: String,
@@ -77,6 +101,11 @@ pub struct GraphSnapshot {
     pub recomputed_count: usize,
     pub previous_node_count: usize,
     pub nodes: Vec<NodeRow>,
+    /// §5-A full incremental: one record per prerendered route. Empty for a
+    /// build that prerendered nothing; absent (older snapshot) deserializes
+    /// as empty.
+    #[serde(default)]
+    pub route_prerenders: Vec<RoutePrerenderRecord>,
 }
 
 pub fn snapshot_path(rootp: &Path) -> PathBuf {
@@ -152,6 +181,9 @@ pub struct RecordInputs<'a> {
     pub client_manifest_path: &'a Path,
     pub server_manifest_path: &'a Path,
     pub build_id: &'a str,
+    /// §5-A full incremental: this build's per-route prerender records.
+    /// The next build's reuse check reads these back from the snapshot.
+    pub route_prerenders: Vec<RoutePrerenderRecord>,
 }
 
 /// Record a graph over `inputs`, compare against the previous snapshot, and
@@ -274,6 +306,7 @@ pub fn record_and_persist(inputs: RecordInputs<'_>) -> std::io::Result<GraphSnap
         recomputed_count: recomputed,
         previous_node_count: previous.node_count,
         nodes,
+        route_prerenders: inputs.route_prerenders,
     };
     let path = snapshot_path(inputs.rootp);
     if let Some(parent) = path.parent() {
