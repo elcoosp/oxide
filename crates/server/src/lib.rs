@@ -382,6 +382,9 @@ fn asset_body_cache() -> &'static moka::sync::Cache<std::path::PathBuf, Bytes> {
         moka::sync::Cache::builder()
             .max_capacity(256 * 1024 * 1024)
             .weigher(|_k, v: &Bytes| v.len().min(u32::MAX as usize) as u32)
+            // A5: a dev rebuild replaces dist/client in place; without a TTL
+            // the cache served the previous body indefinitely.
+            .time_to_live(std::time::Duration::from_secs(300))
             .build()
     })
 }
@@ -1285,6 +1288,15 @@ impl I18nPolicy {
 }
 
 pub struct Pipeline {
+    /// A3: per-peer token bucket for the OG endpoint. `resvg` rasterization
+    /// is CPU-bound and unauthenticated; without a limit one client can pin a
+    /// core.
+    pub og_rate_limiter: RateLimiter,
+    /// Max OG renders per peer per window. Default 10.
+    pub og_rate_max: u32,
+    /// The OG rate-limit window, seconds. Default 60.
+    pub og_rate_window_secs: u64,
+
     pub rules: RulesEngine,
     pub assets: Option<StaticAssets>,
     pub limits: Limits,
@@ -1748,6 +1760,9 @@ impl Default for Pipeline {
             security: Default::default(),
             i18n: None,
             rate_limiter: std::sync::Arc::new(Default::default()),
+            og_rate_limiter: RateLimiter::default(),
+            og_rate_max: 10,
+            og_rate_window_secs: 60,
             health_path: String::new(),
             metrics_path: String::new(),
             metrics: None,
@@ -2333,6 +2348,20 @@ pub async fn ssrf_safe_fetch(
     body: &[u8],
     ssrf_allow_list: &[String],
 ) -> std::result::Result<(u16, Vec<(String, String)>, Vec<u8>), String> {
+    // A6: forward only headers that are safe cross-origin. A caller-supplied
+    // Authorization/Cookie must never ride an SSRF-guarded request to a host
+    // the app does not own - that is a credential leak, not a feature.
+    const SSRF_FORWARD_ALLOWLIST: &[&str] = &["accept", "content-type", "user-agent"];
+    let headers: Vec<(String, String)> = headers
+        .iter()
+        .filter(|(k, _)| {
+            SSRF_FORWARD_ALLOWLIST
+                .iter()
+                .any(|a| k.eq_ignore_ascii_case(a))
+        })
+        .cloned()
+        .collect();
+
     use http_body_util::{BodyExt, Full};
     use hyper_util::client::legacy::Client;
     use hyper_util::rt::TokioExecutor;
@@ -3082,6 +3111,22 @@ impl Pipeline {
         // backend (resvg/taffy/parley in oxide-assets); a PNG response.
         if req.method.eq_ignore_ascii_case("GET") && path == "/_oxide/og" {
             if let Some(ep) = self.og_endpoint.as_deref() {
+                // A3: resvg rasterization is CPU-bound and the endpoint is
+                // unauthenticated. Rate-limit per peer before the work, not
+                // after. `og_rate_limiter` is shared across requests.
+                let peer = req
+                    .header("x-forwarded-for")
+                    .and_then(|v| v.split(',').next())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("unknown")
+                    .to_string();
+                if !self.og_rate_limiter.allow(&peer, self.og_rate_max, self.og_rate_window_secs) {
+                    return NativePrefix::Raw(
+                        OxideResponse::new(429, "og rate limit exceeded")
+                            .with_header("retry-after", self.og_rate_window_secs.to_string()),
+                    );
+                }
                 return NativePrefix::Raw(serve_og_endpoint(ep, &req.url));
             }
             return NativePrefix::Raw(
