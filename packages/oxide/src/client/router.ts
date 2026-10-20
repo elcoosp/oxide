@@ -274,8 +274,9 @@ export function createRouter(opts: RouterOptions): Router {
    * `routes/index/page.js`) resolve under it. Without this prefix a preload
    * `import('/routes/index/page.js')` 404s silently.
    *
-   * Tests inject `clientBase`; in the browser we derive it from
-   * `import.meta.url`, falling back to `/client/`.
+   * The base is derived from `import.meta.url` in a module context; the
+   * `clientBase` option remains as an escape hatch for callers that load the
+   * router outside a module (it is not injected by the test suite).
    */
   const CLIENT_BASE: string = (() => {
     if (opts.clientBase !== undefined) return opts.clientBase
