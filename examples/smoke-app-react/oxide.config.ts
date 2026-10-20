@@ -73,4 +73,8 @@ export default defineConfig({
   build: { target: 'baseline-widely-available', sourcemap: 'hidden' },
   adapter: 'binary',
   modules: [],
+  // S-09: the `/_oxide/og` rasterization endpoint is opt-in because it is
+  // CPU-bound and unauthenticated. The Playwright `og.spec.ts` suite asserts
+  // it end-to-end, so this fixture opts in.
+  og: { enabled: true },
 })
