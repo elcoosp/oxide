@@ -3110,12 +3110,53 @@ impl JsHost for NodeHost {
 /// - `CallErr` resolves the pending call with the worker's diagnostic.
 /// - stdout EOF (worker exit) fails all pending calls with `JSH-CRASH` and bumps
 ///   the `crashed` counter (§4.3 failure isolation).
+/// The runtime the worker reader tasks live on.
+///
+/// A **dedicated** runtime, separate from whatever the caller is using. This
+/// is what makes `oxide build` work under a `current_thread` runtime: the
+/// sync plugin-hook bridge (`std::thread::scope` in `build_js_plugin_hook`)
+/// blocks the calling thread, and if the reader task lived on that same
+/// runtime it would never be polled — the worker's stdout would never be
+/// read, no response would arrive, and the build would hang. On a
+/// multi-thread runtime the extra worker threads hide this; on a
+/// current-thread runtime it is a hard deadlock.
+///
+/// One runtime per process, created lazily on first use. A fresh
+/// `std::thread` builds it because `Builder::build()` panics if called from
+/// within another async context (which `spawn_reader` may be).
+fn reader_runtime_handle() -> tokio::runtime::Handle {
+    use std::sync::OnceLock;
+    static HANDLE: OnceLock<tokio::runtime::Handle> = OnceLock::new();
+    HANDLE
+        .get_or_init(|| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::Builder::new()
+                .name("oxide-reader-rt-init".to_string())
+                .spawn(move || {
+                    let rt = tokio::runtime::Builder::new_multi_thread()
+                        .worker_threads(1)
+                        .enable_all()
+                        .thread_name("oxide-reader-rt")
+                        .build()
+                        .expect("reader runtime");
+                    let handle = rt.handle().clone();
+                    let _ = tx.send(handle);
+                    // Leak the runtime: it lives for the process lifetime.
+                    // Dropping it would abort every reader task on it.
+                    std::mem::forget(rt);
+                })
+                .expect("spawn reader runtime init");
+            rx.recv().expect("reader runtime handle")
+        })
+        .clone()
+}
+
 fn spawn_reader(
     mut stdout: ChildStdout,
     worker: Arc<Worker>,
     counters: Arc<PoolCounters>,
 ) -> JoinHandle<()> {
-    tokio::spawn(async move {
+    reader_runtime_handle().spawn(async move {
         let mut buf: Vec<u8> = Vec::with_capacity(8192);
         let mut chunk = [0u8; 8192];
         loop {
