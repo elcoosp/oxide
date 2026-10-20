@@ -5325,21 +5325,17 @@ async fn build_records_resolver_edges_for_bare_imports() {
 /// `Input::PluginOptions` edge on every module whose source path equals a
 /// plugin entry. A module that is *not* a plugin entry records no
 /// plugin-options edge.
-// KNOWN LIMITATION: the sync plugin-hook bridge (`std::thread::scope` in
-// `build_js_plugin_hook`) blocks the thread that polls the caller's runtime.
-// On a multi-thread runtime that is fine — other worker threads poll the
-// `pool.call` future. On a current-thread runtime it deadlocks: the blocked
-// thread is the only one that could poll the very future being awaited.
-//
-// The production CLI uses `Runtime::new()` (multi-thread), so `oxide build`
-// works. This test uses the same flavour so it exercises the real path. The
-// worker's stdout reader now runs on its own dedicated runtime
-// (`reader_runtime_handle` in `oxide-jshost`) — that is a genuine robustness
-// win, but it cannot fix a hang caused by the WAITER's runtime being blocked.
-//
-// Fixing the current-thread case needs the bridge rewritten to not block the
-// caller (spawn the call, await a channel). Tracked; not done here.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+// The default `#[tokio::test]` is a CURRENT-THREAD runtime. This test MUST
+// pass under it — that is the whole point. The sync plugin-hook bridge
+// (`std::thread::scope` in `build_js_plugin_hook`) blocks the calling
+// thread, which is the only thread that could poll the caller's runtime.
+// That would be a hard deadlock — EXCEPT the worker's child process and its
+// stdout reader are bound to a dedicated runtime (`reader_runtime_handle`
+// in `oxide-jshost`) that has its own thread and is never blocked. Every
+// stdin write and stdout read waits on that reactor, not on the caller's.
+// Before that binding, this test hung forever under a current-thread
+// runtime; with it, the build completes normally.
+#[tokio::test]
 async fn build_records_plugin_options_for_plugin_entries_only() {
     use std::fs;
     let (_d, root) = fixture_project();
