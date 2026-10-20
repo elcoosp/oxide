@@ -5447,3 +5447,68 @@ impl oxide_graph::Compute for FileComputeForTest {
         })
     }
 }
+
+// ─── §5-A: per-env bundle skip ────────────────────────────────────────────
+
+/// Editing a `*.server.*` module must NOT invalidate the client bundle —
+/// that module is never in the client graph (§6.4 guard). Editing a page
+/// component must.
+#[tokio::test]
+async fn client_bundle_skips_only_when_its_own_inputs_change() {
+    use std::fs;
+    let (_d, root) = fixture_project();
+    let build = |force: bool| {
+        let root = root.clone();
+        async move {
+            let mut env_set = false;
+            if force {
+                unsafe { std::env::set_var("OXIDE_FORCE_BUILD", "1"); }
+                env_set = true;
+            }
+            let r = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
+            if env_set {
+                unsafe { std::env::remove_var("OXIDE_FORCE_BUILD"); }
+            }
+            r
+        }
+    };
+
+    // Cold: nothing to skip.
+    let (c1, out1) = build(false).await;
+    assert_eq!(c1, 0, "{out1}");
+    assert!(!out1.contains("bundle: client unchanged"), "cold build bundles: {out1}");
+
+    // No change: the client bundle is skipped.
+    let (c2, out2) = build(true).await;
+    assert_eq!(c2, 0, "{out2}");
+    assert!(
+        out2.contains("bundle: client unchanged"),
+        "unchanged env is skipped: {out2}",
+    );
+
+    // Edit ONLY a server module: still skipped.
+    fs::write(
+        root.join("src/routes/blog/page.server.ts"),
+        "export const config = { render: 'isr', tags: ['post:b'] };\n",
+    )
+    .unwrap();
+    let (c3, out3) = build(true).await;
+    assert_eq!(c3, 0, "{out3}");
+    assert!(
+        out3.contains("bundle: client unchanged"),
+        "a server-only edit leaves the client bundle valid: {out3}",
+    );
+
+    // Edit a page component: the client bundle re-runs.
+    fs::write(
+        root.join("src/routes/blog/page.tsx"),
+        "export default function Blog() { return <main>changed</main>; }\n",
+    )
+    .unwrap();
+    let (c4, out4) = build(true).await;
+    assert_eq!(c4, 0, "{out4}");
+    assert!(
+        !out4.contains("bundle: client unchanged"),
+        "a component edit re-bundles the client: {out4}",
+    );
+}
