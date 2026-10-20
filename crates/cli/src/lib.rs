@@ -8387,6 +8387,13 @@ async fn start_server_inner_full(
     };
 
     let pipeline = std::sync::Arc::new(oxide_server::Pipeline {
+        // A3: OG endpoint rate limit. The rasterization is CPU-bound and the
+        // endpoint is unauthenticated; 10 renders per peer per minute bounds
+        // the worst case without blocking a legitimate OG card.
+        og_rate_limiter: oxide_server::RateLimiter::default(),
+        og_rate_max: 10,
+        og_rate_window_secs: 60,
+
         rules,
         assets,
         image_endpoint,
