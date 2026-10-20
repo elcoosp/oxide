@@ -125,7 +125,38 @@ fn resolve_bucket_key(
     format!("lit:{rule_key}")
 }
 
-pub(crate) fn evaluate_impl(engine: &RulesEngine, path: &str, client_key: &str) -> RuleOutcome {
+/// B-16 / S-17: verify an HTTP Basic `Authorization` header in constant time.
+/// Returns false for a missing/malformed header or a mismatch.
+fn verify_basic_auth(header: Option<&str>, expected: (&str, &str)) -> bool {
+    use base64::Engine as _;
+    use subtle::ConstantTimeEq as _;
+    let Some(h) = header else { return false };
+    let Some(b64) = h.strip_prefix("Basic ") else {
+        return false;
+    };
+    let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(b64.trim()) else {
+        return false;
+    };
+    let Ok(pair) = std::str::from_utf8(&decoded) else {
+        return false;
+    };
+    let Some((user, pass)) = pair.split_once(':') else {
+        return false;
+    };
+    let ct_eq = |a: &str, b: &str| -> bool {
+        let (ab, bb) = (a.as_bytes(), b.as_bytes());
+        ab.len() == bb.len() && bool::from(ab.ct_eq(bb))
+    };
+    // `&` (not `&&`): compare both fields regardless of the first result.
+    ct_eq(user, expected.0) & ct_eq(pass, expected.1)
+}
+
+pub(crate) fn evaluate_impl(
+    engine: &RulesEngine,
+    path: &str,
+    client_key: &str,
+    authorization: Option<&str>,
+) -> RuleOutcome {
     let url = split_path(path);
     let mut merged: BTreeMap<String, String> = BTreeMap::new();
     let mut any_headers = false;
@@ -153,8 +184,12 @@ pub(crate) fn evaluate_impl(engine: &RulesEngine, path: &str, client_key: &str) 
                 retry_after_secs: 1,
             };
         }
-        if rule.basic_auth.is_some() {
-            return RuleOutcome::AuthRequired;
+        if let Some(ba) = &rule.basic_auth {
+            // B-16: verify before challenging; an authenticated request falls
+            // through to the remaining rules / normal dispatch.
+            if !verify_basic_auth(authorization, (&ba.0, &ba.1)) {
+                return RuleOutcome::AuthRequired;
+            }
         }
         if rule.rule_type.as_deref() == Some("rewrite") {
             if let Some(dest) = &rule.destination {
@@ -392,6 +427,24 @@ mod tests {
         r.destination = Some("/login".to_string());
         let e = RulesEngine::compile(vec![r]).unwrap();
         assert_eq!(e.evaluate("/admin/panel"), RuleOutcome::AuthRequired);
+        // B-16: a correct `Basic` header authenticates and falls through to
+        // the next terminal rule (here, the redirect) rather than challenging.
+        assert_eq!(
+            e.evaluate_with_auth("/admin/panel", "", Some("Basic dTpw")),
+            RuleOutcome::Redirect {
+                destination: "/login".to_string(),
+                status: 308
+            }
+        );
+        // Wrong password and malformed header both re-challenge.
+        assert_eq!(
+            e.evaluate_with_auth("/admin/panel", "", Some("Basic dTp4")),
+            RuleOutcome::AuthRequired
+        );
+        assert_eq!(
+            e.evaluate_with_auth("/admin/panel", "", Some("Basic !!!notbase64")),
+            RuleOutcome::AuthRequired
+        );
     }
 
     #[test]
