@@ -39,6 +39,8 @@ blake3 = { workspace = true }
 ring = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+# P-12: hot-asset body cache (no blocking re-read per request).
+moka = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
