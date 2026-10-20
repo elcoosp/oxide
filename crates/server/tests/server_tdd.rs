@@ -22,7 +22,9 @@ fn req(method: &str, url: &str, headers: &[(&str, &str)]) -> OxideRequest {
             .collect(),
         body: Bytes::new(),
         request_id: "req-test".into(),
-            trace: None,
+        trace: None,
+        peer: None,
+        rewrite_hops: 0,
     }
 }
 
@@ -64,6 +66,7 @@ fn pipeline(
         actions: None,
         tls: false,
         dev_token: None,
+        dev_bind_ip: None,
         sockets: None,
         http3_port: 0,
     }
@@ -817,6 +820,7 @@ async fn metrics_endpoint_renders_prometheus_text() {
         actions: None,
         tls: false,
         dev_token: None,
+        dev_bind_ip: None,
         sockets: None,
         http3_port: 0,
     };
@@ -866,6 +870,7 @@ async fn vitals_endpoint_records_samples_into_metrics() {
         actions: None,
         tls: false,
         dev_token: None,
+        dev_bind_ip: None,
         sockets: None,
         http3_port: 0,
     };
@@ -911,6 +916,7 @@ async fn vitals_endpoint_tolerates_a_malformed_beacon() {
         actions: None,
         tls: false,
         dev_token: None,
+        dev_bind_ip: None,
         sockets: None,
         http3_port: 0,
     };
@@ -942,6 +948,7 @@ async fn metrics_endpoint_404_when_not_configured() {
         actions: None,
         tls: false,
         dev_token: None,
+        dev_bind_ip: None,
         sockets: None,
         http3_port: 0,
     };
@@ -977,6 +984,7 @@ async fn pipeline_observes_native_branch_requests() {
         actions: None,
         tls: false,
         dev_token: None,
+        dev_bind_ip: None,
         sockets: None,
         http3_port: 0,
     };
@@ -1018,6 +1026,7 @@ async fn with_metrics_attaches_registry() {
         actions: None,
         tls: false,
         dev_token: None,
+        dev_bind_ip: None,
         sockets: None,
         http3_port: 0,
     };
@@ -1069,6 +1078,7 @@ fn inspector_pipeline() -> Pipeline {
         actions: None,
         tls: false,
         dev_token: None,
+        dev_bind_ip: None,
         sockets: None,
         http3_port: 0,
     }
@@ -1194,7 +1204,7 @@ async fn pipeline_rule_outcomes() {
     assert_eq!(resp.status, 401);
     assert_eq!(
         resp.header("www-authenticate"),
-        Some("Basic realm=\"oxide\"")
+        Some("Basic realm=\"oxide\", charset=\"UTF-8\"")
     );
 
     // SEC-01: `max: 1` allows the first call; the second is rate-limited
@@ -1737,11 +1747,13 @@ async fn hsts_emitted_only_on_tls() {
     let plain = Pipeline {
         tls: false,
         dev_token: None,
+        dev_bind_ip: None,
         ..Default::default()
     };
     let tls_p = Pipeline {
         tls: true,
         dev_token: None,
+        dev_bind_ip: None,
         ..Default::default()
     };
     let d = &echo_dispatch();
@@ -1866,6 +1878,62 @@ fn sec05_trusted_proxy_resolution() {
     assert_eq!(client, None);
     assert_eq!(proto, None);
     assert_eq!(host, Some("real.host"));
+}
+
+/// S-03/S-04: a WebSocket `Origin` must match the request authority (or the
+/// allow-list); a foreign origin is rejected, and a missing origin is rejected
+/// in production but allowed in dev.
+#[test]
+fn ws_origin_gate_matches_authority() {
+    use oxide_server::ws_origin_ok;
+    let none: Vec<String> = Vec::new();
+    let allow = vec!["app.example.com".to_string()];
+
+    // Same host → allowed.
+    assert!(ws_origin_ok(
+        Some("https://app.com"),
+        Some("app.com"),
+        &none,
+        false
+    ));
+    // Different host, not allow-listed → rejected.
+    assert!(!ws_origin_ok(
+        Some("https://evil.net"),
+        Some("app.com"),
+        &none,
+        false
+    ));
+    // Different host but allow-listed → allowed.
+    assert!(ws_origin_ok(
+        Some("https://app.example.com"),
+        Some("app.com"),
+        &allow,
+        false
+    ));
+    // Host:port on the authority is stripped before comparison.
+    assert!(ws_origin_ok(
+        Some("http://localhost:5173"),
+        Some("localhost:5173"),
+        &none,
+        false
+    ));
+    // No Origin: rejected in production, allowed in dev.
+    assert!(!ws_origin_ok(None, Some("app.com"), &none, false));
+    assert!(ws_origin_ok(None, Some("app.com"), &none, true));
+    // Malformed origin rejected.
+    assert!(!ws_origin_ok(Some("not a uri"), Some("app.com"), &none, false));
+}
+
+/// S-21.1: `dev_host_allowed` accepts loopback literals and the bind IP, and
+/// rejects an arbitrary host (DNS rebinding).
+#[test]
+fn dev_host_gate_rejects_rebinding() {
+    use oxide_server::dev_host_allowed;
+    let bind: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+    assert!(dev_host_allowed("localhost", bind));
+    assert!(dev_host_allowed("127.0.0.1:5173", bind));
+    assert!(dev_host_allowed("[::1]:5173", bind));
+    assert!(!dev_host_allowed("evil.example.com", bind));
 }
 
 /// SEC-06: a slowloris (a client that opens a connection and drips headers
