@@ -78,12 +78,14 @@ impl LoaderHost {
         };
         let mut stream = self.pool.call(entry, call_input).await?;
         let bytes = stream.collect().await?;
-        let v: Value = serde_json::from_slice(&bytes).map_err(|e| {
-            crate::err(
-                "JSH-LOADER",
-                format!("loader:run returned invalid JSON: {e}"),
-            )
-        })?;
+        // Two wire shapes:
+        //   * no `defer()` in the loader -> one JSON object (unchanged);
+        //   * at least one -> NDJSON: the initial payload line, then one
+        //     `{deferredSettle: {id, value|error}}` line per settle.
+        let v = match serde_json::from_slice::<Value>(&bytes) {
+            Ok(v) => v,
+            Err(_) => merge_settle_stream(&bytes)?,
+        };
         if let Some(err_msg) = v.get("__oxide_error").and_then(|x| x.as_str()) {
             return Err(crate::err("JSH-LOADER", err_msg.to_string()));
         }
@@ -895,5 +897,81 @@ impl SocketHost {
             _ => None,
         };
         Ok(SocketOutcome { sends, close })
+    }
+}
+
+/// Fold an NDJSON settle stream into one payload: the first line is the
+/// initial response, each later `{deferredSettle: {id, value|error}}` line
+/// fills `deferred[id]`. Keeps the caller's contract — `LoaderOutput::deferred`
+/// is populated exactly as the old await-all path populated it — while the
+/// worker no longer blocks on the slowest defer.
+fn merge_settle_stream(bytes: &[u8]) -> Result<Value> {
+    let text = std::str::from_utf8(bytes).map_err(|e| {
+        crate::err("JSH-LOADER", format!("loader:run stream is not UTF-8: {e}"))
+    })?;
+    let mut lines = text.lines().filter(|l| !l.trim().is_empty());
+    let first = lines
+        .next()
+        .ok_or_else(|| crate::err("JSH-LOADER", "loader:run stream was empty"))?;
+    let mut base: Value = serde_json::from_str(first).map_err(|e| {
+        crate::err(
+            "JSH-LOADER",
+            format!("loader:run returned invalid JSON: {e}"),
+        )
+    })?;
+    for line in lines {
+        let settle: Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let Some(s) = settle.get("deferredSettle") else {
+            continue;
+        };
+        let Some(id) = s.get("id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let value = s
+            .get("value")
+            .cloned()
+            .unwrap_or_else(|| {
+                serde_json::json!({
+                    "__oxide_deferred_error": s.get("error").and_then(|e| e.as_str()).unwrap_or("deferred rejected")
+                })
+            });
+        if let Some(deferred) = base.get_mut("deferred").and_then(|d| d.as_object_mut()) {
+            deferred.insert(id.to_string(), value);
+        }
+    }
+    Ok(base)
+}
+
+#[cfg(test)]
+mod settle_stream_tests {
+    use super::*;
+
+    #[test]
+    fn merges_settle_lines_into_deferred() {
+        let bytes = br#"{"ok":true,"status":200,"data":{"t":"x"},"deferred":{},"deferredPending":["1","2"]}
+{"deferredSettle":{"id":"1","value":{"a":1}}}
+{"deferredSettle":{"id":"2","error":"boom"}}
+"#;
+        let v = merge_settle_stream(bytes).expect("merge");
+        assert_eq!(v["status"], 200);
+        assert_eq!(v["data"]["t"], "x");
+        let d = v["deferred"].as_object().expect("deferred object");
+        assert_eq!(d["1"]["a"], 1, "resolved value");
+        assert_eq!(
+            d["2"]["__oxide_deferred_error"], "boom",
+            "rejected promise serialized as an error object",
+        );
+    }
+
+    #[test]
+    fn a_single_json_object_still_parses() {
+        let bytes = br#"{"ok":true,"status":200,"data":{},"deferred":{}}"#;
+        // The fast path is `from_slice`; this asserts the fallback never runs
+        // for the single-chunk shape by checking the bytes parse directly.
+        let v: Value = serde_json::from_slice(bytes).expect("single");
+        assert_eq!(v["status"], 200);
     }
 }

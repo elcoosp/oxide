@@ -982,13 +982,25 @@ async function dispatchLoaderRun(id, input) {
     // the client's DeferredClient slots resolve to real data. A rejected
     // promise surfaces as a serialized error object, not a throw — a
     // loader whose data is partially ready should still render.
-    const deferred = {};
+    // 9/10 (WP-B1): stream deferred settles instead of awaiting them all.
+    //
+    // The load result ships immediately with `deferredPending` naming the
+    // ids; each promise, as it settles, emits a `call_chunk` carrying
+    // `{deferredSettle: {id, value|error}}`; a final `call_end` closes the
+    // stream. The Rust host collects the same way it does today (no
+    // protocol change), so this is behaviour-preserving for a consumer that
+    // awaits `collect()` - and the seam a streaming consumer (WP-B2) uses to
+    // flush a resolution script per settle rather than after the slowest.
+    const pendingIds = [];
+    const settlePromises = [];
     for (const [did, promise] of registry) {
-      try {
-        deferred[String(did)] = await promise;
-      } catch (e) {
-        deferred[String(did)] = { __oxide_deferred_error: String(e?.message ?? e) };
-      }
+      pendingIds.push(String(did));
+      settlePromises.push(
+        promise.then(
+          (v) => ({ deferredSettle: { id: String(did), value: v } }),
+          (e) => ({ deferredSettle: { id: String(did), error: String(e?.message ?? e) } }),
+        ),
+      );
     }
     // §16-G: a `page.server.ts` may export
     // `meta = defineMeta(({ data }) => ({ title, description, ... }))`.
@@ -1010,16 +1022,42 @@ async function dispatchLoaderRun(id, input) {
       }
     }
 
-    callOk(id, {
+    const initial = {
       ok: true,
       status: 200,
       location: null,
-      deferred,
+      deferred: {},
+      deferredPending: pendingIds,
       data: result ?? {},
       meta,
       setCookies: [...pendingCookies.values()],
       headers: extraHeaders,
-    });
+    };
+    if (settlePromises.length === 0) {
+      // Nothing deferred: the plain complete response is byte-identical to
+      // what this op sent before, so a route with no defer() is untouched.
+      callOk(id, initial);
+    } else {
+      // Initial chunk, not complete.
+      // NDJSON: each streamed payload is one JSON line. The host splits on
+      // `\n` and folds the `{deferredSettle}` lines into the initial
+      // payload's `deferred` map.
+      out({
+        t: "call_ok",
+        id,
+        chunks: [b64(Buffer.from(JSON.stringify(initial) + "\n", "utf8"))],
+        complete: false,
+      });
+      for (const p of settlePromises) {
+        const payload = await p;
+        out({
+          t: "call_chunk",
+          id,
+          data_b64: b64(Buffer.from(JSON.stringify(payload) + "\n", "utf8")),
+        });
+      }
+      out({ t: "call_end", id });
+    }
   } catch (e) {
     callErr(id, "JSH-LOADER", `loader:run failed: ${e?.message ?? e}`);
   }
