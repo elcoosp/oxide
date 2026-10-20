@@ -4684,6 +4684,85 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     }
                     outln!(w, "i18n: emitted {emitted} message catalog(s) -> dist/client/messages/");
                 }
+                // §16-D per-route splitting: scan each route's sources for
+                // `t('key')` calls and emit only the keys that route names.
+                // The client loader prefers `/client/messages/<locale>/<route>.json`
+                // and falls back to the full catalog, so a route that names
+                // no keys costs nothing extra and one that names a few ships
+                // a few.
+                let per_route_dir = messages_dir.clone();
+                let mut routes_with_keys = 0usize;
+                for e in &tree.entries {
+                    if !matches!(e.kind, oxide_router::RouteKind::Page) {
+                        continue;
+                    }
+                    let route_file = rootp.join(&cfg.routes.dir).join(&e.file);
+                    let server_file = route_file.with_file_name("page.server.ts");
+                    let mut keys: std::collections::BTreeSet<String> =
+                        std::collections::BTreeSet::new();
+                    for f in [&route_file, &server_file] {
+                        if let Ok(src) = std::fs::read_to_string(f) {
+                            for k in scan_message_keys(&src) {
+                                keys.insert(k);
+                            }
+                        }
+                    }
+                    if keys.is_empty() {
+                        continue;
+                    }
+                    // The route id used by the client loader is the same
+                    // `componentFor` key the adapter sees: the route
+                    // directory with any trailing `/page` stripped.
+                    let route_key = e
+                        .id
+                        .0
+                        .strip_suffix("/page")
+                        .unwrap_or(&e.id.0)
+                        .trim_start_matches("routes/")
+                        .replace('/', "_");
+                    if route_key.is_empty() {
+                        continue;
+                    }
+                    routes_with_keys += 1;
+                    for (locale, entries) in &cat.entries {
+                        // The catalog keys are namespaced by the file they
+                        // came from (`locales/en/common.json` → `common.`),
+                        // but an author writes `t('blog.title')` without the
+                        // namespace — it is a file-location artifact, not
+                        // part of the message id. Match on the suffix: a
+                        // route key `blog.title` selects `common.blog.title`.
+                        let subset: std::collections::BTreeMap<&String, &String> = entries
+                            .iter()
+                            .filter(|(k, _)| {
+                                keys.contains(*k)
+                                    || keys.iter().any(|want| {
+                                        k.as_str() == want.as_str()
+                                            || k.ends_with(&format!(".{want}"))
+                                    })
+                            })
+                            .collect();
+                        if subset.is_empty() {
+                            continue;
+                        }
+                        let dir = per_route_dir.join(locale);
+                        let _ = std::fs::create_dir_all(&dir);
+                        let body = serde_json::json!({
+                            "locale": locale,
+                            "route": route_key,
+                            "messages": subset,
+                        });
+                        let _ = std::fs::write(
+                            dir.join(format!("{route_key}.json")),
+                            serde_json::to_vec(&body).unwrap_or_default(),
+                        );
+                    }
+                }
+                if routes_with_keys > 0 {
+                    outln!(
+                        w,
+                        "i18n: per-route message subsets for {routes_with_keys} route(s)"
+                    );
+                }
             }
             Ok(_) => { /* no locales/ dir — nothing to typegen */ }
             Err(e) => outln!(
@@ -11007,4 +11086,33 @@ fn merge_neutral_head(outer: serde_json::Value, inner: serde_json::Value) -> ser
         out.insert("title".to_string(), t.clone());
     }
     serde_json::Value::Object(out)
+}
+
+/// Extract the message keys a route's source names via `t('key')` or
+/// `t("key")`. A conservative string scan: a route that builds a key
+/// dynamically (`t(`nav.${x}`)`) names no static key and therefore ships no
+/// subset — it falls back to the full catalog, which is correct.
+fn scan_message_keys(src: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for quote in ['\'', '"'] {
+        let pat = format!("t({quote}");
+        let mut rest = src;
+        while let Some(i) = rest.find(&pat) {
+            let after = &rest[i + pat.len()..];
+            if let Some(end) = after.find(quote) {
+                let key = &after[..end];
+                if !key.is_empty()
+                    && key.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '-')
+                {
+                    out.push(key.to_string());
+                }
+                rest = &after[end + 1..];
+            } else {
+                break;
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
