@@ -66,3 +66,57 @@ test('the catalog is fetched once and cached', async () => {
     },
   )
 })
+
+test('prefers the per-route subset when the page names a route', async () => {
+  _resetMessagesForTest()
+  const fetched: string[] = []
+  const g = globalThis as unknown as { __oxide?: { route: string } }
+  const saved = g.__oxide
+  g.__oxide = { route: 'routes/blog/page' }
+  await withGlobals(
+    'fr',
+    async (url) => {
+      fetched.push(url)
+      if (url.includes('/blog.json')) {
+        return new Response(
+          JSON.stringify({ locale: 'fr', route: 'blog', messages: { 'blog.title': 'Articles' } }),
+        )
+      }
+      return new Response(
+        JSON.stringify({ locale: 'fr', messages: { 'blog.title': 'Articles', 'nav.home': 'Accueil' } }),
+      )
+    },
+    async () => {
+      const msgs = await loadMessages()
+      assert.equal(fetched[0], '/client/messages/fr/blog.json', 'subset fetched first')
+      assert.equal(msgs['blog.title'], 'Articles')
+    },
+  )
+  g.__oxide = saved
+})
+
+test('falls back to the full catalog when no subset exists', async () => {
+  _resetMessagesForTest()
+  const fetched: string[] = []
+  const g = globalThis as unknown as { __oxide?: { route: string } }
+  const saved = g.__oxide
+  g.__oxide = { route: 'routes/page' }
+  await withGlobals(
+    'en',
+    async (url) => {
+      fetched.push(url)
+      if (url.includes('/messages/en/')) {
+        return new Response('not found', { status: 404 })
+      }
+      return new Response(
+        JSON.stringify({ locale: 'en', messages: { 'nav.home': 'Home' } }),
+      )
+    },
+    async () => {
+      const msgs = await loadMessages()
+      assert.equal(fetched.length, 2, 'subset attempted, then full catalog')
+      assert.equal(msgs['nav.home'], 'Home')
+    },
+  )
+  g.__oxide = saved
+})
