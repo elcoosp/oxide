@@ -910,3 +910,77 @@ fn entry_and_policy_serialize_with_camel_case_free_stable_shape() {
         "serialization roundtrip preserves the entry"
     );
 }
+
+// ─── Wave A: MAC strict mode + single-flight owner cleanup ───────────────
+
+/// A2: an owner that drops without publishing must clear its entry even when
+/// a follower is still subscribed. The old `receiver_count() == 0` guard left
+/// the entry forever, poisoning the key.
+#[tokio::test]
+async fn owner_drop_clears_entry_even_with_a_live_follower() {
+    use oxide_cache::{FlightOwnerGuard, FlightSlot, SingleFlight};
+    use std::sync::Arc;
+    use tokio::sync::broadcast;
+
+    type Map = dashmap::DashMap<String, Arc<broadcast::Sender<Arc<oxide_cache::Entry>>>>;
+    let map: Arc<Map> = Arc::new(dashmap::DashMap::new());
+    let sf = SingleFlight::new();
+
+    let slot = sf.acquire(&map, "k").await;
+    let tx = match slot {
+        FlightSlot::Owner(tx) => tx,
+        _ => panic!("expected owner"),
+    };
+    assert_eq!(map.len(), 1, "owner inserted");
+
+    let _follower_rx = map.get("k").unwrap().subscribe();
+
+    {
+        let _guard = FlightOwnerGuard::new(Arc::clone(&map), "k".to_string(), tx);
+    }
+
+    assert_eq!(map.len(), 0, "entry cleared despite the live follower");
+}
+
+/// A2: a follower that subscribed and then dropped must not remove an
+/// owner's live entry.
+#[tokio::test]
+async fn follower_drop_does_not_remove_the_owners_entry() {
+    use oxide_cache::{FlightOwnerGuard, FlightSlot, SingleFlight};
+    use std::sync::Arc;
+    use tokio::sync::broadcast;
+
+    type Map = dashmap::DashMap<String, Arc<broadcast::Sender<Arc<oxide_cache::Entry>>>>;
+    let map: Arc<Map> = Arc::new(dashmap::DashMap::new());
+    let sf = SingleFlight::new();
+
+    let slot = sf.acquire(&map, "k").await;
+    let tx = match slot {
+        FlightSlot::Owner(tx) => tx,
+        _ => panic!("expected owner"),
+    };
+    let _guard = FlightOwnerGuard::new(Arc::clone(&map), "k".to_string(), tx);
+
+    {
+        let _rx = map.get("k").unwrap().subscribe();
+    }
+
+    assert_eq!(map.len(), 1, "owner's entry survives a follower drop");
+}
+
+/// A1: a tampered sealed entry never verifies, regardless of sealing mode.
+#[test]
+fn tampered_sealed_entry_never_verifies() {
+    use oxide_cache::auth;
+    let body = b"payload-under-test";
+    let sealed = auth::seal_entry(body);
+    assert_eq!(auth::open_entry(&sealed).as_deref(), Some(&body[..]));
+
+    let mut tampered = sealed.clone();
+    let n = tampered.len();
+    tampered[n - 1] ^= 0xFF;
+    assert!(
+        auth::open_entry(&tampered).is_none(),
+        "a bit-flipped MAC must not verify",
+    );
+}
