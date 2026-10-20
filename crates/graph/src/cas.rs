@@ -340,6 +340,41 @@ impl ContentStore {
             .join(&hex[..2])
             .join(format!("{hex}.zst"))
     }
+    /// §5-C: store `body` wrapped in the rkyv artifact envelope (see
+    /// [`crate::artifacts`]). The envelope carries a `blake3` of the body, so
+    /// a corrupt or tampered blob is caught twice on load: once by the CAS's
+    /// own key check (`CasKey::of(blob) == key`), and once by the envelope's
+    /// `archived_hash`. Returns the CAS key.
+    ///
+    /// The key is the blake3 of the **sealed** bytes, so the plain
+    /// [`ContentStore::get`] path stays valid — it verifies the blob against
+    /// the key without knowing the envelope exists.
+    pub fn put_sealed(
+        &self,
+        kind: crate::artifacts::ArtifactKind,
+        body: &[u8],
+        meta: &CasWriteMeta,
+    ) -> Result<CasKey> {
+        let sealed = crate::artifacts::seal(kind, body.to_vec())?;
+        self.put(&sealed, meta)
+    }
+
+    /// §5-C: read a sealed artifact. `None` when the key is not in the CAS.
+    /// A `GRAPH-CORRUPT` error when the blob is present but the envelope
+    /// fails to open or its `archived_hash` does not match the body.
+    ///
+    /// A caller whose cache may contain pre-envelope (raw) blobs should fall
+    /// back to [`ContentStore::get`] on `GRAPH-CORRUPT` — the key is still
+    /// valid, only the format differs.
+    pub fn get_sealed(
+        &self,
+        key: &CasKey,
+    ) -> Result<Option<crate::artifacts::ArtifactEnvelope>> {
+        let Some(bytes) = self.get(key)? else {
+            return Ok(None);
+        };
+        crate::artifacts::open(&bytes).map(Some)
+    }
 }
 
 /// Extra introspection used by tests, `oxide cache stats` and cache tooling.
@@ -414,6 +449,53 @@ fn jsonerr(e: serde_json::Error) -> OxideError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sealed_artifact_roundtrips_and_verifies() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(tmp.path()).unwrap();
+        let meta = CasWriteMeta {
+            namespace: vec!["test".to_string()],
+            kind: "compile",
+        };
+        let body = b"export const x = 1;".to_vec();
+        let key = store
+            .put_sealed(crate::artifacts::ArtifactKind::CompiledJs, &body, &meta)
+            .unwrap();
+
+        let env = store
+            .get_sealed(&key)
+            .unwrap()
+            .expect("sealed artifact present");
+        assert_eq!(env.body, body, "body round-trips byte-identical");
+        assert_eq!(
+            env.kind,
+            crate::artifacts::ArtifactKind::CompiledJs,
+            "kind preserved",
+        );
+
+        // The plain path still sees opaque bytes whose key verifies — that
+        // is what makes this backward compatible with pre-envelope blobs.
+        let raw = store.get(&key).unwrap().expect("raw blob present");
+        assert_eq!(CasKey::of(&raw), key, "outer key covers the sealed bytes");
+
+        // Corrupt the envelope, re-store under a fresh key (so the CAS's
+        // key check passes) and prove the envelope's own verification fires.
+        let mut tampered = raw.clone();
+        let n = tampered.len();
+        tampered[n / 2] ^= 0xFF;
+        let bad_key = store.put(&tampered, &meta).expect("store arbitrary bytes");
+        match store.get_sealed(&bad_key) {
+            Ok(Some(_)) => panic!("tampered envelope must not open cleanly"),
+            Ok(None) => panic!("the tampered blob is present, not missing"),
+            Err(e) => assert!(
+                e.0.code == "GRAPH-CORRUPT",
+                "expected GRAPH-CORRUPT, got {}: {}",
+                e.0.code,
+                e.0.message,
+            ),
+        }
+    }
 
     #[test]
     fn hex_roundtrip_and_paths() {
