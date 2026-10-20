@@ -11,7 +11,8 @@
     "./types": "./src/types.ts",
     "./package.json": "./package.json",
     "./client/boot": "./src/client/boot.ts",
-    "./fn": "./src/fn.ts"
+    "./fn": "./src/fn.ts",
+    "./client/messages": "./src/client/messages.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts"
