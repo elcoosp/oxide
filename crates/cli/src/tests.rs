@@ -5512,3 +5512,40 @@ async fn client_bundle_skips_only_when_its_own_inputs_change() {
         "a component edit re-bundles the client: {out4}",
     );
 }
+
+// ─── 19-E / 5-A: frames + per-route chunk records ────────────────────────
+
+#[test]
+fn find_literal_line_locates_a_literal() {
+    let src = "export const a = 1;\nexport const secret = 'super-secret-value';\n";
+    let (line, col) = crate::find_literal_line(src, "super-secret-value").expect("found");
+    assert_eq!(line, 2, "the literal is on line 2");
+    assert!(col > 1, "column is past the assignment");
+}
+
+#[test]
+fn find_literal_line_returns_none_for_absent_literal() {
+    assert!(crate::find_literal_line("const a = 1;\n", "not-here").is_none());
+    assert!(crate::find_literal_line("anything", "").is_none(), "empty needle");
+}
+
+#[tokio::test]
+async fn build_records_per_route_chunk_hashes() {
+    use std::fs;
+    let (_d, root) = fixture_project();
+    let (code, out) = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
+    assert_eq!(code, 0, "build: {out}");
+
+    let snap: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join(".oxide/graph.json")).unwrap()).unwrap();
+    let recs = snap["route_chunks"].as_array().expect("route_chunks array");
+    assert!(!recs.is_empty(), "at least one route recorded: {snap}");
+    let first = &recs[0];
+    assert!(first["route_id"].is_string());
+    let chunks = first["chunks"].as_array().expect("chunks array");
+    assert!(!chunks.is_empty(), "the route reaches at least one chunk");
+    let pair = chunks[0].as_array().expect("pair");
+    assert_eq!(pair.len(), 2);
+    let hash = pair[1].as_str().unwrap();
+    assert_eq!(hash.len(), 64, "blake3 hex is 64 chars");
+}
