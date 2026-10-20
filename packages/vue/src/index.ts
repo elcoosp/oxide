@@ -105,3 +105,4 @@ export {
 export {
   SWAPPER_SRC, boundaryFallback, boundaryContent, islandElement, errorBoundary, hydrationBootstrap,
 } from './protocol.ts'
+export { Image, type ImageProps, type ImageVariantModule } from './image.ts'
