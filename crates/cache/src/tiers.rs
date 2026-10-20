@@ -7,9 +7,9 @@
 //! moka enforces `max_capacity` by weight and uses its TinyLFU admission policy
 //! (spec §11.2: "moka, TinyLFU, weighted by bytes"). Entries heavier than the cap
 //! are refused by moka's own admission rule, matching the previous policy.
-//! Eviction is forced to run synchronously via `run_pending_tasks()` on
-//! `insert`/`len`/`is_empty`/`total_bytes` so the observable behavior stays
-//! deterministic for tests.
+//! moka amortizes eviction internally; `run_pending_tasks()` is called only on
+//! `len`/`is_empty`/`total_bytes` so those reads stay exact (P-17 removed the
+//! forced pass on the hot `insert` path).
 //!
 //! Entry byte weight = `body.len() + Σ(header key.len + value.len) + 32` (the fixed
 //! 32 bytes roughly cover status/etag/timestamp bookkeeping). The canonical cache key
@@ -82,7 +82,9 @@ impl MemoryTier {
             return;
         }
         self.cache.insert(key.to_string(), Arc::new(entry));
-        self.cache.run_pending_tasks();
+        // P-17: moka amortizes maintenance internally; forcing a full pass on
+        // every insert serialized concurrent writers. `len`/`total_bytes` still
+        // flush before reading so metrics stay exact.
     }
 
     /// Remove a key; returns the stored entry if it was present.
@@ -155,11 +157,31 @@ fn ioerr(e: std::io::Error) -> OxideError {
 pub struct DiskTier {
     pub root: PathBuf,
     index: Database,
+    /// S-08: total compressed bytes currently indexed (admission + prune base).
+    cur_bytes: AtomicU64,
+    /// S-08: budget — the store prunes oldest-first past this total.
+    pub max_bytes: u64,
+    /// S-08: reject a single entry larger than this before writing it.
+    pub max_entry: u64,
 }
+
+/// S-08 default disk budget (1 GiB) and per-entry cap (32 MiB). A project can
+/// override via config; these bounds stop attacker-minted keys filling the disk.
+pub const DEFAULT_DISK_MAX_BYTES: u64 = 1024 * 1024 * 1024;
+pub const DEFAULT_DISK_MAX_ENTRY: u64 = 32 * 1024 * 1024;
 
 impl DiskTier {
     /// Open (creating dirs + redb index as needed) at `root`.
     pub fn open(root: std::path::PathBuf) -> Result<Self> {
+        Self::open_with_budget(root, DEFAULT_DISK_MAX_BYTES, DEFAULT_DISK_MAX_ENTRY)
+    }
+
+    /// Open with an explicit disk budget + per-entry cap.
+    pub fn open_with_budget(
+        root: std::path::PathBuf,
+        max_bytes: u64,
+        max_entry: u64,
+    ) -> Result<Self> {
         std::fs::create_dir_all(&root).map_err(|e| {
             OxideError(
                 Diagnostic::error("CAC-IO", format!("create {}: {e}", root.display()))
@@ -175,7 +197,27 @@ impl DiskTier {
             txn.open_table(TAG_TABLE).map_err(dberr)?;
         }
         txn.commit().map_err(dberr)?;
-        Ok(Self { root, index })
+        // S-08: seed the current-size counter from the existing index.
+        let mut cur = 0u64;
+        {
+            let rtxn = index.begin_read().map_err(dberr)?;
+            let table = rtxn.open_table(ENTRY_TABLE).map_err(dberr)?;
+            let iter = table.iter().map_err(dberr)?;
+            for row in iter {
+                if let Ok((_, v)) = row {
+                    if let Ok(idx) = serde_json::from_slice::<DiskIndexEntry>(v.value()) {
+                        cur = cur.saturating_add(idx.size);
+                    }
+                }
+            }
+        }
+        Ok(Self {
+            root,
+            index,
+            cur_bytes: AtomicU64::new(cur),
+            max_bytes,
+            max_entry,
+        })
     }
 
     /// Filesystem-safe blob file name for a key: plain `[A-Za-z0-9_-]` keys (≤120
@@ -207,10 +249,20 @@ impl DiskTier {
     /// Store an entry: compress with zstd, write the blob (tmp + rename), update the
     /// index row and the tag → keys table.
     pub fn set(&self, key: &str, entry: &Entry) -> Result<()> {
+        // S-08: refuse an entry over the per-entry cap before touching disk.
+        let raw_len = entry.body.len() as u64;
+        if raw_len > self.max_entry {
+            return Err(err(
+                "CAC-DISK",
+                format!("entry {raw_len} exceeds per-entry cap {}", self.max_entry),
+            ));
+        }
         let serialized = serde_json::to_vec(entry).map_err(jsonerr)?;
         let hash = blake3::hash(&serialized).to_string();
         let compressed = zstd::bulk::compress(&serialized, 3)
             .map_err(|e| err("CAC-ZSTD", format!("compress: {e}")))?;
+        // The previous row's size, so the byte counter stays exact on replace.
+        let prev_size = self.indexed_size(key);
         let path = self.blob_path(key);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(ioerr)?;
@@ -252,7 +304,73 @@ impl DiskTier {
             }
         }
         txn.commit().map_err(dberr)?;
+        // S-08: update the byte counter and prune oldest-first past the budget.
+        let new_size = compressed.len() as u64;
+        self.cur_bytes
+            .fetch_sub(prev_size, Ordering::Relaxed);
+        let after = self.cur_bytes.fetch_add(new_size, Ordering::Relaxed) + new_size;
+        if after > self.max_bytes {
+            self.prune_oldest_until(self.max_bytes * 9 / 10);
+        }
         Ok(())
+    }
+
+    /// S-08: the indexed compressed size of `key`, or 0 when absent.
+    fn indexed_size(&self, key: &str) -> u64 {
+        let Ok(txn) = self.index.begin_read() else {
+            return 0;
+        };
+        let Ok(table) = txn.open_table(ENTRY_TABLE) else {
+            return 0;
+        };
+        match table.get(key.as_bytes()) {
+            Ok(Some(v)) => serde_json::from_slice::<DiskIndexEntry>(v.value())
+                .map(|i| i.size)
+                .unwrap_or(0),
+            _ => 0,
+        }
+    }
+
+    /// S-08: evict least-recently-stored entries until the total is under
+    /// `target`. Ordering is by `stored_at` ascending (LRU by write time —
+    /// the durable proxy the GC already tracks).
+    fn prune_oldest_until(&self, target: u64) {
+        loop {
+            if self.cur_bytes.load(Ordering::Relaxed) <= target {
+                return;
+            }
+            // Find the oldest key + its size.
+            let victim = {
+                let Ok(txn) = self.index.begin_read() else {
+                    return;
+                };
+                let Ok(table) = txn.open_table(ENTRY_TABLE) else {
+                    return;
+                };
+                let Ok(iter) = table.iter() else {
+                    return;
+                };
+                let mut oldest: Option<(String, u64, u64)> = None; // (key, stored_at, size)
+                for row in iter {
+                    let Ok((k, v)) = row else { continue };
+                    let Some(idx) = serde_json::from_slice::<DiskIndexEntry>(v.value()).ok() else {
+                        continue;
+                    };
+                    let k = String::from_utf8_lossy(k.value()).into_owned();
+                    if oldest.as_ref().is_none_or(|(_, ts, _)| idx.stored_at < *ts) {
+                        oldest = Some((k, idx.stored_at, idx.size));
+                    }
+                }
+                oldest
+            };
+            let Some((key, _, _)) = victim else {
+                return;
+            };
+            // `delete` decrements `cur_bytes` itself.
+            if self.delete(&key).is_err() {
+                return;
+            }
+        }
     }
 
     /// Load an entry; corrupt/missing blobs are deleted and reported as a miss.
@@ -324,12 +442,19 @@ impl DiskTier {
         }
         txn.commit().map_err(dberr)?;
         if let Some(idx) = idx {
+            // S-08: keep the byte budget counter exact.
+            self.cur_bytes.fetch_sub(idx.size, Ordering::Relaxed);
             // Best-effort blob removal; a missing file is already "deleted".
             let _ = std::fs::remove_file(self.root.join(&idx.path));
             Ok(true)
         } else {
             Ok(false)
         }
+    }
+
+    /// S-08: current indexed byte total (for tests + stats).
+    pub fn total_bytes(&self) -> u64 {
+        self.cur_bytes.load(Ordering::Relaxed)
     }
 
     /// Keys tagged with `tag` (from the durable tag table).
@@ -519,12 +644,27 @@ impl TieredCache {
 
     /// Set writes through all tiers and indexes tags (deduped).
     pub async fn set(&self, key: &str, entry: Entry) -> Result<()> {
+        // S-08: an entry heavier than the memory cap was never servable, so
+        // skip every tier — it must not fill the disk/remote either.
+        let weight = entry_weight(&entry);
+        if weight > self.memory.max_bytes {
+            return Ok(());
+        }
         self.memory.insert(key, entry.clone());
         if let Some(disk) = &self.disk {
             disk.set(key, &entry)?;
         }
+        // P-18: the remote L2 write is off the request path — the local tiers
+        // already satisfy the caller, so a slow/hanging remote must not block
+        // the response. The task is fire-and-forget; `set` still returns `Ok`
+        // (a remote error is logged by the handler, degrading silently).
         if let Some(remote) = &self.remote {
-            remote.set(key, entry.clone()).await?;
+            let remote = Arc::clone(remote);
+            let key = key.to_string();
+            let entry = entry.clone();
+            tokio::spawn(async move {
+                let _ = remote.set(&key, entry).await;
+            });
         }
         for tag in &entry.tags {
             let mut list = self.tags.entry(tag.clone()).or_default();
@@ -807,6 +947,47 @@ mod tests {
         assert!(disk.get("k").unwrap().is_none(), "evicted after mismatch");
     }
 
+    #[test]
+    fn disk_rejects_entry_over_per_entry_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let disk = DiskTier::open_with_budget(dir.path().join("c"), 1 << 20, 100).unwrap();
+        // Body 200 > cap 100 — rejected, nothing written.
+        assert!(disk.set("big", &entry(&[b'x'; 200], &[])).is_err());
+        assert!(disk.get("big").unwrap().is_none());
+        assert_eq!(disk.total_bytes(), 0);
+    }
+
+    #[test]
+    fn disk_prunes_oldest_to_stay_under_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        // Budget 4 KiB; each body compresses small, so write many and check bound.
+        let disk = DiskTier::open_with_budget(dir.path().join("c"), 4096, 1 << 20).unwrap();
+        for i in 0..200 {
+            let mut e = entry(&[b'y'; 512], &[]);
+            e.stored_at = i; // monotonic write order
+            disk.set(&format!("k{i:03}"), &e).unwrap();
+        }
+        assert!(
+            disk.total_bytes() <= 4096,
+            "disk budget exceeded: {}",
+            disk.total_bytes()
+        );
+        // The most recently written key must survive; the earliest must be gone.
+        assert!(disk.get("k199").unwrap().is_some(), "newest pruned");
+        assert!(disk.get("k000").unwrap().is_none(), "oldest not pruned");
+    }
+
+    #[test]
+    fn disk_delete_keeps_byte_counter_exact() {
+        let dir = tempfile::tempdir().unwrap();
+        let disk = DiskTier::open(dir.path().join("c")).unwrap();
+        disk.set("a", &entry(&[b'a'; 100], &[])).unwrap();
+        let after_set = disk.total_bytes();
+        assert!(after_set > 0);
+        assert!(disk.delete("a").unwrap());
+        assert_eq!(disk.total_bytes(), 0);
+    }
+
     #[tokio::test]
     async fn tiered_cache_key_and_layer_helpers_available() {
         // CacheKey/Layer flow through the tiered API's key space (integration tests
@@ -848,6 +1029,14 @@ impl CacheHandler for TieredCache {
         // returned here so that decision stays with the caller.
         match TieredCache::get(self, key).await? {
             Some(Hit::Fresh(e)) | Some(Hit::Stale(e)) => Ok(Some((*e).clone())),
+            None => Ok(None),
+        }
+    }
+
+    async fn get_arc(&self, key: &str) -> Result<Option<Arc<Entry>>> {
+        // P-03: hand back the shared entry — no body copy on a hot hit.
+        match TieredCache::get(self, key).await? {
+            Some(Hit::Fresh(e)) | Some(Hit::Stale(e)) => Ok(Some(e)),
             None => Ok(None),
         }
     }
