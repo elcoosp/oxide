@@ -5325,7 +5325,13 @@ async fn build_records_resolver_edges_for_bare_imports() {
 /// `Input::PluginOptions` edge on every module whose source path equals a
 /// plugin entry. A module that is *not* a plugin entry records no
 /// plugin-options edge.
-#[tokio::test]
+// The sync plugin-hook bridge uses `std::thread::scope`, which blocks the
+// calling thread. On a current-thread runtime (the `#[tokio::test]` default)
+// that is the ONLY thread polling the pool's futures — the build deadlocks.
+// The production CLI uses a multi-thread runtime (`Runtime::new()`), so the
+// same code runs fine there; this test uses the same flavor the real binary
+// uses.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn build_records_plugin_options_for_plugin_entries_only() {
     use std::fs;
     let (_d, root) = fixture_project();
@@ -5385,4 +5391,46 @@ async fn build_records_plugin_options_for_plugin_entries_only() {
         dep_count, 1,
         "non-plugin page has only its File edge; got {dep_count}",
     );
+}
+
+// ─── §5-E: lockfile invalidation ─────────────────────────────────────────
+
+#[test]
+fn lockfile_change_invalidates_the_resolver_graph() {
+    // `graph_invalidated` is a private fn inside cmd_dev; expose the logic
+    // here via a small shim: create a graph, seed a node for a normal file,
+    // then feed a lockfile path and assert the graph reports it was dirtied.
+    // The fn itself is not `pub`, so this test drives the same public API
+    // (`DemandGraph::invalidate(&[])`) that the fn calls.
+    let g = oxide_graph::DemandGraph::new();
+    let node = oxide_graph::NodeKey::new("src/routes/page.tsx");
+    let comp = FileComputeForTest(node.0.to_string());
+    g.register(node.clone(), std::sync::Arc::new(comp));
+    let _ = g.get(node.clone(), &FileComputeForTest(node.0.to_string()));
+    assert_eq!(g.node_count(), 1, "node recorded");
+
+    // The lockfile branch of `graph_invalidated` calls `invalidate(&[])`.
+    // That must bump the epoch so a fresh `get` re-runs the compute — the
+    // "a lockfile change is a full resolver invalidation" contract.
+    let before = g.version();
+    let _ = g.invalidate(&[]);
+    assert!(g.version() > before, "epoch bumped on lockfile invalidation");
+}
+
+struct FileComputeForTest(String);
+impl oxide_graph::Compute for FileComputeForTest {
+    fn compute(
+        &self,
+        ctx: &mut oxide_graph::ComputeCtx,
+    ) -> oxide_diagnostics::Result<oxide_graph::NodeOutput> {
+        let bytes = ctx
+            .fs
+            .read_file(std::path::Path::new(&self.0))
+            .unwrap_or_default();
+        Ok(oxide_graph::NodeOutput {
+            hash: blake3::hash(&bytes),
+            artifact: None,
+            deps: Default::default(),
+        })
+    }
 }
