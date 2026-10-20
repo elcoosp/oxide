@@ -13,6 +13,7 @@ async-trait = { workspace = true }
 oxide-diagnostics = { workspace = true }
 oxide-odf = { workspace = true }
 blake3 = { workspace = true }
+base64 = { workspace = true }
 redb = { workspace = true }
 zstd = { workspace = true }
 bytes = { workspace = true }
@@ -22,6 +23,9 @@ tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+tracing = { workspace = true }
+ring = { workspace = true }
+futures = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
