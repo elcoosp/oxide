@@ -131,6 +131,23 @@ impl LoaderRunner for AdapterLoader {
             .map_err(|e| e.0)?;
         output_from_raw(&raw)
     }
+
+    async fn run_streaming(
+        &self,
+        input: LoaderRunInput,
+    ) -> oxide_server::Result<(
+        oxide_server::LoaderOutput,
+        tokio::sync::mpsc::Receiver<serde_json::Value>,
+    )> {
+        let payload = input_to_payload(&input);
+        let (raw, settles) = self
+            .inner
+            .run_streaming(&input.module_path, payload)
+            .await
+            .map_err(|e| e.0)?;
+        let out = output_from_raw(&raw)?;
+        Ok((out, settles))
+    }
 }
 
 /// Convenience constructor for the `cmd_*` paths: given a shared pool,

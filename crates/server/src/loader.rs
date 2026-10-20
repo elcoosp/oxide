@@ -141,6 +141,24 @@ pub trait LoaderRunner: Send + Sync {
     /// output's status/location, not surfaced as `Err`. `Err` means the
     /// runner itself failed (module not found, syntax error, worker crash).
     async fn run(&self, input: LoaderRunInput) -> Result<LoaderOutput>;
+
+    /// B2: run the loader and stream its `defer()` settles.
+    ///
+    /// Returns the initial output immediately (data, no deferred values) and
+    /// a receiver yielding one `{deferredSettle: {id, value | error}}` per
+    /// settle. The default wraps `run` and returns an empty receiver, so a
+    /// runner that does not implement streaming behaves exactly as before.
+    async fn run_streaming(
+        &self,
+        input: LoaderRunInput,
+    ) -> Result<(
+        LoaderOutput,
+        tokio::sync::mpsc::Receiver<serde_json::Value>,
+    )> {
+        let out = self.run(input).await?;
+        let (_tx, rx) = tokio::sync::mpsc::channel(1);
+        Ok((out, rx))
+    }
 }
 
 #[cfg(test)]

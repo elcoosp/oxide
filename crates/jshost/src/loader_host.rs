@@ -92,6 +92,97 @@ impl LoaderHost {
         Ok(v)
     }
 
+    /// B2: stream a load. Returns the initial payload (fast - no defer wait)
+    /// and a receiver yielding one `{deferredSettle: {...}}` per settle.
+    ///
+    /// The worker sends NDJSON over the chunked-call path: the first chunk is
+    /// the load result, each later chunk is one settle. This hands the caller
+    /// the first chunk immediately and forwards the rest, so a response can
+    /// flush a resolution script per settle rather than after the slowest.
+    ///
+    /// A loader with no `defer()` produces a `Complete` stream (the worker's
+    /// no-pending branch); that returns `(payload, empty_rx)` and is
+    /// behaviour-identical to `run`.
+    pub async fn run_streaming(
+        &self,
+        module_path: &str,
+        input: Value,
+    ) -> Result<(
+        Value,
+        tokio::sync::mpsc::Receiver<Value>,
+    )> {
+        let payload = Self::build_payload(module_path, &input);
+        let route = payload
+            .get("route")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let call_input = CallInput {
+            payload,
+            headers: Default::default(),
+            has_body: false,
+            request_id: format!("loader:run:{module_path}"),
+            route,
+        };
+        let entry = EntryRef {
+            kind: "loader:run".into(),
+            module: module_path.to_string(),
+            export: "load".into(),
+        };
+        let stream = self.pool.call(entry, call_input).await?;
+        match stream {
+            crate::CallStream::Complete(bytes) => {
+                let v = serde_json::from_slice::<Value>(&bytes).map_err(|e| {
+                    crate::err("JSH-LOADER", format!("loader:run returned invalid JSON: {e}"))
+                })?;
+                if let Some(m) = v.get("__oxide_error").and_then(|x| x.as_str()) {
+                    return Err(crate::err("JSH-LOADER", m.to_string()));
+                }
+                let (_tx, rx) = tokio::sync::mpsc::channel(1);
+                Ok((v, rx))
+            }
+            crate::CallStream::Chunked(mut inner) => {
+                let (settles_tx, settles_rx) = tokio::sync::mpsc::channel::<Value>(16);
+                let (init_tx, init_rx) = tokio::sync::oneshot::channel::<Result<Value>>();
+                tokio::spawn(async move {
+                    let mut init_tx = Some(init_tx);
+                    let mut first = true;
+                    while let Some(chunk) = inner.recv().await {
+                        let bytes = match chunk {
+                            Ok(b) => b,
+                            Err(e) => {
+                                if let Some(tx) = init_tx.take() {
+                                    let _ = tx.send(Err(e));
+                                }
+                                return;
+                            }
+                        };
+                        let text = String::from_utf8_lossy(&bytes);
+                        for line in text.lines().filter(|l| !l.trim().is_empty()) {
+                            let Ok(v) = serde_json::from_str::<Value>(line) else {
+                                continue;
+                            };
+                            if first {
+                                first = false;
+                                if let Some(tx) = init_tx.take() {
+                                    let _ = tx.send(Ok(v));
+                                }
+                            } else if settles_tx.send(v).await.is_err() {
+                                return; // consumer dropped
+                            }
+                        }
+                    }
+                });
+                let init = init_rx.await.map_err(|_| {
+                    crate::err("JSH-LOADER", "loader stream ended before the initial payload")
+                })??;
+                if let Some(m) = init.get("__oxide_error").and_then(|x| x.as_str()) {
+                    return Err(crate::err("JSH-LOADER", m.to_string()));
+                }
+                Ok((init, settles_rx))
+            }
+        }
+    }
+
     /// Run a route's `generateParams` export and return the enumerated
     /// static params (spec §10.5). When the module has no `generateParams`
     /// export, returns an empty vector (not an error) — the build falls
