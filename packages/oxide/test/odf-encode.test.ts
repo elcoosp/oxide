@@ -5,6 +5,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { encodeOdf, isOdfEncodable } from '../src/odf-encode.ts'
 import { decodeOdf } from '../src/client/odf-decode.ts'
+import { bytesToBase64, fromBase64 } from '../src/bytes.ts'
 
 const hex = (b: Uint8Array) => [...b].map((x) => x.toString(16).padStart(2, '0')).join('')
 
@@ -174,4 +175,19 @@ test('parity: a nested object with a Date matches the Rust encoder (cache case)'
   const want =
     '4f444631000a0104706f73740a0209637265617465644174062a00000000000000057469746c6505024869'
   assert.equal(hex(encodeOdf({ post: { createdAt: new Date(42), title: 'Hi' } })), want)
+})
+
+test('P-09: bytesToBase64 round-trips a 2 MiB payload', () => {
+  // Linear-time base64 (chunked) must match the per-byte reference exactly.
+  const bytes = new Uint8Array(2 * 1024 * 1024)
+  for (let i = 0; i < bytes.length; i++) bytes[i] = i & 0xff
+  const b64 = bytesToBase64(bytes)
+  const back = fromBase64(b64)
+  assert.equal(back.length, bytes.length)
+  assert.deepEqual(back, bytes)
+  // Header of the base64 must match the reference implementation.
+  let bin = ''
+  // 96 is a multiple of 3, so the base64 prefix aligns with the input prefix.
+  for (const b of bytes.subarray(0, 96)) bin += String.fromCharCode(b)
+  assert.ok(b64.startsWith(btoa(bin)))
 })
