@@ -142,17 +142,21 @@ impl FlightOwnerGuard {
 
 impl Drop for FlightOwnerGuard {
     fn drop(&mut self) {
-        // `publish`/`abandon` consume `self`, so reaching here means an early
-        // return (or panic) did not clean up — do it now. Remove only if the
-        // entry is still ours (no followers remaining and same generation).
+        // `publish`/`abandon` consume `self`, so reaching here with `tx` still
+        // `Some` means the owner exited early (an error, a short-circuit, a
+        // panic) without publishing.
+        //
+        // A2: remove UNCONDITIONALLY. The previous `receiver_count() == 0`
+        // guard was the bug: a follower that subscribed before the owner
+        // short-circuited held a receiver forever, so the entry never cleared
+        // and every future request for that key became a follower that
+        // stalled to the 10s timeout - indefinitely.
+        //
+        // A follower whose receiver is left dangling (the sender dropped
+        // without a send) gets `Err(Closed)` from `recv`, which the caller
+        // already treats as "fall through and compute".
         if self.tx.is_some() {
-            if let map_entry::Entry::Occupied(e) = self.map.entry(self.key.clone()) {
-                // Drop the entry when nobody is waiting; leave it if a follower
-                // subscribed after our publish window (it will get the send).
-                if e.get().receiver_count() == 0 {
-                    e.remove();
-                }
-            }
+            self.map.remove(&self.key);
         }
     }
 }
