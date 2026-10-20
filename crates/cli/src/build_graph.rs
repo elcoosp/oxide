@@ -92,6 +92,18 @@ pub struct RoutePrerenderRecord {
     pub nonce: String,
 }
 
+/// One route's emitted client chunks and each chunk's blake3. This is the
+/// diff target a per-chunk incremental build would use. Rolldown 1.2.13
+/// exposes no per-module incremental API, so the build cannot yet act on a
+/// per-chunk change — but recording the hashes makes "did this route's
+/// chunks actually change?" measurable rather than a guess.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RouteChunkRecord {
+    pub route_id: String,
+    /// `(file name, blake3 hex)` for each chunk this route's entry reaches.
+    pub chunks: Vec<(String, String)>,
+}
+
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct GraphSnapshot {
     pub version: String,
@@ -106,6 +118,9 @@ pub struct GraphSnapshot {
     /// as empty.
     #[serde(default)]
     pub route_prerenders: Vec<RoutePrerenderRecord>,
+    /// Each route's emitted chunks and their hashes.
+    #[serde(default)]
+    pub route_chunks: Vec<RouteChunkRecord>,
 }
 
 pub fn snapshot_path(rootp: &Path) -> PathBuf {
@@ -279,6 +294,8 @@ pub struct RecordInputs<'a> {
     /// config; `file_compute_with_plugins` records the edges for module
     /// files whose path matches a plugin entry.
     pub plugin_options: Vec<(String, blake3::Hash, PathBuf)>,
+    /// Each route's emitted chunks and their hashes.
+    pub route_chunks: Vec<RouteChunkRecord>,
 }
 
 /// Record a graph over `inputs`, compare against the previous snapshot, and
@@ -404,6 +421,7 @@ pub fn record_and_persist(inputs: RecordInputs<'_>) -> std::io::Result<GraphSnap
         previous_node_count: previous.node_count,
         nodes,
         route_prerenders: inputs.route_prerenders,
+        route_chunks: inputs.route_chunks,
     };
     let path = snapshot_path(inputs.rootp);
     if let Some(parent) = path.parent() {
