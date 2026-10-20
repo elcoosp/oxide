@@ -147,3 +147,18 @@ mod tests {
         assert_eq!(open_entry(&[0u8; 8]), None);
     }
 }
+
+/// Whether the legacy (unsealed) fallback is still tolerated.
+///
+/// The MAC is the only thing standing between an attacker with L2 write
+/// access and a forged servable cache entry. Tolerating an unsealed value
+/// defeats it entirely: the attacker simply omits the MAC.
+///
+/// Default is **strict** (MAC failure = miss). `OXIDE_CACHE_SEALING=legacy`
+/// restores the upgrade window for one migration; a deployment that sets it
+/// has chosen to re-open the hole, so the choice is explicit and greppable.
+pub fn legacy_sealing_allowed() -> bool {
+    std::env::var("OXIDE_CACHE_SEALING")
+        .map(|v| v.eq_ignore_ascii_case("legacy"))
+        .unwrap_or(false)
+}
