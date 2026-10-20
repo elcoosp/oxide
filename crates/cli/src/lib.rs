@@ -7179,8 +7179,8 @@ fn build_js_plugin_hook(
                                 ))
                             })?;
                             if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                                if let Some(s) = v.get("code").and_then(|c| c.as_str()) {
-                                    code = s.to_string();
+                                if let Some(s) = hook_result_str(&v, "code") {
+                                    code = s;
                                 }
                             }
                         }
@@ -9499,7 +9499,7 @@ fn build_js_plugin_resolve_hook(
                             let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
                                 continue;
                             };
-                            if let Some(id_str) = v.get("id").and_then(|x| x.as_str()) {
+                            if let Some(id_str) = hook_result_str(&v, "id") {
                                 return Ok(Some(PathBuf::from(id_str)));
                             }
                         }
@@ -9597,8 +9597,8 @@ fn build_js_plugin_load_hook(
                             let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
                                 continue;
                             };
-                            if let Some(code) = v.get("code").and_then(|x| x.as_str()) {
-                                return Ok(Some(code.to_string()));
+                            if let Some(code) = hook_result_str(&v, "code") {
+                                return Ok(Some(code));
                             }
                         }
                         Ok(None)
@@ -9862,8 +9862,8 @@ fn build_js_plugin_render_chunk_hook(
                             let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
                                 continue;
                             };
-                            if let Some(s) = v.get("code").and_then(|c| c.as_str()) {
-                                code = s.to_string();
+                            if let Some(s) = hook_result_str(&v, "code") {
+                                code = s;
                                 changed = true;
                             }
                         }
@@ -9962,12 +9962,8 @@ fn build_js_plugin_generate_bundle_hook(
                             let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
                                 continue;
                             };
-                            if let Some(arr) = v.get("files").and_then(|f| f.as_array()) {
-                                current = Some(
-                                    arr.iter()
-                                        .filter_map(|x| x.as_str().map(str::to_string))
-                                        .collect(),
-                                );
+                            if let Some(files) = hook_result_str_array(&v, "files") {
+                                current = Some(files);
                             }
                         }
                         Ok(current)
@@ -10066,8 +10062,8 @@ fn build_js_plugin_transform_html_hook(
                             let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
                                 continue;
                             };
-                            if let Some(s) = v.get("html").and_then(|h| h.as_str()) {
-                                doc = s.to_string();
+                            if let Some(s) = hook_result_str(&v, "html") {
+                                doc = s;
                                 changed = true;
                             }
                         }
@@ -10085,4 +10081,38 @@ fn build_js_plugin_transform_html_hook(
                 })
         })
     }))
+}
+
+// ─── §15-B: hook-result shape helpers ──────────────────────────────────────
+//
+// A plugin author writes the shape every bundler documents: `transform`
+// returns the rewritten code string, `resolveId` returns an id string (or
+// null), `load` returns a source string (or null), `transformHtml` returns
+// HTML, `generateBundle` returns a file array. The Rust readers used to
+// require an object (`{code: …}`) — which no plugin author writes — so every
+// hook's return value was silently dropped. These helpers accept both: the
+// documented bare value, and an object with the named field (for a plugin
+// that wants to carry extra metadata alongside).
+
+/// Extract `field` from a hook result. Accepts a bare string or
+/// `{ "<field>": "…" }`.
+fn hook_result_str(v: &serde_json::Value, field: &str) -> Option<String> {
+    if let Some(s) = v.as_str() {
+        return Some(s.to_string());
+    }
+    v.get(field).and_then(|x| x.as_str()).map(str::to_string)
+}
+
+/// Extract `field` from a hook result as a string array. Accepts a bare
+/// array of strings or `{ "<field>": [...] }`.
+fn hook_result_str_array(v: &serde_json::Value, field: &str) -> Option<Vec<String>> {
+    let arr = match v {
+        serde_json::Value::Array(a) => a,
+        _ => v.get(field)?.as_array()?,
+    };
+    Some(
+        arr.iter()
+            .filter_map(|x| x.as_str().map(str::to_string))
+            .collect(),
+    )
 }
