@@ -149,14 +149,26 @@ globalThis.__oxide_op_request = oxideOpRequest;
 // correct. Cleared after each dispatch.
 let currentTraceparent = null;
 
-/** Pull `traceparent` out of a payload's request-headers array. */
+const TRACEPARENT_RE = /^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/;
+
+/**
+ * Pull `traceparent` out of a payload. S-14: prefer the host's *validated*
+ * value (`payload.trace.traceparent`), and only accept a raw header when it
+ * matches the W3C shape — garbage/oversized values are dropped rather than
+ * forwarded verbatim to upstream APM pipelines.
+ */
 function traceparentFromPayload(payload) {
+  const validated = payload && payload.trace && payload.trace.traceparent;
+  if (typeof validated === "string" && TRACEPARENT_RE.test(validated)) {
+    return validated;
+  }
   const hs = payload && payload.headers;
   if (!Array.isArray(hs)) return null;
   for (const pair of hs) {
     if (Array.isArray(pair) && pair.length === 2 &&
         String(pair[0]).toLowerCase() === "traceparent") {
-      return String(pair[1]);
+      const raw = String(pair[1]);
+      return TRACEPARENT_RE.test(raw) ? raw : null;
     }
   }
   return null;
@@ -223,11 +235,18 @@ globalThis.fetch = async function oxideFetch(input, init = {}) {
     }
     return new Response(bytes, { status: res.status, headers: h });
   } catch (e) {
-    if (!__fetchFallbackWarned) {
-      __fetchFallbackWarned = true;
-      console.error("[oxide] fetch op unavailable (" + (e && e.message) + "); falling back to native fetch (no SSRF guard)");
+    // S-01: only an *unregistered* op (a legacy host with no fetch handler)
+    // may fall back to native fetch. A `JSH-FETCH` error IS the SSRF guard
+    // (or a real fetch failure) and must propagate, never be retried via the
+    // unguarded native path.
+    const code = e && typeof e.code === "string" ? e.code : "";
+    if (code === "JSH-OP" || code === "JSH-NOKIND") {
+      if (!__fetchFallbackWarned) {
+        __fetchFallbackWarned = true;
+        console.error("[oxide] fetch op unavailable (" + (e && e.message) + "); falling back to native fetch (no SSRF guard)");
+      }
+      if (__nativeFetch) return __nativeFetch(input, init);
     }
-    if (__nativeFetch) return __nativeFetch(input, init);
     throw e;
   }
 };
@@ -828,10 +847,25 @@ async function dispatchLoaderRun(id, input) {
       }
     }
     const pendingCookies = new Map(); // name → Set-Cookie value
+    // S-13: validate the user-controlled name/path/domain before interpolation.
+    // A `;` in any of them would inject a cookie attribute; a bad name is an
+    // app bug and surfaces as a 500 at the loader boundary.
+    const COOKIE_NAME_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
     const serializeCookie = (name, value, opts = {}) => {
+      if (!COOKIE_NAME_RE.test(name)) {
+        throw new Error(`invalid cookie name: ${JSON.stringify(String(name).slice(0, 32))}`);
+      }
       let s = `${name}=${encodeURIComponent(value)}`;
-      if (opts.path) s += `; Path=${opts.path}`;
-      if (opts.domain) s += `; Domain=${opts.domain}`;
+      if (opts.path != null) {
+        if (/[;,\s]/.test(String(opts.path))) throw new Error("invalid cookie path");
+        s += `; Path=${opts.path}`;
+      }
+      if (opts.domain != null) {
+        if (/[;,\s]/.test(String(opts.domain)) || !/^[A-Za-z0-9.-]+$/.test(String(opts.domain))) {
+          throw new Error("invalid cookie domain");
+        }
+        s += `; Domain=${opts.domain}`;
+      }
       if (typeof opts.maxAge === "number") s += `; Max-Age=${opts.maxAge}`;
       if (opts.httpOnly) s += "; HttpOnly";
       if (opts.secure) s += "; Secure";
@@ -870,9 +904,9 @@ async function dispatchLoaderRun(id, input) {
     const event = {
       route: route ?? "",
       params: params ?? {},
-      params: params ?? {},// §8.3 / §9.1: parsed search params — the `LoaderSearchParams`
-      params: params ?? {},// type declared in `routes.d.ts` (repeated key → `string[]`).
-      params: params ?? {},searchParams: parseSearchParams(url ?? "/"),
+      // §8.3 / §9.1: parsed search params — the `LoaderSearchParams`
+      // type declared in `routes.d.ts` (repeated key → `string[]`).
+      searchParams: parseSearchParams(url ?? "/"),
       url: url ?? "/",
       request: {
         method: method ?? "GET",
@@ -1073,8 +1107,8 @@ async function dispatchActionRun(id, input) {
 
     const event = {
       params: params ?? {},
-        // §8.3 / §9.1: parsed search params (parity with loader:run).
-        searchParams: parseSearchParams(url ?? "/"),
+      // §8.3 / §9.1: parsed search params (parity with loader:run).
+      searchParams: parseSearchParams(url ?? "/"),
       request: {
         method: method ?? "POST",
         url: url ?? "/",
