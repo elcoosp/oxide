@@ -48,7 +48,8 @@ pub(crate) fn match_impl(tree: &RouteTree, path: &str) -> Option<MatchResult> {
     let route = &tree.entries[idx];
     Some(MatchResult {
         route: route.clone(),
-        layout_chain: layout_chain(&tree.entries, &route.id.0),
+        // P-02: served from the per-tree cache (computed once per route id).
+        layout_chain: tree.layout_chain_cached(&route.id.0),
         params,
         score,
     })
@@ -173,18 +174,21 @@ pub(crate) fn layout_chain<E: EntryLike>(entries: &[E], route_id: &str) -> Vec<R
 }
 
 /// Compile-on-demand cache for param constraint regexes (full-match semantics).
+///
+/// P-19: the cache is keyed by the *raw* constraint, so a hit does no
+/// `format!` allocation. The anchored pattern is built only on a miss.
 fn regex_for(pattern: &str) -> Option<Regex> {
     static CACHE: OnceLock<RwLock<HashMap<String, Regex>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| RwLock::new(HashMap::new()));
-    let full = format!("^(?:{pattern})$");
     if let Ok(guard) = cache.read() {
-        if let Some(re) = guard.get(&full) {
+        if let Some(re) = guard.get(pattern) {
             return Some(re.clone());
         }
     }
+    let full = format!("^(?:{pattern})$");
     let re = Regex::new(&full).ok()?;
     if let Ok(mut guard) = cache.write() {
-        guard.insert(full, re.clone());
+        guard.insert(pattern.to_string(), re.clone());
     }
     Some(re)
 }
@@ -236,6 +240,41 @@ mod tests {
             t.insert(e);
         }
         t
+    }
+
+    #[test]
+    fn dispatch_index_orders_middleware_and_finds_nearest_error() {
+        // P-06: outermost middleware first; nearest error boundary wins.
+        let t = tree(vec![
+            entry("routes/middleware", RouteKind::Middleware, &[]),
+            entry("routes/blog/middleware", RouteKind::Middleware, &[]),
+            entry("routes/error", RouteKind::Error, &[]),
+            entry("routes/blog/error", RouteKind::Error, &[]),
+            entry("routes/not-found", RouteKind::NotFound, &[]),
+            page("routes/blog/page", &["blog"]),
+        ]);
+        let mw = t.middleware_files_for("routes/blog/page");
+        let names: Vec<String> = mw.iter().map(|p| p.display().to_string()).collect();
+        assert_eq!(
+            names,
+            vec!["routes/middleware.tsx", "routes/blog/middleware.tsx"],
+            "root middleware must run before the inner one"
+        );
+        assert_eq!(
+            t.error_route_for("routes/blog/page").as_deref(),
+            Some("routes/blog/error"),
+            "nearest error boundary wins"
+        );
+        assert_eq!(
+            t.error_route_for("routes/other/page").as_deref(),
+            Some("routes/error"),
+        );
+        assert_eq!(
+            t.not_found_route().map(|(id, _)| id).as_deref(),
+            Some("routes/not-found")
+        );
+        // A route under no inner middleware still gets only the root.
+        assert_eq!(t.middleware_files_for("routes/x/page").len(), 1);
     }
 
     #[test]
