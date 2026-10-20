@@ -136,6 +136,27 @@ pub struct MatchResult {
 #[derive(Debug, Clone, Default)]
 pub struct RouteTree {
     pub entries: Vec<RouteEntry>,
+    /// P-02: per-route layout chains, computed once on first match instead of
+    /// re-scanning every entry (and sorting) on every request. Shared across
+    /// clones; cleared by [`RouteTree::insert`].
+    layout_chains: std::sync::Arc<
+        std::sync::RwLock<std::collections::HashMap<String, Vec<RouteId>>>,
+    >,
+    /// P-06: middleware/error/not-found indexes, built once on first use.
+    dispatch: std::sync::Arc<std::sync::RwLock<Option<std::sync::Arc<DispatchIndex>>>>,
+}
+
+/// P-06: per-prefix indexes for the middleware chain, error boundary and the
+/// not-found route. Built once per tree instead of scanning all entries (and
+/// formatting prefixes + sorting) on every request.
+#[derive(Debug, Clone, Default)]
+pub struct DispatchIndex {
+    /// `(base_with_trailing_slash, file)`, sorted outermost → innermost.
+    middleware: Vec<(String, std::path::PathBuf)>,
+    /// `(base_with_trailing_slash, route_id)`, innermost first.
+    errors: Vec<(String, String)>,
+    /// `(route_id, layout_chain)` for the not-found route, if any.
+    not_found: Option<(String, Vec<RouteId>)>,
 }
 
 impl RouteTree {
@@ -165,6 +186,120 @@ impl RouteTree {
     /// Insert a pre-built entry (used by tests, plugins' `routes` hook §15.2).
     pub fn insert(&mut self, entry: RouteEntry) {
         self.entries.push(entry);
+        // P-02/P-06: derived caches; drop them on mutation.
+        if let Ok(mut c) = self.layout_chains.write() {
+            c.clear();
+        }
+        if let Ok(mut c) = self.dispatch.write() {
+            *c = None;
+        }
+    }
+
+    /// P-02: cached layout chain for `route_id` (outermost first). Computed
+    /// once per id, then cloned per match — no O(entries) re-scan.
+    pub(crate) fn layout_chain_cached(&self, route_id: &str) -> Vec<RouteId> {
+        if let Ok(c) = self.layout_chains.read() {
+            if let Some(v) = c.get(route_id) {
+                return v.clone();
+            }
+        }
+        let chain = matcher::layout_chain(&self.entries, route_id);
+        if let Ok(mut c) = self.layout_chains.write() {
+            c.insert(route_id.to_string(), chain.clone());
+        }
+        chain
+    }
+
+    /// P-06: build (once) the middleware/error/not-found prefix indexes.
+    fn dispatch_index(&self) -> std::sync::Arc<DispatchIndex> {
+        if let Ok(c) = self.dispatch.read() {
+            if let Some(idx) = c.as_ref() {
+                return std::sync::Arc::clone(idx);
+            }
+        }
+        let mut middleware: Vec<(String, std::path::PathBuf, usize)> = Vec::new();
+        let mut errors: Vec<(String, String, usize)> = Vec::new();
+        let mut not_found: Option<String> = None;
+        for e in &self.entries {
+            match e.kind {
+                RouteKind::Middleware => {
+                    let base = e
+                        .id
+                        .0
+                        .strip_suffix("/middleware")
+                        .unwrap_or(&e.id.0)
+                        .to_string();
+                    middleware.push((base, e.file.clone(), e.id.0.len()));
+                }
+                RouteKind::Error => {
+                    let base = e
+                        .id
+                        .0
+                        .strip_suffix("/error")
+                        .unwrap_or(&e.id.0)
+                        .to_string();
+                    errors.push((base, e.id.0.clone(), e.id.0.len()));
+                }
+                RouteKind::NotFound if not_found.is_none() => {
+                    not_found = Some(e.id.0.clone());
+                }
+                _ => {}
+            }
+        }
+        // Outermost middleware first (shorter base); nearest error first
+        // (longer base).
+        middleware.sort_by_key(|(_, _, len)| *len);
+        errors.sort_by(|a, b| b.2.cmp(&a.2));
+        let prefix = |base: &str| -> String {
+            if base == "routes" || base.is_empty() {
+                String::new() // matches everything
+            } else {
+                format!("{base}/")
+            }
+        };
+        let idx = DispatchIndex {
+            middleware: middleware
+                .into_iter()
+                .map(|(base, file, _)| (prefix(&base), file))
+                .collect(),
+            errors: errors
+                .into_iter()
+                .map(|(base, id, _)| (prefix(&base), id))
+                .collect(),
+            not_found: not_found.map(|id| {
+                let chain = self.layout_chain_cached(&id);
+                (id, chain)
+            }),
+        };
+        let idx = std::sync::Arc::new(idx);
+        if let Ok(mut c) = self.dispatch.write() {
+            *c = Some(std::sync::Arc::clone(&idx));
+        }
+        idx
+    }
+
+    /// P-06: middleware files wrapping `route_id`, outermost first.
+    pub fn middleware_files_for(&self, route_id: &str) -> Vec<std::path::PathBuf> {
+        let idx = self.dispatch_index();
+        idx.middleware
+            .iter()
+            .filter(|(k, _)| k.is_empty() || route_id.starts_with(k.as_str()))
+            .map(|(_, f)| f.clone())
+            .collect()
+    }
+
+    /// P-06: nearest ancestor `error.tsx` route id for `route_id`.
+    pub fn error_route_for(&self, route_id: &str) -> Option<String> {
+        let idx = self.dispatch_index();
+        idx.errors
+            .iter()
+            .find(|(k, _)| k.is_empty() || route_id.starts_with(k.as_str()))
+            .map(|(_, id)| id.clone())
+    }
+
+    /// P-06: the not-found route id and its layout chain, if declared.
+    pub fn not_found_route(&self) -> Option<(String, Vec<RouteId>)> {
+        self.dispatch_index().not_found.clone()
     }
 
     /// Match a URL path against the tree with priority: static > param > optional > catch-all.
@@ -239,9 +374,21 @@ impl RouteTree {
 }
 
 /// Zero-copy accessor over a memory-mapped archive.
+///
+/// P-01: the archive is validated **once** at load; `root` aliases the mapped
+/// bytes for the process lifetime so a match is O(route-fanout), not
+/// O(archive-bytes).
 pub struct ArchivedTree {
     _mmap: memmap2::Mmap,
+    /// INVARIANT: points into `_mmap`, which is read-only and was validated by
+    /// `access()` at construction, so the pointee cannot change invalidly.
+    root: *const archive::ArchivedArchiveRoot,
 }
+
+// SAFETY: the mapping is read-only and the root pointer is immutable; the
+// only access is through `&ArchivedArchiveRoot` (shared reads).
+unsafe impl Send for ArchivedTree {}
+unsafe impl Sync for ArchivedTree {}
 
 impl std::fmt::Debug for ArchivedTree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -329,14 +476,26 @@ impl RulesEngine {
     /// [`RuleOutcome::Headers`] only when no terminal outcome fired. `:param` captures
     /// (and `:splat` for `*`) substitute into destinations.
     pub fn evaluate(&self, path: &str) -> RuleOutcome {
-        rules::evaluate_impl(self, path, "")
+        rules::evaluate_impl(self, path, "", None)
     }
 
     /// SEC-01: like [`evaluate`], but with the request's rate-limit key
     /// material (e.g. the client IP). A `rate_limit.key` of `ip` (or an empty
     /// key) uses `client_key`; a `:param` uses the captured route param.
     pub fn evaluate_with_key(&self, path: &str, client_key: &str) -> RuleOutcome {
-        rules::evaluate_impl(self, path, client_key)
+        rules::evaluate_impl(self, path, client_key, None)
+    }
+
+    /// B-16: evaluate the rules with the request's `Authorization` header so a
+    /// `basic_auth` rule verifies credentials in constant time instead of
+    /// emitting a permanent 401. `authorization` is the raw header value.
+    pub fn evaluate_with_auth(
+        &self,
+        path: &str,
+        client_key: &str,
+        authorization: Option<&str>,
+    ) -> RuleOutcome {
+        rules::evaluate_impl(self, path, client_key, authorization)
     }
 }
 
