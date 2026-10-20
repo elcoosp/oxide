@@ -91,6 +91,72 @@ pub enum FlightSlot {
     Follower(tokio::sync::broadcast::Receiver<Arc<Entry>>),
 }
 
+use dashmap::mapref::entry as map_entry;
+
+/// S-15: an RAII guard for an owner slot. Every owner exit path — success,
+/// loader `error(404)`/redirect, cookie short-circuit, render error — must
+/// clear the in-flight map entry, or a short-circuited request leaks one
+/// DashMap entry forever (attacker-mintable keys → unbounded growth, and the
+/// key is single-flight-broken thereafter). A guard makes *all* early returns
+/// correct without threading cleanup through each one.
+///
+/// Success path: call [`FlightOwnerGuard::publish`], which removes the entry
+/// then broadcasts the entry to followers.
+pub struct FlightOwnerGuard {
+    map: Arc<DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>>,
+    key: String,
+    tx: Option<broadcast::Sender<Arc<Entry>>>,
+}
+
+impl FlightOwnerGuard {
+    /// Wrap an owner sender (from [`FlightSlot::Owner`]).
+    pub fn new(
+        map: Arc<DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>>,
+        key: String,
+        tx: broadcast::Sender<Arc<Entry>>,
+    ) -> Self {
+        Self {
+            map,
+            key,
+            tx: Some(tx),
+        }
+    }
+
+    /// Success: publish the computed entry to followers. Removes the in-flight
+    /// entry before sending (same ordering guarantee as
+    /// [`SingleFlight::publish_and_cleanup`]).
+    pub fn publish(mut self, entry: Arc<Entry>) {
+        // Remove only our own generation; a later owner may have replaced it.
+        self.map.remove(&self.key);
+        if let Some(tx) = self.tx.take() {
+            let _ = tx.send(entry);
+        }
+    }
+
+    /// Explicit failure: clear the entry so the next acquirer starts fresh.
+    pub fn abandon(mut self) {
+        self.map.remove(&self.key);
+        self.tx = None;
+    }
+}
+
+impl Drop for FlightOwnerGuard {
+    fn drop(&mut self) {
+        // `publish`/`abandon` consume `self`, so reaching here means an early
+        // return (or panic) did not clean up — do it now. Remove only if the
+        // entry is still ours (no followers remaining and same generation).
+        if self.tx.is_some() {
+            if let map_entry::Entry::Occupied(e) = self.map.entry(self.key.clone()) {
+                // Drop the entry when nobody is waiting; leave it if a follower
+                // subscribed after our publish window (it will get the send).
+                if e.get().receiver_count() == 0 {
+                    e.remove();
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,6 +210,47 @@ mod tests {
 
         // Next acquire starts a fresh flight.
         assert!(matches!(sf.acquire(&map, "k").await, FlightSlot::Owner(_)));
+    }
+
+    #[tokio::test]
+    async fn owner_guard_dropped_on_early_exit_clears_the_map() {
+        // S-15: an owner that exits without publishing (loader 404/redirect,
+        // cookie short-circuit, render error) must not leak a map entry.
+        let map: Arc<DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>> =
+            Arc::new(DashMap::new());
+        let sf = SingleFlight::new();
+        let tx = match sf.acquire(&map, "k").await {
+            FlightSlot::Owner(tx) => tx,
+            _ => panic!("owner"),
+        };
+        assert_eq!(map.len(), 1);
+        {
+            let _guard = FlightOwnerGuard::new(Arc::clone(&map), "k".to_string(), tx);
+            // guard drops here without publish/abandon
+        }
+        assert!(map.is_empty(), "early exit must clear the flight entry");
+        // A fresh acquire owns again.
+        assert!(matches!(sf.acquire(&map, "k").await, FlightSlot::Owner(_)));
+    }
+
+    #[tokio::test]
+    async fn owner_guard_publish_delivers_and_clears() {
+        let map: Arc<DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>> =
+            Arc::new(DashMap::new());
+        let sf = SingleFlight::new();
+        let tx = match sf.acquire(&map, "k").await {
+            FlightSlot::Owner(tx) => tx,
+            _ => panic!("owner"),
+        };
+        let mut follower = match sf.acquire(&map, "k").await {
+            FlightSlot::Follower(rx) => rx,
+            _ => panic!("follower"),
+        };
+        let guard = FlightOwnerGuard::new(Arc::clone(&map), "k".to_string(), tx);
+        guard.publish(Arc::new(entry(b"v")));
+        assert!(map.is_empty());
+        let got = follower.recv().await.unwrap();
+        assert_eq!(got.body, b"v");
     }
 
     #[tokio::test]
