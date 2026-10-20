@@ -2139,3 +2139,63 @@ async fn perf06_dispatch_emits_real_server_timing_total() {
         .expect("Server-Timing present");
     assert!(st.starts_with("total;dur="), "real total: {st}");
 }
+
+// ─── Wave A: ssrf header allowlist (A6) ──────────────────────────────────
+
+#[test]
+fn ssrf_forwardable_headers_drops_credentials() {
+    let headers = vec![
+        ("Authorization".to_string(), "Bearer secret".to_string()),
+        ("Cookie".to_string(), "session=abc".to_string()),
+        ("Accept".to_string(), "application/json".to_string()),
+        ("Content-Type".to_string(), "application/json".to_string()),
+        ("User-Agent".to_string(), "oxide-test".to_string()),
+        ("X-Custom".to_string(), "dropped".to_string()),
+    ];
+    let out = oxide_server::ssrf_forwardable_headers(&headers);
+    let names: Vec<&str> = out.iter().map(|(k, _)| k.as_str()).collect();
+    assert!(!names.iter().any(|n| n.eq_ignore_ascii_case("authorization")), "Authorization dropped: {names:?}");
+    assert!(!names.iter().any(|n| n.eq_ignore_ascii_case("cookie")), "Cookie dropped: {names:?}");
+    assert!(!names.iter().any(|n| n.eq_ignore_ascii_case("x-custom")), "unknown dropped: {names:?}");
+    assert!(names.iter().any(|n| n.eq_ignore_ascii_case("accept")), "accept kept");
+    assert!(names.iter().any(|n| n.eq_ignore_ascii_case("content-type")), "content-type kept");
+    assert!(names.iter().any(|n| n.eq_ignore_ascii_case("user-agent")), "user-agent kept");
+    assert_eq!(out.len(), 3, "exactly the three allowlisted headers survive");
+}
+
+// ─── Wave A: asset-cache TTL (A5) ────────────────────────────────────────
+
+#[test]
+fn asset_cache_ttl_defaults_and_overrides() {
+    // Default when the env var is unset.
+    unsafe { std::env::remove_var("OXIDE_ASSET_CACHE_TTL_SECS"); }
+    assert_eq!(
+        oxide_server::asset_cache_ttl(),
+        std::time::Duration::from_secs(300),
+        "default TTL is 300s",
+    );
+    // Override.
+    unsafe { std::env::set_var("OXIDE_ASSET_CACHE_TTL_SECS", "5"); }
+    assert_eq!(
+        oxide_server::asset_cache_ttl(),
+        std::time::Duration::from_secs(5),
+        "env overrides the TTL",
+    );
+    unsafe { std::env::remove_var("OXIDE_ASSET_CACHE_TTL_SECS"); }
+}
+
+// ─── Wave A: OG rate limit (A3) ──────────────────────────────────────────
+
+#[test]
+fn rate_limiter_allows_max_then_denies() {
+    let rl = oxide_server::RateLimiter::default();
+    // Capacity 10, one-minute window. The bucket starts full, so the first
+    // ten calls succeed and the eleventh is denied (no time has passed to
+    // refill).
+    for i in 0..10 {
+        assert!(rl.allow("1.2.3.4", 10, 60), "call {i} allowed");
+    }
+    assert!(!rl.allow("1.2.3.4", 10, 60), "eleventh denied");
+    // A different peer has its own bucket.
+    assert!(rl.allow("5.6.7.8", 10, 60), "other peer unaffected");
+}

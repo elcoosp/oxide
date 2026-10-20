@@ -984,3 +984,22 @@ fn tampered_sealed_entry_never_verifies() {
         "a bit-flipped MAC must not verify",
     );
 }
+
+// ─── Wave A: s3 error redaction (A4) ─────────────────────────────────────
+
+/// The s3 client-init error must not interpolate the bucket name: a bucket
+/// is a resource identifier an operator may paste into a ticket. A
+/// source-level assertion is honest here — the failure path needs a live S3
+/// endpoint to exercise.
+#[test]
+fn s3_client_error_does_not_name_the_bucket() {
+    let src = include_str!("../src/s3_handler.rs");
+    assert!(
+        !src.contains("bucket {bucket}"),
+        "the s3 client error must not interpolate the bucket name",
+    );
+    assert!(
+        src.contains("\"s3 client: {e}\""),
+        "the s3 client error is bucket-free",
+    );
+}

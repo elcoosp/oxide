@@ -375,6 +375,16 @@ impl StaticAssets {
 /// P-12: process-wide cache of asset bodies, keyed by file path. The asset
 /// index is content-addressed and immutable for a build, so a cached body can
 /// never go stale within a process. Bounded by total bytes.
+/// A5: the asset-body cache TTL. 300s by default; `OXIDE_ASSET_CACHE_TTL_SECS`
+/// overrides it (a test sets it short to prove expiry re-reads).
+pub fn asset_cache_ttl() -> std::time::Duration {
+    std::env::var("OXIDE_ASSET_CACHE_TTL_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(std::time::Duration::from_secs)
+        .unwrap_or_else(|| std::time::Duration::from_secs(300))
+}
+
 fn asset_body_cache() -> &'static moka::sync::Cache<std::path::PathBuf, Bytes> {
     static CACHE: std::sync::OnceLock<moka::sync::Cache<std::path::PathBuf, Bytes>> =
         std::sync::OnceLock::new();
@@ -384,7 +394,7 @@ fn asset_body_cache() -> &'static moka::sync::Cache<std::path::PathBuf, Bytes> {
             .weigher(|_k, v: &Bytes| v.len().min(u32::MAX as usize) as u32)
             // A5: a dev rebuild replaces dist/client in place; without a TTL
             // the cache served the previous body indefinitely.
-            .time_to_live(std::time::Duration::from_secs(300))
+            .time_to_live(asset_cache_ttl())
             .build()
     })
 }
@@ -2341,6 +2351,23 @@ pub fn first_blocked_addr(
 /// GET-only, host-pattern-gated), this supports any method + headers + body
 /// and is gated only by the SSRF block ranges. Returns
 /// `(status, headers, body)`.
+/// A6: the only headers an SSRF-guarded fetch forwards.
+///
+/// A caller-supplied `Authorization` / `Cookie` must never ride a request to
+/// a host the app does not own — that is a credential leak. The allowlist is
+/// the cross-origin-safe set: content negotiation and identification, nothing
+/// that authenticates.
+pub fn ssrf_forwardable_headers(
+    headers: &[(String, String)],
+) -> Vec<(String, String)> {
+    const ALLOW: &[&str] = &["accept", "content-type", "user-agent"];
+    headers
+        .iter()
+        .filter(|(k, _)| ALLOW.iter().any(|a| k.eq_ignore_ascii_case(a)))
+        .cloned()
+        .collect()
+}
+
 pub async fn ssrf_safe_fetch(
     method: &str,
     url: &str,
@@ -2351,16 +2378,7 @@ pub async fn ssrf_safe_fetch(
     // A6: forward only headers that are safe cross-origin. A caller-supplied
     // Authorization/Cookie must never ride an SSRF-guarded request to a host
     // the app does not own - that is a credential leak, not a feature.
-    const SSRF_FORWARD_ALLOWLIST: &[&str] = &["accept", "content-type", "user-agent"];
-    let headers: Vec<(String, String)> = headers
-        .iter()
-        .filter(|(k, _)| {
-            SSRF_FORWARD_ALLOWLIST
-                .iter()
-                .any(|a| k.eq_ignore_ascii_case(a))
-        })
-        .cloned()
-        .collect();
+    let headers: Vec<(String, String)> = ssrf_forwardable_headers(headers);
 
     use http_body_util::{BodyExt, Full};
     use hyper_util::client::legacy::Client;
