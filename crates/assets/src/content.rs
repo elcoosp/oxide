@@ -37,6 +37,18 @@ fn parse_scalar(raw: &str) -> serde_json::Value {
     {
         return serde_json::Value::String(raw[1..raw.len() - 1].to_string());
     }
+    // §16.5: inline YAML arrays — `tags: [a, b]` and `tags: ["a", "b"]`.
+    // A flat-YAML subset that dropped this read the whole `[a, b]` as the
+    // string "[a, b]", so a `string[]` field inferred as `string`.
+    if raw.len() >= 2 && raw.starts_with('[') && raw.ends_with(']') {
+        let inner = &raw[1..raw.len() - 1];
+        let items: Vec<serde_json::Value> = if inner.trim().is_empty() {
+            Vec::new()
+        } else {
+            inner.split(',').map(|s| parse_scalar(s.trim())).collect()
+        };
+        return serde_json::Value::Array(items);
+    }
     match raw {
         "true" => serde_json::Value::Bool(true),
         "false" => serde_json::Value::Bool(false),
