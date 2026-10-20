@@ -182,8 +182,16 @@ impl Bundler for RolldownBundler {
     fn bundle(&self, options: &BundleOptions) -> crate::Result<BundleOutput> {
         let ropts = self.build_options(options);
         let out_dir = options.out_dir.clone();
+        // The scoped closure consumes `out_dir`; the post-emit hook
+        // pass below needs its own handle.
+        let out_dir_for_hooks = out_dir.clone();
         let env = options.env;
         let plugins = oxide_plugins(options, &self.root);
+        // SPEC-15.2: clone the post-emit hooks out of `options` so the
+        // scoped thread closure captures owned handles rather than a
+        // borrow of `BundleOptions`.
+        let render_chunk_hook = options.render_chunk_hook.clone();
+        let generate_bundle_hook = options.generate_bundle_hook.clone();
 
         // Rolldown is async; run it on a dedicated current-thread runtime on a
         // scoped thread so this works regardless of the caller's runtime context.
@@ -218,8 +226,39 @@ impl Bundler for RolldownBundler {
                 .join()
                 .map_err(|_| err("BLD-ROLLDOWN", "rolldown worker thread panicked"))?
         });
-        result
+
+    // SPEC-15.2: run `renderChunk` over every emitted chunk file, then
+    // `generateBundle` once over the final file list. Rolldown's `write()`
+    // has already persisted the files, so a `renderChunk` hook rewrites them
+    // in place. Both hooks compose with the caller's `BundleOptions` — a
+    // hook that returns `None` leaves the chunk untouched.
+    let mut result = result?;
+    if let Some(hook) = render_chunk_hook.as_ref() {
+        for c in &result.chunks {
+            let file_path = out_dir_for_hooks.join(&c.file);
+            let Ok(src) = std::fs::read_to_string(&file_path) else {
+                continue;
+            };
+            if let Ok(Some(new_src)) = hook.call(&c.file, &src) {
+                if new_src != src {
+                    let _ = std::fs::write(&file_path, &new_src);
+                }
+            }
+        }
     }
+    if let Some(hook) = generate_bundle_hook.as_ref() {
+        let files: Vec<String> = result.chunks.iter().map(|c| c.file.clone()).collect();
+        // The hook may drop or reorder files. `BundleOutput` reports chunks,
+        // not a flat file list — this lets a plugin veto a chunk from the
+        // manifests without inventing a chunk the bundler never produced.
+        if let Ok(Some(kept)) = hook.call(&files) {
+            let keep: std::collections::BTreeSet<&str> =
+                kept.iter().map(String::as_str).collect();
+            result.chunks.retain(|c| keep.contains(c.file.as_str()));
+        }
+    }
+    Ok(result)
+}
 }
 
 /// §6.4: write `<out_dir>/ssr/index.js` — the adapter entry the serverless
