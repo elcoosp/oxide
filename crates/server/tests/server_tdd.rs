@@ -47,6 +47,9 @@ fn pipeline(
     security: SecuritySettings,
 ) -> Pipeline {
     Pipeline {
+        og_rate_limiter: oxide_server::RateLimiter::default(),
+        og_rate_max: 10,
+        og_rate_window_secs: 60,
         rules,
         assets,
         limits,
@@ -801,6 +804,9 @@ async fn metrics_endpoint_renders_prometheus_text() {
     let m = Arc::new(Metrics::new());
     m.observe("/", std::time::Duration::from_millis(3), 200);
     let p = Pipeline {
+        og_rate_limiter: oxide_server::RateLimiter::default(),
+        og_rate_max: 10,
+        og_rate_window_secs: 60,
         rules: RulesEngine::default(),
         assets: None,
         limits: Limits::default(),
@@ -851,6 +857,9 @@ async fn vitals_endpoint_records_samples_into_metrics() {
 
     let m = Arc::new(Metrics::new());
     let p = Pipeline {
+        og_rate_limiter: oxide_server::RateLimiter::default(),
+        og_rate_max: 10,
+        og_rate_window_secs: 60,
         rules: RulesEngine::default(),
         assets: None,
         limits: Limits::default(),
@@ -897,6 +906,9 @@ async fn vitals_endpoint_tolerates_a_malformed_beacon() {
     use oxide_server::Metrics;
     use std::sync::Arc;
     let p = Pipeline {
+        og_rate_limiter: oxide_server::RateLimiter::default(),
+        og_rate_max: 10,
+        og_rate_window_secs: 60,
         rules: RulesEngine::default(),
         assets: None,
         limits: Limits::default(),
@@ -929,6 +941,9 @@ async fn vitals_endpoint_tolerates_a_malformed_beacon() {
 #[tokio::test]
 async fn metrics_endpoint_404_when_not_configured() {
     let p = Pipeline {
+        og_rate_limiter: oxide_server::RateLimiter::default(),
+        og_rate_max: 10,
+        og_rate_window_secs: 60,
         rules: RulesEngine::default(),
         assets: None,
         limits: Limits::default(),
@@ -965,6 +980,9 @@ async fn pipeline_observes_native_branch_requests() {
 
     let m = Arc::new(Metrics::new());
     let p = Pipeline {
+        og_rate_limiter: oxide_server::RateLimiter::default(),
+        og_rate_max: 10,
+        og_rate_window_secs: 60,
         rules: RulesEngine::default(),
         assets: None,
         limits: Limits::default(),
@@ -1007,6 +1025,9 @@ async fn with_metrics_attaches_registry() {
 
     let m = Arc::new(Metrics::new());
     let p = Pipeline {
+        og_rate_limiter: oxide_server::RateLimiter::default(),
+        og_rate_max: 10,
+        og_rate_window_secs: 60,
         rules: RulesEngine::default(),
         assets: None,
         limits: Limits::default(),
@@ -1053,6 +1074,9 @@ impl InspectorSnapshot for TestInspector {
 
 fn inspector_pipeline() -> Pipeline {
     Pipeline {
+        og_rate_limiter: oxide_server::RateLimiter::default(),
+        og_rate_max: 10,
+        og_rate_window_secs: 60,
         rules: RulesEngine::default(),
         assets: None,
         limits: Limits::default(),
