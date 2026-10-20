@@ -1290,7 +1290,7 @@ async fn ensure_dev_client_bundle(
 
 async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
-    let cfg = load_config_or_default(&rootp, "development");
+    let mut cfg = load_config_or_default(&rootp, "development");
     // SPEC-15.1 / §15.2: fail at load for an unknown `kind:"native"` plugin.
     if let Err(e) = crate::native_plugins::parse_native_plugins(&cfg) {
         anyhow::bail!("{} {}", e.0.code, e.0.message);
@@ -1426,6 +1426,12 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // the worker (and the L0 cache) actually uses honors the config — the
     // CLI-side `stack.cache_tier == None` arm below is only for stacks built
     // without a config (tests), so this is the only live wiring.
+    // §15.2: `cacheHandler` — a plugin may select the cache backend. The
+    // chosen config replaces `cfg.cache.handler` for the stack build below
+    // (and for the L0 tier the server constructs from the same value).
+    if let Ok(Some(chosen)) = resolve_cache_handler_via_plugin(&rootp, &cfg, w).await {
+        cfg.cache.handler = chosen;
+    }
     let stack = framework_shim::build_framework_stack(
         config_path_opt.as_deref(),
         cfg.server.backend,
@@ -2898,9 +2904,14 @@ async fn write_prerender(
             .await
             .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?
     } else {
+        // No framework renderer attached (a project without a
+        // `componentFor`). The placeholder is the whole document — but a
+        // plugin's `renderHead` contribution still belongs in it, so the
+        // head is built from `plugin_head` rather than hardcoded empty.
         format!(
-            "<!doctype html><html><head></head><body>\
-             <main data-route=\"{pattern}\">placeholder</main></body></html>"
+            "<!doctype html><html><head>{}</head><body>\
+             <main data-route=\"{pattern}\">placeholder</main></body></html>",
+            neutral_head_to_html(plugin_head),
         )
     };
     // §10.3: `<Island chunk="X">` emits `data-ox-chunk="X"` — a logical island
@@ -3267,6 +3278,12 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // worker's compile_module applies it (reaching the prerender path).
     let transform_handler = framework_shim::build_transform_handler(&rootp, &cfg);
     // §11.2: `cache.handler` is honored inside the stack (see cmd_dev).
+    // §15.2: `cacheHandler` — a plugin may select the cache backend. The
+    // chosen config replaces `cfg.cache.handler` for the stack build below
+    // (and for the L0 tier the server constructs from the same value).
+    if let Ok(Some(chosen)) = resolve_cache_handler_via_plugin(&rootp, &cfg, w).await {
+        cfg.cache.handler = chosen;
+    }
     let stack = framework_shim::build_framework_stack(
         config_path_opt.as_deref(),
         cfg.server.backend,
@@ -4774,6 +4791,45 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
     // §16.5: search indexes for every configured content collection.
     emit_content_search_indexes(&rootp, &cfg, &dist, w)?;
+    // under `.oxide/types/`. A failure is a warning (the app still ships).
+    if plugin_declares_any(&rootp, &cfg, &["typegen"]) {
+        let results = fire_lifecycle_hook(
+            &rootp,
+            &cfg,
+            stack.tooling_pool.as_ref(),
+            "typegen",
+            serde_json::json!({
+                "outDir": rootp.join(".oxide/types").to_string_lossy(),
+                "routes": tree.entries.len(),
+            }),
+        )
+        .await;
+        let types_dir = rootp.join(".oxide/types");
+        let mut written = 0usize;
+        for r in results {
+            let Some(files) = r.get("files").and_then(|f| f.as_object()) else {
+                continue;
+            };
+            for (rel, body) in files {
+                let Some(src) = body.as_str() else { continue };
+                // Refuse a path that escapes `.oxide/types/`.
+                let target = types_dir.join(rel);
+                if !target.starts_with(&types_dir) {
+                    outln!(w, "warn: typegen path `{rel}` escapes .oxide/types; skipped");
+                    continue;
+                }
+                if let Some(parent) = target.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if std::fs::write(&target, src).is_ok() {
+                    written += 1;
+                }
+            }
+        }
+        if written > 0 {
+            outln!(w, "typegen plugin: {written} file(s) -> .oxide/types/");
+        }
+    }
     // §16.3: sitemap.xml + robots.txt from the route table.
     emit_sitemap_and_robots(&cfg, &tree, &dist, w)?;
     // §16.3: manifest.webmanifest, when a `manifest` block is configured.
@@ -8016,7 +8072,7 @@ async fn start_server_inner_full(
     // the client manifest) is absolute — the worker resolves a module path
     // against its own cwd, so a relative root breaks `action:run` / `loader:run`.
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
-    let cfg = load_config_or_default(&rootp, "production");
+    let mut cfg = load_config_or_default(&rootp, "production");
     // §10.1: refine inferred render modes from the AST, exactly as `oxide build`
     // does — otherwise the live server sees the scanner's line-oriented guess
     // (and `None` for a route with no `page.server.ts`), and the §11 L0 layer
@@ -10698,3 +10754,137 @@ async fn plugin_render_head(
     merged
 }
 
+
+/// §15.2: `cacheHandler` — a plugin *selects* the cache backend.
+///
+/// A plugin cannot implement `oxide_cache::CacheHandler` itself: the trait is
+/// async Rust over a Rust `Entry` (body bytes, policy, etag), and every
+/// operation would cross an RPC boundary. The hook's real value is choosing
+/// among the drivers the CLI already builds — a deploy plugin knows whether
+/// its platform wants redis, s3, an HTTP cache, or memory.
+///
+/// Each plugin returns `{ kind: "memory" | "disk" | "redis" | "s3" | "http",
+/// url?, bucket? }`. The last plugin to return a valid kind wins. An unknown
+/// kind, or a missing url/bucket, is reported and the config's choice stands.
+async fn resolve_cache_handler_via_plugin(
+    root: &Path,
+    cfg: &OxideConfig,
+    w: Writer<'_>,
+) -> anyhow::Result<Option<oxide_config::CacheHandlerConfig>> {
+    if collect_plugin_paths_for_hook(root, cfg, "cacheHandler").is_empty() {
+        return Ok(None);
+    }
+    // The hook runs on the tooling pool — which is built without a cache
+    // handler, since choosing it is the whole point.
+    use oxide_jshost::JsHost as _;
+    let host = oxide_jshost::NodeHost::new(oxide_jshost::NodeHost::worker_script_default());
+    let Some(pool) = host.tooling_pool(oxide_jshost::PoolConfig::default()).ok() else {
+        return Ok(None);
+    };
+    let results = call_js_plugin_hook(
+        root,
+        cfg,
+        &pool,
+        "cacheHandler",
+        serde_json::json!({ "current": format!("{:?}", cfg.cache.handler) }),
+    )
+    .await;
+    let mut chosen: Option<oxide_config::CacheHandlerConfig> = None;
+    for r in results {
+        let Some(kind) = r.get("kind").and_then(|k| k.as_str()) else {
+            continue;
+        };
+        let candidate = match kind {
+            "memory" => Some(oxide_config::CacheHandlerConfig::Memory),
+            "disk" => Some(oxide_config::CacheHandlerConfig::Disk),
+            "redis" => r.get("url").and_then(|u| u.as_str()).map(|url| {
+                oxide_config::CacheHandlerConfig::Redis {
+                    url: url.to_string(),
+                }
+            }),
+            "s3" => r.get("bucket").and_then(|b| b.as_str()).map(|bucket| {
+                oxide_config::CacheHandlerConfig::S3 {
+                    bucket: bucket.to_string(),
+                }
+            }),
+            "http" => r.get("url").and_then(|u| u.as_str()).map(|url| {
+                oxide_config::CacheHandlerConfig::Http {
+                    url: url.to_string(),
+                }
+            }),
+            other => {
+                outln!(w, "warn: cacheHandler plugin returned unknown kind `{other}`; ignored");
+                None
+            }
+        };
+        if let Some(c) = candidate {
+            chosen = Some(c);
+        } else if matches!(kind, "redis" | "s3" | "http") {
+            outln!(w, "warn: cacheHandler kind `{kind}` is missing its url/bucket; ignored");
+        }
+    }
+    Ok(chosen)
+}
+
+/// Render a plugin's neutral head model (`renderHead`'s return value) into
+/// `<head>` markup, for the placeholder path where no framework renderer
+/// runs. The full model a real adapter merges is richer (title templates,
+/// JSON-LD); this covers the four fields a plugin contributes — meta, link,
+/// style, script — which is what the placeholder document can carry.
+fn neutral_head_to_html(head: &serde_json::Value) -> String {
+    let mut out = String::new();
+    let Some(obj) = head.as_object() else {
+        return out;
+    };
+    for field in ["meta", "link", "style", "script"] {
+        let Some(arr) = obj.get(field).and_then(|v| v.as_array()) else {
+            continue;
+        };
+        for entry in arr {
+            let Some(attrs) = entry.as_object() else {
+                // A bare string: treat as the element's text content.
+                if let Some(text) = entry.as_str() {
+                    let tag = if field == "style" { "style" } else { "script" };
+                    out.push_str(&format!("<{tag}>{}</{tag}>", html_escape(text)));
+                }
+                continue;
+            };
+            let tag = match field {
+                "meta" => "meta",
+                "link" => "link",
+                "style" => "style",
+                "script" => "script",
+                _ => continue,
+            };
+            // A `<style>` / `<script>` entry may carry `content` as body text.
+            let body = attrs.get("content").and_then(|c| c.as_str());
+            let mut tag_out = format!("<{tag}");
+            let mut keys: Vec<&String> = attrs.keys().collect();
+            keys.sort();
+            for k in keys {
+                if k == "content" && body.is_some() {
+                    continue;
+                }
+                if let Some(v) = attrs.get(k).and_then(|v| v.as_str()) {
+                    tag_out.push_str(&format!(" {}=\"{}\"", k, html_escape(v)));
+                }
+            }
+            match body {
+                Some(b) if matches!(tag, "style" | "script") => {
+                    tag_out.push_str(&format!(">{}</{tag}>", html_escape(b)));
+                }
+                _ => tag_out.push('>'),
+            }
+            out.push_str(&tag_out);
+        }
+    }
+    out
+}
+
+/// Minimal HTML-attribute/text escape for the placeholder path.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
