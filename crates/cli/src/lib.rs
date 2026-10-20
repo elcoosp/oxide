@@ -15,6 +15,7 @@ pub mod mcp;
 
 mod build_cache;
 mod build_graph;
+mod migrate;
 mod modules_loader;
 mod framework_shim;
 mod l0_cache;
@@ -161,6 +162,9 @@ pub enum Command {
         #[arg(long, default_value = ".")]
         root: String,
         source: String,
+        /// Actually write the converted files. Default is dry-run (plan only).
+        #[arg(long, default_value_t = false)]
+        write: bool,
     },
     /// In-process test helper: boot the app and expose `fetch` (§16.6 oxide/test).
     Test {
@@ -434,7 +438,9 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
         Command::Generate { root, kind, path } => cmd_generate(&root, &kind, &path, w).await,
         Command::Cache { root, op } => cmd_cache(&root, op, w).await,
         Command::Audit { root } => cmd_audit(&root, w).await,
-        Command::Migrate { root, source } => cmd_migrate(&root, &source, w).await,
+        Command::Migrate { root, source, write } => {
+            cmd_migrate(&root, &source, write, w).await
+        }
         Command::Test { root } => cmd_test(&root, w).await,
         Command::Mcp { root } => cmd_mcp(&root, w).await,
         Command::Schema => cmd_schema(w),
@@ -884,6 +890,9 @@ fn bundle_env_options(
     ssr_externals: Vec<String>,
     // BUG-11: `build.sourcemap` (`off` | `file` | `hidden`). `off` → no maps.
     sourcemap_on: bool,
+    // P-23: production builds minify; the dev client bundle stays unminified
+    // for debugging and a faster fresh `oxide dev`.
+    minify: bool,
 ) -> oxide_bundler::BundleOptions {
     // §6.1: `process.env.NODE_ENV` drives React's dev-vs-production
     // bundle selection. Setting it at the CLI level (rather than in the
@@ -915,10 +924,7 @@ fn bundle_env_options(
         env,
         entries,
         out_dir,
-        // Production builds minify. The dev server has its own bundling
-        // path (`dev::prebundle`) and never goes through this helper, so
-        // turning minify on here only affects `oxide build` output.
-        minify: true,
+        minify,
         // BUG-11: honour `build.sourcemap`. `RolldownBundler` supports
         // `SourceMapType::File`; `off` emits no map.
         sourcemap: sourcemap_on,
@@ -1135,7 +1141,8 @@ async fn ensure_dev_client_bundle(
         transform_hook,
         css_transform,
         Vec::new(),
-        true, // sourcemap on for dev
+        true,  // sourcemap on for dev
+        false, // P-23: unminified dev client bundle
     );
     use oxide_bundler::Bundler as _;
     let rb = oxide_bundler::RolldownBundler::new(rootp);
@@ -3218,6 +3225,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         css_transform.clone(),
         Vec::new(),
         cfg.build.sourcemap != "off",
+        true, // production build minifies
     );
     let server_opts = bundle_env_options(
         oxide_bundler::BundleEnv::Ssr,
@@ -3230,6 +3238,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         css_transform,
         cfg.build.ssr_externals.clone(),
         cfg.build.sourcemap != "off",
+        true, // production build minifies
     );
     let rb = oxide_bundler::RolldownBundler::new(&rootp);
     // SPEC-16.6 / §16-A: scan every route entry for `.svg?react` imports
@@ -3238,6 +3247,20 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // content is the generated TSX, which the bundler reads from
     // `precompiled` rather than disk.
     let mut client_opts = client_opts;
+    // §15-E: JS-plugin resolveId / load hooks. Build once; both envs share
+    // the closures (`ResolveHook`/`LoadHook` are `Arc<dyn Fn>` — cheap to
+    // clone; worker discovery is lazy on first call). Assigned by field on
+    // `BundleOptions` — no signature change to `bundle_env_options`, so this
+    // composes with any in-flight edit elsewhere in that function.
+    let js_resolve_hook =
+        build_js_plugin_resolve_hook(&rootp, &cfg, stack.tooling_pool.as_ref());
+    let js_load_hook =
+        build_js_plugin_load_hook(&rootp, &cfg, stack.tooling_pool.as_ref());
+    client_opts.resolve_hook = js_resolve_hook.clone();
+    client_opts.load_hook = js_load_hook.clone();
+    let mut server_opts = server_opts;
+    server_opts.resolve_hook = js_resolve_hook;
+    server_opts.load_hook = js_load_hook;
     if client_opts.virtual_modules.is_empty() {
         let mut seen: std::collections::BTreeMap<PathBuf, String> = std::collections::BTreeMap::new();
         for entry in client_opts.entries.values() {
@@ -3676,6 +3699,24 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     let mut prerendered: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // PERF-04: (route_id, url_path, sentineled html) for the L0 seed manifest.
     let mut seed_bodies: Vec<(String, String, String, u16)> = Vec::new();
+    // §5-A full incremental: load the previous build's per-route prerender
+    // records, indexed by (route_id, url). On this build, a route whose
+    // source hash matches AND whose output file still exists is reused
+    // (skipping the render). The saved HTML's `nonce="…"` is rewritten to
+    // the current build's nonce so the CSP header the server emits still
+    // matches. A missing or old-format snapshot yields an empty map — every
+    // route renders, which is the safe default.
+    let prev_prerender_snapshot = crate::build_graph::load_snapshot(&rootp);
+    let prev_prerenders: std::collections::BTreeMap<
+        (String, String),
+        &crate::build_graph::RoutePrerenderRecord,
+    > = prev_prerender_snapshot
+        .route_prerenders
+        .iter()
+        .map(|r| ((r.route_id.clone(), r.url.clone()), r))
+        .collect();
+    let mut new_prerender_records: Vec<crate::build_graph::RoutePrerenderRecord> = Vec::new();
+    let mut reused_prerender_count: usize = 0;
     // Routes with literal generateParams are effectively static regardless of
     // whether they also have a server module.
     let mut static_override: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -3792,6 +3833,19 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             None
         };
 
+        // §5-A: hash every source that feeds this route. Reuse fires only when
+        // this hash matches the previous build's record for the same
+        // (route_id, url). Computed once per entry — the hash covers file
+        // contents + config, not the per-URL params.
+        let route_src_hash = route_source_hash(
+            &rootp,
+            &cfg,
+            &tree,
+            e,
+            &layout_ids,
+            &prerender_layout_modules,
+            prerender_error_route_id.as_deref(),
+        );
         match gen_params {
             oxide_compiler::GenerateParamsResult::Literal(params) => {
                 // Prerendered output exists → effective mode `static` for the
@@ -3813,30 +3867,60 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     } else {
                         format!("prerendered/{}.html", segs.join("/"))
                     };
-                    let (html, prerender_status) = write_prerender(
-                        &dist,
-                        &rel,
+                    let url_path = url_path_from_rel(&rel);
+                    let (html, prerender_status) = match try_reuse_prerender(
+                        &dist.join(&rel),
                         &route_id,
-                        &pattern,
-                        &url_path_from_rel(&rel),
-                        params_map,
-                        &nonce_for,
-                        stack.page_renderer.as_ref(),
-                        stack.loader_runner.as_ref(),
-                        module_path.as_deref(),
-                        boot_script_url.as_deref(),
-                        &layout_ids,
-
-                        &prerender_layout_modules,
-                        prerender_error_route_id.as_deref(),
-                    )
-                    .await?;
+                        &url_path,
+                        &route_src_hash,
+                        &prev_prerenders,
+                    ) {
+                        Some((saved, status, old_nonce)) => {
+                            let fresh = saved.replace(&old_nonce, &nonce);
+                            if std::fs::write(dist.join(&rel), &fresh).is_ok() {
+                                reused_prerender_count += 1;
+                                (fresh, status)
+                            } else {
+                                // Nonce rewrite failed — fall back to a fresh
+                                // render; a stale-nonce HTML is worse than a
+                                // re-render.
+                                write_prerender(
+                                    &dist, &rel, &route_id, &pattern, &url_path,
+                                    params_map, &nonce_for,
+                                    stack.page_renderer.as_ref(),
+                                    stack.loader_runner.as_ref(),
+                                    module_path.as_deref(),
+                                    boot_script_url.as_deref(),
+                                    &layout_ids, &prerender_layout_modules,
+                                    prerender_error_route_id.as_deref(),
+                                ).await?
+                            }
+                        }
+                        None => write_prerender(
+                            &dist, &rel, &route_id, &pattern, &url_path,
+                            params_map, &nonce_for,
+                            stack.page_renderer.as_ref(),
+                            stack.loader_runner.as_ref(),
+                            module_path.as_deref(),
+                            boot_script_url.as_deref(),
+                            &layout_ids, &prerender_layout_modules,
+                            prerender_error_route_id.as_deref(),
+                        ).await?,
+                    };
                     seed_bodies.push((
                         route_id.clone(),
-                        url_path_from_rel(&rel),
+                        url_path.clone(),
                         html.replace(&nonce, l0_cache::NONCE_SENTINEL),
-                    prerender_status,
+                        prerender_status,
                     ));
+                    new_prerender_records.push(crate::build_graph::RoutePrerenderRecord {
+                        route_id: route_id.clone(),
+                        url: url_path.clone(),
+                        status: prerender_status,
+                        rel_out: format!("dist/{rel}"),
+                        source_hash: route_src_hash.clone(),
+                        nonce: nonce.clone(),
+                    });
                     outs.push(rel);
                 }
                 if !outs.is_empty() {
@@ -3892,30 +3976,57 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                             } else {
                                 format!("prerendered/{}.html", segs.join("/"))
                             };
-                            let (html, prerender_status) = write_prerender(
-                                &dist,
-                                &rel,
+                            let url_path = url_path_from_rel(&rel);
+                            let (html, prerender_status) = match try_reuse_prerender(
+                                &dist.join(&rel),
                                 &route_id,
-                                &pattern,
-                                &url_path_from_rel(&rel),
-                                params_map,
-                                &nonce_for,
-                                stack.page_renderer.as_ref(),
-                                stack.loader_runner.as_ref(),
-                                module_path.as_deref(),
-                                boot_script_url.as_deref(),
-                                &layout_ids,
-
-                                &prerender_layout_modules,
-                                prerender_error_route_id.as_deref(),
-                            )
-                            .await?;
+                                &url_path,
+                                &route_src_hash,
+                                &prev_prerenders,
+                            ) {
+                                Some((saved, status, old_nonce)) => {
+                                    let fresh = saved.replace(&old_nonce, &nonce);
+                                    if std::fs::write(dist.join(&rel), &fresh).is_ok() {
+                                        reused_prerender_count += 1;
+                                        (fresh, status)
+                                    } else {
+                                        write_prerender(
+                                            &dist, &rel, &route_id, &pattern, &url_path,
+                                            params_map, &nonce_for,
+                                            stack.page_renderer.as_ref(),
+                                            stack.loader_runner.as_ref(),
+                                            module_path.as_deref(),
+                                            boot_script_url.as_deref(),
+                                            &layout_ids, &prerender_layout_modules,
+                                            prerender_error_route_id.as_deref(),
+                                        ).await?
+                                    }
+                                }
+                                None => write_prerender(
+                                    &dist, &rel, &route_id, &pattern, &url_path,
+                                    params_map, &nonce_for,
+                                    stack.page_renderer.as_ref(),
+                                    stack.loader_runner.as_ref(),
+                                    module_path.as_deref(),
+                                    boot_script_url.as_deref(),
+                                    &layout_ids, &prerender_layout_modules,
+                                    prerender_error_route_id.as_deref(),
+                                ).await?,
+                            };
                             seed_bodies.push((
                                 route_id.clone(),
-                                url_path_from_rel(&rel),
+                                url_path.clone(),
                                 html.replace(&nonce, l0_cache::NONCE_SENTINEL),
-                    prerender_status,
+                                prerender_status,
                             ));
+                            new_prerender_records.push(crate::build_graph::RoutePrerenderRecord {
+                                route_id: route_id.clone(),
+                                url: url_path.clone(),
+                                status: prerender_status,
+                                rel_out: format!("dist/{rel}"),
+                                source_hash: route_src_hash.clone(),
+                                nonce: nonce.clone(),
+                            });
                             outs.push(rel);
                         }
                         if !outs.is_empty() {
@@ -3977,35 +4088,69 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     format!("prerendered/{}.html", e.segments.join("/"))
                 };
                 let empty_params: BTreeMap<String, String> = BTreeMap::new();
-                let (html, prerender_status) = write_prerender(
-                    &dist,
-                    &rel,
+                let url_path = url_path_from_rel(&rel);
+                let (html, prerender_status) = match try_reuse_prerender(
+                    &dist.join(&rel),
                     &route_id,
-                    &pattern,
-                    &url_path_from_rel(&rel),
-                    &empty_params,
-                    &nonce_for,
-                    stack.page_renderer.as_ref(),
-                    stack.loader_runner.as_ref(),
-                    module_path.as_deref(),
-                    boot_script_url.as_deref(),
-                    &layout_ids,
-
-                    &prerender_layout_modules,
-                    prerender_error_route_id.as_deref(),
-                )
-                .await?;
+                    &url_path,
+                    &route_src_hash,
+                    &prev_prerenders,
+                ) {
+                    Some((saved, status, old_nonce)) => {
+                        let fresh = saved.replace(&old_nonce, &nonce);
+                        if std::fs::write(dist.join(&rel), &fresh).is_ok() {
+                            reused_prerender_count += 1;
+                            (fresh, status)
+                        } else {
+                            write_prerender(
+                                &dist, &rel, &route_id, &pattern, &url_path,
+                                &empty_params, &nonce_for,
+                                stack.page_renderer.as_ref(),
+                                stack.loader_runner.as_ref(),
+                                module_path.as_deref(),
+                                boot_script_url.as_deref(),
+                                &layout_ids, &prerender_layout_modules,
+                                prerender_error_route_id.as_deref(),
+                            ).await?
+                        }
+                    }
+                    None => write_prerender(
+                        &dist, &rel, &route_id, &pattern, &url_path,
+                        &empty_params, &nonce_for,
+                        stack.page_renderer.as_ref(),
+                        stack.loader_runner.as_ref(),
+                        module_path.as_deref(),
+                        boot_script_url.as_deref(),
+                        &layout_ids, &prerender_layout_modules,
+                        prerender_error_route_id.as_deref(),
+                    ).await?,
+                };
                 seed_bodies.push((
                     route_id.clone(),
-                    url_path_from_rel(&rel),
+                    url_path.clone(),
                     html.replace(&nonce, l0_cache::NONCE_SENTINEL),
                     prerender_status,
                 ));
+                new_prerender_records.push(crate::build_graph::RoutePrerenderRecord {
+                    route_id: route_id.clone(),
+                    url: url_path.clone(),
+                    status: prerender_status,
+                    rel_out: format!("dist/{rel}"),
+                    source_hash: route_src_hash.clone(),
+                    nonce: nonce.clone(),
+                });
                 prerendered.insert(e.id.0.clone(), vec![rel]);
             }
         }
     }
 
+    if reused_prerender_count > 0 {
+        outln!(
+            w,
+            "incremental: reused {} prerendered route(s) (source hash unchanged)",
+            reused_prerender_count,
+        );
+    }
     // PERF-07: serialize the route tree to the rkyv archive so `oxide start`
     // can mmap it instead of re-scanning the routes directory.
     {
@@ -4258,6 +4403,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             client_manifest_path: &cm_path,
             server_manifest_path: &sm_path,
             build_id: &build_id,
+            route_prerenders: std::mem::take(&mut new_prerender_records),
         };
         match crate::build_graph::record_and_persist(inputs) {
             Ok(snap) => outln!(
@@ -4669,13 +4815,11 @@ fn build_dispatch(
         dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
     > = std::sync::Arc::new(move |req: oxide_server::OxideRequest| {
         let started = std::time::Instant::now();
-        // Rewrite-hop guard (§8.5): a request that already carries the
-        // rewrite header is a re-dispatch. Cap the number of hops so a
-        // middleware that unconditionally rewrites cannot loop.
-        let rewrite_hop: u32 = req
-            .header("x-oxide-rewrite-hop")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0);
+        // Rewrite-hop guard (§8.5 / S-20): the hop count is tracked on the
+        // internal `rewrite_hops` field, never a client-supplied header — a
+        // client cannot pre-set it to exhaust the rewrite budget. Inbound
+        // `x-oxide-rewrite-hop` headers are stripped at `from_hyper_request`.
+        let rewrite_hop: u32 = req.rewrite_hops as u32;
         let _is_rewritten = rewrite_hop > 0;
         if rewrite_hop > 8 {
             return Box::pin(async move {
@@ -4855,31 +4999,13 @@ fn build_dispatch(
         // cannot happen (each directory yields at most one middleware
         // file). An unmatched URL still gets the root middleware, matching
         // the previous behaviour.
-        let middleware_module_paths: Vec<std::path::PathBuf> = {
-            let route_id_for_mw = route_id.as_deref().unwrap_or("");
-            let mut hits: Vec<(std::path::PathBuf, usize)> = Vec::new();
-            for candidate in &tree.entries {
-                if !matches!(candidate.kind, oxide_router::RouteKind::Middleware) {
-                    continue;
-                }
-                let base = candidate
-                    .id
-                    .0
-                    .strip_suffix("/middleware")
-                    .unwrap_or(&candidate.id.0);
-                let wraps = if base == "routes" || base.is_empty() {
-                    true
-                } else {
-                    route_id_for_mw.starts_with(&format!("{base}/"))
-                };
-                if !wraps {
-                    continue;
-                }
-                hits.push((routes_root.join(&candidate.file), base.len()));
-            }
-            hits.sort_by_key(|(_, len)| *len);
-            hits.into_iter().map(|(p, _)| p).collect()
-        };
+        // P-06: served from the tree's precomputed prefix index — no full
+        // entry scan, no per-candidate `format!`, no sort per request.
+        let middleware_module_paths: Vec<std::path::PathBuf> = tree
+            .middleware_files_for(route_id.as_deref().unwrap_or(""))
+            .into_iter()
+            .map(|f| routes_root.join(f))
+            .collect();
         let endpoint_params_json: serde_json::Map<String, serde_json::Value> = params
             .iter()
             .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
@@ -4896,87 +5022,24 @@ fn build_dispatch(
         // `componentFor` cannot find. Precompute both here, before
         // `matched` is consumed, so the async render block below can use
         // them.
-        let (unmatched_route_id, unmatched_layout_ids): (Option<String>, Vec<String>) = {
-            let not_found_entry = tree
-                .entries
-                .iter()
-                .find(|e| matches!(e.kind, oxide_router::RouteKind::NotFound));
-            match not_found_entry {
-                Some(e) => {
-                    // The adapter's `componentFor` is keyed on the route
-                    // *directory* id, which for a not-found file is
-                    // `routes/not-found` (or `routes/blog/not-found`,
-                    // etc.). That id is exactly what the scanner emits —
-                    // no stripping needed. Stripping `/not-found` would
-                    // collapse it to `routes`, which no user registers.
-                    let not_found_id = e.id.0.clone();
-                    // The layout chain that wraps the not-found route.
-                    // Same rule as the page `layout_ids` above: any layout
-                    // whose base directory is a prefix of the route id.
-                    let mut chain: Vec<(String, usize)> = Vec::new();
-                    for candidate in &tree.entries {
-                        if !matches!(candidate.kind, oxide_router::RouteKind::Layout) {
-                            continue;
-                        }
-                        let layout_base = candidate
-                            .id
-                            .0
-                            .strip_suffix("/layout")
-                            .unwrap_or(&candidate.id.0);
-                        let wraps = if layout_base == "routes" || layout_base.is_empty() {
-                            true
-                        } else {
-                            e.id.0.starts_with(&format!("{layout_base}/"))
-                        };
-                        if wraps {
-                            chain.push((candidate.id.0.clone(), layout_base.len()));
-                        }
-                    }
-                    chain.sort_by_key(|(_, len)| *len);
-                    (
-                        Some(not_found_id),
-                        chain.into_iter().map(|(id, _)| id).collect(),
-                    )
-                }
+        // P-06: not-found route + layout chain, precomputed by the tree index.
+        let (unmatched_route_id, unmatched_layout_ids): (Option<String>, Vec<String>) =
+            match tree.not_found_route() {
+                Some((id, chain)) => (
+                    Some(id),
+                    chain.into_iter().map(|r| r.0).collect(),
+                ),
                 None => (None, Vec::new()),
-            }
-        };
+            };
 
         // §10.2 step 5: resolve the NEAREST ancestor `error.tsx` for the
         // matched route (innermost boundary wins — a `routes/blog/error`
         // shadows `routes/error`). Precomputed here so the async render
         // block can pass it as `input.error_route_id`. The adapter
         // renders this component when the page throws.
-        let error_route_id: Option<String> = {
-            let route_id_for_err = route_id.as_deref().unwrap_or("");
-            let mut best: Option<(String, usize)> = None;
-            for candidate in &tree.entries {
-                if !matches!(candidate.kind, oxide_router::RouteKind::Error) {
-                    continue;
-                }
-                // `routes/<dir>/error` wraps any route at or under
-                // `routes/<dir>/`. The root `routes/error` wraps everything.
-                let base = candidate
-                    .id
-                    .0
-                    .strip_suffix("/error")
-                    .unwrap_or(&candidate.id.0);
-                let wraps = if base == "routes" || base.is_empty() {
-                    true
-                } else {
-                    route_id_for_err.starts_with(&format!("{base}/"))
-                };
-                if !wraps {
-                    continue;
-                }
-                let len = base.len();
-                match &best {
-                    Some((_, prev)) if *prev >= len => {}
-                    _ => best = Some((candidate.id.0.clone(), len)),
-                }
-            }
-            best.map(|(id, _)| id)
-        };
+        // P-06: nearest error boundary from the precomputed index.
+        let error_route_id: Option<String> =
+            tree.error_route_for(route_id.as_deref().unwrap_or(""));
         // The URL pattern (`pattern_of(segments)`) is for metrics labels;
         // the ROUTE ID is what the framework adapter's `componentFor`
         // expects. Two conventions to reconcile here:
@@ -5212,10 +5275,9 @@ fn build_dispatch(
                                 if let Some(re_dispatch) = self_dispatch_for_closure.get() {
                                     let mut new_req = req_owned.clone();
                                     new_req.url = rw.to_string();
-                                    new_req.headers.push((
-                                        "x-oxide-rewrite-hop".to_string(),
-                                        (rewrite_hop + 1).to_string(),
-                                    ));
+                                    // S-20: bump the internal counter, not a
+                                    // header, so it cannot be forged.
+                                    new_req.rewrite_hops = (rewrite_hop + 1) as u8;
                                     return re_dispatch(new_req).await;
                                 }
                                 tracing::warn!(
@@ -5340,12 +5402,12 @@ fn build_dispatch(
                         // matches the stored ETag gets a 304 (no body). The
                         // ETag is weak-formatted so a cache can still serve
                         // it after a nonce-only body change.
-                        let etag = format!("W/\"{}\"", hit.etag);
+                        let etag = format!("W/\"{}\"", hit.etag());
                         let inm = req_owned.header("if-none-match").map(str::to_string);
                         if inm.as_deref().is_some_and(|v| {
                             v.split(',')
                                 .map(str::trim)
-                                .any(|t| t == etag || t == hit.etag || t == "*")
+                                .any(|t| t == etag || t == hit.etag() || t == "*")
                         }) {
                             let mut resp = oxide_server::OxideResponse::new(304, "");
                             resp = resp.with_header("etag", etag.clone());
@@ -5360,10 +5422,23 @@ fn build_dispatch(
                             metrics.observe(&label, started.elapsed(), 304);
                             return resp;
                         }
+                        // P-05: stale-while-revalidate. A stale hit is served
+                        // immediately, and the entry is dropped in the
+                        // background so the *next* request misses, re-renders
+                        // and re-stores (single-flight coalesces concurrent
+                        // misses). Previously the entry served stale forever
+                        // within the SWR window with nobody refreshing it.
+                        if hit.stale {
+                            let bg = cache.clone();
+                            let bg_path = l0_path.clone();
+                            tokio::spawn(async move {
+                                let _ = bg.invalidate_path(&bg_path, false).await;
+                            });
+                        }
                         let nonce = oxide_server::nonce_for(&req_owned.request_id);
                         let body = hit.materialize(&nonce);
-                        let mut resp = oxide_server::OxideResponse::new(hit.status, body);
-                        for (k, v) in &hit.headers {
+                        let mut resp = oxide_server::OxideResponse::new(hit.status(), body);
+                        for (k, v) in &hit.headers() {
                             resp = resp.with_header(k, v.clone());
                         }
                         resp = resp.with_header("etag", etag);
@@ -5381,7 +5456,7 @@ fn build_dispatch(
                         for (k, v) in &middleware_headers {
                             resp = resp.with_header(k, v.clone());
                         }
-                        metrics.observe(&label, started.elapsed(), hit.status);
+                        metrics.observe(&label, started.elapsed(), hit.status());
                         return resp;
                     }
                 }
@@ -5389,9 +5464,10 @@ fn build_dispatch(
 
             // PERF-04: single-flight. A concurrent miss for the same L0
             // key awaits the in-flight owner instead of rendering again.
-            let mut flight_owner: Option<
-                tokio::sync::broadcast::Sender<std::sync::Arc<oxide_cache::Entry>>,
-            > = None;
+            // S-15: a guard (not a bare sender) so *every* owner exit path —
+            // loader error/redirect, cookie short-circuit, render error —
+            // clears the in-flight map; the guard's Drop does it.
+            let mut flight_owner: Option<oxide_cache::FlightOwnerGuard> = None;
             if l0_eligible && l0.is_some() {
                 use oxide_cache::FlightSlot;
                 match oxide_cache::SingleFlight::new()
@@ -5421,7 +5497,13 @@ fn build_dispatch(
                             return resp;
                         }
                     }
-                    FlightSlot::Owner(tx) => flight_owner = Some(tx),
+                    FlightSlot::Owner(tx) => {
+                        flight_owner = Some(oxide_cache::FlightOwnerGuard::new(
+                            std::sync::Arc::clone(&flight_map),
+                            flight_key.clone(),
+                            tx,
+                        ))
+                    }
                 }
             }
 
@@ -6032,12 +6114,11 @@ fn build_dispatch(
                                 let nonce = oxide_server::nonce_for(&req_owned.request_id);
                                 let cache = std::sync::Arc::clone(cache);
                                 let l0_route = l0_route.clone();
-                                let l0_params = l0_params.clone();
-                                let l0_vary = l0_vary.clone();
                                 let l0_path = l0_path.clone();
                                 let headers_for_store = loader_headers.clone();
-                                let flight_map = std::sync::Arc::clone(&flight_map);
-                                let flight_key = flight_key.clone();
+                                // P-04: reuse the key already computed for the
+                                // flight instead of re-deriving it at store time.
+                                let store_key = flight_key.clone();
                                 let flight_owner = flight_owner.take();
                                 let render_ms = stage_render_start.elapsed().as_secs_f64() * 1000.0;
                                 let (tx, mut rx) = tokio::sync::mpsc::channel::<
@@ -6083,17 +6164,9 @@ fn build_dispatch(
                                         sentineled,
                                         vec![l0_route.clone(), format!("path:{}", l0_path)],
                                     );
-                                    let key = cache.key_of(&l0_route, &l0_params, &l0_vary);
-                                    cache.store_entry(&key, entry.clone()).await;
-                                    if let Some(tx) = flight_owner {
-                                        let _ = oxide_cache::SingleFlight::new()
-                                            .publish_and_cleanup(
-                                                &flight_map,
-                                                &flight_key,
-                                                oxide_cache::FlightSlot::Owner(tx),
-                                                Some(std::sync::Arc::new(entry)),
-                                            )
-                                            .await;
+                                    cache.store_entry(&store_key, entry.clone()).await;
+                                    if let Some(guard) = flight_owner {
+                                        guard.publish(std::sync::Arc::new(entry));
                                     }
                                 });
                                 let stream: oxide_server::BodyStream =
@@ -6786,6 +6859,46 @@ fn build_socket_dispatcher(
 /// any, and wrap its `transform` hook as a closure the bundler can call.
 ///
 /// The config's `plugins` array is `Vec<serde_json::Value>` (its shape is
+/// S-21.5: resolve a plugin's declared `path` against the project root and
+/// confine the result to that root. A plugin entry is config-controlled, but a
+/// config can arrive from an untrusted template/PR, and an absolute path or a
+/// `..`-escaping relative path would let it load code from anywhere on the
+/// host. Absolute paths are refused; a relative path is joined to the
+/// canonical root and required to stay under it (symlinks resolved first).
+/// Returns `None` (with a warning) when the entry escapes or is unreadable.
+fn confine_plugin_path(root: &Path, rel: &str, allow_absolute: bool) -> Option<PathBuf> {
+    if Path::new(rel).is_absolute() {
+        if allow_absolute {
+            return Some(PathBuf::from(rel));
+        }
+        eprintln!("warn: plugin path {rel:?} is absolute; refusing (set plugins.allowAbsolutePaths = true to permit)");
+        return None;
+    }
+    let root_abs = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let candidate = root.join(rel);
+    // Canonicalize to resolve `..`/symlinks; fall back to the lexical join when
+    // the target does not exist (the caller reports "not readable").
+    let resolved = std::fs::canonicalize(&candidate).unwrap_or(candidate);
+    if !resolved.starts_with(&root_abs) {
+        eprintln!(
+            "warn: plugin path {rel:?} escapes the project root; refusing"
+        );
+        return None;
+    }
+    Some(resolved)
+}
+
+/// S-21.5: whether the operator has opted out of plugin path confinement.
+/// `plugins` is an array, so the flag is read from any entry that sets
+/// `allowAbsolutePaths: true` (a config-wide opt-in).
+fn plugins_allow_absolute(cfg: &OxideConfig) -> bool {
+    cfg.plugins.iter().any(|p| {
+        p.get("allowAbsolutePaths")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    })
+}
+
 /// the plugin manifest plus a path). A WASM entry looks like:
 ///
 /// ```text
@@ -6850,10 +6963,8 @@ fn build_js_plugin_hook(
         let Some(rel) = p.get("path").and_then(|v| v.as_str()) else {
             continue;
         };
-        let abs = if Path::new(rel).is_absolute() {
-            PathBuf::from(rel)
-        } else {
-            root.join(rel)
+        let Some(abs) = confine_plugin_path(root, rel, plugins_allow_absolute(cfg)) else {
+            continue;
         };
         if !abs.is_file() {
             eprintln!("warn: js plugin {} not found; skipping", abs.display());
@@ -7194,10 +7305,8 @@ async fn build_js_plugin_chain(
             eprintln!("warn: js plugin #{} has no `path`; skipping", idx);
             continue;
         };
-        let abs = if Path::new(rel).is_absolute() {
-            PathBuf::from(rel)
-        } else {
-            root.join(rel)
+        let Some(abs) = confine_plugin_path(root, rel, plugins_allow_absolute(cfg)) else {
+            continue;
         };
         if !abs.is_file() {
             eprintln!("warn: js plugin {} not readable; skipping", abs.display());
@@ -7275,10 +7384,8 @@ fn build_transform_hook(root: &Path, cfg: &OxideConfig) -> Option<oxide_bundler:
             eprintln!("warn: wasm plugin entry has no `path`; skipping");
             continue;
         };
-        let abs = if Path::new(rel).is_absolute() {
-            PathBuf::from(rel)
-        } else {
-            root.join(rel)
+        let Some(abs) = confine_plugin_path(root, rel, plugins_allow_absolute(cfg)) else {
+            continue;
         };
         let Ok(bytes) = std::fs::read(&abs) else {
             eprintln!("warn: wasm plugin {} not readable; skipping", abs.display());
@@ -7480,8 +7587,18 @@ async fn start_server_inner_full(
     let metrics = std::sync::Arc::new(oxide_server::Metrics::new());
 
     let assets = load_client_assets(&rootp);
-    let image_endpoint = build_image_endpoint(&rootp, &cfg);
-    let og_endpoint = build_og_endpoint();
+    let image_endpoint = if cfg.images_endpoint.enabled {
+        build_image_endpoint(&rootp, &cfg)
+    } else {
+        None
+    };
+    // S-09: the OG rasterization endpoint is opt-in (`og.enabled: true`) — it
+    // is CPU-bound and, when reachable, unauthenticated.
+    let og_endpoint = if cfg.og.enabled {
+        build_og_endpoint()
+    } else {
+        None
+    };
     let server_fns = build_server_fn_dispatcher(&rootp, stack.pool.as_ref());
     let actions = build_action_dispatcher(stack.pool.as_ref());
     let endpoint_dispatcher = build_endpoint_dispatcher(stack.pool.as_ref());
@@ -7619,6 +7736,10 @@ async fn start_server_inner_full(
                 .iter()
                 .map(|k| k.as_bytes().to_vec())
                 .collect(),
+            // S-10: trust X-Forwarded-For only behind these proxies.
+            trusted_proxies: cfg.security.trusted_proxies.clone(),
+            // S-21.3: whether the `x-oxide-cache` status header is emitted.
+            expose_cache_header: cfg.security.expose_cache_header,
         },
         rate_limiter: std::sync::Arc::new(oxide_server::RateLimiter::default()),
         health_path: "/_oxide/health".to_string(),
@@ -7648,6 +7769,9 @@ async fn start_server_inner_full(
         tls: tls.is_some(),
         // SEC-09: the dev inspector token (see below).
         dev_token: dev_token.clone(),
+        // S-03/S-04/S-21.1: dev servers get the DNS-rebinding Host gate on
+        // the HMR/socket upgrade arms. Production never sets it.
+        dev_bind_ip: with_inspector.then_some(bind_ip),
         // §9.6: WebSocket route dispatch (None when the project has no
         // `socket.ts` routes or no pool).
         sockets: socket_service,
@@ -7726,13 +7850,13 @@ async fn start_server_inner_full(
                         Ok(h) => {
                             tier = tier.with_remote(std::sync::Arc::new(h));
                             tracing::info!(
-                                url = %url,
+                                url = %oxide_cache::redacted_url(&url),
                                 "cache.handler=redis: attached remote tier",
                             );
                         }
                         Err(e) => {
                             tracing::warn!(
-                                url = %url,
+                                url = %oxide_cache::redacted_url(&url),
                                 error = %e.0.message,
                                 "cache.handler=redis: connection failed; \
                                  continuing with local tier only",
@@ -7774,10 +7898,12 @@ async fn start_server_inner_full(
     let l0 = if is_dev {
         None
     } else {
+        // P-05: configurable freshness window (`cache.l0.ttlSecs`, default
+        // 300) instead of the old hard-coded 60 s.
         Some(std::sync::Arc::new(l0_cache::L0Cache::new(
             l0_tier,
             build_id.clone(),
-            std::time::Duration::from_secs(60),
+            std::time::Duration::from_secs(cfg.cache.l0.ttl_secs.unwrap_or(300)),
         )))
     };
     // PERF-04: seed L0 from the build manifest so a prerendered route is an
@@ -8789,66 +8915,72 @@ async fn cmd_audit(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
 }
 
 /// `oxide migrate <source>` (§19.2): dry-run plan; never writes.
-async fn cmd_migrate(root: &str, source: &str, w: Writer<'_>) -> anyhow::Result<i32> {
+async fn cmd_migrate(
+    root: &str,
+    source: &str,
+    write: bool,
+    w: Writer<'_>,
+) -> anyhow::Result<i32> {
     let rootp = PathBuf::from(root);
-    let (markers, label): (&[&str], &str) = match source {
-        "next" => (&["next.config.js", "next.config.mjs"], "Next.js"),
-        "nuxt" => (&["nuxt.config.ts"], "Nuxt"),
-        "sveltekit" => (&["svelte.config.js"], "SvelteKit"),
-        "vite" => (&["vite.config.ts"], "Vite"),
-        other => {
-            outln!(
-                w,
-                "unknown source `{other}`; expected next|nuxt|sveltekit|vite"
-            );
+    // §19-B: plan via the codemod engine, report every file (converted or
+    // skipped), then optionally apply. A dry-run never writes; `--write`
+    // refuses to clobber an existing destination.
+    let plan = match crate::migrate::plan(&rootp, source) {
+        Ok(p) => p,
+        Err(e) => {
+            outln!(w, "{e}");
             return Ok(2);
         }
     };
-    if !markers.iter().any(|m| rootp.join(m).is_file()) {
+    let converted = plan.converted_count();
+    let skipped = plan.skipped_count();
+    if write {
         outln!(
             w,
-            "no {label} project detected (missing {})",
-            markers.join(" or ")
+            "migration plan ({} → oxide) — writing {converted} file(s), {skipped} follow-up(s):",
+            plan.label,
         );
-        return Ok(2);
-    }
-    outln!(
-        w,
-        "migration plan ({label} → oxide) — dry run, no files written:"
-    );
-    let candidates: &[&str] = match source {
-        "next" => &["page.tsx", "page.jsx", "route.ts"],
-        "nuxt" => &["vue"],
-        "sveltekit" => &["+page.svelte", "+layout.svelte"],
-        _ => &["main.tsx", "main.ts", "index.html"],
-    };
-    let mut files: Vec<PathBuf> = Vec::new();
-    walk_files(&rootp, &mut files);
-    let found: Vec<PathBuf> = files
-        .into_iter()
-        .filter(|p| {
-            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            candidates.iter().any(|c| name == *c || name.ends_with(c))
-                && !p.to_string_lossy().contains("node_modules")
-        })
-        .collect();
-    if found.is_empty() {
-        outln!(w, "  no convertible route files found");
     } else {
-        outln!(w, "  found {} file(s) to convert:", found.len());
-        for f in &found {
-            outln!(
-                w,
-                "  - {} → conventions mapped (page/layout modules, data APIs)",
-                f.display()
-            );
+        outln!(
+            w,
+            "migration plan ({} → oxide) — dry run; {converted} file(s) would be written, {skipped} follow-up(s):",
+            plan.label,
+        );
+    }
+    for c in &plan.conversions {
+        match &c.to {
+            Some(dst) => {
+                outln!(w, "  - {} → {}", c.from.display(), dst.display());
+                if let Some(note) = &c.note {
+                    outln!(w, "      note: {note}");
+                }
+            }
+            None => {
+                let note = c.note.as_deref().unwrap_or("(no reason given)");
+                outln!(w, "  - {}  ✗ skipped: {note}", c.from.display());
+            }
         }
     }
-    outln!(
-        w,
-        "  no files written — codemods run with --write in a later pass (§19.2)"
-    );
-    Ok(0)
+    if !write {
+        outln!(
+            w,
+            "  no files written — pass --write to apply (a dry run never modifies disk)"
+        );
+        return Ok(0);
+    }
+    match crate::migrate::apply(&plan) {
+        Ok(()) => {
+            outln!(w, "  wrote {converted} file(s)");
+            Ok(0)
+        }
+        Err(e) => {
+            outln!(w, "  write errors:");
+            for line in e.lines() {
+                outln!(w, "    {line}");
+            }
+            Ok(1)
+        }
+    }
 }
 
 /// `oxide test` (§16.6): gates on build manifests; the in-process `app.fetch` helper
@@ -9127,3 +9259,374 @@ async fn cmd_test(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
 
 #[cfg(test)]
 mod tests;
+
+// ─── §15-E: extended plugin hooks (resolveId + load) ─────────────────────────
+//
+// Additive: these use the same `plugin:load` / `plugin:call` worker ops that
+// `build_js_plugin_hook` already uses for `transform`, but build a
+// `ResolveHook` / `LoadHook` (types already in `oxide_bundler::BundleOptions`)
+// so a `kind:js` plugin — or a `modules:[]` entry — can alias or virtualize
+// modules. The bundler wiring (setting `BundleOptions.resolve_hook` etc.) is
+// in `cmd_build`.
+//
+// Each collector honors the same `confine_plugin_path` rule the transform
+// path applies, so a plugin path escape is a warning+skip, not an error.
+
+/// Collect every candidate plugin entry that could export `hook_name`.
+/// Reuses `confine_plugin_path` for the kind:js plugin paths (same rule the
+/// transform path applies) so a path escape is caught at collect time.
+fn collect_plugin_paths_for_hook(
+    root: &Path,
+    cfg: &OxideConfig,
+    hook_name: &str,
+) -> Vec<String> {
+    let mut plugins: Vec<String> = Vec::new();
+    let allow_abs = plugins_allow_absolute(cfg);
+    for p in &cfg.plugins {
+        if p.get("kind").and_then(|v| v.as_str()) != Some("js") {
+            continue;
+        }
+        let Some(rel) = p.get("path").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(abs) = confine_plugin_path(root, rel, allow_abs) else {
+            continue;
+        };
+        if !abs.is_file() {
+            eprintln!("warn: js plugin {} not found; skipping", abs.display());
+            continue;
+        }
+        plugins.push(abs.to_string_lossy().to_string());
+    }
+    for m in crate::modules_loader::load_quiet(root, cfg) {
+        if !m.hooks.iter().any(|h| h == hook_name) {
+            continue;
+        }
+        let Some(ref entry) = m.entry else {
+            eprintln!(
+                "warn: module `{}` declares `{hook_name}` but has no entry file; skipping",
+                m.name,
+            );
+            continue;
+        };
+        if !entry.is_file() {
+            eprintln!(
+                "warn: module `{}` entry {} is missing; skipping {hook_name}",
+                m.name,
+                entry.display(),
+            );
+            continue;
+        }
+        plugins.push(entry.to_string_lossy().to_string());
+    }
+    plugins
+}
+
+/// SPEC-15.2: build the `resolveId` hook. Chaining is Vite-style: the FIRST
+/// plugin that returns a non-null `id` wins; a `{id: null}` passes to the
+/// next plugin and finally to the bundler's default resolver.
+fn build_js_plugin_resolve_hook(
+    root: &Path,
+    cfg: &OxideConfig,
+    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
+) -> Option<oxide_bundler::ResolveHook> {
+    let pool = pool?;
+    let plugins = collect_plugin_paths_for_hook(root, cfg, "resolveId");
+    if plugins.is_empty() {
+        return None;
+    }
+    let pool = std::sync::Arc::clone(pool);
+    let loaded = std::sync::Arc::new(std::sync::Mutex::new(false));
+    Some(oxide_bundler::ResolveHook::new(move |specifier, from| {
+        let pool = std::sync::Arc::clone(&pool);
+        let loaded = std::sync::Arc::clone(&loaded);
+        let plugins = plugins.clone();
+        let specifier = specifier.to_string();
+        let from = from.to_string();
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| -> oxide_diagnostics::Result<Option<PathBuf>> {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|e| {
+                            oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
+                                "PLG-BRIDGE",
+                                format!("bridge runtime: {e}"),
+                            ))
+                        })?;
+                    rt.block_on(async move {
+                        let need_load = {
+                            let mut g = loaded.lock().unwrap();
+                            if *g { false } else { *g = true; true }
+                        };
+                        for path in &plugins {
+                            if need_load {
+                                let load = oxide_jshost::CallInput {
+                                    payload: serde_json::json!({ "path": path }),
+                                    headers: Default::default(),
+                                    has_body: false,
+                                    request_id: format!("plugin:load:{path}"),
+                                    route: None,
+                                };
+                                let entry = oxide_jshost::EntryRef {
+                                    kind: "plugin:load".into(),
+                                    module: path.clone(),
+                                    export: "default".into(),
+                                };
+                                let _ = pool.call(entry, load).await;
+                            }
+                            let call = oxide_jshost::CallInput {
+                                payload: serde_json::json!({
+                                    "path": path,
+                                    "hook": "resolveId",
+                                    "args": { "specifier": specifier, "from": from },
+                                }),
+                                headers: Default::default(),
+                                has_body: false,
+                                request_id: format!("plugin:call:{path}:resolveId"),
+                                route: None,
+                            };
+                            let entry = oxide_jshost::EntryRef {
+                                kind: "plugin:call".into(),
+                                module: path.clone(),
+                                export: "resolveId".into(),
+                            };
+                            // A plugin that does not export resolveId (or one
+                            // whose call errors) passes to the next plugin.
+                            let Ok(mut stream) = pool.call(entry, call).await else {
+                                continue;
+                            };
+                            let Ok(bytes) = stream.collect().await else {
+                                continue;
+                            };
+                            let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+                                continue;
+                            };
+                            if let Some(id_str) = v.get("id").and_then(|x| x.as_str()) {
+                                return Ok(Some(PathBuf::from(id_str)));
+                            }
+                        }
+                        Ok(None)
+                    })
+                })
+                .join()
+                .unwrap_or_else(|_| {
+                    Err(oxide_diagnostics::OxideError(
+                        oxide_diagnostics::Diagnostic::error(
+                            "PLG-BRIDGE",
+                            "plugin bridge thread panicked",
+                        ),
+                    ))
+                })
+        })
+    }))
+}
+
+/// SPEC-15.2: build the `load` hook. Chaining: the FIRST plugin that
+/// returns a non-null `code` overrides the disk read; `{code: null}` passes
+/// to the next plugin and finally to disk.
+fn build_js_plugin_load_hook(
+    root: &Path,
+    cfg: &OxideConfig,
+    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
+) -> Option<oxide_bundler::LoadHook> {
+    let pool = pool?;
+    let plugins = collect_plugin_paths_for_hook(root, cfg, "load");
+    if plugins.is_empty() {
+        return None;
+    }
+    let pool = std::sync::Arc::clone(pool);
+    let loaded = std::sync::Arc::new(std::sync::Mutex::new(false));
+    Some(oxide_bundler::LoadHook::new(move |id| {
+        let pool = std::sync::Arc::clone(&pool);
+        let loaded = std::sync::Arc::clone(&loaded);
+        let plugins = plugins.clone();
+        let id = id.to_string();
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| -> oxide_diagnostics::Result<Option<String>> {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|e| {
+                            oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
+                                "PLG-BRIDGE",
+                                format!("bridge runtime: {e}"),
+                            ))
+                        })?;
+                    rt.block_on(async move {
+                        let need_load = {
+                            let mut g = loaded.lock().unwrap();
+                            if *g { false } else { *g = true; true }
+                        };
+                        for path in &plugins {
+                            if need_load {
+                                let load = oxide_jshost::CallInput {
+                                    payload: serde_json::json!({ "path": path }),
+                                    headers: Default::default(),
+                                    has_body: false,
+                                    request_id: format!("plugin:load:{path}"),
+                                    route: None,
+                                };
+                                let entry = oxide_jshost::EntryRef {
+                                    kind: "plugin:load".into(),
+                                    module: path.clone(),
+                                    export: "default".into(),
+                                };
+                                let _ = pool.call(entry, load).await;
+                            }
+                            let call = oxide_jshost::CallInput {
+                                payload: serde_json::json!({
+                                    "path": path,
+                                    "hook": "load",
+                                    "args": { "id": id },
+                                }),
+                                headers: Default::default(),
+                                has_body: false,
+                                request_id: format!("plugin:call:{path}:load"),
+                                route: None,
+                            };
+                            let entry = oxide_jshost::EntryRef {
+                                kind: "plugin:call".into(),
+                                module: path.clone(),
+                                export: "load".into(),
+                            };
+                            let Ok(mut stream) = pool.call(entry, call).await else {
+                                continue;
+                            };
+                            let Ok(bytes) = stream.collect().await else {
+                                continue;
+                            };
+                            let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+                                continue;
+                            };
+                            if let Some(code) = v.get("code").and_then(|x| x.as_str()) {
+                                return Ok(Some(code.to_string()));
+                            }
+                        }
+                        Ok(None)
+                    })
+                })
+                .join()
+                .unwrap_or_else(|_| {
+                    Err(oxide_diagnostics::OxideError(
+                        oxide_diagnostics::Diagnostic::error(
+                            "PLG-BRIDGE",
+                            "plugin bridge thread panicked",
+                        ),
+                    ))
+                })
+        })
+    }))
+}
+
+// ─── §5-A full incremental: per-route prerender reuse ──────────────────────
+//
+// A build re-runs the full pipeline; the win comes from **skipping the
+// expensive per-route render** when the route's source files (and the
+// config) are unchanged since the last build. The reuse granularity is
+// per-URL, so a `generateParams` route that produced N pages keeps its
+// rendered output while a page whose source changed gets a fresh render.
+//
+// The hash deliberately includes the serialized config: any config change
+// (framework adapter, i18n locale list, `build.sourcemap`, etc.) flushes
+// every route. That is coarser than a field-by-field dependency, but it is
+// conservative in the safe direction — the worst case is a full rerender,
+// never a stale render.
+
+/// Hash every source that fed this route's render: the serialized config,
+/// the page file, its `page.server.ts`, every layout in the chain (both
+/// `layout.*` and `layout.server.*`), and the error boundary when present.
+fn route_source_hash(
+    rootp: &Path,
+    cfg: &OxideConfig,
+    tree: &oxide_router::RouteTree,
+    entry: &oxide_router::RouteEntry,
+    layout_ids: &[String],
+    layout_modules: &[(String, std::path::PathBuf)],
+    error_route_id: Option<&str>,
+) -> String {
+    const HASH_VERSION: &str = "route-source-hash-v1";
+    let mut h = blake3::Hasher::new();
+    h.update(HASH_VERSION.as_bytes());
+    h.update(&[0]);
+    // The config is hashed as a whole — a config change is a flush.
+    if let Ok(cfg_bytes) = serde_json::to_vec(cfg) {
+        h.update(&cfg_bytes);
+    }
+    h.update(&[0]);
+    let routes_root = rootp.join(&cfg.routes.dir);
+    // Page source + page server module.
+    let page_path = routes_root.join(&entry.file);
+    hash_file_into(&mut h, &page_path);
+    let page_server_path = routes_root.join(entry.file.with_file_name("page.server.ts"));
+    hash_file_into(&mut h, &page_server_path);
+    // Layout chain (both the layout file and its server module).
+    for lid in layout_ids {
+        if let Some(le) = tree.entries.iter().find(|x| &x.id.0 == lid) {
+            let lfile = routes_root.join(&le.file);
+            hash_file_into(&mut h, &lfile);
+            let lserver = routes_root.join(le.file.with_file_name("layout.server.ts"));
+            hash_file_into(&mut h, &lserver);
+        }
+    }
+    // `layout_modules` also has the on-disk `layout.server.ts` paths — include
+    // them so a rename of a layout module (which the id lookup may miss) still
+    // invalidates.
+    for (_, p) in layout_modules {
+        hash_file_into(&mut h, p);
+    }
+    // Error boundary (if any).
+    if let Some(eid) = error_route_id {
+        if let Some(ee) = tree.entries.iter().find(|x| x.id.0 == eid) {
+            let efile = routes_root.join(&ee.file);
+            hash_file_into(&mut h, &efile);
+        }
+    }
+    h.finalize().to_hex().to_string()
+}
+
+/// Hash `path` and the file's content into `h`. A missing file is a
+/// well-defined sentinel rather than an error, so the source hash stays
+/// stable when a file legitimately doesn't exist (e.g., a page with no
+/// `page.server.ts`).
+fn hash_file_into(h: &mut blake3::Hasher, path: &Path) {
+    h.update(path.to_string_lossy().as_bytes());
+    h.update(&[0]);
+    match std::fs::read(path) {
+        Ok(bytes) => {
+            h.update(blake3::hash(&bytes).as_bytes());
+        }
+        Err(_) => {
+            h.update(b"<missing>");
+        }
+    }
+    h.update(&[0]);
+}
+
+/// If a prior build's record for `(route_id, url)` has the same source
+/// hash and its saved output file exists, return `(html, status, prev_nonce)`.
+/// The caller is responsible for replacing `prev_nonce` with the current
+/// build's nonce (and rewriting the disk file to match, so a static-file
+/// serve sees a matching CSP).
+fn try_reuse_prerender(
+    disk_path: &Path,
+    route_id: &str,
+    url: &str,
+    src_hash: &str,
+    prev_map: &std::collections::BTreeMap<
+        (String, String),
+        &crate::build_graph::RoutePrerenderRecord,
+    >,
+) -> Option<(String, u16, String)> {
+    let prev = prev_map.get(&(route_id.to_string(), url.to_string()))?;
+    if prev.source_hash != src_hash {
+        return None;
+    }
+    if !disk_path.is_file() {
+        return None;
+    }
+    let html = std::fs::read_to_string(disk_path).ok()?;
+    Some((html, prev.status, prev.nonce.clone()))
+}
