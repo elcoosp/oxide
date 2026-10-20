@@ -1,12 +1,11 @@
 // ODF encoder — the JS half of the wire format (spec §9.5 / D11).
 //
-// The Rust encoder (crates/odf/src/encode.rs) is ground truth. This is the
-// **JSON-subset** encoder: it covers the values an island's `props` actually
-// carries (null/undefined/bool/number/string/array/object). Anything outside
-// that subset (Date, Map, Set, BigInt, typed arrays, cycles) is NOT encoded
-// here — `encodeProps` falls back to JSON bytes, which `decodeIslandProps`
-// accepts. That keeps the fast path ODF (the common case) without a partial
-// encoder ever emitting bytes the decoder would reject.
+// The Rust encoder (crates/odf/src/encode.rs) is ground truth. This encoder
+// covers the value shapes an island's `props` carries: null/undefined/bool/
+// number/string/array/object plus BigInt, Date, Map, Set, URL, RegExp and
+// typed arrays (see `writeValue`). Only cycles are left to `isOdfEncodable`,
+// which reports `false` so `encodeProps` falls back to JSON bytes instead of
+// emitting a partial document the decoder would reject.
 //
 // Wire layout (see odf-decode.ts for the full table):
 //   "ODF1" · varu(preamble=0) · value
@@ -15,6 +14,8 @@
 //
 // Object keys are written byte-sorted (matching the Rust BTreeMap order),
 // `__proto__`/`constructor` are rejected (the decoder skips them anyway).
+
+import { bytesToBase64 } from './bytes.ts'
 
 const TAG = {
   NULL: 0x00,
@@ -262,14 +263,8 @@ export function encodeOdf(value: unknown): Uint8Array {
  * Date/Map/cycle still hydrates; only the common case pays the ODF path.
  */
 export function encodePropsB64(props: unknown): string {
-  const toB64 = (bytes: Uint8Array): string => {
-    let bin = ''
-    for (const b of bytes) bin += String.fromCharCode(b)
-    const g = globalThis as { btoa?: (s: string) => string; Buffer?: { from(s: string, enc: string): { toString(enc: string): string } } }
-    if (typeof g.btoa === 'function') return g.btoa(bin)
-    if (g.Buffer) return g.Buffer.from(bin, 'binary').toString('base64')
-    throw new TypeError('encodePropsB64: no base64 encoder available')
-  }
+  // P-09: linear-time base64 (chunked) instead of per-byte string concat.
+  const toB64 = (bytes: Uint8Array): string => bytesToBase64(bytes)
   if (isOdfEncodable(props)) {
     try {
       return toB64(encodeOdf(props))
