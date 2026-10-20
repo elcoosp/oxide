@@ -2260,6 +2260,10 @@ fn emit_snapshot_lint(
 ) -> anyhow::Result<()> {
     let routes_root = root.join(&cfg.routes.dir);
     let mut count = 0usize;
+    // 19-E: each side effect becomes a real Diagnostic — location plus a
+    // code frame — so the persisted diagnostics file (and the editor / MCP
+    // tool reading it) shows the offending line, not just a stderr line.
+    let mut diags: Vec<oxide_diagnostics::Diagnostic> = Vec::new();
     for e in &tree.entries {
         if !matches!(e.kind, oxide_router::RouteKind::Page) {
             continue;
@@ -2276,19 +2280,37 @@ fn emit_snapshot_lint(
         for fx in oxide_jshost::lint_top_level_side_effects(&rel, &source) {
             outln!(
                 w,
-                "warn: snapshot side effect at {}:{} — {}",
+                "warn: snapshot side effect at {}:{} - {}",
                 fx.path,
                 fx.line,
                 fx.message
             );
+            let mut d = oxide_diagnostics::Diagnostic::warning(
+                "SNP-SIDEEFFECT",
+                format!("{}: {}", fx.path, fx.message),
+            )
+            .with_fix(
+                "move the call behind a lazy initializer (a function called on first \
+                 request) so the module body has no live timer/socket at snapshot time",
+            );
+            let line = fx.line as usize;
+            if line > 0 {
+                d = d.at(oxide_diagnostics::Location::file(&fx.path, fx.line, 1));
+                let frame = oxide_diagnostics::render_code_frame(&source, line, None);
+                if !frame.is_empty() {
+                    d = d.with_code_frame(frame);
+                }
+            }
+            diags.push(d);
             count += 1;
         }
     }
     if count > 0 {
         outln!(
             w,
-            "snapshot: {count} top-level side effect(s) — move them behind a lazy initializer for a clean snapshot"
+            "snapshot: {count} top-level side effect(s) - move them behind a lazy initializer for a clean snapshot"
         );
+        persist_diagnostics(root, &diags);
     }
     Ok(())
 }
@@ -4027,19 +4049,37 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         for (sp, ident) in &server_exports {
             for (chunk, code) in &client_code {
                 if code.contains(ident.as_str()) {
-                    hits.push(
-                        oxide_diagnostics::Diagnostic::error(
-                            "CMP-GUARD",
-                            format!(
-                                "server-only `{ident}` from `{}` shipped into client chunk `{chunk}`",
-                                sp.display()
-                            ),
-                        )
-                        .with_fix(
-                            "import it via a server function (§9.4) or move the value \
-                             into a non-server module",
+                    // 19-E: locate the literal in its source file so the
+                    // diagnostic can show the offending line. `ident` is the
+                    // string literal the guard found (>= 8 chars), so a
+                    // substring search for it in the quoted source is exact
+                    // enough to name the line.
+                    let mut diag = oxide_diagnostics::Diagnostic::error(
+                        "CMP-GUARD",
+                        format!(
+                            "server-only `{ident}` from `{}` shipped into client chunk `{chunk}`",
+                            sp.display()
                         ),
+                    )
+                    .with_fix(
+                        "import it via a server function (9.4) or move the value \
+                         into a non-server module",
                     );
+                    if let Ok(src) = std::fs::read_to_string(sp) {
+                        if let Some((line_no, col)) = find_literal_line(&src, ident) {
+                            diag = diag.at(oxide_diagnostics::Location::file(
+                                sp.to_string_lossy(),
+                                line_no as u32,
+                                col as u32,
+                            ));
+                            let frame =
+                                oxide_diagnostics::render_code_frame(&src, line_no, Some(col));
+                            if !frame.is_empty() {
+                                diag = diag.with_code_frame(frame);
+                            }
+                        }
+                    }
+                    hits.push(diag);
                     break;
                 }
             }
@@ -5053,6 +5093,10 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             build_id: &build_id,
             route_prerenders: std::mem::take(&mut new_prerender_records),
             plugin_options: collect_plugin_options(&rootp, &cfg),
+            // `client_manifest` was moved into the build artifact above;
+            // the snapshot clone taken right after it was read is the same
+            // value.
+            route_chunks: collect_route_chunks(&rootp, &client_manifest_snapshot),
         };
         match crate::build_graph::record_and_persist(inputs) {
             Ok(snap) => outln!(
@@ -11158,4 +11202,67 @@ fn scan_message_keys(src: &str) -> Vec<String> {
     out.sort();
     out.dedup();
     out
+}
+
+/// Find the 1-based `(line, column)` of the first occurrence of `needle` in
+/// `src`. Returns `None` when the literal is not found as-is (a multi-line
+/// string, or an escaped form) — in which case the diagnostic carries no
+/// frame rather than pointing at the wrong line.
+fn find_literal_line(src: &str, needle: &str) -> Option<(usize, usize)> {
+    if needle.is_empty() {
+        return None;
+    }
+    let mut offset = 0usize;
+    for (i, line) in src.lines().enumerate() {
+        if let Some(byte_col) = line.find(needle) {
+            // Column is a character count within the line.
+            let col = line[..byte_col].chars().count() + 1;
+            return Some((i + 1, col));
+        }
+        offset += line.len() + 1;
+        let _ = offset;
+    }
+    None
+}
+
+/// Read each route's reachable chunk list from the client manifest and hash
+/// every chunk file. The result is what a per-chunk incremental build would
+/// diff against; recording it makes the question measurable even though
+/// Rolldown 1.2.13's API does not expose a per-module rebuild.
+fn collect_route_chunks(
+    rootp: &Path,
+    client_manifest: &serde_json::Value,
+) -> Vec<crate::build_graph::RouteChunkRecord> {
+    let client_dir = rootp.join("dist/client");
+    let mut out = Vec::new();
+    let Some(routes) = client_manifest.get("routes").and_then(|r| r.as_object()) else {
+        return out;
+    };
+    for (route_id, row) in routes {
+        let mut chunks: Vec<(String, String)> = Vec::new();
+        if let Some(entry) = row.get("entry_chunk").and_then(|v| v.as_str()) {
+            push_chunk_hash(&client_dir, entry, &mut chunks);
+        }
+        if let Some(pre) = row.get("preload").and_then(|v| v.as_array()) {
+            for p in pre {
+                if let Some(f) = p.as_str() {
+                    push_chunk_hash(&client_dir, f, &mut chunks);
+                }
+            }
+        }
+        chunks.sort();
+        chunks.dedup();
+        out.push(crate::build_graph::RouteChunkRecord {
+            route_id: route_id.clone(),
+            chunks,
+        });
+    }
+    out
+}
+
+fn push_chunk_hash(dir: &Path, file: &str, out: &mut Vec<(String, String)>) {
+    let Ok(bytes) = std::fs::read(dir.join(file)) else {
+        return;
+    };
+    out.push((file.to_string(), blake3::hash(&bytes).to_hex().to_string()));
 }
