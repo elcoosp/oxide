@@ -495,6 +495,26 @@ async function dispatchPluginLoad(id, input) {
   }
 }
 
+/**
+ * Documented positional argument order per hook (SPEC-15.2). The Rust side
+ * sends a named object; this maps it to the argument list a plugin author
+ * writes. A hook not listed here falls back to `Object.values(args)`, which
+ * is correct for a single-argument hook whose object has one key.
+ */
+const PLUGIN_HOOK_ARGS = {
+  transform: ["code", "id"],
+  resolveId: ["specifier", "from"],
+  load: ["id"],
+  renderChunk: ["file", "code"],
+  generateBundle: ["files"],
+  transformHtml: ["route", "html"],
+  config: ["config"],
+  configResolved: ["config"],
+  buildStart: [],
+  buildEnd: ["result"],
+  handleHotUpdate: ["ctx"],
+};
+
 async function dispatchPluginCall(id, input) {
   const path = String(input?.payload?.path ?? "");
   const hook = String(input?.payload?.hook ?? "");
@@ -516,7 +536,17 @@ async function dispatchPluginCall(id, input) {
       error: (m) => { throw new Error(String(m)); },
       resolve: async (spec) => spec,
     };
-    const out = await fn.call(ctx, args);
+    // Hooks are POSITIONAL on the plugin side — `transform(code, id)`,
+    // `resolveId(specifier, from)`, `load(id)`. The Rust side sends a named
+    // object (`{code, id}`); spreading `Object.values(args)` is not safe
+    // because serde_json sorts keys alphabetically workspace-wide, so
+    // `{specifier, from}` would arrive as `(from, specifier)`. This table
+    // names the documented order per hook.
+    const order = PLUGIN_HOOK_ARGS[hook];
+    const callArgs = order
+      ? order.map((k) => args?.[k])
+      : Object.values(args ?? {});
+    const out = await fn.call(ctx, ...callArgs);
     callOk(id, out === undefined ? null : out);
   } catch (e) {
     callErr(id, "PLG-CALL", `plugin hook ${hook} threw: ${e?.message ?? e}`);
