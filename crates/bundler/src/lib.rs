@@ -119,6 +119,16 @@ pub struct BundleOptions {
     /// SPEC-15.2: an optional plugin `load` hook. Consulted before the
     /// disk read; a returned `Some(source)` overrides (virtual modules).
     pub load_hook: Option<LoadHook>,
+    /// SPEC-15.2: a plugin `renderChunk` hook, run after Rolldown writes a
+    /// chunk file. Returns the rewritten source; `None` leaves it untouched.
+    /// `None` (the field) means no plugin supplies one.
+    pub render_chunk_hook: Option<RenderChunkHook>,
+    /// SPEC-15.2: a plugin `generateBundle` hook, run once after every
+    /// chunk. Returns the file list to report; `None` leaves it unchanged.
+    pub generate_bundle_hook: Option<GenerateBundleHook>,
+    /// SPEC-15.2: a plugin `transformHtml` hook, run on every HTML document
+    /// the build finalizes (prerender). `(route_id, html)` in, HTML out.
+    pub transform_html_hook: Option<TransformHtmlHook>,
     /// §6.6: an optional CSS transform. The bundler does not depend on
     /// `oxide-assets` (which pulls lightningcss + the image/font stack);
     /// the CLI builds a closure over `LightningCssBackend` and hands it in.
@@ -297,6 +307,104 @@ impl std::fmt::Debug for LoadHook {
 impl std::fmt::Debug for TransformHook {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("TransformHook(..)")
+    }
+}
+
+/// SPEC-15.2: a plugin's `renderChunk` hook. Runs after Rolldown writes a
+/// chunk file, receives `(file_name, source)`, returns the rewritten
+/// source. A `None` return leaves the file untouched. Multiple plugins
+/// chain in declaration order (the CLI composes them).
+pub struct RenderChunkHook(
+    #[allow(clippy::type_complexity)]
+    pub std::sync::Arc<dyn Fn(&str, &str) -> Result<Option<String>> + Send + Sync>,
+);
+
+impl RenderChunkHook {
+    pub fn new<F>(f: F) -> Self
+    where
+        F: Fn(&str, &str) -> Result<Option<String>> + Send + Sync + 'static,
+    {
+        Self(std::sync::Arc::new(f))
+    }
+    pub fn call(&self, file: &str, source: &str) -> Result<Option<String>> {
+        (self.0)(file, source)
+    }
+}
+
+impl Clone for RenderChunkHook {
+    fn clone(&self) -> Self {
+        Self(std::sync::Arc::clone(&self.0))
+    }
+}
+
+impl std::fmt::Debug for RenderChunkHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RenderChunkHook(..)")
+    }
+}
+
+/// SPEC-15.2: a plugin's `generateBundle` hook. Runs once after every chunk
+/// is written, receives the list of emitted files (relative paths) and
+/// returns the full list to report (a plugin may drop or add files). `None`
+/// leaves the list untouched.
+pub struct GenerateBundleHook(
+    #[allow(clippy::type_complexity)]
+    pub std::sync::Arc<dyn Fn(&[String]) -> Result<Option<Vec<String>>> + Send + Sync>,
+);
+
+impl GenerateBundleHook {
+    pub fn new<F>(f: F) -> Self
+    where
+        F: Fn(&[String]) -> Result<Option<Vec<String>>> + Send + Sync + 'static,
+    {
+        Self(std::sync::Arc::new(f))
+    }
+    pub fn call(&self, files: &[String]) -> Result<Option<Vec<String>>> {
+        (self.0)(files)
+    }
+}
+
+impl Clone for GenerateBundleHook {
+    fn clone(&self) -> Self {
+        Self(std::sync::Arc::clone(&self.0))
+    }
+}
+
+impl std::fmt::Debug for GenerateBundleHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("GenerateBundleHook(..)")
+    }
+}
+
+/// SPEC-15.2: a plugin's `transformHtml` hook. Runs on every HTML document
+/// the build finalizes (prerender). `(route_id, html)` in, rewritten HTML
+/// out. A `None` return leaves the document untouched.
+pub struct TransformHtmlHook(
+    #[allow(clippy::type_complexity)]
+    pub std::sync::Arc<dyn Fn(&str, &str) -> Result<Option<String>> + Send + Sync>,
+);
+
+impl TransformHtmlHook {
+    pub fn new<F>(f: F) -> Self
+    where
+        F: Fn(&str, &str) -> Result<Option<String>> + Send + Sync + 'static,
+    {
+        Self(std::sync::Arc::new(f))
+    }
+    pub fn call(&self, route_id: &str, html: &str) -> Result<Option<String>> {
+        (self.0)(route_id, html)
+    }
+}
+
+impl Clone for TransformHtmlHook {
+    fn clone(&self) -> Self {
+        Self(std::sync::Arc::clone(&self.0))
+    }
+}
+
+impl std::fmt::Debug for TransformHtmlHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TransformHtmlHook(..)")
     }
 }
 
