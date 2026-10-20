@@ -258,6 +258,8 @@ fn fn_request(method: &str, id: &str, body: &str, ct: &str) -> OxideRequest {
         body: bytes::Bytes::from(body.to_string()),
         request_id: "test-fn".into(),
         trace: None,
+        peer: None,
+        rewrite_hops: 0,
     }
 }
 
