@@ -84,6 +84,42 @@ pub struct OxideConfig {
     /// available for the shell to include.
     #[serde(default)]
     pub manifest: Option<WebManifestConfig>,
+    /// S-09: the OG-image endpoint (`GET /_oxide/og`). **Off by default** —
+    /// it rasterizes on demand, so leaving it unauthenticated and default-on
+    /// is a CPU-exhaustion vector. Opt in with `og.enabled: true`.
+    #[serde(default)]
+    pub og: OgConfig,
+    /// S-09: the on-demand image transform endpoint (`GET /_oxide/image`).
+    /// On by default (it is the documented product feature) but gateable.
+    #[serde(default)]
+    pub images_endpoint: EndpointToggle,
+}
+
+/// S-09: opt-in toggle for the OG rasterization endpoint.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct OgConfig {
+    pub enabled: bool,
+}
+
+impl Default for OgConfig {
+    fn default() -> Self {
+        Self { enabled: false }
+    }
+}
+
+/// S-09: a minimal enable flag shared by native endpoints (`enabled` defaults
+/// true so existing projects keep the feature).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct EndpointToggle {
+    pub enabled: bool,
+}
+
+impl Default for EndpointToggle {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 /// §16.3: a minimal, honest web app manifest. The fields are the ones a
@@ -161,6 +197,8 @@ impl Default for OxideConfig {
             dev: DevConfig::default(),
             site_url: None,
             manifest: None,
+            og: OgConfig::default(),
+            images_endpoint: EndpointToggle::default(),
         }
     }
 }
@@ -219,7 +257,7 @@ pub enum JsBackend {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
 pub struct ServerConfig {
     pub port: u16,
     pub host: String,
@@ -241,7 +279,7 @@ impl Default for ServerConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
 pub struct RenderConfig {
     /// `auto | static | isr | dynamic | spa | islands` (§10.1)
     pub default: String,
@@ -255,7 +293,7 @@ impl Default for RenderConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
 pub struct CacheConfig {
     pub handler: CacheHandlerConfig,
     /// §14.1: `cache: { l0: { maxSize: "512mb" } }`.
@@ -265,7 +303,7 @@ pub struct CacheConfig {
 
 /// §14.1: `cache.l0` — the L0 response-cache settings.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
 pub struct L0CacheConfig {
     /// e.g. `"512mb"`, `"64kb"`, `"1gb"` — parsed by `parse_size`.
     pub max_size: String,
@@ -275,12 +313,17 @@ pub struct L0CacheConfig {
     /// (beyond the always-included `accept-language` when i18n is configured).
     /// Empty disables header variance. Matched case-insensitively.
     pub vary: Vec<String>,
+    /// P-05: freshness window for an L0 entry, in seconds. Was hard-coded to
+    /// 60 — long enough that every cached page fully re-renders on a TTL
+    /// cliff, short enough that the SWR window is useless. Default 300.
+    pub ttl_secs: Option<u64>,
 }
 impl Default for L0CacheConfig {
     fn default() -> Self {
         Self {
             max_size: "512mb".into(),
             vary: vec!["accept-language".into()],
+            ttl_secs: None,
         }
     }
 }
@@ -314,7 +357,7 @@ pub enum CacheHandlerConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
 pub struct ImagesConfig {
     pub formats: Vec<String>,
     pub remote_patterns: Vec<RemotePattern>,
@@ -338,7 +381,7 @@ impl Default for ImagesConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
 pub struct FontsConfig {
     pub providers: Vec<String>,
     pub subset: Vec<String>,
@@ -350,7 +393,7 @@ pub struct FontsConfig {
 /// styles to emit, and where the face files come from. Local paths are the
 /// supported source today; a provider name reserves the fetch path.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
 pub struct FontFamilyConfig {
     pub family: String,
     /// `"local"` or a provider name (google, …). Local copies files verbatim.
@@ -381,7 +424,7 @@ impl Default for I18nConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
 pub struct SecurityConfig {
     /// `strict | hash | off`
     pub csp: String,
@@ -405,6 +448,10 @@ pub struct SecurityConfig {
     /// cookies fall back to the signed-only `sign_cookie` primitive (payload
     /// visible). Set this to make session payloads confidential.
     pub session_keys: Vec<String>,
+    /// S-21.3: emit the `x-oxide-cache` status header (`L0-hit`/`miss`/…).
+    /// Default `true`; a strict deployment can set it `false` to avoid
+    /// telling clients whether a response came from cache.
+    pub expose_cache_header: bool,
 }
 impl Default for SecurityConfig {
     fn default() -> Self {
@@ -416,6 +463,7 @@ impl Default for SecurityConfig {
             trusted_proxies: Vec::new(),
             cookie_keys: Vec::new(),
             session_keys: Vec::new(),
+            expose_cache_header: true,
         }
     }
 }
@@ -429,7 +477,7 @@ pub struct BudgetsConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
 pub struct BuildConfig {
     /// `baseline-widely-available` default (§6.6)
     pub target: String,
