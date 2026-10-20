@@ -282,7 +282,7 @@ pub async fn remote_cache_handler(
                 Ok(h) => Some(Arc::new(h) as Arc<dyn oxide_cache::CacheHandler>),
                 Err(e) => {
                     tracing::warn!(
-                        url = %url,
+                        url = %oxide_cache::redacted_url(&url),
                         error = %e.0.message,
                         "cache.handler=redis: connection failed; \
                          continuing with local tier only",
@@ -352,18 +352,26 @@ pub async fn build_framework_stack(
     // `cache.handler=http` attaches an `HttpCacheHandler` REMOTE tier via
     // `with_remote` so `'use cache'` reads/writes through it.
     let cache_tier: Arc<dyn oxide_cache::CacheHandler> = {
-        let t = oxide_cache::TieredCache::new(512 * 1024 * 1024);
-        // A disk root beside the config, when one is known. `with_disk`
-        // takes ownership and returns the cache on success; on failure the
-        // memory-only value is gone, so build a fresh one — a disk-tier
-        // failure is rare (a permissions or redb problem) and a memory-only
-        // fallback is the right degradation.
-        let disk = config_path
-            .and_then(|p| p.parent())
-            .map(|root| root.join(".oxide/cache/l1"))
-            .filter(|d| std::fs::create_dir_all(d).is_ok());
-        let with_disk = disk.and_then(|d| t.with_disk(d).ok());
-        let tier = match with_disk {
+        // B-19: only materialize the disk L1 when the configured handler is
+        // disk-backed (disk/redis/s3/http). With the default `memory` handler
+        // there is no persistent tier to warm, so attaching a disk cache just
+        // pays redb open/write cost for nothing. `with_disk` takes ownership
+        // and returns the cache on success; on failure we rebuild memory-only.
+        let attach_disk = !matches!(
+            cache_handler,
+            None | Some(oxide_config::CacheHandlerConfig::Memory)
+        );
+        let disk = attach_disk
+            .then(|| {
+                config_path
+                    .and_then(|p| p.parent())
+                    .map(|root| root.join(".oxide/cache/l1"))
+                    .filter(|d| std::fs::create_dir_all(d).is_ok())
+            })
+            .flatten();
+        let tier = match disk
+            .and_then(|d| oxide_cache::TieredCache::new(512 * 1024 * 1024).with_disk(d).ok())
+        {
             Some(c) => c,
             None => oxide_cache::TieredCache::new(512 * 1024 * 1024),
         };
@@ -393,6 +401,13 @@ pub async fn build_framework_stack(
             Arc::new(h)
         }
         JsBackend::V8 => {
+            // P-21: the V8 worker implements render + tooling ops only; the
+            // loader/middleware/action ops still route to the Node fallback
+            // pool. Say so loudly instead of letting "V8 parity" be silent.
+            tracing::warn!(
+                "server.backend = \"v8\": loader/middleware/action still run on the Node \
+                 fallback pool (V8 only implements render + tooling ops)"
+            );
             // §4.4: if `oxide build` wrote a snapshot, boot from it.
             let snap = config_path
                 .and_then(|p| p.parent())
