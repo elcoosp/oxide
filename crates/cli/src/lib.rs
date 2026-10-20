@@ -1791,6 +1791,11 @@ fn emit_content_search_indexes(
     }
     let out_dir = dist.join("content");
     std::fs::create_dir_all(&out_dir)?;
+    // §16-C: collect each scanned collection so a typed `content.d.ts` can be
+    // emitted once the loop finishes. Config carries no schema field yet, so
+    // the schema is inferred from the frontmatter actually on disk.
+    let mut scanned_collections: Vec<oxide_assets::Collection> = Vec::new();
+    let mut inferred_schemas: Vec<(String, oxide_assets::NativeSchema)> = Vec::new();
     for coll in &cfg.content.collections {
         if coll.name.is_empty() || coll.dir.is_empty() {
             outln!(w, "content collection skipped: name and dir are required");
@@ -1826,6 +1831,37 @@ fn emit_content_search_indexes(
             scanned.entries.len(),
             coll.name
         );
+        inferred_schemas.push((
+            coll.name.clone(),
+            oxide_assets::content_typegen::infer_schema(&scanned),
+        ));
+        scanned_collections.push(scanned);
+    }
+    // Pair each scanned collection with its inferred schema.
+    let typed_collections: Vec<oxide_assets::content_typegen::TypedCollection<'_>> =
+        scanned_collections
+            .iter()
+            .enumerate()
+            .map(|(i, c)| oxide_assets::content_typegen::TypedCollection {
+                collection: c,
+                schema: Some(&inferred_schemas[i].1),
+            })
+            .collect();
+    // §16-C: emit `.oxide/types/content.d.ts`. A typegen failure is a
+    // warning, not a build failure — the app still ships.
+    let dts_path = root.join(".oxide/types/content.d.ts");
+    match oxide_assets::content_typegen::write_content_dts(&typed_collections, &dts_path) {
+        Ok(()) => outln!(
+            w,
+            "content typegen: {} collection(s) -> .oxide/types/content.d.ts",
+            typed_collections.len()
+        ),
+        Err(e) => outln!(
+            w,
+            "warn: content.d.ts typegen failed ({} {}); stale",
+            e.0.code,
+            e.0.message
+        ),
     }
     Ok(())
 }
