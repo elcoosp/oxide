@@ -44,9 +44,9 @@ pub(crate) fn scan_impl(dir: &Path) -> Result<RouteTree> {
     };
     walk_dir(&mut walk, &root, &[], &[], None)?;
     sort_entries(&mut walk.entries);
-    Ok(RouteTree {
-        entries: walk.entries,
-    })
+    let mut tree = RouteTree::new();
+    tree.entries = walk.entries;
+    Ok(tree)
 }
 
 pub(crate) fn scan_with_config_impl(
