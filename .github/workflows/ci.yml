@@ -29,6 +29,19 @@ jobs:
             pnpm -C "$d" test
           done
 
+  plugin-fixtures:
+    name: plugin fixture gate (§15-F)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the CLI
+        run: cargo build -p oxide-cli
+      - name: Plugin fixture gate
+        run: ./tests/fixtures/plugins/check.sh
+
   conformance:
     name: conformance gate (D20)
     runs-on: ubuntu-latest
