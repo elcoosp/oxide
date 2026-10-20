@@ -14,8 +14,8 @@
     <img src="https://img.shields.io/badge/Node-%E2%89%A524-339933?style=flat-square&logo=node.js" alt="Node"/>
     <img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/>
     <img src="https://img.shields.io/badge/Workspace-17%20crates%20%2B%206%20packages-6F4E37?style=flat-square" alt="Workspace"/>
-    <img src="https://img.shields.io/badge/Code-%E2%89%8888k%20lines-9CF?style=flat-square" alt="Lines of code"/>
-    <img src="https://img.shields.io/badge/Tests-980%20Rust%20%7C%20293%20TS-brightgreen?style=flat-square" alt="Tests"/>
+    <img src="https://img.shields.io/badge/Code-%E2%89%8899k%20lines-9CF?style=flat-square" alt="Lines of code"/>
+    <img src="https://img.shields.io/badge/Tests-1078%20Rust%20%7C%20306%20TS-brightgreen?style=flat-square" alt="Tests"/>
     <img src="https://img.shields.io/badge/ODF-16%20golden%20fixtures-00BFFF?style=flat-square" alt="ODF golden fixtures"/>
     <img src="https://img.shields.io/badge/TS%20runtime-zero%20npm%20deps-228B22?style=flat-square" alt="Zero dependencies"/>
   </p>
@@ -216,12 +216,13 @@ typed arrays, `undefined`, cyclic and shared references, `Error` and deferred pr
 The repository is built test-first: each crate's `*_tdd.rs` suites were written against its
 contract before the implementation.
 
-- **980 Rust test functions** across 17 crates (46 of them engine-dependent e2e tests gated
+- **1078 Rust test functions** across 17 crates (48 of them engine-dependent e2e tests gated
   behind `#[ignore]`), including `proptest` property suites on the router and graph engines
   and `cargo-fuzz` harnesses for the ODF decoder, router matcher, config extractor and path
   splitter.
-- **293 TypeScript test cases** across 38 files on Node's built-in test runner — including
-  the ODF decoder against the same golden fixtures as the Rust encoder, router / island
+- **306 TypeScript test cases** across 39 files on Node's built-in test runner — including
+  the ODF decoder against the same golden fixtures as the Rust encoder (typed values:
+  `BigInt`, `Date`, `Map`, `Set`, `URL`, `RegExp`, typed arrays), router / island
   tests against a hand-rolled fake DOM (no jsdom, no deps), and suites for the defer script
   protocol and client-side loading boundaries.
 - **Conformance gate** — the Atlas reference app runs one 24-assertion set (contract shape,
@@ -229,8 +230,11 @@ contract before the implementation.
   deferred boundaries in settle order, error / not-found, islands, actions JS-on/off, server
   functions, cache shapes, client router, prefetch) against all four adapters: 96 checks per
   release, and 21 Rust snapshot tests lock the emitted HTML and deploy artifacts byte-for-byte.
-- **Playwright** — Chromium specs that boot the real binary and click an island 3 → 4 → 5,
-  asserting zero console errors.
+- **Playwright** — 17 Chromium specs across 7 files that boot the real binary and drive a
+  real browser: SSR identity with zero console errors, island hydration (click 3 → 4 → 5),
+  navigation loading boundaries, middleware locals + redirect, socket round-trip, ordered
+  SSE streaming, and the config-gated `/_oxide/og` endpoint (PNG magic bytes, 400 on a
+  missing title, byte-determinism).
 
 CI runs five gates: Rust fmt + tests on a Linux / macOS / Windows matrix, Node 24 package
 tests, the conformance suite, the V8 fixture check, and a benchmark gate that **fails the
@@ -240,7 +244,7 @@ build on >5% regression** against `benchmarks/report.md`.
 
 > [!WARNING]
 > Oxide is pre-alpha software under active development toward
-> [spec v0.1](docs/Oxide%20Technical%20Specification%20v0.1.md). The adapter contract is
+> [spec v0.1](docs/Oxide%20Technical%20Specification.md). The adapter contract is
 > versioned and treated as frozen; everything else may churn.
 
 **Shipped and gated today** — the production pipeline (hyper + rustls HTTP/1+2 with HTTP/3
@@ -251,30 +255,45 @@ doesn't call `parent()`, real error statuses seeded into the cache), snapshots a
 targets, real framework SSR and real island hydration on all four adapters, client navigation
 that resolves deferred values on all four adapters, the ODF wire format with byte-parity
 encoders on both sides (including ODF-encoded `'use cache'` on Node and V8), six-layer config
-extraction, cache semantics with tags / single-flight / Vary, JS middleware with
-`event.locals` whose headers ride cached responses too, `route.ts` endpoint dispatch, socket
-routes (RFC6455 handshake through `socket:run`), connected dev HMR including the loader-edit
-round trip and a one-time client bundle on fresh dev, `/_oxide/og` Open Graph images,
-`oxide check` with tsgo + oxlint, and the introspection tooling (`doctor`, `why`, `analyze`,
-`schema`, `mcp`).
+extraction, cache semantics with tags / single-flight / Vary, full outer→inner middleware
+ancestor chains with threaded `event.locals` whose headers ride cached responses too,
+`route.ts` endpoint dispatch, socket routes (RFC6455 handshake through `socket:run`),
+connected dev HMR including the loader-edit round trip and a one-time client bundle on
+fresh dev, `/_oxide/og` config-gated Open Graph PNG rendering (SVG → resvg → PNG with an
+MP area cap), module packages (`oxide.module`) that inject routes under `/modules/<name>`
+and run `transform` / `resolveId` / `load` hooks through the real bundler, real
+`oxide add` (package-manager-detected installs), `oxide audit` (live OSV queries with a
+24h cache) and `oxide migrate` with working codemods, per-route prerender reuse backed by
+the persisted DemandGraph (`.oxide/graph.json`, surfaced in `analyze` and `mcp`), zero-copy
+L0 cache hits over `Arc` entries with MAC-sealed Redis/S3 payloads, a moka asset-body cache,
+build-time font subsetting, locale-aware `href()` typegen, constant-time Basic-auth checks
+and a middleware rewrite-loop guard (508), `oxide check` with tsgo + oxlint, and the
+introspection tooling (`doctor`, `why`, `analyze`, `schema`, `mcp`).
 
-**Built, wiring in progress** — partial prerendering (the shell splitter and assembler are
-tested; no render path constructs shells yet), session-cookie *writing* (the decode path is
-live, `Set-Cookie` is not), HTTP/3 request bodies and streamed responses (HTTP/1+2
-unaffected), the edge build (`dist/edge.wasm` emission is dormant and the edge handler does
-not call ODF decode yet), socket fan-out / presence (sends reach only the calling socket),
-the full outer→inner middleware chain (nearest-ancestor runs today), font subsetting (metrics
-only), MDX compilation (collections scan + search), `searchParams` runtime values behind the
-typegen types, and the neutral IR renderer's layout nesting (dev-fixture path only). See
-[`docs/HANDOFF-wave2-complete.md`](docs/HANDOFF-wave2-complete.md) for the current thread
-list and what remains.
+**Built, wiring in progress** — streaming deferred values (today the worker awaits every
+`defer()` before the response flushes, so one slow `defer()` stalls TTFB), partial
+prerendering (the shell splitter and assembler are tested; no render path constructs shells
+yet), session-cookie *writing* (the decode path is live, `Set-Cookie` is not), HTTP/3
+request bodies and streamed responses (HTTP/1+2 unaffected), the edge build
+(`dist/edge.wasm` emission is dormant and the edge handler does not call ODF decode yet),
+socket fan-out / presence (sends reach only the calling socket), plugin
+`renderChunk` / `generateBundle` / `transformHtml` hooks (declared, never invoked) and
+plugin transforms on the V8 render path (the compile op exists; V8 bypasses it), strict MAC
+enforcement for L2 cache entries (a legacy-JSON fallback still accepts unsealed payloads),
+single-flight cleanup when a follower subscribes before the owner short-circuits, MDX
+compilation beyond the reachable compile arm (collections typed schema is partial), and the
+neutral IR renderer's layout nesting (dev-fixture path only). See
+[`HANDOFF.md`](HANDOFF.md) for the current thread list and what remains.
 
 ## Documentation
 
 - [`docs/architecture.md`](docs/architecture.md) — spec § → crate map, pipeline and
   cross-cutting invariants
-- [`docs/Oxide Technical Specification v0.1.md`](docs/Oxide%20Technical%20Specification%20v0.1.md)
-  — the full design document: 20 decisions, 26 sections, roadmap
+- [`docs/Oxide Technical Specification.md`](docs/Oxide%20Technical%20Specification.md)
+  — the full design document: Part I is the v0.1 spec (20 decisions, 26 sections); Part II
+  is the v0.2 implementation edition (work packages, waves, appendices)
+- [`docs/plugin-compat.md`](docs/plugin-compat.md) — plugin kinds × hooks compatibility
+  matrix (what is wired, partial, or unsupported per plugin kind)
 - [`benchmarks/README.md`](benchmarks/README.md) — benchmark method and per-route JS budgets
 - [`conformance/`](conformance/) — the Atlas reference app and the cross-adapter suite
 - [`examples/smoke-app-react`](examples/smoke-app-react) — the minimal app used in the
