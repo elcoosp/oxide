@@ -212,6 +212,7 @@ export interface CacheOptions {
 
 import { encodeOdf } from '../odf-encode.ts'
 import { decodeOdf } from '../client/odf-decode.ts'
+import { bytesToBase64 } from '../bytes.ts'
 
 /** Deterministic cache key: JSON of args + normalized opts (tags sorted). */
 /** Deterministic cache key: JSON of args + normalized opts (tags sorted). */
@@ -255,6 +256,28 @@ function hostOpAvailable(): boolean {
 
 const cacheStore = new Map<string, CacheEntry>()
 const cachePending = new Map<string, Promise<unknown>>()
+
+/** P-10: bound the in-process fallback cache. Keys derive from caller args,
+ *  which an attacker controls, so without a cap a long-lived worker's Map
+ *  grows without limit. Expired entries are swept periodically and a hard
+ *  entry cap evicts oldest-first. */
+const CACHE_MAX_ENTRIES = 10_000
+function sweepCache(): void {
+  const now = Date.now()
+  for (const [k, v] of cacheStore) {
+    if (v.staleUntil < now) cacheStore.delete(k)
+  }
+  if (cacheStore.size > CACHE_MAX_ENTRIES) {
+    let drop = cacheStore.size - CACHE_MAX_ENTRIES
+    for (const k of cacheStore.keys()) {
+      if (drop-- <= 0) break
+      cacheStore.delete(k)
+    }
+  }
+}
+const cacheSweeper = setInterval(sweepCache, 60_000)
+// `unref` so a short-lived process is not kept alive by the sweeper.
+;(cacheSweeper as unknown as { unref?: () => void }).unref?.()
 
 /** Drop cached entries carrying any of the given tags (soft→delete here; the
  * Rust TieredCache implements the stale-serve semantics, §11.3). */
@@ -360,16 +383,12 @@ export function cache<A extends unknown[], R>(
     // warning rather than failing the cache write.
     let body_b64 = ''
     try {
-      const bytes = encodeOdf(value)
-      let bin = ''
-      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
-      body_b64 = btoa(bin)
+      // P-09: linear-time base64 (chunked), not per-byte string concat.
+      body_b64 = bytesToBase64(encodeOdf(value))
     } catch (e) {
       console.warn?.('oxide: cache value is not ODF-encodable; storing JSON', e)
       const json = JSON.stringify(value)
-      body_b64 = btoa(
-        String.fromCharCode(...new TextEncoder().encode(json)),
-      )
+      body_b64 = bytesToBase64(new TextEncoder().encode(json))
     }
     // `ttl`/`swr` are seconds on the wire (§11.3).
     void globalThis
@@ -392,6 +411,8 @@ export function cache<A extends unknown[], R>(
           staleUntil: Date.now() + ttlMs + swrMs,
           tags: [...tags],
         })
+        // P-10: keep the fallback Map bounded after each write.
+        if (cacheStore.size > CACHE_MAX_ENTRIES) sweepCache()
         // §9.3: mirror to the Rust tier when a host is reachable.
         hostSet(key, value, tags)
         return value
