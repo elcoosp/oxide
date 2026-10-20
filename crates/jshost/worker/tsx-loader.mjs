@@ -156,7 +156,11 @@ async function runPluginTransforms(code, id) {
         error: (m) => { throw new Error(String(m)); },
         resolve: async (spec) => spec,
       };
-      const result = await mod.transform.call(ctx, { code: out, id });
+      // Hooks are positional (`transform(code, id)`), matching the build-time
+      // worker. The old object-argument call passed `{code, id}` as `code`,
+      // so a plugin's `code.replace(...)` threw or returned nothing — the
+      // exact bug the build worker had.
+      const result = await mod.transform.call(ctx, out, id);
       if (typeof result === 'string') {
         out = result;
       } else if (result && typeof result.code === 'string') {
