@@ -86,7 +86,17 @@ pub fn config_schema() -> Value {
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
-                            "maxSize": { "type": "string", "pattern": "^[0-9]+(kb|mb|gb)$", "default": "512mb" }
+                            "maxSize": { "type": "string", "pattern": "^[0-9]+(kb|mb|gb)$", "default": "512mb" },
+                            "vary": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "description": "Request headers the L0 fingerprint varies on. The primary language tag of accept-language is normalized automatically."
+                            },
+                            "ttlSecs": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "description": "P-05: L0 freshness window in seconds (default 300)."
+                            }
                         }
                     }
                 }
@@ -114,7 +124,21 @@ pub fn config_schema() -> Value {
                 "additionalProperties": false,
                 "properties": {
                     "providers": { "type": "array", "items": { "type": "string" } },
-                    "subset": { "type": "array", "items": { "type": "string" } }
+                    "subset": { "type": "array", "items": { "type": "string" } },
+                    "families": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "family": { "type": "string" },
+                                "provider": { "type": "string" },
+                                "weights": { "type": "array", "items": { "type": "integer" } },
+                                "styles": { "type": "array", "items": { "type": "string" } },
+                                "localPaths": { "type": "array", "items": { "type": "string" } }
+                            }
+                        }
+                    }
                 }
             },
             "i18n": {
@@ -139,7 +163,17 @@ pub fn config_schema() -> Value {
                     "hostAllowList": { "type": "array", "items": { "type": "string" } },
                     "ssrfAllowList": { "type": "array", "items": { "type": "string" } },
                     "trustedProxies": { "type": "array", "items": { "type": "string" } },
-                    "cookieKeys": { "type": "array", "items": { "type": "string" } }
+                    "cookieKeys": { "type": "array", "items": { "type": "string" } },
+                    "sessionKeys": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "minItems": 1,
+                        "description": "≥32-byte base64 keys for the ChaCha20-Poly1305 session codec; first seals, all decrypt (rotation)."
+                    },
+                    "exposeCacheHeader": {
+                        "type": "boolean",
+                        "description": "S-21.3: emit the `x-oxide-cache` status header. Default true."
+                    }
                 }
             },
             "rules": {
@@ -185,6 +219,16 @@ pub fn config_schema() -> Value {
                 "type": "object",
                 "additionalProperties": true,
                 "description": "§16.3: web app manifest (PWA). Present -> oxide build emits manifest.webmanifest + a service worker."
+            },
+            "og": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "S-09: on-demand OG-image endpoint (GET /_oxide/og). Off by default; opt in with og.enabled = true."
+            },
+            "imagesEndpoint": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "S-09: on-demand image transform endpoint (GET /_oxide/image). On by default; gateable."
             },
             "static": {
                 "type": "object",
@@ -247,11 +291,7 @@ pub fn config_schema() -> Value {
                         "description": "Path to a fallback HTML file emitted for dynamic routes without prerendered output (§10.5)."
                     }
                 }
-            },
-            "plugins": { "type": "array" },
-            "modules": { "type": "array", "items": { "type": "string" } },
-            "extends": { "type": "array", "items": { "type": "string" } },
-            "environments": { "type": "object" }
+            }
         }
     })
 }
@@ -330,6 +370,91 @@ mod tests {
                 .is_some(),
             "build.ssrExternals missing"
         );
+        // B-15: keys the typed config deserializes but the schema dropped.
+        assert!(
+            v["properties"]["cache"]["properties"]["l0"]["properties"]
+                .get("vary")
+                .is_some(),
+            "cache.l0.vary missing"
+        );
+        // P-05 / S-21.3
+        assert!(
+            v["properties"]["cache"]["properties"]["l0"]["properties"]
+                .get("ttlSecs")
+                .is_some(),
+            "cache.l0.ttlSecs missing"
+        );
+        assert!(
+            sec.get("exposeCacheHeader").is_some(),
+            "security.exposeCacheHeader missing"
+        );
+        assert!(
+            sec.get("sessionKeys").is_some(),
+            "security.sessionKeys missing"
+        );
+        assert!(
+            v["properties"]["fonts"]["properties"].get("families").is_some(),
+            "fonts.families missing"
+        );
+    }
+
+    /// B-15: the schema must not carry duplicate object keys — serde's
+    /// `json!` is last-wins, so a duplicated key silently drops the first
+    /// (more descriptive) variant. Parse the pretty text with a
+    /// duplicate-detecting pass.
+    #[test]
+    fn schema_has_no_duplicate_object_keys() {
+        let text = config_schema_pretty().unwrap();
+        let mut stack: Vec<Option<(String, Vec<String>)>> = Vec::new();
+        let mut key: Option<String> = None;
+        let mut chars = text.char_indices().peekable();
+        while let Some((_, c)) = chars.next() {
+            match c {
+                '"' => {
+                    let mut s = String::new();
+                    while let Some((_, c2)) = chars.next() {
+                        if c2 == '\\' {
+                            if let Some((_, e)) = chars.next() {
+                                s.push(e);
+                            }
+                        } else if c2 == '"' {
+                            break;
+                        } else {
+                            s.push(c2);
+                        }
+                    }
+                    // Detect `"key":` by lookahead for a colon after whitespace.
+                    let mut la = chars.clone();
+                    let mut is_key = false;
+                    while let Some((_, c3)) = la.next() {
+                        if c3.is_whitespace() {
+                            continue;
+                        }
+                        is_key = c3 == ':';
+                        break;
+                    }
+                    if is_key {
+                        key = Some(s);
+                    }
+                }
+                ':' => {
+                    if let Some(k) = key.take() {
+                        if let Some(Some((_, seen))) = stack.last_mut() {
+                            assert!(
+                                !seen.contains(&k),
+                                "duplicate schema key `{k}` (last-wins drops the first)"
+                            );
+                            seen.push(k);
+                        }
+                    }
+                }
+                '{' => stack.push(Some((String::new(), Vec::new()))),
+                '}' => {
+                    stack.pop();
+                }
+                _ => {}
+            }
+        }
     }
 
     #[test]
