@@ -607,11 +607,18 @@ async fn remote_read_through_and_write_through() {
     cache.remote = Some(remote.clone());
     let cache = Arc::new(cache);
 
-    // Write-through: set reaches the remote handler.
+    // Write-through: set reaches the remote handler. P-18 makes the remote
+    // write asynchronous (off the request path), so allow it to land.
     cache
         .set("r1", entry(b"remote", &["rt"], fresh_policy(60_000, 0)))
         .await
         .unwrap();
+    for _ in 0..200 {
+        if remote.store.contains_key("r1") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
     assert_eq!(remote.sets.load(Ordering::Relaxed), 1);
     assert!(remote.store.contains_key("r1"));
 
