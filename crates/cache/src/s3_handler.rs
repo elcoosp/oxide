@@ -55,7 +55,7 @@ impl S3CacheHandler {
         let store = object_store::aws::AmazonS3Builder::from_env()
             .with_bucket_name(&bucket)
             .build()
-            .map_err(|e| err("CACHE-S3", format!("s3 client (bucket {bucket}): {e}")))?;
+            .map_err(|e| err("CACHE-S3", format!("s3 client: {e}")))?;
         Ok(Self {
             store: Arc::new(store),
         })
@@ -111,8 +111,12 @@ impl CacheHandler for S3CacheHandler {
         let verified: &[u8] = match auth::open_entry(&bytes) {
             Some(body) => body,
             None => {
-                if codec::decode_entry(&bytes).is_ok() {
-                    // Legacy (unsealed) entry — tolerated on upgrade.
+                // A1: MAC failure is a miss unless the one-release legacy
+                // window is explicitly enabled.
+                if auth::legacy_sealing_allowed() && codec::decode_entry(&bytes).is_ok() {
+                    tracing::warn!(
+                        "L2 (s3) entry is unsealed; serving under OXIDE_CACHE_SEALING=legacy"
+                    );
                     &bytes
                 } else {
                     tracing::warn!("L2 (s3) entry failed MAC verification — treated as miss");
