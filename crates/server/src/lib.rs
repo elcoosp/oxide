@@ -72,6 +72,11 @@ pub struct OxideRequest {
     /// middleware rewrite. Internal (never read from an inbound header), so a
     /// client cannot pre-set it to exhaust the rewrite budget.
     pub rewrite_hops: u8,
+    /// B-22: the middleware module that issued the rewrite that produced this
+    /// request. On re-dispatch the chain skips every layer up to (and
+    /// including) that one, so outer middleware does not run twice. Internal,
+    /// like `rewrite_hops` — never read from an inbound header.
+    pub mw_resume_after: Option<String>,
 }
 
 impl OxideRequest {
@@ -750,7 +755,7 @@ fn csrf_reject(req: &OxideRequest, mode: &str) -> std::result::Result<(), Diagno
     ))
 }
 
-fn cookie_value<'a>(cookie_header: &'a str, name: &str) -> Option<&'a str> {
+pub fn cookie_value<'a>(cookie_header: &'a str, name: &str) -> Option<&'a str> {
     for pair in cookie_header.split(';') {
         let pair = pair.trim();
         if let Some((k, v)) = pair.split_once('=') {
@@ -3722,6 +3727,7 @@ pub async fn from_hyper_request(
         trace,
         peer: None,
         rewrite_hops: 0,
+        mw_resume_after: None,
     })
 }
 
@@ -4503,6 +4509,7 @@ pub async fn serve_http3(
                 let dispatch = Arc::clone(&dispatch);
                 tokio::spawn(async move {
                     let Ok(conn) = connecting.await else { return };
+                    let peer = Some(conn.remote_address().ip());
                     let h3_conn = h3_quinn::Connection::new(conn);
                     let mut h3 = match h3::server::Connection::new(h3_conn).await {
                         Ok(c) => c,
@@ -4524,18 +4531,50 @@ pub async fn serve_http3(
                                         v.to_str().ok().map(|vs| (k.to_string(), vs.to_string()))
                                     })
                                     .collect();
+                                // B-04: drain the request body (DATA frames).
+                                // Without this, POST/action bodies were empty
+                                // over h3. The cap mirrors the h1/h2 `Limited`
+                                // guard; exceeding it answers 413 and moves on.
+                                const H3_MAX_BODY: usize = 8 * 1024 * 1024;
+                                let mut body: Vec<u8> = Vec::new();
+                                let mut too_large = false;
+                                loop {
+                                    match stream.recv_data().await {
+                                        Ok(Some(mut chunk)) => {
+                                            use bytes::Buf as _;
+                                            let n = chunk.remaining();
+                                            if body.len() + n > H3_MAX_BODY {
+                                                too_large = true;
+                                                break;
+                                            }
+                                            body.extend_from_slice(&chunk.copy_to_bytes(n));
+                                        }
+                                        Ok(None) => break,
+                                        Err(_) => break,
+                                    }
+                                }
+                                if too_large {
+                                    if let Ok(r) = hyper::http::Response::builder()
+                                        .status(413)
+                                        .body(())
+                                    {
+                                        let _ = stream.send_response(r).await;
+                                    }
+                                    let _ = stream.finish().await;
+                                    continue;
+                                }
                                 let oreq = OxideRequest {
                                     method,
                                     url,
                                     headers,
-                                    body: bytes::Bytes::new(),
+                                    body: bytes::Bytes::from(body),
                                     request_id: next_request_id(),
                                     trace: None,
-                                    peer: None,
+                                    peer,
                                     rewrite_hops: 0,
+                                    mw_resume_after: None,
                                 };
                                 let resp = pipeline.serve_request(oreq, dispatch.as_ref()).await;
-                                // 响应 head
                                 let mut builder = hyper::http::Response::builder().status(resp.status);
                                 for (k, v) in &resp.headers {
                                     builder = builder.header(k.as_str(), v.as_str());
@@ -4550,7 +4589,18 @@ pub async fn serve_http3(
                                 if stream.send_response(response).await.is_err() {
                                     continue;
                                 }
-                                if !resp.body.is_empty() {
+                                // B-04: streaming responses (the live SSR
+                                // path) carry their bytes in `stream`, not
+                                // `body`; h3 used to drop them entirely.
+                                if let Some(mut st) = resp.stream {
+                                    use futures::StreamExt as _;
+                                    while let Some(item) = st.next().await {
+                                        let Ok(chunk) = item else { break };
+                                        if stream.send_data(chunk).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                } else if !resp.body.is_empty() {
                                     let _ = stream.send_data(resp.body).await;
                                 }
                                 let _ = stream.finish().await;
