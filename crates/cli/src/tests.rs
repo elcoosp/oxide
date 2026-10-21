@@ -707,7 +707,6 @@ async fn write_prerender_threads_loader_data_into_renderer() {
         &[],  // no layouts in this test
         &[],  // no layout chain in this test
         None, // no error.tsx in this test
-    
         &serde_json::json!({"meta":[],"link":[],"style":[],"script":[]}),
     )
     .await
@@ -753,7 +752,6 @@ async fn write_prerender_without_loader_uses_empty_data() {
         &[],  // no layouts
         &[],  // no layout chain
         None, // no error.tsx
-    
         &serde_json::json!({"meta":[],"link":[],"style":[],"script":[]}),
     )
     .await
@@ -1631,7 +1629,9 @@ async fn add_appends_module_and_dedupes() {
         r#"{"name":"oxide-image-scraper","version":"1.0.0","oxide":{"module":{}}}"#,
     )
     .unwrap();
-    unsafe { std::env::set_var("OXIDE_ADD_NO_INSTALL", "1"); }
+    unsafe {
+        std::env::set_var("OXIDE_ADD_NO_INSTALL", "1");
+    }
     let (code, out) = run_ok(&[
         "oxide",
         "add",
@@ -1653,7 +1653,9 @@ async fn add_appends_module_and_dedupes() {
         "oxide-image-scraper",
     ])
     .await;
-    unsafe { std::env::remove_var("OXIDE_ADD_NO_INSTALL"); }
+    unsafe {
+        std::env::remove_var("OXIDE_ADD_NO_INSTALL");
+    }
     let list: Vec<String> = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(list, vec!["oxide-image-scraper".to_string()], "deduped");
 }
@@ -3404,7 +3406,13 @@ async fn middleware_rewrite_does_not_rerun_outer_layers() {
         resp.headers
     );
     let calls = calls.lock().unwrap();
-    let outer = calls.iter().filter(|p| p.ends_with("routes/middleware.ts") || p.ends_with("middleware.ts") && !p.contains("shop/")).count();
+    let outer = calls
+        .iter()
+        .filter(|p| {
+            p.ends_with("routes/middleware.ts")
+                || p.ends_with("middleware.ts") && !p.contains("shop/")
+        })
+        .count();
     assert_eq!(outer, 1, "outer middleware ran exactly once: {calls:?}");
 }
 
@@ -3469,7 +3477,11 @@ fn tree_with_two_middleware_layers() -> std::sync::Arc<oxide_router::RouteTree> 
         needs_parent: false,
     };
     tree.insert(mw("routes/middleware", vec![], "middleware.ts"));
-    tree.insert(mw("routes/shop/middleware", vec!["shop"], "shop/middleware.ts"));
+    tree.insert(mw(
+        "routes/shop/middleware",
+        vec!["shop"],
+        "shop/middleware.ts",
+    ));
     std::sync::Arc::new(tree)
 }
 
@@ -3931,7 +3943,6 @@ async fn layout_then_page_sequential_when_page_calls_parent() {
     );
 }
 
-
 // ---- Wave 3 item 2: prerender error-status carried through L0 seed -----
 //
 // `write_prerender` must return the status the adapter's buffered output
@@ -3951,10 +3962,7 @@ impl oxide_server::PageRenderer for BufferedErrorMarkerRenderer {
     fn name(&self) -> &str {
         "buffered-error-marker"
     }
-    async fn render(
-        &self,
-        _input: oxide_server::PageRenderInput,
-    ) -> oxide_server::Result<String> {
+    async fn render(&self, _input: oxide_server::PageRenderInput) -> oxide_server::Result<String> {
         Ok(
             "<!doctype html><html><head><!--oxide-status:500--></head><body>ERR</body></html>"
                 .into(),
@@ -3971,10 +3979,7 @@ impl oxide_server::PageRenderer for CleanBodyRenderer {
     fn name(&self) -> &str {
         "clean-body"
     }
-    async fn render(
-        &self,
-        _input: oxide_server::PageRenderInput,
-    ) -> oxide_server::Result<String> {
+    async fn render(&self, _input: oxide_server::PageRenderInput) -> oxide_server::Result<String> {
         Ok("<!doctype html><html><body>ok</body></html>".into())
     }
 }
@@ -4001,7 +4006,6 @@ async fn write_prerender_carries_500_status_for_marker_body() {
         &[],  // no layouts
         &[],  // no layout server modules
         None, // no error_route
-    
         &serde_json::json!({"meta":[],"link":[],"style":[],"script":[]}),
     )
     .await
@@ -4038,14 +4042,12 @@ async fn write_prerender_carries_200_status_for_clean_body() {
         &[],
         &[],
         None,
-    
         &serde_json::json!({"meta":[],"link":[],"style":[],"script":[]}),
     )
     .await
     .expect("write_prerender succeeds");
     assert_eq!(status, 200, "no marker → 200");
 }
-
 
 // ---- §8.5 middleware chain (outer→inner) ------------------------------
 //
@@ -4080,10 +4082,8 @@ impl oxide_server::MiddlewareDispatcher for ChainProbeMiddleware {
         _headers: &[(String, String)],
         _body: &[u8],
         locals: Option<&serde_json::Value>,
-    ) -> std::result::Result<
-        oxide_server::MiddlewareRunResult,
-        oxide_server::MiddlewareRunError,
-    > {
+    ) -> std::result::Result<oxide_server::MiddlewareRunResult, oxide_server::MiddlewareRunError>
+    {
         self.seen
             .lock()
             .unwrap()
@@ -4220,7 +4220,6 @@ async fn middleware_chain_runs_outer_to_inner_and_threads_locals() {
     );
 }
 
-
 #[test]
 fn build_transform_hook_returns_none_when_no_wasm_plugin_configured() {
     // §15.1 / §17.2: `build_transform_hook` returns `None` when no wasm
@@ -4284,7 +4283,10 @@ fn parse_hook_name_accepts_snake_case() {
     use oxide_plugin::Hook;
     assert_eq!(parse_hook_name("resolve_id"), Some(Hook::ResolveId));
     assert_eq!(parse_hook_name("transform_html"), Some(Hook::TransformHtml));
-    assert_eq!(parse_hook_name("config_resolved"), Some(Hook::ConfigResolved));
+    assert_eq!(
+        parse_hook_name("config_resolved"),
+        Some(Hook::ConfigResolved)
+    );
 }
 
 #[test]
@@ -4343,9 +4345,7 @@ struct SessionCaptureLoader {
 impl SessionCaptureLoader {
     fn new() -> Self {
         Self {
-            last_session: std::sync::Arc::new(std::sync::Mutex::new(
-                serde_json::Value::Null,
-            )),
+            last_session: std::sync::Arc::new(std::sync::Mutex::new(serde_json::Value::Null)),
         }
     }
 }
@@ -4504,10 +4504,15 @@ async fn session_codec_tampered_cookie_yields_empty_session() {
     );
 
     let mut req = test_request("GET", "/");
-    req.headers
-        .push(("cookie".to_string(), "oxide_session=not-a-real-token".to_string()));
+    req.headers.push((
+        "cookie".to_string(),
+        "oxide_session=not-a-real-token".to_string(),
+    ));
     let resp = dispatch(req).await;
-    assert_eq!(resp.status, 200, "tampered cookie must not fail the request");
+    assert_eq!(
+        resp.status, 200,
+        "tampered cookie must not fail the request"
+    );
 
     // The loader saw an EMPTY session (no `session` key), never a 500.
     let s = captured.lock().unwrap();
@@ -4526,8 +4531,13 @@ async fn dev_writes_plugin_registry() {
     fs::write(
         root.join("src/routes/page.tsx"),
         "export default function Page() { return null }",
-    ).unwrap();
-    fs::write(root.join("plugin.mjs"), "export async function transform() {}").unwrap();
+    )
+    .unwrap();
+    fs::write(
+        root.join("plugin.mjs"),
+        "export async function transform() {}",
+    )
+    .unwrap();
     write_config(
         &root,
         r#"{"plugins":[
@@ -4535,17 +4545,14 @@ async fn dev_writes_plugin_registry() {
             {"kind":"wasm","path":"./ignored.wasm"}
         ]}"#,
     );
-    let _ = run_ok(&[
-        "oxide",
-        "dev",
-        "--root",
-        &root.to_string_lossy(),
-        "--once",
-    ]).await;
+    let _ = run_ok(&["oxide", "dev", "--root", &root.to_string_lossy(), "--once"]).await;
     let registry = root.join(".oxide/dev-plugins.json");
-    assert!(registry.is_file(), "registry written at {}", registry.display());
-    let v: serde_json::Value =
-        serde_json::from_slice(&fs::read(&registry).unwrap()).unwrap();
+    assert!(
+        registry.is_file(),
+        "registry written at {}",
+        registry.display()
+    );
+    let v: serde_json::Value = serde_json::from_slice(&fs::read(&registry).unwrap()).unwrap();
     let arr = v.as_array().expect("registry is an array");
     assert_eq!(arr.len(), 1, "only the js plugin: {v}");
     let p = arr[0].get("path").and_then(|v| v.as_str()).unwrap_or("");
@@ -4563,7 +4570,8 @@ async fn check_reports_native_plugins() {
     fs::write(
         root.join("src/routes/page.tsx"),
         "export default function Page() { return null }",
-    ).unwrap();
+    )
+    .unwrap();
     write_config(
         &root,
         r#"{"plugins":[
@@ -4572,9 +4580,7 @@ async fn check_reports_native_plugins() {
             {"kind":"native","name":"i18n"}
         ]}"#,
     );
-    let (code, out) = run_ok(&[
-        "oxide", "check", "--root", &root.to_string_lossy(),
-    ]).await;
+    let (code, out) = run_ok(&["oxide", "check", "--root", &root.to_string_lossy()]).await;
     assert_eq!(code, 0, "check passed: {out}");
     assert!(
         out.contains("native plugins: images, fonts, i18n"),
@@ -4591,11 +4597,10 @@ async fn check_rejects_unknown_native_plugin() {
     fs::write(
         root.join("src/routes/page.tsx"),
         "export default function Page() { return null }",
-    ).unwrap();
+    )
+    .unwrap();
     write_config(&root, r#"{"plugins":[{"kind":"native","name":"bogus"}]}"#);
-    let (code, out) = run_ok(&[
-        "oxide", "check", "--root", &root.to_string_lossy(),
-    ]).await;
+    let (code, out) = run_ok(&["oxide", "check", "--root", &root.to_string_lossy()]).await;
     assert_eq!(code, 1, "check fails: {out}");
     assert!(out.contains("OX-PLUGIN"), "coded diagnostic: {out}");
     assert!(out.contains("unknown native plugin"), "message: {out}");
@@ -4611,11 +4616,10 @@ async fn dev_fails_fast_on_unknown_native_plugin() {
     fs::write(
         root.join("src/routes/page.tsx"),
         "export default function Page() { return null }",
-    ).unwrap();
+    )
+    .unwrap();
     write_config(&root, r#"{"plugins":[{"kind":"native","name":"oops"}]}"#);
-    let err = run_err(&[
-        "oxide", "dev", "--root", &root.to_string_lossy(), "--once",
-    ]).await;
+    let err = run_err(&["oxide", "dev", "--root", &root.to_string_lossy(), "--once"]).await;
     let msg = format!("{err:#}");
     assert!(msg.contains("OX-PLUGIN"), "coded: {msg}");
     assert!(msg.contains("unknown native plugin"), "message: {msg}");
@@ -4661,17 +4665,29 @@ async fn add_records_oxide_module() {
     fs::write(
         mod_dir.join("package.json"),
         r#"{"name":"@acme/plugin","version":"1.0.0","oxide":{"module":{"hooks":["transform"]}}}"#,
-    ).unwrap();
-    unsafe { std::env::set_var("OXIDE_ADD_NO_INSTALL", "1"); }
+    )
+    .unwrap();
+    unsafe {
+        std::env::set_var("OXIDE_ADD_NO_INSTALL", "1");
+    }
     let (code, out) = run_ok(&[
-        "oxide", "add", "@acme/plugin", "--root", &root.to_string_lossy(),
-    ]).await;
-    unsafe { std::env::remove_var("OXIDE_ADD_NO_INSTALL"); }
+        "oxide",
+        "add",
+        "@acme/plugin",
+        "--root",
+        &root.to_string_lossy(),
+    ])
+    .await;
+    unsafe {
+        std::env::remove_var("OXIDE_ADD_NO_INSTALL");
+    }
     assert_eq!(code, 0, "add passed: {out}");
-    assert!(out.contains("oxide module detected"), "contract found: {out}");
+    assert!(
+        out.contains("oxide module detected"),
+        "contract found: {out}"
+    );
     let modules_json = root.join(".oxide/modules.json");
-    let v: serde_json::Value =
-        serde_json::from_slice(&fs::read(&modules_json).unwrap()).unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&fs::read(&modules_json).unwrap()).unwrap();
     assert_eq!(v, serde_json::json!(["@acme/plugin"]));
 }
 
@@ -4685,12 +4701,22 @@ async fn add_records_plain_npm_package_with_note() {
     fs::write(
         mod_dir.join("package.json"),
         r#"{"name":"left-pad","version":"1.3.0"}"#,
-    ).unwrap();
-    unsafe { std::env::set_var("OXIDE_ADD_NO_INSTALL", "1"); }
+    )
+    .unwrap();
+    unsafe {
+        std::env::set_var("OXIDE_ADD_NO_INSTALL", "1");
+    }
     let (code, out) = run_ok(&[
-        "oxide", "add", "left-pad", "--root", &root.to_string_lossy(),
-    ]).await;
-    unsafe { std::env::remove_var("OXIDE_ADD_NO_INSTALL"); }
+        "oxide",
+        "add",
+        "left-pad",
+        "--root",
+        &root.to_string_lossy(),
+    ])
+    .await;
+    unsafe {
+        std::env::remove_var("OXIDE_ADD_NO_INSTALL");
+    }
     assert_eq!(code, 0, "add passed: {out}");
     assert!(out.contains("ordinary npm package"), "note present: {out}");
 }
@@ -4706,11 +4732,13 @@ async fn audit_offline_without_cache_is_a_clear_error() {
         root.join("package-lock.json"),
         r#"{"lockfileVersion":3,"packages":{"":{"name":"root","version":"1.0.0"},"node_modules/x":{"version":"1.0.0"}}}"#,
     ).unwrap();
-    unsafe { std::env::set_var("OXIDE_AUDIT_OFFLINE", "1"); }
-    let (code, out) = run_ok(&[
-        "oxide", "audit", "--root", &root.to_string_lossy(),
-    ]).await;
-    unsafe { std::env::remove_var("OXIDE_AUDIT_OFFLINE"); }
+    unsafe {
+        std::env::set_var("OXIDE_AUDIT_OFFLINE", "1");
+    }
+    let (code, out) = run_ok(&["oxide", "audit", "--root", &root.to_string_lossy()]).await;
+    unsafe {
+        std::env::remove_var("OXIDE_AUDIT_OFFLINE");
+    }
     assert_eq!(code, 2, "offline without cache exits 2: {out}");
     assert!(out.contains("AUDIT-OFFLINE"), "coded diagnostic: {out}");
 }
@@ -4720,15 +4748,16 @@ async fn audit_no_lockfile_is_a_clear_error() {
     let _g = ENV_LOCK.lock().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
-    unsafe { std::env::set_var("OXIDE_AUDIT_OFFLINE", "1"); }
-    let (code, out) = run_ok(&[
-        "oxide", "audit", "--root", &root.to_string_lossy(),
-    ]).await;
-    unsafe { std::env::remove_var("OXIDE_AUDIT_OFFLINE"); }
+    unsafe {
+        std::env::set_var("OXIDE_AUDIT_OFFLINE", "1");
+    }
+    let (code, out) = run_ok(&["oxide", "audit", "--root", &root.to_string_lossy()]).await;
+    unsafe {
+        std::env::remove_var("OXIDE_AUDIT_OFFLINE");
+    }
     assert_eq!(code, 2, "no lockfile exits 2: {out}");
     assert!(out.contains("AUDIT-LOCKFORMAT"), "coded: {out}");
 }
-
 
 // ─── §5-A: build_graph snapshot tests ─────────────────────────────────────
 
@@ -4754,7 +4783,10 @@ async fn build_writes_graph_snapshot() {
         .collect();
     assert!(kinds.iter().any(|k| *k == "module"), "module nodes present");
     assert!(kinds.iter().any(|k| *k == "chunk"), "chunk nodes present");
-    assert!(kinds.iter().any(|k| *k == "manifest"), "manifest nodes present");
+    assert!(
+        kinds.iter().any(|k| *k == "manifest"),
+        "manifest nodes present"
+    );
 }
 
 #[tokio::test]
@@ -4762,10 +4794,8 @@ async fn second_build_recomputes_nothing() {
     let (_d, root) = fixture_project();
     let (code1, _out1) = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
     assert_eq!(code1, 0);
-    let first: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(root.join(".oxide/graph.json")).unwrap(),
-    )
-    .unwrap();
+    let first: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.join(".oxide/graph.json")).unwrap()).unwrap();
     let first_nodes = first["node_count"].as_u64().unwrap();
     let first_recomputed = first["recomputed_count"].as_u64().unwrap();
     // A cold build recomputes every node.
@@ -4777,16 +4807,18 @@ async fn second_build_recomputes_nothing() {
     // and assert every node SURVIVED (0 recomputed).
     let (code2, out2) = {
         // Set OXIDE_FORCE_BUILD=1 so the fingerprint skip does not fire.
-        unsafe { std::env::set_var("OXIDE_FORCE_BUILD", "1"); }
+        unsafe {
+            std::env::set_var("OXIDE_FORCE_BUILD", "1");
+        }
         let r = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
-        unsafe { std::env::remove_var("OXIDE_FORCE_BUILD"); }
+        unsafe {
+            std::env::remove_var("OXIDE_FORCE_BUILD");
+        }
         r
     };
     assert_eq!(code2, 0, "forced rebuild: {out2}");
-    let second: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(root.join(".oxide/graph.json")).unwrap(),
-    )
-    .unwrap();
+    let second: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.join(".oxide/graph.json")).unwrap()).unwrap();
     assert_eq!(second["node_count"].as_u64().unwrap(), first_nodes);
     assert_eq!(
         second["recomputed_count"].as_u64().unwrap(),
@@ -4827,12 +4859,20 @@ async fn module_route_is_injected_and_built() {
     // Record the module. `oxide add` normally installs it; the opt-out +
     // a pre-populated `node_modules/` lets us exercise the full path
     // (install-skip + contract discovery + modules.json) offline.
-    unsafe { std::env::set_var("OXIDE_ADD_NO_INSTALL", "1"); }
+    unsafe {
+        std::env::set_var("OXIDE_ADD_NO_INSTALL", "1");
+    }
     let (add_code, add_out) = run_ok(&[
-        "oxide", "add", "oxide-test-mod",
-        "--root", root.to_str().unwrap(),
-    ]).await;
-    unsafe { std::env::remove_var("OXIDE_ADD_NO_INSTALL"); }
+        "oxide",
+        "add",
+        "oxide-test-mod",
+        "--root",
+        root.to_str().unwrap(),
+    ])
+    .await;
+    unsafe {
+        std::env::remove_var("OXIDE_ADD_NO_INSTALL");
+    }
     assert_eq!(add_code, 0, "add: {add_out}");
     assert!(add_out.contains("oxide module detected"), "{add_out}");
 
@@ -4872,9 +4912,8 @@ async fn module_route_is_injected_and_built() {
 
     // Sanity: the server manifest carries the module's namespaced route id.
     let server_manifest = root.join("dist/server/server.manifest.json");
-    let manifest: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(&server_manifest).unwrap(),
-    ).unwrap();
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&server_manifest).unwrap()).unwrap();
     let routes = manifest["routes"].as_object().expect("manifest routes");
     assert!(
         routes.keys().any(|k| k.contains("modules/oxide-test-mod")),
@@ -4911,8 +4950,15 @@ fn modules_loader_resolves_entry_and_routes_from_contract() {
     assert_eq!(m.name, "acme-mod");
     assert!(m.routes_present(), "routes dir detected");
     assert_eq!(m.hooks, vec!["transform".to_string()]);
-    let entry = m.entry.as_ref().expect("entry resolved from package.json main");
-    assert!(entry.ends_with("index.mjs"), "entry path: {}", entry.display());
+    let entry = m
+        .entry
+        .as_ref()
+        .expect("entry resolved from package.json main");
+    assert!(
+        entry.ends_with("index.mjs"),
+        "entry path: {}",
+        entry.display()
+    );
 }
 
 #[test]
@@ -5007,16 +5053,24 @@ async fn add_reports_module_contributions() {
     )
     .unwrap();
 
-    unsafe { std::env::set_var("OXIDE_ADD_NO_INSTALL", "1"); }
-    let (code, out) = run_ok(&[
-        "oxide", "add", "full-mod", "--root", root.to_str().unwrap(),
-    ]).await;
-    unsafe { std::env::remove_var("OXIDE_ADD_NO_INSTALL"); }
+    unsafe {
+        std::env::set_var("OXIDE_ADD_NO_INSTALL", "1");
+    }
+    let (code, out) = run_ok(&["oxide", "add", "full-mod", "--root", root.to_str().unwrap()]).await;
+    unsafe {
+        std::env::remove_var("OXIDE_ADD_NO_INSTALL");
+    }
     assert_eq!(code, 0, "add: {out}");
     // The report is structured — every contribution the contract has is
     // enumerated, and each is tagged merged or deferred honestly.
-    assert!(out.contains("oxide module detected — contributes:"), "{out}");
-    assert!(out.contains("routes: 1 page(s) under /modules/full-mod/"), "{out}");
+    assert!(
+        out.contains("oxide module detected — contributes:"),
+        "{out}"
+    );
+    assert!(
+        out.contains("routes: 1 page(s) under /modules/full-mod/"),
+        "{out}"
+    );
     assert!(out.contains("transform (merged)"), "{out}");
     assert!(out.contains("resolveId (not yet merged)"), "{out}");
     assert!(out.contains("adapters: node"), "{out}");
@@ -5040,13 +5094,18 @@ async fn add_warns_on_adapter_mismatch() {
     )
     .unwrap();
 
-    unsafe { std::env::set_var("OXIDE_ADD_NO_INSTALL", "1"); }
-    let (code, out) = run_ok(&[
-        "oxide", "add", "cf-mod", "--root", root.to_str().unwrap(),
-    ]).await;
-    unsafe { std::env::remove_var("OXIDE_ADD_NO_INSTALL"); }
+    unsafe {
+        std::env::set_var("OXIDE_ADD_NO_INSTALL", "1");
+    }
+    let (code, out) = run_ok(&["oxide", "add", "cf-mod", "--root", root.to_str().unwrap()]).await;
+    unsafe {
+        std::env::remove_var("OXIDE_ADD_NO_INSTALL");
+    }
     assert_eq!(code, 0, "add: {out}");
-    assert!(out.contains("MOD-ADAPTER"), "adapter mismatch warning: {out}");
+    assert!(
+        out.contains("MOD-ADAPTER"),
+        "adapter mismatch warning: {out}"
+    );
     assert!(out.contains("binary"), "project adapter named: {out}");
 }
 
@@ -5075,8 +5134,7 @@ async fn mcp_graph_tool_reports_demand_graph_snapshot() {
     }
 
     // Build so the snapshot is written, then the MCP tool surfaces it.
-    let (code, _out) =
-        run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
+    let (code, _out) = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
     assert_eq!(code, 0);
 
     let server = crate::mcp::OxideMcp::new(root.clone());
@@ -5096,7 +5154,9 @@ async fn mcp_graph_tool_reports_demand_graph_snapshot() {
     assert_eq!(g["version"], "v1");
     let count = g["node_count"].as_u64().unwrap();
     assert!(count > 0, "node_count positive (got {count})");
-    let kinds = g["nodes_by_kind"].as_object().expect("nodes_by_kind object");
+    let kinds = g["nodes_by_kind"]
+        .as_object()
+        .expect("nodes_by_kind object");
     for expected in ["module", "chunk", "manifest"] {
         assert!(
             kinds.contains_key(expected),
@@ -5135,13 +5195,13 @@ async fn migrate_next_pages_converts_to_oxide_routes() {
     )
     .unwrap();
 
-    let (code, out) = run_ok(&[
-        "oxide", "migrate", "--root", root.to_str().unwrap(), "next",
-    ])
-    .await;
+    let (code, out) = run_ok(&["oxide", "migrate", "--root", root.to_str().unwrap(), "next"]).await;
     assert_eq!(code, 0, "dry run: {out}");
     // Dry run — no writes.
-    assert!(!root.join("src/routes/page.tsx").exists(), "dry run writes nothing");
+    assert!(
+        !root.join("src/routes/page.tsx").exists(),
+        "dry run writes nothing"
+    );
     // Both conventional pages are planned.
     assert!(out.contains("pages/index.tsx"), "{out}");
     assert!(out.contains("src/routes/page.tsx"), "{out}");
@@ -5153,7 +5213,12 @@ async fn migrate_next_pages_converts_to_oxide_routes() {
 
     // Now write.
     let (code, out) = run_ok(&[
-        "oxide", "migrate", "--write", "--root", root.to_str().unwrap(), "next",
+        "oxide",
+        "migrate",
+        "--write",
+        "--root",
+        root.to_str().unwrap(),
+        "next",
     ])
     .await;
     assert_eq!(code, 0, "write: {out}");
@@ -5171,7 +5236,12 @@ async fn migrate_next_pages_converts_to_oxide_routes() {
 
     // Re-running refuses to overwrite.
     let (code, out) = run_ok(&[
-        "oxide", "migrate", "--write", "--root", root.to_str().unwrap(), "next",
+        "oxide",
+        "migrate",
+        "--write",
+        "--root",
+        root.to_str().unwrap(),
+        "next",
     ])
     .await;
     assert_eq!(code, 1, "second write must refuse: {out}");
@@ -5197,7 +5267,12 @@ export default function Post({ post }) { return <main>{post.title}</main>; }
     .unwrap();
 
     let (code, out) = run_ok(&[
-        "oxide", "migrate", "--write", "--root", root.to_str().unwrap(), "next",
+        "oxide",
+        "migrate",
+        "--write",
+        "--root",
+        root.to_str().unwrap(),
+        "next",
     ])
     .await;
     assert_eq!(code, 0, "{out}");
@@ -5205,8 +5280,14 @@ export default function Post({ post }) { return <main>{post.title}</main>; }
     assert!(written.is_file(), "{out}");
     let body = std::fs::read_to_string(&written).unwrap();
     // `getServerSideProps` was rewritten to an Oxide `load`.
-    assert!(body.contains("export async function load("), "load emitted: {body}");
-    assert!(!body.contains("export async function getServerSideProps"), "GSSP removed: {body}");
+    assert!(
+        body.contains("export async function load("),
+        "load emitted: {body}"
+    );
+    assert!(
+        !body.contains("export async function getServerSideProps"),
+        "GSSP removed: {body}"
+    );
     // The internal fetch is preserved.
     assert!(body.contains("fetchPost("), "body preserved: {body}");
 }
@@ -5230,14 +5311,14 @@ export default function Admin() { return <main>admin</main>; }
     )
     .unwrap();
 
-    let (code, out) = run_ok(&[
-        "oxide", "migrate", "--root", root.to_str().unwrap(), "next",
-    ])
-    .await;
+    let (code, out) = run_ok(&["oxide", "migrate", "--root", root.to_str().unwrap(), "next"]).await;
     assert_eq!(code, 0, "{out}");
     // Redirect uses are reported as follow-ups, not silently mangled.
     assert!(out.contains("redirect/notFound"), "{out}");
-    assert!(out.contains("port by hand") || out.contains("skipped"), "{out}");
+    assert!(
+        out.contains("port by hand") || out.contains("skipped"),
+        "{out}"
+    );
 }
 
 #[tokio::test]
@@ -5263,7 +5344,12 @@ async fn migrate_next_app_router_path_rewrite() {
     .unwrap();
 
     let (code, _) = run_ok(&[
-        "oxide", "migrate", "--write", "--root", root.to_str().unwrap(), "next",
+        "oxide",
+        "migrate",
+        "--write",
+        "--root",
+        root.to_str().unwrap(),
+        "next",
     ])
     .await;
     assert_eq!(code, 0);
@@ -5281,11 +5367,7 @@ async fn migrate_sveltekit_renames_plus_prefixed_files() {
     let root = dir.path().to_path_buf();
     std::fs::write(root.join("svelte.config.js"), "export default {};\n").unwrap();
     std::fs::create_dir_all(root.join("src/routes/blog")).unwrap();
-    std::fs::write(
-        root.join("src/routes/+page.svelte"),
-        "<main>home</main>\n",
-    )
-    .unwrap();
+    std::fs::write(root.join("src/routes/+page.svelte"), "<main>home</main>\n").unwrap();
     std::fs::write(
         root.join("src/routes/blog/+page.svelte"),
         "<main>blog</main>\n",
@@ -5296,16 +5378,17 @@ async fn migrate_sveltekit_renames_plus_prefixed_files() {
         "export async function load() { return {}; }\n",
     )
     .unwrap();
-    std::fs::write(
-        root.join("src/routes/+layout.svelte"),
-        "<slot />\n",
-    )
-    .unwrap();
+    std::fs::write(root.join("src/routes/+layout.svelte"), "<slot />\n").unwrap();
     // A non-route file (a component) — should not be renamed.
     std::fs::write(root.join("src/routes/MyComponent.svelte"), "<p>x</p>\n").unwrap();
 
     let (code, out) = run_ok(&[
-        "oxide", "migrate", "--write", "--root", root.to_str().unwrap(), "sveltekit",
+        "oxide",
+        "migrate",
+        "--write",
+        "--root",
+        root.to_str().unwrap(),
+        "sveltekit",
     ])
     .await;
     assert_eq!(code, 0, "{out}");
@@ -5340,29 +5423,30 @@ async fn migrate_unknown_source_and_missing_marker() {
 
     // Unknown source → exit 2.
     let (code, out) = run_ok(&[
-        "oxide", "migrate", "--root", root.to_str().unwrap(), "angular",
+        "oxide",
+        "migrate",
+        "--root",
+        root.to_str().unwrap(),
+        "angular",
     ])
     .await;
     assert_eq!(code, 2, "{out}");
     assert!(out.contains("unknown source"), "{out}");
 
     // Nuxt without markers → exit 2.
-    let (code, out) = run_ok(&[
-        "oxide", "migrate", "--root", root.to_str().unwrap(), "nuxt",
-    ])
-    .await;
+    let (code, out) = run_ok(&["oxide", "migrate", "--root", root.to_str().unwrap(), "nuxt"]).await;
     assert_eq!(code, 2, "{out}");
     assert!(out.contains("no Nuxt project detected"), "{out}");
 
     // Vite with a config but no entry: config is the marker, entry missing
     // is a reported follow-up, not an error.
-    let (code, out) = run_ok(&[
-        "oxide", "migrate", "--root", root.to_str().unwrap(), "vite",
-    ])
-    .await;
+    let (code, out) = run_ok(&["oxide", "migrate", "--root", root.to_str().unwrap(), "vite"]).await;
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("Vite"), "{out}");
-    assert!(out.contains("no src/main"), "entry missing is reported: {out}");
+    assert!(
+        out.contains("no src/main"),
+        "entry missing is reported: {out}"
+    );
 }
 
 // ─── §5-A full incremental: per-route prerender reuse ────────────────────
@@ -5394,13 +5478,16 @@ async fn incremental_build_reuses_unchanged_prerenders() {
         "cold build has nothing to reuse: {out1}",
     );
     // The snapshot now carries route_prerenders.
-    let snap1: serde_json::Value = serde_json::from_slice(
-        &fs::read(root.join(".oxide/graph.json")).unwrap(),
-    )
-    .unwrap();
-    let recs1 = snap1["route_prerenders"].as_array().expect("route_prerenders array");
+    let snap1: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join(".oxide/graph.json")).unwrap()).unwrap();
+    let recs1 = snap1["route_prerenders"]
+        .as_array()
+        .expect("route_prerenders array");
     let n1 = recs1.len();
-    assert!(n1 >= 2, "at least two prerendered routes recorded (got {n1})");
+    assert!(
+        n1 >= 2,
+        "at least two prerendered routes recorded (got {n1})"
+    );
     // Every record has the fields the reuse check needs.
     for r in recs1 {
         assert!(r["route_id"].is_string());
@@ -5413,9 +5500,13 @@ async fn incremental_build_reuses_unchanged_prerenders() {
     // Build 2 — forced (bypass the whole-build fingerprint skip so the
     // incremental path itself runs) with no source change.
     let (c2, out2) = {
-        unsafe { std::env::set_var("OXIDE_FORCE_BUILD", "1"); }
+        unsafe {
+            std::env::set_var("OXIDE_FORCE_BUILD", "1");
+        }
         let r = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
-        unsafe { std::env::remove_var("OXIDE_FORCE_BUILD"); }
+        unsafe {
+            std::env::remove_var("OXIDE_FORCE_BUILD");
+        }
         r
     };
     assert_eq!(c2, 0, "build 2: {out2}");
@@ -5433,9 +5524,13 @@ async fn incremental_build_reuses_unchanged_prerenders() {
     )
     .unwrap();
     let (c3, out3) = {
-        unsafe { std::env::set_var("OXIDE_FORCE_BUILD", "1"); }
+        unsafe {
+            std::env::set_var("OXIDE_FORCE_BUILD", "1");
+        }
         let r = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
-        unsafe { std::env::remove_var("OXIDE_FORCE_BUILD"); }
+        unsafe {
+            std::env::remove_var("OXIDE_FORCE_BUILD");
+        }
         r
     };
     assert_eq!(c3, 0, "build 3: {out3}");
@@ -5445,7 +5540,8 @@ async fn incremental_build_reuses_unchanged_prerenders() {
         "editing one page re-renders that page; reuse drops (got {reused3}, was {n1}): {out3}",
     );
     assert_eq!(
-        reused3, n1 - 1,
+        reused3,
+        n1 - 1,
         "exactly one route re-rendered (got {reused3}, expected {}): {out3}",
         n1 - 1,
     );
@@ -5475,7 +5571,11 @@ fn collect_plugin_paths_includes_module_entries_per_hook() {
     let root = dir.path().to_path_buf();
     let pkg = root.join("node_modules/alias-mod");
     fs::create_dir_all(&pkg).unwrap();
-    fs::write(pkg.join("index.mjs"), "export function resolveId() {}\nexport function load() {}\n").unwrap();
+    fs::write(
+        pkg.join("index.mjs"),
+        "export function resolveId() {}\nexport function load() {}\n",
+    )
+    .unwrap();
     fs::write(
         pkg.join("package.json"),
         r#"{"name":"alias-mod","main":"./index.mjs","oxide":{"module":{"hooks":["resolveId","load"]}}}"#,
@@ -5487,7 +5587,10 @@ fn collect_plugin_paths_includes_module_entries_per_hook() {
 
     let resolve = crate::collect_plugin_paths_for_hook(&root, &cfg, "resolveId");
     assert_eq!(resolve.len(), 1, "resolveId collector includes the module");
-    assert!(resolve[0].ends_with("index.mjs"), "resolved entry: {resolve:?}");
+    assert!(
+        resolve[0].ends_with("index.mjs"),
+        "resolved entry: {resolve:?}"
+    );
 
     let load = crate::collect_plugin_paths_for_hook(&root, &cfg, "load");
     assert_eq!(load.len(), 1, "load collector includes the module");
@@ -5547,15 +5650,18 @@ async fn build_records_resolver_edges_for_bare_imports() {
     let (code, out) = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
     assert_eq!(code, 0, "build: {out}");
 
-    let snap: serde_json::Value = serde_json::from_slice(
-        &fs::read(root.join(".oxide/graph.json")).unwrap(),
-    )
-    .unwrap();
+    let snap: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join(".oxide/graph.json")).unwrap()).unwrap();
     let nodes = snap["nodes"].as_array().expect("nodes array");
     // Find the node for the page we rewrote.
     let page_node = nodes
         .iter()
-        .find(|n| n["key"].as_str().map(|k| k.contains("src/routes/page.tsx")).unwrap_or(false))
+        .find(|n| {
+            n["key"]
+                .as_str()
+                .map(|k| k.contains("src/routes/page.tsx"))
+                .unwrap_or(false)
+        })
         .expect("page node recorded");
     // It recorded a Resolver edge for `react` and for `date-fns`. Those are
     // the only two deps, so dep_count >= 2. (Input::File is one more, added
@@ -5603,10 +5709,8 @@ async fn build_records_plugin_options_for_plugin_entries_only() {
     let (code, out) = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
     assert_eq!(code, 0, "build: {out}");
 
-    let snap: serde_json::Value = serde_json::from_slice(
-        &fs::read(root.join(".oxide/graph.json")).unwrap(),
-    )
-    .unwrap();
+    let snap: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join(".oxide/graph.json")).unwrap()).unwrap();
     let nodes = snap["nodes"].as_array().expect("nodes array");
 
     // The plugin file node should have dep_count >= 2 (its Input::File +
@@ -5615,9 +5719,12 @@ async fn build_records_plugin_options_for_plugin_entries_only() {
     // the point of this test is the edge *is* recorded when the file is
     // processed. Skip the assertion if the plugin file is not part of the
     // recorded entry set, and assert the wiring path exists.
-    let plugin_node = nodes
-        .iter()
-        .find(|n| n["key"].as_str().map(|k| k.contains("plugins/my-plugin.mjs")).unwrap_or(false));
+    let plugin_node = nodes.iter().find(|n| {
+        n["key"]
+            .as_str()
+            .map(|k| k.contains("plugins/my-plugin.mjs"))
+            .unwrap_or(false)
+    });
     if let Some(n) = plugin_node {
         let dep_count = n["dep_count"].as_u64().unwrap_or(0);
         assert!(
@@ -5631,7 +5738,12 @@ async fn build_records_plugin_options_for_plugin_entries_only() {
     // entries). Sanity: no page node has a suspiciously high dep_count.
     let page_node = nodes
         .iter()
-        .find(|n| n["key"].as_str().map(|k| k.contains("src/routes/page.tsx")).unwrap_or(false))
+        .find(|n| {
+            n["key"]
+                .as_str()
+                .map(|k| k.contains("src/routes/page.tsx"))
+                .unwrap_or(false)
+        })
         .expect("page node recorded");
     // The fixture's page imports nothing bare — dep_count should be exactly
     // 1 (the Input::File edge). Two more would mean the plugin-options
@@ -5664,7 +5776,10 @@ fn lockfile_change_invalidates_the_resolver_graph() {
     // "a lockfile change is a full resolver invalidation" contract.
     let before = g.version();
     let _ = g.invalidate(&[]);
-    assert!(g.version() > before, "epoch bumped on lockfile invalidation");
+    assert!(
+        g.version() > before,
+        "epoch bumped on lockfile invalidation"
+    );
 }
 
 struct FileComputeForTest(String);
@@ -5699,12 +5814,16 @@ async fn client_bundle_skips_only_when_its_own_inputs_change() {
         async move {
             let mut env_set = false;
             if force {
-                unsafe { std::env::set_var("OXIDE_FORCE_BUILD", "1"); }
+                unsafe {
+                    std::env::set_var("OXIDE_FORCE_BUILD", "1");
+                }
                 env_set = true;
             }
             let r = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
             if env_set {
-                unsafe { std::env::remove_var("OXIDE_FORCE_BUILD"); }
+                unsafe {
+                    std::env::remove_var("OXIDE_FORCE_BUILD");
+                }
             }
             r
         }
@@ -5713,7 +5832,10 @@ async fn client_bundle_skips_only_when_its_own_inputs_change() {
     // Cold: nothing to skip.
     let (c1, out1) = build(false).await;
     assert_eq!(c1, 0, "{out1}");
-    assert!(!out1.contains("bundle: client unchanged"), "cold build bundles: {out1}");
+    assert!(
+        !out1.contains("bundle: client unchanged"),
+        "cold build bundles: {out1}"
+    );
 
     // No change: the client bundle is skipped.
     let (c2, out2) = build(true).await;
@@ -5763,7 +5885,10 @@ fn find_literal_line_locates_a_literal() {
 #[test]
 fn find_literal_line_returns_none_for_absent_literal() {
     assert!(crate::find_literal_line("const a = 1;\n", "not-here").is_none());
-    assert!(crate::find_literal_line("anything", "").is_none(), "empty needle");
+    assert!(
+        crate::find_literal_line("anything", "").is_none(),
+        "empty needle"
+    );
 }
 
 #[tokio::test]
@@ -5785,4 +5910,120 @@ async fn build_records_per_route_chunk_hashes() {
     assert_eq!(pair.len(), 2);
     let hash = pair[1].as_str().unwrap();
     assert_eq!(hash.len(), 64, "blake3 hex is 64 chars");
+}
+
+// ─── WP-B2: per-settle deferred delivery ─────────────────────────────────
+
+/// The B2 contract, tested at the seam rather than through a live server:
+/// given a render stream ending in `</body></html>` and a settle channel that
+/// delivers two values 30ms apart, the output must
+///   1. emit the body bytes BEFORE the first settle (TTFB is not held),
+///   2. withhold `</body></html>` until every settle has been delivered,
+///   3. emit exactly one resolution script per settle, in settle order.
+#[tokio::test]
+async fn settles_flush_per_settle_and_close_last() {
+    use futures::StreamExt as _;
+
+    // A render stream: a shell, then the closing tags.
+    let chunks: Vec<Result<bytes::Bytes, std::io::Error>> = vec![
+        Ok(bytes::Bytes::from_static(b"<html><body><main>shell</main>")),
+        Ok(bytes::Bytes::from_static(b"</body></html>")),
+    ];
+    let src: oxide_server::BodyStream =
+        Box::pin(futures::stream::iter(chunks)) as oxide_server::BodyStream;
+
+    // Two settles, delivered with a real gap so ordering is observable.
+    let (tx, rx) = tokio::sync::mpsc::channel(4);
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let _ = tx
+            .send(serde_json::json!({"deferredSettle": {"id": "1", "value": {"a": 1}}}))
+            .await;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let _ = tx
+            .send(serde_json::json!({"deferredSettle": {"id": "2", "value": {"b": 2}}}))
+            .await;
+    });
+
+    let out = crate::strip_close_and_append_settles(src, rx, "NONCE".to_string());
+    let mut out = out;
+    let mut all: Vec<u8> = Vec::new();
+    while let Some(item) = out.next().await {
+        all.extend_from_slice(&item.expect("chunk"));
+    }
+    let text = String::from_utf8_lossy(&all);
+
+    // 1. The shell reached the output.
+    assert!(text.contains("<main>shell</main>"), "shell emitted: {text}");
+    // 2. Exactly one script per settle.
+    assert_eq!(
+        text.matches("application/oxide-deferred").count(),
+        2,
+        "one script per settle: {text}",
+    );
+    assert!(text.contains(r#"data-id="1""#), "settle 1: {text}");
+    assert!(text.contains(r#"data-id="2""#), "settle 2: {text}");
+    // 3. Ordering: settle 1 precedes settle 2.
+    let p1 = text.find(r#"data-id="1""#).unwrap();
+    let p2 = text.find(r#"data-id="2""#).unwrap();
+    assert!(p1 < p2, "settles in settle order");
+    // 4. The document closes LAST — after every settle script.
+    let close = text.rfind("</body></html>").expect("close present");
+    assert!(close > p2, "closing tags emitted after the last settle");
+    // 5. The body was never emitted mid-stream with the close attached.
+    let shell_at = text.find("<main>shell</main>").unwrap();
+    assert!(shell_at < p1, "shell precedes the settles");
+}
+
+/// The close-hold must survive a chunk boundary splitting `</body></html>`.
+#[tokio::test]
+async fn close_tag_split_across_chunks_is_still_withheld() {
+    use futures::StreamExt as _;
+
+    // `</body>` and `</html>` arrive as separate chunks.
+    let chunks: Vec<Result<bytes::Bytes, std::io::Error>> = vec![
+        Ok(bytes::Bytes::from_static(b"<main>x</main></body>")),
+        Ok(bytes::Bytes::from_static(b"</html>")),
+    ];
+    let src: oxide_server::BodyStream =
+        Box::pin(futures::stream::iter(chunks)) as oxide_server::BodyStream;
+    let (tx, rx) = tokio::sync::mpsc::channel::<serde_json::Value>(1);
+    // Drop the sender immediately: with no settles coming, the receiver must
+    // observe the channel closed, not wait for a message that never arrives.
+    drop(tx);
+
+    let mut out = crate::strip_close_and_append_settles(src, rx, "N".into());
+    let mut all: Vec<u8> = Vec::new();
+    while let Some(item) = out.next().await {
+        all.extend_from_slice(&item.expect("chunk"));
+    }
+    let text = String::from_utf8_lossy(&all);
+    assert!(text.contains("<main>x</main>"), "body preserved: {text}");
+    assert_eq!(
+        text.matches("</body></html>").count(),
+        1,
+        "the close appears exactly once, at the end: {text}",
+    );
+    assert!(text.ends_with("</body></html>"), "close is last: {text}");
+}
+
+/// A route with no settles must be byte-identical to the buffered path.
+#[tokio::test]
+async fn no_settles_leaves_the_document_unchanged() {
+    use futures::StreamExt as _;
+
+    let body = b"<html><body><main>x</main></body></html>";
+    let chunks: Vec<Result<bytes::Bytes, std::io::Error>> =
+        vec![Ok(bytes::Bytes::from_static(body))];
+    let src: oxide_server::BodyStream =
+        Box::pin(futures::stream::iter(chunks)) as oxide_server::BodyStream;
+    let (tx, rx) = tokio::sync::mpsc::channel::<serde_json::Value>(1);
+    drop(tx);
+
+    let mut out = crate::strip_close_and_append_settles(src, rx, "N".into());
+    let mut all: Vec<u8> = Vec::new();
+    while let Some(item) = out.next().await {
+        all.extend_from_slice(&item.expect("chunk"));
+    }
+    assert_eq!(all, body, "no-settle output equals the input bytes");
 }
