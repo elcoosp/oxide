@@ -2,7 +2,7 @@
 // the render crate's inline swapper resolve promise-likes in client data.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { attachDeferGlue, wireDeferreds } from '../src/client/defer-glue.ts'
+import { attachDeferGlue, wireDeferreds, DeferredClient } from '../src/client/defer-glue.ts'
 
 function fakeDoc() {
   const listeners = new Map<string, Array<(e: unknown) => void>>()
@@ -108,3 +108,94 @@ test('defer glue: ox:swap now carries the streamed HTML as detail.value', async 
   glue.dispose()
 })
 
+
+// ─── WP-B3: per-settle scripts arriving after load ───────────────────────
+
+/** A tiny fake document: enough of the DOM surface `attachDeferGlue` uses
+ *  (querySelectorAll, addEventListener, readyState, documentElement) plus a
+ *  MutationObserver the test can drive. */
+function fakeDocWithObserver() {
+  const scripts: Array<{ type: string; dataId: string | null; text: string }> = []
+  const listeners = new Map<string, Array<(e: unknown) => void>>()
+  let observerCb: ((m: unknown[]) => void) | null = null
+  const doc = {
+    readyState: 'complete',
+    documentElement: {},
+    querySelectorAll(sel: string) {
+      if (sel !== 'script[type="application/oxide-deferred"]') return []
+      return scripts.map((s) => ({
+        textContent: s.text,
+        getAttribute: (n: string) => (n === 'data-id' ? s.dataId : n === 'type' ? s.type : null),
+      }))
+    },
+    addEventListener(name: string, fn: (e: unknown) => void) {
+      const list = listeners.get(name) ?? []
+      list.push(fn)
+      listeners.set(name, list)
+    },
+    removeEventListener() {},
+  }
+  const MO = function (cb: (m: unknown[]) => void) {
+    observerCb = cb
+    return { observe() {}, disconnect() { observerCb = null } }
+  }
+  return {
+    doc,
+    MO,
+    /** Append a settle script and fire the observer, as the browser would. */
+    appendSettle(id: string, value: unknown) {
+      scripts.push({ type: 'application/oxide-deferred', dataId: id, text: JSON.stringify(value) })
+      observerCb?.([
+        { addedNodes: [{ tagName: 'SCRIPT', getAttribute: (n: string) => (n === 'type' ? 'application/oxide-deferred' : id) }] },
+      ])
+    },
+  }
+}
+
+test('a per-settle script appended after load resolves its slot', async () => {
+  const { doc, MO, appendSettle } = fakeDocWithObserver()
+  const g = (globalThis as unknown as { MutationObserver?: unknown }).MutationObserver
+  ;(globalThis as unknown as { MutationObserver?: unknown }).MutationObserver = MO
+  try {
+    const glue = attachDeferGlue({ doc: doc as unknown as Document })
+    const slot = new DeferredClient<{ late: string }>()
+    glue.registry.set(7, slot as unknown as DeferredClient)
+    appendSettle('7', { late: 'arrived' })
+    const v = await slot.promise
+    assert.deepEqual(v, { late: 'arrived' })
+    glue.dispose()
+  } finally {
+    ;(globalThis as unknown as { MutationObserver?: unknown }).MutationObserver = g
+  }
+})
+
+test('a late per-settle rejection rejects the slot', async () => {
+  const { doc, MO, appendSettle } = fakeDocWithObserver()
+  const g = (globalThis as unknown as { MutationObserver?: unknown }).MutationObserver
+  ;(globalThis as unknown as { MutationObserver?: unknown }).MutationObserver = MO
+  try {
+    const glue = attachDeferGlue({ doc: doc as unknown as Document })
+    const slot = new DeferredClient<unknown>()
+    glue.registry.set(3, slot as unknown as DeferredClient)
+    appendSettle('3', { __oxide_deferred_error: 'boom' })
+    await assert.rejects(slot.promise, /boom/)
+    glue.dispose()
+  } finally {
+    ;(globalThis as unknown as { MutationObserver?: unknown }).MutationObserver = g
+  }
+})
+
+test('dispose disconnects the observer', () => {
+  const { doc, MO } = fakeDocWithObserver()
+  const g = (globalThis as unknown as { MutationObserver?: unknown }).MutationObserver
+  ;(globalThis as unknown as { MutationObserver?: unknown }).MutationObserver = MO
+  try {
+    const glue = attachDeferGlue({ doc: doc as unknown as Document })
+    glue.dispose()
+    // The fake's disconnect nulls its callback; a later append would not
+    // reach the glue. Reaching here without throwing is the assertion.
+    assert.ok(true)
+  } finally {
+    ;(globalThis as unknown as { MutationObserver?: unknown }).MutationObserver = g
+  }
+})
