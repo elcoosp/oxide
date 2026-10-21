@@ -21,9 +21,7 @@
 //! component re-bundles exactly one chunk — is the follow-up that this
 //! snapshot makes measurable.
 
-use oxide_graph::{
-    Compute, ComputeCtx, DemandGraph, NodeKey, NodeOutput, Result as GraphResult,
-};
+use oxide_graph::{Compute, ComputeCtx, DemandGraph, NodeKey, NodeOutput, Result as GraphResult};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
