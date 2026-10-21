@@ -55,6 +55,13 @@ impl LoaderHost {
                 .get("locale")
                 .cloned()
                 .unwrap_or(Value::String(String::new())),
+            // §20 / G2: W3C trace context forwarded to the loader's worker.
+            // The worker's `traceparentFromPayload` reads
+            // `payload.trace.traceparent` to stamp server-side `fetch()`.
+            // Absent → Null; the worker generates a fresh trace id.
+            // This is the same payload builder the V8 dispatcher reads, so
+            // one whitelist entry reaches both backends.
+            "trace": input.get("trace").cloned().unwrap_or(Value::Null),
         })
     }
 
@@ -371,6 +378,31 @@ mod tests {
             "parent_data survives the whitelist"
         );
         assert_eq!(p["locale"], "en", "locale survives the whitelist");
+    }
+
+    #[test]
+    fn build_payload_forwards_trace() {
+        let trace = serde_json::json!({
+            "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+            "tracestate": null,
+        });
+        let input = serde_json::json!({
+            "route": "routes/x",
+            "url": "/x",
+            "trace": trace.clone(),
+        });
+        let p = LoaderHost::build_payload("/x/page.server.ts", &input);
+        assert_eq!(
+            p["trace"], trace,
+            "trace forwarded: {p}"
+        );
+    }
+
+    #[test]
+    fn build_payload_defaults_trace_to_null() {
+        let input = serde_json::json!({ "url": "/x" });
+        let p = LoaderHost::build_payload("/x/page.server.ts", &input);
+        assert_eq!(p["trace"], serde_json::Value::Null, "trace defaults to null: {p}");
     }
 
     #[test]
