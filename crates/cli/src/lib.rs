@@ -693,7 +693,7 @@ async fn scan_routes(
             .map(|s| s.as_str())
             .collect();
         eprintln!(
-            "modules: `{}` declares hook(s) [{}] — only `transform` is merged today",
+            "modules: `{}` declares hook(s) [{}] — transform, resolveId and load are merged; the rest are deferred",
             m.name,
             unmerged.join(", "),
         );
@@ -1178,6 +1178,14 @@ async fn hmr_route_data_update(
 /// This is the dev-mode bundling path: a full per-module dev server is
 /// post-v0.1. A cold `oxide dev` on a fresh project therefore pays one
 /// unminified client build (~1-3s on the smoke fixtures).
+/// §6.4 / WP-A2: the canonical route id used by every emitted manifest and
+/// by the runtime component resolver. It is the route *directory* form: the
+/// scanner's `routes/<...>/page` loses its `/page` suffix; layouts, error,
+/// not-found and template ids are already canonical.
+fn canonical_route_id(id: &str) -> String {
+    id.strip_suffix("/page").unwrap_or(id).to_string()
+}
+
 async fn ensure_dev_client_bundle(
     rootp: &Path,
     cfg: &oxide_config::OxideConfig,
@@ -1206,7 +1214,14 @@ async fn ensure_dev_client_bundle(
             oxide_router::RouteKind::Layout => {
                 entries.insert(e.id.0.clone(), rootp.join(&cfg.routes.dir).join(&e.file));
             }
-            oxide_router::RouteKind::Page | oxide_router::RouteKind::Endpoint => {
+            oxide_router::RouteKind::Page
+            | oxide_router::RouteKind::Endpoint
+            // §6.4 / WP-A1: error / not-found / template components are part
+            // of the generated component surface too — the resolver must be
+            // able to find them without a hand-written config map.
+            | oxide_router::RouteKind::Error
+            | oxide_router::RouteKind::NotFound
+            | oxide_router::RouteKind::Template => {
                 entries.insert(e.id.0.clone(), rootp.join(&cfg.routes.dir).join(&e.file));
             }
             _ => {}
@@ -1451,6 +1466,46 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         Some(&cfg.cache.handler),
     )
     .await;
+    // §6.4 / WP-C1: in dev there is no build entry, so hand the worker the
+    // route-table → source-file map. TS/JS/JSX go through the worker's
+    // loader; SFCs are precompiled once here (and recompiled on watcher
+    // invalidation, which re-imports through the bumped generation).
+    {
+        use oxide_router::RouteKind;
+        let routes_root = rootp.join(&cfg.routes.dir);
+        let entries: BTreeMap<String, PathBuf> = tree
+            .entries
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e.kind,
+                    RouteKind::Page
+                        | RouteKind::Layout
+                        | RouteKind::Error
+                        | RouteKind::NotFound
+                        | RouteKind::Template
+                )
+            })
+            .map(|e| (canonical_route_id(&e.id.0), routes_root.join(&e.file)))
+            .collect();
+        if !entries.is_empty() {
+            let framework = cfg
+                .framework
+                .adapter
+                .as_deref()
+                .or(cfg.framework.name.as_deref());
+            let sources = framework_shim::dev_component_sources(
+                &rootp,
+                framework,
+                entries,
+                stack.tooling_pool.as_ref(),
+            )
+            .await;
+            if let Ok(mut src) = stack.component_source.write() {
+                src.sources = sources;
+            }
+        }
+    }
     if let Some(name) = stack.renderer_name() {
         outln!(w, "framework renderer: {}", name);
     }
@@ -3553,6 +3608,12 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 // `client.manifest.json`. Without this the client can only
                 // hydrate a bare page and React reports #418.
                 | oxide_router::RouteKind::Layout
+                // §6.4 / WP-A1: the generated SSR entry is the component
+                // surface; it must include the error / not-found / template
+                // modules the renderer resolves on failures and navigation.
+                | oxide_router::RouteKind::Error
+                | oxide_router::RouteKind::NotFound
+                | oxide_router::RouteKind::Template
         ) {
             if matches!(e.kind, oxide_router::RouteKind::Loading) {
                 loading_entries.insert(e.id.0.clone(), rootp.join(&cfg.routes.dir).join(&e.file));
@@ -3561,6 +3622,15 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             }
         }
     }
+    // WP-A2: the SSR entry and server manifest speak the canonical route id
+    // (directory form). The client manifest keeps its historical `/page`
+    // keys — the client router/manifest matcher consumes that shape and is
+    // already manifest-driven; both surfaces are derived from this same
+    // entry set, and the build test asserts their canonical key sets match.
+    let server_entries: BTreeMap<String, PathBuf> = entries
+        .iter()
+        .map(|(id, p)| (canonical_route_id(id), p.clone()))
+        .collect();
     let client_out = dist.join("client");
     let server_out = dist.join("server");
     // RolldownBundler handles every project shape: it lowers TS/JSX via
@@ -3723,7 +3793,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     .await;
     let server_precompiled = precompile::precompile_entries(
         stack.tooling_pool.as_ref(),
-        &entries,
+        &server_entries,
         "ssr",
         framework_name,
         precompile_cache.as_ref(),
@@ -3807,7 +3877,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     );
     let server_opts = bundle_env_options(
         oxide_bundler::BundleEnv::Ssr,
-        entries.clone(),
+        server_entries.clone(),
         server_out.clone(),
         server_precompiled,
         jsx_source,
@@ -4400,7 +4470,9 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
 
         let pattern = pattern_of(&e.segments);
         let nonce_for = nonce.clone();
-        let route_id = e.id.0.clone();
+        // WP-A2: prerender speaks the same canonical id the live pipeline
+        // hands the renderer, so the adapter's resolver hit is identical.
+        let route_id = canonical_route_id(&e.id.0);
         // §8.2: the layout chain for this route. `e` is a scanned entry;
         // asking the tree to match this route's own id via a synthetic path
         // is overkill — compute the chain directly from the entry list using
@@ -4582,7 +4654,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     outs.push(rel);
                 }
                 if !outs.is_empty() {
-                    prerendered.insert(e.id.0.clone(), outs);
+                    prerendered.insert(route_id.clone(), outs);
                 }
             }
             oxide_compiler::GenerateParamsResult::Runtime { .. } => {
@@ -4681,7 +4753,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                             outs.push(rel);
                         }
                         if !outs.is_empty() {
-                            prerendered.insert(e.id.0.clone(), outs);
+                            prerendered.insert(route_id.clone(), outs);
                         }
                     }
                     Some(_) => {
@@ -4808,7 +4880,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     source_hash: route_src_hash.clone(),
                     nonce: nonce.clone(),
                 });
-                prerendered.insert(e.id.0.clone(), vec![rel]);
+                prerendered.insert(route_id.clone(), vec![rel]);
             }
         }
     }
@@ -5066,7 +5138,23 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         .and_then(|r| r.as_object_mut())
     {
         for (id, row) in routes.iter_mut() {
-            if let Some(e) = tree.entries.iter().find(|e| &e.id.0 == id) {
+            if let Some(e) = tree
+                .entries
+                .iter()
+                .find(|e| canonical_route_id(&e.id.0) == *id)
+            {
+                // WP-A1: error / not-found / template rows have no render
+                // mode of their own — they are rendering infrastructure, not
+                // routable pages.
+                if matches!(
+                    e.kind,
+                    oxide_router::RouteKind::Error
+                        | oxide_router::RouteKind::NotFound
+                        | oxide_router::RouteKind::Template
+                ) {
+                    row["render_mode"] = serde_json::Value::Null;
+                    continue;
+                }
                 let mode = e.render_mode.clone().unwrap_or_else(|| {
                     if static_override.contains(id) {
                         "static".to_string()
@@ -9868,24 +9956,28 @@ async fn cmd_add(root: &str, module: &str, w: Writer<'_>) -> anyhow::Result<i32>
             if m.hooks.is_empty() {
                 outln!(w, "    hooks:  (none)");
             } else {
+                // WP-J4: derive the merged/deferred split from the actual
+                // pipeline (transform, resolveId, load all route through the
+                // plugin chain today; everything else is deferred).
+                let merged_set = ["transform", "resolveId", "load"];
                 let merged: Vec<&str> = m
                     .hooks
                     .iter()
-                    .filter(|h| h.as_str() == "transform")
                     .map(|s| s.as_str())
+                    .filter(|h| merged_set.contains(h))
                     .collect();
                 let deferred: Vec<&str> = m
                     .hooks
                     .iter()
-                    .filter(|h| h.as_str() != "transform")
                     .map(|s| s.as_str())
+                    .filter(|h| !merged_set.contains(h))
                     .collect();
                 let mut parts = Vec::new();
                 if !merged.is_empty() {
                     parts.push(format!("{} (merged)", merged.join(", ")));
                 }
                 if !deferred.is_empty() {
-                    parts.push(format!("{} (not yet merged)", deferred.join(", ")));
+                    parts.push(format!("{} (deferred — not wired into the pipeline yet)", deferred.join(", ")));
                 }
                 outln!(w, "    hooks:  {}", parts.join("; "));
             }
@@ -9906,6 +9998,20 @@ async fn cmd_add(root: &str, module: &str, w: Writer<'_>) -> anyhow::Result<i32>
                     w,
                     "    typegen: present (not merged — deferred to a follow-up)"
                 );
+            }
+            // J2: a native plugin's `enables()` is consulted here so
+            // `oxide add` reports which features the project's plugin set
+            // activates, rather than leaving the list inert.
+            {
+                let cfg = load_config_or_default(&rootp, "development");
+                let enabled: Vec<&str> = crate::native_plugins::parse_native_plugins(&cfg)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|p| p.name())
+                    .collect();
+                if !enabled.is_empty() {
+                    outln!(w, "    native plugins: {}", enabled.join(", "));
+                }
             }
             if m.config_defaults.is_some() {
                 outln!(

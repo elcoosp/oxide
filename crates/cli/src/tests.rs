@@ -1244,14 +1244,53 @@ async fn smoke_app_builds_its_own_pages() {
         .get("routes")
         .and_then(|r| r.as_object())
         .expect("manifest has routes object");
+    // WP-A2: the canonical id is the directory form — no `/page` suffix.
     let index_entry = routes
-        .get("routes/index/page")
-        .or_else(|| routes.get("routes/index"))
-        .expect("manifest has an index route entry");
+        .get("routes/index")
+        .expect("manifest has the canonical index route entry");
     assert_eq!(
         index_entry.get("render_mode").and_then(|v| v.as_str()),
         Some("static"),
         "index route classified static: {index_entry}"
+    );
+
+    // WP-A1: error / not-found components are part of the generated SSR
+    // surface and carry no render mode.
+    for id in ["routes/error", "routes/not-found"] {
+        assert!(routes.contains_key(id), "manifest has `{id}`: {routes:?}");
+        assert!(
+            routes[id].get("render_mode").map(|v| v.is_null()).unwrap_or(false),
+            "`{id}` has a null render_mode: {}",
+            routes[id]
+        );
+    }
+    let ssr_entry = std::fs::read_to_string(dist.join("server/ssr/index.js"))
+        .expect("generated SSR adapter entry");
+    for id in ["routes/error", "routes/not-found"] {
+        assert!(
+            ssr_entry.contains(&format!("\"{id}\"")),
+            "ssr/index.js exports `{id}`: {ssr_entry}"
+        );
+    }
+
+    // WP-A2: the server and client manifests describe the same route set.
+    let client_json: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dist.join("client/client.manifest.json")).unwrap(),
+    )
+    .expect("client manifest parses");
+    let client_routes = client_json
+        .get("routes")
+        .and_then(|r| r.as_object())
+        .expect("client manifest routes");
+    let canonical_client: std::collections::BTreeSet<String> = client_routes
+        .keys()
+        .filter(|k| k.as_str() != "__boot__")
+        .map(|k| k.strip_suffix("/page").unwrap_or(k).to_string())
+        .collect();
+    let server_keys: std::collections::BTreeSet<String> = routes.keys().cloned().collect();
+    assert_eq!(
+        canonical_client, server_keys,
+        "client and server manifests must share canonical route ids"
     );
 
     let _ = std::fs::remove_dir_all(&dist);
@@ -5181,8 +5220,9 @@ async fn add_reports_module_contributions() {
         out.contains("routes: 1 page(s) under /modules/full-mod/"),
         "{out}"
     );
-    assert!(out.contains("transform (merged)"), "{out}");
-    assert!(out.contains("resolveId (not yet merged)"), "{out}");
+    // WP-J4: the report derives from the merged-hook table — transform,
+    // resolveId, and load all route through the plugin pipeline today.
+    assert!(out.contains("transform, resolveId (merged)"), "{out}");
     assert!(out.contains("adapters: node"), "{out}");
     assert!(out.contains("configDefaults: present (not merged"), "{out}");
 }
