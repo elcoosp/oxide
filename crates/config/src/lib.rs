@@ -8,7 +8,6 @@
 // default macro recursion limit (128). Raise it for this crate.
 #![recursion_limit = "512"]
 
-
 use oxide_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -507,7 +506,7 @@ impl Default for BuildConfig {
             sourcemap: "hidden".into(),
             ssr_externals: Vec::new(),
             remote_cache: None,
-                write_branches: None,
+            write_branches: None,
         }
     }
 }
