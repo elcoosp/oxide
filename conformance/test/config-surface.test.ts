@@ -1,14 +1,15 @@
-// Config-surface conformance (spec §14 + §7). Every adapter must expose a
-// callable default export that:
+// Config-surface conformance (spec §14 + §6.4 + §7). Every adapter must
+// expose a callable default export that:
 //   (a) with no options returns an adapter byte-identical to the named
-//       `adapter` export on the home route (IR contract preserved), and
-//   (b) with `ssr: 'real'` + no componentFor emits a comment placeholder
-//       (the real path is reachable through the config surface).
-//
-// This is what the Rust CLI will consume once it loads oxide.config.ts.
+//       `adapter` export on the home route (IR contract preserved),
+//   (b) with `ssr: 'real'` and NO componentFor still selects the real
+//       renderer — components come from the runtime resolver (§6.4), and
+//   (c) the smoke apps' configs contain no component imports/closure: the
+//       §14.1 literal shape is the only supported one.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import reactDefault, { adapter as react, createAdapter as reactCreate } from '../../packages/react/src/index.ts'
 import vueDefault, { adapter as vue, createAdapter as vueCreate } from '../../packages/vue/src/index.ts'
 import svelteDefault, { adapter as svelte, createAdapter as svelteCreate } from '../../packages/svelte/src/index.ts'
@@ -50,10 +51,46 @@ for (const b of BUNDLES) {
     assert.equal(viaFactory, viaNamed, 'factory with no opts == named adapter byte-for-byte')
   })
 
-  test(`config: ${b.name} createAdapter({ssr:'real', componentFor: () => undefined}) emits placeholder`, async () => {
-    const a = b.createAdapter({ ssr: 'real', componentFor: () => undefined })
+  test(`config: ${b.name} real SSR needs no componentFor (resolver supplies components)`, async () => {
+    const a = b.createAdapter({ ssr: 'real' })
     const html = await drain(a.render(asRenderInput({ ...atlas.home, route: 'routes/missing' })))
-    assert.ok(html.includes('no component for route routes/missing'), `placeholder emitted: ${html.slice(0, 120)}`)
+    assert.ok(
+      html.includes('no component resolved for route routes/missing'),
+      `missing-page diagnostic emitted: ${html.slice(0, 160)}`,
+    )
+    assert.ok(
+      html.includes('<!--oxide-status:500-->') || html.includes("data-ox-error='OX-500'"),
+      `missing page is a 500 diagnostic, not a silent skip: ${html.slice(0, 160)}`,
+    )
+  })
+
+  test(`config: ${b.name} createAdapter() with an explicit resolver renders that route`, async () => {
+    const a = b.createAdapter({ ssr: 'real' })
+    const calls: string[] = []
+    const html = await drain(
+      a.render(
+        asRenderInput({
+          ...atlas.home,
+          route: 'routes/probe',
+          // The runtime attaches `resolve`; a test supplies its own.
+          resolve: (id) => {
+            calls.push(id)
+            return undefined
+          },
+        }),
+      ),
+    )
+    assert.ok(calls.length > 0, 'adapter consulted input.resolve')
+    assert.equal(typeof html, 'string')
+  })
+
+  test(`smoke configs: ${b.name} is literal (no component imports/closure)`, () => {
+    const cfg = readFileSync(
+      new URL(`../../examples/smoke-app-${b.name}/oxide.config.ts`, import.meta.url),
+      'utf8',
+    )
+    assert.ok(!/\.(tsx|jsx|vue|svelte)['"]/.test(cfg), `${b.name} config imports no component files`)
+    assert.ok(!/componentFor/.test(cfg), `${b.name} config has no componentFor closure`)
   })
 
   test(`config: ${b.name} default export accepts the smoke-app {compiler:true} shape`, () => {
