@@ -130,6 +130,7 @@ fn to_fw_input(input: PageRenderInput) -> FrameworkRenderInput {
         // adapter consumes this as `input.layouts` to nest the page.
         layouts: input.layouts,
         error_route_id: input.error_route_id,
+        components: None,
     }
 }
 
@@ -185,6 +186,10 @@ pub struct FrameworkStack {
     /// the server built its own `TieredCache` and the worker had a second
     /// one, so they could not see each other's invalidations.
     pub cache_tier: Option<Arc<dyn oxide_cache::CacheHandler>>,
+    /// §6.4: the component source handed to the worker's resolver. Dev fills
+    /// `sources`; prod leaves it empty and the renderer derives the generated
+    /// SSR entry from the project root.
+    pub component_source: Arc<std::sync::RwLock<oxide_jshost::ComponentSource>>,
 }
 
 impl FrameworkStack {
@@ -196,6 +201,9 @@ impl FrameworkStack {
             pool: None,
             tooling_pool: None,
             cache_tier: None,
+            component_source: Arc::new(std::sync::RwLock::new(
+                oxide_jshost::ComponentSource::default(),
+            )),
         }
     }
     /// The attached renderer's name, if any (for the `framework renderer:`
@@ -523,6 +531,10 @@ pub async fn build_framework_stack(
     // moved into the pipeline.
     let pool_for_stack: Arc<dyn oxide_jshost::Pool> = Arc::clone(&pool);
 
+    let component_source: Arc<std::sync::RwLock<oxide_jshost::ComponentSource>> =
+        Arc::new(std::sync::RwLock::new(
+            oxide_jshost::ComponentSource::default(),
+        ));
     // The page renderer needs a config file. Its absence is normal.
     let page_renderer: Option<Arc<dyn PageRenderer>> = match config_path {
         Some(path) => {
@@ -553,6 +565,7 @@ pub async fn build_framework_stack(
                 config_path,
                 bundled_path,
                 name: peeked,
+                components: Arc::clone(&component_source),
                 inner: tokio::sync::OnceCell::new(),
             };
             Some(Arc::new(AdapterPageRenderer::new(Arc::new(lazy))))
@@ -568,6 +581,7 @@ pub async fn build_framework_stack(
         // BUG-02: hand the shared cache tier back to the caller so the L0
         // response cache wraps the *same* handler the worker uses.
         cache_tier: Some(Arc::clone(&cache_tier)),
+        component_source,
     }
 }
 
@@ -592,10 +606,35 @@ pub struct LazyFrameworkRenderer {
     /// Peeked from the config source at construction: the descriptor's own
     /// name is only known after the load this type defers.
     name: String,
+    /// §6.4: the component surface for this render (prod entry or dev map).
+    components: Arc<std::sync::RwLock<oxide_jshost::ComponentSource>>,
     inner: tokio::sync::OnceCell<Arc<dyn FrameworkRenderer>>,
 }
 
 impl LazyFrameworkRenderer {
+    /// Fill the component source for this render. Production derives
+    /// `<project>/dist/server/ssr/index.js` when the build wrote one; dev
+    /// already populated the shared map.
+    fn with_components(&self, mut input: FrameworkRenderInput) -> FrameworkRenderInput {
+        let mut src = self
+            .components
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        if src.entry.is_none() && src.sources.is_empty() {
+            if let Some(root) = std::path::Path::new(&self.config_path).parent() {
+                let entry = root.join("dist/server/ssr/index.js");
+                if entry.is_file() {
+                    src.entry = Some(entry.to_string_lossy().to_string());
+                }
+            }
+        }
+        if !src.is_empty() {
+            input.components = Some(src);
+        }
+        input
+    }
+
     async fn resolve(&self) -> oxide_jshost::Result<Arc<dyn FrameworkRenderer>> {
         let v = self
             .inner
@@ -621,14 +660,57 @@ impl FrameworkRenderer for LazyFrameworkRenderer {
         &self.name
     }
     async fn render(&self, input: FrameworkRenderInput) -> oxide_jshost::Result<String> {
+        let input = self.with_components(input);
         self.resolve().await?.render(input).await
     }
     async fn render_streaming(
         &self,
         input: FrameworkRenderInput,
     ) -> oxide_jshost::Result<oxide_jshost::RenderStream> {
+        let input = self.with_components(input);
         self.resolve().await?.render_streaming(input).await
     }
+}
+
+/// §6.4 / WP-C1: build the dev component map — canonical route id → an
+/// importable module path. TS/JS/JSX sources are imported directly (the
+/// worker's loader compiles them); `.vue`/`.svelte` (and Solid's babel JSX)
+/// are precompiled through the tooling pool and written under
+/// `.oxide/components/`, so the resolver needs no bundler in dev.
+pub async fn dev_component_sources(
+    project_root: &std::path::Path,
+    framework: Option<&str>,
+    entries: std::collections::BTreeMap<String, std::path::PathBuf>,
+    pool: Option<&Arc<dyn oxide_jshost::Pool>>,
+) -> std::collections::BTreeMap<String, String> {
+    let precompiled = crate::precompile::precompile_entries(
+        pool,
+        &entries,
+        "ssr",
+        framework,
+        None,
+        env!("CARGO_PKG_VERSION"),
+    )
+    .await;
+    let comp_dir = project_root.join(".oxide/components");
+    let mut out = std::collections::BTreeMap::new();
+    for (id, src) in entries {
+        if let Some(js) = precompiled.get(&src) {
+            if std::fs::create_dir_all(&comp_dir).is_ok() {
+                let name = format!(
+                    "{}.mjs",
+                    blake3::hash(format!("{id}\u{0}{}", src.display()).as_bytes()).to_hex()
+                );
+                let path = comp_dir.join(name);
+                if std::fs::write(&path, js).is_ok() {
+                    out.insert(id, path.to_string_lossy().to_string());
+                    continue;
+                }
+            }
+        }
+        out.insert(id, src.to_string_lossy().to_string());
+    }
+    out
 }
 
 /// Build a `PageRenderer` for a project's `oxide.config.{ts,mjs,js}`.
