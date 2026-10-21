@@ -4819,6 +4819,7 @@ dependencies = [
  "oxide-render",
  "oxide-router",
  "oxide-server",
+ "rayon",
  "reqwest",
  "rmcp",
  "schemars",
@@ -4874,6 +4875,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "wasm-bindgen",
 ]
 
 [[package]]
