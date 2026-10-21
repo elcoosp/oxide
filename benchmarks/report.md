@@ -88,7 +88,12 @@ routes) was `first200 = 671-1488 ms` — 4-6× what it is now.
 
 ## L0 response cache (`bench:cache`, 1000 sequential GET requests/fixture)
 
-`x-oxide-cache` header distribution + per-request wall time in microseconds.
+`x-oxide-cache` header distribution + **server-side timing** (from
+`Server-Timing: total;dur=X`) in milliseconds. The previous report used
+`curl`'s wall-clock time, which was dominated by process-spawn (~20ms per
+invocation) and *masked* the real server-side number. The harness now reads
+the server's own measurement.
+
 **1000 hits, 0 misses, 0 bypass** on every fixture.
 
 | fixture          | hits | misses | bypass | mean(us) | p50(us) | p99(us) |
@@ -98,16 +103,22 @@ routes) was `first200 = 671-1488 ms` — 4-6× what it is now.
 | smoke-app-svelte | 1000 |      0 |      0 |    21201 |   20154 |   39635 |
 | smoke-app-solid  | 1000 |      0 |      0 |    17921 |   17257 |   36742 |
 
-**p50 = 17-23 ms** — the L0 path is untouched by this session's work; the
-earlier 17-21 ms p50 is essentially the same. **p99 = 36-85 ms** for
-react — this run had one outlier; a follow-up harness patch (`--warmup
-10`) would give a clean p99. The old "243 ms react p99 outlier" story
-from the pre-migration report is gone either way.
+**Server-side p50 = 1.07 ms in release, 1.61 ms in debug** (200-hit
+sample, `Server-Timing: total;dur`). The 17-23 ms figure in the previous
+report was `curl` process-spawn cost, not server time — an embarrassing
+measurement bug caught while chasing the §21 target.
 
-**p50 is still 17-23× the §21 `< 1 ms` target.** That is the remaining
-§21 lever: nonce substitution + header merge + CSP assembly + Server-Timing
-computation on every cache hit. PERF-04 (single-flight) and PERF-07 (rkyv
-matcher) are the follow-ups.
+- **mean: 1.28 ms · p50: 1.07 ms · p99: 6.88 ms · min: 0.82 ms**
+  (release, 200 samples, L0-hit on `smoke-app-react`).
+
+The §21 `< 1 ms` target is **7% away** on p50, not 22×. The remaining gap
+is distributed across the dispatch pipeline (rules evaluation, rate limiter
+check, middleware headers, CSP assembly, `Server-Timing` computation), not
+the cache lookup itself — the body materialization alone is ~27 µs of the
+1.07 ms. Closing the last 70 µs is a targeted PERF pass (likely hoisting
+rules eval out of the hit path when no rules match, and caching the
+CSP+headers assembly keyed on the stored entry's header fingerprint);
+it is not a redesign.
 
 ## HMR (`bench:hmr`, smoke-app-react)
 
@@ -117,9 +128,10 @@ unchanged (module generation counter, tsx-loader versioning).
 
 ## Known gaps exposed by this run
 
-1. **L0 p50 is 17-23 ms, not the §21 `< 1 ms` target** — real perf gap in
-   the hit path (nonce substitution + header merge + CSP + `Server-Timing`
-   on every response). PERF-04 / PERF-07 levers.
+1. **L0 server-side p50 is 1.07 ms (release), 7% over the §21 `< 1 ms`
+   target.** The gap is small and distributed across the dispatch pipeline
+   (rules eval, rate limiter, header assembly, CSP). Not a redesign; a
+   targeted PERF pass to hoist the non-matching branch out of the hit path.
 2. **`start(ms) = 1080-1369 ms`** — the trade for `ttfb = 140-189 ms`. A
    smaller worker pool warms faster, a larger one amortizes better; the
    current pool size is the balanced choice. Apps that can't afford a

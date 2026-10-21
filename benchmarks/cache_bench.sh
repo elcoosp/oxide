@@ -66,10 +66,15 @@ for fx in smoke-app-react smoke-app-vue smoke-app-svelte smoke-app-solid; do
     tmp=$(mktemp)
     for _ in $(seq 1 "$N"); do
         # --write-out on one line with the header; capture both.
-        line=$(curl -s -o /dev/null -D - -w 'LAT:%{time_total}\n' \
-            "http://127.0.0.1:$port/" 2>/dev/null)
+        # Extract the server's own timing (Server-Timing: total;dur=X in ms)
+        # rather than curl's wall clock — the latter is dominated by process
+        # spawn + TCP connect (20+ ms per invocation) and hides the real
+        # server-side cost.
+        line=$(curl -s -o /dev/null -D - "http://127.0.0.1:$port/" 2>/dev/null)
         state=$(printf '%s\n' "$line" | awk 'tolower($1)=="x-oxide-cache:" { print tolower($2); exit }')
-        lat=$(printf '%s\n' "$line" | awk -F: '/^LAT:/ { print $2; exit }')
+        lat=$(printf '%s\n' "$line" | awk -F'total;dur=' '
+            NF>1 { split($2, a, ","); print a[1]; exit }
+        ')
         case "$state" in
             # §11: an SWR window hit is still a hit — the response came from
             # the cache (no loader/render ran), it is just past the strict
