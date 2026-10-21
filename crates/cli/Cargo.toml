@@ -20,6 +20,7 @@ oxide-graph = { workspace = true }
 oxide-compiler = { workspace = true }
 oxide-bundler = { workspace = true }
 blake3 = { workspace = true }
+rayon = { workspace = true }
 oxide-jshost = { workspace = true }
 oxide-cache = { workspace = true, features = ["redis", "s3"] }
 dashmap = { workspace = true }
