@@ -76,6 +76,7 @@ fn pipeline(
         dev_bind_ip: None,
         sockets: None,
         http3_port: 0,
+        http3_advertise: false,
     }
 }
 
@@ -833,6 +834,7 @@ async fn metrics_endpoint_renders_prometheus_text() {
         dev_bind_ip: None,
         sockets: None,
         http3_port: 0,
+        http3_advertise: false,
     };
     let d = &echo_dispatch();
     let resp = p.serve_request(req("GET", "/_oxide/metrics", &[]), d).await;
@@ -886,6 +888,7 @@ async fn vitals_endpoint_records_samples_into_metrics() {
         dev_bind_ip: None,
         sockets: None,
         http3_port: 0,
+        http3_advertise: false,
     };
     let body = br#"[{"name":"LCP","value":1234.5,"route":"/home"},{"name":"CLS","value":0.05,"route":"/home"}]"#;
     let mut r = req("POST", "/_oxide/vitals", &[]);
@@ -935,6 +938,7 @@ async fn vitals_endpoint_tolerates_a_malformed_beacon() {
         dev_bind_ip: None,
         sockets: None,
         http3_port: 0,
+        http3_advertise: false,
     };
     let mut r = req("POST", "/_oxide/vitals", &[]);
     r.body = bytes::Bytes::from_static(b"not json");
@@ -970,6 +974,7 @@ async fn metrics_endpoint_404_when_not_configured() {
         dev_bind_ip: None,
         sockets: None,
         http3_port: 0,
+        http3_advertise: false,
     };
     let d = &echo_dispatch();
     let resp = p.serve_request(req("GET", "/_oxide/metrics", &[]), d).await;
@@ -1009,6 +1014,7 @@ async fn pipeline_observes_native_branch_requests() {
         dev_bind_ip: None,
         sockets: None,
         http3_port: 0,
+        http3_advertise: false,
     };
     let d = &echo_dispatch();
     // Health is a native-prefix branch (_native label).
@@ -1054,6 +1060,7 @@ async fn with_metrics_attaches_registry() {
         dev_bind_ip: None,
         sockets: None,
         http3_port: 0,
+        http3_advertise: false,
     };
     let p = p.with_metrics(Arc::clone(&m));
     assert!(p.metrics().is_some());
@@ -1109,6 +1116,7 @@ fn inspector_pipeline() -> Pipeline {
         dev_bind_ip: None,
         sockets: None,
         http3_port: 0,
+        http3_advertise: false,
     }
 }
 
@@ -2082,6 +2090,27 @@ fn sec09_dev_host_allowed() {
     assert!(!dev_host_allowed("evil.example", ip("127.0.0.1")));
 }
 
+/// P-14: header() is case-insensitive, first occurrence wins, and a request
+/// clone shares the header vector (Arc) instead of deep-copying it.
+#[test]
+fn p14_header_lookup_case_insensitive_and_first_wins() {
+    let r = req(
+        "GET",
+        "http://x/",
+        &[("X-Test", "a"), ("x-test", "b"), ("Accept", "text/html")],
+    );
+    assert_eq!(r.header("X-TEST"), Some("a"));
+    assert_eq!(r.header("x-Test"), Some("a"));
+    assert_eq!(r.header("accept"), Some("text/html"));
+    assert_eq!(r.header("missing"), None);
+    let c = r.clone();
+    assert!(
+        std::sync::Arc::ptr_eq(&r.headers, &c.headers),
+        "clone shares the header Arc"
+    );
+    assert_eq!(c.header("Accept"), Some("text/html"), "clone index rebuilt");
+}
+
 /// PERF-06: a compressible HTML response is compressed when the client offers
 /// an encoding; a non-compressible one is left alone.
 #[tokio::test]
@@ -2282,4 +2311,42 @@ fn rate_limiter_allows_max_then_denies() {
     assert!(!rl.allow("1.2.3.4", 10, 60), "eleventh denied");
     // A different peer has its own bucket.
     assert!(rl.allow("5.6.7.8", 10, 60), "other peer unaffected");
+}
+
+// ─── Wave C: alt-svc honesty valve (C3) ──────────────────────────────────
+
+/// With `http3_advertise` off, no `Alt-Svc` header is emitted — a browser
+/// stays on h1/h2 even though the h3 listener may be running.
+#[tokio::test]
+async fn alt_svc_is_absent_when_advertisement_is_off() {
+    let mut p = pipeline(
+        RulesEngine::default(),
+        None,
+        Limits::default(),
+        SecuritySettings::default(),
+    );
+    p.http3_port = 8443;
+    p.http3_advertise = false;
+    let resp = p.serve_request(req("GET", "/page", &[]), &echo_dispatch()).await;
+    assert!(
+        resp.header("alt-svc").is_none(),
+        "no alt-svc with the valve off",
+    );
+}
+
+/// With it on, the header names the configured port.
+#[tokio::test]
+async fn alt_svc_names_the_port_when_enabled() {
+    let mut p = pipeline(
+        RulesEngine::default(),
+        None,
+        Limits::default(),
+        SecuritySettings::default(),
+    );
+    p.http3_port = 8443;
+    p.http3_advertise = true;
+    let resp = p.serve_request(req("GET", "/page", &[]), &echo_dispatch()).await;
+    let v = resp.header("alt-svc").expect("alt-svc present");
+    assert!(v.contains("8443"), "names the port: {v}");
+    assert!(v.contains("h3"), "names h3: {v}");
 }
