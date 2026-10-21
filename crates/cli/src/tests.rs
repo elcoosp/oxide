@@ -6201,3 +6201,168 @@ fn loader_output_parses_session() {
     let out = output_from_raw(&raw).expect("parse");
     assert!(out.session.is_none(), "no session field -> None");
 }
+
+// ------------------------------ §22 / L1: L0 hit-rate regression
+
+/// §22 / L1: the flagship 999/1000 hit rate had no committed regression
+/// test — one field change in the dispatch could silently push every
+/// request through the render path and nothing would fail. Seed the cache
+/// once and fire 1000 dispatches: at least 999 MUST be L0 hits and none
+/// may be a bypass.
+#[tokio::test]
+async fn l0_hit_rate_999_of_1000_dispatches() {
+    use std::sync::Arc;
+
+    let tier: Arc<dyn oxide_cache::CacheHandler> =
+        Arc::new(oxide_cache::TieredCache::new(8 * 1024 * 1024));
+    let l0 = Arc::new(l0_cache::L0Cache::new(
+        tier,
+        "test-build",
+        std::time::Duration::from_secs(300),
+    ));
+
+    let page_renderer: Option<Arc<dyn oxide_server::PageRenderer>> =
+        Some(Arc::new(DataCapturingRenderer::new()));
+
+    let dispatch = build_dispatch(
+        tree_with_static_page_and_middleware(),
+        Arc::new(oxide_server::Metrics::new()),
+        Vec::new(),
+        page_renderer,
+        None,
+        routes_root(),
+        None,
+        Some(Arc::clone(&l0)),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        Vec::new(),
+        None,
+        None,
+        None,
+    );
+
+    // The store happens inside a tokio::spawn that consumes the render
+    // stream — it fires only when the client has drained the response
+    // body. So: dispatch, drain, then wait for the cache to show the entry.
+    let first = dispatch(test_request("GET", "/")).await;
+    let _ = collect_response_body(first).await;
+    let mut stored = false;
+    for _ in 0..100 {
+        if l0.get("routes/index", "", "").await.is_some() {
+            stored = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(stored, "the first render's store never landed in L0");
+
+    let mut hits = 0usize;
+    let mut misses = 0usize;
+    let mut bypass = 0usize;
+    let mut other = 0usize;
+
+    for _ in 0..1000 {
+        let resp = dispatch(test_request("GET", "/")).await;
+        let cache = resp
+            .headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-cache"))
+            .map(|(_, v)| v.as_str())
+            .unwrap_or("");
+        match cache {
+            "L0-hit" | "L0-stale" => hits += 1,
+            "L0-miss" => misses += 1,
+            "bypass" => bypass += 1,
+            _ => other += 1,
+        }
+    }
+
+    assert!(
+        hits >= 999,
+        "expected >= 999 hits, got {hits} (misses={misses} bypass={bypass} other={other})"
+    );
+    assert_eq!(bypass, 0, "no request should be a bypass");
+    assert_eq!(
+        other, 0,
+        "every request should carry an x-oxide-cache header (got {other} without)"
+    );
+}
+
+// ------------------------------ §22 / L3(a): prerendered 500 served as 500
+
+/// §22 / L3(a): a route whose stored status is 500 MUST serve 500 on
+/// subsequent requests. The class of bug this catches is "200 status,
+/// 500 body" — a stored error entry that looks successful to monitoring
+/// because the dispatch forgot to use the entry's status.
+#[tokio::test]
+async fn prerendered_500_serves_500_on_hit() {
+    use std::sync::Arc;
+
+    let tier: Arc<dyn oxide_cache::CacheHandler> =
+        Arc::new(oxide_cache::TieredCache::new(8 * 1024 * 1024));
+    let l0 = Arc::new(l0_cache::L0Cache::new(
+        tier,
+        "test-build",
+        std::time::Duration::from_secs(300),
+    ));
+
+    // Static route (no params), and the test dispatch passes an empty
+    // vary_headers slice → vary is "". Use the dispatch's own key form.
+    let key = l0.key_of("routes/index", "", "");
+    let entry = l0.make_entry(
+        500,
+        vec![("content-type".into(), "text/html; charset=utf-8".into())],
+        b"<h1>prerendered failure</h1>".to_vec(),
+        Vec::new(),
+    );
+    l0.store_entry(&key, entry).await;
+
+    let dispatch = build_dispatch(
+        tree_with_static_page_and_middleware(),
+        Arc::new(oxide_server::Metrics::new()),
+        Vec::new(),
+        None,
+        None,
+        routes_root(),
+        None,
+        Some(Arc::clone(&l0)),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        Vec::new(),
+        None,
+        None,
+        None,
+    );
+
+    let resp = dispatch(test_request("GET", "/")).await;
+    assert_eq!(
+        resp.status, 500,
+        "prerendered 500 must serve as 500, not 200-with-a-500-body"
+    );
+    let cache = resp
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-cache"))
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("");
+    assert_eq!(
+        cache, "L0-hit",
+        "the request must have been served from L0 (got x-oxide-cache={cache})"
+    );
+    let body = collect_response_body(resp).await;
+    let s = std::str::from_utf8(&body).unwrap_or("");
+    assert!(
+        s.contains("prerendered failure"),
+        "stored error body must be retained on hit: {s}"
+    );
+}
