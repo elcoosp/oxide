@@ -100,6 +100,28 @@ export interface DeferGlueOptions {
  * deferred slots. `dispose()` removes the listener; later swaps no longer
  * resolve (slots wired after dispose reject as orphaned).
  */
+/** Resolve (or reject) one slot from a settle value. A rejected defer is
+ *  serialized as `{ __oxide_deferred_error: "..." }` and must reject the
+ *  slot rather than resolve it to a shape the page did not expect. */
+function resolveSlot(
+  registry: Map<number, DeferredClient>,
+  id: number,
+  value: unknown,
+): void {
+  const slot = registry.get(id)
+  if (!slot) return
+  if (
+    value &&
+    typeof value === 'object' &&
+    '__oxide_deferred_error' in (value as Record<string, unknown>)
+  ) {
+    const err = (value as Record<string, unknown>).__oxide_deferred_error
+    slot.reject(new Error(String(err)))
+  } else {
+    slot.resolve(value)
+  }
+}
+
 export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
   const doc = options.doc ?? (globalThis as { document?: Document }).document
   const eventName = options.eventName ?? 'ox:swap'
@@ -148,23 +170,57 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
         // A malformed deferred payload must not break hydration; skip it.
         continue
       }
+      // Two shapes carry a settle:
+      //   * batched (pre-B2): the script body is `{ "<id>": value, ... }`;
+      //   * per-settle (B2): `data-id="<id>"` and the body is the value.
+      // A per-settle script arrives as its own element, possibly *after*
+      // DOMContentLoaded — the observer below picks those up.
+      const dataId = (script as unknown as { getAttribute?: (n: string) => string | null })
+        .getAttribute?.('data-id')
+      if (dataId) {
+        const id = Number(dataId)
+        if (Number.isFinite(id)) {
+          resolveSlot(registry, id, parsed)
+        }
+        continue
+      }
       for (const [idStr, value] of Object.entries(parsed)) {
         const id = Number(idStr)
         if (!Number.isFinite(id)) continue
-        const slot = registry.get(id)
-        if (!slot) continue
-        if (
-          value &&
-          typeof value === 'object' &&
-          '__oxide_deferred_error' in (value as Record<string, unknown>)
-        ) {
-          const err = (value as Record<string, unknown>).__oxide_deferred_error
-          slot.reject(new Error(String(err)))
-        } else {
-          slot.resolve(value)
-        }
+        resolveSlot(registry, id, value)
       }
     }
+  }
+
+  // A streamed settle appends its script after the document has loaded, so
+  // `resolveFromScripts` has already run. Watch for the insertions and
+  // resolve each new one. The observer disconnects in `dispose`.
+  let observer: { disconnect(): void } | null = null
+  const MO = (globalThis as { MutationObserver?: new (cb: (m: unknown[]) => void) => {
+    observe(t: unknown, o: unknown): void
+    disconnect(): void
+  } }).MutationObserver
+  if (typeof MO === 'function' && typeof (doc as unknown as { documentElement?: unknown }).documentElement !== 'undefined') {
+    observer = new MO((mutations: unknown[]) => {
+      for (const m of mutations) {
+        const added = (m as { addedNodes?: ArrayLike<unknown> }).addedNodes
+        if (!added) continue
+        for (let i = 0; i < added.length; i++) {
+          const node = added[i] as { tagName?: string; getAttribute?: (n: string) => string | null }
+          if (
+            node.tagName === 'SCRIPT' &&
+            node.getAttribute?.('type') === 'application/oxide-deferred'
+          ) {
+            resolveFromScripts()
+            return
+          }
+        }
+      }
+    })
+    observer.observe((doc as unknown as { documentElement: unknown }).documentElement, {
+      childList: true,
+      subtree: true,
+    })
   }
   // Try synchronously, then again on DOMContentLoaded in case the script
   // element had not yet been parsed when the glue attached (the glue attaches
@@ -201,6 +257,8 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
       resolveFromScripts()
     },
     dispose() {
+      observer?.disconnect()
+      observer = null
       dead = true
       doc.removeEventListener(eventName, onSwap as EventListener)
       doc.removeEventListener('DOMContentLoaded', onReady as EventListener)
