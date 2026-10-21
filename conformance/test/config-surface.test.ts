@@ -89,7 +89,14 @@ for (const b of BUNDLES) {
       new URL(`../../examples/smoke-app-${b.name}/oxide.config.ts`, import.meta.url),
       'utf8',
     )
-    assert.ok(!/\.(tsx|jsx|vue|svelte)['"]/.test(cfg), `${b.name} config imports no component files`)
+    // Narrow to imports: an islands registry string ('src/islands/counter.tsx')
+    // legitimately names a component file for the CLI to bundle — the
+    // prohibition is against a config-side *import*, the pattern that made
+    // the pre-§6.4 model evaluate the component graph on every render.
+    assert.ok(
+      !/^\s*import\b.*from\s+['"][^'"]+\.(tsx|jsx|vue|svelte)['"]/m.test(cfg),
+      `${b.name} config imports no component files (islands strings are allowed)`,
+    )
     assert.ok(!/componentFor/.test(cfg), `${b.name} config has no componentFor closure`)
   })
 

@@ -136,8 +136,22 @@ export const atlasRoutes: Record<string, AtlasRoute> = {
 }
 
 /** Build a RenderInput from an Atlas route (loader data already applied). */
-export function asRenderInput(r: AtlasRoute): RenderInput {
-  return { route: r.route, url: r.url, params: r.params, data: r.data, head: r.head }
+export function asRenderInput(
+  r: AtlasRoute & { resolve?: (id: string) => unknown },
+): RenderInput {
+  const out: RenderInput = {
+    route: r.route,
+    url: r.url,
+    params: r.params,
+    data: r.data,
+    head: r.head,
+  }
+  // §7 / §6.4: `resolve` is an optional field the runtime attaches; a
+  // test that supplies its own must reach the adapter. Prior versions
+  // of this helper dropped every field not enumerated above, so the
+  // conformance resolver tests never saw their own `resolve`.
+  if (r.resolve) out.resolve = r.resolve
+  return out
 }
 
 /** Expected strings — one set, every adapter (framework markers in suite.ts). */

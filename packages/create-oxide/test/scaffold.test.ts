@@ -127,8 +127,8 @@ test('unknown framework/template fail fast with helpful message', async () => {
 test('config helpers are deterministic and per-framework', () => {
   const react = configTs('react', 'minimal');
   const vue = configTs('vue', 'minimal');
-  assert.ok(react.includes("@oxide/react") && react.includes('react()'));
-  assert.ok(vue.includes("@oxide/vue") && vue.includes('vue()'));
+  assert.ok(react.includes("@oxide/react") && react.includes("react({ ssr: 'real' })"));
+  assert.ok(vue.includes("@oxide/vue") && vue.includes("vue({ ssr: 'real' })"));
   assert.equal(react, configTs('react', 'minimal'));
   assert.ok(configTs('react', 'storefront').includes("images: { formats: ['avif', 'webp']"));
   assert.ok(configTs('react', 'dashboard').includes("security: { csp: 'strict'"));
@@ -146,3 +146,23 @@ test('cli main prints files and returns 0 on success', async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('emitted config uses the nested l0 shape (CacheConfig is deny_unknown_fields)', () => {
+  const blog = configTs('react', 'blog')
+  assert.ok(!/l0MaxSize/.test(blog), 'no flat l0MaxSize — CacheConfig rejects it')
+  assert.ok(/l0:\s*\{\s*maxSize:/.test(blog), 'nested l0.maxSize present')
+  const dashboard = configTs('react', 'dashboard')
+  assert.ok(!/l0MaxSize/.test(dashboard))
+  assert.ok(/l0:\s*\{\s*maxSize:/.test(dashboard))
+  const storefront = configTs('react', 'storefront')
+  assert.ok(!/l0MaxSize/.test(storefront))
+  assert.ok(/l0:\s*\{\s*maxSize:/.test(storefront))
+})
+
+test('emitted framework call opts into real SSR', () => {
+  for (const fw of ['react', 'vue', 'svelte', 'solid']) {
+    const cfg = configTs(fw, 'minimal')
+    assert.ok(cfg.includes(`${fw}({ ssr: 'real' })`), `${fw} opts into real SSR`)
+  }
+})
+

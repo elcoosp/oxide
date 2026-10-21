@@ -37,13 +37,15 @@ test('factory: createAdapter() with no componentFor returns the IR adapter behav
   assert.equal(html, irHtml, 'identical to the named `adapter` export')
 })
 
-test('factory: createAdapter({ ssr: "real", componentFor: () => undefined }) emits placeholder', async () => {
+test('factory: createAdapter({ ssr: "real", componentFor: () => undefined }) emits the OX-500 page', async () => {
   const a = createAdapter({
     ssr: 'real',
     componentFor: () => undefined,
   })
   const html = await drain(a.render(input({ route: 'routes/missing' })))
-  assert.ok(html.includes('no component for route routes/missing'), html)
+  assert.ok(html.includes('<!--oxide-status:500-->'), `500 marker: ${html}`)
+  assert.ok(html.includes("data-ox-error='OX-500'"), `OX-500 div: ${html}`)
+  assert.ok(html.includes('no component resolved for route routes/missing'), `diagnostic wording: ${html}`)
 })
 
 test('factory: componentFor + ssr="auto" with missing component falls back to IR', async () => {

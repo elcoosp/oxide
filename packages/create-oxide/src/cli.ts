@@ -15,14 +15,14 @@ export function configTs(framework, shape) {
     framework === 'svelte' ? `import svelte from '@oxide/svelte'` :
     `import solid from '@oxide/solid'`;
   const shapeOpts =
-    shape === 'blog' ? `\n  cache: { handler: { type: 'disk' }, l0MaxSize: '512mb' },` :
-    shape === 'dashboard' ? `\n  security: { csp: 'strict', csrf: 'origin' },\n  cache: { handler: { type: 'memory' }, l0MaxSize: '128mb' },` :
-    shape === 'storefront' ? `\n  images: { formats: ['avif', 'webp'], remotePatterns: [{ host: 'cdn.example.com' }] },\n  cache: { handler: { type: 'disk' }, l0MaxSize: '512mb' },` : '';
+    shape === 'blog' ? `\n  cache: { handler: { type: 'disk' }, l0: { maxSize: '512mb' } },` :
+    shape === 'dashboard' ? `\n  security: { csp: 'strict', csrf: 'origin' },\n  cache: { handler: { type: 'memory' }, l0: { maxSize: '128mb' } },` :
+    shape === 'storefront' ? `\n  images: { formats: ['avif', 'webp'], remotePatterns: [{ host: 'cdn.example.com' }] },\n  cache: { handler: { type: 'disk' }, l0: { maxSize: '512mb' } },` : '';
   return `${adapterImport}
 import { defineConfig } from 'oxide'
 
 export default defineConfig({
-  framework: ${framework}(),
+  framework: ${framework}({ ssr: 'real' }),
   routes: { dir: 'src/routes' },
   server: { port: 3000, compression: ['zstd', 'br'], http3: false },
   render: { default: 'auto' },${shapeOpts}

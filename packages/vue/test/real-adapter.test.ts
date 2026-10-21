@@ -51,10 +51,12 @@ test('factory: no component → falls back to the neutral IR renderer', async ()
   assert.ok(html.includes('data-v-app'), 'vue app marker preserved')
 })
 
-test('factory: ssr=real + no component → comment placeholder', async () => {
+test('factory: ssr=real + no component → OX-500 page (§10.2 step 5)', async () => {
   const a = createRealAdapter({ ssr: 'real', componentFor: () => undefined })
   const html = await drain(a.render(input({ route: 'routes/missing' })))
-  assert.ok(html.includes('no component for route routes/missing'), html)
+  assert.ok(html.includes('<!--oxide-status:500-->'), `500 marker: ${html}`)
+  assert.ok(html.includes("data-ox-error='OX-500'"), `OX-500 div: ${html}`)
+  assert.ok(html.includes('no component resolved for route routes/missing'), `diagnostic wording: ${html}`)
 })
 
 test('factory: real strategy renders through @vue/server-renderer', { skip: realSkip }, async () => {
