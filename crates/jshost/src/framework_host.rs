@@ -105,17 +105,33 @@ impl FrameworkHost {
     ///
     /// - `JSH-FRAMEWORK`: the worker reported an error, the response was not
     ///   valid JSON, or the response was missing its `html` field.
-    pub async fn render(&self, config_path: &str, input: Value) -> Result<String> {
+    pub async fn render(&self, config_path: &str, mut input: Value) -> Result<String> {
+        // §6.4 / WP-B3: the worker destructures `{ path, input, components }`
+        // from the payload. `to_payload` nests `components` inside `input`;
+        // hoist it to the payload level so both the Node worker
+        // (`dispatchFrameworkRender`) and the V8 dispatcher see it.
+        // Without this, `input.components` is set but the resolver is
+        // never built and every real-SSR render emits 500.
+        let components = input
+            .as_object_mut()
+            .and_then(|o| o.remove("components"));
+        let route_key = input
+            .get("route")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let payload = match components {
+            Some(c) => serde_json::json!({
+                "path": config_path, "input": input, "components": c
+            }),
+            None => serde_json::json!({ "path": config_path, "input": input }),
+        };
         let call_input = CallInput {
-            payload: serde_json::json!({ "path": config_path, "input": input }),
+            payload,
             headers: Default::default(),
             has_body: false,
             request_id: format!("framework:render:{config_path}"),
             // PERF-02: affinity key = the route being rendered.
-            route: input
-                .get("route")
-                .and_then(|v| v.as_str())
-                .map(str::to_string),
+            route: route_key,
         };
         let entry = EntryRef {
             kind: "framework:render".into(),
@@ -153,17 +169,29 @@ impl FrameworkHost {
     ///
     /// Callers **must** drain the stream to EOF. Leaving it un-drained keeps
     /// the channel alive, holding a worker slot in the pool.
-    pub async fn render_streaming(&self, config_path: &str, input: Value) -> Result<CallStream> {
+    pub async fn render_streaming(&self, config_path: &str, mut input: Value) -> Result<CallStream> {
+        // §6.4 / WP-B3: same hoist as `render` — the worker sees
+        // `{ path, input, components }`, not `{ path, input: {..., components} }`.
+        let components = input
+            .as_object_mut()
+            .and_then(|o| o.remove("components"));
+        let route_key = input
+            .get("route")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let payload = match components {
+            Some(c) => serde_json::json!({
+                "path": config_path, "input": input, "components": c
+            }),
+            None => serde_json::json!({ "path": config_path, "input": input }),
+        };
         let call_input = CallInput {
-            payload: serde_json::json!({ "path": config_path, "input": input }),
+            payload,
             headers: Default::default(),
             has_body: false,
             request_id: format!("framework:render:{config_path}"),
             // PERF-02: affinity key = the route being rendered.
-            route: input
-                .get("route")
-                .and_then(|v| v.as_str())
-                .map(str::to_string),
+            route: route_key,
         };
         let entry = EntryRef {
             kind: "framework:render".into(),
