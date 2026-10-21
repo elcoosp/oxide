@@ -93,6 +93,33 @@ export async function isReactClientAvailable(): Promise<boolean> {
  * navigation via `root.render` (a React root updates in place) and unmounts
  * on dispose.
  */
+/**
+ * §8.2 / §16.3: wrap a page component in its layout chain.
+ *
+ * The swap logic shared by the initial mount, hydration, and navigation
+ * update. The outermost layout is applied last (loops from
+ * `layouts.length - 1` down to 0), so `layouts[0]` ends up outermost —
+ * the exact tree the SSR adapter emits.
+ *
+ * Exported for L6(b): the swap logic is what the Playwright navigation
+ * spec asserts at the DOM level, but the tree assembly is worth pinning
+ * at the unit level — a layout order regression would render
+ * Inner(Outer(Page)) which is valid React but wrong markup, and no
+ * Playwright assertion today covers that.
+ */
+export function nestLayouts(
+  react: { createElement: (C: unknown, p: Record<string, unknown>) => unknown },
+  Component: unknown,
+  props: Record<string, unknown>,
+  layouts: Array<{ id: string; Component: unknown }>,
+): unknown {
+  let node: unknown = react.createElement(Component, props)
+  for (let i = layouts.length - 1; i >= 0; i--) {
+    node = react.createElement(layouts[i].Component, { children: node })
+  }
+  return node
+}
+
 export async function mountReactPageRoot(
   container: Element,
   Component: unknown,
@@ -110,23 +137,17 @@ export async function mountReactPageRoot(
   // by wrapping the page then each layout from the inside out. The SSR
   // adapter produces this exact tree; a bare page here throws React #418
   // on the layout markup.
-  function buildTree(C: unknown, p: Record<string, unknown>): unknown {
-    let node: unknown = rt.react.createElement(C, p)
-    for (let i = layouts.length - 1; i >= 0; i--) {
-      node = rt.react.createElement(layouts[i].Component, { children: node })
-    }
-    return node
-  }
+
   let root: ReactRootLike
   if (opts.hydrate) {
-    root = rt.client.hydrateRoot(container, buildTree(Component, props))
+    root = rt.client.hydrateRoot(container, nestLayouts(rt.react, Component, props, layouts))
   } else {
     root = rt.client.createRoot(container)
-    root.render(buildTree(Component, props))
+    root.render(nestLayouts(rt.react, Component, props, layouts))
   }
   return {
     update(C: unknown, next: Record<string, unknown>): void {
-      root.render(buildTree(C, next))
+      root.render(nestLayouts(rt.react, C, next, layouts))
     },
     dispose(): void {
       try {

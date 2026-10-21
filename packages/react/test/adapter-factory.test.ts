@@ -37,13 +37,18 @@ test('factory: createAdapter() with no componentFor returns the IR adapter behav
   assert.equal(html, irHtml, 'identical to the named `adapter` export')
 })
 
-test('factory: createAdapter({ ssr: "real", componentFor: () => undefined }) emits placeholder', async () => {
+test('factory: createAdapter({ ssr: "real", componentFor: () => undefined }) emits the OX-500 page', async () => {
   const a = createAdapter({
     ssr: 'real',
     componentFor: () => undefined,
   })
   const html = await drain(a.render(input({ route: 'routes/missing' })))
-  assert.ok(html.includes('no component for route routes/missing'), html)
+  // §6.4 / §10.2 step 5: a missing page is a diagnostic + a 500, never
+  // a silent comment. The marker is what the pipeline promotes to HTTP
+  // 500; the div is the visible fallback.
+  assert.ok(html.includes('<!--oxide-status:500-->'), `500 marker: ${html}`)
+  assert.ok(html.includes("data-ox-error='OX-500'"), `OX-500 div: ${html}`)
+  assert.ok(html.includes('no component resolved for route routes/missing'), `diagnostic wording: ${html}`)
 })
 
 test('factory: componentFor + ssr="auto" with missing component falls back to IR', async () => {
