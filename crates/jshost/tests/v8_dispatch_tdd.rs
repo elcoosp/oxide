@@ -324,3 +324,36 @@ async fn v8_tooling_module_refused_loudly() {
         }
     }
 }
+
+// B-07: the V8 prelude's loader event must carry §8.3 `searchParams`, with
+// the same semantics as the Node worker (`+`→space, repeated key → array).
+#[tokio::test]
+#[ignore = "boots a V8 isolate; run with --ignored"]
+async fn v8_loader_event_includes_search_params() {
+    let dir = tempfile::tempdir().unwrap();
+    let module = dir.path().join("page.server.mjs");
+    std::fs::write(
+        &module,
+        "export async function load(event) {\n  return { sp: event.searchParams };\n}\n",
+    )
+    .unwrap();
+    let m = module.to_string_lossy().to_string();
+    let v = call(
+        &pool1(),
+        "loader:run",
+        &m,
+        "",
+        serde_json::json!({
+            "route": "routes/index",
+            "params": {},
+            "url": "/?q=hello+world&tag=a&tag=b&empty=",
+            "method": "GET",
+            "headers": [],
+        }),
+    )
+    .await;
+    let sp = &v["data"]["sp"];
+    assert_eq!(sp["q"], "hello world", "single key: {sp}");
+    assert_eq!(sp["tag"], serde_json::json!(["a", "b"]), "repeated key: {sp}");
+    assert_eq!(sp["empty"], "", "empty value: {sp}");
+}
