@@ -196,7 +196,6 @@ async fn missing_module_surfaces_jsh_loader() {
     );
 }
 
-
 // ---- §8.3 / §9.1: searchParams on the load(event) ----------------------
 //
 // The typegen emits `LoaderEvent[R].searchParams: LoaderSearchParams` — a
