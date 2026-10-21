@@ -47,7 +47,7 @@ pub mod loader_host;
 pub mod tooling_pool;
 pub use framework_host::{FrameworkDescriptor, FrameworkHost};
 pub use framework_renderer::{
-    FrameworkHostRenderer, FrameworkRenderInput, FrameworkRenderer, RenderStream,
+    ComponentSource, FrameworkHostRenderer, FrameworkRenderInput, FrameworkRenderer, RenderStream,
 };
 pub use loader_host::{
     ActionHost, ActionOutcome, EndpointHost, EndpointOutcome, LoaderHost, MiddlewareHost,
@@ -1353,7 +1353,7 @@ globalThis.__oxideFrameworkLoad = async function (configPath) {
 // framework:render — call the adapter's `render(input)` and collect its
 // ReadableStream to a string. (Streaming is a later refinement; the collected
 // shape is what `FrameworkHost::render` returns.)
-globalThis.__oxideFrameworkRender = async function (configPath, renderInput) {
+globalThis.__oxideFrameworkRender = async function (configPath, renderInput, components) {
   try {
     const url = configPath.startsWith('file://')
       ? configPath
@@ -1364,7 +1364,50 @@ globalThis.__oxideFrameworkRender = async function (configPath, renderInput) {
     if (!fw || typeof fw.render !== 'function') {
       return JSON.stringify({ __oxide_error: 'config has no framework.render' });
     }
-    const stream = fw.render(renderInput || {});
+    // §6.4: resolve components from the build entry (prod) or the CLI's
+    // source map (dev), never from a config closure. `components` arrives
+    // as JSON; a malformed value degrades to the adapter's own fallback.
+    let componentResolver = null;
+    try {
+      const cs = typeof components === 'string' ? JSON.parse(components) : components;
+      if (cs && typeof cs.entry === 'string' && cs.entry.length > 0) {
+        const entryUrl = cs.entry.startsWith('file://')
+          ? cs.entry
+          : 'file://' + (cs.entry.startsWith('/') ? '' : '/') + cs.entry;
+        const entry = await import(globalThis.__oxideVersioned(entryUrl));
+        const routes = entry.routes || {};
+        componentResolver = (id) => {
+          if (!Object.prototype.hasOwnProperty.call(routes, id)) return undefined;
+          const ns = routes[id];
+          if (!ns || typeof ns !== 'object') return ns;
+          return ns.default ?? ns.Page ?? ns.page ?? ns.Component ?? ns.component ?? ns;
+        };
+      } else if (cs && cs.sources && typeof cs.sources === 'object') {
+        const routes = {};
+        const rinput = renderInput || {};
+        const wanted = [rinput.route, ...(Array.isArray(rinput.layouts) ? rinput.layouts : []), rinput.errorRoute]
+          .filter((x) => typeof x === 'string' && x.length > 0);
+        for (const rid of new Set(wanted)) {
+          const src = cs.sources[rid];
+          if (typeof src !== 'string' || src.length === 0) continue;
+          const srcUrl = src.startsWith('file://') ? src : 'file://' + (src.startsWith('/') ? '' : '/') + src;
+          routes[rid] = await import(globalThis.__oxideVersioned(srcUrl));
+        }
+        componentResolver = (id) => {
+          if (!Object.prototype.hasOwnProperty.call(routes, id)) return undefined;
+          const ns = routes[id];
+          if (!ns || typeof ns !== 'object') return ns;
+          return ns.default ?? ns.Page ?? ns.page ?? ns.Component ?? ns.component ?? ns;
+        };
+      }
+    } catch (e) {
+      return JSON.stringify({
+        __oxide_error: 'component resolver failed: ' + ((e && e.message) || e),
+      });
+    }
+    const rinput = renderInput || {};
+    if (componentResolver) rinput.resolve = componentResolver;
+    const stream = fw.render(rinput, componentResolver || undefined);
     // PERF-03: push each chunk to the host via `oxide.streamWrite`. When the
     // host is not streaming this call (no sink), streamWrite answers "false"
     // and we accumulate instead, so the buffered path still works.
@@ -1983,7 +2026,14 @@ async fn v8_dispatch(
                     .unwrap_or(&serde_json::Value::Null),
             )
             .unwrap_or_else(|_| "null".into());
-            format!("globalThis.__oxideFrameworkRender({p}, {inp})")
+            let comps = serde_json::to_string(
+                input
+                    .payload
+                    .get("components")
+                    .unwrap_or(&serde_json::Value::Null),
+            )
+            .unwrap_or_else(|_| "null".into());
+            format!("globalThis.__oxideFrameworkRender({p}, {inp}, {comps})")
         };
         // PERF-03: `framework:render` streams. Install a sink, execute the
         // render (which returns a promise), stash that promise, and return a
