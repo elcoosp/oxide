@@ -94,6 +94,8 @@ pub fn output_from_raw(raw: &Value) -> oxide_server::Result<LoaderOutput> {
     // this load's data. Absent for a route whose server module has no `meta`
     // export, which is the common case.
     let meta = raw.get("meta").filter(|v| !v.is_null()).cloned();
+    // D1: the loader's session (if it touched `event.session`).
+    let session = raw.get("session").filter(|v| !v.is_null()).cloned();
     Ok(LoaderOutput {
         status,
         location,
@@ -102,6 +104,7 @@ pub fn output_from_raw(raw: &Value) -> oxide_server::Result<LoaderOutput> {
         headers,
         deferred,
         meta,
+        session,
     })
 }
 
