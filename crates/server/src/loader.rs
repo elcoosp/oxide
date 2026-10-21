@@ -113,6 +113,12 @@ pub struct LoaderOutput {
     /// into the render input's head.
     #[serde(default)]
     pub meta: Option<serde_json::Value>,
+    /// D1: the session as the loader left it. `None` when the loader did not
+    /// touch `event.session`; `Some` means the pipeline must re-seal it and
+    /// set the cookie. The pipeline compares it against the inbound value so
+    /// an unchanged object does not re-issue a cookie on every request.
+    #[serde(default)]
+    pub session: Option<serde_json::Value>,
 }
 
 impl LoaderOutput {
@@ -275,6 +281,7 @@ mod tests {
             headers: vec![("x-oxide-visits".into(), "7".into())],
             deferred: std::collections::BTreeMap::new(),
             meta: None,
+            session: None,
         };
         let s = serde_json::to_string(&out).unwrap();
         let back: LoaderOutput = serde_json::from_str(&s).unwrap();
