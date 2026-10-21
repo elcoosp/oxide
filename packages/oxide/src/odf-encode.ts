@@ -32,6 +32,12 @@ const TAG = {
   MAP: 0x0b,
   SET: 0x0c,
   TYPED_ARRAY: 0x0d,
+  // B-14: the three Rust tags the value encoder previously lacked. `Error`
+  // is a plain value here; REF/DEFERRED are produced by the shared-ref
+  // machinery (`{ __oxide_ref }` / `{ __oxide_deferred }` markers).
+  ERROR: 0x0e,
+  REF: 0x0f,
+  DEFERRED: 0x10,
 } as const
 
 /**
@@ -70,6 +76,30 @@ function varu(out: number[], n: number): void {
 
 function utf8(s: string): number[] {
   return Array.from(new TextEncoder().encode(s))
+}
+
+const UTF8_ENCODER = new TextEncoder()
+
+/**
+ * B-14: sort object keys by UTF-8 byte order, matching Rust's
+ * `BTreeMap<String, _>`. JS `.sort()` compares UTF-16 code units, which
+ * diverges for keys mixing BMP (U+E000–U+FFFF) with surrogate pairs.
+ */
+function byUtf8(a: string, b: string): number {
+  const ab = UTF8_ENCODER.encode(a)
+  const bb = UTF8_ENCODER.encode(b)
+  const n = Math.min(ab.length, bb.length)
+  for (let i = 0; i < n; i++) {
+    if (ab[i] !== bb[i]) return ab[i] - bb[i]
+  }
+  return ab.length - bb.length
+}
+
+/** varu(len) + UTF-8 bytes — the STRING body shared by several tags. */
+function writeString(out: number[], s: string): void {
+  const bytes = utf8(s)
+  varu(out, bytes.length)
+  out.push(...bytes)
 }
 
 function writeValue(out: number[], v: unknown): void {
@@ -116,6 +146,35 @@ function writeValue(out: number[], v: unknown): void {
     return
   }
   if (typeof v === 'object') {
+    // ERROR (0x0e): name, message, stack? — mirrors encode.rs' field order.
+    if (v instanceof Error) {
+      out.push(TAG.ERROR)
+      writeString(out, typeof v.name === 'string' ? v.name : 'Error')
+      writeString(out, typeof v.message === 'string' ? v.message : '')
+      if (typeof v.stack === 'string') {
+        out.push(1)
+        writeString(out, v.stack)
+      } else {
+        out.push(0)
+      }
+      return
+    }
+    // REF (0x0f) / DEFERRED (0x10): shared-table markers emitted by the
+    // reference machinery (see `crates/odf/src/encode.rs` `write_ref`).
+    const marker = v as { __oxide_ref?: unknown; __oxide_deferred?: unknown; __oxide_deferred_id?: unknown }
+    if (typeof marker.__oxide_ref === 'number') {
+      out.push(TAG.REF)
+      varu(out, marker.__oxide_ref)
+      return
+    }
+    if (
+      marker.__oxide_deferred !== undefined &&
+      typeof marker.__oxide_deferred_id === 'number'
+    ) {
+      out.push(TAG.DEFERRED)
+      varu(out, marker.__oxide_deferred_id)
+      return
+    }
     // DATE (0x06): i64 epoch-ms, little-endian — matches `Value::Date(i64)`.
     if (v instanceof Date) {
       const ms = v.getTime()
@@ -185,7 +244,7 @@ function writeValue(out: number[], v: unknown): void {
     // the number of pairs actually written, or the decoder desyncs.
     const keys = Object.keys(v as Record<string, unknown>)
       .filter((k) => k !== '__proto__' && k !== 'constructor')
-      .sort()
+      .sort(byUtf8)
     out.push(TAG.OBJECT)
     varu(out, keys.length)
     for (const k of keys) {
@@ -212,6 +271,8 @@ export function isOdfEncodable(v: unknown, depth = 0, seen = new Set<object>()):
   let ok = true
   if (Array.isArray(v)) {
     ok = v.every((x) => isOdfEncodable(x, depth + 1, seen))
+  } else if (v instanceof Error) {
+    ok = true
   } else if (v instanceof Date) {
     ok = Number.isFinite(v.getTime())
   } else if (v instanceof Map) {
