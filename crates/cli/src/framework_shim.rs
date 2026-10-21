@@ -83,6 +83,12 @@ fn render_pool_size() -> usize {
         .max(2)
 }
 
+/// B-23: a separate tooling lane so an SFC compile cannot head-of-line block
+/// SSR renders. Half the render pool, at least one worker.
+fn tooling_pool_size() -> usize {
+    (render_pool_size() / 2).max(1)
+}
+
 /// Wraps any `FrameworkRenderer` as an `oxide_server::PageRenderer`.
 ///
 /// The only translation is input-shape: `PageRenderInput.params` is a typed
@@ -434,7 +440,9 @@ pub async fn build_framework_stack(
     // a hardcoded 2. Under load a 2-worker pool throttles TTFB; the spec
     // calls for "physical cores" (min 2, so a single-core CI box still works).
     let pool_size = render_pool_size();
-    let pool = match host.tooling_pool(PoolConfig {
+    // B-23: renders/loaders/middleware/actions get the render lane; tooling
+    // compiles get their own pool below.
+    let pool = match host.render_pool(PoolConfig {
         size: pool_size,
         ..Default::default()
     }) {
@@ -464,7 +472,7 @@ pub async fn build_framework_stack(
                 h = h.with_transform_handler(Arc::clone(t));
             }
             h.tooling_pool(PoolConfig {
-                size: pool_size,
+                size: tooling_pool_size(),
                 ..Default::default()
             })
         } {
@@ -478,8 +486,29 @@ pub async fn build_framework_stack(
             }
         }
     } else {
-        // The Node backend's render pool IS a Node tooling pool.
-        Arc::clone(&pool)
+        // B-23: on the Node backend, the render lane and the tooling lane are
+        // separate Node pools so a slow compile cannot block an SSR render.
+        match {
+            let mut h = NodeHost::new(NodeHost::worker_script_default())
+                .with_cache_handler(Arc::clone(&cache_tier))
+                .with_fetch_handler(Arc::clone(&fetch_handler));
+            if let Some(t) = transform_handler.as_ref() {
+                h = h.with_transform_handler(Arc::clone(t));
+            }
+            h.tooling_pool(PoolConfig {
+                size: tooling_pool_size(),
+                ..Default::default()
+            })
+        } {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!(
+                    "warn: tooling pool unavailable (node): {} {}",
+                    e.0.code, e.0.message
+                );
+                Arc::clone(&pool)
+            }
+        }
     };
 
     // The loader runner needs only the pool — it resolves modules per request.
