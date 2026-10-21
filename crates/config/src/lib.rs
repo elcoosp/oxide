@@ -287,11 +287,17 @@ impl Default for ServerConfig {
 pub struct RenderConfig {
     /// `auto | static | isr | dynamic | spa | islands` (§10.1)
     pub default: String,
+    /// §10.8: partial prerendering. When true, the dispatcher caches the
+    /// static shell of a streamed page and serves it immediately on later
+    /// requests, streaming the dynamic holes in afterwards.
+    #[serde(default)]
+    pub ppr: bool,
 }
 impl Default for RenderConfig {
     fn default() -> Self {
         Self {
             default: "auto".into(),
+            ppr: false,
         }
     }
 }
