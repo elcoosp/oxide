@@ -392,6 +392,57 @@ pub async fn op_oxide_cache_tag(#[string] tag: String) -> String {
 /// `compile_module` op. Extracted so it can be unit-tested directly —
 /// `#[op2]` turns the decorated wrapper into a 0-arg `OpDecl` generator,
 /// which cannot be invoked as a normal async function.
+/// G1: a synchronous entry to the same transform + lower pipeline the
+/// `compile_module` op runs, for the V8 module loader.
+///
+/// The loader's `load()` is a sync trait method on the runtime thread, so it
+/// cannot `.await`. The work runs on a scoped thread with its own
+/// current-thread runtime — the same bridge the CLI's plugin hooks use. The
+/// tooling pool has its own runtime (fixed in bdfe82f), so blocking here does
+/// not starve it.
+pub fn compile_module_sync(
+    path: String,
+    code: String,
+    lang: String,
+) -> crate::Result<String> {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| {
+                        crate::err("JSH-V8COMPILE", format!("bridge runtime: {e}"))
+                    })?;
+                // `compile_module_impl` returns the op's JSON string — a
+                // `{code: ...}` object on success, an error object otherwise.
+                let json = rt.block_on(compile_module_impl(path, code, lang));
+                match serde_json::from_str::<serde_json::Value>(&json) {
+                    Ok(v) => {
+                        if let Some(s) = v.get("code").and_then(|s| s.as_str()) {
+                            Ok(s.to_string())
+                        } else if let Some(m) = v.get("error").and_then(|m| m.as_str()) {
+                            Err(crate::err("JSH-V8COMPILE", m.to_string()))
+                        } else {
+                            Err(crate::err(
+                                "JSH-V8COMPILE",
+                                format!("unexpected compile result: {json}"),
+                            ))
+                        }
+                    }
+                    Err(_) => Err(crate::err(
+                        "JSH-V8COMPILE",
+                        format!("compile result is not JSON: {json}"),
+                    )),
+                }
+            })
+            .join()
+            .unwrap_or_else(|_| {
+                Err(crate::err("JSH-V8COMPILE", "compile bridge thread panicked"))
+            })
+    })
+}
+
 pub async fn compile_module_impl(path: String, code: String, lang: String) -> String {
     // B-13: memoise by (path, lang, content hash). The Node worker gates
     // recompiles by source hash too; this keeps the Oxc pass from re-running

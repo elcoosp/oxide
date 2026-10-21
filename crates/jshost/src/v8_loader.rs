@@ -298,7 +298,9 @@ impl ModuleLoader for TranspileLoader {
         // The ModuleSource keeps the ORIGINAL specifier (query included) so
         // deno_core caches `?v=N` generations as distinct modules (BUG-04).
         let spec = module_specifier.clone();
-        let jsx = self.jsx_import_source.clone();
+        // G1: retained as a field read for test introspection; the
+        // compile path now routes through compile_module_sync.
+        let _jsx = self.jsx_import_source.clone();
         let fut = async move {
             let src = std::fs::read_to_string(&path).map_err(|e| {
                 deno_error::JsErrorBox::generic(format!("read {}: {e}", path.display()))
@@ -328,15 +330,17 @@ impl ModuleLoader for TranspileLoader {
                 Some("ts" | "tsx" | "jsx")
             ) {
                 let lang = lang_of(&path);
-                let (js, _map) = oxide_compiler::lower_to_js(
-                    &src,
-                    lang,
-                    &path.to_string_lossy(),
-                    jsx.as_deref(),
+                // G1: route through the same transform + lower pipeline the
+                // `compile_module` op runs, so a plugin's `transform` hook
+                // reaches a V8 build (it previously reached only Node).
+                let js = crate::v8_ops::compile_module_sync(
+                    path.to_string_lossy().into_owned(),
+                    src.clone(),
+                    lang.to_string(),
                 )
                 .map_err(|e| {
                     deno_error::JsErrorBox::generic(format!(
-                        "lower {}: {} {}",
+                        "compile {}: {} {}",
                         path.display(),
                         e.0.code,
                         e.0.message
