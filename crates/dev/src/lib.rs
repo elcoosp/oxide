@@ -641,6 +641,28 @@ pub fn render_inspector_html(state: &InspectorState) -> String {
             html_escape(&r.cache_policy),
         ));
     }
+    // B-17: render the recorded request waterfalls (the flamegraph view).
+    let mut wf_rows = String::new();
+    for wf in &state.waterfalls {
+        let total: f64 = wf.waterfall_ms.iter().map(|(_, ms)| *ms).sum();
+        let mut bars = String::new();
+        for (name, ms) in &wf.waterfall_ms {
+            // 2px per ms, clamped so a 2s defer cannot blow up the page.
+            let width = (ms * 2.0).round().clamp(1.0, 400.0) as u32;
+            bars.push_str(&format!(
+                "<span class=\"bar\" style=\"width:{}px\" title=\"{}: {:.1}ms\"></span>",
+                width,
+                html_escape(name),
+                ms,
+            ));
+        }
+        wf_rows.push_str(&format!(
+            "<tr><td><code>{}</code></td><td class=\"stages\">{}</td><td>{:.1}ms</td></tr>",
+            html_escape(&wf.request_id),
+            bars,
+            total,
+        ));
+    }
     format!(
         "<!doctype html><html><head><title>Oxide Inspector</title>\
          <style>\
@@ -651,6 +673,7 @@ pub fn render_inspector_html(state: &InspectorState) -> String {
          th,td{{text-align:left;padding:6px 10px;border-bottom:1px solid #222}}\
          th{{color:#888;font-weight:500}}\
          code{{background:#151515;padding:2px 6px;border-radius:4px}}\
+         .bar{{display:inline-block;height:10px;background:#7cb7ff;margin-right:2px;border-radius:2px;vertical-align:middle}}\
          a{{color:#7cb7ff}}\
          </style></head>\
          <body>\
@@ -658,9 +681,13 @@ pub fn render_inspector_html(state: &InspectorState) -> String {
          <p>Raw JSON: <a href=\"/__oxide/state\">/__oxide/state</a></p>\
          <h2>Routes ({})</h2>\
          <table><thead><tr><th>pattern</th><th>mode</th><th>dynamic reason</th><th>cache policy</th></tr></thead><tbody>{}</tbody></table>\
+         <h2>Waterfalls ({})</h2>\
+         <table id=\"wf\"><thead><tr><th>request</th><th>stages</th><th>total</th></tr></thead><tbody>{}</tbody></table>\
          </body></html>",
         state.routes.len(),
-        rows
+        rows,
+        state.waterfalls.len(),
+        wf_rows
     )
 }
 
