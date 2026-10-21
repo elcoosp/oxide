@@ -55,11 +55,12 @@ function buildHead(input: RenderInput): HeadTags {
 }
 
 /**
- * Build a react adapter. `componentFor(route)` MUST return a React component
- * (a function of props) or undefined. When `ssr` is 'auto' (default), a
+ * Build a react adapter. Components are resolved by the runtime
+ * (`RenderInput.resolve`, §6.4) from the generated SSR entry; an explicit
+ * `componentFor` option overrides it. When `ssr` is 'auto' (default), a
  * missing component or missing `react`/`react-dom` deps falls back to the
- * neutral-IR renderer; when 'real', the failure is emitted as an HTML
- * comment so it shows up in the response body.
+ * neutral-IR renderer; when 'real', a missing page component is the §10.2
+ * OX-500 diagnostic (never a silent blank body).
  */
 export function createRealAdapter(opts: RealAdapterOptions) {
   return makeRealAdapter({
