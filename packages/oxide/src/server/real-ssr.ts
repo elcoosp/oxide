@@ -34,8 +34,13 @@ export interface RealAdapterOptions {
    *   placeholder instead of falling back (useful for production).
    */
   ssr?: 'real' | 'auto'
-  /** Resolve the real framework component for a route id. */
-  componentFor: (route: string) => unknown
+  /**
+   * Advanced override: resolve a component for a route id without the
+   * generated resolver. The normal path is {@link RenderInput.resolve},
+   * supplied by the runtime from the build-emitted component surface
+   * (§6.4). Kept for one release window for custom component registries.
+   */
+  componentFor?: (route: string) => unknown
   /** Optional layout: called with the route's tree as children (React-style). */
   layoutFor?: (route: string) => unknown
 }
@@ -135,6 +140,16 @@ function streamOf(html: string): ReadableStream<Uint8Array> {
  */
 export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
   const strategy = cfg.opts.ssr ?? 'auto'
+  // §6.4: components come from the runtime resolver; the config's
+  // `componentFor` (if any) is an explicit advanced override.
+  const resolveComponent = (input: RenderInput, id: string): unknown => {
+    const r = (input as RenderInput & { resolve?: (id: string) => unknown }).resolve
+    if (typeof r === 'function') return r(id)
+    return cfg.opts.componentFor?.(id)
+  }
+  const missing = (kind: string, id: string): void => {
+    console.error(`[oxide] ${cfg.name}: no component resolved for ${kind} \`${id}\``)
+  }
   return {
     contract: 1,
     name: cfg.name,
@@ -154,7 +169,7 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
       return cfg.buildHead(synthetic)
     },
     render(input: RenderInput): ReadableStream<Uint8Array> {
-      const Component = cfg.opts.componentFor(input.route)
+      const Component = resolveComponent(input, input.route)
       // BUG-09: escape anything interpolated into an HTML comment — a `why`
       // containing `-->` would break out of the comment into live HTML.
       const safeComment = (s: string): string =>
@@ -164,7 +179,13 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
       // means "the caller has no component for this route".
       if (Component === undefined || Component === null) {
         if (strategy === 'real') {
-          return streamOf(`<!-- oxide: real SSR: no component for route ${safeComment(input.route)} -->`)
+          // §6.4 / §10.2 step 5: a missing page component is a diagnostic and
+          // a 500, never a silently blank page. The marker is the adapter
+          // status contract the pipeline promotes to HTTP 500.
+          missing('route', input.route)
+          return streamOf(
+            `<!--oxide-status:500--><div class='ox-error' data-ox-error='OX-500'>OX-500: no component resolved for route ${escText(input.route)}</div>`,
+          )
         }
         return cfg.irRender(input)
       }
@@ -201,13 +222,13 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
         const layoutIds: string[] = Array.isArray(input.layouts) ? input.layouts : []
         const layoutParts: Array<{ id: string; Component: unknown }> = []
         for (const id of layoutIds) {
-          const L = cfg.opts.componentFor(id)
+          const L = resolveComponent(input, id)
           if (L === undefined || L === null) {
-            // `auto`: silently skip an unresolved layout (keeps existing
-            // single-layer flows working when a route declares a layout
-            // without supplying a component). `real`: emit a loud comment
-            // so a missing registration is visible in the response.
+            // §6.4: never silently drop a declared layout. `real` records a
+            // diagnostic (and still renders so the page is visible); `auto`
+            // keeps the legacy skip.
             if (strategy === 'real') {
+              missing('layout', id)
               layoutParts.push({ id, Component: undefined })
             }
             continue
@@ -243,7 +264,7 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
           for (const layer of [...layoutParts].reverse()) {
             if (layer.Component === undefined) {
               headWarnings.push(
-                `<!-- oxide: layout ${safeComment(layer.id)} declared but componentFor returned undefined; skipped -->`,
+                `<!-- oxide: layout ${safeComment(layer.id)} declared but the resolver returned undefined; skipped -->`,
               )
               continue
             }
@@ -285,7 +306,7 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
           const msg = err instanceof Error ? err.message : String(err)
           const errId = input.errorRoute
           if (typeof errId === 'string' && errId.length > 0) {
-            const ErrComp = cfg.opts.componentFor(errId)
+            const ErrComp = resolveComponent(input, errId)
             if (ErrComp !== undefined && ErrComp !== null) {
               try {
                 const errProps: Record<string, unknown> = {
