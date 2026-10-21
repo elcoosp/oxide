@@ -1938,14 +1938,35 @@ fn compile_edge_wasm(root: &Path, dist: &Path) -> anyhow::Result<Option<PathBuf>
             "cargo build -p oxide-core-wasm --target wasm32-unknown-unknown failed"
         ));
     }
-    // Copy the produced .wasm next to the deploy artifact.
+    // The raw cdylib artifact.
     let produced = root.join("target/wasm32-unknown-unknown/release/oxide_core_wasm.wasm");
-    if produced.is_file() {
-        std::fs::copy(&produced, &out)?;
-        Ok(Some(out))
-    } else {
-        Ok(None)
+    if !produced.is_file() {
+        return Ok(None);
     }
+    // B-01: run wasm-bindgen so the emitted `edge.wasm` exposes the
+    // `edge_cache_key` / `merge_head` / `encode_odf` / `decode_odf` exports
+    // the edge handler calls. `--target web` keeps the glue dependency-free.
+    let bindgen_ok = std::process::Command::new("wasm-bindgen")
+        .arg(&produced)
+        .args(["--target", "web"])
+        .arg("--out-dir")
+        .arg(dist)
+        .args(["--out-name", "edge"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !bindgen_ok {
+        tracing::warn!("wasm-bindgen not on PATH; emitting raw cdylib without JS glue");
+        std::fs::copy(&produced, &out)?;
+        return Ok(Some(out));
+    }
+    // wasm-bindgen writes `edge_bg.wasm`; the handler + wrangler expect the
+    // single-artifact name `edge.wasm`.
+    let bg = dist.join("edge_bg.wasm");
+    if bg.is_file() {
+        std::fs::rename(&bg, &out)?;
+    }
+    Ok(Some(out))
 }
 
 /// Emit a search index per configured content collection (§16.5). Writes
@@ -3037,7 +3058,54 @@ async fn write_prerender(
 /// + ODF encode. Success is 200 with `application/oxide+odf`; a loader
 /// short-circuit (`error()`/`redirect()`) propagates its status/location.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 async fn route_data_response(
+    req: &oxide_server::OxideRequest,
+    loader_runner: Option<&std::sync::Arc<dyn oxide_server::LoaderRunner>>,
+    module_path: Option<&std::path::Path>,
+    route_id: Option<&str>,
+    params: &std::collections::BTreeMap<String, String>,
+    metrics: &std::sync::Arc<oxide_server::Metrics>,
+    started: std::time::Instant,
+    middleware_locals: &serde_json::Value,
+    middleware_headers: &[(String, String)],
+    layout_module_paths: &[(String, std::path::PathBuf)],
+    locale: &str,
+    // B-17: the `/__data` branch also shows up in the inspector waterfall,
+    // split into the middleware phase it shares with SSR and its own load.
+    middleware_ms: f64,
+    waterfall: Option<&oxide_dev::WaterfallRecorder>,
+) -> oxide_server::OxideResponse {
+    let request_id = req.request_id.clone();
+    let resp = route_data_response_inner(
+        req,
+        loader_runner,
+        module_path,
+        route_id,
+        params,
+        metrics,
+        started,
+        middleware_locals,
+        middleware_headers,
+        layout_module_paths,
+        locale,
+    )
+    .await;
+    if let Some(rec) = waterfall {
+        let total = started.elapsed().as_secs_f64() * 1000.0;
+        rec.record(
+            &request_id,
+            vec![
+                ("middleware".to_string(), middleware_ms),
+                ("load".to_string(), (total - middleware_ms).max(0.0)),
+            ],
+        );
+    }
+    resp
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn route_data_response_inner(
     req: &oxide_server::OxideRequest,
     loader_runner: Option<&std::sync::Arc<dyn oxide_server::LoaderRunner>>,
     module_path: Option<&std::path::Path>,
@@ -5703,10 +5771,9 @@ fn build_dispatch(
             .iter()
             .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
             .collect();
-        let endpoint_headers: Vec<(String, String)> = req.headers.clone();
+        // P-07: header/method/url are borrowed from `req_owned` at the
+        // dispatcher call sites instead of cloned per request.
         let endpoint_body: bytes::Bytes = req.body.clone();
-        let endpoint_method_for_dispatch: String = req.method.clone();
-        let endpoint_url_for_dispatch: String = req.url.clone();
 
         // §10.2 step 5 / §8.3: an unmatched URL gets a 404 status (the
         // `status` label above). To render a user-visible 404 page the
@@ -5801,10 +5868,11 @@ fn build_dispatch(
         let page_renderer = page_renderer.clone();
         let loader_runner = loader_runner.clone();
         let metrics = std::sync::Arc::clone(&metrics);
-        let req_owned = req.clone();
-        // Shadow so the async block moves a per-call clone rather than
-        // the outer closure's captured value (which would be E0507 —
-        // an `Fn` closure cannot surrender a captured variable).
+        // P-07: `req` is this invocation's own parameter, so move it into
+        // the async block instead of cloning the whole request per call.
+        let req_owned = req;
+        // Shadow captured values that the async block consumes (an `Fn`
+        // closure cannot surrender a captured variable — E0507).
         let boot_script_url_for_render = boot_script_url_for_render.clone();
         // §8.1 route.ts / §10.2 step 7: same pattern for the endpoint
         // dispatcher — the async block below moves this per-call clone.
@@ -5852,7 +5920,7 @@ fn build_dispatch(
                 }
             }
         };
-        let l0_eligible = req.method.eq_ignore_ascii_case("GET")
+        let l0_eligible = req_owned.method.eq_ignore_ascii_case("GET")
             && l0_cache::mode_is_cacheable(Some(effective_mode))
             && route_id.is_some()
             && !is_data_request;
@@ -5896,17 +5964,43 @@ fn build_dispatch(
             // §16.6: decode the encrypted session cookie into
             // `locals.session` so a loader/action reads it as an object. A
             // missing or tampered cookie is an empty session, never an error.
+            // B-05: the sealed token rides the `Cookie` header, never a
+            // header named `oxide_session`; read it through the cookie parser.
             if let Some(codec) = session_codec.as_deref() {
-                if let Some(cookie) = req_owned.header("oxide_session") {
-                    if let Ok(sess) = oxide_server::Session::decode(codec, cookie) {
+                if let Some(token) = req_owned
+                    .header("cookie")
+                    .and_then(|h| oxide_server::cookie_value(h, "oxide_session"))
+                {
+                    if let Ok(sess) = oxide_server::Session::decode(codec, token) {
                         middleware_locals["session"] = sess.to_value();
                     }
                 }
             }
+            // B-05: baseline for the session write-back. Middleware is the
+            // only phase that can refine `locals.session` (the loader gets a
+            // deserialized copy), so diffing around it captures every change.
+            let session_before = middleware_locals.get("session").cloned();
             let mut middleware_headers: Vec<(String, String)> = Vec::new();
+            // B-22: resume after the layer that issued the rewrite.
+            let resume_after = req_owned.mw_resume_after.clone();
+            let mut pending_resume = resume_after.as_ref().map(|_| {
+                // Only honour the marker when the target layer is present in
+                // this route's chain; otherwise run the chain normally.
+                let present = middleware_module_paths.iter().any(|p| {
+                    p.to_string_lossy() == resume_after.as_deref().unwrap_or("")
+                });
+                present.then(|| resume_after.clone().unwrap_or_default())
+            }).flatten();
             if let Some(dispatcher) = middleware_for_dispatch.as_deref() {
                 for mp in &middleware_module_paths {
                     let module_path_s = mp.to_string_lossy().to_string();
+                    if let Some(target) = pending_resume.as_ref() {
+                        if &module_path_s == target {
+                            // The rewriting layer itself must not run twice.
+                            pending_resume = None;
+                        }
+                        continue;
+                    }
                     // Pass the full request (headers + body) so an auth /
                     // upload middleware sees what it needs, plus the
                     // locals accumulated by outer middlewares (None when
@@ -5925,7 +6019,7 @@ fn build_dispatch(
                             &req_owned.method,
                             &req_owned.url,
                             &endpoint_params_json,
-                            &endpoint_headers,
+                            &req_owned.headers,
                             endpoint_body.as_ref(),
                             locals_for_call,
                         )
@@ -5943,20 +6037,28 @@ fn build_dispatch(
                                 }
                                 return resp;
                             }
-                            // Non-short-circuit: accumulate headers, and
-                            // MERGE locals so an inner middleware refines
-                            // (rather than erases) what an outer one set.
+                            // B-06: last-writer-wins per header name — an
+                            // inner middleware refines what an outer one
+                            // set, matching the locals merge below. Appending
+                            // both produced duplicate header lines.
                             for (k, v) in &out.headers {
-                                middleware_headers.push((k.clone(), v.clone()));
+                                let lower = k.to_ascii_lowercase();
+                                match middleware_headers
+                                    .iter_mut()
+                                    .find(|(ek, _)| ek.eq_ignore_ascii_case(&lower))
+                                {
+                                    Some((_, ev)) => *ev = v.clone(),
+                                    None => middleware_headers.push((k.clone(), v.clone())),
+                                }
                             }
-                            if let Some(l) = out.locals {
-                                if let Some(src) = l.as_object() {
-                                    let dst = middleware_locals
-                                        .as_object_mut()
-                                        .expect("middleware_locals is always an object");
-                                    for (k, v) in src {
-                                        dst.insert(k.clone(), v.clone());
-                                    }
+                            // P-08: consume the locals by value — the merge
+                            // used to deep-clone every key/value per hop.
+                            if let Some(serde_json::Value::Object(src)) = out.locals {
+                                let dst = middleware_locals
+                                    .as_object_mut()
+                                    .expect("middleware_locals is always an object");
+                                for (k, v) in src {
+                                    dst.insert(k, v);
                                 }
                             }
                             if let Some(rw) = out.rewrite.as_deref() {
@@ -5971,6 +6073,7 @@ fn build_dispatch(
                                     // S-20: bump the internal counter, not a
                                     // header, so it cannot be forged.
                                     new_req.rewrite_hops = (rewrite_hop + 1) as u8;
+                                    new_req.mw_resume_after = Some(module_path_s.clone());
                                     return re_dispatch(new_req).await;
                                 }
                                 tracing::warn!(
@@ -5991,6 +6094,32 @@ fn build_dispatch(
                                 }}),
                             );
                         }
+                    }
+                }
+            }
+            // B-05: write-back. If a middleware layer changed
+            // `locals.session`, seal it and ride a `Set-Cookie` on every
+            // response path via `middleware_headers`.
+            if let Some(codec) = session_codec.as_deref() {
+                let after = middleware_locals.get("session").cloned();
+                if after.is_some() && after != session_before {
+                    let mut sess = oxide_server::Session::new();
+                    if let Some(obj) = after.as_ref().and_then(|v| v.as_object()) {
+                        for (k, v) in obj {
+                            sess.insert(k.clone(), v.clone());
+                        }
+                    }
+                    match sess.encode(codec) {
+                        Ok(token) => middleware_headers.push((
+                            "set-cookie".to_string(),
+                            format!(
+                                "oxide_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=1800"
+                            ),
+                        )),
+                        Err(e) => tracing::warn!(
+                            error = %e.0.message,
+                            "session encode failed; cookie not set",
+                        ),
                     }
                 }
             }
@@ -6017,6 +6146,8 @@ fn build_dispatch(
                     &middleware_headers,
                     &layout_module_paths,
                     &resolved_locale,
+                    middleware_ms,
+                    waterfall.as_ref(),
                 )
                 .await;
             }
@@ -6045,6 +6176,18 @@ fn build_dispatch(
                         &middleware_locals,
                     )
                     .await;
+                    // B-17: actions get their own waterfall row so the
+                    // inspector shows form-POST latency next to renders.
+                    if let Some(rec) = waterfall.as_ref() {
+                        let total = started.elapsed().as_secs_f64() * 1000.0;
+                        rec.record(
+                            &req_owned.request_id,
+                            vec![
+                                ("middleware".to_string(), middleware_ms),
+                                ("action".to_string(), (total - middleware_ms).max(0.0)),
+                            ],
+                        );
+                    }
                     // §11.3: apply any tag/path invalidations the action
                     // asked for, then return the response.
                     if let Some(rev) = resp.header("x-oxide-revalidate") {
@@ -6113,6 +6256,15 @@ fn build_dispatch(
                                 resp = resp.with_header(k, v.clone());
                             }
                             metrics.observe(&label, started.elapsed(), 304);
+                            if let Some(rec) = waterfall.as_ref() {
+                                rec.record(
+                                    &req_owned.request_id,
+                                    vec![(
+                                        "cache-hit".to_string(),
+                                        started.elapsed().as_secs_f64() * 1000.0,
+                                    )],
+                                );
+                            }
                             return resp;
                         }
                         // P-05: stale-while-revalidate. A stale hit is served
@@ -6150,6 +6302,18 @@ fn build_dispatch(
                             resp = resp.with_header(k, v.clone());
                         }
                         metrics.observe(&label, started.elapsed(), hit.status());
+                        // B-17: hit rows sit next to miss rows in the
+                        // inspector so cache-hit rate is visible.
+                        if let Some(rec) = waterfall.as_ref() {
+                            rec.record(
+                                &req_owned.request_id,
+                                vec![(
+                                    if hit.stale { "cache-stale" } else { "cache-hit" }
+                                        .to_string(),
+                                    started.elapsed().as_secs_f64() * 1000.0,
+                                )],
+                            );
+                        }
                         return resp;
                     }
                 }
@@ -6205,6 +6369,12 @@ fn build_dispatch(
             // output (error(...) or redirect(...)) short-circuits the
             // response; a 200 output threads `data` into the render phase.
             let mut data = serde_json::Value::Object(Default::default());
+            // B2: the page load's per-settle stream, when the runner streams.
+            // `Some` only when the loader declared at least one `defer()`;
+            // the render arm then holds `</body>` until the settles land.
+            let mut page_settles: Option<
+                tokio::sync::mpsc::Receiver<serde_json::Value>,
+            > = None;
             // 16-G: the route's `meta = defineMeta(fn)` contribution, if its
             // server module exports one. Merged into the render input's head.
             let mut route_meta: Option<serde_json::Value> = None;
@@ -6492,41 +6662,36 @@ fn build_dispatch(
                         .cloned()
                         .unwrap_or(serde_json::Value::Null);
 
-                    match runner.run(input).await {
-                        Ok(out) if out.short_circuits() => {
-                            let body = out
-                                .data
-                                .get("message")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let mut resp = oxide_server::OxideResponse::new(out.status, body);
-                            if let Some(loc) = out.location {
-                                resp = resp.with_header("location", loc);
+                    match runner.run_streaming(input.clone()).await {
+                        Ok((out, settles)) => {
+                            if out.short_circuits() {
+                                // fall through to the short-circuit arm below
+                                // by re-dispatching on the same shape.
+                                let body = out
+                                    .data
+                                    .get("message")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let mut resp =
+                                    oxide_server::OxideResponse::new(out.status, body);
+                                if let Some(loc) = out.location {
+                                    resp = resp.with_header("location", loc);
+                                }
+                                for c in &out.set_cookies {
+                                    resp = resp.with_header("set-cookie", c.clone());
+                                }
+                                for (k, v) in &out.headers {
+                                    resp = resp.with_header(k, v.clone());
+                                }
+                                metrics.observe(&label, started.elapsed(), out.status);
+                                return resp;
                             }
-                            // §16.6 / §9.2: cookies the load set and headers
-                            // it added ride the short-circuiting response
-                            // (a redirect that also sets a session cookie).
-                            for c in &out.set_cookies {
-                                resp = resp.with_header("set-cookie", c.clone());
-                            }
-                            for (k, v) in &out.headers {
-                                resp = resp.with_header(k, v.clone());
-                            }
-                            metrics.observe(&label, started.elapsed(), out.status);
-                            return resp;
-                        }
-                        Ok(out) => {
                             data = out.data;
-                            // 16-G: the route's `meta` contribution.
-                            route_meta = out.meta;
                             loader_set_cookies = out.set_cookies;
                             loader_headers = out.headers;
-                            // §7.1 / §9.2: resolved defer() values. Injected
-                            // as a `<script>` so the client's DeferredClient
-                            // slots (wired from the ODF payload's
-                            // `{__deferred: id}` markers) resolve.
                             deferred_values = out.deferred;
+                            page_settles = Some(settles);
                         }
                         Err(e) => {
                             tracing::error!(
@@ -6562,10 +6727,10 @@ fn build_dispatch(
                 match dispatcher
                     .dispatch(
                         &module_path_s,
-                        &endpoint_method_for_dispatch,
-                        &endpoint_url_for_dispatch,
+                        &req_owned.method,
+                        &req_owned.url,
                         &endpoint_params_json,
-                        &endpoint_headers,
+                        &req_owned.headers,
                         endpoint_body.as_ref(),
                         &middleware_locals,
                     )
@@ -6687,6 +6852,20 @@ fn build_dispatch(
                             Some(oxide_server::nonce_for(&req_owned.request_id)),
                             label.clone(),
                         );
+
+                        // B2: when the load declared at least one
+                        // `defer()`, hold the document's closing tags and
+                        // emit a resolution script per settle as it arrives,
+                        // instead of one batched tag after the slowest.
+                        let nonce_for_settles = oxide_server::nonce_for(&req_owned.request_id);
+                        let bridged = match page_settles.take() {
+                            Some(rx) => strip_close_and_append_settles(
+                                bridged,
+                                rx,
+                                nonce_for_settles,
+                            ),
+                            None => bridged,
+                        };
                         // §17.1: a script without the matching nonce is
                         // blocked by the response's `strict-dynamic` CSP.
                         // The pipeline derives a per-request nonce in
@@ -6751,6 +6930,9 @@ fn build_dispatch(
                                     r#"<script nonce="{n}">(function(){{"#,
                                     r#"try{{var ws=new WebSocket((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/_oxide/hmr');"#,
                                     r#"ws.onmessage=function(ev){{try{{var m=JSON.parse(ev.data);"#,
+                                    // B-21: a tab open across a server restart holds
+                                    // assets from the old build_id — hard reload.
+                                    r#"if(m.type==='connected'){{if(window.__oxideBuildId&&window.__oxideBuildId!==m.build_id){{location.reload();return;}}window.__oxideBuildId=m.build_id;}}"#,
                                     r#"if(m.type==='css-update'){{var p=(m.path||'').split('?')[0];var ls=document.querySelectorAll('link[rel=stylesheet]');"#,
                                     r#"for(var i=0;i<ls.length;i++){{var h=(ls[i].getAttribute('href')||'').split('?')[0];"#,
                                     r#"if(h===p||h.slice(-p.length)===p){{ls[i].setAttribute('href',p+'?t='+Date.now());break;}}}}}}"#,
@@ -11272,4 +11454,96 @@ fn push_chunk_hash(dir: &Path, file: &str, out: &mut Vec<(String, String)>) {
         return;
     };
     out.push((file.to_string(), blake3::hash(&bytes).to_hex().to_string()));
+}
+
+/// B2: hold the document's closing tags until the deferred settles finish,
+/// emitting one resolution script per settle as it arrives.
+///
+/// The render stream ends with `</body></html>`. This adapter withholds the
+/// last `suffix_len` bytes, forwards everything before them immediately, then
+/// drains the settle receiver (one `<script type="application/oxide-deferred"
+/// data-id="…">` per settle, in settle order), and finally emits the
+/// tail + the withheld closing bytes.
+///
+/// The point: the shell and the initial data reach the browser at once; each
+/// deferred slot resolves when *its* promise settles, not when the slowest
+/// one does. A no-defer route never enters this path (its receiver is empty
+/// and the caller uses the buffered `deferred_tag`).
+fn strip_close_and_append_settles(
+    src: oxide_server::BodyStream,
+    mut settles: tokio::sync::mpsc::Receiver<serde_json::Value>,
+    nonce: String,
+) -> oxide_server::BodyStream {
+    use bytes::Bytes;
+    use futures::StreamExt as _;
+
+    const CLOSE: &[u8] = b"</body></html>";
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<std::result::Result<Bytes, std::io::Error>>(16);
+    tokio::spawn(async move {
+        let mut src = src;
+        // Hold back at least CLOSE.len() bytes so a `</body></html>` split
+        // across chunks is still stripped. Keep one extra byte of margin so
+        // a chunk boundary cannot defeat the match.
+        let hold = CLOSE.len() + 1;
+        let mut buf: Vec<u8> = Vec::new();
+        while let Some(item) = src.next().await {
+            match item {
+                Ok(chunk) => {
+                    buf.extend_from_slice(&chunk);
+                    if buf.len() > hold {
+                        let emit_upto = buf.len() - hold;
+                        let head = buf[..emit_upto].to_vec();
+                        buf.drain(..emit_upto);
+                        if tx.send(Ok(Bytes::from(head))).await.is_err() {
+                            return; // consumer gone
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e)).await;
+                    return;
+                }
+            }
+        }
+        // Strip the trailing close, if present (it always is for a full doc).
+        let stripped = if buf.ends_with(CLOSE) {
+            buf.truncate(buf.len() - CLOSE.len());
+            std::mem::take(&mut buf)
+        } else {
+            std::mem::take(&mut buf)
+        };
+        if !stripped.is_empty() && tx.send(Ok(Bytes::from(stripped))).await.is_err() {
+            return;
+        }
+        // One resolution script per settle, in settle order.
+        while let Some(v) = settles.recv().await {
+            let Some(obj) = v.get("deferredSettle") else {
+                continue;
+            };
+            let Some(id) = obj.get("id").and_then(|x| x.as_str()) else {
+                continue;
+            };
+            let payload = match obj.get("value") {
+                Some(value) => value.clone(),
+                None => serde_json::json!({
+                    "__oxide_deferred_error": obj
+                        .get("error")
+                        .and_then(|e| e.as_str())
+                        .unwrap_or("deferred rejected")
+                }),
+            };
+            let json = serde_json::to_string(&payload).unwrap_or_else(|_| "null".into());
+            let safe = json.replace('<', "\\u003c");
+            let tag = format!(
+                r#"<script type="application/oxide-deferred" data-id="{id}" nonce="{nonce}">{safe}</script>"#
+            );
+            if tx.send(Ok(Bytes::from(tag))).await.is_err() {
+                return;
+            }
+        }
+        // Close the document only after every settle has been delivered.
+        let _ = tx.send(Ok(Bytes::from_static(CLOSE))).await;
+        // `tx` drops, closing the body stream.
+    });
+    Box::pin(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)))
 }
