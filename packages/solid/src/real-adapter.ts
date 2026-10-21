@@ -38,10 +38,11 @@ function buildHead(input: RenderInput): HeadTags {
 }
 
 /**
- * Build a Solid adapter. `componentFor(route)` MUST return a Solid component
- * (a function of props) or undefined. When `ssr` is 'auto' (default), a
- * missing component or missing `solid-js` dep falls back to the neutral-IR
- * renderer; when 'real', the failure is emitted as an HTML comment.
+ * Build a Solid adapter. Components come from the runtime resolver
+ * (`RenderInput.resolve`, §6.4): a function of props. An explicit
+ * `componentFor` overrides it. When `ssr` is 'auto' (default), a missing
+ * component or missing `solid-js` dep falls back to the neutral-IR renderer;
+ * when 'real', a missing page is the §10.2 OX-500 diagnostic.
  */
 export function createRealAdapter(opts: RealAdapterOptions) {
   return makeRealAdapter({
