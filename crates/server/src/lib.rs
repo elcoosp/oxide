@@ -39,7 +39,7 @@ use oxide_render::RequestTimings;
 use oxide_router::RulesEngine;
 use std::collections::BTreeMap;
 use std::io::Write as IoWrite;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
@@ -51,11 +51,19 @@ pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
 }
 
 /// A platform-agnostic request handed to the pipeline (web-standard shape, G5).
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct OxideRequest {
     pub method: String,
     pub url: String,
-    pub headers: Vec<(String, String)>,
+    /// P-14: shared across the dispatch clones (loader/action/trace) instead
+    /// of a deep `Vec` clone per hop.
+    pub headers: std::sync::Arc<Vec<(String, String)>>,
+    /// P-14: lazily-built lowercased name → first index, so `header()` is
+    /// O(1) after the first lookup instead of a linear scan per call.
+    /// Derived header index (P-14). Public only so struct literals in tests
+    /// can initialize it; treat it as an implementation detail.
+    #[doc(hidden)]
+    pub header_index: OnceLock<std::collections::HashMap<Box<str>, usize>>,
     pub body: Bytes,
     pub request_id: String,
     /// §20: the parsed W3C trace context from the incoming `traceparent`
@@ -79,11 +87,37 @@ pub struct OxideRequest {
     pub mw_resume_after: Option<String>,
 }
 
+impl Clone for OxideRequest {
+    fn clone(&self) -> Self {
+        Self {
+            method: self.method.clone(),
+            url: self.url.clone(),
+            headers: std::sync::Arc::clone(&self.headers),
+            // The index is derived from `headers`; rebuild lazily on the clone.
+            header_index: OnceLock::new(),
+            body: self.body.clone(),
+            request_id: self.request_id.clone(),
+            trace: self.trace.clone(),
+            peer: self.peer,
+            rewrite_hops: self.rewrite_hops,
+            mw_resume_after: self.mw_resume_after.clone(),
+        }
+    }
+}
+
 impl OxideRequest {
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+        let index = self.header_index.get_or_init(|| {
+            let mut map = std::collections::HashMap::with_capacity(self.headers.len());
+            for (i, (k, _)) in self.headers.iter().enumerate() {
+                map.entry(k.to_ascii_lowercase().into_boxed_str())
+                    .or_insert(i);
+            }
+            map
+        });
+        index
+            .get(&*name.to_ascii_lowercase())
+            .and_then(|i| self.headers.get(*i))
             .map(|(_, v)| v.as_str())
     }
 }
@@ -586,6 +620,125 @@ pub fn negotiate_encoding(accept_encoding: &str, available: &[&str]) -> Option<S
     None
 }
 
+/// P-15: a `std::io::Write` sink that forwards compressed bytes to the
+/// response stream as they are produced, so the first chunk is flushed at
+/// shell speed instead of after the whole page has rendered.
+struct ChunkSink {
+    tx: tokio::sync::mpsc::Sender<std::result::Result<Bytes, std::io::Error>>,
+}
+
+impl std::io::Write for ChunkSink {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if !buf.is_empty()
+            && self
+                .tx
+                .blocking_send(Ok(Bytes::copy_from_slice(buf)))
+                .is_err()
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "response stream dropped",
+            ));
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+enum StreamEncoder {
+    Zstd(Box<zstd::stream::write::Encoder<'static, ChunkSink>>),
+    Gzip(flate2::write::GzEncoder<ChunkSink>),
+}
+
+impl StreamEncoder {
+    fn new(encoding: &str, sink: ChunkSink) -> std::io::Result<Self> {
+        match encoding.to_ascii_lowercase().as_str() {
+            "zstd" => Ok(StreamEncoder::Zstd(Box::new(
+                zstd::stream::write::Encoder::new(sink, 3)?,
+            ))),
+            _ => Ok(StreamEncoder::Gzip(flate2::write::GzEncoder::new(
+                sink,
+                flate2::Compression::new(3),
+            ))),
+        }
+    }
+}
+
+impl std::io::Write for StreamEncoder {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            StreamEncoder::Zstd(w) => w.write(buf),
+            StreamEncoder::Gzip(w) => w.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            StreamEncoder::Zstd(w) => w.flush(),
+            StreamEncoder::Gzip(w) => w.flush(),
+        }
+    }
+}
+
+impl StreamEncoder {
+    fn finish(self) -> std::io::Result<()> {
+        match self {
+            StreamEncoder::Zstd(w) => w.finish().map(|_| ()),
+            StreamEncoder::Gzip(w) => w.finish().map(|_| ()),
+        }
+    }
+}
+
+/// P-15: wrap a streaming body in a background compressor. The blocking
+/// encoder runs on the blocking pool (zstd/gzip are not async) and is fed
+/// chunk-by-chunk; each `flush` surfaces bytes immediately so TTFB is the
+/// shell's, not the page's.
+fn spawn_stream_compressor(encoding: &str, mut stream: BodyStream) -> BodyStream {
+    use futures::StreamExt as _;
+    let (in_tx, in_rx) =
+        tokio::sync::mpsc::channel::<std::result::Result<Bytes, std::io::Error>>(4);
+    let (out_tx, out_rx) =
+        tokio::sync::mpsc::channel::<std::result::Result<Bytes, std::io::Error>>(8);
+    let err_tx = out_tx.clone();
+    let enc = encoding.to_string();
+    tokio::task::spawn_blocking(move || {
+        let mut writer = match StreamEncoder::new(&enc, ChunkSink { tx: out_tx }) {
+            Ok(w) => w,
+            Err(e) => {
+                let _ = err_tx.blocking_send(Err(e));
+                return;
+            }
+        };
+        let mut rx = in_rx;
+        while let Some(item) = rx.blocking_recv() {
+            match item {
+                Ok(chunk) => {
+                    if writer.write_all(&chunk).is_err() {
+                        break;
+                    }
+                    let _ = writer.flush();
+                }
+                Err(e) => {
+                    let _ = err_tx.blocking_send(Err(e));
+                    break;
+                }
+            }
+        }
+        let _ = writer.finish();
+    });
+    tokio::spawn(async move {
+        while let Some(item) = stream.next().await {
+            if in_tx.send(item).await.is_err() {
+                break;
+            }
+        }
+    });
+    Box::pin(tokio_stream::wrappers::ReceiverStream::new(out_rx))
+}
+
 /// Dynamic compression of a body chunk stream, flushed for first byte (§12.1 step 8).
 ///
 /// Deviation (documented): brotli is not compiled into this crate, so `"br"` fails with
@@ -996,10 +1149,7 @@ pub fn ws_origin_ok(
         Some((_, rest)) => rest,
         None => origin,
     };
-    let authority = after_scheme
-        .split(['/', '?', '#'])
-        .next()
-        .unwrap_or("");
+    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
     let o_host = strip_port(authority.trim());
     if o_host.is_empty() {
         return false;
@@ -1192,7 +1342,7 @@ pub async fn forward_proxy(url: &str, req: OxideRequest) -> Result<OxideResponse
     let mut builder = hyper::Request::builder()
         .method(req.method.as_str())
         .uri(url);
-    for (k, v) in &req.headers {
+    for (k, v) in req.headers.iter() {
         builder = builder.header(k.as_str(), v.as_str());
     }
     let outbound = builder
@@ -1647,7 +1797,9 @@ pub trait OgEndpointBackend: Send + Sync {
 /// Query keys: `title` (required), `subtitle` (optional), `bg` (optional CSS
 /// color, default `#0a0a0a`), `fg` (optional, default `#ffffff`), `w`/`h`
 /// (optional pixel size, default 1200×630).
-pub fn og_tree_from_query(query: &str) -> std::result::Result<(serde_json::Value, u32, u32), String> {
+pub fn og_tree_from_query(
+    query: &str,
+) -> std::result::Result<(serde_json::Value, u32, u32), String> {
     let mut title: Option<String> = None;
     let mut subtitle: Option<String> = None;
     let mut bg = "#0a0a0a".to_string();
@@ -1751,7 +1903,7 @@ fn serve_og_endpoint(endpoint: &OgEndpoint, raw_url: &str) -> OxideResponse {
         Ok(v) => v,
         Err(msg) => {
             return OxideResponse::new(400, format!("bad og request: {msg}"))
-                .with_header("content-type", "text/plain; charset=utf-8")
+                .with_header("content-type", "text/plain; charset=utf-8");
         }
     };
     match endpoint.backend.render(&tree, w, h) {
@@ -1844,9 +1996,9 @@ fn sanitize_route_label(raw: &str) -> String {
         return "_other".to_string();
     }
     let ok = path.len() <= 128
-        && path.bytes().all(|b| {
-            b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_' | b'-' | b'.' | b':')
-        });
+        && path
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_' | b'-' | b'.' | b':'));
     if ok {
         path.to_string()
     } else {
@@ -2362,9 +2514,7 @@ pub fn first_blocked_addr(
 /// a host the app does not own — that is a credential leak. The allowlist is
 /// the cross-origin-safe set: content negotiation and identification, nothing
 /// that authenticates.
-pub fn ssrf_forwardable_headers(
-    headers: &[(String, String)],
-) -> Vec<(String, String)> {
+pub fn ssrf_forwardable_headers(headers: &[(String, String)]) -> Vec<(String, String)> {
     const ALLOW: &[&str] = &["accept", "content-type", "user-agent"];
     headers
         .iter()
@@ -2959,7 +3109,8 @@ impl Pipeline {
                         Some(&method),
                         cookie.as_deref(),
                         accept_encoding.as_deref(),
-                    ).await
+                    )
+                    .await
                 })
             }
         }
@@ -2975,14 +3126,8 @@ impl Pipeline {
         match req.peer {
             Some(peer) => {
                 let xff = req.header("x-forwarded-for");
-                let (ip, _, _) = effective_client(
-                    peer,
-                    &self.security.trusted_proxies,
-                    xff,
-                    None,
-                    None,
-                    None,
-                );
+                let (ip, _, _) =
+                    effective_client(peer, &self.security.trusted_proxies, xff, None, None, None);
                 ip.unwrap_or("local").to_string()
             }
             None => "local".to_string(),
@@ -3144,7 +3289,10 @@ impl Pipeline {
                     .filter(|s| !s.is_empty())
                     .unwrap_or("unknown")
                     .to_string();
-                if !self.og_rate_limiter.allow(&peer, self.og_rate_max, self.og_rate_window_secs) {
+                if !self
+                    .og_rate_limiter
+                    .allow(&peer, self.og_rate_max, self.og_rate_window_secs)
+                {
                     return NativePrefix::Raw(
                         OxideResponse::new(429, "og rate limit exceeded")
                             .with_header("retry-after", self.og_rate_window_secs.to_string()),
@@ -3218,12 +3366,10 @@ impl Pipeline {
                     );
                 }
                 oxide_router::RuleOutcome::AuthRequired => {
-                    return NativePrefix::Raw(
-                        OxideResponse::new(401, "unauthorized").with_header(
-                            "WWW-Authenticate",
-                            "Basic realm=\"oxide\", charset=\"UTF-8\"",
-                        ),
-                    );
+                    return NativePrefix::Raw(OxideResponse::new(401, "unauthorized").with_header(
+                        "WWW-Authenticate",
+                        "Basic realm=\"oxide\", charset=\"UTF-8\"",
+                    ));
                 }
                 oxide_router::RuleOutcome::Redirect {
                     destination,
@@ -3285,12 +3431,10 @@ impl Pipeline {
                 rule_headers = map.into_iter().collect();
             }
             oxide_router::RuleOutcome::AuthRequired => {
-                return NativePrefix::Raw(
-                    OxideResponse::new(401, "unauthorized").with_header(
-                        "WWW-Authenticate",
-                        "Basic realm=\"oxide\", charset=\"UTF-8\"",
-                    ),
-                );
+                return NativePrefix::Raw(OxideResponse::new(401, "unauthorized").with_header(
+                    "WWW-Authenticate",
+                    "Basic realm=\"oxide\", charset=\"UTF-8\"",
+                ));
             }
             oxide_router::RuleOutcome::RateLimited { retry_after_secs } => {
                 // SEC-01: a 429 with the seconds until a token refills.
@@ -3357,7 +3501,10 @@ impl Pipeline {
         // A 0 port means the h3 listener is disabled.
         let mut resp = resp;
         if self.http3_port != 0
-            && !resp.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("alt-svc"))
+            && !resp
+                .headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("alt-svc"))
         {
             let port = self.http3_port;
             // P-16: the port is fixed for the server's lifetime, so the
@@ -3385,12 +3532,33 @@ impl Pipeline {
         accept_encoding: Option<&str>,
     ) -> OxideResponse {
         if let Some(ae) = accept_encoding {
-            let compressible = resp.stream.is_none()
-                && !resp.body.is_empty()
-                && !resp
+            let already_encoded = resp
+                .headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("content-encoding"));
+            // P-15: streamed bodies are compressed too. The streaming path
+            // takes precedence; buffered bodies keep the whole-body branch.
+            if !already_encoded && resp.stream.is_some() {
+                let ct_owned = resp
                     .headers
                     .iter()
-                    .any(|(k, _)| k.eq_ignore_ascii_case("content-encoding"));
+                    .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or_default();
+                if is_compressible(&ct_owned) {
+                    if let Some(enc) = negotiate_encoding(ae, &["zstd", "gzip"]) {
+                        if let Some(stream) = resp.stream.take() {
+                            resp.stream = Some(spawn_stream_compressor(&enc, stream));
+                            resp.headers
+                                .retain(|(k, _)| !k.eq_ignore_ascii_case("content-length"));
+                            resp.headers.push(("Content-Encoding".to_string(), enc));
+                            resp.headers
+                                .push(("Vary".to_string(), "Accept-Encoding".to_string()));
+                        }
+                    }
+                }
+            }
+            let compressible = resp.stream.is_none() && !resp.body.is_empty() && !already_encoded;
             if compressible {
                 let ct_owned = resp
                     .headers
@@ -3412,8 +3580,7 @@ impl Pipeline {
                                 resp.body = compressed;
                                 resp.headers
                                     .retain(|(k, _)| !k.eq_ignore_ascii_case("content-length"));
-                                resp.headers
-                                    .push(("Content-Encoding".to_string(), enc));
+                                resp.headers.push(("Content-Encoding".to_string(), enc));
                                 resp.headers
                                     .push(("Vary".to_string(), "Accept-Encoding".to_string()));
                             }
@@ -3684,18 +3851,14 @@ pub async fn from_hyper_request(
     // S-11: a body read also gets a hard deadline — `header_read_timeout` only
     // covers headers, so a client that drips a large body at 1 B/s would
     // otherwise hold the task + buffer indefinitely (a slowloris variant).
-    let body_deadline = std::time::Duration::from_millis(limits.slow_request_timeout_ms.max(1000) * 4);
+    let body_deadline =
+        std::time::Duration::from_millis(limits.slow_request_timeout_ms.max(1000) * 4);
     let collected = tokio::time::timeout(
         body_deadline,
         Limited::new(req.into_body(), limits.max_body).collect(),
     )
     .await
-    .map_err(|_| {
-        err(
-            "SRV-408",
-            "request body read timed out".to_string(),
-        )
-    })?;
+    .map_err(|_| err("SRV-408", "request body read timed out".to_string()))?;
     let body = collected
         .map_err(|_| {
             err(
@@ -3721,7 +3884,8 @@ pub async fn from_hyper_request(
     Ok(OxideRequest {
         method,
         url,
-        headers,
+        headers: Arc::new(headers),
+        header_index: OnceLock::new(),
         body,
         request_id,
         trace,
@@ -4133,10 +4297,7 @@ fn ws_hmr_upgrade(
         let mut rx = hub.subscribe();
         // The first message tells the client it is connected.
         // §13.3: advertise the current build id so a stale tab can reload.
-        let hello = format!(
-            "{{\"type\":\"connected\",\"build_id\":\"{}\"}}",
-            build_id,
-        );
+        let hello = format!("{{\"type\":\"connected\",\"build_id\":\"{}\"}}", build_id,);
         let _ = wr
             .write_all(&crate::ws::encode(&crate::ws::Frame::Text(hello), false))
             .await;
@@ -4242,10 +4403,7 @@ fn ws_socket_upgrade(
         // authorization) so the handler can authenticate — the socket.ts
         // `open(ctx)` contract documents `{ headers }`.
         let open_payload = serde_json::json!({ "headers": headers });
-        match dispatcher
-            .run(&mp, "open", open_payload, &socket_id)
-            .await
-        {
+        match dispatcher.run(&mp, "open", open_payload, &socket_id).await {
             Ok(out) => {
                 for text in &out.sends {
                     if wr
@@ -4320,8 +4478,7 @@ fn ws_socket_upgrade(
             for frame in frames {
                 match frame {
                     crate::ws::Frame::Text(text) => {
-                        let payload =
-                            serde_json::json!({ "data": text, "headers": headers });
+                        let payload = serde_json::json!({ "data": text, "headers": headers });
                         match dispatcher.run(&mp, "message", payload, &socket_id).await {
                             Ok(out) => {
                                 for send in &out.sends {
@@ -4566,7 +4723,8 @@ pub async fn serve_http3(
                                 let oreq = OxideRequest {
                                     method,
                                     url,
-                                    headers,
+                                    headers: Arc::new(headers),
+                                    header_index: OnceLock::new(),
                                     body: bytes::Bytes::from(body),
                                     request_id: next_request_id(),
                                     trace: None,
