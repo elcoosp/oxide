@@ -125,7 +125,11 @@ pub fn render_code_frame(source: &str, line: usize, col: Option<usize>) -> Strin
     let target = lines[line - 1];
     let gutter_width = line.to_string().len();
     let mut out = String::new();
-    out.push_str(&format!("{:width$} | {target}\n", line, width = gutter_width));
+    out.push_str(&format!(
+        "{:width$} | {target}\n",
+        line,
+        width = gutter_width
+    ));
     if let Some(c) = col {
         // Column is 1-based; underline the character at that column.
         let prefix_width = c.saturating_sub(1);
@@ -217,28 +221,26 @@ mod tests {
     }
 }
 
-    #[test]
-    fn render_code_frame_formats_with_gutter() {
-        let src = "line one\nline two\nline three\n";
-        let frame = render_code_frame(src, 2, Some(5));
-        assert!(frame.contains("2 | line two"), "gutter line: {frame}");
-        assert!(frame.contains("^"), "caret present: {frame}");
-    }
+#[test]
+fn render_code_frame_formats_with_gutter() {
+    let src = "line one\nline two\nline three\n";
+    let frame = render_code_frame(src, 2, Some(5));
+    assert!(frame.contains("2 | line two"), "gutter line: {frame}");
+    assert!(frame.contains("^"), "caret present: {frame}");
+}
 
-    #[test]
-    fn render_code_frame_line_only_has_no_caret() {
-        let src = "a\nb\n";
-        let frame = render_code_frame(src, 1, None);
-        assert!(frame.contains("1 | a"));
-        assert!(!frame.contains("^"));
-    }
+#[test]
+fn render_code_frame_line_only_has_no_caret() {
+    let src = "a\nb\n";
+    let frame = render_code_frame(src, 1, None);
+    assert!(frame.contains("1 | a"));
+    assert!(!frame.contains("^"));
+}
 
-    #[test]
-    fn diagnostic_display_includes_code_frame() {
-        let d = Diagnostic::error("TEST-E", "boom")
-            .with_code_frame("2 | error here\n  |     ^");
-        let rendered = format!("{d}");
-        assert!(rendered.contains("[TEST-E] boom"));
-        assert!(rendered.contains("2 | error here"), "frame: {rendered}");
-    }
-
+#[test]
+fn diagnostic_display_includes_code_frame() {
+    let d = Diagnostic::error("TEST-E", "boom").with_code_frame("2 | error here\n  |     ^");
+    let rendered = format!("{d}");
+    assert!(rendered.contains("[TEST-E] boom"));
+    assert!(rendered.contains("2 | error here"), "frame: {rendered}");
+}
