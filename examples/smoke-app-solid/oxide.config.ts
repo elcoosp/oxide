@@ -1,23 +1,14 @@
 import solid from '@oxide/solid'
 import { defineConfig } from 'oxide'
 
-// Solid's JSX compiles through `solid-jsx-oxc` — a Rust/OXC-native compiler
-// with NAPI bindings, not babel. The CLI detects `framework: solid(...)`
-// and routes `.tsx` through the tooling pool (`tooling:solid-compile`),
-// which calls `solid-jsx-oxc.transform({ generate: 'ssr' })`. The output
-// is `ssr`-template-literal JS importing from `solid-js/web`, exactly what
-// `@solidjs/web`'s `renderToString` consumes.
-// @ts-expect-error - .tsx resolved at runtime by the worker's tsx-loader
-import Home from './src/routes/index/page.tsx'
-
-const components: Record<string, unknown> = {
-  'routes/index': Home,
-}
+// §14.1: this config declares *where* routes live and which adapter to use.
+// Route components are discovered from `src/routes` at build time and
+// resolved at render time from the generated component surface (§6.4) — no
+// hand-imported page/layout/error map belongs here.
 
 export default defineConfig({
   framework: solid({
     ssr: 'real',
-    componentFor: (route: string) => components[route],
   }),
   routes: { dir: 'src/routes' },
   server: { port: 3000, compression: ['zstd', 'br'], http3: false },
