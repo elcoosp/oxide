@@ -26,8 +26,8 @@ struct WireEntry {
 
 /// Encode an entry for the L2 wire (JSON envelope + base64+zstd body).
 pub fn encode_entry(e: &Entry) -> Result<Vec<u8>> {
-    let compressed = zstd::bulk::compress(&e.body, 3)
-        .map_err(|e| err("CACHE-CODEC", format!("zstd: {e}")))?;
+    let compressed =
+        zstd::bulk::compress(&e.body, 3).map_err(|e| err("CACHE-CODEC", format!("zstd: {e}")))?;
     let wire = WireEntry {
         body_b64: base64::engine::general_purpose::STANDARD.encode(&compressed),
         status: e.status,
@@ -54,8 +54,8 @@ pub fn decode_entry(bytes: &[u8]) -> Result<Entry> {
     if let Some(e) = decode_legacy(bytes) {
         return Ok(e);
     }
-    let wire: WireEntry = serde_json::from_slice(bytes)
-        .map_err(|e| err("CACHE-CODEC", format!("decode: {e}")))?;
+    let wire: WireEntry =
+        serde_json::from_slice(bytes).map_err(|e| err("CACHE-CODEC", format!("decode: {e}")))?;
     let compressed = base64::engine::general_purpose::STANDARD
         .decode(&wire.body_b64)
         .map_err(|e| err("CACHE-CODEC", format!("b64: {e}")))?;
@@ -109,7 +109,12 @@ mod tests {
         let e = entry_with(body.clone());
         let wire = encode_entry(&e).unwrap();
         // JSON number-array form would be ~4x; base64+zstd must be far smaller.
-        assert!(wire.len() < body.len(), "wire {} vs body {}", wire.len(), body.len());
+        assert!(
+            wire.len() < body.len(),
+            "wire {} vs body {}",
+            wire.len(),
+            body.len()
+        );
         let back = decode_entry(&wire).unwrap();
         assert_eq!(back.body, body);
         assert_eq!(back.status, 200);
