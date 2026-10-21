@@ -167,3 +167,40 @@ pub fn edge_manifest_routes(tree_json: &serde_json::Value) -> Result<Vec<String>
 
 #[cfg(test)]
 mod tests;
+
+/// B-01: wasm-bindgen exports for the edge Worker. Thin wrappers over the
+/// pure-Rust functions above (which remain the tested implementations).
+#[cfg(target_arch = "wasm32")]
+pub mod bindings {
+    use wasm_bindgen::prelude::*;
+
+    #[wasm_bindgen]
+    pub fn edge_cache_key(route: &str, params: &str, vary: &str, build_id: &str) -> String {
+        crate::edge_cache_key(route, params, vary, build_id)
+    }
+
+    /// `shell`/`head` are JSON arrays of `[key, value]` pairs; returns the
+    /// merged array as JSON (the edge handler parses it back).
+    #[wasm_bindgen]
+    pub fn merge_head(shell: &str, head: &str) -> String {
+        let a: Vec<(String, String)> = serde_json::from_str(shell).unwrap_or_default();
+        let b: Vec<(String, String)> = serde_json::from_str(head).unwrap_or_default();
+        serde_json::to_string(&crate::merge_head(a, b)).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// JSON value in, ODF bytes out (JS `Uint8Array`).
+    #[wasm_bindgen]
+    pub fn encode_odf(json: &[u8]) -> Vec<u8> {
+        let value: serde_json::Value =
+            serde_json::from_slice(json).unwrap_or(serde_json::Value::Null);
+        crate::encode_odf(&value).unwrap_or_default()
+    }
+
+    /// ODF bytes in, JSON value bytes out.
+    #[wasm_bindgen]
+    pub fn decode_odf(odf: &[u8]) -> Result<Vec<u8>, JsValue> {
+        let v = crate::decode_odf(odf)
+            .map_err(|e| JsValue::from_str(&format!("edge decode_odf: {}", e.0.message)))?;
+        serde_json::to_vec(&v).map_err(|e| JsValue::from_str(&format!("edge decode_odf: {e}")))
+    }
+}
