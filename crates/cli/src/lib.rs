@@ -10,16 +10,16 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 mod audit;
-mod native_plugins;
 pub mod mcp;
+mod native_plugins;
 
 mod build_cache;
 mod build_graph;
-mod migrate;
-mod modules_loader;
 mod framework_shim;
 mod l0_cache;
 pub mod loader_shim;
+mod migrate;
+mod modules_loader;
 pub mod precompile;
 mod precompile_cache;
 /// `oxide secrets <op>` (§9.4 / BUG-05).
@@ -438,9 +438,11 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
         Command::Generate { root, kind, path } => cmd_generate(&root, &kind, &path, w).await,
         Command::Cache { root, op } => cmd_cache(&root, op, w).await,
         Command::Audit { root } => cmd_audit(&root, w).await,
-        Command::Migrate { root, source, write } => {
-            cmd_migrate(&root, &source, write, w).await
-        }
+        Command::Migrate {
+            root,
+            source,
+            write,
+        } => cmd_migrate(&root, &source, write, w).await,
         Command::Test { root } => cmd_test(&root, w).await,
         Command::Mcp { root } => cmd_mcp(&root, w).await,
         Command::Schema => cmd_schema(w),
@@ -678,7 +680,10 @@ async fn scan_routes(
     let mods = crate::modules_loader::load(&root_abs, cfg);
     let merged = crate::modules_loader::inject_routes(&mut tree, &mods);
     if merged > 0 {
-        eprintln!("modules: merged {merged} route entr(y/ies) from {} module(s)", mods.len());
+        eprintln!(
+            "modules: merged {merged} route entr(y/ies) from {} module(s)",
+            mods.len()
+        );
     }
     for m in crate::modules_loader::has_unmerged_hooks(&mods) {
         let unmerged: Vec<&str> = m
@@ -712,8 +717,12 @@ async fn scan_routes(
                     continue;
                 };
                 for e in list {
-                    let Some(id) = e.get("id").and_then(|v| v.as_str()) else { continue };
-                    let Some(rel) = e.get("file").and_then(|v| v.as_str()) else { continue };
+                    let Some(id) = e.get("id").and_then(|v| v.as_str()) else {
+                        continue;
+                    };
+                    let Some(rel) = e.get("file").and_then(|v| v.as_str()) else {
+                        continue;
+                    };
                     let file = root_abs.join(rel);
                     if !file.starts_with(&root_abs) || !file.is_file() {
                         eprintln!("warn: routes hook entry `{id}` has no readable file; skipped");
@@ -729,7 +738,11 @@ async fn scan_routes(
                     let segments: Vec<String> = e
                         .get("segments")
                         .and_then(|v| v.as_array())
-                        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|x| x.as_str().map(str::to_string))
+                                .collect()
+                        })
                         .unwrap_or_default();
                     tree.insert(oxide_router::RouteEntry {
                         id: oxide_router::RouteId(id.to_string()),
@@ -1183,8 +1196,7 @@ async fn ensure_dev_client_bundle(
     for e in &tree.entries {
         match e.kind {
             oxide_router::RouteKind::Loading => {
-                loading_entries
-                    .insert(e.id.0.clone(), rootp.join(&cfg.routes.dir).join(&e.file));
+                loading_entries.insert(e.id.0.clone(), rootp.join(&cfg.routes.dir).join(&e.file));
             }
             // §8.2: layouts must be client entries too — the client hydrate
             // rebuilds the server's `<RootLayout><Page/></RootLayout>` tree
@@ -1463,7 +1475,11 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     let hmr_build_id = std::fs::read_to_string(rootp.join("dist/client/client.manifest.json"))
         .ok()
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        .and_then(|v| v.get("build_id").and_then(|x| x.as_str()).map(str::to_string))
+        .and_then(|v| {
+            v.get("build_id")
+                .and_then(|x| x.as_str())
+                .map(str::to_string)
+        })
         .unwrap_or_else(|| "dev".to_string());
     let hmr_hub = std::sync::Arc::new(oxide_dev::HmrHub::with_build_id(hmr_build_id.clone()));
     // §15.2: `configureServer` — a plugin gets the dev server's handles and
@@ -1635,14 +1651,15 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         // `invalidate(&[Input])` names a specific input), so the honest
         // shape today is: an empty `invalidate([])` bumps the epoch and
         // forces every node without a proven-survivor dep to recompute.
-        let base_name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
+        let base_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if matches!(
             base_name,
-            "package-lock.json" | "pnpm-lock.yaml" | "yarn.lock"
-                | "bun.lockb" | "Cargo.lock" | "bun.lock"
+            "package-lock.json"
+                | "pnpm-lock.yaml"
+                | "yarn.lock"
+                | "bun.lockb"
+                | "Cargo.lock"
+                | "bun.lock"
         ) {
             // Broadcast: bump the epoch, then re-seed the lockfile's own node
             // so the graph has something to invalidate against.
@@ -1859,9 +1876,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                             });
                         }
                     }
-                    HmrBehavior::AdapterHmr => hub.publish(HmrMessage::ModuleUpdate {
-                        path: pstr,
-                    }),
+                    HmrBehavior::AdapterHmr => hub.publish(HmrMessage::ModuleUpdate { path: pstr }),
                     HmrBehavior::ServerSwap => {
                         hub.publish(HmrMessage::ServerModuleSwap { path: pstr })
                     }
@@ -2061,7 +2076,6 @@ fn emit_content_search_indexes(
     }
     Ok(())
 }
-
 
 /// Derive the request URL from a prerender output path. `prerendered/index.html`
 /// → `/`; `prerendered/blog/hello.html` → `/blog/hello`; `prerendered/foo.html`
@@ -2943,7 +2957,10 @@ async fn write_prerender(
         // merge walks.
         if plugin_head
             .as_object()
-            .map(|o| o.values().any(|v| v.as_array().is_some_and(|a| !a.is_empty())))
+            .map(|o| {
+                o.values()
+                    .any(|v| v.as_array().is_some_and(|a| !a.is_empty()))
+            })
             .unwrap_or(false)
         {
             input.head = plugin_head.clone();
@@ -3368,11 +3385,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     if let Err(e) = crate::native_plugins::parse_native_plugins(&cfg) {
         anyhow::bail!("{} {}", e.0.code, e.0.message);
     }
-    let tree = refine_render_modes_from_ast(
-        &rootp,
-        &cfg,
-        scan_routes(&rootp, &cfg, None).await?,
-    );
+    let tree = refine_render_modes_from_ast(&rootp, &cfg, scan_routes(&rootp, &cfg, None).await?);
     let routes_root = rootp.join(&cfg.routes.dir);
     // §4.4: report top-level side effects that would break a V8 snapshot.
     emit_snapshot_lint(&cfg, &rootp, &tree, w)?;
@@ -3532,7 +3545,10 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         (Some(_), None, _) => {
             // No explicit list — default trusted: main + release/*.
             matches!(branch.as_deref(), Some("main") | Some("master"))
-                || branch.as_deref().map(|b| b.starts_with("release/")).unwrap_or(false)
+                || branch
+                    .as_deref()
+                    .map(|b| b.starts_with("release/"))
+                    .unwrap_or(false)
         }
         (Some(_), _, None) => {
             eprintln!(
@@ -3706,10 +3722,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // clone; worker discovery is lazy on first call). Assigned by field on
     // `BundleOptions` — no signature change to `bundle_env_options`, so this
     // composes with any in-flight edit elsewhere in that function.
-    let js_resolve_hook =
-        build_js_plugin_resolve_hook(&rootp, &cfg, stack.tooling_pool.as_ref());
-    let js_load_hook =
-        build_js_plugin_load_hook(&rootp, &cfg, stack.tooling_pool.as_ref());
+    let js_resolve_hook = build_js_plugin_resolve_hook(&rootp, &cfg, stack.tooling_pool.as_ref());
+    let js_load_hook = build_js_plugin_load_hook(&rootp, &cfg, stack.tooling_pool.as_ref());
     client_opts.resolve_hook = js_resolve_hook.clone();
     client_opts.load_hook = js_load_hook.clone();
     let mut server_opts = server_opts;
@@ -3730,7 +3744,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     server_opts.generate_bundle_hook = js_generate_bundle_hook;
     let transform_html_hook = js_transform_html_hook;
     if client_opts.virtual_modules.is_empty() {
-        let mut seen: std::collections::BTreeMap<PathBuf, String> = std::collections::BTreeMap::new();
+        let mut seen: std::collections::BTreeMap<PathBuf, String> =
+            std::collections::BTreeMap::new();
         for entry in client_opts.entries.values() {
             // Scan the entry module (and transitively? No — scan every route
             // file referenced by the manifest's `modules` field is better,
@@ -3756,8 +3771,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                             // Synthetic path: same dir as the SVG, with
                             // `.react.tsx` appended so the resolver's `.tsx`
                             // extension handler picks it up.
-                            let synthetic =
-                                svg_path.with_extension("svg.react.tsx");
+                            let synthetic = svg_path.with_extension("svg.react.tsx");
                             // Register in BOTH `virtual_modules` (for
                             // resolution) and `precompiled` (so the bundler
                             // reads the generated TSX, not the (nonexistent)
@@ -3811,7 +3825,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                         "export const src = {};\nexport const srcset = {};\nexport const width = {};\nexport const height = {};\n",
                         serde_json::to_string(&src).unwrap_or_else(|_| "\"\"".into()),
                         serde_json::to_string(&srcset).unwrap_or_else(|_| "\"\"".into()),
-                        w0, h0,
+                        w0,
+                        h0,
                     );
                     // Synthetic path: `.img.js` extension so the bundler
                     // treats it as a normal module (no JSX/TSX precompile
@@ -3831,10 +3846,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                         .insert(synthetic.clone(), module.clone());
                     seen_imgs.insert(
                         img_path.clone(),
-                        (
-                            synthetic.to_string_lossy().to_string(),
-                            module,
-                        ),
+                        (synthetic.to_string_lossy().to_string(), module),
                     );
                     let _ = (w0, h0);
                 }
@@ -3914,7 +3926,10 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         && !force_bundle
         && build_cache::env_is_up_to_date(&rootp, "client", &client_fp);
     let client_outcome = if skip_client {
-        outln!(w, "bundle: client unchanged (env fingerprint match) — skipped");
+        outln!(
+            w,
+            "bundle: client unchanged (env fingerprint match) — skipped"
+        );
         oxide_bundler::BundleOutput {
             modules: Vec::new(),
             chunks: Vec::new(),
@@ -4366,13 +4381,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         // §15.2: `renderHead` — a plugin's contribution to the neutral head
         // model for THIS route. Called once per route entry (not per
         // generateParams path): the head is route-shaped, not URL-shaped.
-        let plugin_head = plugin_render_head(
-            &rootp,
-            &cfg,
-            stack.tooling_pool.as_ref(),
-            &route_id,
-        )
-        .await;
+        let plugin_head =
+            plugin_render_head(&rootp, &cfg, stack.tooling_pool.as_ref(), &route_id).await;
         let route_src_hash = route_source_hash(
             &rootp,
             &cfg,
@@ -4421,29 +4431,45 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                                 // render; a stale-nonce HTML is worse than a
                                 // re-render.
                                 write_prerender(
-                                    &dist, &rel, &route_id, &pattern, &url_path,
-                                    params_map, &nonce_for,
+                                    &dist,
+                                    &rel,
+                                    &route_id,
+                                    &pattern,
+                                    &url_path,
+                                    params_map,
+                                    &nonce_for,
                                     stack.page_renderer.as_ref(),
                                     stack.loader_runner.as_ref(),
                                     module_path.as_deref(),
                                     boot_script_url.as_deref(),
-                                    &layout_ids, &prerender_layout_modules,
+                                    &layout_ids,
+                                    &prerender_layout_modules,
                                     prerender_error_route_id.as_deref(),
                                     &plugin_head,
-                                ).await?
+                                )
+                                .await?
                             }
                         }
-                        None => write_prerender(
-                            &dist, &rel, &route_id, &pattern, &url_path,
-                            params_map, &nonce_for,
-                            stack.page_renderer.as_ref(),
-                            stack.loader_runner.as_ref(),
-                            module_path.as_deref(),
-                            boot_script_url.as_deref(),
-                            &layout_ids, &prerender_layout_modules,
-                            prerender_error_route_id.as_deref(),
-                            &plugin_head,
-                        ).await?,
+                        None => {
+                            write_prerender(
+                                &dist,
+                                &rel,
+                                &route_id,
+                                &pattern,
+                                &url_path,
+                                params_map,
+                                &nonce_for,
+                                stack.page_renderer.as_ref(),
+                                stack.loader_runner.as_ref(),
+                                module_path.as_deref(),
+                                boot_script_url.as_deref(),
+                                &layout_ids,
+                                &prerender_layout_modules,
+                                prerender_error_route_id.as_deref(),
+                                &plugin_head,
+                            )
+                            .await?
+                        }
                     };
                     seed_bodies.push((
                         route_id.clone(),
@@ -4529,29 +4555,45 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                                         (fresh, status)
                                     } else {
                                         write_prerender(
-                                            &dist, &rel, &route_id, &pattern, &url_path,
-                                            params_map, &nonce_for,
+                                            &dist,
+                                            &rel,
+                                            &route_id,
+                                            &pattern,
+                                            &url_path,
+                                            params_map,
+                                            &nonce_for,
                                             stack.page_renderer.as_ref(),
                                             stack.loader_runner.as_ref(),
                                             module_path.as_deref(),
                                             boot_script_url.as_deref(),
-                                            &layout_ids, &prerender_layout_modules,
+                                            &layout_ids,
+                                            &prerender_layout_modules,
                                             prerender_error_route_id.as_deref(),
                                             &plugin_head,
-                                        ).await?
+                                        )
+                                        .await?
                                     }
                                 }
-                                None => write_prerender(
-                                    &dist, &rel, &route_id, &pattern, &url_path,
-                                    params_map, &nonce_for,
-                                    stack.page_renderer.as_ref(),
-                                    stack.loader_runner.as_ref(),
-                                    module_path.as_deref(),
-                                    boot_script_url.as_deref(),
-                                    &layout_ids, &prerender_layout_modules,
-                                    prerender_error_route_id.as_deref(),
-                                    &plugin_head,
-                                ).await?,
+                                None => {
+                                    write_prerender(
+                                        &dist,
+                                        &rel,
+                                        &route_id,
+                                        &pattern,
+                                        &url_path,
+                                        params_map,
+                                        &nonce_for,
+                                        stack.page_renderer.as_ref(),
+                                        stack.loader_runner.as_ref(),
+                                        module_path.as_deref(),
+                                        boot_script_url.as_deref(),
+                                        &layout_ids,
+                                        &prerender_layout_modules,
+                                        prerender_error_route_id.as_deref(),
+                                        &plugin_head,
+                                    )
+                                    .await?
+                                }
                             };
                             seed_bodies.push((
                                 route_id.clone(),
@@ -4643,29 +4685,45 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                             (fresh, status)
                         } else {
                             write_prerender(
-                                &dist, &rel, &route_id, &pattern, &url_path,
-                                &empty_params, &nonce_for,
+                                &dist,
+                                &rel,
+                                &route_id,
+                                &pattern,
+                                &url_path,
+                                &empty_params,
+                                &nonce_for,
                                 stack.page_renderer.as_ref(),
                                 stack.loader_runner.as_ref(),
                                 module_path.as_deref(),
                                 boot_script_url.as_deref(),
-                                &layout_ids, &prerender_layout_modules,
+                                &layout_ids,
+                                &prerender_layout_modules,
                                 prerender_error_route_id.as_deref(),
                                 &plugin_head,
-                            ).await?
+                            )
+                            .await?
                         }
                     }
-                    None => write_prerender(
-                        &dist, &rel, &route_id, &pattern, &url_path,
-                        &empty_params, &nonce_for,
-                        stack.page_renderer.as_ref(),
-                        stack.loader_runner.as_ref(),
-                        module_path.as_deref(),
-                        boot_script_url.as_deref(),
-                        &layout_ids, &prerender_layout_modules,
-                        prerender_error_route_id.as_deref(),
-                        &plugin_head,
-                    ).await?,
+                    None => {
+                        write_prerender(
+                            &dist,
+                            &rel,
+                            &route_id,
+                            &pattern,
+                            &url_path,
+                            &empty_params,
+                            &nonce_for,
+                            stack.page_renderer.as_ref(),
+                            stack.loader_runner.as_ref(),
+                            module_path.as_deref(),
+                            boot_script_url.as_deref(),
+                            &layout_ids,
+                            &prerender_layout_modules,
+                            prerender_error_route_id.as_deref(),
+                            &plugin_head,
+                        )
+                        .await?
+                    }
                 };
                 seed_bodies.push((
                     route_id.clone(),
@@ -4715,7 +4773,10 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             }
         }
         if touched > 0 {
-            outln!(w, "transformHtml: rewrote {touched} prerendered document(s)");
+            outln!(
+                w,
+                "transformHtml: rewrote {touched} prerendered document(s)"
+            );
         }
     }
     // PERF-07: serialize the route tree to the rkyv archive so `oxide start`
@@ -4824,16 +4885,16 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                             "messages": entries,
                         });
                         let path = messages_dir.join(format!("{locale}.json"));
-                        if std::fs::write(
-                            &path,
-                            serde_json::to_vec(&body).unwrap_or_default(),
-                        )
-                        .is_ok()
+                        if std::fs::write(&path, serde_json::to_vec(&body).unwrap_or_default())
+                            .is_ok()
                         {
                             emitted += 1;
                         }
                     }
-                    outln!(w, "i18n: emitted {emitted} message catalog(s) -> dist/client/messages/");
+                    outln!(
+                        w,
+                        "i18n: emitted {emitted} message catalog(s) -> dist/client/messages/"
+                    );
                 }
                 // §16-D per-route splitting: scan each route's sources for
                 // `t('key')` calls and emit only the keys that route names.
@@ -4864,13 +4925,12 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     // The route id used by the client loader is the same
                     // `componentFor` key the adapter sees: the route
                     // directory with any trailing `/page` stripped.
-                    let route_key = e
-                        .id
-                        .0
-                        .strip_suffix("/page")
-                        .unwrap_or(&e.id.0)
-                        .trim_start_matches("routes/")
-                        .replace('/', "_");
+                    let route_key =
+                        e.id.0
+                            .strip_suffix("/page")
+                            .unwrap_or(&e.id.0)
+                            .trim_start_matches("routes/")
+                            .replace('/', "_");
                     if route_key.is_empty() {
                         continue;
                     }
@@ -5062,7 +5122,10 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 // Refuse a path that escapes `.oxide/types/`.
                 let target = types_dir.join(rel);
                 if !target.starts_with(&types_dir) {
-                    outln!(w, "warn: typegen path `{rel}` escapes .oxide/types; skipped");
+                    outln!(
+                        w,
+                        "warn: typegen path `{rel}` escapes .oxide/types; skipped"
+                    );
                     continue;
                 }
                 if let Some(parent) = target.parent() {
@@ -5123,7 +5186,9 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         {
             let mut stack = vec![client_out.clone()];
             while let Some(d) = stack.pop() {
-                let Ok(rd) = std::fs::read_dir(&d) else { continue };
+                let Ok(rd) = std::fs::read_dir(&d) else {
+                    continue;
+                };
                 for e in rd.flatten() {
                     let p = e.path();
                     if p.is_dir() {
@@ -5138,7 +5203,9 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         {
             let mut stack = vec![server_out.clone()];
             while let Some(d) = stack.pop() {
-                let Ok(rd) = std::fs::read_dir(&d) else { continue };
+                let Ok(rd) = std::fs::read_dir(&d) else {
+                    continue;
+                };
                 for e in rd.flatten() {
                     let p = e.path();
                     if p.is_dir() {
@@ -5733,7 +5800,14 @@ fn build_dispatch(
                     m.route.needs_parent,
                 )
             }
-            None => (None, None, std::collections::BTreeMap::new(), false, None, false),
+            None => (
+                None,
+                None,
+                std::collections::BTreeMap::new(),
+                false,
+                None,
+                false,
+            ),
         };
 
         // §8.1 route.ts / §10.2 step 7: pre-compute whether this is an
@@ -5785,10 +5859,7 @@ fn build_dispatch(
         // P-06: not-found route + layout chain, precomputed by the tree index.
         let (unmatched_route_id, unmatched_layout_ids): (Option<String>, Vec<String>) =
             match tree.not_found_route() {
-                Some((id, chain)) => (
-                    Some(id),
-                    chain.into_iter().map(|r| r.0).collect(),
-                ),
+                Some((id, chain)) => (Some(id), chain.into_iter().map(|r| r.0).collect()),
                 None => (None, Vec::new()),
             };
 
@@ -5983,14 +6054,17 @@ fn build_dispatch(
             let mut middleware_headers: Vec<(String, String)> = Vec::new();
             // B-22: resume after the layer that issued the rewrite.
             let resume_after = req_owned.mw_resume_after.clone();
-            let mut pending_resume = resume_after.as_ref().map(|_| {
-                // Only honour the marker when the target layer is present in
-                // this route's chain; otherwise run the chain normally.
-                let present = middleware_module_paths.iter().any(|p| {
-                    p.to_string_lossy() == resume_after.as_deref().unwrap_or("")
-                });
-                present.then(|| resume_after.clone().unwrap_or_default())
-            }).flatten();
+            let mut pending_resume = resume_after
+                .as_ref()
+                .map(|_| {
+                    // Only honour the marker when the target layer is present in
+                    // this route's chain; otherwise run the chain normally.
+                    let present = middleware_module_paths
+                        .iter()
+                        .any(|p| p.to_string_lossy() == resume_after.as_deref().unwrap_or(""));
+                    present.then(|| resume_after.clone().unwrap_or_default())
+                })
+                .flatten();
             if let Some(dispatcher) = middleware_for_dispatch.as_deref() {
                 for mp in &middleware_module_paths {
                     let module_path_s = mp.to_string_lossy().to_string();
@@ -6308,8 +6382,12 @@ fn build_dispatch(
                             rec.record(
                                 &req_owned.request_id,
                                 vec![(
-                                    if hit.stale { "cache-stale" } else { "cache-hit" }
-                                        .to_string(),
+                                    if hit.stale {
+                                        "cache-stale"
+                                    } else {
+                                        "cache-hit"
+                                    }
+                                    .to_string(),
                                     started.elapsed().as_secs_f64() * 1000.0,
                                 )],
                             );
@@ -6372,9 +6450,7 @@ fn build_dispatch(
             // B2: the page load's per-settle stream, when the runner streams.
             // `Some` only when the loader declared at least one `defer()`;
             // the render arm then holds `</body>` until the settles land.
-            let mut page_settles: Option<
-                tokio::sync::mpsc::Receiver<serde_json::Value>,
-            > = None;
+            let mut page_settles: Option<tokio::sync::mpsc::Receiver<serde_json::Value>> = None;
             // 16-G: the route's `meta = defineMeta(fn)` contribution, if its
             // server module exports one. Merged into the render input's head.
             let mut route_meta: Option<serde_json::Value> = None;
@@ -6424,8 +6500,7 @@ fn build_dispatch(
             } else {
                 &layout_module_paths[..]
             };
-            if let (Some(runner), true) = (loader_runner.as_ref(), !layouts_to_run.is_empty())
-            {
+            if let (Some(runner), true) = (loader_runner.as_ref(), !layouts_to_run.is_empty()) {
                 for (lid, lpath) in layouts_to_run {
                     let mut linput = oxide_server::LoaderRunInput::new(
                         lpath.to_string_lossy().to_string(),
@@ -6515,8 +6590,7 @@ fn build_dispatch(
 
                 let mp = module_path.as_ref().unwrap();
                 let rid = route_id.as_ref().unwrap();
-                let route_for_loader_page =
-                    rid.strip_suffix("/page").unwrap_or(rid).to_string();
+                let route_for_loader_page = rid.strip_suffix("/page").unwrap_or(rid).to_string();
                 let mut pinput = oxide_server::LoaderRunInput::new(
                     mp.to_string_lossy().to_string(),
                     route_for_loader_page,
@@ -6530,8 +6604,7 @@ fn build_dispatch(
                 // Page does not call `parent()`, so this value is unused.
                 pinput.parent_data = serde_json::Value::Null;
 
-                let (layout_res, page_res) =
-                    tokio::join!(runner.run(linput), runner.run(pinput));
+                let (layout_res, page_res) = tokio::join!(runner.run(linput), runner.run(pinput));
 
                 // Layout result first (precedence: matches sequential).
                 match layout_res {
@@ -6623,10 +6696,7 @@ fn build_dispatch(
                         metrics.observe(&label, started.elapsed(), 500);
                         return oxide_server::OxideResponse::html(
                             500,
-                            format!(
-                                "loader error: {}",
-                                oxide_render::escape_text(&e.0.message)
-                            ),
+                            format!("loader error: {}", oxide_render::escape_text(&e.0.message)),
                         );
                     }
                 }
@@ -6673,8 +6743,7 @@ fn build_dispatch(
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("")
                                     .to_string();
-                                let mut resp =
-                                    oxide_server::OxideResponse::new(out.status, body);
+                                let mut resp = oxide_server::OxideResponse::new(out.status, body);
                                 if let Some(loc) = out.location {
                                     resp = resp.with_header("location", loc);
                                 }
@@ -6859,11 +6928,9 @@ fn build_dispatch(
                         // instead of one batched tag after the slowest.
                         let nonce_for_settles = oxide_server::nonce_for(&req_owned.request_id);
                         let bridged = match page_settles.take() {
-                            Some(rx) => strip_close_and_append_settles(
-                                bridged,
-                                rx,
-                                nonce_for_settles,
-                            ),
+                            Some(rx) => {
+                                strip_close_and_append_settles(bridged, rx, nonce_for_settles)
+                            }
                             None => bridged,
                         };
                         // §17.1: a script without the matching nonce is
@@ -7088,7 +7155,8 @@ fn build_dispatch(
                                     // resolution — but that's per-dispatch.
                                     // Simpler: use the CWD, which is the
                                     // project root for the dev server.
-                                    let waterfall_path = std::path::PathBuf::from(".oxide/last-waterfalls.json");
+                                    let waterfall_path =
+                                        std::path::PathBuf::from(".oxide/last-waterfalls.json");
                                     rec.persist_to(&waterfall_path);
                                 }
                                 let mut resp =
@@ -7761,7 +7829,9 @@ fn confine_plugin_path(root: &Path, rel: &str, allow_absolute: bool) -> Option<P
         if allow_absolute {
             return Some(PathBuf::from(rel));
         }
-        eprintln!("warn: plugin path {rel:?} is absolute; refusing (set plugins.allowAbsolutePaths = true to permit)");
+        eprintln!(
+            "warn: plugin path {rel:?} is absolute; refusing (set plugins.allowAbsolutePaths = true to permit)"
+        );
         return None;
     }
     let root_abs = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
@@ -7770,9 +7840,7 @@ fn confine_plugin_path(root: &Path, rel: &str, allow_absolute: bool) -> Option<P
     // the target does not exist (the caller reports "not readable").
     let resolved = std::fs::canonicalize(&candidate).unwrap_or(candidate);
     if !resolved.starts_with(&root_abs) {
-        eprintln!(
-            "warn: plugin path {rel:?} escapes the project root; refusing"
-        );
+        eprintln!("warn: plugin path {rel:?} escapes the project root; refusing");
         return None;
     }
     Some(resolved)
@@ -8062,11 +8130,7 @@ impl JsPluginChain {
                 }),
                 headers: Default::default(),
                 has_body: false,
-                request_id: format!(
-                    "plugin:call:{}:{}",
-                    p.path.display(),
-                    hook_name
-                ),
+                request_id: format!("plugin:call:{}:{}", p.path.display(), hook_name),
                 route: None,
             };
             let entry = oxide_jshost::EntryRef {
@@ -8184,7 +8248,9 @@ async fn build_js_plugin_chain(
 ) -> anyhow::Result<JsPluginChain> {
     use futures::StreamExt as _;
     let Some(pool) = pool else {
-        return Ok(JsPluginChain { plugins: Vec::new() });
+        return Ok(JsPluginChain {
+            plugins: Vec::new(),
+        });
     };
     let mut plugins = Vec::new();
     for (idx, p) in cfg.plugins.iter().enumerate() {
@@ -8225,7 +8291,11 @@ async fn build_js_plugin_chain(
             )
         })?;
         let bytes = stream.collect().await.map_err(|e| {
-            anyhow::anyhow!("plugin:load read failed for {}: {}", abs.display(), e.0.message)
+            anyhow::anyhow!(
+                "plugin:load read failed for {}: {}",
+                abs.display(),
+                e.0.message
+            )
         })?;
         let v: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
             anyhow::anyhow!("plugin:load returned non-JSON for {}: {}", abs.display(), e)
@@ -8818,12 +8888,12 @@ async fn start_server_inner_full(
                         for e in entries {
                             let key = e.get("key").and_then(|k| k.as_str()).unwrap_or("");
                             let body = e.get("body").and_then(|b| b.as_str()).unwrap_or("");
-                            let status = e
-                                .get("status")
-                                .and_then(|s| s.as_u64())
-                                .unwrap_or(200) as u16;
+                            let status =
+                                e.get("status").and_then(|s| s.as_u64()).unwrap_or(200) as u16;
                             if !key.is_empty() && !body.is_empty() {
-                                cache.seed_entry(key, body.as_bytes().to_vec(), status).await;
+                                cache
+                                    .seed_entry(key, body.as_bytes().to_vec(), status)
+                                    .await;
                             }
                         }
                     }
@@ -8994,11 +9064,7 @@ async fn cmd_routes(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     // authoritative mode rather than the scanner's line-oriented guess.
     // (Without it, a loader with `'…cookies…'` in a string literal reads
     // as dynamic here while the build treats it as static.)
-    let tree = refine_render_modes_from_ast(
-        &rootp,
-        &cfg,
-        scan_routes(&rootp, &cfg, None).await?,
-    );
+    let tree = refine_render_modes_from_ast(&rootp, &cfg, scan_routes(&rootp, &cfg, None).await?);
     let i18n_for_typegen: Option<&[String]> = match cfg.i18n.strategy.as_str() {
         "none" => None,
         _ if cfg.i18n.locales.is_empty() => None,
@@ -9143,7 +9209,10 @@ async fn cmd_analyze(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
         } else {
             (*bytes as f64) * 100.0 / (total_bytes as f64)
         };
-        outln!(w, "{route} | {bytes} | {share:.1} | {budget_str} | {status}");
+        outln!(
+            w,
+            "{route} | {bytes} | {share:.1} | {budget_str} | {status}"
+        );
     }
     if let Some(limit) = total_budget {
         let ok = total_bytes <= limit;
@@ -9300,7 +9369,11 @@ async fn cmd_check(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
                                 outln!(w, "  {line}");
                             }
                             diags.push(oxide_diagnostics::Diagnostic::error(
-                                if label == "typecheck" { "CHECK-TS" } else { "CHECK-LINT" },
+                                if label == "typecheck" {
+                                    "CHECK-TS"
+                                } else {
+                                    "CHECK-LINT"
+                                },
                                 format!("`{bin}` reported errors"),
                             ));
                             ok = false;
@@ -9338,7 +9411,10 @@ async fn cmd_check(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
                 for d in list {
                     let code = d.get("code").and_then(|c| c.as_str()).unwrap_or("PLUGIN");
                     let message = d.get("message").and_then(|m| m.as_str()).unwrap_or("");
-                    let severity = d.get("severity").and_then(|s| s.as_str()).unwrap_or("error");
+                    let severity = d
+                        .get("severity")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("error");
                     outln!(w, "plugin diagnostic {code}: {message}");
                     let diag = if severity == "warning" {
                         oxide_diagnostics::Diagnostic::warning(code, message)
@@ -9604,10 +9680,7 @@ async fn cmd_add(root: &str, module: &str, w: Writer<'_>) -> anyhow::Result<i32>
     list.sort();
     list.dedup();
     std::fs::create_dir_all(modules_path.parent().unwrap_or(Path::new(".")))?;
-    std::fs::write(
-        &modules_path,
-        serde_json::to_string_pretty(&list)? + "\n",
-    )?;
+    std::fs::write(&modules_path, serde_json::to_string_pretty(&list)? + "\n")?;
     outln!(w, "[ok] added {module} to .oxide/modules.json");
 
     // §15-E: report what the module actually contributes. Routes and the
@@ -9630,9 +9703,7 @@ async fn cmd_add(root: &str, module: &str, w: Writer<'_>) -> anyhow::Result<i32>
                         .map(|t| {
                             t.entries
                                 .iter()
-                                .filter(|e| {
-                                    matches!(e.kind, oxide_router::RouteKind::Page)
-                                })
+                                .filter(|e| matches!(e.kind, oxide_router::RouteKind::Page))
                                 .count()
                         })
                         .unwrap_or(0);
@@ -9677,7 +9748,10 @@ async fn cmd_add(root: &str, module: &str, w: Writer<'_>) -> anyhow::Result<i32>
                 }
             }
             if m.typegen.is_some() {
-                outln!(w, "    typegen: present (not merged — deferred to a follow-up)");
+                outln!(
+                    w,
+                    "    typegen: present (not merged — deferred to a follow-up)"
+                );
             }
             if m.config_defaults.is_some() {
                 outln!(
@@ -9796,7 +9870,10 @@ async fn cmd_cache(root: &str, op: CacheOp, w: Writer<'_>) -> anyhow::Result<i32
             outln!(w, "files: {}", files.len());
             outln!(w, "total_bytes: {total}");
         }
-        CacheOp::Gc { idle_secs, max_bytes } => {
+        CacheOp::Gc {
+            idle_secs,
+            max_bytes,
+        } => {
             // SPEC-5D: two-phase GC — first drop entries older than the idle
             // window, then if still over cap, drop the OLDEST remaining
             // entries until under `max_bytes`. The pipeline never reads a GC'd
@@ -9815,7 +9892,11 @@ async fn cmd_cache(root: &str, op: CacheOp, w: Writer<'_>) -> anyhow::Result<i32
             let mut idle_removed = 0usize;
             let mut idle_bytes = 0u64;
             sizes.retain(|(path, bytes, mtime)| {
-                if now.duration_since(*mtime).map(|d| d > idle).unwrap_or(false) {
+                if now
+                    .duration_since(*mtime)
+                    .map(|d| d > idle)
+                    .unwrap_or(false)
+                {
                     if std::fs::remove_file(path).is_ok() {
                         idle_removed += 1;
                         idle_bytes += *bytes;
@@ -9870,7 +9951,11 @@ async fn cmd_audit(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
             return Ok(2);
         }
     };
-    outln!(w, "auditing {} installed npm package(s) via OSV", pkgs.len());
+    outln!(
+        w,
+        "auditing {} installed npm package(s) via OSV",
+        pkgs.len()
+    );
 
     let advisories = match crate::audit::query_osv(&rootp, &pkgs, offline).await {
         Ok(a) => a,
@@ -9883,27 +9968,39 @@ async fn cmd_audit(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
         outln!(w, "[ok] no advisories");
         return Ok(0);
     }
-    outln!(w, "{} advisor{} found:", advisories.len(), if advisories.len() == 1 { "y" } else { "ies" });
+    outln!(
+        w,
+        "{} advisor{} found:",
+        advisories.len(),
+        if advisories.len() == 1 { "y" } else { "ies" }
+    );
     for a in &advisories {
-        let sev = if a.severity.is_empty() { "?" } else { a.severity.as_str() };
-        outln!(w, "  {} {}@{}  [{}]  {}", a.id, a.package, a.version, sev, a.summary);
+        let sev = if a.severity.is_empty() {
+            "?"
+        } else {
+            a.severity.as_str()
+        };
+        outln!(
+            w,
+            "  {} {}@{}  [{}]  {}",
+            a.id,
+            a.package,
+            a.version,
+            sev,
+            a.summary
+        );
     }
     // Exit 1 when any HIGH/CRITICAL is present (CI gate convention); a
     // low/moderate advisory is a warning-not-a-failure so a transitive
     // unfixable LOW doesn't block every build.
-    let fatal = advisories.iter().any(|a| {
-        matches!(a.severity.as_str(), "HIGH" | "CRITICAL")
-    });
+    let fatal = advisories
+        .iter()
+        .any(|a| matches!(a.severity.as_str(), "HIGH" | "CRITICAL"));
     Ok(if fatal { 1 } else { 0 })
 }
 
 /// `oxide migrate <source>` (§19.2): dry-run plan; never writes.
-async fn cmd_migrate(
-    root: &str,
-    source: &str,
-    write: bool,
-    w: Writer<'_>,
-) -> anyhow::Result<i32> {
+async fn cmd_migrate(root: &str, source: &str, write: bool, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = PathBuf::from(root);
     // §19-B: plan via the codemod engine, report every file (converted or
     // skipped), then optionally apply. A dry-run never writes; `--write`
@@ -10258,11 +10355,7 @@ mod tests;
 /// Collect every candidate plugin entry that could export `hook_name`.
 /// Reuses `confine_plugin_path` for the kind:js plugin paths (same rule the
 /// transform path applies) so a path escape is caught at collect time.
-fn collect_plugin_paths_for_hook(
-    root: &Path,
-    cfg: &OxideConfig,
-    hook_name: &str,
-) -> Vec<String> {
+fn collect_plugin_paths_for_hook(root: &Path, cfg: &OxideConfig, hook_name: &str) -> Vec<String> {
     let mut plugins: Vec<String> = Vec::new();
     let allow_abs = plugins_allow_absolute(cfg);
     for p in &cfg.plugins {
@@ -10341,7 +10434,12 @@ fn build_js_plugin_resolve_hook(
                     rt.block_on(async move {
                         let need_load = {
                             let mut g = loaded.lock().unwrap();
-                            if *g { false } else { *g = true; true }
+                            if *g {
+                                false
+                            } else {
+                                *g = true;
+                                true
+                            }
                         };
                         for path in &plugins {
                             if need_load {
@@ -10441,7 +10539,12 @@ fn build_js_plugin_load_hook(
                     rt.block_on(async move {
                         let need_load = {
                             let mut g = loaded.lock().unwrap();
-                            if *g { false } else { *g = true; true }
+                            if *g {
+                                false
+                            } else {
+                                *g = true;
+                                true
+                            }
                         };
                         for path in &plugins {
                             if need_load {
@@ -10627,10 +10730,7 @@ fn try_reuse_prerender(
 // configured with changes the hash, so every module that plugin transforms
 // invalidates on the next build — which is exactly the §5-B contract.
 
-fn collect_plugin_options(
-    root: &Path,
-    cfg: &OxideConfig,
-) -> Vec<(String, blake3::Hash, PathBuf)> {
+fn collect_plugin_options(root: &Path, cfg: &OxideConfig) -> Vec<(String, blake3::Hash, PathBuf)> {
     let mut out = Vec::new();
     for (idx, p) in cfg.plugins.iter().enumerate() {
         if p.get("kind").and_then(|v| v.as_str()) != Some("js") {
@@ -10704,7 +10804,12 @@ fn build_js_plugin_render_chunk_hook(
                     rt.block_on(async move {
                         let need_load = {
                             let mut g = loaded.lock().unwrap();
-                            if *g { false } else { *g = true; true }
+                            if *g {
+                                false
+                            } else {
+                                *g = true;
+                                true
+                            }
                         };
                         let mut code = source;
                         let mut changed = false;
@@ -10804,7 +10909,12 @@ fn build_js_plugin_generate_bundle_hook(
                     rt.block_on(async move {
                         let need_load = {
                             let mut g = loaded.lock().unwrap();
-                            if *g { false } else { *g = true; true }
+                            if *g {
+                                false
+                            } else {
+                                *g = true;
+                                true
+                            }
                         };
                         let mut current: Option<Vec<String>> = None;
                         for path in &plugins {
@@ -10883,91 +10993,99 @@ fn build_js_plugin_transform_html_hook(
     }
     let pool = std::sync::Arc::clone(pool);
     let loaded = std::sync::Arc::new(std::sync::Mutex::new(false));
-    Some(oxide_bundler::TransformHtmlHook::new(move |route_id, html| {
-        let pool = std::sync::Arc::clone(&pool);
-        let loaded = std::sync::Arc::clone(&loaded);
-        let plugins = plugins.clone();
-        let route_id = route_id.to_string();
-        let html = html.to_string();
-        std::thread::scope(|scope| {
-            scope
-                .spawn(|| -> oxide_diagnostics::Result<Option<String>> {
-                    let rt = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .map_err(|e| {
-                            oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
-                                "PLG-BRIDGE",
-                                format!("bridge runtime: {e}"),
-                            ))
-                        })?;
-                    rt.block_on(async move {
-                        let need_load = {
-                            let mut g = loaded.lock().unwrap();
-                            if *g { false } else { *g = true; true }
-                        };
-                        let mut doc = html;
-                        let mut changed = false;
-                        for path in &plugins {
-                            if need_load {
+    Some(oxide_bundler::TransformHtmlHook::new(
+        move |route_id, html| {
+            let pool = std::sync::Arc::clone(&pool);
+            let loaded = std::sync::Arc::clone(&loaded);
+            let plugins = plugins.clone();
+            let route_id = route_id.to_string();
+            let html = html.to_string();
+            std::thread::scope(|scope| {
+                scope
+                    .spawn(|| -> oxide_diagnostics::Result<Option<String>> {
+                        let rt = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .map_err(|e| {
+                                oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
+                                    "PLG-BRIDGE",
+                                    format!("bridge runtime: {e}"),
+                                ))
+                            })?;
+                        rt.block_on(async move {
+                            let need_load = {
+                                let mut g = loaded.lock().unwrap();
+                                if *g {
+                                    false
+                                } else {
+                                    *g = true;
+                                    true
+                                }
+                            };
+                            let mut doc = html;
+                            let mut changed = false;
+                            for path in &plugins {
+                                if need_load {
+                                    let req = oxide_jshost::CallInput {
+                                        payload: serde_json::json!({ "path": path }),
+                                        headers: Default::default(),
+                                        has_body: false,
+                                        request_id: format!("plugin:load:{path}"),
+                                        route: None,
+                                    };
+                                    let entry = oxide_jshost::EntryRef {
+                                        kind: "plugin:load".into(),
+                                        module: path.clone(),
+                                        export: "default".into(),
+                                    };
+                                    let _ = pool.call(entry, req).await;
+                                }
                                 let req = oxide_jshost::CallInput {
-                                    payload: serde_json::json!({ "path": path }),
+                                    payload: serde_json::json!({
+                                        "path": path,
+                                        "hook": "transformHtml",
+                                        "args": { "route": route_id, "html": doc },
+                                    }),
                                     headers: Default::default(),
                                     has_body: false,
-                                    request_id: format!("plugin:load:{path}"),
+                                    request_id: format!("plugin:call:{path}:transformHtml"),
                                     route: None,
                                 };
                                 let entry = oxide_jshost::EntryRef {
-                                    kind: "plugin:load".into(),
+                                    kind: "plugin:call".into(),
                                     module: path.clone(),
-                                    export: "default".into(),
+                                    export: "transformHtml".into(),
                                 };
-                                let _ = pool.call(entry, req).await;
+                                let Ok(mut stream) = pool.call(entry, req).await else {
+                                    continue;
+                                };
+                                let Ok(bytes) = stream.collect().await else {
+                                    continue;
+                                };
+                                let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes)
+                                else {
+                                    continue;
+                                };
+                                if let Some(s) = hook_result_str(&v, "html") {
+                                    doc = s;
+                                    changed = true;
+                                }
                             }
-                            let req = oxide_jshost::CallInput {
-                                payload: serde_json::json!({
-                                    "path": path,
-                                    "hook": "transformHtml",
-                                    "args": { "route": route_id, "html": doc },
-                                }),
-                                headers: Default::default(),
-                                has_body: false,
-                                request_id: format!("plugin:call:{path}:transformHtml"),
-                                route: None,
-                            };
-                            let entry = oxide_jshost::EntryRef {
-                                kind: "plugin:call".into(),
-                                module: path.clone(),
-                                export: "transformHtml".into(),
-                            };
-                            let Ok(mut stream) = pool.call(entry, req).await else {
-                                continue;
-                            };
-                            let Ok(bytes) = stream.collect().await else {
-                                continue;
-                            };
-                            let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-                                continue;
-                            };
-                            if let Some(s) = hook_result_str(&v, "html") {
-                                doc = s;
-                                changed = true;
-                            }
-                        }
-                        Ok(if changed { Some(doc) } else { None })
+                            Ok(if changed { Some(doc) } else { None })
+                        })
                     })
-                })
-                .join()
-                .unwrap_or_else(|_| {
-                    Err(oxide_diagnostics::OxideError(
-                        oxide_diagnostics::Diagnostic::error(
-                            "PLG-BRIDGE",
-                            "transformHtml bridge thread panicked",
-                        ),
-                    ))
-                })
-        })
-    }))
+                    .join()
+                    .unwrap_or_else(|_| {
+                        Err(oxide_diagnostics::OxideError(
+                            oxide_diagnostics::Diagnostic::error(
+                                "PLG-BRIDGE",
+                                "transformHtml bridge thread panicked",
+                            ),
+                        ))
+                    })
+            })
+        },
+    ))
 }
 
 // ─── §15-B: hook-result shape helpers ──────────────────────────────────────
@@ -11096,7 +11214,9 @@ async fn fire_lifecycle_hook(
 /// `hook_name`. Used to skip building a tooling pool for a hook nothing
 /// declares — the pool costs one Node child.
 fn plugin_declares_any(root: &Path, cfg: &OxideConfig, hook_names: &[&str]) -> bool {
-    hook_names.iter().any(|h| !collect_plugin_paths_for_hook(root, cfg, h).is_empty())
+    hook_names
+        .iter()
+        .any(|h| !collect_plugin_paths_for_hook(root, cfg, h).is_empty())
 }
 
 /// Merge a `config` hook's returned patch into the live config.
@@ -11111,7 +11231,9 @@ fn apply_config_patch(
     patch: &serde_json::Value,
     w: Writer<'_>,
 ) -> anyhow::Result<()> {
-    let Some(obj) = patch.as_object() else { return Ok(()) };
+    let Some(obj) = patch.as_object() else {
+        return Ok(());
+    };
     for (key, value) in obj {
         match key.as_str() {
             "adapter" => {
@@ -11185,7 +11307,6 @@ async fn plugin_render_head(
     merged
 }
 
-
 /// §15.2: `cacheHandler` — a plugin *selects* the cache backend.
 ///
 /// A plugin cannot implement `oxide_cache::CacheHandler` itself: the trait is
@@ -11244,14 +11365,20 @@ async fn resolve_cache_handler_via_plugin(
                 }
             }),
             other => {
-                outln!(w, "warn: cacheHandler plugin returned unknown kind `{other}`; ignored");
+                outln!(
+                    w,
+                    "warn: cacheHandler plugin returned unknown kind `{other}`; ignored"
+                );
                 None
             }
         };
         if let Some(c) = candidate {
             chosen = Some(c);
         } else if matches!(kind, "redis" | "s3" | "http") {
-            outln!(w, "warn: cacheHandler kind `{kind}` is missing its url/bucket; ignored");
+            outln!(
+                w,
+                "warn: cacheHandler kind `{kind}` is missing its url/bucket; ignored"
+            );
         }
     }
     Ok(chosen)
@@ -11378,7 +11505,9 @@ fn scan_message_keys(src: &str) -> Vec<String> {
             if let Some(end) = after.find(quote) {
                 let key = &after[..end];
                 if !key.is_empty()
-                    && key.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '-')
+                    && key
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '-')
                 {
                     out.push(key.to_string());
                 }
@@ -11515,8 +11644,20 @@ fn strip_close_and_append_settles(
         if !stripped.is_empty() && tx.send(Ok(Bytes::from(stripped))).await.is_err() {
             return;
         }
-        // One resolution script per settle, in settle order.
-        while let Some(v) = settles.recv().await {
+        // One resolution script per settle, in settle order. A sender that
+        // is never dropped would otherwise hold the document open forever;
+        // 30s is far past any real defer and turns a leak into a closed page.
+        let deadline = std::time::Duration::from_secs(30);
+        loop {
+            let v = match tokio::time::timeout(deadline, settles.recv()).await {
+                Ok(Some(v)) => v,
+                Ok(None) => break,   // channel closed: all settles delivered
+                Err(_) => {
+                    // A settle hung: close the document rather than hold it.
+                    tracing::warn!("deferred settle wait timed out; closing the document");
+                    break;
+                }
+            };
             let Some(obj) = v.get("deferredSettle") else {
                 continue;
             };
