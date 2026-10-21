@@ -218,6 +218,36 @@ fn cache_key_for(
 /// Run `compile`, consulting `cache` first. On a hit the compiler is skipped
 /// entirely; on a miss the result is stored. A cache error is logged and the
 /// freshly compiled value is returned.
+
+/// §5.4 / K4: cached version of a compiler that may legitimately return
+/// `None` (an empty MDX file compiles to nothing). Mirrors `cached_compile`,
+/// but distinguishes "compiled to nothing" (Ok(None), not cached) from
+/// "compiled to JS" (Ok(Some(js))).
+async fn cached_compile_optional<F, Fut>(
+    cache: Option<&PrecompileCache>,
+    key: PrecompileKey,
+    compile: F,
+) -> anyhow::Result<Option<String>>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<Option<String>>>,
+{
+    if let Some(c) = cache {
+        if let Some(hit) = c.get(&key) {
+            return Ok(Some(hit));
+        }
+        if let Some(hit) = c.get_remote(&key).await {
+            let _ = c.put(&key, &hit);
+            return Ok(Some(hit));
+        }
+    }
+    let result = compile().await?;
+    if let (Some(js), Some(c)) = (&result, cache) {
+        let _ = c.put(&key, js);
+    }
+    Ok(result)
+}
+
 async fn cached_compile<F, Fut>(
     cache: Option<&PrecompileCache>,
     key: PrecompileKey,
@@ -331,8 +361,16 @@ pub async fn precompile_entries(
                 }
             }
             "mdx" => {
-                // SPEC-16-C: compile via @mdx-js/mdx in the tooling pool.
-                match compile_mdx(pool, &path).await {
+                // SPEC-16-C / §5.4 / K4: compile via @mdx-js/mdx in the
+                // tooling pool, wrapped in the precompile cache so a
+                // warm build reuses the compiled output instead of
+                // re-invoking the JS compiler on every run.
+                let key = cache_key_for(&path, &source, "mdx", svelte_generate, tool_version);
+                match cached_compile_optional(cache, key, || async {
+                    compile_mdx(pool, &path).await
+                })
+                .await
+                {
                     Ok(Some(js)) => {
                         out.insert(path, js);
                     }

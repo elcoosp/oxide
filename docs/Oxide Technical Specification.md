@@ -1,3 +1,13 @@
+<!-- VERSION NOTE (2026-10-21, WP-N1):
+     This file contains BOTH Part I (v0.1, frozen audit target) and
+     Part II (v0.2 draft, D21-D42). For per-part files see:
+       - docs/spec-v0.1.md       (Part I, unchanged)
+       - docs/spec-v0.2-draft.md (Part II, draft)
+     The full text below is unchanged so any existing line-number
+     reference still resolves. Future edits: put Part I in
+     spec-v0.1.md, Part II in spec-v0.2-draft.md, and never amend the
+     original in place (link into the split files instead). -->
+
 # Oxide: Technical Specification
 
 *Working name · Draft 0.1 · 11 Oct 2026 · Status: design proposal. Performance figures are targets to validate, not measurements. Dependency versions and APIs must be re-verified before lock-in.*
