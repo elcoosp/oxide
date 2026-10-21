@@ -14,8 +14,8 @@
     <img src="https://img.shields.io/badge/Node-%E2%89%A524-339933?style=flat-square&logo=node.js" alt="Node"/>
     <img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/>
     <img src="https://img.shields.io/badge/Workspace-17%20crates%20%2B%206%20packages-6F4E37?style=flat-square" alt="Workspace"/>
-    <img src="https://img.shields.io/badge/Code-%E2%89%8899k%20lines-9CF?style=flat-square" alt="Lines of code"/>
-    <img src="https://img.shields.io/badge/Tests-1087%20Rust%20%7C%20342%20TS-brightgreen?style=flat-square" alt="Tests"/>
+    <img src="https://img.shields.io/badge/Code-%E2%89%88104k%20lines-9CF?style=flat-square" alt="Lines of code"/>
+    <img src="https://img.shields.io/badge/Tests-1108%20Rust%20%7C%20344%20TS-brightgreen?style=flat-square" alt="Tests"/>
     <img src="https://img.shields.io/badge/ODF-16%20golden%20fixtures-00BFFF?style=flat-square" alt="ODF golden fixtures"/>
     <img src="https://img.shields.io/badge/TS%20runtime-zero%20npm%20deps-228B22?style=flat-square" alt="Zero dependencies"/>
   </p>
@@ -216,16 +216,18 @@ typed arrays, `undefined`, cyclic and shared references, `Error` and deferred pr
 The repository is built test-first: each crate's `*_tdd.rs` suites were written against its
 contract before the implementation.
 
-- **1087 Rust test functions** across 17 crates (48 of them engine-dependent e2e tests gated
-  behind `#[ignore]`), including `proptest` property suites on the router and graph engines
-  and `cargo-fuzz` harnesses for the ODF decoder, router matcher, config extractor and path
-  splitter.
-- **342 TypeScript test cases** across 46 files on Node's built-in test runner — including
+- **1108 Rust test functions** across 17 crates (48 of them engine-dependent e2e tests gated
+  behind `#[ignore]`), including `proptest` property suites on the router and graph engines,
+  `cargo-fuzz` harnesses for the ODF decoder, router matcher, config extractor and path
+  splitter, and acceptance tests for the cache-security closures (single-flight owner-drop
+  regression, tampered-entry rejection, per-env bundle-skip flips driven through real
+  rebuilds).
+- **344 TypeScript test cases** across 46 files on Node's built-in test runner — including
   the ODF decoder against the same golden fixtures as the Rust encoder (typed values:
   `BigInt`, `Date`, `Map`, `Set`, `URL`, `RegExp`, typed arrays), router / island
   tests against a hand-rolled fake DOM (no jsdom, no deps), suites for the defer script
   protocol and client-side loading boundaries, the per-adapter `<Image>` components,
-  and the client message-catalog loader.
+  the client message-catalog loader, and the per-route message-subset preference.
 - **Conformance gate** — the Atlas reference app runs one 24-assertion set (contract shape,
   SSR content + framework markers, merged head, deterministic markup, streaming boundaries,
   deferred boundaries in settle order, error / not-found, islands, actions JS-on/off, server
@@ -261,12 +263,21 @@ ancestor chains with threaded `event.locals` whose headers ride cached responses
 `route.ts` endpoint dispatch, socket routes (RFC6455 handshake through `socket:run`),
 connected dev HMR including the loader-edit round trip and a one-time client bundle on
 fresh dev, `/_oxide/og` config-gated Open Graph PNG rendering (SVG → resvg → PNG with an
-MP area cap), module packages (`oxide.module`) that inject routes under `/modules/<name>`
+MP area cap) now guarded by a token-bucket rate limit evaluated before the render (429 +
+`Retry-After`), strict MAC sealing for Redis/S3 cache payloads by default
+(`OXIDE_CACHE_SEALING=legacy` opts out for one migration window) with single-flight
+cleanup that always clears the owner's entry, an allowlist for headers forwarded through
+SSRF-guarded fetches, a TTL'd asset-body cache, per-env client-bundle fingerprints that
+skip rebundling an unchanged env, per-route chunk-hash records in `.oxide/graph.json`,
+per-route message subsets with a client loader that prefers them, module packages (`oxide.module`) that inject routes under `/modules/<name>`
 and dispatch **all 19 plugin hooks** through the real bundler and pipeline (build-time
 effects of six hooks gated by the fixture CI job), per-adapter `<Image>` components over
 the signed AVIF/WebP/JPEG/PNG pipeline (build-time `srcset` + intrinsic dimensions,
 runtime `/_oxide/image` with `remotePatterns` + SSRF guards), per-locale message catalogs
-emitted at build with a client-side loader, `content.d.ts` typed-content emission, real
+emitted at build with a client-side loader that prefers per-route subsets, code frames on
+the forbidden-import and snapshot-side-effect diagnostic families, and two documented,
+TDD-locked spec deviations (per-chunk bundling → env-level reuse; WOFF2 → TrueType
+subsetting), `content.d.ts` typed-content emission, real
 `oxide add` (package-manager-detected installs), `oxide audit` (live OSV queries with a
 24h cache) and `oxide migrate` with working `--write` codemods, per-route prerender reuse
 backed by the persisted DemandGraph (`.oxide/graph.json`, surfaced in `analyze` and `mcp`),
@@ -277,8 +288,11 @@ Redis/S3 payloads, a moka asset-body cache, build-time font subsetting, locale-a
 (508), `oxide check` with tsgo + oxlint, and the introspection tooling (`doctor`, `why`,
 `analyze`, `schema`, `mcp`).
 
-**Built, wiring in progress** — streaming deferred values (today the worker awaits every
-`defer()` before the response flushes, so one slow `defer()` stalls TTFB), partial
+**Built, wiring in progress** — streaming deferred values (the worker now emits one frame
+per settled `defer()`, but the Rust host still collects them before dispatch, the
+`run_streaming` API has no production caller yet, the V8 backend still awaits the whole
+registry, and the client receives one batched script — so a slow `defer()` still stalls
+TTFB), partial
 prerendering (the shell splitter and assembler are tested; no render path constructs shells
 yet), session-cookie *writing* (the decode path is live, `Set-Cookie` is not), HTTP/3
 request bodies and streamed responses (HTTP/1+2 unaffected), the edge build
@@ -294,10 +308,13 @@ evaluated at render time), image-result caching and concurrency limits (every re
 re-transforms; `sizes` is user-supplied and the LQIP placeholder arm is unreachable), the
 collections runtime query surface (`content.d.ts` emits inferred types; declared schemas
 and typed queries are not wired), route `meta` exports (title path wired; the flat shape
-drops richer head fields), strict MAC enforcement for L2 cache entries (a legacy-JSON
-fallback still accepts unsealed payloads), single-flight cleanup when a follower subscribes
-before the owner short-circuits, MDX compilation beyond the reachable compile arm, and the
-neutral IR renderer's layout nesting (dev-fixture path only). See
+drops richer head fields), MAC sealing for the `http` cache handler (Redis/S3 are sealed;
+the HTTP L2 driver still serves plain JSON), rate-limit keying that still trusts
+`x-forwarded-for` (spoofable, unbounded buckets, no `og.rate_limit` config knob yet),
+the per-route message-subset bridge (the emitter ships namespaced keys the client looks
+up exactly, and a subset replaces the catalog instead of merging), MDX compilation beyond
+the reachable compile arm, and the neutral IR renderer's layout nesting (dev-fixture path
+only). See
 [`HANDOFF.md`](HANDOFF.md) for the current thread list and what remains.
 
 ## Documentation
