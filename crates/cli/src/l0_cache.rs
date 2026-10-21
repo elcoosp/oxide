@@ -478,7 +478,11 @@ mod tests {
             ] {
                 let got = mk(body.as_bytes()).materialize(nonce);
                 let want = body.replace(NONCE_SENTINEL, nonce);
-                assert_eq!(got.as_ref(), want.as_bytes(), "nonce={nonce:?} body={body:?}");
+                assert_eq!(
+                    got.as_ref(),
+                    want.as_bytes(),
+                    "nonce={nonce:?} body={body:?}"
+                );
             }
         }
     }
@@ -622,59 +626,65 @@ mod tests {
     }
 
     #[test]
-fn vary_tracks_the_configured_headers() {
-    let lang = vec!["accept-language".to_string()];
-    // No header -> empty value, but the NAME is still present so a missing
-    // header is distinct from an empty configured list.
-    assert_eq!(vary_of(&[], &lang), "accept-language=");
-    // The primary language tag is normalized (first entry, q-weight stripped,
-    // lowercased) — what i18n negotiation actually keys on.
-    assert_eq!(
-        vary_of(&[("accept-language".into(), "en-US,en;q=0.9".into())], &lang),
-        "accept-language=en-us"
-    );
-    assert_eq!(
-        vary_of(&[("Accept-Language".into(), "FR".into())], &lang),
-        "accept-language=fr"
-    );
-    // An empty configured list disables header variance entirely.
-    assert_eq!(vary_of(&[("accept-language".into(), "fr".into())], &[]), "");
-}
+    fn vary_tracks_the_configured_headers() {
+        let lang = vec!["accept-language".to_string()];
+        // No header -> empty value, but the NAME is still present so a missing
+        // header is distinct from an empty configured list.
+        assert_eq!(vary_of(&[], &lang), "accept-language=");
+        // The primary language tag is normalized (first entry, q-weight stripped,
+        // lowercased) — what i18n negotiation actually keys on.
+        assert_eq!(
+            vary_of(
+                &[("accept-language".into(), "en-US,en;q=0.9".into())],
+                &lang
+            ),
+            "accept-language=en-us"
+        );
+        assert_eq!(
+            vary_of(&[("Accept-Language".into(), "FR".into())], &lang),
+            "accept-language=fr"
+        );
+        // An empty configured list disables header variance entirely.
+        assert_eq!(vary_of(&[("accept-language".into(), "fr".into())], &[]), "");
+    }
 
-#[test]
-fn vary_bounds_cardinality_for_attacker_values() {
-    // S-16: a huge attacker-controlled header value must not become an
-    // unbounded key component.
-    let hdrs = vec!["x-junk".to_string()];
-    let big = "a".repeat(10_000);
-    let v = vary_of(&[("x-junk".into(), big)], &hdrs);
-    assert!(v.len() <= 512, "vary fingerprint too long: {}", v.len());
-    // Two distinct long values collapse to (possibly) the same hashed shape,
-    // but the result must always be bounded.
-    let v2 = vary_of(&[("x-junk".into(), "b".repeat(10_000))], &hdrs);
-    assert!(v2.len() <= 512);
-    // A short value is preserved verbatim.
-    assert_eq!(vary_of(&[("x-junk".into(), "small".into())], &hdrs), "x-junk=small");
-}
+    #[test]
+    fn vary_bounds_cardinality_for_attacker_values() {
+        // S-16: a huge attacker-controlled header value must not become an
+        // unbounded key component.
+        let hdrs = vec!["x-junk".to_string()];
+        let big = "a".repeat(10_000);
+        let v = vary_of(&[("x-junk".into(), big)], &hdrs);
+        assert!(v.len() <= 512, "vary fingerprint too long: {}", v.len());
+        // Two distinct long values collapse to (possibly) the same hashed shape,
+        // but the result must always be bounded.
+        let v2 = vary_of(&[("x-junk".into(), "b".repeat(10_000))], &hdrs);
+        assert!(v2.len() <= 512);
+        // A short value is preserved verbatim.
+        assert_eq!(
+            vary_of(&[("x-junk".into(), "small".into())], &hdrs),
+            "x-junk=small"
+        );
+    }
 
-#[test]
-fn vary_covers_arbitrary_configured_headers() {
-    // A non-language header is fingerprinted by its raw trimmed value.
-    let cfg = vec!["accept".to_string(), "x-tenant".to_string()];
-    let got = vary_of(
-        &[
-            ("Accept".into(), "application/odf".into()),
-            ("X-Tenant".into(), "acme".into()),
-        ],
-        &cfg,
-    );
-    assert_eq!(got, "accept=application/odf;x-tenant=acme");
-    // A header absent from the request contributes an empty value.
-    assert_eq!(
-        vary_of(&[("accept".into(), "application/odf".into())], &cfg),
-        "accept=application/odf;x-tenant="
-    );
-}
+    #[test]
+    fn vary_covers_arbitrary_configured_headers() {
+        // A non-language header is fingerprinted by its raw trimmed value.
+        let cfg = vec!["accept".to_string(), "x-tenant".to_string()];
+        let got = vary_of(
+            &[
+                ("Accept".into(), "application/odf".into()),
+                ("X-Tenant".into(), "acme".into()),
+            ],
+            &cfg,
+        );
+        assert_eq!(got, "accept=application/odf;x-tenant=acme");
+        // A header absent from the request contributes an empty value.
+        assert_eq!(
+            vary_of(&[("accept".into(), "application/odf".into())], &cfg),
+            "accept=application/odf;x-tenant="
+        );
+    }
 
     // ---------------------------------------------------------- BUG-01
     // The revalidate path: an entry tagged `path:<path>` must be
