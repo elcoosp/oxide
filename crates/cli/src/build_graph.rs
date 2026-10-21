@@ -204,13 +204,14 @@ fn scan_bare_imports(src: &str) -> Vec<String> {
         while let Some(i) = rest.find(marker) {
             let after = &rest[i + marker.len()..];
             let after = after.trim_start();
-            let Some(quote) = after.chars().next().filter(|c| *c == '\'' || *c == '"') else {
-                // No quoted string after the marker — skip a byte and
-                // continue so a malformed sequence does not spin.
-                if after.is_empty() {
-                    break;
-                }
-                rest = &after[1..];
+            let Some(first) = after.chars().next() else {
+                break;
+            };
+            let Some(quote) = Some(first).filter(|c| *c == '\'' || *c == '"') else {
+                // No quoted string after the marker — skip one CHARACTER
+                // (not one byte: a multibyte codepoint would be split and
+                // panic on the next slice).
+                rest = &after[first.len_utf8()..];
                 continue;
             };
             let body = &after[1..];
