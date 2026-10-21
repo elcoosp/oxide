@@ -11,6 +11,7 @@
 import { hydrateIslands, type IslandsOptions } from './islands.ts'
 import { createRouter } from './router.ts'
 import { decodeOdf } from './odf-decode.ts'
+import { fromBase64 } from '../bytes.ts'
 import { loadScripts } from './scripts.ts'
 import { setRouteComponentSource, isParamSegment, type ClientManifestLike } from './route-manifest.ts'
 import { attachDeferGlue, type DeferGlue } from './defer-glue.ts'
@@ -187,10 +188,8 @@ export function bootWithRouter(
     let decoded: Record<string, unknown> | undefined
     if (typeof payload.data === 'string' && payload.data.length > 0) {
       try {
-        const bin = atob(payload.data)
-        const bytes = new Uint8Array(bin.length)
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-        decoded = decodeOdf(bytes) as Record<string, unknown>
+        // P-24: one shared chunked/native decoder, not a per-byte loop.
+        decoded = decodeOdf(fromBase64(payload.data)) as Record<string, unknown>
         data = decoded && typeof decoded === 'object' && 'data' in decoded ? decoded.data : decoded
       } catch (e) {
         // Not fatal: the page still hydrates with empty data; navigation works.
@@ -376,10 +375,8 @@ export function bootWithRouter(
       // Inline HMR shape: `{ route, odf }` with base64 ODF.
       let data: unknown
       try {
-        const bin = atob(detail.odf)
-        const bytes = new Uint8Array(bin.length)
-        for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k)
-        const decoded = decodeOdf(bytes) as Record<string, unknown>
+        // P-24: shared decoder (see the hydration path above).
+        const decoded = decodeOdf(fromBase64(detail.odf)) as Record<string, unknown>
         // The ODF envelope is `{ route, url, params, data }`; unwrap `data`.
         data = decoded && typeof decoded === 'object' && 'data' in decoded ? decoded.data : decoded
       } catch (err) {
