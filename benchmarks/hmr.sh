@@ -113,3 +113,22 @@ echo
 echo "fixture: smoke-app-react   port: $PORT   iterations: $N"
 echo "successful: ${#ms_vals[@]}   timeouts: $timeouts"
 echo "invalidate→200  p50: ${p50} ms   p95: ${p95} ms"
+
+# §21 / r8 P1.7: the CI job's comment promised "fails if no edit reaches
+# 200-with-marker"; the old script had no failure exit — all 15 iterations
+# could time out and it still printed a table and exited 0.
+#
+# Exit non-zero when the harness cannot vouch for the feature:
+#   * zero successful iterations (the headline claim — "a file edit reaches
+#     the served page" — failed)
+#   * more than a third of iterations timed out (a flaky env, not a healthy
+#     baseline; catches a half-broken watcher that still passes occasionally)
+if [ "${#ms_vals[@]}" -eq 0 ]; then
+    echo "FAIL: no edit reached the served page in $N iterations" >&2
+    exit 1
+fi
+if [ "$timeouts" -gt $((N / 3)) ]; then
+    echo "FAIL: ${timeouts}/$N iterations timed out (threshold $((N / 3)))" >&2
+    exit 1
+fi
+exit 0

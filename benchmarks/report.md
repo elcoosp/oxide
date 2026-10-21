@@ -103,11 +103,26 @@ the server's own measurement.
 | smoke-app-svelte | 1000 |      0 |      0 |      302 |     230 |     520 |
 | smoke-app-solid  | 1000 |      0 |      0 |      329 |     360 |     660 |
 
-**Server-side p50 = 0.57 ms mean across fixtures** (measured via Server-Timing total;dur, so this is the server's own timing, not curl's process-spawn time). Release builds have been measured at 1.07 ms p50 on smoke-app-react, matching these numbers within noise. The §21 `< 1 ms` target is close but not reached on this host; the remaining gap is in the dispatch pipeline (rules eval, rate limiter, header assembly, CSP), not the cache lookup.
+**The §21 target is p99 < 1 ms server time** (`spec-v0.1.md:665`), not p50.
+Against that target, three of four fixtures pass and one does not:
 
-- **mean: 1.28 ms · p50: 1.07 ms · p99: 6.88 ms · min: 0.82 ms**
-  (release, 200 samples, L0-hit on `smoke-app-react`).
+- **vue: p99 = 0.56 ms** — under the target.
+- **svelte: p99 = 0.52 ms** — under the target.
+- **solid: p99 = 0.66 ms** — under the target.
+- **react: p99 = 5.80 ms** — **5.8× over.** React's p50 (1.47 ms) is also
+  over the §21 `< 1 ms` p50 reading, and it is the only fixture with a
+  real gap.
 
+The gap is react-specific and lives in the dispatch pipeline (rules
+evaluation, rate limiter, header assembly, CSP) on its larger route set —
+the cache lookup itself is ~0.3 ms. Closing it is a targeted PERF pass on
+react's dispatch arm; it is not a rewrite.
+
+*Earlier framing, now corrected:* this report previously said "the §21
+`< 1 ms` target is 7% away on p50". That compared the wrong metric (p50)
+against a spec that names p99, and it averaged across four fixtures of
+very different size. The honest statement is above: three pass, react
+does not. The p50 framing obscured that.
 The §21 `< 1 ms` target is **7% away** on p50, not 22×. The remaining gap
 is distributed across the dispatch pipeline (rules evaluation, rate limiter
 check, middleware headers, CSP assembly, `Server-Timing` computation), not
@@ -167,3 +182,15 @@ new baseline.
 pipe, so it matched nothing against the column-padded report header and
 the gate silently passed on any regression. Fixed 2026-10-21 (commit
 `bfff3c6`).
+
+## What the gate covers
+
+`benchmarks/gate.sh` compares a fresh `run.sh` table (cold build, warm
+build, client bytes, server bytes, page count, start ms, RSS, TTFB)
+against the committed copy of *this* report's first table and fails on a
+>5% regression. The L0 latency table (`bench:cache`) and the HMR table
+(`bench:hmr`) are not gated — their numbers are recorded here for
+verification, and the CI jobs that run them are pass/fail on
+correctness only, not regression. Gating the L0 and HMR tables by
+threshold is a documented follow-up; the L0 hit-rate regression *is*
+pinned (by `l0_hit_rate_999_of_1000_dispatches`).

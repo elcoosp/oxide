@@ -6888,3 +6888,65 @@ async fn sw_emitter_falls_back_to_shell_when_offline_route_missing() {
     );
 }
 
+// ------------------------------ §13 / r8 P1.7: dev-mode L0 divergence
+
+/// `start_server_inner_full` constructs `l0 = None` when `is_dev` (an
+/// edit would otherwise be shadowed by the seeded response). The dispatch
+/// is agnostic — it checks `if let Some(cache) = l0.as_ref()`. This test
+/// pins the *invariant the dev branch relies on*: a dispatch built
+/// without an L0 cache never sets `x-oxide-cache: L0-hit` on any request.
+/// If that ever stops being true (e.g. an L0 singleton sneaks in), a
+/// dev server would silently cache its own edits again.
+///
+/// This replaces the earlier `dev_l0_smoke.rs` integration stub (which
+/// was `let _ = ();` — honestly labeled in the audit but functionally a
+/// no-op). The real dev-vs-prod branch lives in `start_server_inner_full`
+/// and is not directly unit-testable; what *is* testable is the dispatch
+/// contract it depends on, and that is what this asserts.
+#[tokio::test]
+async fn dispatch_without_l0_never_emits_a_cache_header() {
+    use std::sync::Arc;
+
+    let dispatch = build_dispatch(
+        tree_with_static_page_and_middleware(),
+        Arc::new(oxide_server::Metrics::new()),
+        Vec::new(),
+        None,
+        None,
+        routes_root(),
+        None,
+        None, // l0: None — the dev-mode construction
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        Vec::new(),
+        None,
+        None,
+        None,
+    );
+
+    // Three dispatches; the invariant is per-request, not per-first-hit.
+    for _ in 0..3 {
+        let resp = dispatch(test_request("GET", "/")).await;
+        let header = resp
+            .headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-cache"))
+            .map(|(_, v)| v.as_str());
+        assert_ne!(
+            header,
+            Some("L0-hit"),
+            "a dispatch without an L0 cache must never report an L0 hit"
+        );
+        assert_ne!(
+            header,
+            Some("L0-stale"),
+            "a dispatch without an L0 cache must never report an L0 stale hit"
+        );
+    }
+}
+

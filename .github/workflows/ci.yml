@@ -153,6 +153,33 @@ jobs:
       - name: Install workspace deps (for the worker's tsx loader)
         run: pnpm install --frozen-lockfile || pnpm install
       - name: Run the ignored loader_host / framework_host e2e tests
+        # Both are real e2e runs (spawn a Node worker, exercise the wire).
+        # No `|| true` on either: if the framework host tests regress, the
+        # job is red. The previous version swallowed framework_host_e2e
+        # failures — the sibling loader_host_e2e did not, so the two halves
+        # of the same subsystem reported different verdicts for the same
+        # class of bug.
         run: |
           cargo test -p oxide-jshost --test loader_host_e2e -- --ignored --test-threads=1
-          cargo test -p oxide-jshost --test framework_host_e2e -- --ignored --test-threads=1 || true
+          cargo test -p oxide-jshost --test framework_host_e2e -- --ignored --test-threads=1
+
+  playwright:
+    name: Playwright e2e (§22)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - name: Build CLI
+        run: cargo build -p oxide-cli
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile || pnpm install
+      - name: Install Playwright browsers
+        working-directory: tests/playwright
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run Playwright
+        working-directory: tests/playwright
+        run: pnpm exec playwright test --timeout=25000
