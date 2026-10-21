@@ -1177,6 +1177,34 @@ globalThis.__oxideDispatch = async function (kind, moduleUrl, exportName, payloa
   }
 };
 
+// B-07: §8.3 parsed search params — mirrors the Node worker:
+// `+`→space before percent-decode, repeated key → array, fragment stripped.
+// Shared by the loader and action events (B-07 wired both).
+globalThis.__oxideParseSearchParams = (url) => {
+  const out = Object.create(null);
+  if (typeof url !== 'string') return out;
+  const q = url.indexOf('?');
+  if (q < 0) return out;
+  const hashAt = url.indexOf('#', q);
+  const query = hashAt >= 0 ? url.slice(q + 1, hashAt) : url.slice(q + 1);
+  if (!query) return out;
+  const dec = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
+  for (const part of query.split('&')) {
+    if (!part) continue;
+    const eq = part.indexOf('=');
+    const rawK = eq < 0 ? part : part.slice(0, eq);
+    const rawV = eq < 0 ? '' : part.slice(eq + 1);
+    const k = dec(rawK.replace(/\+/g, ' '));
+    const v = dec(rawV.replace(/\+/g, ' '));
+    if (!k) continue;
+    if (k in out) {
+      const prev = out[k];
+      if (Array.isArray(prev)) prev.push(v); else out[k] = [prev, v];
+    } else out[k] = v;
+  }
+  return out;
+};
+
 // loader:run — import a route's `page.server.ts` (transpiled by the Rust
 // loader) and call its `load(event)`. Mirrors the Node worker's
 // dispatchLoaderRun: a full LoadEvent (cookies, setHeaders, locals, locale,
@@ -1231,35 +1259,9 @@ globalThis.__oxideLoaderRun = async function (moduleUrl, input) {
     // SPEC-10 / §16.4: the pipeline's resolved locale (worker parity).
     const locale = typeof input.locale === 'string' ? input.locale : '';
 
-    // B-07: §8.3 parsed search params — mirrors the Node worker:
-    // `+`→space before percent-decode, repeated key → array, fragment stripped.
-    const parseSearchParams = (url) => {
-      const out = Object.create(null);
-      if (typeof url !== 'string') return out;
-      const q = url.indexOf('?');
-      if (q < 0) return out;
-      const hashAt = url.indexOf('#', q);
-      const query = hashAt >= 0 ? url.slice(q + 1, hashAt) : url.slice(q + 1);
-      if (!query) return out;
-      const dec = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
-      for (const part of query.split('&')) {
-        if (!part) continue;
-        const eq = part.indexOf('=');
-        const rawK = eq < 0 ? part : part.slice(0, eq);
-        const rawV = eq < 0 ? '' : part.slice(eq + 1);
-        const k = dec(rawK.replace(/\+/g, ' '));
-        const v = dec(rawV.replace(/\+/g, ' '));
-        if (!k) continue;
-        if (k in out) {
-          const prev = out[k];
-          if (Array.isArray(prev)) prev.push(v); else out[k] = [prev, v];
-        } else out[k] = v;
-      }
-      return out;
-    };
     const event = {
       route: input.route || '',
-      searchParams: parseSearchParams(input.url || '/'),
+      searchParams: globalThis.__oxideParseSearchParams(input.url || '/'),
       params: input.params || {},
       url: input.url || '/',
       request: { method: input.method || 'GET', url: input.url || '/', headers: hdrs },
@@ -1280,6 +1282,29 @@ globalThis.__oxideLoaderRun = async function (moduleUrl, input) {
           data: { message: err.message ?? '' }, setCookies: [...pending.values()], headers: extra });
       }
       throw err;
+    }
+    // B-03 / B2 (V8 parity): in streaming mode emit the initial payload at
+    // loader speed, then one NDJSON settle line per `defer()` as it settles.
+    // The host drives the returned promise (which awaits every settle) so the
+    // event loop keeps running after the caller already has the stream.
+    if (input && input.__oxide_stream) {
+      const pendingIds = [...registry.keys()].map(String);
+      Deno.core.ops.op_oxide_loader_emit(JSON.stringify({ ok: true, status: 200, location: null,
+        deferred: {}, deferredPending: pendingIds, data: result ?? {},
+        setCookies: [...pending.values()], headers: extra }));
+      const jobs = [];
+      for (const [id, p] of registry) {
+        jobs.push(Promise.resolve(p).then(
+          (value) => { Deno.core.ops.op_oxide_loader_emit(JSON.stringify({
+            deferredSettle: { id: String(id), value: value === undefined ? null : value } }));
+          },
+          (e) => { Deno.core.ops.op_oxide_loader_emit(JSON.stringify({
+            deferredSettle: { id: String(id), error: String(e?.message ?? e) } }));
+          },
+        ));
+      }
+      await Promise.all(jobs);
+      return '';
     }
     // §7.1 / §9.2: await every `defer(promise)` marker and serialize
     // `{ id: value }`; a rejection surfaces as `{ __oxide_deferred_error }`
@@ -1496,7 +1521,7 @@ globalThis.__oxideActionRun = async function (moduleUrl, input) {
     }
     const event = {
       params: input.params ?? {},
-      searchParams: parseSearchParams(input.url ?? '/'),
+      searchParams: globalThis.__oxideParseSearchParams(input.url ?? '/'),
       request: { method: input.method ?? 'POST', url: input.url ?? '/', headers: Array.isArray(input.headers) ? input.headers : [] },
       locals: {},
       cookies,
@@ -1760,14 +1785,23 @@ fn spawn_v8_worker(
                             }
                             if let Some(promise) = streaming {
                                 let resolve = js.resolve(promise);
-                                let _ = js
+                                let resolved = js
                                     .with_event_loop_promise(
                                         resolve,
                                         deno_core::PollEventLoopOptions::default(),
                                     )
                                     .await;
-                                // Drop the sink: closes the chunk stream.
+                                if let Ok(value) = resolved {
+                                    let text = {
+                                        deno_core::scope!(scope, js);
+                                        deno_core::v8::Local::new(scope, value)
+                                            .to_rust_string_lossy(scope)
+                                    };
+                                    crate::v8_ops::finish_loader_stream(text);
+                                }
+                                // Drop the sinks: closes the chunk stream.
                                 crate::v8_ops::set_stream_sink(None);
+                                crate::v8_ops::set_loader_emit_sink(None);
                             }
                         }
                         V8Msg::Shutdown => {
@@ -1884,9 +1918,24 @@ async fn v8_dispatch(
         let u = serde_json::to_string(&url).unwrap_or_else(|_| "\"\"".into());
         let inp = serde_json::to_string(&input.payload).unwrap_or_else(|_| "{}".into());
         let script = format!("globalThis.__oxideLoaderRun({u}, {inp})");
+        // B-03: streaming loaders return their chunk stream immediately; the
+        // worker loop drives the promise (settles are emitted as late lines).
+        let streaming_loader = input
+            .payload
+            .get("__oxide_stream")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let promise = js
             .execute_script("oxide:loader", script)
             .map_err(|e| err("JSH-V8", format!("loader dispatch: {e}")))?;
+        if streaming_loader {
+            let (tx, rx) = mpsc::channel::<Result<Bytes>>(16);
+            crate::v8_ops::set_loader_emit_sink(Some(tx));
+            crate::v8_ops::PENDING_STREAM.with(|slot| {
+                *slot.borrow_mut() = Some(promise);
+            });
+            return Ok(CallStream::Chunked(rx));
+        }
         let resolve = js.resolve(promise);
         let resolved = js
             .with_event_loop_promise(resolve, deno_core::PollEventLoopOptions::default())
@@ -2514,8 +2563,10 @@ impl Pool for V8Pool {
                 let fetch = self.fetch_handler.clone();
                 let transform = self.transform_handler.clone();
                 tokio::spawn(async move {
-                    V8Pool::spawn_replacement(workers, counters, worker_idx, snapshot, cache, fetch, transform)
-                        .await
+                    V8Pool::spawn_replacement(
+                        workers, counters, worker_idx, snapshot, cache, fetch, transform,
+                    )
+                    .await
                 });
             }
             return Err(err(
