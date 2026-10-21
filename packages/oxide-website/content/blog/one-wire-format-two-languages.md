@@ -78,7 +78,7 @@ Three concrete examples from this site, which runs on Oxide:
   client runtime decodes them with the same module your bundle ships — no JSON.parse edge cases
 - The home page's stats island receives its props as base64 ODF on the `ox-island` host element;
   if the numbers ever included dates or BigInts, they would survive too
-- The deferred-value protocol (streaming late settles to the browser) uses the same format for
+- The deferred-value protocol (streaming late settles to the browser) rides JSON, not ODF — the settle is a short tag injected mid-stream, and JSON's zero-dependency decode on the client is the right tool for a one-shot value that never enters the cache. ODF is for the values that must survive a *cache round trip* (Date, Map, Set, BigInt, Error), which is the problem it was built for.
   its slot payloads — one parser in the browser, for everything
 
 Serialization is not a feature users see, which is exactly why it should be boring, byte-exact

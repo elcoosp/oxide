@@ -10,7 +10,7 @@ pipeline, and the whole thing deploys as one binary.
 
 | Feature | Where |
 |---|---|
-| Real streaming SSR (React adapter, `ssr: 'real'`) | `oxide.config.ts` `componentFor` map |
+| Real streaming SSR (React adapter, `ssr: 'real'`) | `oxide.config.ts` `react({ ssr: 'real' })` + build-time component collection (§6.4) |
 | Root + section layouts, layout chaining (§8.2) | `routes/layout.tsx`, `routes/docs/layout.tsx` |
 | Loaders (`defineLoad`), `error()`, ISR + cache tags | `routes/blog/[slug]/page.server.ts` |
 | `generateParams` prerender enumeration | blog + docs server modules |
@@ -25,19 +25,19 @@ pipeline, and the whole thing deploys as one binary.
 | Auto CSS pipeline (Lightning CSS, hashed, injected) | `routes/layout.tsx` imports `styles/global.css` |
 
 Deliberately **not** used (documented gaps, see the repo's
-"built, wiring in progress" list): partial prerendering, `content.*` runtime
-queries (loaders read the markdown directly via `src/lib/md.server.ts` until
-the typed query surface lands), `defineAction`/`enhance` forms (next up: the
-newsletter signup).
+"built, wiring in progress" list): partial prerendering (its runtime
+shell cache is wired; a build-time shell is the follow-up), `defineAction`/
+`enhance` forms (next up: the newsletter signup). Content collections are
+wired — `getCollection('blog')` / `getEntry('blog', slug)` in a loader
+reads the build's emitted entries.
 
 ## Run it
 
 The app resolves `oxide` / `@oxide/react` through the pnpm workspace, so it
-lives **inside the Oxide monorepo** as `website/`:
+lives **inside the Oxide monorepo** at `packages/oxide-website/`:
 
 ```sh
-cd oxide
-# one-time: register the folder in pnpm-workspace.yaml if needed ("website")
+cd oxide/packages/oxide-website
 pnpm install
 
 cargo build --release -p oxide-cli

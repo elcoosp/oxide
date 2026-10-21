@@ -1,5 +1,5 @@
 ---
-title: We audited our own framework against its own spec — 91/100, everything public
+title: We audited our own framework against its own spec — 92/100, everything public
 description: Oxide is built against a published v0.1 specification, and audited against it every round. Here's the method, the score, and the findings we would rather not have published — but did.
 date: 2026-11-02
 tags: [oxide, rust, quality, transparency, engineering]
@@ -9,8 +9,9 @@ Most frameworks publish benchmarks. Very few publish their homework.
 
 Oxide is built against a **published technical specification** — v0.1, 20 numbered decisions, 26
 sections — and since the first implementation commit we have run a recurring, structured audit of
-the codebase against that spec. Seven rounds so far. The current score is **91 / 100**, every
-section and every finding is public, and this post explains the method and — more interestingly —
+the codebase against that spec. Eight rounds so far. The current score is **~92 / 100** (r8 at
+`fbfc794`, with the two P0 fixes landed since), every section and every finding is public, and this
+post explains the method and — more interestingly —
 the things the audit found that we would rather not have published, and published anyway.
 
 ## The method
@@ -24,7 +25,8 @@ Each audit round runs the same loop:
    gets a verdict: **LIVE** (production-reachable), **SEAM-ONLY** (tested in isolation, not
    wired into the real path), **REFUTED**, or **MIXED**.
 3. **Tests are executed, not counted.** The TypeScript suites run for real — the last round:
-   349/349 green, zero skipped. The Rust suites are statically counted (test functions, ignored
+   333/333 green, zero skipped on this machine (the last r8 run reported 351/362 — the 11
+   red tests were fixed post-audit). The Rust suites are statically counted (test functions, ignored
    gates, TDD-written contract suites) until a full toolchain run is available.
 4. **21 sections, scored.** The spec's sections map to 21 scored areas; the score is the plain
    average, no weighting games.
@@ -39,7 +41,8 @@ public.
 The 21 sections cover the build graph, bundler, config extraction, router, server pipeline,
 rendering paths, cache semantics, deploy targets, plugin surface, diagnostics, testing
 infrastructure, and documentation integrity. Seven rounds moved the score from the high 80s to
-**90.95 ≈ 91**: 17 sections up, one down (config-schema drift turned out wider than reported),
+**92.4 ≈ 92**: 18 sections up, three flat (config-schema drift and the migration wave uncovered
+new surface in §6 and §14 — both fixed post-audit),
 and documentation integrity took the biggest single hit in the last round — for reasons we think
 are worth explaining in full.
 
@@ -86,3 +89,16 @@ and adds the sections the last round flagged for widening drift. If you want the
 more teeth, the best contribution is a machine-checkable assertion for a section you care about
 — [the repo](https://github.com/elcoosp/oxide) and its spec are public, and the
 [docs](/docs/architecture) map every spec section to the crate that owns it.
+
+---
+
+*r8 → post-audit corrections (2026-10-21):* the 91/100 above is the r7
+score; r8 re-scored at ~92 with the ComponentSource main path closed. The
+audit's own findings are now (mostly) fixed: the TS suite is green, the
+scaffolder emits the current config shape, PPR refuses to cache
+cookie-setting responses, and the schema carries the two keys it was
+missing. What remains open — P0-1's `edge_bundle.js`, P0-8's L2 sealing,
+P0-2's `/__data` unbounded collect, and the half of the migration the
+website config itself was on — is tracked in the r8 scorecard and fixed in
+this same push. The post is a point-in-time record; the scorecard is the
+live document.
