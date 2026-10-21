@@ -1007,6 +1007,13 @@ async function dispatchLoaderRun(id, input) {
       // (empty object) when the project has no middleware; present when a
       // middleware returned `{ locals: {...} }`.
       locals: inputLocals && typeof inputLocals === "object" ? inputLocals : {},
+      // D1: the decoded session, mutable. A loader that changes it has the
+      // change persisted by the pipeline (which re-seals and sets the
+      // cookie), so `event.session.user = ...` is the write API.
+      session:
+        inputLocals && typeof inputLocals === "object" && inputLocals.session
+          ? inputLocals.session
+          : {},
       // SPEC-10 / §16.4: the pipeline's resolved locale, forwarded by the
       // Rust host whitelist. Empty string when the project has no i18n —
       // mirrors the shim's `LoaderRunInput::locale` default.
@@ -1089,6 +1096,9 @@ async function dispatchLoaderRun(id, input) {
       deferred: {},
       deferredPending: pendingIds,
       data: result ?? {},
+      // D1: the loader may have mutated `event.session`; the pipeline
+      // compares it against the inbound value and re-seals when it changed.
+      session: event.session,
       meta,
       setCookies: [...pendingCookies.values()],
       headers: extraHeaders,
