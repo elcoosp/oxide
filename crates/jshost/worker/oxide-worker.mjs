@@ -463,9 +463,15 @@ async function dispatchToolingModule(id, input) {
 // documented in packages/oxide/src/server/README.md — the CLI consumes it
 // via `FrameworkHost` (crates/jshost/src/framework_host.rs).
 //
-// Two ops:
-//   framework:load   { path }            → { name, extensions, capabilities }
-//   framework:render { path, input }     → { html }
+// Ops:
+//   framework:load     { path }                      → { name, extensions, capabilities }
+//   framework:render   { path, input, components }   → { html } (streamed)
+//   components:load    { entry }                     → { generation, ids }
+//
+// §7 / §6.4: the config supplies the framework *descriptor* only. Route
+// components come from a build-emitted entry (`dist/server/ssr/index.js`) in
+// production, or from a CLI-generated source map in dev. The config is
+// imported for the adapter; it is never the component graph root.
 //
 // The config module is dynamic-imported fresh on every call so dev edits
 // take effect immediately (HMR-lite). Caching by mtime is a follow-up.
@@ -578,8 +584,51 @@ async function dispatchFrameworkLoad(id, input) {
   }
 }
 
+// §6.4 / WP-B1: the component resolver. The generated entry exports
+// `routes = { "<route id>": moduleNamespace }`; `components:load` imports it
+// once per module generation and `framework:render` hands the adapter a
+// synchronous resolver over that map.
+const componentEntryCache = new Map(); // `${entry}:gen${generation}` -> Promise
+
+function componentExport(ns) {
+  if (!ns || typeof ns !== "object") return ns;
+  return ns.default ?? ns.Page ?? ns.page ?? ns.Component ?? ns.component ?? ns;
+}
+
+function resolverFor(routes) {
+  return (id) => (routes && Object.prototype.hasOwnProperty.call(routes, id)
+    ? componentExport(routes[id])
+    : undefined);
+}
+
+async function loadComponentEntry(entryPath) {
+  const key = `components:${entryPath}:gen${moduleGeneration}`;
+  if (!componentEntryCache.has(key)) {
+    const p = (async () => {
+      const mod = await import(versioned(pathToFileURL(entryPath).href));
+      return mod?.routes ?? {};
+    })();
+    componentEntryCache.set(key, p);
+  }
+  return componentEntryCache.get(key);
+}
+
+async function dispatchComponentsLoad(id, input) {
+  const entry = String(input?.payload?.entry ?? "");
+  if (!entry) {
+    callErr(id, "JSH-COMPONENTS", "components:load requires an `entry` string");
+    return;
+  }
+  try {
+    const routes = await loadComponentEntry(entry);
+    callOk(id, { generation: moduleGeneration, ids: Object.keys(routes) });
+  } catch (e) {
+    callErr(id, "JSH-COMPONENTS", `components:load failed: ${e?.message ?? e}`);
+  }
+}
+
 async function dispatchFrameworkRender(id, input) {
-  const { path, input: renderInput } = input.payload ?? {};
+  const { path, input: renderInput, components } = input.payload ?? {};
   if (typeof path !== "string" || path.length === 0) {
     callErr(id, "JSH-FRAMEWORK", "framework:render requires a `path` string");
     return;
@@ -592,7 +641,39 @@ async function dispatchFrameworkRender(id, input) {
       callErr(id, "JSH-FRAMEWORK", `config at ${path} has no framework.render`);
       return;
     }
-    const stream = framework.render(renderInput ?? {});
+    // §6.4: build the resolver BEFORE render. Production imports the build
+    // entry once per generation; dev imports the CLI's source map (the
+    // tsx/sfc loader stack compiles each module), also versioned by the
+    // generation the watcher bumps.
+    let resolver = null;
+    if (components && typeof components.entry === "string") {
+      resolver = resolverFor(await loadComponentEntry(components.entry));
+    } else if (components && components.sources && typeof components.sources === "object") {
+      const routes = {};
+      const wanted = new Set([
+        renderInput?.route,
+        ...(Array.isArray(renderInput?.layouts) ? renderInput.layouts : []),
+        renderInput?.errorRoute,
+      ].filter((x) => typeof x === "string" && x.length > 0));
+      for (const rid of wanted) {
+        const src = components.sources[rid];
+        if (typeof src !== "string" || src.length === 0) continue;
+        try {
+          routes[rid] = await import(versioned(pathToFileURL(src).href));
+        } catch (e) {
+          callErr(
+            id,
+            "JSH-COMPONENTS",
+            `dev component import failed for ${rid} (${src}): ${e?.message ?? e}`,
+          );
+          return;
+        }
+      }
+      resolver = resolverFor(routes);
+    }
+    const rinput = renderInput ?? {};
+    if (resolver) rinput.resolve = resolver;
+    const stream = framework.render(rinput, resolver ?? undefined);
     // Emit the adapter's ReadableStream<Uint8Array> as chunked frames of
     // RAW HTML bytes — no JSON envelope. Rust consumers (render for the
     // collected shape, render_streaming for the incremental shape) both
@@ -1839,6 +1920,7 @@ async function handleCallInner(msg) {
   if (entry.kind === "framework:render") { await dispatchFrameworkRender(id, input); return; }
   if (entry.kind === "loader:run") { await dispatchLoaderRun(id, input); return; }
   if (entry.kind === "framework:invalidate") { await dispatchFrameworkInvalidate(id, input); return; }
+  if (entry.kind === "components:load") { await dispatchComponentsLoad(id, input); return; }
   if (entry.kind === "generate-params:run") { await dispatchGenerateParamsRun(id, input); return; }
   if (entry.kind === "server-fn:run") { await dispatchServerFn(id, input); return; }
   if (entry.kind === "action:run") { await dispatchActionRun(id, input); return; }
