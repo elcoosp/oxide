@@ -86,3 +86,79 @@ test('WebSocket at /chat greets on open and echoes on message', async ({ page })
   // client sent (a JSON string), so just assert it survives the round-trip.
   expect(echo.payload).toBeDefined()
 })
+
+// ------------------------------ §9.6 / §22 / L6c: second client
+
+/// Two concurrent clients on the same route must not interfere. This pins
+/// the *isolation* of the per-connection lifecycle: a bug that assumed one
+/// connection at a time (a shared `send` in the worker, a `OnceCell` for
+/// the connection state, a Rust-side single-slot registry) would pass the
+/// single-client test and fail here.
+///
+/// The H1 fan-out work (broadcast / rooms / targeting) is a separate WP —
+/// this test deliberately does NOT assert that client B receives client
+/// A's messages. The current `SocketService` has no connection registry;
+/// `send` is per-connection only. When H1 lands, add a broadcast test
+/// alongside this one; do not weaken this one to make room.
+test('two clients — independent welcome + echo, no cross-talk', async ({ page }) => {
+  await page.goto('http://127.0.0.1:3104/')
+  await page.waitForFunction(() => typeof (window as any).WebSocket === 'function')
+
+  const results = await page.evaluate(async () => {
+    // Two connections opened in the same page (same origin as the single-
+    // client test). Both should get exactly one welcome then one echo, and
+    // neither should see the other's echo payload.
+    const run = (marker: string) =>
+      new Promise<{ welcome: any; echo: any; raw: string[] }>((resolve, reject) => {
+        const ws = new WebSocket('ws://127.0.0.1:3104/chat')
+        const out: string[] = []
+        const timeout = setTimeout(() => {
+          ws.close()
+          reject(new Error(`client ${marker} timed out; got ${JSON.stringify(out)}`))
+        }, 10_000)
+        ws.onopen = () => ws.send(JSON.stringify({ who: marker }))
+        ws.onmessage = (e) => {
+          out.push(String(e.data))
+          if (out.length === 2) {
+            clearTimeout(timeout)
+            ws.close()
+            try {
+              resolve({
+                welcome: JSON.parse(out[0]),
+                echo: JSON.parse(out[1]),
+                raw: out,
+              })
+            } catch (err) {
+              reject(err)
+            }
+          }
+        }
+        ws.onerror = (e) => {
+          clearTimeout(timeout)
+          reject(new Error(`client ${marker} ws error: ${String(e)}`))
+        }
+      })
+
+    const [a, b] = await Promise.all([run('A'), run('B')])
+    return { a, b }
+  })
+
+  // Each connection got its own welcome.
+  expect(results.a.welcome.type).toBe('welcome')
+  expect(results.b.welcome.type).toBe('welcome')
+  // Each connection echoed its OWN payload — no cross-talk.
+  expect(results.a.echo.type).toBe('echo')
+  expect(results.b.echo.type).toBe('echo')
+  // The echo payload is the client's own outbound JSON string.
+  const aPayload = typeof results.a.echo.payload === 'string'
+    ? results.a.echo.payload
+    : JSON.stringify(results.a.echo.payload)
+  const bPayload = typeof results.b.echo.payload === 'string'
+    ? results.b.echo.payload
+    : JSON.stringify(results.b.echo.payload)
+  expect(aPayload).toContain('"who":"A"')
+  expect(bPayload).toContain('"who":"B"')
+  expect(aPayload).not.toContain('"who":"B"')
+  expect(bPayload).not.toContain('"who":"A"')
+})
+
