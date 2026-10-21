@@ -53,11 +53,7 @@ impl Transformer for OxcTransformer {
                     let line_start = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
                     let col = before[line_start..].chars().count() + 1;
                     d = d.at(oxidation_location(&input.path, line, col));
-                    let frame = oxide_diagnostics::render_code_frame(
-                        &input.code,
-                        line,
-                        Some(col),
-                    );
+                    let frame = oxide_diagnostics::render_code_frame(&input.code, line, Some(col));
                     if !frame.is_empty() {
                         d = d.with_code_frame(frame);
                     }
@@ -243,8 +239,7 @@ impl OxcTransformer {
                     line as u32,
                     col as u32,
                 ));
-                let frame =
-                    oxide_diagnostics::render_code_frame(&input.code, line, Some(col));
+                let frame = oxide_diagnostics::render_code_frame(&input.code, line, Some(col));
                 if !frame.is_empty() {
                     d = d.with_code_frame(frame);
                 }
