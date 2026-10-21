@@ -100,6 +100,44 @@ pub fn assemble(shell: &Shell, resolved: &BTreeMap<String, String>) -> Result<St
     Ok(out)
 }
 
+/// §10.8: the client half of PPR. A cached shell carries `<ox-hole id="…">`
+/// placeholders; the live render streams `<template data-ox-c="…">fragment
+/// </template>` chunks for each resolved boundary (the B-03 stream). This
+/// resolver swaps each fragment into its hole as it arrives, and also walks
+/// templates already present at parse time.
+///
+/// CSP-safe (nonce-carrying, no eval); ids are compared by attribute, never
+/// interpolated into a selector.
+pub fn client_resolver(nonce: &str) -> String {
+    let mut out = String::with_capacity(900);
+    out.push_str("<script nonce=\"");
+    out.push_str(nonce);
+    out.push_str("\">(function(){");
+    out.push_str("function fill(id){var hs=document.querySelectorAll('ox-hole');");
+    out.push_str("for(var i=0;i<hs.length;i++){var h=hs[i];if(h.getAttribute('id')!==id)continue;");
+    out.push_str("var ts=document.querySelectorAll(\"template[data-ox-c]\");");
+    out.push_str("for(var j=0;j<ts.length;j++){var t=ts[j];");
+    out.push_str("if(t.getAttribute('data-ox-c')!==id)continue;");
+    out.push_str("var d=document.createElement('div');d.innerHTML=t.innerHTML;");
+    out.push_str("h.replaceWith.apply(h,d.childNodes);");
+    out.push_str(
+        "document.dispatchEvent(new CustomEvent('ox:swap',{detail:{id:id,value:t.innerHTML}}));",
+    );
+    out.push_str("return;}}}");
+    out.push_str("function scan(){var ts=document.querySelectorAll(\"template[data-ox-c]\");");
+    out.push_str(
+        "for(var i=0;i<ts.length;i++){var id=ts[i].getAttribute('data-ox-c');if(id)fill(id);}}",
+    );
+    out.push_str("var mo=new MutationObserver(function(ms){for(var i=0;i<ms.length;i++){");
+    out.push_str("var a=ms[i].addedNodes;for(var j=0;j<a.length;j++){var n=a[j];");
+    out.push_str("if(n.nodeType===1&&n.tagName==='TEMPLATE'&&n.getAttribute('data-ox-c'))");
+    out.push_str("fill(n.getAttribute('data-ox-c'));}}});");
+    out.push_str("if(typeof document!=='undefined'&&document.documentElement){");
+    out.push_str("mo.observe(document.documentElement,{childList:true,subtree:true});scan();}");
+    out.push_str("})();</script>");
+    out
+}
+
 /// Cache key for a shell (§10.4): route + params + build id + Vary dims. Any
 /// static shell from the same build for the same route shares one entry.
 pub fn shell_cache_key(
