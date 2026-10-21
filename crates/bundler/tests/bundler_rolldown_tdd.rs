@@ -640,7 +640,10 @@ fn render_chunk_hook_rewrites_emitted_files() {
             }
         }
     }
-    assert!(found, "at least one emitted .js carries the renderChunk marker");
+    assert!(
+        found,
+        "at least one emitted .js carries the renderChunk marker"
+    );
 }
 
 #[test]
