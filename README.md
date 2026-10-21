@@ -14,8 +14,8 @@
     <img src="https://img.shields.io/badge/Node-%E2%89%A524-339933?style=flat-square&logo=node.js" alt="Node"/>
     <img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/>
     <img src="https://img.shields.io/badge/Workspace-17%20crates%20%2B%206%20packages-6F4E37?style=flat-square" alt="Workspace"/>
-    <img src="https://img.shields.io/badge/Code-%E2%89%88104k%20lines-9CF?style=flat-square" alt="Lines of code"/>
-    <img src="https://img.shields.io/badge/Tests-1108%20Rust%20%7C%20344%20TS-brightgreen?style=flat-square" alt="Tests"/>
+    <img src="https://img.shields.io/badge/Code-%E2%89%88108k%20lines-9CF?style=flat-square" alt="Lines of code"/>
+    <img src="https://img.shields.io/badge/Tests-1116%20Rust%20%7C%20349%20TS-brightgreen?style=flat-square" alt="Tests"/>
     <img src="https://img.shields.io/badge/ODF-16%20golden%20fixtures-00BFFF?style=flat-square" alt="ODF golden fixtures"/>
     <img src="https://img.shields.io/badge/TS%20runtime-zero%20npm%20deps-228B22?style=flat-square" alt="Zero dependencies"/>
   </p>
@@ -216,13 +216,15 @@ typed arrays, `undefined`, cyclic and shared references, `Error` and deferred pr
 The repository is built test-first: each crate's `*_tdd.rs` suites were written against its
 contract before the implementation.
 
-- **1108 Rust test functions** across 17 crates (48 of them engine-dependent e2e tests gated
+- **1116 Rust test functions** across 17 crates (50 of them engine-dependent e2e tests gated
   behind `#[ignore]`), including `proptest` property suites on the router and graph engines,
   `cargo-fuzz` harnesses for the ODF decoder, router matcher, config extractor and path
   splitter, and acceptance tests for the cache-security closures (single-flight owner-drop
   regression, tampered-entry rejection, per-env bundle-skip flips driven through real
-  rebuilds).
-- **344 TypeScript test cases** across 46 files on Node's built-in test runner — including
+  rebuilds) and the defer-streaming wave (per-settle flush with the close tag withheld and
+  re-emitted last, close tags split across chunks, no-settle byte-identity, and client-side
+  late-settle / rejection / dispose slot resolution).
+- **349 TypeScript test cases** across 46 files on Node's built-in test runner — including
   the ODF decoder against the same golden fixtures as the Rust encoder (typed values:
   `BigInt`, `Date`, `Map`, `Set`, `URL`, `RegExp`, typed arrays), router / island
   tests against a hand-rolled fake DOM (no jsdom, no deps), suites for the defer script
@@ -252,7 +254,20 @@ build on >5% regression** against `benchmarks/report.md`.
 
 **Shipped and gated today** — the production pipeline (hyper + rustls HTTP/1+2 with HTTP/3
 discovery via `Alt-Svc`, native rules, L0 response cache with configurable Vary, streaming
-SSR as the primary live path on both backends), `oxide build` with prerender that runs full
+SSR as the primary live path on both backends, per-settle `defer()` delivery on the serve
+path — one nonce'd settle script per promise as it resolves, the close tag withheld and
+appended last, a 30s settle bound, an `OXIDE_DEFER_BUFFERED=1` kill switch that restores
+the batched document exactly, and client-side slot resolution from the stream (late
+settles ride a `MutationObserver`), with the V8 backend streaming through the same loader
+contract — HTTP/3 request-body drain (8 MiB cap + 413) and streamed responses,
+session-cookie write-back (`locals.session` diffs seal into `Set-Cookie` on every response
+path), `Arc`-shared request headers with an O(1) lookup index, streamed dynamic compression
+over a blocking-codec bridge, split tooling/render pools with rayon-parallel project
+hashing, a compiled-module LRU in the worker, `edge.wasm` emission for Cloudflare targets
+(cdylib + wasm-bindgen, `wasm_modules` wired into `wrangler.toml`), middleware that skips
+already-run layers on a rewrite, request waterfalls in the dev inspector (also on
+`Server-Timing` and via MCP), ODF `Error`/`Ref`/`Deferred` encoders on both sides),
+`oxide build` with prerender that runs full
 layout chains (`await parent()` threading, last layout + page load in parallel when the page
 doesn't call `parent()`, real error statuses seeded into the cache), snapshots and 12 deploy
 targets, real framework SSR and real island hydration on all four adapters, client navigation
@@ -288,15 +303,14 @@ Redis/S3 payloads, a moka asset-body cache, build-time font subsetting, locale-a
 (508), `oxide check` with tsgo + oxlint, and the introspection tooling (`doctor`, `why`,
 `analyze`, `schema`, `mcp`).
 
-**Built, wiring in progress** — streaming deferred values (the worker now emits one frame
-per settled `defer()`, but the Rust host still collects them before dispatch, the
-`run_streaming` API has no production caller yet, the V8 backend still awaits the whole
-registry, and the client receives one batched script — so a slow `defer()` still stalls
-TTFB), partial
+**Built, wiring in progress** — defer streaming's last mile (the parallel layout arm — the
+no-`parent()` shape — still buffers via `join!`, `/__data` and prerender still collect the
+whole registry without a deadline, and a mid-stream worker crash still closes the document
+silently), partial
 prerendering (the shell splitter and assembler are tested; no render path constructs shells
-yet), session-cookie *writing* (the decode path is live, `Set-Cookie` is not), HTTP/3
-request bodies and streamed responses (HTTP/1+2 unaffected), the edge build
-(`dist/edge.wasm` emission is dormant and the edge handler does not call ODF decode yet),
+yet), the edge build's consumer chain (`dist/edge.wasm` now builds and emits, but nothing
+emits the `edge_bundle.js` the Worker dispatches to, and the wasm-preference branches still
+mismatch the JS ABI for head merge and cache keys),
 socket fan-out / presence (sends reach only the calling socket), the *last mile* of the
 plugin hook surface (`handleHotUpdate` fires on the once-probe path only, 8 hooks receive
 arguments via a positional fallback table, module `routes` / `serverMiddleware` pools are
@@ -312,7 +326,10 @@ drops richer head fields), MAC sealing for the `http` cache handler (Redis/S3 ar
 the HTTP L2 driver still serves plain JSON), rate-limit keying that still trusts
 `x-forwarded-for` (spoofable, unbounded buckets, no `og.rate_limit` config knob yet),
 the per-route message-subset bridge (the emitter ships namespaced keys the client looks
-up exactly, and a subset replaces the catalog instead of merging), MDX compilation beyond
+up exactly, and a subset replaces the catalog instead of merging), per-route chunk records
+that no consumer reads yet, the secret-scan→fingerprint ordering that lets a failed scan
+go green on retry, config-schema drift (`framework.islands` and `build.writeBranches`
+unpublished; a duplicated `static` key in the schema macro), MDX compilation beyond
 the reachable compile arm, and the neutral IR renderer's layout nesting (dev-fixture path
 only). See
 [`HANDOFF.md`](HANDOFF.md) for the current thread list and what remains.
