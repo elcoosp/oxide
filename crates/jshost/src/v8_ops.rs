@@ -116,6 +116,59 @@ thread_local! {
         const { RefCell::new(None) };
 }
 
+thread_local! {
+    /// B-03 / B2: sink for a streaming `loader:run`. The prelude emits the
+    /// initial payload and one line per settled `defer()`; the worker drives
+    /// the promise so timers/rejections fire after the caller already has the
+    /// chunk stream.
+    static LOADER_EMIT: RefCell<
+        Option<tokio::sync::mpsc::Sender<Result<bytes::Bytes, oxide_diagnostics::OxideError>>>,
+    > = const { RefCell::new(None) };
+
+    /// Whether the streaming loader emitted its initial payload. Used to fall
+    /// back to the promise's return value for early error/redirect exits that
+    /// skip the emit.
+    static LOADER_EMITTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub(crate) fn set_loader_emit_sink(
+    sink: Option<tokio::sync::mpsc::Sender<Result<bytes::Bytes, oxide_diagnostics::OxideError>>>,
+) {
+    LOADER_EMIT.with(|s| *s.borrow_mut() = sink);
+    LOADER_EMITTED.with(|e| e.set(false));
+}
+
+/// B-03: emit one NDJSON line from the streaming loader.
+#[op2]
+#[string]
+pub fn op_oxide_loader_emit(#[string] line: String) -> String {
+    let tx = LOADER_EMIT.with(|s| s.borrow().clone());
+    let Some(tx) = tx else {
+        return "false".to_string();
+    };
+    LOADER_EMITTED.with(|e| e.set(true));
+    let mut bytes = line.into_bytes();
+    bytes.push(b'\n');
+    if tx.try_send(Ok(bytes::Bytes::from(bytes))).is_ok() {
+        "true".to_string()
+    } else {
+        "false".to_string()
+    }
+}
+
+/// B-03: after the streaming loader's promise resolves, push its return value
+/// when the initial payload was never emitted (early `error()`/`redirect()`).
+pub(crate) fn finish_loader_stream(resolved: String) {
+    let emitted = LOADER_EMITTED.with(|e| e.get());
+    if emitted || resolved.is_empty() {
+        return;
+    }
+    let tx = LOADER_EMIT.with(|s| s.borrow().clone());
+    if let Some(tx) = tx {
+        let _ = tx.try_send(Ok(bytes::Bytes::from(resolved)));
+    }
+}
+
 /// Install the stream sink for the current V8 worker thread's in-flight
 /// streaming render.
 pub fn set_stream_sink(
@@ -170,7 +223,10 @@ pub async fn op_oxide_fetch(
     // §20: propagate the inbound trace to the outbound request. A caller that
     // already set its own `traceparent` wins (it knows the span better).
     if let Some(tp) = trace_parent() {
-        if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("traceparent")) {
+        if !headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("traceparent"))
+        {
             headers.push(("traceparent".to_string(), tp));
         }
     }
@@ -452,9 +508,11 @@ pub fn op_decls() -> Vec<deno_core::OpDecl> {
         // restores (deno_core only compares against the baked table; the
         // new op simply has no external reference until the next build).
         op_oxide_compile_module(),
+        // B-03: streaming loader settle lines (append-only, same snapshot
+        // compatibility rule as above).
+        op_oxide_loader_emit(),
     ]
 }
-
 
 #[cfg(test)]
 mod compile_module_tests {
