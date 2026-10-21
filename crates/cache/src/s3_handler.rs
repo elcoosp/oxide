@@ -175,9 +175,11 @@ impl CacheHandler for S3CacheHandler {
                     // B-20: the entry is written but its tag registration
                     // failed — remove the orphan so a later `invalidate_tag`
                     // is not the only way to reclaim it, and surface the error.
-                    let _ =
-                        tokio::time::timeout(L2_OP_TIMEOUT, self.store.delete(&Self::entry_path(key)))
-                            .await;
+                    let _ = tokio::time::timeout(
+                        L2_OP_TIMEOUT,
+                        self.store.delete(&Self::entry_path(key)),
+                    )
+                    .await;
                     let _ = tokio::time::timeout(L2_OP_TIMEOUT, self.store.delete(&marker)).await;
                     return Err(err(
                         "CACHE-S3",
