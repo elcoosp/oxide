@@ -156,6 +156,12 @@ pub enum Command {
     Audit {
         #[arg(long, default_value = ".")]
         root: String,
+        /// Emit the advisory report as JSON (a stable, machine-parseable
+        /// schema: root, package_count, advisories, fatal, exit_code).
+        /// Exit code is unchanged — a caller checking CI still gets 1 on
+        /// HIGH/CRITICAL.
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
     /// Migrate from next/nuxt/sveltekit/vite (§19.2).
     Migrate {
@@ -437,7 +443,7 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
         Command::Add { root, module } => cmd_add(&root, &module, w).await,
         Command::Generate { root, kind, path } => cmd_generate(&root, &kind, &path, w).await,
         Command::Cache { root, op } => cmd_cache(&root, op, w).await,
-        Command::Audit { root } => cmd_audit(&root, w).await,
+        Command::Audit { root, json } => cmd_audit(&root, json, w).await,
         Command::Migrate {
             root,
             source,
@@ -10499,7 +10505,7 @@ async fn cmd_cache(root: &str, op: CacheOp, w: Writer<'_>) -> anyhow::Result<i32
 
 /// `oxide audit` (§17.2): static advisory pass over `.oxide/modules.json` + config
 /// plugins. The real registry feed plugs in behind the same output shape.
-async fn cmd_audit(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
+async fn cmd_audit(root: &str, json: bool, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = PathBuf::from(root);
     let offline = std::env::var_os("OXIDE_AUDIT_OFFLINE").is_some();
 
@@ -10510,26 +10516,81 @@ async fn cmd_audit(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     let pkgs = match crate::audit::read_package_lock(&rootp) {
         Ok(p) => p,
         Err(e) => {
-            outln!(w, "{e:#}");
+            if json {
+                let err_json = serde_json::json!({
+                    "root": rootp.to_string_lossy(),
+                    "error": format!("{e:#}"),
+                    "exit_code": 2,
+                });
+                outln!(w, "{}", serde_json::to_string_pretty(&err_json)?);
+            } else {
+                outln!(w, "{e:#}");
+            }
             return Ok(2);
         }
     };
+
+    let advisories = match crate::audit::query_osv(&rootp, &pkgs, offline).await {
+        Ok(a) => a,
+        Err(e) => {
+            if json {
+                let err_json = serde_json::json!({
+                    "root": rootp.to_string_lossy(),
+                    "package_count": pkgs.len(),
+                    "error": format!("{e:#}"),
+                    "exit_code": 2,
+                });
+                outln!(w, "{}", serde_json::to_string_pretty(&err_json)?);
+            } else {
+                outln!(w, "{e:#}");
+            }
+            return Ok(2);
+        }
+    };
+
+    // Exit 1 when any HIGH/CRITICAL is present (CI gate convention); a
+    // low/moderate advisory is a warning-not-a-failure so a transitive
+    // unfixable LOW doesn't block every build.
+    let fatal = advisories
+        .iter()
+        .any(|a| matches!(a.severity.as_str(), "HIGH" | "CRITICAL"));
+    let exit_code = if fatal { 1 } else { 0 };
+
+    if json {
+        // Stable machine-readable schema. A CI consumer can parse this
+        // without depending on the human message wording (which the plan
+        // has re-versioned twice since r4).
+        let adv_json: Vec<serde_json::Value> = advisories
+            .iter()
+            .map(|a| {
+                serde_json::json!({
+                    "id": a.id,
+                    "package": a.package,
+                    "version": a.version,
+                    "severity": if a.severity.is_empty() { "?" } else { a.severity.as_str() },
+                    "summary": a.summary,
+                })
+            })
+            .collect();
+        let report = serde_json::json!({
+            "root": rootp.to_string_lossy(),
+            "package_count": pkgs.len(),
+            "advisories": adv_json,
+            "fatal": fatal,
+            "exit_code": exit_code,
+        });
+        outln!(w, "{}", serde_json::to_string_pretty(&report)?);
+        return Ok(exit_code);
+    }
+
     outln!(
         w,
         "auditing {} installed npm package(s) via OSV",
         pkgs.len()
     );
-
-    let advisories = match crate::audit::query_osv(&rootp, &pkgs, offline).await {
-        Ok(a) => a,
-        Err(e) => {
-            outln!(w, "{e:#}");
-            return Ok(2);
-        }
-    };
     if advisories.is_empty() {
         outln!(w, "[ok] no advisories");
-        return Ok(0);
+        return Ok(exit_code);
     }
     outln!(
         w,
@@ -10553,13 +10614,7 @@ async fn cmd_audit(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
             a.summary
         );
     }
-    // Exit 1 when any HIGH/CRITICAL is present (CI gate convention); a
-    // low/moderate advisory is a warning-not-a-failure so a transitive
-    // unfixable LOW doesn't block every build.
-    let fatal = advisories
-        .iter()
-        .any(|a| matches!(a.severity.as_str(), "HIGH" | "CRITICAL"));
-    Ok(if fatal { 1 } else { 0 })
+    Ok(exit_code)
 }
 
 /// `oxide migrate <source>` (§19.2): dry-run plan; never writes.

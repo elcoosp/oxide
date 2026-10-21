@@ -4897,6 +4897,28 @@ async fn audit_offline_without_cache_is_a_clear_error() {
 }
 
 #[tokio::test]
+async fn audit_json_mode_emits_stable_schema() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    // No package-lock.json → read_package_lock errors; JSON mode emits a
+    // stable error envelope.
+    let cli = Cli::try_parse_from([
+        "oxide", "audit", "--root", root.to_str().unwrap(), "--json",
+    ])
+    .expect("parse");
+    let mut buf: Vec<u8> = Vec::new();
+    let code = run_with_writer(cli, &mut buf).await.expect("run");
+    let out = String::from_utf8_lossy(&buf).to_string();
+    assert_eq!(code, 2, "no lockfile is exit 2: {out}");
+    let v: serde_json::Value = serde_json::from_str(out.trim())
+        .unwrap_or_else(|e| panic!("not valid JSON: {e}; got: {out}"));
+    assert!(v.get("root").is_some(), "root key: {v}");
+    assert!(v.get("error").is_some(), "error key: {v}");
+    assert_eq!(v.get("exit_code").and_then(|x| x.as_u64()), Some(2));
+}
+
+
+#[tokio::test]
 async fn audit_no_lockfile_is_a_clear_error() {
     let _g = ENV_LOCK.lock().unwrap();
     let dir = tempfile::tempdir().unwrap();
