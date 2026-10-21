@@ -136,10 +136,7 @@ mod tests {
             // Linux
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         ];
-        let Some(bytes) = candidates
-            .iter()
-            .find_map(|p| std::fs::read(p).ok())
-        else {
+        let Some(bytes) = candidates.iter().find_map(|p| std::fs::read(p).ok()) else {
             eprintln!("skipped: no system font available for subset test");
             return;
         };
