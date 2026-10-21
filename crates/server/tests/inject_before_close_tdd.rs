@@ -260,6 +260,7 @@ fn fn_request(method: &str, id: &str, body: &str, ct: &str) -> OxideRequest {
         trace: None,
         peer: None,
         rewrite_hops: 0,
+        mw_resume_after: None,
     }
 }
 
