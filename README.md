@@ -13,9 +13,9 @@
     <img src="https://img.shields.io/badge/Platforms-Linux%20%7C%20macOS%20%7C%20Windows-9D4EDD?style=flat-square" alt="Platforms"/>
     <img src="https://img.shields.io/badge/Node-%E2%89%A524-339933?style=flat-square&logo=node.js" alt="Node"/>
     <img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/>
-    <img src="https://img.shields.io/badge/Workspace-17%20crates%20%2B%206%20packages-6F4E37?style=flat-square" alt="Workspace"/>
-    <img src="https://img.shields.io/badge/Code-%E2%89%88108k%20lines-9CF?style=flat-square" alt="Lines of code"/>
-    <img src="https://img.shields.io/badge/Tests-1116%20Rust%20%7C%20349%20TS-brightgreen?style=flat-square" alt="Tests"/>
+    <img src="https://img.shields.io/badge/Workspace-17%20crates%20%2B%207%20packages-6F4E37?style=flat-square" alt="Workspace"/>
+    <img src="https://img.shields.io/badge/Code-%E2%89%88109k%20lines-9CF?style=flat-square" alt="Lines of code"/>
+    <img src="https://img.shields.io/badge/Tests-1133%20Rust%20%7C%20351%2F362%20TS-brightgreen?style=flat-square" alt="Tests"/>
     <img src="https://img.shields.io/badge/ODF-16%20golden%20fixtures-00BFFF?style=flat-square" alt="ODF golden fixtures"/>
     <img src="https://img.shields.io/badge/TS%20runtime-zero%20npm%20deps-228B22?style=flat-square" alt="Zero dependencies"/>
   </p>
@@ -32,8 +32,10 @@
   renderer *and* a bridge to the real upstream renderer (`react-dom/server`,
   `@vue/server-renderer`, `svelte/server`, `@solidjs/web`). Framework libraries are optional
   peer dependencies: when they are absent, the adapter degrades gracefully to the IR renderer.
-  Real streaming SSR is the primary live render path, and island hydration runs the real
-  framework runtime on all four adapters.
+  Real streaming SSR is the primary live render path: the config carries only the routes
+  directory — page, layout and error-boundary components are collected at build time into the
+  emitted SSR adapter entry, no config-side imports. Island hydration runs the real framework
+  runtime on all four adapters.
 - **Fast paths that skip JavaScript.** The route table is a build-time radix tree serialized
   to an `rkyv` archive and memory-mapped at boot — matches read the mapped bytes in place.
   Redirects, rewrites, headers, basic auth and rate limits are evaluated natively in Rust.
@@ -124,7 +126,7 @@ One binary, twenty subcommands:
 | --- | --- | --- |
 | **Core loop** | `dev` | Dev server + watcher + HMR hub + inspector; per-file invalidation, idle pre-warm; `--https --qr --open --proxy` |
 | | `build` | Client+SSR bundles, prerender, typegen, `rkyv` route manifest, V8 snapshot, L0 cache seed, deploy artifacts, forbidden-import guard |
-| | `start` · `preview` | Production server (pipeline below); health at `/_oxide/health` |
+| | `start` · `preview` | Production server (pipeline below); health at `/_oxide/health`, readiness at `/_oxide/ready` (503 while the renderer warms) |
 | | `render <route>` | Dispatch a page render, HTML to stdout (`--url --param --data --stream`) |
 | **Introspection** | `routes` | Scan routes, infer render modes, emit typegen, print the route table |
 | | `analyze` | Per-route JS bytes vs `config.budgets` — exits non-zero on breach; top modules by reachable bytes |
@@ -138,7 +140,7 @@ One binary, twenty subcommands:
 | | `migrate <source>` | Migration codemods for Next, Nuxt, SvelteKit, Vite (`--write` to apply on disk) |
 | **Operations** | `secrets rotate` | Drop the build secret; the next build mints a fresh one |
 | | `cache inspect\|clear\|stats` | Inspect, clear or measure `.oxide/cache` |
-| | `audit` | Static advisory pass over registered modules and plugins |
+| | `audit` | Advisory pass over the lockfile via live OSV queries (24h cache); `--json` for a stable JSON envelope |
 | | `test` | Build-manifest gate for the app test helpers |
 | | `mcp` | stdio MCP server exposing `oxide_routes`, `oxide_cache`, `oxide_graph`, `oxide_errors` |
 
@@ -164,14 +166,14 @@ request → hyper 1.x → limits + request id → static assets (precompressed, 
 ```text
 crates/         cli · config · graph · compiler · bundler · jshost · router · server ·
                 render · cache · odf · assets · dev · plugin · adapters · core-wasm ·
-                diagnostics                                   (17 crates, ~60k lines)
+                diagnostics                                   (17 crates, ~84k lines)
 packages/       oxide (runtime) · @oxide/react · @oxide/vue · @oxide/svelte ·
-                @oxide/solid · create-oxide                   (zero runtime deps)
+                @oxide/solid · create-oxide · oxide-website   (runtime pkgs: zero deps)
 conformance/    Atlas reference app — one assertion set × four adapters
 examples/       smoke-app-{react,vue,svelte,solid} — end-to-end fixtures
 benchmarks/     method, harness and the >5% CI regression gate
 tests/          Playwright specs + fixture check scripts
-docs/           architecture.md · Technical Specification v0.1
+docs/           architecture.md · spec-v0.1.md (frozen) · spec-v0.2-draft.md · deviations.md
 ```
 
 Every external engine sits behind an isolation trait — `JsHost`, `Bundler`, `Transformer`,
@@ -216,7 +218,7 @@ typed arrays, `undefined`, cyclic and shared references, `Error` and deferred pr
 The repository is built test-first: each crate's `*_tdd.rs` suites were written against its
 contract before the implementation.
 
-- **1116 Rust test functions** across 17 crates (50 of them engine-dependent e2e tests gated
+- **1,133 Rust test functions** across 17 crates (50 of them engine-dependent e2e tests gated
   behind `#[ignore]`), including `proptest` property suites on the router and graph engines,
   `cargo-fuzz` harnesses for the ODF decoder, router matcher, config extractor and path
   splitter, and acceptance tests for the cache-security closures (single-flight owner-drop
@@ -224,7 +226,7 @@ contract before the implementation.
   rebuilds) and the defer-streaming wave (per-settle flush with the close tag withheld and
   re-emitted last, close tags split across chunks, no-settle byte-identity, and client-side
   late-settle / rejection / dispose slot resolution).
-- **349 TypeScript test cases** across 46 files on Node's built-in test runner — including
+- **362 TypeScript test cases** across 47 files on Node's built-in test runner — including
   the ODF decoder against the same golden fixtures as the Rust encoder (typed values:
   `BigInt`, `Date`, `Map`, `Set`, `URL`, `RegExp`, typed arrays), router / island
   tests against a hand-rolled fake DOM (no jsdom, no deps), suites for the defer script
@@ -235,15 +237,17 @@ contract before the implementation.
   deferred boundaries in settle order, error / not-found, islands, actions JS-on/off, server
   functions, cache shapes, client router, prefetch) against all four adapters: 96 checks per
   release, and 21 Rust snapshot tests lock the emitted HTML and deploy artifacts byte-for-byte.
-- **Playwright** — 17 Chromium specs across 7 files that boot the real binary and drive a
+- **Playwright** — 18 Chromium specs across 7 files that boot the real binary and drive a
   real browser: SSR identity with zero console errors, island hydration (click 3 → 4 → 5),
-  navigation loading boundaries, middleware locals + redirect, socket round-trip, ordered
-  SSE streaming, and the config-gated `/_oxide/og` endpoint (PNG magic bytes, 400 on a
-  missing title, byte-determinism).
+  navigation loading boundaries, middleware locals + redirect, socket round-trip and
+  two-client isolation, ordered SSE streaming, and the config-gated `/_oxide/og` endpoint
+  (PNG magic bytes, 400 on a missing title, byte-determinism).
 
-CI runs five gates: Rust fmt + tests on a Linux / macOS / Windows matrix, Node 24 package
-tests, the conformance suite, the V8 fixture check, and a benchmark gate that **fails the
-build on >5% regression** against `benchmarks/report.md`.
+CI runs eleven gates: Rust fmt + tests on a Linux / macOS / Windows matrix, Node 24 package
+tests, the conformance suite, the V8 fixture check, a benchmark gate that **fails the
+build on >5% regression** against `benchmarks/report.md`, a Redis service-container job for
+the L2 integration suite, an ODF fuzz-property job, config-schema stability + stale-string
+gates, an HMR latency harness, and the Node-loader jshost e2e.
 
 ## Project status
 
@@ -275,7 +279,15 @@ that resolves deferred values on all four adapters, the ODF wire format with byt
 encoders on both sides (including ODF-encoded `'use cache'` on Node and V8), six-layer config
 extraction, cache semantics with tags / single-flight / Vary, full outer→inner middleware
 ancestor chains with threaded `event.locals` whose headers ride cached responses too,
-`route.ts` endpoint dispatch, socket routes (RFC6455 handshake through `socket:run`),
+`route.ts` endpoint dispatch, build-time component collection for SSR (spec-shaped configs —
+a routes dir and nothing more — reach real streaming SSR through the emitted adapter entry,
+no config-side imports), the lazy SSR entry with manifest-only module loads and a
+`/_oxide/ready` endpoint backed by renderer warm-up, `server.h3Advertise` gating of
+`Alt-Svc`, loader-session mutation persistence on the serve path, per-locale prerender
+across all three prerender arms, a CAS-keyed MDX precompile cache, V8 module loads routed
+through the shared compile/transform pipeline with a blake3 memo, per-route `trace_id` on
+dev waterfalls and MCP rows, `audit --json`, `layout_chain` recorded in both manifests,
+socket routes (RFC6455 handshake through `socket:run`),
 connected dev HMR including the loader-edit round trip and a one-time client bundle on
 fresh dev, `/_oxide/og` config-gated Open Graph PNG rendering (SVG → resvg → PNG with an
 MP area cap) now guarded by a token-bucket rate limit evaluated before the render (429 +
@@ -307,18 +319,23 @@ Redis/S3 payloads, a moka asset-body cache, build-time font subsetting, locale-a
 no-`parent()` shape — still buffers via `join!`, `/__data` and prerender still collect the
 whole registry without a deadline, and a mid-stream worker crash still closes the document
 silently), partial
-prerendering (the shell splitter and assembler are tested; no render path constructs shells
-yet), the edge build's consumer chain (`dist/edge.wasm` now builds and emits, but nothing
-emits the `edge_bundle.js` the Worker dispatches to, and the wasm-preference branches still
-mismatch the JS ABI for head merge and cache keys),
+prerendering is experimental and honest about it (`render.ppr` turns on a runtime shell
+cache for `defer()` boundaries in dev and `oxide start` — first request captured, later
+requests stream fresh holes; it is not build-time partial prerendering, is not integrated
+with L0/vary, does not invalidate shells on rebuild, and currently caches shells of
+cookie-setting responses — fix in flight), the edge build's consumer chain
+(`dist/edge.wasm` now builds and emits, but nothing emits the `edge_bundle.js` the Worker
+dispatches to, the wasm-preference branches still mismatch the JS ABI for head merge, and
+the edge cache key is a documented divergence from the L0 key),
 socket fan-out / presence (sends reach only the calling socket), the *last mile* of the
 plugin hook surface (`handleHotUpdate` fires on the once-probe path only, 8 hooks receive
 arguments via a positional fallback table, module `routes` / `serverMiddleware` pools are
 passed only at serve boot, and `cacheHandler` is consulted in dev+build but not in
-`start`), plugin transforms on the V8 render path (the compile op exists; V8 bypasses it),
-client-side i18n hydration (the server resolves the locale but never emits `<html lang>`,
-so the client catalog loader always falls back to `'en'`; ICU formatting is not yet
-evaluated at render time), image-result caching and concurrency limits (every request
+`start`), plugin-transform coverage on the V8 path beyond module loads (module loads now route
+through the shared compile/transform pipeline with a blake3 memo; op-level coverage still
+trails Node), client-side i18n hydration (the server resolves the locale but emits a
+hardcoded `<html lang="en">`, so the client catalog loader always falls back to `'en'`;
+ICU formatting is not yet evaluated at render time), image-result caching and concurrency limits (every request
 re-transforms; `sizes` is user-supplied and the LQIP placeholder arm is unreachable), the
 collections runtime query surface (`content.d.ts` emits inferred types; declared schemas
 and typed queries are not wired), route `meta` exports (title path wired; the flat shape
@@ -328,8 +345,12 @@ the HTTP L2 driver still serves plain JSON), rate-limit keying that still trusts
 the per-route message-subset bridge (the emitter ships namespaced keys the client looks
 up exactly, and a subset replaces the catalog instead of merging), per-route chunk records
 that no consumer reads yet, the secret-scan→fingerprint ordering that lets a failed scan
-go green on retry, config-schema drift (`framework.islands` and `build.writeBranches`
-unpublished; a duplicated `static` key in the schema macro), MDX compilation beyond
+go green on retry, config-schema drift (`framework.islands` and `server.h3Advertise`
+unpublished; a duplicated `static` key in the schema macro), the test half of the
+ComponentSource migration (11 TS assertions still pin the pre-migration adapter behavior —
+the suite is 351/362 until they land), the scaffolder (still emits the pre-ComponentSource
+config shape, and a flat `l0MaxSize` the typed cache config rejects), trace-context
+threading into five of six loader call sites, MDX compilation beyond
 the reachable compile arm, and the neutral IR renderer's layout nesting (dev-fixture path
 only). See
 [`HANDOFF.md`](HANDOFF.md) for the current thread list and what remains.
@@ -338,9 +359,12 @@ only). See
 
 - [`docs/architecture.md`](docs/architecture.md) — spec § → crate map, pipeline and
   cross-cutting invariants
-- [`docs/Oxide Technical Specification.md`](docs/Oxide%20Technical%20Specification.md)
-  — the full design document: Part I is the v0.1 spec (20 decisions, 26 sections); Part II
-  is the v0.2 implementation edition (work packages, waves, appendices)
+- [`docs/spec-v0.1.md`](docs/spec-v0.1.md) — the frozen v0.1 spec (audit target);
+  [`docs/spec-v0.2-draft.md`](docs/spec-v0.2-draft.md) — the v0.2 implementation edition
+  (work packages, waves, appendices); the combined original,
+  [`docs/Oxide Technical Specification.md`](docs/Oxide%20Technical%20Specification.md), is
+  content-frozen with a version-note banner so existing line anchors resolve
+- [`docs/deviations.md`](docs/deviations.md) — the numbered, TDD-locked spec deviations
 - [`docs/plugin-compat.md`](docs/plugin-compat.md) — plugin kinds × hooks compatibility
   matrix (what is wired, partial, or unsupported per plugin kind)
 - [`benchmarks/README.md`](benchmarks/README.md) — benchmark method and per-route JS budgets
