@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # §21 cold-start ladder. For each fixture: launch `oxide start`, wait for the
-# socket to answer `/_oxide/health`, then wait for the first 200 on `GET /`.
+# socket to answer `/_oxide/ready`, then wait for the first 200 on `GET /`.
 # Five runs per fixture; report min and median. Every number is a wall-clock
 # measurement of this machine right now.
 #
@@ -22,12 +22,12 @@ fi
 
 now_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time*1000'; }
 
-# Wait until `/_oxide/health` answers; return elapsed ms, or "timeout".
+# Wait until `/_oxide/ready` answers; return elapsed ms, or "timeout".
 wait_health() {
     local port="$1" start end
     start=$(now_ms)
     for _ in $(seq 1 600); do
-        if curl -sf -o /dev/null "http://127.0.0.1:$port/_oxide/health" 2>/dev/null; then
+        if curl -sf -o /dev/null "http://127.0.0.1:$port/_oxide/ready" 2>/dev/null; then
             end=$(now_ms); echo $((end - start)); return 0
         fi
         sleep 0.02

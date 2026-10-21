@@ -28,7 +28,7 @@ now_us() { perl -MTime::HiRes=time -e 'printf "%d\n", time*1000000'; }
 wait_health() {
     local port="$1"
     for _ in $(seq 1 600); do
-        if curl -sf -o /dev/null "http://127.0.0.1:$port/_oxide/health" 2>/dev/null; then
+        if curl -sf -o /dev/null "http://127.0.0.1:$port/_oxide/ready" 2>/dev/null; then
             return 0
         fi
         sleep 0.02

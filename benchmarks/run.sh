@@ -12,7 +12,7 @@
 #   * client JS bytes      — sum of `dist/client/*.js`
 #   * server bundle bytes  — sum of `dist/server/**/*.js`
 #   * page count           — from the client manifest
-#   * cold start           — `oxide start` to first 200 on `/_oxide/health`
+#   * cold start           — `oxide start` to first 200 on `/_oxide/ready`
 #   * idle RSS             — the oxide-cli server process, after start
 #   * TTFB                 — first byte of `GET /` from the running server
 #
@@ -79,7 +79,7 @@ wait_for_server() {
     local port="$1" start end
     start=$(now_ms)
     for _ in $(seq 1 300); do
-        if curl -sf -o /dev/null "http://127.0.0.1:$port/_oxide/health"; then
+        if curl -sf -o /dev/null "http://127.0.0.1:$port/_oxide/ready"; then
             end=$(now_ms)
             echo $((end - start))
             return 0
