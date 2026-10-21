@@ -61,7 +61,7 @@ stats_of() {
         }'
 }
 
-printf '%-22s %14s %14s %8s\n' "fixture" "health(min/med)" "first200(min/med)" "runs"
+printf '%-22s %14s %14s %8s\n' "fixture" "ready(min/med)" "first200(min/med)" "runs"
 printf '%-22s %14s %14s %8s\n' "-------" "---------------" "----------------" "----"
 
 for fx in smoke-app-react smoke-app-vue smoke-app-svelte smoke-app-solid; do
