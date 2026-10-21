@@ -12,7 +12,6 @@ pub mod artifacts;
 #[cfg(feature = "s3")]
 pub mod remote_s3;
 
-
 mod cas;
 mod demand;
 mod trackers;
@@ -259,12 +258,7 @@ impl<'a> ComputeCtx<'a> {
     /// `resolved_hash` (path + package version + matched conditions). A later
     /// [`DemandGraph::invalidate`] with a matching `Input::Resolver` (e.g. a
     /// lockfile bump that changes the resolved package) invalidates this node.
-    pub fn record_resolver(
-        &mut self,
-        specifier: &str,
-        from: &str,
-        resolved_hash: blake3::Hash,
-    ) {
+    pub fn record_resolver(&mut self, specifier: &str, from: &str, resolved_hash: blake3::Hash) {
         self.deps.borrow_mut().insert(Input::Resolver {
             specifier: specifier.to_string(),
             from: from.to_string(),
