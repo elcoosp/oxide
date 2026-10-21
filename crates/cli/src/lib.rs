@@ -3382,6 +3382,23 @@ async fn route_data_response_inner(
                 &route_q,
             );
             linput.method = req.method.clone();
+            // §20 / G2: thread the inbound W3C trace into the loader so its
+            // server-side fetch calls join the same trace. The worker's
+            // `traceparentFromPayload` reads `payload.trace.traceparent` —
+            // a W3C wire-form string — so build the dict from the parsed
+            // context rather than serializing the internal struct.
+            linput.trace = req.trace.as_ref().and_then(|t| {
+                // Re-emit the *parent* span as this loader's inbound
+                // traceparent — the worker treats it as the upstream hop.
+                // The `tracestate` rides along unchanged (W3C 3.3: a
+                // participant that does not mutate it must forward it).
+                t.to_traceparent(&t.parent_id).map(|tp| {
+                    serde_json::json!({
+                        "traceparent": tp,
+                        "tracestate": t.tracestate,
+                    })
+                })
+            });
             linput.headers = req.headers.as_ref().clone();
             linput.params = params.clone();
             linput.locals = middleware_locals.clone();

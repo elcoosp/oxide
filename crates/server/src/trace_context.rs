@@ -120,6 +120,8 @@ mod tests {
         assert!(tc.sampled);
     }
 
+
+
     #[test]
     fn rejects_all_zero_trace_id() {
         assert!(

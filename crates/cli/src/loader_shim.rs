@@ -271,4 +271,19 @@ mod tests {
         assert!(out.data.is_object());
         assert!(out.data.as_object().unwrap().is_empty());
     }
+
+    #[test]
+    fn input_to_payload_forwards_trace() {
+        let mut input = LoaderRunInput::new("/x/page.server.ts", "routes/x", "/x");
+        input.trace = Some(serde_json::json!({
+            "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        }));
+        let v = input_to_payload(&input);
+        assert_eq!(
+            v["trace"]["traceparent"],
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+            "traceparent forwarded: {v}"
+        );
+    }
+
 }
