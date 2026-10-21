@@ -21,6 +21,8 @@ hyper-util = { workspace = true, features = ["server-auto", "server-graceful", "
 socket2 = { version = "0.5", features = ["all"] }
 http-body-util = { workspace = true }
 tokio = { workspace = true }
+# P-15: bridge the blocking (de)compressor thread back into a BodyStream.
+tokio-stream = "0.1"
 tokio-rustls = { workspace = true }
 # §12.1: HTTP/3 (QUIC transport + HTTP/3 framing). Feature-gated at the call
 # site by `server.http3`; the deps are always compiled so the surface is real.
