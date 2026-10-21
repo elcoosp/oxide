@@ -1103,7 +1103,10 @@ mod kill_switch_tests {
     fn buffered_flag_semantics() {
         assert!(!buffered_from(None), "unset -> streaming");
         assert!(!buffered_from(Some("0".into())), "0 -> streaming");
-        assert!(!buffered_from(Some("true".into())), "anything but 1 -> streaming");
+        assert!(
+            !buffered_from(Some("true".into())),
+            "anything but 1 -> streaming"
+        );
         assert!(buffered_from(Some("1".into())), "1 -> buffered");
     }
 }
