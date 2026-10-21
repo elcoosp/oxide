@@ -140,10 +140,11 @@ unchanged (module generation counter, tsx-loader versioning).
 
 ## Known gaps exposed by this run
 
-1. **L0 server-side p50 is 1.07 ms (release), 7% over the §21 `< 1 ms`
-   target.** The gap is small and distributed across the dispatch pipeline
-   (rules eval, rate limiter, header assembly, CSP). Not a redesign; a
-   targeted PERF pass to hoist the non-matching branch out of the hit path.
+1. **L0 p99 is the §21 target, and react misses it 5.8× over.**
+   vue/svelte/solid are under (0.52–0.66 ms p99); react is 5.80 ms.
+   The remaining gap is react's dispatch arm — rules eval, rate limiter,
+   header assembly, CSP — not the cache lookup. Tracked as a
+   react-specific PERF pass.
 2. **`start(ms) = 1080-1369 ms`** — the trade for `ttfb = 140-189 ms`. A
    smaller worker pool warms faster, a larger one amortizes better; the
    current pool size is the balanced choice. Apps that can't afford a
