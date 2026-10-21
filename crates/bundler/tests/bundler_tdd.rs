@@ -692,11 +692,7 @@ fn resolve_hook_can_alias_an_import() {
         "src/entry.ts",
         "import { x } from './from-alias';\nexport const y = x + 1;\n",
     );
-    let mut opts = opts(
-        root,
-        BundleEnv::Client,
-        &[("routes/index", "src/entry.ts")],
-    );
+    let mut opts = opts(root, BundleEnv::Client, &[("routes/index", "src/entry.ts")]);
     let actual = root.join("src/actual.ts");
     let mut resolve_calls = 0usize;
     opts.resolve_hook = Some(ResolveHook::new({
@@ -743,11 +739,7 @@ fn load_hook_overrides_an_existing_file() {
         "src/entry.ts",
         "import { msg } from './message';\nexport const s = msg;\n",
     );
-    let mut opts = opts(
-        root,
-        BundleEnv::Client,
-        &[("routes/index", "src/entry.ts")],
-    );
+    let mut opts = opts(root, BundleEnv::Client, &[("routes/index", "src/entry.ts")]);
     opts.load_hook = Some(LoadHook::new(move |id: &str| {
         if id.ends_with("message.ts") {
             Ok(Some("export const msg = 'from-plugin';\n".to_string()))
@@ -786,11 +778,7 @@ fn load_hook_returning_none_falls_through_to_disk() {
         "src/entry.ts",
         "import { msg } from './message';\nexport const s = msg;\n",
     );
-    let mut opts = opts(
-        root,
-        BundleEnv::Client,
-        &[("routes/index", "src/entry.ts")],
-    );
+    let mut opts = opts(root, BundleEnv::Client, &[("routes/index", "src/entry.ts")]);
     // Hook returns None for every id — the bundler must read from disk.
     opts.load_hook = Some(LoadHook::new(|_id: &str| Ok(None)));
     let b = ChunkBundler::new(root);
@@ -806,4 +794,3 @@ fn load_hook_returning_none_falls_through_to_disk() {
         "None → fall through to disk:\n{joined}"
     );
 }
-
