@@ -899,11 +899,7 @@ mod catalog_tests {
             r#"{"save":"Save"}"#,
         )
         .unwrap();
-        std::fs::write(
-            root.join("fr").join("fr.json"),
-            r#"{"hello":"Bonjour"}"#,
-        )
-        .unwrap();
+        std::fs::write(root.join("fr").join("fr.json"), r#"{"hello":"Bonjour"}"#).unwrap();
         let cat = load_catalog_from_dir(&root).unwrap();
         assert_eq!(cat.get("en", "hello", "?"), "Hello");
         assert_eq!(cat.get("en", "bye", "?"), "Goodbye");
@@ -930,11 +926,7 @@ mod catalog_tests {
             r#"{"hello":"Hello","bye":"Goodbye"}"#,
         )
         .unwrap();
-        std::fs::write(
-            root.join("pt-BR").join("pt-BR.json"),
-            r#"{"hello":"Olá"}"#,
-        )
-        .unwrap();
+        std::fs::write(root.join("pt-BR").join("pt-BR.json"), r#"{"hello":"Olá"}"#).unwrap();
         let cat = load_catalog_from_dir(&root).unwrap();
         let out = tmp.path().join("messages.d.ts");
         write_messages_dts(&cat, &out).unwrap();
