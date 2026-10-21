@@ -136,6 +136,29 @@ fn to_fw_input(input: PageRenderInput) -> FrameworkRenderInput {
 
 #[async_trait]
 impl PageRenderer for AdapterPageRenderer {
+    /// §6.4 / Wave M: prime the framework worker pool, the config import,
+    /// and the component entry by rendering a synthetic route. The render
+    /// itself is expected to fail with a resolver miss — the route does
+    /// not exist. The warm-up goal is orthogonal: worker pool spawned,
+    /// config imported (once, cached), SSR entry loaded. After this, a
+    /// real request pays render cost only.
+    async fn warm(&self) -> oxide_server::Result<()> {
+        use oxide_server::PageRenderInput;
+        let synthetic = PageRenderInput {
+            route: "__oxide_warmup__".to_string(),
+            url: "/__oxide_warmup__".to_string(),
+            params: Default::default(),
+            data: serde_json::Value::Object(serde_json::Map::new()),
+            head: serde_json::json!({
+                "meta": [], "link": [], "style": [], "script": []
+            }),
+            layouts: Vec::new(),
+            error_route_id: None,
+        };
+        let _ = self.render(synthetic).await;
+        Ok(())
+    }
+
     fn name(&self) -> &str {
         self.inner.name()
     }
@@ -623,9 +646,24 @@ impl LazyFrameworkRenderer {
             .unwrap_or_default();
         if src.entry.is_none() && src.sources.is_empty() {
             if let Some(root) = std::path::Path::new(&self.config_path).parent() {
-                let entry = root.join("dist/server/ssr/index.js");
-                if entry.is_file() {
-                    src.entry = Some(entry.to_string_lossy().to_string());
+                // §6.4 / Wave M: prefer the lazy entry — importing it is
+                // cheap, and the render path then pulls only the matched
+                // route + its layouts + error boundary, not the whole
+                // bundle. The eager `index.js` stays as the entry that
+                // server-fn / action dispatch consume (those modules
+                // register at import side effect).
+                // §6.4 / Wave M: prefer the lazy entry (importing it is
+                // cheap; the render path then pulls only the matched route
+                // + layouts + error boundary). `OXIDE_SSR_EAGER=1` forces
+                // the eager entry — used by the Wave M A/B measurement to
+                // confirm which shape is faster for a given app size.
+                let prefer_eager = std::env::var_os("OXIDE_SSR_EAGER").is_some();
+                let lazy = root.join("dist/server/ssr/lazy.js");
+                let eager = root.join("dist/server/ssr/index.js");
+                if !prefer_eager && lazy.is_file() {
+                    src.entry = Some(lazy.to_string_lossy().to_string());
+                } else if eager.is_file() {
+                    src.entry = Some(eager.to_string_lossy().to_string());
                 }
             }
         }

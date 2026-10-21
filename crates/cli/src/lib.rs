@@ -8916,6 +8916,13 @@ async fn start_server_inner_full(
         }
     };
 
+    // §6.4 / Wave M: capture the renderer handle for warmup BEFORE it
+    // moves into the pipeline. Arc clone is cheap; the renderer itself
+    // lives in the pipeline but we need a second reference for the task.
+    let renderer_to_warm = stack.page_renderer.clone();
+    let render_ready = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+        renderer_to_warm.is_none(),
+    ));
     let pipeline = std::sync::Arc::new(oxide_server::Pipeline {
         // A3: OG endpoint rate limit. The rasterization is CPU-bound and the
         // endpoint is unauthenticated; 10 renders per peer per minute bounds
@@ -8988,6 +8995,8 @@ async fn start_server_inner_full(
         },
         rate_limiter: std::sync::Arc::new(oxide_server::RateLimiter::default()),
         health_path: "/_oxide/health".to_string(),
+        ready_path: "/_oxide/ready".to_string(),
+        render_ready: std::sync::Arc::clone(&render_ready),
         metrics_path: "/_oxide/metrics".to_string(),
         metrics: Some(std::sync::Arc::clone(&metrics)),
         inspector: if with_inspector {
@@ -9259,6 +9268,23 @@ async fn start_server_inner_full(
     let rx_h3 = rx.clone();
     let h3_bind = std::net::SocketAddr::new(bind_ip, port);
     let rx_main = rx;
+    // §6.4 / Wave M: warm the renderer on a background task. Socket is
+    // already bound (health → 200); ready → 503 until the synthetic render
+    // completes. Single-node traffic continues unaffected while this runs.
+    if let Some(renderer) = renderer_to_warm {
+        let ready = std::sync::Arc::clone(&render_ready);
+        tokio::spawn(async move {
+            match renderer.warm().await {
+                Ok(()) => tracing::info!("renderer warm; /_oxide/ready → 200"),
+                Err(e) => tracing::warn!(
+                    code = %e.0.code,
+                    "warmup failed (readiness flips anyway): {}",
+                    e.0.message
+                ),
+            }
+            ready.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+    }
     tokio::spawn(async move {
         let bind_addr = std::net::SocketAddr::new(bind_ip, port);
         if let Some(h3_cfg) = http3_cfg {

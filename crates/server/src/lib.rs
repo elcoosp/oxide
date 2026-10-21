@@ -1474,6 +1474,16 @@ pub struct Pipeline {
     pub i18n: Option<crate::I18nPolicy>,
     pub rate_limiter: Arc<RateLimiter>,
     pub health_path: String,
+    /// §6.4 / Wave M: readiness endpoint (`/_oxide/ready`). Liveness
+    /// (`/_oxide/health`) answers the moment the socket binds; readiness
+    /// answers once the renderer pool is warm. A single-node server keeps
+    /// serving on `/health` — this is a signal for LBs and benchmarks,
+    /// not a traffic gate. Empty disables the endpoint (tests).
+    pub ready_path: String,
+    /// §6.4 / Wave M: `false` while the renderer is warming; flipped by
+    /// the CLI's `tokio::spawn` after `PageRenderer::warm()` returns.
+    /// Defaults to `true` so tests and cache-only servers need no changes.
+    pub render_ready: Arc<std::sync::atomic::AtomicBool>,
     /// Prometheus metrics endpoint path (§20). `/_oxide/metrics` default;
     /// empty string disables.
     pub metrics_path: String,
@@ -1939,6 +1949,8 @@ impl Default for Pipeline {
             og_rate_max: 10,
             og_rate_window_secs: 60,
             health_path: String::new(),
+            ready_path: String::new(),
+            render_ready: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             metrics_path: String::new(),
             metrics: None,
             inspector: None,
@@ -3279,6 +3291,27 @@ impl Pipeline {
                 OxideResponse::new(200, "ok")
                     .with_header("content-type", "text/plain; charset=utf-8"),
             );
+        }
+
+        // (3b') readiness endpoint (§6.4 / Wave M). 200 when the renderer
+        // is warm; 503 with retry-after while warming. Distinct from
+        // health — traffic can flow as soon as health is 200; readiness
+        // is what an LB or a benchmark polls to avoid measuring warm-up.
+        if !self.ready_path.is_empty()
+            && req.method.eq_ignore_ascii_case("GET")
+            && path == self.ready_path
+        {
+            let ready = self.render_ready.load(std::sync::atomic::Ordering::Relaxed);
+            let mut r = if ready {
+                OxideResponse::new(200, "ok")
+            } else {
+                OxideResponse::new(503, "warming")
+            };
+            r = r.with_header("content-type", "text/plain; charset=utf-8");
+            if !ready {
+                r = r.with_header("retry-after", "1");
+            }
+            return NativePrefix::Raw(r);
         }
 
         // (3c) image endpoint (§16.1). GET/HEAD only. The transform runs

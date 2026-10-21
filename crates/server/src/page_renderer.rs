@@ -92,6 +92,15 @@ pub type RenderStream = BoxStream<'static, Result<Bytes>>;
 /// framework- and Node-agnostic.
 #[async_trait]
 pub trait PageRenderer: Send + Sync {
+    /// §6.4 / Wave M: best-effort warm-up. Called once after the socket
+    /// is bound. The default impl is a no-op; a renderer backed by a
+    /// worker pool overrides this to spawn the pool, import the config,
+    /// and load the component entry — so the first real request does not
+    /// pay those one-time costs. Errors are logged and ignored: readiness
+    /// flips even on warmup failure (a broken renderer fails every
+    /// request, not just the first).
+    async fn warm(&self) -> crate::Result<()> { Ok(()) }
+
     /// Human-readable name (`react` / `vue` / `svelte` / `solid` / `fake`).
     /// Surfaces in the inspector (§13.4) and log lines.
     fn name(&self) -> &str;
