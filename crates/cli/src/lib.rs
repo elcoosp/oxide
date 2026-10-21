@@ -5376,7 +5376,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // §5-A: record a DemandGraph over this build's inputs and persist it so
     // `oxide analyze` and the MCP `oxide_graph` tool can report real
     // recompute counts (node granularity: module / chunk / manifest /
-    // typegen). The conservative landing: the pipeline still runs to
+    // typegen). The current shape: the pipeline still runs to
     // completion — the graph is what a future incremental build diffs
     // against. Best-effort: a persistence failure logs, does not fail.
     {
@@ -10044,7 +10044,16 @@ async fn cmd_add(root: &str, module: &str, w: Writer<'_>) -> anyhow::Result<i32>
                     parts.push(format!("{} (merged)", merged.join(", ")));
                 }
                 if !deferred.is_empty() {
-                    parts.push(format!("{} (deferred — not wired into the pipeline yet)", deferred.join(", ")));
+                    // §15 / §15-B: every hook here IS wired — via the
+                    // general plugin path (`plugins: [...]` + the per-hook
+                    // build/dev dispatch), not via the module loader that
+                    // only consumes transform/resolveId/load. Say that,
+                    // instead of the stale "deferred" wording that read as
+                    // "not implemented".
+                    parts.push(format!(
+                        "{} (via the general plugin path — not module-loader hooks)",
+                        deferred.join(", ")
+                    ));
                 }
                 outln!(w, "    hooks:  {}", parts.join("; "));
             }

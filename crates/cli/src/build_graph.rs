@@ -1,4 +1,4 @@
-//! §5-A conservative landing: a real `DemandGraph` over a build's inputs.
+//! §5-A graph engine: a real `DemandGraph` over a build's inputs.
 //!
 //! The pipeline itself (`cmd_build`) still runs to completion — this module
 //! **records** the graph after a build, so:
