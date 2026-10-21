@@ -4960,6 +4960,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "oxide-diagnostics",
+ "proptest",
  "serde_json",
  "thiserror 2.0.21",
 ]
