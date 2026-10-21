@@ -2327,7 +2327,9 @@ async fn alt_svc_is_absent_when_advertisement_is_off() {
     );
     p.http3_port = 8443;
     p.http3_advertise = false;
-    let resp = p.serve_request(req("GET", "/page", &[]), &echo_dispatch()).await;
+    let resp = p
+        .serve_request(req("GET", "/page", &[]), &echo_dispatch())
+        .await;
     assert!(
         resp.header("alt-svc").is_none(),
         "no alt-svc with the valve off",
@@ -2345,7 +2347,9 @@ async fn alt_svc_names_the_port_when_enabled() {
     );
     p.http3_port = 8443;
     p.http3_advertise = true;
-    let resp = p.serve_request(req("GET", "/page", &[]), &echo_dispatch()).await;
+    let resp = p
+        .serve_request(req("GET", "/page", &[]), &echo_dispatch())
+        .await;
     let v = resp.header("alt-svc").expect("alt-svc present");
     assert!(v.contains("8443"), "names the port: {v}");
     assert!(v.contains("h3"), "names h3: {v}");
