@@ -601,16 +601,48 @@ function resolverFor(routes) {
     : undefined);
 }
 
-async function loadComponentEntry(entryPath) {
-  const key = `components:${entryPath}:gen${moduleGeneration}`;
+// §6.4 / Wave M: the SSR entry may be eager (modules) or lazy (loader fns).
+// We normalize to loader fns so the render path only imports what it needs.
+// A route module in the entry can be:
+//   eager:  export const routes = { "id": ns }         (legacy)
+//   lazy:   export const routes = { "id": () => import("./x.js") }   (current)
+// This helper imports the manifest (cheap — no route modules load), then
+// normalizes so callers can await only the ones they need.
+async function loadComponentManifest(entryPath) {
+  const key = `manifest:${entryPath}:gen${moduleGeneration}`;
   if (!componentEntryCache.has(key)) {
-    const p = (async () => {
+    componentEntryCache.set(key, (async () => {
       const mod = await import(versioned(pathToFileURL(entryPath).href));
-      return mod?.routes ?? {};
-    })();
-    componentEntryCache.set(key, p);
+      const routes = mod?.routes ?? {};
+      const normalized = {};
+      for (const [id, v] of Object.entries(routes)) {
+        normalized[id] = (typeof v === 'function')
+          ? v
+          : () => Promise.resolve(v);
+      }
+      return normalized;
+    })());
   }
   return componentEntryCache.get(key);
+}
+
+// Import only the given ids, in parallel. Missing ids are skipped (a
+// route pointing at a layout the entry does not declare is a benign miss).
+async function loadNeededComponents(manifest, neededIds) {
+  const out = {};
+  await Promise.all([...neededIds].map(async (id) => {
+    if (typeof id !== 'string' || id.length === 0) return;
+    const loader = manifest[id];
+    if (typeof loader !== 'function') return;
+    try {
+      out[id] = await loader();
+    } catch (e) {
+      // A missing route module is a resolver miss the adapter will report;
+      // a malformed one (syntax, missing dep) is a build bug worth a line.
+      console.error(`[oxide] component import failed for ${id}:`, e?.message ?? e);
+    }
+  }));
+  return out;
 }
 
 async function dispatchComponentsLoad(id, input) {
@@ -651,7 +683,18 @@ async function dispatchFrameworkRender(id, input) {
     // generation the watcher bumps.
     let resolver = null;
     if (components && typeof components.entry === "string") {
-      resolver = resolverFor(await loadComponentEntry(components.entry));
+      // §6.4 / Wave M: manifest import is cheap; only the route's actual
+      // module (and its layouts + error boundary) is imported. This is
+      // the TTFB fix — one render used to import the whole 12-module entry.
+      const manifest = await loadComponentManifest(components.entry);
+      const needed = new Set(
+        [renderInput?.route,
+         ...(Array.isArray(renderInput?.layouts) ? renderInput.layouts : []),
+         renderInput?.errorRoute]
+          .filter((x) => typeof x === "string" && x.length > 0)
+      );
+      const loaded = await loadNeededComponents(manifest, needed);
+      resolver = resolverFor(loaded);
     } else if (components && components.sources && typeof components.sources === "object") {
       const routes = {};
       const wanted = new Set([
