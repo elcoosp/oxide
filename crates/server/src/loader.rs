@@ -56,6 +56,13 @@ pub struct LoaderRunInput {
     /// runs (the pipeline awaits all layout loads, then the page load).
     #[serde(default)]
     pub parent_data: serde_json::Value,
+    /// §20 / G2: W3C trace context from the inbound request, threaded
+    /// through to the loader worker so its server-side `fetch()` calls
+    /// join the same trace. The worker's `traceparentFromPayload` reads
+    /// `payload.trace.traceparent`; absent → the fetch shim generates
+    /// a fresh trace id per request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<serde_json::Value>,
 }
 
 impl LoaderRunInput {
@@ -76,6 +83,7 @@ impl LoaderRunInput {
             locale: String::new(),
             locals: serde_json::json!({}),
             parent_data: serde_json::Value::Null,
+            trace: None,
         }
     }
 }

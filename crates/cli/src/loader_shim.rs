@@ -30,6 +30,11 @@ pub fn input_to_payload(input: &LoaderRunInput) -> Value {
         "locale": input.locale,
         // §9.2: the pre-resolved outer-layout data for `parent()`.
         "parent_data": input.parent_data,
+        // §20 / G2: W3C trace context, consumed by the worker's
+        // `traceparentFromPayload` so the loader's server-side fetch calls
+        // join the inbound request's trace. Absent → Null; the worker
+        // generates a fresh trace id in that case.
+        "trace": input.trace,
     })
 }
 
