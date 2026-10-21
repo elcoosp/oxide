@@ -193,8 +193,6 @@ fn hmr_messages_roundtrip_through_json_all_variants() {
     assert!(HmrMessage::from_json("not json").is_none());
 }
 
-
-
 // ---------------- HMR hub ----------------
 
 #[tokio::test]
