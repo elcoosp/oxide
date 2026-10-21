@@ -34,12 +34,21 @@ export interface RenderInput {
   odf?: Uint8Array
   locals?: Record<string, unknown>
   /**
+   * §6.4: runtime component resolver, supplied by the worker from the
+   * build-emitted component surface (`dist/server/ssr/index.js`) or the dev
+   * source map. `resolve(routeId)` returns the component/default export, or
+   * `undefined` when the id is absent. Adapters use it for the page, each
+   * layout and the error boundary; it is the replacement for the config
+   * `componentFor` closure.
+   */
+  resolve?: (routeId: string) => unknown
+  /**
    * §8.2 / §16.3 layout chain for this route, **outermost → innermost**.
    * Each entry is a route module id like `routes/layout` or
-   * `routes/blog/layout`. The adapter resolves each via the caller's
-   * `componentFor(layoutId)` and nests the page inside them (outermost
-   * wraps everything). Absent on the client — layouts are a server-render
-   * concept here. See `packages/oxide/src/server/real-ssr.ts`.
+   * `routes/blog/layout`. The adapter resolves each via `input.resolve`
+   * and nests the page inside them (outermost wraps everything). Absent on
+   * the client — layouts are a server-render concept here. See
+   * `packages/oxide/src/server/real-ssr.ts`.
    */
   layouts?: string[]
   /**
