@@ -7411,7 +7411,18 @@ fn build_dispatch(
                         let nonce_for_settles = oxide_server::nonce_for(&req_owned.request_id);
                         let bridged = match page_settles.take() {
                             Some(rx) => {
-                                strip_close_and_append_settles(bridged, rx, nonce_for_settles)
+                                // §20 / O3b: pass the recorder + request id
+                                // so the settle drain records a
+                                // `deferred-settles` stage once the last
+                                // one lands.
+                                strip_close_and_append_settles(
+                                    bridged,
+                                    rx,
+                                    nonce_for_settles,
+                                    waterfall.clone(),
+                                    req_owned.request_id.clone(),
+                                    req_owned.trace.as_ref().map(|t| t.trace_id.clone()),
+                                )
                             }
                             None => bridged,
                         };
@@ -12220,6 +12231,15 @@ fn strip_close_and_append_settles(
     src: oxide_server::BodyStream,
     mut settles: tokio::sync::mpsc::Receiver<serde_json::Value>,
     nonce: String,
+    // §20 / O3b: waterfall context. When present, the spawned drain task
+    // records a `deferred-settles` stage on the request's row after the
+    // last settle lands. The stage's value is the time from the start of
+    // the settle drain to the last delivered settle — i.e. the extra
+    // time the settles added *after* the shell finished, not the total
+    // request time. That is what the inspector bar means.
+    waterfall: Option<oxide_dev::WaterfallRecorder>,
+    request_id: String,
+    trace_id: Option<String>,
 ) -> oxide_server::BodyStream {
     use bytes::Bytes;
     use futures::StreamExt as _;
@@ -12262,6 +12282,10 @@ fn strip_close_and_append_settles(
         if !stripped.is_empty() && tx.send(Ok(Bytes::from(stripped))).await.is_err() {
             return;
         }
+        // §20 / O3b: mark the drain start so `deferred-settles` measures
+        // the settle window only, not the whole request (which is already
+        // recorded by the caller at dispatch time).
+        let settles_started = std::time::Instant::now();
         // One resolution script per settle, in settle order. A sender that
         // is never dropped would otherwise hold the document open forever;
         // 30s is far past any real defer and turns a leak into a closed page.
@@ -12299,6 +12323,17 @@ fn strip_close_and_append_settles(
             if tx.send(Ok(Bytes::from(tag))).await.is_err() {
                 return;
             }
+        }
+        // §20 / O3b: record the settle window on the request's waterfall
+        // row. Merges with the initial middleware/load/render record via
+        // `record_staged` — the two calls produce one row per request.
+        if let Some(rec) = waterfall {
+            let settle_ms = settles_started.elapsed().as_secs_f64() * 1000.0;
+            rec.record_staged(
+                &request_id,
+                vec![("deferred-settles".to_string(), settle_ms)],
+                trace_id,
+            );
         }
         // Close the document only after every settle has been delivered.
         let _ = tx.send(Ok(Bytes::from_static(CLOSE))).await;

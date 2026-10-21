@@ -6121,7 +6121,7 @@ async fn settles_flush_per_settle_and_close_last() {
             .await;
     });
 
-    let out = crate::strip_close_and_append_settles(src, rx, "NONCE".to_string());
+    let out = crate::strip_close_and_append_settles(src, rx, "NONCE".to_string(), None, String::new(), None);
     let mut out = out;
     let mut all: Vec<u8> = Vec::new();
     while let Some(item) = out.next().await {
@@ -6168,7 +6168,7 @@ async fn close_tag_split_across_chunks_is_still_withheld() {
     // observe the channel closed, not wait for a message that never arrives.
     drop(tx);
 
-    let mut out = crate::strip_close_and_append_settles(src, rx, "N".into());
+    let mut out = crate::strip_close_and_append_settles(src, rx, "N".into(), None, String::new(), None);
     let mut all: Vec<u8> = Vec::new();
     while let Some(item) = out.next().await {
         all.extend_from_slice(&item.expect("chunk"));
@@ -6196,7 +6196,7 @@ async fn no_settles_leaves_the_document_unchanged() {
     let (tx, rx) = tokio::sync::mpsc::channel::<serde_json::Value>(1);
     drop(tx);
 
-    let mut out = crate::strip_close_and_append_settles(src, rx, "N".into());
+    let mut out = crate::strip_close_and_append_settles(src, rx, "N".into(), None, String::new(), None);
     let mut all: Vec<u8> = Vec::new();
     while let Some(item) = out.next().await {
         all.extend_from_slice(&item.expect("chunk"));
@@ -6606,5 +6606,78 @@ fn waterfall_records_trace_id() {
 
     let untraced = snap.iter().find(|r| r.request_id == "req-untraced").expect("untraced row");
     assert_eq!(untraced.trace_id, None, "no inbound trace → None");
+}
+
+// ------------------------------ §20 / O3b: deferred-settles stage
+
+#[tokio::test]
+async fn strip_close_and_append_settles_records_settle_stage() {
+    use futures::StreamExt as _;
+
+    let rec = oxide_dev::WaterfallRecorder::new();
+    // The dispatch records the initial stages before wiring the settle tail.
+    rec.record_staged(
+        "req-o3b",
+        vec![
+            ("middleware".to_string(), 1.0),
+            ("load".to_string(), 5.0),
+            ("render".to_string(), 20.0),
+        ],
+        Some("trace-o3b".to_string()),
+    );
+
+    // A source stream with the document body ending in the close marker.
+    let src: oxide_server::BodyStream = Box::pin(futures::stream::iter(vec![
+        Ok(bytes::Bytes::from_static(b"<body>shell</body></html>")),
+    ]));
+
+    // Settle channel: send two settles, then close.
+    let (tx, rx) = tokio::sync::mpsc::channel::<serde_json::Value>(4);
+    tx.send(serde_json::json!({
+        "deferredSettle": { "id": "d1", "value": 42 }
+    })).await.unwrap();
+    tx.send(serde_json::json!({
+        "deferredSettle": { "id": "d2", "value": 99 }
+    })).await.unwrap();
+    drop(tx); // close the channel
+
+    let out = strip_close_and_append_settles(
+        src,
+        rx,
+        "nonce-x".to_string(),
+        Some(rec.clone()),
+        "req-o3b".to_string(),
+        Some("trace-o3b".to_string()),
+    );
+
+    // Drain the returned body stream so the spawned task runs to completion
+    // (the record happens after the settle loop, before close).
+    let mut all: Vec<u8> = Vec::new();
+    let mut stream = out;
+    while let Some(item) = stream.next().await {
+        if let Ok(b) = item {
+            all.extend_from_slice(&b);
+        }
+    }
+    let s = String::from_utf8_lossy(&all);
+    assert!(s.contains("application/oxide-deferred"), "settle tags emitted: {s}");
+    assert!(s.contains("d1"), "first settle rendered");
+    assert!(s.contains("d2"), "second settle rendered");
+
+    // The recorder must now have a single row with the deferred-settles
+    // stage merged in alongside the initial stages.
+    let snap = rec.snapshot();
+    assert_eq!(snap.len(), 1, "one row per request_id: {snap:?}");
+    let row = &snap[0];
+    assert_eq!(row.request_id, "req-o3b");
+    let names: Vec<_> = row.waterfall_ms.iter().map(|(n, _)| n.as_str()).collect();
+    assert!(
+        names.contains(&"deferred-settles"),
+        "deferred-settles stage recorded: {names:?}"
+    );
+    assert!(
+        names.contains(&"render"),
+        "initial stages preserved (merged, not replaced): {names:?}"
+    );
 }
 

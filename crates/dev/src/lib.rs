@@ -506,16 +506,37 @@ impl WaterfallRecorder {
     /// Record one request's stages. Keeps the most recent `MAX` entries.
     /// Back-compat shim: existing call sites pass no trace id.
     pub fn record(&self, request_id: &str, waterfall_ms: Vec<(String, f64)>) {
-        self.record_with_trace(request_id, waterfall_ms, None);
+        self.record_staged(request_id, waterfall_ms, None);
     }
 
-    /// Record one request's stages alongside its W3C trace id. The trace
-    /// id is `None` when the inbound request carried no `traceparent`.
-    /// Kept as a distinct method (rather than a third arg on `record`)
-    /// so the ~5 call sites that don't have a trace yet keep their
-    /// current shape; sites that do carry one switch over at their own
-    /// pace.
+    /// Record one request's stages alongside its W3C trace id.
     pub fn record_with_trace(
+        &self,
+        request_id: &str,
+        waterfall_ms: Vec<(String, f64)>,
+        trace_id: Option<String>,
+    ) {
+        self.record_staged(request_id, waterfall_ms, trace_id);
+    }
+
+    /// §20 / O3b: merge a request's stage rows by `request_id`.
+    ///
+    /// A single request can produce stage data from *two* places: the
+    /// initial dispatch (middleware + load + render, recorded synchronously)
+    /// and the streaming tail (deferred settles, recorded from the spawned
+    /// stream-drain task). Both call this method; the second call appends
+    /// its stages to the row the first created rather than pushing a new
+    /// row. Result: one row per request in `snapshot()`, which is what the
+    /// inspector and `oxide_state` MCP tool expect.
+    ///
+    /// Order-independent: if the settle task's call lands first (only
+    /// possible when a request has no defers and drains instantly), it
+    /// creates the row; the initial call then appends. Either order
+    /// produces a single row.
+    ///
+    /// `MAX` still bounds the deque — appends to an existing row are free,
+    /// pushes evict from the front once the cap is crossed.
+    pub fn record_staged(
         &self,
         request_id: &str,
         waterfall_ms: Vec<(String, f64)>,
@@ -523,6 +544,19 @@ impl WaterfallRecorder {
     ) {
         const MAX: usize = 50;
         if let Ok(mut q) = self.inner.lock() {
+            // Merge into an existing row if one is already present. Search
+            // from the back (usually a hit on the last entry); a merge is
+            // cheap and does not touch the deque.
+            for row in q.iter_mut().rev() {
+                if row.request_id == request_id {
+                    row.waterfall_ms.extend(waterfall_ms);
+                    if row.trace_id.is_none() {
+                        row.trace_id = trace_id;
+                    }
+                    return;
+                }
+            }
+            // No row — create one and enforce the cap.
             q.push_back(RequestTimingsRow {
                 request_id: request_id.to_string(),
                 waterfall_ms,
