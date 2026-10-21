@@ -151,10 +151,7 @@ pub trait LoaderRunner: Send + Sync {
     async fn run_streaming(
         &self,
         input: LoaderRunInput,
-    ) -> Result<(
-        LoaderOutput,
-        tokio::sync::mpsc::Receiver<serde_json::Value>,
-    )> {
+    ) -> Result<(LoaderOutput, tokio::sync::mpsc::Receiver<serde_json::Value>)> {
         let out = self.run(input).await?;
         let (_tx, rx) = tokio::sync::mpsc::channel(1);
         Ok((out, rx))
