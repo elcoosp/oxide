@@ -354,6 +354,68 @@ async fn v8_loader_event_includes_search_params() {
     .await;
     let sp = &v["data"]["sp"];
     assert_eq!(sp["q"], "hello world", "single key: {sp}");
-    assert_eq!(sp["tag"], serde_json::json!(["a", "b"]), "repeated key: {sp}");
+    assert_eq!(
+        sp["tag"],
+        serde_json::json!(["a", "b"]),
+        "repeated key: {sp}"
+    );
     assert_eq!(sp["empty"], "", "empty value: {sp}");
+}
+
+// B-03 (V8 fork): a streaming loader emits the initial payload before a slow
+// `defer()` settles, then one NDJSON `{deferredSettle}` line per settle.
+#[tokio::test]
+#[ignore = "boots a V8 isolate; run with --ignored"]
+async fn v8_streaming_loader_emits_settles_after_initial() {
+    let dir = tempfile::tempdir().unwrap();
+    let module = dir.path().join("page.server.mjs");
+    std::fs::write(
+        &module,
+        r#"
+export async function load(event) {
+  event.defer(new Promise((r) => setTimeout(() => r({ a: 1 }), 40)));
+  return { ok: 1 };
+}
+"#,
+    )
+    .unwrap();
+    let m = module.to_string_lossy().to_string();
+    let s = pool1()
+        .call(
+            EntryRef {
+                kind: "loader:run".into(),
+                module: m.clone(),
+                export: "load".into(),
+            },
+            input(serde_json::json!({
+                "route": "routes/index",
+                "params": {},
+                "url": "/",
+                "method": "GET",
+                "headers": [],
+                "__oxide_stream": true,
+            })),
+        )
+        .await
+        .expect("call");
+    let oxide_jshost::CallStream::Chunked(mut rx) = s else {
+        panic!("streaming loader must return Chunked");
+    };
+    let first = rx.recv().await.expect("initial chunk").expect("ok");
+    let first = String::from_utf8_lossy(&first).to_string();
+    let v: serde_json::Value = serde_json::from_str(first.trim()).expect("initial JSON");
+    assert_eq!(v["data"]["ok"], 1, "loader data present: {first}");
+    assert!(
+        v.get("deferredSettle").is_none(),
+        "initial chunk is the payload, not a settle: {first}"
+    );
+    let second = rx.recv().await.expect("settle chunk").expect("ok");
+    let second = String::from_utf8_lossy(&second).to_string();
+    let s: serde_json::Value = serde_json::from_str(second.trim()).expect("settle JSON");
+    assert_eq!(s["deferredSettle"]["id"], "1", "settle id: {second}");
+    assert_eq!(
+        s["deferredSettle"]["value"]["a"], 1,
+        "settle value: {second}"
+    );
+    assert!(rx.recv().await.is_none(), "stream closes after the settle");
 }
