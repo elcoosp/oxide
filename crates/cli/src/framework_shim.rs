@@ -280,9 +280,10 @@ pub async fn remote_cache_handler(
     handler: Option<&oxide_config::CacheHandlerConfig>,
 ) -> Option<Arc<dyn oxide_cache::CacheHandler>> {
     match handler {
-        Some(oxide_config::CacheHandlerConfig::Http { url }) => Some(Arc::new(
-            oxide_cache::HttpCacheHandler::new(url.clone()),
-        ) as Arc<dyn oxide_cache::CacheHandler>),
+        Some(oxide_config::CacheHandlerConfig::Http { url }) => {
+            Some(Arc::new(oxide_cache::HttpCacheHandler::new(url.clone()))
+                as Arc<dyn oxide_cache::CacheHandler>)
+        }
         Some(oxide_config::CacheHandlerConfig::Redis { url }) => {
             match oxide_cache::RedisCacheHandler::new(url.clone()).await {
                 Ok(h) => Some(Arc::new(h) as Arc<dyn oxide_cache::CacheHandler>),
@@ -375,9 +376,11 @@ pub async fn build_framework_stack(
                     .filter(|d| std::fs::create_dir_all(d).is_ok())
             })
             .flatten();
-        let tier = match disk
-            .and_then(|d| oxide_cache::TieredCache::new(512 * 1024 * 1024).with_disk(d).ok())
-        {
+        let tier = match disk.and_then(|d| {
+            oxide_cache::TieredCache::new(512 * 1024 * 1024)
+                .with_disk(d)
+                .ok()
+        }) {
             Some(c) => c,
             None => oxide_cache::TieredCache::new(512 * 1024 * 1024),
         };
