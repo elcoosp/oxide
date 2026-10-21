@@ -21,11 +21,11 @@ fn snapshot_emit_headers() {
     sec.insert("X-Frame-Options".to_string(), "DENY".to_string());
     sec.insert("X-Content-Type-Options".to_string(), "nosniff".to_string());
     let mut sec2 = BTreeMap::new();
-    sec2.insert("Cache-Control".to_string(), "public, max-age=31536000".to_string());
-    let rules = vec![
-        ("/*".to_string(), sec),
-        ("/assets/*".to_string(), sec2),
-    ];
+    sec2.insert(
+        "Cache-Control".to_string(),
+        "public, max-age=31536000".to_string(),
+    );
+    let rules = vec![("/*".to_string(), sec), ("/assets/*".to_string(), sec2)];
     insta::assert_snapshot!("emit_headers", emit_headers(&rules));
 }
 
@@ -72,7 +72,6 @@ fn snapshot_cloudflare_worker_entry() {
         cloudflare_worker_entry("build-abc123")
     );
 }
-
 
 // ---------------------------------------------------------------- node server entry (§18)
 
