@@ -2967,10 +2967,49 @@ fn inject_island_boot_script(shell: &str, boot_url: &str, nonce: &str) -> String
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
 /// P-20: one prerender target (a route + one `generateParams` entry).
+/// §16.4 / O2: locale set to prerender for. A project without i18n
+/// config returns a single empty-string locale; one with i18n returns
+/// one entry per declared locale.
+fn prerender_locales(cfg: &oxide_config::OxideConfig) -> Vec<String> {
+    if cfg.i18n.locales.is_empty() || cfg.i18n.strategy == "none" {
+        vec![String::new()]
+    } else {
+        cfg.i18n.locales.clone()
+    }
+}
+
+/// §16.4 / O2: on-disk relative path and URL path for a locale's variant.
+/// `base_rel` is a `.html`-suffixed path like `index.html` or
+/// `nested/page.html`. Returns the path under `prerendered/` (which the
+/// caller joins) and the request URL path.
+fn prefixed_prerender_path(
+    base_rel: &str,
+    locale: &str,
+    cfg: &oxide_config::OxideConfig,
+) -> (String, String) {
+    if locale.is_empty() {
+        return (format!("prerendered/{base_rel}"), url_path_from_rel(base_rel));
+    }
+    let should_prefix = match cfg.i18n.strategy.as_str() {
+        "prefix-always" => true,
+        "prefix-never" => false,
+        _ => locale != cfg.i18n.default_locale, // prefix-except-default
+    };
+    if should_prefix {
+        let url = url_path_from_rel(&format!("{locale}/{base_rel}"));
+        (format!("prerendered/{locale}/{base_rel}"), url)
+    } else {
+        (format!("prerendered/{base_rel}"), url_path_from_rel(base_rel))
+    }
+}
+
 struct PrerenderTarget {
     rel: String,
     url_path: String,
     params: BTreeMap<String, String>,
+    /// §16.4 / O2: the locale this target renders for. Empty when the
+    /// project has no i18n config.
+    locale: String,
 }
 
 /// P-20: render a route's `generateParams` targets with bounded parallelism.
@@ -3057,6 +3096,7 @@ async fn prerender_targets(
                 pattern,
                 &t.url_path,
                 &t.params,
+                &t.locale,
                 nonce_for,
                 page_renderer,
                 loader_runner,
@@ -3094,6 +3134,7 @@ async fn write_prerender(
     pattern: &str,
     url_path: &str,
     params: &BTreeMap<String, String>,
+    locale: &str,
     nonce: &str,
     page_renderer: Option<&std::sync::Arc<dyn oxide_server::PageRenderer>>,
     loader_runner: Option<&std::sync::Arc<dyn oxide_server::LoaderRunner>>,
@@ -3151,8 +3192,8 @@ async fn write_prerender(
             );
             linput.params = params.clone();
             linput.parent_data = parent_data.clone();
-            // Build time has no request middleware; `locals` is `{}` and the
-            // locale is the project default (there is no Accept-Language).
+            linput.locale = locale.to_string();
+            // Build time has no request middleware; `locals` is `{}`.
             linput.locals = serde_json::json!({});
             match loader.run(linput).await {
                 Ok(out) if out.status == 200 => {
@@ -3208,6 +3249,7 @@ async fn write_prerender(
         input.params = params.clone();
         // §9.2: the innermost layout's data — what `parent()` reads.
         input.parent_data = parent_data.clone();
+        input.locale = locale.to_string();
         match loader.run(input).await {
             Ok(out) if out.status == 200 => {
                 data = out.data;
@@ -3274,6 +3316,12 @@ async fn write_prerender(
         // §10.2 step 5: mirror the live-dispatch resolution on the prerender
         // path so a throw in `page.tsx` renders the project's `error.tsx`.
         input.error_route_id = error_route_id.map(str::to_string);
+        // §16.4 / O2: the resolved locale this prerender targets. The
+        // adapter forwards it to the render, so a page calling `t()` /
+        // `getLocale()` knows its language even at build time.
+        if !locale.is_empty() {
+            input.locale = Some(locale.to_string());
+        }
         // §15.2: merge the plugin's `renderHead` contribution into the
         // neutral model. The adapter's own `head()` output and the plugin's
         // both land in `PageRenderInput.head`, which the adapter's head
@@ -4601,7 +4649,11 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     let nonce = oxide_bundler::ChunkBundler::content_hash(&[build_id.as_bytes()]);
     let mut prerendered: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // PERF-04: (route_id, url_path, sentineled html) for the L0 seed manifest.
-    let mut seed_bodies: Vec<(String, String, String, u16)> = Vec::new();
+    // (route_id, url, sentineled_html, status, locale) — the locale is
+    // the last element so the L0-seed key can carry it once the dispatch
+    // appends the resolved locale to the vary (a follow-up; see the seed
+    // write below).
+    let mut seed_bodies: Vec<(String, String, String, u16, String)> = Vec::new();
     // §5-A full incremental: load the previous build's per-route prerender
     // records, indexed by (route_id, url). On this build, a route whose
     // source hash matches AND whose output file still exists is reused
@@ -4761,7 +4813,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 // Prerendered output exists → effective mode `static` for the
                 // manifest, even if the route also has a server module.
                 static_override.insert(route_id.clone());
-                let mut targets = Vec::with_capacity(params.len());
+                let locales = prerender_locales(&cfg);
+                let mut targets = Vec::with_capacity(params.len() * locales.len());
                 for params_map in &params {
                     // Substitute params into the segment list to build a path.
                     let mut segs: Vec<String> = e.segments.clone();
@@ -4772,17 +4825,20 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                             }
                         }
                     }
-                    let rel = if segs.is_empty() {
-                        "prerendered/index.html".to_string()
+                    let base_rel = if segs.is_empty() {
+                        "index.html".to_string()
                     } else {
-                        format!("prerendered/{}.html", segs.join("/"))
+                        format!("{}.html", segs.join("/"))
                     };
-                    let url_path = url_path_from_rel(&rel);
-                    targets.push(PrerenderTarget {
-                        rel,
-                        url_path,
-                        params: params_map.clone(),
-                    });
+                    for locale in &locales {
+                        let (rel, url_path) = prefixed_prerender_path(&base_rel, locale, &cfg);
+                        targets.push(PrerenderTarget {
+                            rel,
+                            url_path,
+                            params: params_map.clone(),
+                            locale: locale.clone(),
+                        });
+                    }
                 }
                 // P-20: bounded-parallel render across this route's params.
                 let (rows, reused) = prerender_targets(
@@ -4807,12 +4863,13 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 reused_prerender_count += reused;
                 let mut outs: Vec<String> = Vec::with_capacity(rows.len());
                 for (t, html, prerender_status) in rows {
-                    let PrerenderTarget { rel, url_path, .. } = t;
+                    let PrerenderTarget { rel, url_path, locale, .. } = t;
                     seed_bodies.push((
                         route_id.clone(),
                         url_path.clone(),
                         html.replace(&nonce, l0_cache::NONCE_SENTINEL),
                         prerender_status,
+                        locale,
                     ));
                     new_prerender_records.push(crate::build_graph::RoutePrerenderRecord {
                         route_id: route_id.clone(),
@@ -4862,7 +4919,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                         // Same shape as the Literal arm: enumerate, batch
                         // render, mark the route static in the manifest.
                         static_override.insert(route_id.clone());
-                        let mut targets = Vec::with_capacity(params.len());
+                        let locales = prerender_locales(&cfg);
+                        let mut targets = Vec::with_capacity(params.len() * locales.len());
                         for params_map in &params {
                             let mut segs: Vec<String> = e.segments.clone();
                             for s in segs.iter_mut() {
@@ -4872,17 +4930,20 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                                     }
                                 }
                             }
-                            let rel = if segs.is_empty() {
-                                "prerendered/index.html".to_string()
+                            let base_rel = if segs.is_empty() {
+                                "index.html".to_string()
                             } else {
-                                format!("prerendered/{}.html", segs.join("/"))
+                                format!("{}.html", segs.join("/"))
                             };
-                            let url_path = url_path_from_rel(&rel);
-                            targets.push(PrerenderTarget {
-                                rel,
-                                url_path,
-                                params: params_map.clone(),
-                            });
+                            for locale in &locales {
+                                let (rel, url_path) = prefixed_prerender_path(&base_rel, locale, &cfg);
+                                targets.push(PrerenderTarget {
+                                    rel,
+                                    url_path,
+                                    params: params_map.clone(),
+                                    locale: locale.clone(),
+                                });
+                            }
                         }
                         let (rows, reused) = prerender_targets(
                             &dist,
@@ -4906,12 +4967,13 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                         reused_prerender_count += reused;
                         let mut outs: Vec<String> = Vec::with_capacity(rows.len());
                         for (t, html, prerender_status) in rows {
-                            let PrerenderTarget { rel, url_path, .. } = t;
+                            let PrerenderTarget { rel, url_path, locale, .. } = t;
                             seed_bodies.push((
                                 route_id.clone(),
                                 url_path.clone(),
                                 html.replace(&nonce, l0_cache::NONCE_SENTINEL),
                                 prerender_status,
+                                locale,
                             ));
                             new_prerender_records.push(crate::build_graph::RoutePrerenderRecord {
                                 route_id: route_id.clone(),
@@ -4976,26 +5038,55 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 if !mode_ok || !no_params {
                     continue;
                 }
-                let rel = if e.segments.is_empty() {
-                    "prerendered/index.html".to_string()
+                // §16.4 / O2: a static route without generateParams still
+                // needs one output per locale under the project's i18n
+                // strategy. Base path (no `prerendered/` prefix) is shared
+                // across variants; the locale loop adds the prefix.
+                let base_rel = if e.segments.is_empty() {
+                    "index.html".to_string()
                 } else {
-                    format!("prerendered/{}.html", e.segments.join("/"))
+                    format!("{}.html", e.segments.join("/"))
                 };
                 let empty_params: BTreeMap<String, String> = BTreeMap::new();
-                let url_path = url_path_from_rel(&rel);
-                let (html, prerender_status) = match try_reuse_prerender(
-                    &dist.join(&rel),
-                    &route_id,
-                    &url_path,
-                    &route_src_hash,
-                    &prev_prerenders,
-                ) {
-                    Some((saved, status, old_nonce)) => {
-                        let fresh = saved.replace(&old_nonce, &nonce);
-                        if std::fs::write(dist.join(&rel), &fresh).is_ok() {
-                            reused_prerender_count += 1;
-                            (fresh, status)
-                        } else {
+                let locales = prerender_locales(&cfg);
+                let mut outs: Vec<String> = Vec::with_capacity(locales.len());
+                for locale in &locales {
+                    let (rel, url_path) = prefixed_prerender_path(&base_rel, locale, &cfg);
+                    let (html, prerender_status) = match try_reuse_prerender(
+                        &dist.join(&rel),
+                        &route_id,
+                        &url_path,
+                        &route_src_hash,
+                        &prev_prerenders,
+                    ) {
+                        Some((saved, status, old_nonce)) => {
+                            let fresh = saved.replace(&old_nonce, &nonce);
+                            if std::fs::write(dist.join(&rel), &fresh).is_ok() {
+                                reused_prerender_count += 1;
+                                (fresh, status)
+                            } else {
+                                write_prerender(
+                                    &dist,
+                                    &rel,
+                                    &route_id,
+                                    &pattern,
+                                    &url_path,
+                                    &empty_params,
+                                    locale,
+                                    &nonce_for,
+                                    stack.page_renderer.as_ref(),
+                                    stack.loader_runner.as_ref(),
+                                    module_path.as_deref(),
+                                    boot_script_url.as_deref(),
+                                    &layout_ids,
+                                    &prerender_layout_modules,
+                                    prerender_error_route_id.as_deref(),
+                                    &plugin_head,
+                                )
+                                .await?
+                            }
+                        }
+                        None => {
                             write_prerender(
                                 &dist,
                                 &rel,
@@ -5003,6 +5094,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                                 &pattern,
                                 &url_path,
                                 &empty_params,
+                                locale,
                                 &nonce_for,
                                 stack.page_renderer.as_ref(),
                                 stack.loader_runner.as_ref(),
@@ -5015,43 +5107,27 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                             )
                             .await?
                         }
-                    }
-                    None => {
-                        write_prerender(
-                            &dist,
-                            &rel,
-                            &route_id,
-                            &pattern,
-                            &url_path,
-                            &empty_params,
-                            &nonce_for,
-                            stack.page_renderer.as_ref(),
-                            stack.loader_runner.as_ref(),
-                            module_path.as_deref(),
-                            boot_script_url.as_deref(),
-                            &layout_ids,
-                            &prerender_layout_modules,
-                            prerender_error_route_id.as_deref(),
-                            &plugin_head,
-                        )
-                        .await?
-                    }
-                };
-                seed_bodies.push((
-                    route_id.clone(),
-                    url_path.clone(),
-                    html.replace(&nonce, l0_cache::NONCE_SENTINEL),
-                    prerender_status,
-                ));
-                new_prerender_records.push(crate::build_graph::RoutePrerenderRecord {
-                    route_id: route_id.clone(),
-                    url: url_path.clone(),
-                    status: prerender_status,
-                    rel_out: format!("dist/{rel}"),
-                    source_hash: route_src_hash.clone(),
-                    nonce: nonce.clone(),
-                });
-                prerendered.insert(route_id.clone(), vec![rel]);
+                    };
+                    seed_bodies.push((
+                        route_id.clone(),
+                        url_path.clone(),
+                        html.replace(&nonce, l0_cache::NONCE_SENTINEL),
+                        prerender_status,
+                        locale.clone(),
+                    ));
+                    new_prerender_records.push(crate::build_graph::RoutePrerenderRecord {
+                        route_id: route_id.clone(),
+                        url: url_path.clone(),
+                        status: prerender_status,
+                        rel_out: format!("dist/{rel}"),
+                        source_hash: route_src_hash.clone(),
+                        nonce: nonce.clone(),
+                    });
+                    outs.push(rel);
+                }
+                if !outs.is_empty() {
+                    prerendered.insert(route_id.clone(), outs);
+                }
             }
         }
     }
@@ -5106,9 +5182,24 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // seeded route is an L0 hit on the very first request (no warm-up miss).
     if !seed_bodies.is_empty() {
         let mut entries = Vec::with_capacity(seed_bodies.len());
-        for (rid, url, sentineled, status) in &seed_bodies {
-            // The key matches what the live server computes: route id
-            // (no `/page` suffix), no params, vary `lang=` (empty).
+        for (rid, url, sentineled, status, locale) in &seed_bodies {
+            // §16.4 / O2: only seed the *default-locale* variant. The L0 key
+            // is route + params + vary; the runtime's `l0_vary` is header-only
+            // today (accept-language), so a locale-prefixed URL like `/fr/about`
+            // and `/about` collapse to the same key. Seeding a non-default
+            // locale would write an entry the runtime never hits, and would
+            // collide with the default-locale entry. The non-default pages
+            // serve from `prerendered/<locale>/<route>.html` via the normal
+            // static-asset path. Making per-locale L0 seeding useful needs a
+            // dispatch change (append the resolved locale to `l0_vary`);
+            // tracked as a §21 follow-up.
+            let is_default_variant = locale.is_empty() || locale == &cfg.i18n.default_locale;
+            if !is_default_variant {
+                continue;
+            }
+            // The key matches what the live server computes for a request
+            // with no `accept-language`: route id (no `/page` suffix), no
+            // params, vary `lang=`.
             let rid = rid.strip_suffix("/page").unwrap_or(rid);
             let key = l0_cache::L0Cache::key_for(rid, "", "lang=", &build_id);
             entries.push(serde_json::json!({

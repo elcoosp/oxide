@@ -61,6 +61,12 @@ pub struct PageRenderInput {
     /// no error boundary is registered for this route.
     #[serde(default)]
     pub error_route_id: Option<String>,
+    /// §16.4 / O2: the resolved locale for this render, when the project
+    /// configures i18n. Empty / None when no i18n config is present. The
+    /// adapter forwards it to the loader event and to any `defineMeta`
+    /// that reads it, matching the live dispatch's `LoaderRunInput.locale`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
 }
 
 impl PageRenderInput {
@@ -77,6 +83,7 @@ impl PageRenderInput {
             }),
             layouts: Vec::new(),
             error_route_id: None,
+            locale: None,
         }
     }
 }

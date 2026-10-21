@@ -131,6 +131,7 @@ fn to_fw_input(input: PageRenderInput) -> FrameworkRenderInput {
         layouts: input.layouts,
         error_route_id: input.error_route_id,
         components: None,
+        locale: input.locale,
     }
 }
 
@@ -154,6 +155,7 @@ impl PageRenderer for AdapterPageRenderer {
             }),
             layouts: Vec::new(),
             error_route_id: None,
+            locale: None,
         };
         let _ = self.render(synthetic).await;
         Ok(())

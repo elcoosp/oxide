@@ -795,6 +795,7 @@ async fn write_prerender_threads_loader_data_into_renderer() {
         "/",
         "/",
         &params,
+        "", // no i18n locale in this test
         "test-nonce",
         Some(&page_renderer),
         Some(&loader_runner),
@@ -840,6 +841,7 @@ async fn write_prerender_without_loader_uses_empty_data() {
         "/",
         "/",
         &params,
+        "", // no i18n locale in this test
         "test-nonce",
         Some(&page_renderer),
         None,
@@ -4143,6 +4145,7 @@ async fn write_prerender_carries_500_status_for_marker_body() {
         "/",
         "/",
         &params,
+        "", // no i18n locale in this test
         "test-nonce",
         Some(&renderer),
         None, // no loader
@@ -4179,6 +4182,7 @@ async fn write_prerender_carries_200_status_for_clean_body() {
         "/",
         "/",
         &params,
+        "", // no i18n locale in this test
         "test-nonce",
         Some(&renderer),
         None,

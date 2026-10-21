@@ -81,6 +81,11 @@ pub struct FrameworkRenderInput {
     /// the legacy adapter behaviour (an explicit `componentFor` override).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub components: Option<ComponentSource>,
+    /// §16.4 / O2: the resolved locale for this render, when the project
+    /// configures i18n. Threads through to the adapter so a page can call
+    /// `t()` / `getLocale()` and know which language it renders in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
 }
 
 impl FrameworkRenderInput {
@@ -97,6 +102,7 @@ impl FrameworkRenderInput {
             layouts: Vec::new(),
             error_route_id: None,
             components: None,
+            locale: None,
         }
     }
 
@@ -114,6 +120,11 @@ impl FrameworkRenderInput {
         if let Some(cs) = &self.components {
             if !cs.is_empty() {
                 payload["components"] = serde_json::to_value(cs).unwrap_or(Value::Null);
+            }
+        }
+        if let Some(loc) = &self.locale {
+            if !loc.is_empty() {
+                payload["locale"] = Value::String(loc.clone());
             }
         }
         payload
