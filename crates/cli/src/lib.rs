@@ -2764,6 +2764,127 @@ fn inject_island_boot_script(shell: &str, boot_url: &str, nonce: &str) -> String
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
+/// P-20: one prerender target (a route + one `generateParams` entry).
+struct PrerenderTarget {
+    rel: String,
+    url_path: String,
+    params: BTreeMap<String, String>,
+}
+
+/// P-20: render a route's `generateParams` targets with bounded parallelism.
+///
+/// Reuse (an unchanged source hash + an existing output file) is cheap and
+/// stays synchronous. Only the targets that must actually render go through
+/// the worker pool, at most `render_concurrency()` at a time. Results are
+/// returned in target order, so seed manifests and graph records stay
+/// deterministic regardless of completion order.
+#[allow(clippy::too_many_arguments)]
+async fn prerender_targets(
+    dist: &Path,
+    route_id: &str,
+    pattern: &str,
+    targets: Vec<PrerenderTarget>,
+    nonce: &str,
+    nonce_for: &str,
+    page_renderer: Option<&std::sync::Arc<dyn oxide_server::PageRenderer>>,
+    loader_runner: Option<&std::sync::Arc<dyn oxide_server::LoaderRunner>>,
+    module_path: Option<&Path>,
+    boot_script_url: Option<&str>,
+    layout_ids: &[String],
+    layout_modules: &[(String, std::path::PathBuf)],
+    error_route: Option<&str>,
+    plugin_head: &serde_json::Value,
+    prev_prerenders: &std::collections::BTreeMap<
+        (String, String),
+        &crate::build_graph::RoutePrerenderRecord,
+    >,
+    route_src_hash: &str,
+) -> anyhow::Result<(Vec<(PrerenderTarget, String, u16)>, usize)> {
+    use futures::StreamExt as _;
+
+    let mut results: Vec<Option<(String, u16)>> = (0..targets.len()).map(|_| None).collect();
+    let mut to_render: Vec<usize> = Vec::new();
+    let mut reused = 0usize;
+    for (i, t) in targets.iter().enumerate() {
+        match try_reuse_prerender(
+            &dist.join(&t.rel),
+            route_id,
+            &t.url_path,
+            route_src_hash,
+            prev_prerenders,
+        ) {
+            Some((saved, status, old_nonce)) => {
+                let fresh = saved.replace(&old_nonce, nonce);
+                if std::fs::write(dist.join(&t.rel), &fresh).is_ok() {
+                    reused += 1;
+                    results[i] = Some((fresh, status));
+                } else {
+                    to_render.push(i);
+                }
+            }
+            None => to_render.push(i),
+        }
+    }
+
+    let concurrency = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .clamp(2, 8);
+    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
+    let mut renders = futures::stream::iter(to_render.into_iter().map(|i| {
+        let sem = std::sync::Arc::clone(&sem);
+        let t = &targets[i];
+        let dist = dist;
+        let route_id = route_id;
+        let pattern = pattern;
+        let nonce_for = nonce_for;
+        let page_renderer = page_renderer;
+        let loader_runner = loader_runner;
+        let module_path = module_path;
+        let boot_script_url = boot_script_url;
+        let layout_ids = layout_ids;
+        let layout_modules = layout_modules;
+        let error_route = error_route;
+        let plugin_head = plugin_head;
+        async move {
+            let _permit = sem.acquire().await;
+            let out = write_prerender(
+                dist,
+                &t.rel,
+                route_id,
+                pattern,
+                &t.url_path,
+                &t.params,
+                nonce_for,
+                page_renderer,
+                loader_runner,
+                module_path,
+                boot_script_url,
+                layout_ids,
+                layout_modules,
+                error_route,
+                plugin_head,
+            )
+            .await;
+            (i, out)
+        }
+    }))
+    .buffer_unordered(concurrency);
+    while let Some((i, out)) = renders.next().await {
+        results[i] = Some(out?);
+    }
+    drop(renders);
+
+    let mut ordered = Vec::with_capacity(targets.len());
+    for (t, r) in targets.into_iter().zip(results.into_iter()) {
+        let Some((html, status)) = r else {
+            continue;
+        };
+        ordered.push((t, html, status));
+    }
+    Ok((ordered, reused))
+}
+
 async fn write_prerender(
     dist: &Path,
     rel: &str,
@@ -3165,7 +3286,7 @@ async fn route_data_response_inner(
                 &route_q,
             );
             linput.method = req.method.clone();
-            linput.headers = req.headers.clone();
+            linput.headers = req.headers.as_ref().clone();
             linput.params = params.clone();
             linput.locals = middleware_locals.clone();
             linput.locale = locale.to_string();
@@ -3216,7 +3337,7 @@ async fn route_data_response_inner(
             &route_q,
         );
         input.method = req.method.clone();
-        input.headers = req.headers.clone();
+        input.headers = req.headers.as_ref().clone();
         input.params = params.clone();
         input.locals = middleware_locals.clone();
         input.locale = locale.to_string();
@@ -4397,7 +4518,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 // Prerendered output exists → effective mode `static` for the
                 // manifest, even if the route also has a server module.
                 static_override.insert(route_id.clone());
-                let mut outs: Vec<String> = Vec::new();
+                let mut targets = Vec::with_capacity(params.len());
                 for params_map in &params {
                     // Substitute params into the segment list to build a path.
                     let mut segs: Vec<String> = e.segments.clone();
@@ -4414,63 +4535,36 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                         format!("prerendered/{}.html", segs.join("/"))
                     };
                     let url_path = url_path_from_rel(&rel);
-                    let (html, prerender_status) = match try_reuse_prerender(
-                        &dist.join(&rel),
-                        &route_id,
-                        &url_path,
-                        &route_src_hash,
-                        &prev_prerenders,
-                    ) {
-                        Some((saved, status, old_nonce)) => {
-                            let fresh = saved.replace(&old_nonce, &nonce);
-                            if std::fs::write(dist.join(&rel), &fresh).is_ok() {
-                                reused_prerender_count += 1;
-                                (fresh, status)
-                            } else {
-                                // Nonce rewrite failed — fall back to a fresh
-                                // render; a stale-nonce HTML is worse than a
-                                // re-render.
-                                write_prerender(
-                                    &dist,
-                                    &rel,
-                                    &route_id,
-                                    &pattern,
-                                    &url_path,
-                                    params_map,
-                                    &nonce_for,
-                                    stack.page_renderer.as_ref(),
-                                    stack.loader_runner.as_ref(),
-                                    module_path.as_deref(),
-                                    boot_script_url.as_deref(),
-                                    &layout_ids,
-                                    &prerender_layout_modules,
-                                    prerender_error_route_id.as_deref(),
-                                    &plugin_head,
-                                )
-                                .await?
-                            }
-                        }
-                        None => {
-                            write_prerender(
-                                &dist,
-                                &rel,
-                                &route_id,
-                                &pattern,
-                                &url_path,
-                                params_map,
-                                &nonce_for,
-                                stack.page_renderer.as_ref(),
-                                stack.loader_runner.as_ref(),
-                                module_path.as_deref(),
-                                boot_script_url.as_deref(),
-                                &layout_ids,
-                                &prerender_layout_modules,
-                                prerender_error_route_id.as_deref(),
-                                &plugin_head,
-                            )
-                            .await?
-                        }
-                    };
+                    targets.push(PrerenderTarget {
+                        rel,
+                        url_path,
+                        params: params_map.clone(),
+                    });
+                }
+                // P-20: bounded-parallel render across this route's params.
+                let (rows, reused) = prerender_targets(
+                    &dist,
+                    &route_id,
+                    &pattern,
+                    targets,
+                    &nonce,
+                    &nonce_for,
+                    stack.page_renderer.as_ref(),
+                    stack.loader_runner.as_ref(),
+                    module_path.as_deref(),
+                    boot_script_url.as_deref(),
+                    &layout_ids,
+                    &prerender_layout_modules,
+                    prerender_error_route_id.as_deref(),
+                    &plugin_head,
+                    &prev_prerenders,
+                    &route_src_hash,
+                )
+                .await?;
+                reused_prerender_count += reused;
+                let mut outs: Vec<String> = Vec::with_capacity(rows.len());
+                for (t, html, prerender_status) in rows {
+                    let PrerenderTarget { rel, url_path, .. } = t;
                     seed_bodies.push((
                         route_id.clone(),
                         url_path.clone(),
@@ -4522,10 +4616,10 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
 
                 match params_via_worker {
                     Some(params) if !params.is_empty() => {
-                        // Same shape as the Literal arm: enumerate, write
-                        // each, mark the route static in the manifest.
+                        // Same shape as the Literal arm: enumerate, batch
+                        // render, mark the route static in the manifest.
                         static_override.insert(route_id.clone());
-                        let mut outs: Vec<String> = Vec::new();
+                        let mut targets = Vec::with_capacity(params.len());
                         for params_map in &params {
                             let mut segs: Vec<String> = e.segments.clone();
                             for s in segs.iter_mut() {
@@ -4541,74 +4635,51 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                                 format!("prerendered/{}.html", segs.join("/"))
                             };
                             let url_path = url_path_from_rel(&rel);
-                            let (html, prerender_status) = match try_reuse_prerender(
-                                &dist.join(&rel),
-                                &route_id,
-                                &url_path,
-                                &route_src_hash,
-                                &prev_prerenders,
-                            ) {
-                                Some((saved, status, old_nonce)) => {
-                                    let fresh = saved.replace(&old_nonce, &nonce);
-                                    if std::fs::write(dist.join(&rel), &fresh).is_ok() {
-                                        reused_prerender_count += 1;
-                                        (fresh, status)
-                                    } else {
-                                        write_prerender(
-                                            &dist,
-                                            &rel,
-                                            &route_id,
-                                            &pattern,
-                                            &url_path,
-                                            params_map,
-                                            &nonce_for,
-                                            stack.page_renderer.as_ref(),
-                                            stack.loader_runner.as_ref(),
-                                            module_path.as_deref(),
-                                            boot_script_url.as_deref(),
-                                            &layout_ids,
-                                            &prerender_layout_modules,
-                                            prerender_error_route_id.as_deref(),
-                                            &plugin_head,
-                                        )
-                                        .await?
-                                    }
-                                }
-                                None => {
-                                    write_prerender(
-                                        &dist,
-                                        &rel,
-                                        &route_id,
-                                        &pattern,
-                                        &url_path,
-                                        params_map,
-                                        &nonce_for,
-                                        stack.page_renderer.as_ref(),
-                                        stack.loader_runner.as_ref(),
-                                        module_path.as_deref(),
-                                        boot_script_url.as_deref(),
-                                        &layout_ids,
-                                        &prerender_layout_modules,
-                                        prerender_error_route_id.as_deref(),
-                                        &plugin_head,
-                                    )
-                                    .await?
-                                }
-                            };
+                            targets.push(PrerenderTarget {
+                                rel,
+                                url_path,
+                                params: params_map.clone(),
+                            });
+                        }
+                        let (rows, reused) = prerender_targets(
+                            &dist,
+                            &route_id,
+                            &pattern,
+                            targets,
+                            &nonce,
+                            &nonce_for,
+                            stack.page_renderer.as_ref(),
+                            stack.loader_runner.as_ref(),
+                            module_path.as_deref(),
+                            boot_script_url.as_deref(),
+                            &layout_ids,
+                            &prerender_layout_modules,
+                            prerender_error_route_id.as_deref(),
+                            &plugin_head,
+                            &prev_prerenders,
+                            &route_src_hash,
+                        )
+                        .await?;
+                        reused_prerender_count += reused;
+                        let mut outs: Vec<String> = Vec::with_capacity(rows.len());
+                        for (t, html, prerender_status) in rows {
+                            let PrerenderTarget { rel, url_path, .. } = t;
                             seed_bodies.push((
                                 route_id.clone(),
                                 url_path.clone(),
                                 html.replace(&nonce, l0_cache::NONCE_SENTINEL),
                                 prerender_status,
                             ));
-                            new_prerender_records.push(crate::build_graph::RoutePrerenderRecord {
-                                route_id: route_id.clone(),
-                                url: url_path.clone(),
-                                status: prerender_status,
-                                rel_out: format!("dist/{rel}"),
-                                source_hash: route_src_hash.clone(),
-                                nonce: nonce.clone(),
-                            });
+                            new_prerender_records.push(
+                                crate::build_graph::RoutePrerenderRecord {
+                                    route_id: route_id.clone(),
+                                    url: url_path.clone(),
+                                    status: prerender_status,
+                                    rel_out: format!("dist/{rel}"),
+                                    source_hash: route_src_hash.clone(),
+                                    nonce: nonce.clone(),
+                                },
+                            );
                             outs.push(rel);
                         }
                         if !outs.is_empty() {
@@ -6508,7 +6579,7 @@ fn build_dispatch(
                         req_owned.url.clone(),
                     );
                     linput.method = req_owned.method.clone();
-                    linput.headers = req_owned.headers.clone();
+                    linput.headers = req_owned.headers.as_ref().clone();
                     linput.params = params.clone();
                     linput.locals = middleware_locals.clone();
                     linput.locale = resolved_locale.clone();
@@ -6579,7 +6650,7 @@ fn build_dispatch(
                     req_owned.url.clone(),
                 );
                 linput.method = req_owned.method.clone();
-                linput.headers = req_owned.headers.clone();
+                linput.headers = req_owned.headers.as_ref().clone();
                 linput.params = params.clone();
                 linput.locals = middleware_locals.clone();
                 linput.locale = resolved_locale.clone();
@@ -6597,7 +6668,7 @@ fn build_dispatch(
                     req_owned.url.clone(),
                 );
                 pinput.method = req_owned.method.clone();
-                pinput.headers = req_owned.headers.clone();
+                pinput.headers = req_owned.headers.as_ref().clone();
                 pinput.params = params.clone();
                 pinput.locals = middleware_locals.clone();
                 pinput.locale = resolved_locale.clone();
@@ -6717,7 +6788,7 @@ fn build_dispatch(
                         req_owned.url.clone(),
                     );
                     input.method = req_owned.method.clone();
-                    input.headers = req_owned.headers.clone();
+                    input.headers = req_owned.headers.as_ref().clone();
                     input.params = params.clone();
                     // §8.1 middleware.ts / §9.1: request-scoped locals
                     // injected by the middleware that just ran. `{}` when
@@ -11651,7 +11722,7 @@ fn strip_close_and_append_settles(
         loop {
             let v = match tokio::time::timeout(deadline, settles.recv()).await {
                 Ok(Some(v)) => v,
-                Ok(None) => break,   // channel closed: all settles delivered
+                Ok(None) => break, // channel closed: all settles delivered
                 Err(_) => {
                     // A settle hung: close the document rather than hold it.
                     tracing::warn!("deferred settle wait timed out; closing the document");
