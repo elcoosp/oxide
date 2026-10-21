@@ -196,6 +196,7 @@ fn test_request(method: &str, url: &str) -> oxide_server::OxideRequest {
         trace: None,
         peer: None,
         rewrite_hops: 0,
+        mw_resume_after: None,
     }
 }
 
@@ -3330,6 +3331,190 @@ fn tree_with_page_and_middleware() -> std::sync::Arc<oxide_router::RouteTree> {
     std::sync::Arc::new(tree)
 }
 
+/// B-22: the outer layer rewrites once; on re-dispatch it must not run again
+/// while the remaining (inner) layer still runs.
+struct RewriteOnceMiddleware {
+    calls: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+#[async_trait::async_trait]
+impl oxide_server::MiddlewareDispatcher for RewriteOnceMiddleware {
+    async fn dispatch(
+        &self,
+        module_path: &str,
+        _method: &str,
+        _url: &str,
+        _params: &serde_json::Map<String, serde_json::Value>,
+        _headers: &[(String, String)],
+        _body: &[u8],
+        _locals: Option<&serde_json::Value>,
+    ) -> std::result::Result<oxide_server::MiddlewareRunResult, oxide_server::MiddlewareRunError>
+    {
+        let inner = module_path.ends_with("shop/middleware.ts");
+        self.calls.lock().unwrap().push(module_path.to_string());
+        Ok(oxide_server::MiddlewareRunResult {
+            short: false,
+            status: 200,
+            headers: if inner {
+                vec![("x-inner-ran".to_string(), "1".to_string())]
+            } else {
+                Vec::new()
+            },
+            rewrite: (!inner).then(|| "/shop".to_string()),
+            ..Default::default()
+        })
+    }
+}
+
+#[tokio::test]
+async fn middleware_rewrite_does_not_rerun_outer_layers() {
+    use std::sync::Arc;
+    let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mw: Option<Arc<dyn oxide_server::MiddlewareDispatcher>> =
+        Some(Arc::new(RewriteOnceMiddleware {
+            calls: Arc::clone(&calls),
+        }));
+    let dispatch = build_dispatch(
+        tree_with_two_middleware_layers(),
+        Arc::new(oxide_server::Metrics::new()),
+        Vec::new(),
+        Some(Arc::new(DataCapturingRenderer::new())),
+        None,
+        routes_root(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        mw,
+        false,
+        Vec::new(),
+        None,
+        None,
+    );
+    let resp = dispatch(test_request("GET", "/shop")).await;
+    assert_eq!(resp.status, 200);
+    assert!(
+        resp.headers
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("x-inner-ran") && v == "1"),
+        "inner layer still runs: {:?}",
+        resp.headers
+    );
+    let calls = calls.lock().unwrap();
+    let outer = calls.iter().filter(|p| p.ends_with("routes/middleware.ts") || p.ends_with("middleware.ts") && !p.contains("shop/")).count();
+    assert_eq!(outer, 1, "outer middleware ran exactly once: {calls:?}");
+}
+
+/// B-06: two middleware layers; the inner one re-sets a header the outer
+/// already emitted. Last-writer-wins must leave exactly one line.
+struct LayerMiddleware;
+
+#[async_trait::async_trait]
+impl oxide_server::MiddlewareDispatcher for LayerMiddleware {
+    async fn dispatch(
+        &self,
+        module_path: &str,
+        _method: &str,
+        _url: &str,
+        _params: &serde_json::Map<String, serde_json::Value>,
+        _headers: &[(String, String)],
+        _body: &[u8],
+        _locals: Option<&serde_json::Value>,
+    ) -> std::result::Result<oxide_server::MiddlewareRunResult, oxide_server::MiddlewareRunError>
+    {
+        let inner = module_path.ends_with("shop/middleware.ts");
+        let headers = if inner {
+            vec![("x-tenant-frame".to_string(), "SAMEORIGIN".to_string())]
+        } else {
+            vec![
+                ("x-tenant-frame".to_string(), "DENY".to_string()),
+                ("x-only-outer".to_string(), "1".to_string()),
+            ]
+        };
+        Ok(oxide_server::MiddlewareRunResult {
+            short: false,
+            status: 200,
+            headers,
+            ..Default::default()
+        })
+    }
+}
+
+fn tree_with_two_middleware_layers() -> std::sync::Arc<oxide_router::RouteTree> {
+    let mut tree = oxide_router::RouteTree::new();
+    let mut page = |id: &str, segments: Vec<&str>, file: &str| oxide_router::RouteEntry {
+        id: oxide_router::RouteId(id.into()),
+        kind: oxide_router::RouteKind::Page,
+        segments: segments.into_iter().map(str::to_string).collect(),
+        file: std::path::PathBuf::from(file),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: true,
+        slot: None,
+        needs_parent: false,
+    };
+    tree.insert(page("routes/shop/page", vec!["shop"], "shop/page.tsx"));
+    let mut mw = |id: &str, segments: Vec<&str>, file: &str| oxide_router::RouteEntry {
+        id: oxide_router::RouteId(id.into()),
+        kind: oxide_router::RouteKind::Middleware,
+        segments: segments.into_iter().map(str::to_string).collect(),
+        file: std::path::PathBuf::from(file),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: false,
+        slot: None,
+        needs_parent: false,
+    };
+    tree.insert(mw("routes/middleware", vec![], "middleware.ts"));
+    tree.insert(mw("routes/shop/middleware", vec!["shop"], "shop/middleware.ts"));
+    std::sync::Arc::new(tree)
+}
+
+#[tokio::test]
+async fn inner_middleware_header_overwrites_outer() {
+    use std::sync::Arc;
+    let metrics = Arc::new(oxide_server::Metrics::new());
+    let mw: Option<Arc<dyn oxide_server::MiddlewareDispatcher>> = Some(Arc::new(LayerMiddleware));
+    let dispatch = build_dispatch(
+        tree_with_two_middleware_layers(),
+        std::sync::Arc::clone(&metrics),
+        Vec::new(),
+        Some(Arc::new(DataCapturingRenderer::new())),
+        None,
+        routes_root(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        mw,
+        false,
+        Vec::new(),
+        None,
+        None,
+    );
+    let resp = dispatch(test_request("GET", "/shop")).await;
+    assert_eq!(resp.status, 200);
+    let frames: Vec<&str> = resp
+        .headers
+        .iter()
+        .filter(|(k, _)| k.eq_ignore_ascii_case("x-tenant-frame"))
+        .map(|(_, v)| v.as_str())
+        .collect();
+    assert_eq!(frames, vec!["SAMEORIGIN"], "headers: {:?}", resp.headers);
+    let outer = resp
+        .headers
+        .iter()
+        .filter(|(k, _)| k.eq_ignore_ascii_case("x-only-outer"))
+        .count();
+    assert_eq!(outer, 1, "headers: {:?}", resp.headers);
+}
+
 #[tokio::test]
 async fn middleware_headers_ride_page_and_data_responses() {
     use std::sync::Arc;
@@ -4223,7 +4408,9 @@ async fn session_codec_decodes_into_locals_session() {
 
     // Request with the encoded cookie.
     let mut req = test_request("GET", "/");
-    req.headers.push(("oxide_session".to_string(), cookie));
+    // B-05: browsers deliver the sealed token in the `Cookie` header.
+    req.headers
+        .push(("cookie".to_string(), format!("oxide_session={cookie}")));
     let resp = dispatch(req).await;
     assert_eq!(resp.status, 200, "request served");
 
@@ -4234,6 +4421,56 @@ async fn session_codec_decodes_into_locals_session() {
         Some("ada"),
         "session.user from cookie reached the loader via locals.session: {s:?}"
     );
+}
+
+#[tokio::test]
+async fn session_change_from_middleware_sets_cookie() {
+    use std::sync::Arc;
+
+    // B-05 write-back: a middleware layer that refines `locals.session`
+    // must produce a sealed `Set-Cookie` on the response.
+    let key = vec![0x42u8; 32];
+    let codec = Arc::new(oxide_server::SessionCodec::new(&[key]).expect("codec"));
+    let mw: Option<Arc<dyn oxide_server::MiddlewareDispatcher>> =
+        Some(Arc::new(ScriptedMiddleware {
+            headers: Vec::new(),
+            locals: Some(serde_json::json!({ "session": { "user": "ada" } })),
+        }));
+    let dispatch = build_dispatch(
+        tree_with_page_and_middleware(),
+        Arc::new(oxide_server::Metrics::new()),
+        Vec::new(),
+        Some(Arc::new(DataCapturingRenderer::new())),
+        None,
+        routes_root(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        mw,
+        false,
+        Vec::new(),
+        None,
+        Some(Arc::clone(&codec)),
+    );
+    let resp = dispatch(test_request("GET", "/")).await;
+    let set_cookie = resp
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("set-cookie"))
+        .map(|(_, v)| v.clone())
+        .expect("session write-back emits set-cookie");
+    assert!(set_cookie.starts_with("oxide_session="), "{set_cookie}");
+    let token = set_cookie
+        .strip_prefix("oxide_session=")
+        .and_then(|r| r.split(';').next())
+        .unwrap();
+    let sess: oxide_server::Session =
+        oxide_server::Session::decode(&codec, token).expect("sealed session decodes");
+    assert_eq!(sess.to_value()["user"], "ada");
 }
 
 #[tokio::test]
@@ -4268,7 +4505,7 @@ async fn session_codec_tampered_cookie_yields_empty_session() {
 
     let mut req = test_request("GET", "/");
     req.headers
-        .push(("oxide_session".to_string(), "not-a-real-token".to_string()));
+        .push(("cookie".to_string(), "oxide_session=not-a-real-token".to_string()));
     let resp = dispatch(req).await;
     assert_eq!(resp.status, 200, "tampered cookie must not fail the request");
 
