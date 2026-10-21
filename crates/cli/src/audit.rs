@@ -80,10 +80,12 @@ pub fn read_package_lock(root: &Path) -> anyhow::Result<Vec<InstalledPackage>> {
     let packages = v
         .get("packages")
         .and_then(|p| p.as_object())
-        .ok_or_else(|| anyhow::anyhow!(
-            "AUDIT-LOCKFORMAT: {} has no `packages` map (lockfileVersion < 2)",
-            path.display(),
-        ))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "AUDIT-LOCKFORMAT: {} has no `packages` map (lockfileVersion < 2)",
+                path.display(),
+            )
+        })?;
     let mut out = Vec::new();
     for (path_key, entry) in packages {
         if path_key.is_empty() || !path_key.starts_with("node_modules/") {
@@ -323,9 +325,7 @@ pub async fn query_osv(
             }
         }
     }
-    advisories.sort_by(|a, b| {
-        (&a.package, &a.id).cmp(&(&b.package, &b.id))
-    });
+    advisories.sort_by(|a, b| (&a.package, &a.id).cmp(&(&b.package, &b.id)));
     write_cache(root, pkgs, &advisories);
     Ok(advisories)
 }
@@ -363,8 +363,14 @@ mod tests {
         assert_eq!(
             pkgs,
             vec![
-                InstalledPackage { name: "lodash".into(), version: "4.17.20".into() },
-                InstalledPackage { name: "react".into(), version: "19.0.0".into() },
+                InstalledPackage {
+                    name: "lodash".into(),
+                    version: "4.17.20".into()
+                },
+                InstalledPackage {
+                    name: "react".into(),
+                    version: "19.0.0".into()
+                },
             ]
         );
     }
