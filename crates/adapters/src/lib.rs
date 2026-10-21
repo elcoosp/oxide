@@ -914,12 +914,22 @@ try {
   wasm = null;
 }
 
+// ---- WASM preference --------------------------------------------------------
+// B-02: prefer the accelerated export when `edge.wasm` loaded, and fall back
+// to the JS implementation on absence OR any runtime error.
+const useWasm = (fn, ...args) => {
+  if (!wasm || typeof wasm[fn] !== "function") return null;
+  try { return wasm[fn](...args); } catch { return null; }
+};
+
 // ---- edge cache key ---------------------------------------------------------
 // The edge key is the raw composite string, NOT a hash. KV keys allow up to
 // 512 bytes; a hash would only save bytes we do not need. It also keeps edge
 // keys explicitly out of the binary-server's blake3 keyspace (which would
 // otherwise risk accidental collisions across processes).
 function cacheKey(route, params, vary, build_id) {
+  const viaWasm = useWasm("edge_cache_key", route, params, vary, build_id);
+  if (viaWasm !== null) return String(viaWasm);
   return ["edge", route, params, vary, build_id].join("\u0000");
 }
 
@@ -927,6 +937,10 @@ function cacheKey(route, params, vary, build_id) {
 // Merge two head-tag models: layout (parent) then page (child). Dedupe by
 // (kind, key) with page winning. Matches `oxide_core_wasm::merge_head`.
 function mergeHead(a, b) {
+  const viaWasm = useWasm("merge_head", JSON.stringify(a), JSON.stringify(b));
+  if (typeof viaWasm === "string") {
+    try { return JSON.parse(viaWasm); } catch { /* fall through */ }
+  }
   const out = { title: null, meta: [], links: [], json_ld: [] };
   for (const src of [a, b]) {
     if (!src) continue;
@@ -950,6 +964,8 @@ function dedupe(arr, keyFn) {
 // Sets, BigInt, Date and cyclic refs are server-side only; the client router
 // uses the ~1 KB decoder in packages/oxide.
 function encodeOdf(value) {
+  const viaWasm = useWasm("encode_odf", JSON.stringify(value));
+  if (viaWasm !== null) return viaWasm;
   const bytes = new TextEncoder().encode(JSON.stringify(value));
   return bytes;
 }
