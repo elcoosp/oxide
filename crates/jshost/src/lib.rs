@@ -1231,8 +1231,35 @@ globalThis.__oxideLoaderRun = async function (moduleUrl, input) {
     // SPEC-10 / §16.4: the pipeline's resolved locale (worker parity).
     const locale = typeof input.locale === 'string' ? input.locale : '';
 
+    // B-07: §8.3 parsed search params — mirrors the Node worker:
+    // `+`→space before percent-decode, repeated key → array, fragment stripped.
+    const parseSearchParams = (url) => {
+      const out = Object.create(null);
+      if (typeof url !== 'string') return out;
+      const q = url.indexOf('?');
+      if (q < 0) return out;
+      const hashAt = url.indexOf('#', q);
+      const query = hashAt >= 0 ? url.slice(q + 1, hashAt) : url.slice(q + 1);
+      if (!query) return out;
+      const dec = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
+      for (const part of query.split('&')) {
+        if (!part) continue;
+        const eq = part.indexOf('=');
+        const rawK = eq < 0 ? part : part.slice(0, eq);
+        const rawV = eq < 0 ? '' : part.slice(eq + 1);
+        const k = dec(rawK.replace(/\+/g, ' '));
+        const v = dec(rawV.replace(/\+/g, ' '));
+        if (!k) continue;
+        if (k in out) {
+          const prev = out[k];
+          if (Array.isArray(prev)) prev.push(v); else out[k] = [prev, v];
+        } else out[k] = v;
+      }
+      return out;
+    };
     const event = {
       route: input.route || '',
+      searchParams: parseSearchParams(input.url || '/'),
       params: input.params || {},
       url: input.url || '/',
       request: { method: input.method || 'GET', url: input.url || '/', headers: hdrs },
@@ -1469,6 +1496,7 @@ globalThis.__oxideActionRun = async function (moduleUrl, input) {
     }
     const event = {
       params: input.params ?? {},
+      searchParams: parseSearchParams(input.url ?? '/'),
       request: { method: input.method ?? 'POST', url: input.url ?? '/', headers: Array.isArray(input.headers) ? input.headers : [] },
       locals: {},
       cookies,
