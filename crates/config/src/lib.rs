@@ -262,6 +262,10 @@ pub struct ServerConfig {
     pub host: String,
     pub compression: Vec<String>,
     pub http3: bool,
+    /// Whether to advertise h3 via `Alt-Svc`. Default **true** now that the
+    /// h3 request-body drain and response-streaming paths are implemented;
+    /// `false` keeps a browser on h1/h2 without disabling the listener.
+    pub h3_advertise: bool,
     /// §4.2: which JS host backend to use for the render pool.
     pub backend: JsBackend,
 }
@@ -272,6 +276,7 @@ impl Default for ServerConfig {
             host: "localhost".into(),
             compression: vec!["zstd".into(), "br".into(), "gzip".into()],
             http3: false,
+            h3_advertise: true,
             backend: JsBackend::default(),
         }
     }
