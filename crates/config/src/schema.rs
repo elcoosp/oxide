@@ -226,6 +226,15 @@ pub fn config_schema() -> Value {
                 "additionalProperties": true,
                 "description": "§16.3: web app manifest (PWA). Present -> oxide build emits manifest.webmanifest + a service worker."
             },
+            "sw": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "enabled": { "type": "boolean", "description": "§16 / K3: emit the service worker at build. Default true when `manifest` is present; an explicit `false` disables emission even with a manifest." },
+                        "offlineFallback": { "type": "string", "description": "§16 / K3: the offline-fallback route the worker serves for a navigation miss. Default `/offline` when the build produced that route; otherwise `/`." }
+                    },
+                    "description": "§16 / K3: service worker configuration. Present only when the project wants to control emission beyond the default (manifest presence)."
+                },
             "og": {
                 "type": "object",
                 "additionalProperties": true,

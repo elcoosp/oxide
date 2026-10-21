@@ -23,6 +23,7 @@ fn config_schema_has_the_known_top_level_sections() {
         "routes",
         "security",
         "server",
+        "sw",
         "siteUrl",
     ] {
         assert!(

@@ -36,6 +36,36 @@ pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
     OxideError(Diagnostic::error(code, msg))
 }
 
+/// §16 / K3: service worker configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SwConfig {
+    /// Emit the service worker at build. Default: `true` when
+    /// `manifest` is present; `sw.enabled = false` disables emission
+    /// even with a manifest.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// The offline-fallback route the worker serves for a navigation
+    /// miss. Default `/offline` when the build produced that route;
+    /// otherwise `/` (the precached shell). `sw.offlineFallback`
+    /// overrides it.
+    #[serde(default)]
+    pub offline_fallback: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for SwConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            offline_fallback: None,
+        }
+    }
+}
+
 /// The single typed config (§14.1). Serde field names match the TS config keys.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -83,6 +113,13 @@ pub struct OxideConfig {
     /// available for the shell to include.
     #[serde(default)]
     pub manifest: Option<WebManifestConfig>,
+    /// §16 / K3: the service worker configuration. `None` keeps the
+    /// default (worker emitted when `manifest` is set, offline fallback
+    /// from the shell). `sw.enabled = false` disables emission even when
+    /// a manifest is present; `sw.offline_fallback` overrides the
+    /// fallback route path.
+    #[serde(default)]
+    pub sw: SwConfig,
     /// S-09: the OG-image endpoint (`GET /_oxide/og`). **Off by default** —
     /// it rasterizes on demand, so leaving it unauthenticated and default-on
     /// is a CPU-exhaustion vector. Opt in with `og.enabled: true`.
@@ -196,6 +233,7 @@ impl Default for OxideConfig {
             dev: DevConfig::default(),
             site_url: None,
             manifest: None,
+            sw: SwConfig::default(),
             og: OgConfig::default(),
             images_endpoint: EndpointToggle::default(),
         }

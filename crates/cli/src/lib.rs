@@ -978,9 +978,20 @@ fn generate_island_boot_entry(
     // loading it from the boot entry is what the spec's "auto-registration"
     // means (previously the script was emitted but never loaded).
     if pwa {
+        // §16.6 / K3: register the service worker at runtime, not via a
+        // static `import('/pwa-register.js')`. The latter is resolved by
+        // rolldown at bundle time, but `/pwa-register.js` is written by
+        // `emit_pwa_worker` AFTER bundling — so a clean build fails with
+        // "Could not resolve /pwa-register.js". A runtime `<script>`
+        // injection sidesteps the bundler entirely and matches what a
+        // manual PWA registration does anyway.
         out.push_str(
-            "if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {\n  \
-             void import('/pwa-register.js').catch(() => {});\n}\n",
+            "if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && !globalThis.__oxidePwaRegistered) {\n  \
+             globalThis.__oxidePwaRegistered = true;\n  \
+             var __oxidePwa = document.createElement('script');\n  \
+             __oxidePwa.src = '/pwa-register.js';\n  \
+             __oxidePwa.async = true;\n  \
+             document.head.appendChild(__oxidePwa);\n}\n",
         );
     }
     out
@@ -2803,8 +2814,15 @@ fn emit_pwa_worker(
     if cfg.manifest.is_none() {
         return Ok(());
     }
+    if !cfg.sw.enabled {
+        outln!(w, "pwa: sw disabled by config (sw.enabled = false)");
+        return Ok(());
+    }
     // Every asset path the client manifest names (entry + preload + css),
-    // turned into a URL.
+    // turned into a URL. Precache is the *shell* — the paths the app needs
+    // to boot offline. Route-specific chunks are SWR'd on first use rather
+    // than precached (a large site's full chunk set would blow the install
+    // window).
     let mut precache: Vec<String> = vec!["/".to_string()];
     if let Some(routes) = client_manifest.get("routes").and_then(|r| r.as_object()) {
         for row in routes.values() {
@@ -2840,31 +2858,97 @@ fn emit_pwa_worker(
         .collect::<Vec<_>>()
         .join("\n");
 
+    // §16 / K3: offline fallback. Default `/offline` if the project has
+    // that route; otherwise `/` (the precached shell).
+    let offline_fallback = cfg
+        .sw
+        .offline_fallback
+        .clone()
+        .unwrap_or_else(|| "/offline".to_string());
+    // Check the fallback actually exists in the build. If not, fall back
+    // to the shell (`/`) so a broken nav still gets *something* from cache
+    // rather than a browser offline page.
+    let fallback_exists = dist
+        .join("prerendered")
+        .join(offline_fallback.trim_start_matches('/'))
+        .with_extension("html")
+        .is_file()
+        || offline_fallback == "/";
+    let effective_fallback = if fallback_exists { &offline_fallback } else { "/" };
+
     let sw = format!(
-        "// Oxide service worker (§16.6). Cache-first for precached assets,\n\
-// network-first with an offline fallback for navigations.\n\
-const CACHE = 'oxide-{build}';\n\
-const PRECACHE = [\n{list}\n];\n\
-self.addEventListener('install', (e) => {{\n\
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(PRECACHE)).then(() => self.skipWaiting()));\n\
-}});\n\
-self.addEventListener('activate', (e) => {{\n\
-  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));\n\
-}});\n\
-self.addEventListener('fetch', (e) => {{\n\
-  const req = e.request;\n\
-  if (req.method !== 'GET') return;\n\
-  const url = new URL(req.url);\n\
-  if (req.mode === 'navigate') {{\n\
-    e.respondWith(fetch(req).catch(() => caches.match('/') || caches.match(req)));\n\
-    return;\n\
-  }}\n\
-  e.respondWith(caches.match(req).then((hit) => hit || fetch(req)));\n\
-}});\n",
+        r#"// Oxide service worker (§16.6 / K3). Stale-while-revalidate for
+// same-origin assets; network-first with an offline fallback for
+// navigations. Cache name is scoped by build id so a rebuild is a new
+// cache and a stale deploy self-evicts on activate.
+const CACHE = 'oxide-{build}';
+const PRECACHE = [
+{list}
+];
+const OFFLINE_FALLBACK = {fallback:?};
+
+self.addEventListener('install', (e) => {{
+  e.waitUntil(
+    caches.open(CACHE)
+      .then((c) => c.addAll(PRECACHE))
+      .then(() => self.skipWaiting())
+      .catch(() => self.skipWaiting()),
+  );
+}});
+
+self.addEventListener('activate', (e) => {{
+  e.waitUntil(
+    caches.keys()
+      .then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim()),
+  );
+}});
+
+self.addEventListener('fetch', (e) => {{
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+  // Only same-origin; a cross-origin request (an analytics beacon, a CDN
+  // script) is out of scope for the app's cache.
+  if (url.origin !== self.location.origin) return;
+
+  if (req.mode === 'navigate') {{
+    // Network-first: a fresh deploy must reach the browser. On failure,
+    // the offline fallback (or the shell) — never the browser's own
+    // offline page.
+    e.respondWith(
+      fetch(req).catch(() =>
+        caches.match(OFFLINE_FALLBACK).then((hit) => hit || caches.match('/') || caches.match(req)),
+      ),
+    );
+    return;
+  }}
+
+  // Stale-while-revalidate: serve the cached copy immediately, fetch a
+  // fresh one in the background, and store it for the next request. A
+  // cached asset is not "never updated" and a network hiccup is not
+  // "unavailable" — the cache bridges both.
+  e.respondWith(
+    caches.match(req).then((cached) => {{
+      const network = fetch(req)
+        .then((resp) => {{
+          if (resp && resp.status === 200 && resp.type === 'basic') {{
+            const copy = resp.clone();
+            caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {{}});
+          }}
+          return resp;
+        }})
+        .catch(() => cached);
+      return cached || network;
+    }}),
+  );
+}});
+"#,
         build = client_manifest
             .get("build_id")
             .and_then(|v| v.as_str())
             .unwrap_or("dev"),
+        fallback = effective_fallback,
     );
     std::fs::write(dist.join("sw.js"), sw).map_err(|e| anyhow::anyhow!("write sw.js: {e}"))?;
 
@@ -2874,7 +2958,10 @@ if ('serviceWorker' in navigator) {\n\
 }\n";
     std::fs::write(dist.join("pwa-register.js"), reg)
         .map_err(|e| anyhow::anyhow!("write pwa-register.js: {e}"))?;
-    outln!(w, "pwa: sw.js + pwa-register.js emitted");
+    outln!(
+        w,
+        "pwa: sw.js + pwa-register.js emitted (fallback: {effective_fallback})"
+    );
     Ok(())
 }
 
