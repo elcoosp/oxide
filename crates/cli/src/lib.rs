@@ -1002,6 +1002,41 @@ fn jsx_import_source_for(framework: &str) -> Option<String> {
     }
 }
 
+/// §6.4 / §21: the framework runtimes must never be inlined into the SSR
+/// bundle. Each runtime carries module-level state (React's
+/// `ReactCurrentDispatcher`, Vue's current instance, Svelte's component
+/// context, Solid's reactive root); two copies silently break hook dispatch
+/// (the classic "invalid hook call / reading 'useState' of null" failure).
+///
+/// The user's `build.ssrExternals` still wins when set; this default only
+/// applies when that list is empty. Extra entries are harmless — an external
+/// that is never imported is never resolved.
+fn default_ssr_externals() -> Vec<String> {
+    [
+        // React
+        "react",
+        "react-dom",
+        "react/jsx-runtime",
+        "react/jsx-dev-runtime",
+        "react-dom/server",
+        "react-dom/client",
+        // Vue
+        "vue",
+        "vue/server-renderer",
+        // Svelte
+        "svelte",
+        "svelte/internal",
+        // Solid: v1 namespace + v2 package (renamed `./web` -> `@solidjs/web`)
+        "solid-js",
+        "solid-js/web",
+        "solid-js/server",
+        "@solidjs/web",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
 fn bundle_env_options(
     env: oxide_bundler::BundleEnv,
     entries: BTreeMap<String, PathBuf>,
@@ -1058,7 +1093,13 @@ fn bundle_env_options(
         // §21: externals only apply to the server bundle; a browser bundle
         // must inline everything.
         externals: match env {
-            oxide_bundler::BundleEnv::Ssr => ssr_externals,
+            oxide_bundler::BundleEnv::Ssr => {
+                let mut e = ssr_externals;
+                if e.is_empty() {
+                    e = default_ssr_externals();
+                }
+                e
+            }
             _ => Vec::new(),
         },
         define,
