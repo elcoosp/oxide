@@ -117,7 +117,10 @@ fn read_contract(pkg_dir: &Path) -> Option<Contract> {
     let module = v.get("oxide")?.get("module")?;
 
     Some(Contract {
-        routes: module.get("routes").and_then(|r| r.as_str()).map(str::to_string),
+        routes: module
+            .get("routes")
+            .and_then(|r| r.as_str())
+            .map(str::to_string),
         entry: module
             .get("entry")
             .and_then(|r| r.as_str())
@@ -126,14 +129,25 @@ fn read_contract(pkg_dir: &Path) -> Option<Contract> {
         hooks: module
             .get("hooks")
             .and_then(|h| h.as_array())
-            .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect()
+            })
             .unwrap_or_default(),
         adapters: module
             .get("adapters")
             .and_then(|a| a.as_array())
-            .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect()
+            })
             .unwrap_or_default(),
-        typegen: module.get("typegen").and_then(|t| t.as_str()).map(str::to_string),
+        typegen: module
+            .get("typegen")
+            .and_then(|t| t.as_str())
+            .map(str::to_string),
         config_defaults: module.get("configDefaults").cloned(),
     })
 }
@@ -153,7 +167,10 @@ pub fn resolve_one(pkg_dir: &Path, name: String) -> Option<ResolvedModule> {
         }
     };
     let entry = c.entry.map(|rel| pkg_dir.join(rel)).filter(|p| p.is_file());
-    let typegen = c.typegen.map(|rel| pkg_dir.join(rel)).filter(|p| p.is_file());
+    let typegen = c
+        .typegen
+        .map(|rel| pkg_dir.join(rel))
+        .filter(|p| p.is_file());
     Some(ResolvedModule {
         name,
         dir: pkg_dir.to_path_buf(),
@@ -188,7 +205,9 @@ fn load_impl(rootp: &Path, cfg: &OxideConfig, warn: bool) -> Vec<ResolvedModule>
         let dir = rootp.join("node_modules").join(&name);
         if !dir.is_dir() {
             if warn {
-                eprintln!("warn: module `{name}` is not installed at node_modules/{name}; skipping");
+                eprintln!(
+                    "warn: module `{name}` is not installed at node_modules/{name}; skipping"
+                );
             }
             continue;
         }
@@ -196,7 +215,9 @@ fn load_impl(rootp: &Path, cfg: &OxideConfig, warn: bool) -> Vec<ResolvedModule>
             if warn {
                 eprintln!(
                     "warn: module `{}` has no `oxide.module` field in package.json; skipping",
-                    dir.file_name().and_then(|s| s.to_str()).unwrap_or("(unknown)"),
+                    dir.file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("(unknown)"),
                 );
             }
             continue;
