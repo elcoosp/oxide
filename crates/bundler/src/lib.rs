@@ -16,10 +16,10 @@
 
 #![forbid(unsafe_code)]
 
-pub mod svg_react;
 mod minify;
 mod resolve;
 mod rolldown_backend;
+pub mod svg_react;
 
 use blake3::Hasher;
 use oxide_compiler::{
@@ -316,7 +316,7 @@ impl std::fmt::Debug for TransformHook {
 /// chain in declaration order (the CLI composes them).
 pub struct RenderChunkHook(
     #[allow(clippy::type_complexity)]
-    pub std::sync::Arc<dyn Fn(&str, &str) -> Result<Option<String>> + Send + Sync>,
+    pub  std::sync::Arc<dyn Fn(&str, &str) -> Result<Option<String>> + Send + Sync>,
 );
 
 impl RenderChunkHook {
@@ -349,7 +349,7 @@ impl std::fmt::Debug for RenderChunkHook {
 /// leaves the list untouched.
 pub struct GenerateBundleHook(
     #[allow(clippy::type_complexity)]
-    pub std::sync::Arc<dyn Fn(&[String]) -> Result<Option<Vec<String>>> + Send + Sync>,
+    pub  std::sync::Arc<dyn Fn(&[String]) -> Result<Option<Vec<String>>> + Send + Sync>,
 );
 
 impl GenerateBundleHook {
@@ -381,7 +381,7 @@ impl std::fmt::Debug for GenerateBundleHook {
 /// out. A `None` return leaves the document untouched.
 pub struct TransformHtmlHook(
     #[allow(clippy::type_complexity)]
-    pub std::sync::Arc<dyn Fn(&str, &str) -> Result<Option<String>> + Send + Sync>,
+    pub  std::sync::Arc<dyn Fn(&str, &str) -> Result<Option<String>> + Send + Sync>,
 );
 
 impl TransformHtmlHook {
@@ -678,7 +678,9 @@ impl ChunkBundler {
                                 "BLD-PLUGIN",
                                 format!(
                                     "plugin load({:?}) failed: {} {}",
-                                    rp.display(), e.0.code, e.0.message
+                                    rp.display(),
+                                    e.0.code,
+                                    e.0.message
                                 ),
                             ));
                             None
@@ -767,7 +769,13 @@ impl ChunkBundler {
                     };
                     let resolved = match plugin_resolved {
                         Some(p) => Ok(p),
-                        None => self.resolve_with_virtual(&sp.specifier, &rp, options.env, &options.tsconfig_paths, &options.virtual_modules),
+                        None => self.resolve_with_virtual(
+                            &sp.specifier,
+                            &rp,
+                            options.env,
+                            &options.tsconfig_paths,
+                            &options.virtual_modules,
+                        ),
                     };
                     match resolved {
                         Ok(dep) => {
