@@ -25,6 +25,7 @@ fn req(method: &str, url: &str, headers: &[(&str, &str)]) -> OxideRequest {
         trace: None,
         peer: None,
         rewrite_hops: 0,
+        mw_resume_after: None,
     }
 }
 
