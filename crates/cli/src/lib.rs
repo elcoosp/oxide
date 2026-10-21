@@ -5680,8 +5680,12 @@ fn build_dispatch(
     // `locals.session` (the signed-only `sign_cookie` primitive remains for
     // a project that wants a tamper-evident, non-confidential cookie).
     session_codec: Option<std::sync::Arc<oxide_server::SessionCodec>>,
+    // §10.8 / B-27: the PPR shell cache. `Some` only when `render.ppr` is on;
+    // the dispatch then serves a cached shell and streams holes into it.
+    ppr_shells: Option<PprShells>,
 ) -> std::sync::Arc<dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync> {
     let boot_script_url_for_render = boot_script_url.clone();
+    let ppr_for_render = ppr_shells.clone();
     let dev_hmr_for_render = dev_hmr;
     let actions_for_dispatch = actions.clone();
     let endpoint_for_dispatch = endpoint_dispatcher.clone();
@@ -6085,6 +6089,7 @@ fn build_dispatch(
             None => String::new(),
         };
         let flight_map = std::sync::Arc::clone(&flight_map);
+        let ppr_for_request = ppr_for_render.clone();
 
         Box::pin(async move {
             // §8.1 middleware.ts / §8.5: run the route's FULL ancestor
@@ -6830,6 +6835,31 @@ fn build_dispatch(
                             loader_headers = out.headers;
                             deferred_values = out.deferred;
                             page_settles = Some(settles);
+                            // D1: a loader that mutated `event.session` has
+                            // its change persisted. Compare against the
+                            // inbound session so an untouched one does not
+                            // re-issue a cookie on every request.
+                            if let (Some(codec), Some(after)) =
+                                (session_codec.as_deref(), out.session.as_ref())
+                            {
+                                if Some(after) != session_before.as_ref() {
+                                    let mut sess = oxide_server::Session::new();
+                                    if let Some(obj) = after.as_object() {
+                                        for (k, v) in obj {
+                                            sess.insert(k.clone(), v.clone());
+                                        }
+                                    }
+                                    match sess.encode(codec) {
+                                        Ok(token) => loader_set_cookies.push(format!(
+                                            "oxide_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=1800"
+                                        )),
+                                        Err(e) => tracing::warn!(
+                                            error = %e.0.message,
+                                            "session encode failed; cookie not set",
+                                        ),
+                                    }
+                                }
+                            }
                         }
                         Err(e) => {
                             tracing::error!(
@@ -6928,14 +6958,39 @@ fn build_dispatch(
                         None => ("_unmatched".to_string(), Vec::new()),
                     },
                 };
-                // PERF-01 / §8.4: the ODF hydration payload needs the same
-                // route/url/params/data the render input carries, but those
-                // fields move into `PageRenderInput` below — clone the
-                // payload's copies first.
+                // PERF-01 / §8.4 / P-11: the ODF hydration payload needs the
+                // same route/url/params/data the render input carries. Encode
+                // it directly from borrowed fields *before* they move into
+                // `PageRenderInput`, so `data` is traversed once instead of
+                // being deep-cloned and then traversed again.
                 let route_for_odf = route_for_render.clone();
-                let odf_params = params.clone();
-                let odf_data = data.clone();
                 let odf_url = req_owned.url.clone();
+                let odf_bytes = {
+                    use oxide_odf::Value as OdfValue;
+                    let mut obj = std::collections::BTreeMap::new();
+                    obj.insert("route".to_string(), OdfValue::String(route_for_odf.clone()));
+                    obj.insert("url".to_string(), OdfValue::String(odf_url.clone()));
+                    obj.insert(
+                        "params".to_string(),
+                        OdfValue::Object(
+                            params
+                                .iter()
+                                .map(|(k, v)| (k.clone(), OdfValue::String(v.clone())))
+                                .collect(),
+                        ),
+                    );
+                    obj.insert("data".to_string(), OdfValue::from_json(&data));
+                    obj.insert(
+                        "layouts".to_string(),
+                        OdfValue::Array(
+                            effective_layouts
+                                .iter()
+                                .map(|l| OdfValue::String(l.clone()))
+                                .collect(),
+                        ),
+                    );
+                    oxide_odf::encode_to_bytes(&OdfValue::Object(obj)).unwrap_or_default()
+                };
                 let mut input =
                     oxide_server::PageRenderInput::new(route_for_render, req_owned.url.clone());
                 input.params = params;
@@ -7017,23 +7072,9 @@ fn build_dispatch(
                         // payload and skipped hydration + the router
                         // entirely (`if (root && payload)` in boot.ts).
                         let odf_tag = {
-                            let payload = serde_json::json!({
-                                "route": route_for_odf,
-                                "url": odf_url,
-                                "params": odf_params,
-                                "data": odf_data,
-                                // §8.2: the layout chain the client must re-nest
-                                // on hydration — SSR rendered `<RootLayout>
-                                // <Page/></RootLayout>`; without this, the
-                                // client hydrate produces a bare page and
-                                // React reports mismatch #418.
-                                "layouts": effective_layouts,
-                            });
-                            let odf =
-                                oxide_odf::encode_to_bytes(&oxide_odf::Value::from_json(&payload))
-                                    .unwrap_or_default();
                             use base64::Engine as _;
-                            let odf_b64 = base64::engine::general_purpose::STANDARD.encode(&odf);
+                            let odf_b64 =
+                                base64::engine::general_purpose::STANDARD.encode(&odf_bytes);
                             oxide_render::hydration_bootstrap(&odf_b64, &route_for_odf, &nonce)
                         };
                         // §7.1 / §9.2: resolved defer() values ride a JSON
@@ -7113,6 +7154,30 @@ fn build_dispatch(
                                     )
                                 }
                             }
+                        };
+                        // §10.8 / B-27: serve a previously captured static
+                        // shell at once and stream only the dynamic boundary
+                        // fragments into it; the first request taps the full
+                        // render and stores its shell on completion.
+                        let body = match (ppr_for_request.as_ref(), error_status) {
+                            (Some(shells), 0) => {
+                                let pkey = format!("{l0_route}\x1f{}", req_owned.url);
+                                let cached = shells.lock().ok().and_then(|m| m.get(&pkey).cloned());
+                                match cached {
+                                    Some(shell) => ppr_filter_stream(
+                                        shell.replace(l0_cache::NONCE_SENTINEL, &nonce),
+                                        body,
+                                        nonce.clone(),
+                                    ),
+                                    None => ppr_tap_stream(
+                                        body,
+                                        std::sync::Arc::clone(shells),
+                                        pkey,
+                                        nonce.clone(),
+                                    ),
+                                }
+                            }
+                            _ => body,
                         };
                         // §11 L0: when this response is cacheable, collect
                         // the streamed body once so it can be stored, then
@@ -7297,13 +7362,28 @@ fn build_dispatch(
                 }
             } else {
                 metrics.observe(&label, started.elapsed(), status);
-                oxide_server::OxideResponse::html(
+                let mut resp = oxide_server::OxideResponse::html(
                     status,
                     format!(
                         "<!doctype html><html><head><title>Oxide</title></head>\
                              <body><main>Oxide serving {label}</main></body></html>"
                     ),
-                )
+                );
+                // D1: the loader's side effects belong on the response
+                // whichever render path produced the body. The placeholder
+                // path previously dropped them, so a loader's session
+                // mutation (or any `set-cookie`) vanished for a project
+                // without a framework renderer.
+                for c in &loader_set_cookies {
+                    resp = resp.with_header("set-cookie", c.clone());
+                }
+                for (k, v) in &loader_headers {
+                    resp = resp.with_header(k, v.clone());
+                }
+                for (k, v) in &middleware_headers {
+                    resp = resp.with_header(k, v.clone());
+                }
+                resp
             }
         })
     });
@@ -9014,6 +9094,10 @@ async fn start_server_inner_full(
         waterfall_recorder.clone(),
         // §16.6: the session codec (None when no keys are configured).
         session_codec,
+        // §10.8: PPR shells exist only when `render.ppr` is enabled.
+        cfg.render
+            .ppr
+            .then(|| std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()))),
     );
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (tx, rx) = tokio::sync::watch::channel(false);
@@ -11757,4 +11841,125 @@ fn strip_close_and_append_settles(
         // `tx` drops, closing the body stream.
     });
     Box::pin(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)))
+}
+
+// §10.8 / B-27: process-local PPR shell cache, keyed by route id + URL. One
+// map per server; only populated when `render.ppr` is enabled.
+type PprShells = std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>;
+
+const PPR_SHELLS_MAX: usize = 256;
+
+/// First request for a PPR route: the render is streamed through unchanged,
+/// while the completed document is split into a shell (holes for each
+/// `data-ox-b` boundary) and stored with the nonce replaced by
+/// [`l0_cache::NONCE_SENTINEL`] so another request can reuse it.
+fn ppr_tap_stream(
+    src: oxide_server::BodyStream,
+    shells: PprShells,
+    key: String,
+    nonce: String,
+) -> oxide_server::BodyStream {
+    use futures::StreamExt as _;
+    let (tx, mut rx) =
+        tokio::sync::mpsc::channel::<std::result::Result<bytes::Bytes, std::io::Error>>(8);
+    tokio::spawn(async move {
+        let mut src = src;
+        let mut collected: Vec<u8> = Vec::new();
+        while let Some(item) = src.next().await {
+            match item {
+                Ok(chunk) => {
+                    collected.extend_from_slice(&chunk);
+                    if tx.send(Ok(chunk)).await.is_err() {
+                        return;
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e)).await;
+                    return;
+                }
+            }
+        }
+        // The client already saw EOF; storing after this point adds no latency.
+        if let Ok(html) = String::from_utf8(collected) {
+            if let Ok(shell) = oxide_render::ppr::split_shell(&html) {
+                if !shell.hole_ids.is_empty() {
+                    let stored = shell.html.replace(&nonce, l0_cache::NONCE_SENTINEL);
+                    if let Ok(mut map) = shells.lock() {
+                        if map.len() >= PPR_SHELLS_MAX {
+                            map.clear();
+                        }
+                        map.insert(key, stored);
+                    }
+                }
+            }
+        }
+    });
+    Box::pin(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)))
+}
+
+/// Later requests: emit the cached shell immediately, then forward only the
+/// resolved boundary fragments from the live render (`<template data-ox-c>`),
+/// dropping the duplicated static document. The resolver in the shell swaps
+/// each fragment into its hole as it arrives.
+fn ppr_filter_stream(
+    shell: String,
+    src: oxide_server::BodyStream,
+    nonce: String,
+) -> oxide_server::BodyStream {
+    use futures::StreamExt as _;
+    let (tx, mut rx) =
+        tokio::sync::mpsc::channel::<std::result::Result<bytes::Bytes, std::io::Error>>(16);
+    tokio::spawn(async move {
+        let mut src = src;
+        let prelude = format!("{shell}{}", oxide_render::ppr::client_resolver(&nonce));
+        if tx.send(Ok(bytes::Bytes::from(prelude))).await.is_err() {
+            return;
+        }
+        const OPEN: &[u8] = b"<template data-ox-c=";
+        const CLOSE: &[u8] = b"</template>";
+        let mut buf: Vec<u8> = Vec::new();
+        while let Some(item) = src.next().await {
+            match item {
+                Ok(chunk) => {
+                    buf.extend_from_slice(&chunk);
+                    loop {
+                        let Some(rel_open) = find_subslice(&buf, OPEN) else {
+                            // No boundary yet. Keep only a tail long enough to
+                            // contain a split opening tag.
+                            if buf.len() > OPEN.len() + 8 {
+                                let keep = OPEN.len() + 8;
+                                buf.drain(..buf.len() - keep);
+                            }
+                            break;
+                        };
+                        let Some(rel_close) = find_subslice(&buf[rel_open..], CLOSE) else {
+                            // A boundary may span chunks; drop the prefix and
+                            // wait for the rest.
+                            buf.drain(..rel_open);
+                            break;
+                        };
+                        let end = rel_open + rel_close + CLOSE.len();
+                        let frag = bytes::Bytes::copy_from_slice(&buf[rel_open..end]);
+                        buf.drain(..end);
+                        if tx.send(Ok(frag)).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e)).await;
+                    return;
+                }
+            }
+        }
+        // `tx` drops → EOF.
+    });
+    Box::pin(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)))
+}
+
+fn find_subslice(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return None;
+    }
+    hay.windows(needle.len()).position(|w| w == needle)
 }
