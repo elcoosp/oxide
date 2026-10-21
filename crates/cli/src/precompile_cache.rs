@@ -144,9 +144,11 @@ impl PrecompileCache {
         // §5-C: a compiled-JS artifact goes through the rkyv envelope so a
         // corrupt or tampered blob is caught by `archived_hash` on read, in
         // addition to the CAS's own key check.
-        let cas_key = self
-            .store
-            .put_sealed(oxide_graph::artifacts::ArtifactKind::CompiledJs, js.as_bytes(), &meta)?;
+        let cas_key = self.store.put_sealed(
+            oxide_graph::artifacts::ArtifactKind::CompiledJs,
+            js.as_bytes(),
+            &meta,
+        )?;
         let ptr = self.ptr_path(&key.digest());
         // Atomic write: a half-written pointer would be a permanent miss, not a
         // corruption, but a rename keeps a concurrent reader from seeing it.
