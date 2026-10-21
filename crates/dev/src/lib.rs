@@ -482,6 +482,12 @@ pub struct CacheRow {
 pub struct RequestTimingsRow {
     pub request_id: String,
     pub waterfall_ms: Vec<(String, f64)>,
+    /// §20 / O3: the W3C trace id (`traceparent`'s 32-hex field) when
+    /// the inbound request carried one. Correlates this waterfall row
+    /// with the same trace in any downstream span consumer (OTLP,
+    /// Jaeger, Tempo). `None` when there was no inbound `traceparent`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_id: Option<String>,
 }
 
 /// §20 / §13.4: a bounded, thread-safe recorder of per-request timings.
@@ -498,12 +504,29 @@ impl WaterfallRecorder {
     }
 
     /// Record one request's stages. Keeps the most recent `MAX` entries.
+    /// Back-compat shim: existing call sites pass no trace id.
     pub fn record(&self, request_id: &str, waterfall_ms: Vec<(String, f64)>) {
+        self.record_with_trace(request_id, waterfall_ms, None);
+    }
+
+    /// Record one request's stages alongside its W3C trace id. The trace
+    /// id is `None` when the inbound request carried no `traceparent`.
+    /// Kept as a distinct method (rather than a third arg on `record`)
+    /// so the ~5 call sites that don't have a trace yet keep their
+    /// current shape; sites that do carry one switch over at their own
+    /// pace.
+    pub fn record_with_trace(
+        &self,
+        request_id: &str,
+        waterfall_ms: Vec<(String, f64)>,
+        trace_id: Option<String>,
+    ) {
         const MAX: usize = 50;
         if let Ok(mut q) = self.inner.lock() {
             q.push_back(RequestTimingsRow {
                 request_id: request_id.to_string(),
                 waterfall_ms,
+                trace_id,
             });
             while q.len() > MAX {
                 q.pop_front();

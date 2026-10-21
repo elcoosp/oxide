@@ -6678,12 +6678,13 @@ fn build_dispatch(
                     // inspector shows form-POST latency next to renders.
                     if let Some(rec) = waterfall.as_ref() {
                         let total = started.elapsed().as_secs_f64() * 1000.0;
-                        rec.record(
+                        rec.record_with_trace(
                             &req_owned.request_id,
                             vec![
                                 ("middleware".to_string(), middleware_ms),
                                 ("action".to_string(), (total - middleware_ms).max(0.0)),
                             ],
+                            req_owned.trace.as_ref().map(|t| t.trace_id.clone()),
                         );
                     }
                     // §11.3: apply any tag/path invalidations the action
@@ -6803,7 +6804,7 @@ fn build_dispatch(
                         // B-17: hit rows sit next to miss rows in the
                         // inspector so cache-hit rate is visible.
                         if let Some(rec) = waterfall.as_ref() {
-                            rec.record(
+                            rec.record_with_trace(
                                 &req_owned.request_id,
                                 vec![(
                                     if hit.stale {
@@ -6814,6 +6815,7 @@ fn build_dispatch(
                                     .to_string(),
                                     started.elapsed().as_secs_f64() * 1000.0,
                                 )],
+                                req_owned.trace.as_ref().map(|t| t.trace_id.clone()),
                             );
                         }
                         return resp;
@@ -7620,13 +7622,17 @@ fn build_dispatch(
                                     inject_ms: 0.0,
                                 };
                                 if let Some(rec) = waterfall.as_ref() {
-                                    rec.record(
+                                    // §20 / O3: attach the inbound W3C
+                                    // trace id so this row correlates with
+                                    // the request's spans downstream.
+                                    rec.record_with_trace(
                                         &req_owned.request_id,
                                         vec![
                                             ("middleware".to_string(), middleware_ms),
                                             ("load".to_string(), load_ms),
                                             ("render".to_string(), render_ms),
                                         ],
+                                        req_owned.trace.as_ref().map(|t| t.trace_id.clone()),
                                     );
                                     // SPEC-19.3 / §19-D: also persist the
                                     // snapshot to disk so the MCP server (a

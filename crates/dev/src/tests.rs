@@ -298,10 +298,12 @@ fn inspector_renders_waterfalls() {
                 ("load".to_string(), 12.0),
                 ("render".to_string(), 30.0),
             ],
+        trace_id: None,
         },
         RequestTimingsRow {
             request_id: "req-hit".to_string(),
             waterfall_ms: vec![("cache-hit".to_string(), 0.4)],
+        trace_id: None,
         },
     ];
     let html = render_inspector_html(&state);

@@ -110,6 +110,10 @@ pub struct WaterfallEntry {
     pub request_id: String,
     /// Ordered (stage, ms) pairs — mirrors the Server-Timing header.
     pub stages: Vec<(String, f64)>,
+    /// §20 / O3: the inbound W3C trace id, when the request carried one.
+    /// Lets the MCP client join this row to spans in Jaeger/Tempo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -336,6 +340,7 @@ impl OxideMcp {
                 report.waterfalls.push(WaterfallEntry {
                     request_id: rid,
                     stages,
+                trace_id: row.get("trace_id").and_then(|v| v.as_str().map(String::from)),
                 });
             }
         }

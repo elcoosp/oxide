@@ -6562,3 +6562,27 @@ fn compute_layout_chain_finds_root_and_nested_layouts() {
     );
 }
 
+// ------------------------------ §20 / O3: trace_id on the waterfall
+
+#[test]
+fn waterfall_records_trace_id() {
+    let rec = oxide_dev::WaterfallRecorder::new();
+    let trace_id = "4bf92f3577b34da6a3ce929d0e0e4736";
+    rec.record_with_trace(
+        "req-abc",
+        vec![("render".to_string(), 1.0)],
+        Some(trace_id.to_string()),
+    );
+    // And one without a trace — the row still records, trace_id is None.
+    rec.record("req-untraced", vec![("render".to_string(), 2.0)]);
+
+    let snap = rec.snapshot();
+    assert_eq!(snap.len(), 2, "two rows recorded");
+
+    let with_trace = snap.iter().find(|r| r.request_id == "req-abc").expect("traced row");
+    assert_eq!(with_trace.trace_id.as_deref(), Some(trace_id));
+
+    let untraced = snap.iter().find(|r| r.request_id == "req-untraced").expect("untraced row");
+    assert_eq!(untraced.trace_id, None, "no inbound trace → None");
+}
+
