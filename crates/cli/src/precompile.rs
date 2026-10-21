@@ -69,7 +69,10 @@ fn scan_import_specs(src: &str) -> Vec<String> {
 async fn compile_mdx(pool: &Arc<dyn Pool>, path: &Path) -> anyhow::Result<Option<String>> {
     let source = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("read {}: {e}", path.display()))?;
-    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("input.mdx");
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("input.mdx");
     let out = call_pool(
         pool,
         "tooling:module",
@@ -330,7 +333,9 @@ pub async fn precompile_entries(
             "mdx" => {
                 // SPEC-16-C: compile via @mdx-js/mdx in the tooling pool.
                 match compile_mdx(pool, &path).await {
-                    Ok(Some(js)) => { out.insert(path, js); }
+                    Ok(Some(js)) => {
+                        out.insert(path, js);
+                    }
                     Ok(None) => { /* empty */ }
                     Err(e) => eprintln!("warn: mdx compile {}: {e}", path.display()),
                 }
