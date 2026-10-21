@@ -4670,16 +4670,14 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                                 html.replace(&nonce, l0_cache::NONCE_SENTINEL),
                                 prerender_status,
                             ));
-                            new_prerender_records.push(
-                                crate::build_graph::RoutePrerenderRecord {
-                                    route_id: route_id.clone(),
-                                    url: url_path.clone(),
-                                    status: prerender_status,
-                                    rel_out: format!("dist/{rel}"),
-                                    source_hash: route_src_hash.clone(),
-                                    nonce: nonce.clone(),
-                                },
-                            );
+                            new_prerender_records.push(crate::build_graph::RoutePrerenderRecord {
+                                route_id: route_id.clone(),
+                                url: url_path.clone(),
+                                status: prerender_status,
+                                rel_out: format!("dist/{rel}"),
+                                source_hash: route_src_hash.clone(),
+                                nonce: nonce.clone(),
+                            });
                             outs.push(rel);
                         }
                         if !outs.is_empty() {
@@ -8817,6 +8815,7 @@ async fn start_server_inner_full(
         // The h3 listener shares the TCP port over UDP. `port` is resolved
         // above (a probe picks a free port for a requested 0); the h3 bind
         // uses the same value.
+        http3_advertise: cfg.server.h3_advertise,
         http3_port: if cfg.server.http3 && tls.is_some() {
             port
         } else {
