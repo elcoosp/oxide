@@ -704,8 +704,8 @@ fn op_decls_returns_the_documented_ops() {
     let decls = oxide_jshost::v8_ops::op_decls();
     assert_eq!(
         decls.len(),
-        11,
-        "expected log/trace/serialize/random/sleep + 3 cache ops + fetch + stream_write + compile_module"
+        12,
+        "expected log/trace/serialize/random/sleep + 3 cache ops + fetch + stream_write + compile_module + loader_emit"
     );
     // Op names are namespaced with the `op_oxide_` prefix so the JS side can
     // distinguish them from deno_core built-ins.
