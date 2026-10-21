@@ -113,22 +113,20 @@ impl CacheHandler for RedisCacheHandler {
     async fn get(&self, key: &str) -> Result<Option<Entry>> {
         let mut conn = self.conn.clone();
         // S-05: an outer timeout guards even a stuck connection-manager op.
-        let raw: Vec<u8> = match tokio::time::timeout(
-            L2_OP_TIMEOUT,
-            conn.get::<_, Vec<u8>>(Self::entry_key(key)),
-        )
-        .await
-        {
-            Ok(Ok(v)) => v,
-            Ok(Err(e)) => {
-                self.note_degraded("get", &e.to_string());
-                return Ok(None);
-            }
-            Err(_) => {
-                self.note_degraded("get", "timeout");
-                return Ok(None);
-            }
-        };
+        let raw: Vec<u8> =
+            match tokio::time::timeout(L2_OP_TIMEOUT, conn.get::<_, Vec<u8>>(Self::entry_key(key)))
+                .await
+            {
+                Ok(Ok(v)) => v,
+                Ok(Err(e)) => {
+                    self.note_degraded("get", &e.to_string());
+                    return Ok(None);
+                }
+                Err(_) => {
+                    self.note_degraded("get", "timeout");
+                    return Ok(None);
+                }
+            };
         self.note_recovered();
         // S-06: verify the keyed MAC before trusting the payload. A MAC failure
         // is a miss + a warning, never a served entry. Legacy/unsealed values
@@ -168,11 +166,16 @@ impl CacheHandler for RedisCacheHandler {
         let mut conn = self.conn.clone();
         // B-09: hygiene TTL so keys nobody re-reads expire (freshness is still
         // classified at read time by `tiers.rs`, so an early expiry is safe).
-        let ttl_secs = (entry.policy.ttl.max(entry.policy.swr.unwrap_or_default()).as_secs())
-            .clamp(60, 86_400);
+        let ttl_secs = (entry
+            .policy
+            .ttl
+            .max(entry.policy.swr.unwrap_or_default())
+            .as_secs())
+        .clamp(60, 86_400);
         // P-18: entry + all tag registrations in one round-trip.
         let mut pipe = redis::pipe();
-        pipe.set_ex(Self::entry_key(key), payload, ttl_secs).ignore();
+        pipe.set_ex(Self::entry_key(key), payload, ttl_secs)
+            .ignore();
         for tag in &entry.tags {
             pipe.sadd(Self::tag_key(tag), key).ignore();
         }
