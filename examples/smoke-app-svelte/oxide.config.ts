@@ -1,17 +1,14 @@
 import svelte from '@oxide/svelte'
 import { defineConfig } from 'oxide'
 
-// @ts-expect-error - .svelte module resolved at runtime by the worker's loader
-import Home from './src/routes/index/page.svelte'
-
-const components: Record<string, unknown> = {
-  'routes/index': Home,
-}
+// §14.1: this config declares *where* routes live and which adapter to use.
+// Route components are discovered from `src/routes` at build time and
+// resolved at render time from the generated component surface (§6.4) — no
+// hand-imported page/layout/error map belongs here.
 
 export default defineConfig({
   framework: svelte({
     ssr: 'real',
-    componentFor: (route: string) => components[route],
   }),
   routes: { dir: 'src/routes' },
   server: { port: 3000, compression: ['zstd', 'br'], http3: false },
