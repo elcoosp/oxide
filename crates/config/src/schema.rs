@@ -209,7 +209,8 @@ pub fn config_schema() -> Value {
                     "target": { "type": "string" },
                     "sourcemap": { "type": "string", "enum": ["hidden", "inline", "external", "off"] },
                     "ssrExternals": { "type": "array", "items": { "type": "string" } },
-                    "remoteCache": { "type": "string", "description": "§5.4: remote build-cache URL (http://). Read-through on a local miss, write-back on store." }
+                    "remoteCache": { "type": "string", "description": "§5.4: remote build-cache URL (http://). Read-through on a local miss, write-back on store." },
+                    "writeBranches": { "type": "array", "items": { "type": "string" }, "description": "§5.4 / SPEC-5D: git branches trusted to write the shared remote cache. Default main/master + release/* when remoteCache is set." }
                 }
             },
             "adapter": {
