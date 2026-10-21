@@ -121,10 +121,7 @@ mod tests {
             NativePlugin::from_name("tailwindcss"),
             Some(NativePlugin::Tailwind)
         );
-        assert_eq!(
-            NativePlugin::from_name("pwa"),
-            Some(NativePlugin::Manifest)
-        );
+        assert_eq!(NativePlugin::from_name("pwa"), Some(NativePlugin::Manifest));
     }
 
     #[test]
