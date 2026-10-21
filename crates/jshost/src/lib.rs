@@ -1376,9 +1376,22 @@ globalThis.__oxideFrameworkRender = async function (configPath, renderInput, com
           : 'file://' + (cs.entry.startsWith('/') ? '' : '/') + cs.entry;
         const entry = await import(globalThis.__oxideVersioned(entryUrl));
         const routes = entry.routes || {};
+        // §6.4 / WP-A2: rolldown names entries after their sanitized file
+        // basename (`[slug]` -> `_slug_`). The pipeline sends the source
+        // shape. Accept both — a resolver miss on a bundled build surfaces
+        // as a 500 on every dynamic route.
+        const alias = (id) => {
+          if (Object.prototype.hasOwnProperty.call(routes, id)) return id;
+          const bracket = id.replace(/_([^_/]+)_/g, '[$1]');
+          if (Object.prototype.hasOwnProperty.call(routes, bracket)) return bracket;
+          const underscore = id.replace(/\[([^\]/]+)\]/g, '_$1_');
+          if (Object.prototype.hasOwnProperty.call(routes, underscore)) return underscore;
+          return id;
+        };
         componentResolver = (id) => {
-          if (!Object.prototype.hasOwnProperty.call(routes, id)) return undefined;
-          const ns = routes[id];
+          const k = alias(id);
+          if (!Object.prototype.hasOwnProperty.call(routes, k)) return undefined;
+          const ns = routes[k];
           if (!ns || typeof ns !== 'object') return ns;
           return ns.default ?? ns.Page ?? ns.page ?? ns.Component ?? ns.component ?? ns;
         };

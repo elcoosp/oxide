@@ -616,9 +616,23 @@ async function loadComponentManifest(entryPath) {
       const routes = mod?.routes ?? {};
       const normalized = {};
       for (const [id, v] of Object.entries(routes)) {
-        normalized[id] = (typeof v === 'function')
-          ? v
-          : () => Promise.resolve(v);
+        const loader = (typeof v === 'function') ? v : () => Promise.resolve(v);
+        normalized[id] = loader;
+        // §6.4 / WP-A2: rolldown names entries after their file basename,
+        // which sanitizes `[slug]` -> `_slug_`. The pipeline sends the
+        // route id in its source shape (`routes/blog/[slug]`), from
+        // `canonical_route_id` (which only strips `/page`). Alias both
+        // shapes here so neither a bundled build nor a dev build can
+        // miss the lookup — the miss otherwise surfaces as a 500 on
+        // every dynamic route.
+        const bracketForm = id.replace(/_([^_/]+)_/g, '[$1]');
+        if (bracketForm !== id && !(bracketForm in normalized)) {
+          normalized[bracketForm] = loader;
+        }
+        const underscoreForm = id.replace(/\[([^\]/]+)\]/g, '_$1_');
+        if (underscoreForm !== id && !(underscoreForm in normalized)) {
+          normalized[underscoreForm] = loader;
+        }
       }
       return normalized;
     })());
