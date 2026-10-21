@@ -18,20 +18,30 @@ THRESHOLD="${3:-5}"
 
 # Extract the first markdown table from report.md (the run.sh table lives
 # under "## The table" and starts with `| fixture`).
+# Detect the table by any line whose first cell contains "fixture".
+# The header row is column-padded, so an exact `/^\| fixture \|/` regex
+# never matches. Fixed 2026-10-21 during Wave M — the old regex made the
+# gate silently PASS on arbitrary regressions.
 extract_table() {
     awk '
-        /^\| fixture \|/ { in_table = 1 }
-        in_table && /^\|/ { print }
-        in_table && !/^\|/ && NR > 1 && found { exit }
-        in_table { found = 1 }
+        !in_table && /^\|/ && /fixture/ { in_table = 1; print; next }
+        in_table && /^\|/ { print; next }
+        in_table { exit }
     ' "$1"
 }
 
 # Fresh table is plain `run.sh` output (space-separated, no pipes).
 # Normalize both to "fixture cold warm client server pages start rss ttfb".
+# Only accept rows whose first field looks like a fixture name. The
+# harness's stderr (interleaved `Killed: 9` job-control notices from
+# run.sh's per-fixture kill) would otherwise pass the NF >= 9 test and
+# then just be dropped at base-lookup. Filtering at the source keeps
+# TMP_F clean. Fixed 2026-10-21 during Wave M.
 normalize_fresh() {
     awk '
-        NR > 2 && NF >= 9 { printf "%s %s %s %s %s %s %s %s %s\n", $1, $2, $3, $4, $5, $6, $7, $8, $9 }
+        NR > 2 && NF >= 9 && $1 ~ /^smoke-app-/ {
+            printf "%s %s %s %s %s %s %s %s %s\n", $1, $2, $3, $4, $5, $6, $7, $8, $9
+        }
     ' "$1"
 }
 
