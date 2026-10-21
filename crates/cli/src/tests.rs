@@ -6464,3 +6464,97 @@ async fn static_asset_cache_serves_byte_identical_body_on_repeat() {
     );
 }
 
+// ------------------------------ §8.2 / O1: layout_chain in manifests
+
+#[test]
+fn compute_layout_chain_finds_root_and_nested_layouts() {
+    use oxide_router::RouteEntry;
+    let mut tree = oxide_router::RouteTree::new();
+
+    // Root layout
+    tree.insert(RouteEntry {
+        id: oxide_router::RouteId("routes/layout".into()),
+        kind: oxide_router::RouteKind::Layout,
+        segments: vec![],
+        file: std::path::PathBuf::from("layout.tsx"),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: false,
+        slot: None,
+        needs_parent: false,
+    });
+    // Nested layout
+    tree.insert(RouteEntry {
+        id: oxide_router::RouteId("routes/nested/layout".into()),
+        kind: oxide_router::RouteKind::Layout,
+        segments: vec!["nested".into()],
+        file: std::path::PathBuf::from("nested/layout.tsx"),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: false,
+        slot: None,
+        needs_parent: false,
+    });
+    // Page at nested/
+    tree.insert(RouteEntry {
+        id: oxide_router::RouteId("routes/nested/page".into()),
+        kind: oxide_router::RouteKind::Page,
+        segments: vec!["nested".into()],
+        file: std::path::PathBuf::from("nested/page.tsx"),
+        render_mode: Some("static".into()),
+        tags: Vec::new(),
+        has_server_module: false,
+        slot: None,
+        needs_parent: false,
+    });
+
+    // A nested page sees BOTH layouts, outermost first.
+    assert_eq!(
+        compute_layout_chain(&tree, "routes/nested"),
+        vec!["routes/layout".to_string(), "routes/nested/layout".to_string()],
+        "grandparent + parent chain for a two-level nested page"
+    );
+
+    // A top-level page sees only the root layout.
+    tree.insert(RouteEntry {
+        id: oxide_router::RouteId("routes/page".into()),
+        kind: oxide_router::RouteKind::Page,
+        segments: vec![],
+        file: std::path::PathBuf::from("page.tsx"),
+        render_mode: Some("static".into()),
+        tags: Vec::new(),
+        has_server_module: false,
+        slot: None,
+        needs_parent: false,
+    });
+    assert_eq!(
+        compute_layout_chain(&tree, "routes/index"),
+        vec!["routes/layout".to_string()],
+        "top-level page sees only the root layout"
+    );
+
+    // A top-level route nested under `routes/` still gets the root layout —
+    // `routes/layout` wraps everything (that is what a root layout means).
+    assert_eq!(
+        compute_layout_chain(&tree, "routes/orphan"),
+        vec!["routes/layout".to_string()],
+        "root layout applies to every route under routes/"
+    );
+
+    // The empty-chain case is a route id that has no `routes/layout` at any
+    // prefix — a tree with no layouts at all.
+    let empty_tree = oxide_router::RouteTree::new();
+    assert_eq!(
+        compute_layout_chain(&empty_tree, "routes/x"),
+        Vec::<String>::new(),
+        "empty tree → empty chain"
+    );
+
+    // A route id outside the `routes/` prefix: no layout matches.
+    assert_eq!(
+        compute_layout_chain(&tree, "outside/x"),
+        Vec::<String>::new(),
+        "outside the routes/ namespace → empty chain"
+    );
+}
+

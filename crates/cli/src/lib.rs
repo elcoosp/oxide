@@ -1223,6 +1223,112 @@ async fn hmr_route_data_update(
 /// by the runtime component resolver. It is the route *directory* form: the
 /// scanner's `routes/<...>/page` loses its `/page` suffix; layouts, error,
 /// not-found and template ids are already canonical.
+/// §8.2 / §16.3 / O1: compute the layout chain for a route id from the
+/// router tree. Route ids are the *canonical* form (`/page` stripped), and
+/// a `layout.tsx` at each prefix of the id is checked. A page at
+/// `routes/nested/about` sees `routes/layout` then `routes/nested/layout`
+/// in that order (outermost first) — the same order the router's
+/// `layout_chain` produces for a live match.
+///
+/// Pure and self-contained: walks `tree.entries` looking for `Layout` kind
+/// entries whose canonical id matches `<prefix>/layout` at each depth of
+/// the route id. No private router state, no lazy-init to trigger — the
+/// CLI already has `tree.entries` in scope at every build call site.
+/// Rolldown sanitizes `[slug]` → `_slug_` in chunk names. Manifest route
+/// keys therefore use the sanitized form while the router tree uses the
+/// source form. Map a manifest key back to the canonical route id so
+/// layout-chain lookup can find the tree entry.
+fn canonicalize_manifest_key(tree: &oxide_router::RouteTree, key: &str) -> String {
+    // Direct match: the manifest already carries the source form.
+    if tree
+        .entries
+        .iter()
+        .any(|e| e.id.0.strip_suffix("/page").unwrap_or(&e.id.0) == key)
+    {
+        return key.to_string();
+    }
+    // Try each tree route's sanitized form against the manifest key.
+    for e in &tree.entries {
+        let canon = e.id.0.strip_suffix("/page").unwrap_or(&e.id.0);
+        let sanitized = canon
+            .split('/')
+            .map(|seg| {
+                if seg.starts_with('[') && seg.ends_with(']') && seg.len() > 2 {
+                    format!("_{}_", &seg[1..seg.len() - 1])
+                } else {
+                    seg.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+        if sanitized == key {
+            return canon.to_string();
+        }
+    }
+    // Fallback: return as-is. compute_layout_chain will find nothing.
+    key.to_string()
+}
+
+fn compute_layout_chain(tree: &oxide_router::RouteTree, route_id: &str) -> Vec<String> {
+    let segments: Vec<&str> = route_id.split('/').collect();
+    let mut chain = Vec::new();
+    for i in 0..segments.len() {
+        let prefix = segments[..=i].join("/");
+        let layout_id = format!("{prefix}/layout");
+        if tree.entries.iter().any(|e| {
+            matches!(e.kind, oxide_router::RouteKind::Layout) && e.id.0 == layout_id
+        }) {
+            chain.push(layout_id);
+        }
+    }
+    chain
+}
+
+/// §8.2 / §16.3 / O1: enrich a written manifest with layout chains from the
+/// router tree. The bundler writes an empty `layout_chain` on every route
+/// because it doesn't know the tree; the CLI reads the JSON back, fills in
+/// each route's chain, and writes it. Absent/None for older manifests is
+/// safe — the field is `#[serde(default)]`.
+fn enrich_manifest_layout_chains(
+    manifest_path: &std::path::Path,
+    tree: &oxide_router::RouteTree,
+) -> anyhow::Result<()> {
+    let bytes = match std::fs::read(manifest_path) {
+        Ok(b) => b,
+        Err(_) => return Ok(()),  // no manifest yet — nothing to enrich
+    };
+    let mut doc: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|e| anyhow::anyhow!("manifest {} invalid JSON: {e}", manifest_path.display()))?;
+    let routes = match doc.get_mut("routes").and_then(|v| v.as_object_mut()) {
+        Some(r) => r,
+        None => return Ok(()),
+    };
+    let mut enriched = 0usize;
+    for (route_id, entry) in routes.iter_mut() {
+        // §8.2 / O1: the manifest key may be in rolldown's sanitized form
+        // (`routes/blog/_slug_`), while the router tree uses the source form
+        // (`routes/blog/[slug]`). Canonicalize before the layout-chain walk
+        // so a param route finds its layouts.
+        let canonical = canonicalize_manifest_key(tree, route_id);
+        let chain = compute_layout_chain(tree, &canonical);
+        if let Some(obj) = entry.as_object_mut() {
+            obj.insert(
+                "layout_chain".to_string(),
+                serde_json::to_value(&chain).unwrap_or(serde_json::Value::Array(Vec::new())),
+            );
+            if !chain.is_empty() {
+                enriched += 1;
+            }
+        }
+    }
+    std::fs::write(manifest_path, serde_json::to_string_pretty(&doc)? + "\n")
+        .map_err(|e| anyhow::anyhow!("write {}: {e}", manifest_path.display()))?;
+    if enriched > 0 {
+        tracing::debug!(count = enriched, "enriched manifest layout chains");
+    }
+    Ok(())
+}
+
 fn canonical_route_id(id: &str) -> String {
     id.strip_suffix("/page").unwrap_or(id).to_string()
 }
@@ -4447,6 +4553,13 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         persist_diagnostics(&rootp, &diags);
         anyhow::anyhow!("{} {}", e.0.code, e.0.message)
     })?;
+
+    // §8.2 / §16.3 / O1: enrich both manifests with layout chains from the
+    // router tree. The bundler doesn't know the tree, so its layout_chain
+    // is []; the CLI fills it in here. Best-effort — a missing manifest
+    // (an older build, or a non-SSR env) is a no-op.
+    let _ = enrich_manifest_layout_chains(&client_out.join("client.manifest.json"), &tree);
+    let _ = enrich_manifest_layout_chains(&server_out.join("server.manifest.json"), &tree);
     // BUG-06: persist build diagnostics so MCP `oxide_errors` has data.
     // Written on success too (possibly `[]`) so stale errors don't linger.
     {

@@ -528,6 +528,7 @@ fn convert(
                     css: c.css.clone(),
                     js_bytes,
                     modules: mods,
+                layout_chain: Vec::new(),
                 },
             );
         }
@@ -556,6 +557,7 @@ fn convert(
                     render_mode: None,
                     tags: Vec::new(),
                     prerendered: None,
+                    layout_chain: Vec::new(),
                 },
             );
         }

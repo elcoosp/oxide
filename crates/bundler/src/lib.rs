@@ -461,6 +461,13 @@ pub struct RouteBundle {
     /// data `oxide why` uses to attribute a module to a route.
     #[serde(default)]
     pub modules: Vec<PathBuf>,
+    /// §8.2 / §16.3 / O1: the layout chain for this route, outermost →
+    /// innermost. Populated by the CLI after the bundler writes the
+    /// manifest — the bundler doesn't know the router tree, but the CLI
+    /// does. `#[serde(default)]` keeps older manifests (no field) parsing
+    /// as an empty chain, which is the correct "no layouts" default.
+    #[serde(default)]
+    pub layout_chain: Vec<String>,
 }
 
 /// Server manifest (§6.4): route → server module, adapter entry.
@@ -478,6 +485,10 @@ pub struct ServerRoute {
     pub tags: Vec<String>,
     /// Prerendered routes list their output files here (§10.5).
     pub prerendered: Option<String>,
+    /// §8.2 / §16.3 / O1: layout chain for this route (outermost →
+    /// innermost), same enrichment contract as `RouteBundle.layout_chain`.
+    #[serde(default)]
+    pub layout_chain: Vec<String>,
 }
 
 /// The bundler trait (D3 isolation point; Rolldown slots in here).
@@ -1220,6 +1231,7 @@ impl ChunkBundler {
                         css,
                         js_bytes,
                         modules,
+                        layout_chain: Vec::new(),
                     },
                 );
             }
@@ -1251,6 +1263,7 @@ impl ChunkBundler {
                         render_mode: None,
                         tags: Vec::new(),
                         prerendered: None,
+                        layout_chain: Vec::new(),
                     },
                 );
             }
