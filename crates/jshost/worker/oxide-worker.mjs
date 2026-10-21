@@ -628,7 +628,11 @@ async function dispatchComponentsLoad(id, input) {
 }
 
 async function dispatchFrameworkRender(id, input) {
-  const { path, input: renderInput, components } = input.payload ?? {};
+  const { path, input: renderInput } = input.payload ?? {};
+  // §6.4 / WP-B3: accept `components` at the payload level (the current
+  // wire shape) OR nested inside `input` (backward compatibility for any
+  // older client); the Rust side hoists it to the payload level.
+  const components = input.payload?.components ?? renderInput?.components;
   if (typeof path !== "string" || path.length === 0) {
     callErr(id, "JSH-FRAMEWORK", "framework:render requires a `path` string");
     return;
