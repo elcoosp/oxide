@@ -6366,3 +6366,101 @@ async fn prerendered_500_serves_500_on_hit() {
         "stored error body must be retained on hit: {s}"
     );
 }
+
+// ------------------------------ §22 / L3(b): S-20 rewrite hop guard
+
+/// §22 / L3(b): the S-20 rewrite-loop guard fires before any routing,
+/// loader, or render work. `rewrite_hops > 8` is a 508. This pins the
+/// guard so a future dispatch refactor cannot regress it silently.
+#[tokio::test]
+async fn rewrite_hop_guard_returns_508_after_8_hops() {
+    use std::sync::Arc;
+
+    let dispatch = build_dispatch(
+        empty_tree(),
+        Arc::new(oxide_server::Metrics::new()),
+        Vec::new(),
+        None,
+        None,
+        routes_root(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        Vec::new(),
+        None,
+        None,
+        None,
+    );
+
+    // 8 hops: allowed (guard is strictly `> 8`). Falls through to the
+    // normal 404 path since the tree is empty.
+    let mut req = test_request("GET", "/");
+    req.rewrite_hops = 8;
+    let resp = dispatch(req).await;
+    assert_ne!(
+        resp.status, 508,
+        "8 hops must not trip the guard — only a ninth does"
+    );
+
+    // 9 hops: 508, and the body names the loop. Runs before any route
+    // work, so an empty tree is enough.
+    let mut req = test_request("GET", "/");
+    req.rewrite_hops = 9;
+    let resp = dispatch(req).await;
+    assert_eq!(resp.status, 508, "9 hops must return 508");
+    let body = collect_response_body(resp).await;
+    let s = std::str::from_utf8(&body).unwrap_or("");
+    assert!(
+        s.contains("rewrite loop"),
+        "508 body names the failure: {s}"
+    );
+}
+
+// ------------------------------ §22 / L3(c): P-12 asset cache
+
+/// §22 / L3(c): `StaticAssets::serve` serves the same body from the asset
+/// cache on repeated requests. The cache is a module-level `OnceLock`
+/// (shared across every test in this binary, TTL 300s / configurable via
+/// env), so this test pins the *positive path* — the cache is populated
+/// on the first serve and the second serve returns byte-identical content
+/// with the expected cache headers. TTL *expiry* is deliberately not
+/// exercised here: mutating a process-global cache would poison every
+/// other server test, and the `OXIDE_ASSET_CACHE_TTL_SECS` env is read
+/// once at OnceLock init. If a TTL regression test is wanted, it belongs
+/// in a fresh process (a `crates/server/tests/` integration test that
+/// boots with a low TTL env set before any other test in the binary).
+#[tokio::test]
+async fn static_asset_cache_serves_byte_identical_body_on_repeat() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("hello.css"), b"body { color: red; }").unwrap();
+
+    let assets = oxide_server::StaticAssets::scan(dir.path()).unwrap();
+    let req = test_request("GET", "/hello.css");
+
+    let first = assets.serve(&req, "/hello.css");
+    let first = match first {
+        Some(r) => r,
+        None => panic!("first serve returned None"),
+    };
+    let first_body = collect_response_body(first).await;
+    assert_eq!(&first_body[..], b"body { color: red; }");
+
+    let second = assets.serve(&req, "/hello.css");
+    let second = match second {
+        Some(r) => r,
+        None => panic!("second serve returned None — the cache poisoned it"),
+    };
+    let second_body = collect_response_body(second).await;
+    assert_eq!(
+        &second_body[..],
+        &first_body[..],
+        "cached serve must be byte-identical to the first"
+    );
+}
+
