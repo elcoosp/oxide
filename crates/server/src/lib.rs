@@ -39,8 +39,8 @@ use oxide_render::RequestTimings;
 use oxide_router::RulesEngine;
 use std::collections::BTreeMap;
 use std::io::Write as IoWrite;
-use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 pub type Result<T> = std::result::Result<T, OxideError>;
@@ -115,8 +115,12 @@ impl OxideRequest {
             }
             map
         });
+        // Fast path: HTTP/2 and hyper's h1 parser hand us lowercase names.
+        if let Some(i) = index.get(name) {
+            return self.headers.get(*i).map(|(_, v)| v.as_str());
+        }
         index
-            .get(&*name.to_ascii_lowercase())
+            .get(name.to_ascii_lowercase().as_str())
             .and_then(|i| self.headers.get(*i))
             .map(|(_, v)| v.as_str())
     }
@@ -1532,6 +1536,10 @@ pub struct Pipeline {
     /// non-zero value makes every HTTP/1.1+2 response advertise it via
     /// `Alt-Svc`, so a browser upgrades to h3 on the next request.
     pub http3_port: u16,
+    /// C3: whether to emit `Alt-Svc: h3=":port"`. The h3 listener runs
+    /// either way; this gates only the advertisement a browser uses to
+    /// upgrade.
+    pub http3_advertise: bool,
 }
 
 /// §9.6: the WebSocket route service. Holds the dispatcher and a lookup from
@@ -1946,6 +1954,7 @@ impl Default for Pipeline {
             dev_bind_ip: None,
             sockets: None,
             http3_port: 0,
+            http3_advertise: false,
         }
     }
 }
@@ -3507,10 +3516,16 @@ impl Pipeline {
                 .any(|(k, _)| k.eq_ignore_ascii_case("alt-svc"))
         {
             let port = self.http3_port;
-            // P-16: the port is fixed for the server's lifetime, so the
-            // Alt-Svc value is formatted once and reused.
-            let value = alt_svc_for(port);
-            resp = resp.with_header("alt-svc", value);
+            // C3: advert only when `http3_advertise` is set on the pipeline.
+            // The listener still runs with it off — a client that already
+            // knows the endpoint keeps working; a fresh browser stays on
+            // h1/h2.
+            if self.http3_advertise {
+                // P-16: the port is fixed for the server's lifetime, so the
+                // Alt-Svc value is formatted once and reused.
+                let value = alt_svc_for(port);
+                resp = resp.with_header("alt-svc", value);
+            }
         }
 
         self.finish_response_inner(resp, rule_headers, request_id, method, cookie_header)
