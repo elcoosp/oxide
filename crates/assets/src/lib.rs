@@ -12,11 +12,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-#[cfg(feature = "subset")]
-mod font_subset;
 mod content;
 pub mod content_collection;
 pub mod content_typegen;
+#[cfg(feature = "subset")]
+mod font_subset;
 pub use content::{
     ContentFormat, MdxCompileRequest, parse_content_entry_with_format, parse_mdx_source,
 };
