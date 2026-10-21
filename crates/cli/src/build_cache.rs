@@ -62,12 +62,25 @@ pub fn fingerprint(root: &Path, mode: &str, static_export: bool) -> String {
     let mut files: Vec<PathBuf> = Vec::new();
     collect_files(root, &mut files);
     files.sort();
-    for f in &files {
-        let rel = f.strip_prefix(root).unwrap_or(f);
+    // P-22: read + hash in parallel; `par_iter().map().collect()` over a
+    // sorted `Vec` preserves index order, so the digest is byte-identical
+    // to the sequential walk while the hashing scales across cores.
+    use rayon::prelude::*;
+    let mut hashed: Vec<(&Path, Option<blake3::Hash>)> = files
+        .par_iter()
+        .map(|f| {
+            (
+                f.strip_prefix(root).unwrap_or(f),
+                std::fs::read(f).ok().map(|b| blake3::hash(&b)),
+            )
+        })
+        .collect();
+    hashed.sort_by(|a, b| a.0.cmp(b.0));
+    for (rel, digest) in hashed {
         h.update(rel.to_string_lossy().as_bytes());
         h.update(&[0]);
-        if let Ok(bytes) = std::fs::read(f) {
-            h.update(blake3::hash(&bytes).as_bytes());
+        if let Some(d) = digest {
+            h.update(d.as_bytes());
         }
         h.update(&[0]);
     }
