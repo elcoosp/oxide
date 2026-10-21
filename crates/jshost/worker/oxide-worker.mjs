@@ -642,6 +642,21 @@ async function dispatchFrameworkRender(id, input) {
 // rewritten to point at the compiled temp file of its target.
 const serverModuleCache = new Map();
 
+// B-13: per-module compiled result, keyed by the content+path hash. An
+// unchanged module reuses both the compiled code and its temp path, so a
+// repeat loader/action/endpoint/socket request skips the `compile_module`
+// IPC round-trip (and the write, when the temp file is still on disk).
+const compiledModuleCache = new Map();
+const COMPILED_MAX = 512;
+function rememberCompiled(hash, info) {
+  if (compiledModuleCache.has(hash)) compiledModuleCache.delete(hash);
+  compiledModuleCache.set(hash, info);
+  if (compiledModuleCache.size > COMPILED_MAX) {
+    const [oldest] = compiledModuleCache.keys();
+    compiledModuleCache.delete(oldest);
+  }
+}
+
 function scanRelativeSpecifiers(source) {
   const out = [];
   const patterns = [
@@ -689,13 +704,38 @@ async function compileServerModule(entryPath) {
     return { url: pathToFileURL(entryPath).href, isTemp: false };
   }
 
+  // B-13 fast path: reuse the previous graph's temp files when every
+  // module still has the same mtime+size. No read, no compile, no write.
+  const prev = serverModuleCache.get(entryPath);
+  if (prev?.graph) {
+    let fresh = true;
+    for (const g of prev.graph) {
+      try {
+        const st = await fs.stat(g.path);
+        if (st.mtimeMs !== g.mtimeMs || st.size !== g.size) {
+          fresh = false;
+          break;
+        }
+      } catch {
+        fresh = false;
+        break;
+      }
+    }
+    if (fresh) return { url: prev.tmpUrl, isTemp: true };
+  }
+
   const modules = new Map();
   const order = [];
+  const graph = [];
   const queue = [entryPath];
   while (queue.length > 0) {
     const path = queue.shift();
     if (modules.has(path)) continue;
     const source = await fs.readFile(path, "utf8");
+    try {
+      const st = await fs.stat(path);
+      graph.push({ path, mtimeMs: st.mtimeMs, size: st.size });
+    } catch { /* unreadable now; forces a recompile next time */ }
     const deps = [];
     for (const { spec } of scanRelativeSpecifiers(source)) {
       if (spec.includes("?")) continue;
@@ -727,6 +767,13 @@ async function compileServerModule(entryPath) {
       .update(path)
       .digest("hex")
       .slice(0, 16);
+    const known = compiledModuleCache.get(hash);
+    if (known) {
+      // Refresh LRU position and reuse the previous compile.
+      rememberCompiled(hash, known);
+      tempOf.set(path, { ...known, fromCache: true });
+      continue;
+    }
     let compiled;
     try {
       const result = await globalThis.__oxide_op_request("compile_module", {
@@ -748,7 +795,12 @@ async function compileServerModule(entryPath) {
     // annotations. Node's native type-stripper handles a `.ts` file on
     // import; a `.mjs` file would be parsed as-is and fail.
     const tmpPath = pathMod.join(dir, `.${base}.${hash}.oxide.ts`);
-    tempOf.set(path, { tmpPath, tmpUrl: pathToFileURL(tmpPath).href, content: compiled, hash });
+    const info = { tmpPath, tmpUrl: pathToFileURL(tmpPath).href, content: compiled, hash };
+    // Cache the *raw* compiled output; the import-specifier rewrite below
+    // mutates only the per-request copy in `tempOf`, so a later hit never
+    // inherits stale dependency temp paths.
+    rememberCompiled(hash, { ...info });
+    tempOf.set(path, info);
   }
 
   for (const path of order) {
@@ -770,17 +822,25 @@ async function compileServerModule(entryPath) {
   }
 
   const entryInfo = tempOf.get(entryPath);
-  const cached = serverModuleCache.get(entryPath);
   for (const path of order) {
-    await fs.writeFile(tempOf.get(path).tmpPath, tempOf.get(path).content, "utf8");
+    const info = tempOf.get(path);
+    if (info.fromCache) {
+      // Already on disk from the previous request — no write needed.
+      try {
+        await fs.access(info.tmpPath);
+        continue;
+      } catch { /* temp file was cleaned up; rewrite below */ }
+    }
+    await fs.writeFile(info.tmpPath, info.content, "utf8");
   }
-  if (cached?.tmpPath && cached.tmpPath !== entryInfo.tmpPath) {
-    await fs.rm(cached.tmpPath, { force: true }).catch(() => {});
+  if (prev?.tmpPath && prev.tmpPath !== entryInfo.tmpPath) {
+    await fs.rm(prev.tmpPath, { force: true }).catch(() => {});
   }
   serverModuleCache.set(entryPath, {
     hash: entryInfo.hash,
     tmpPath: entryInfo.tmpPath,
     tmpUrl: entryInfo.tmpUrl,
+    graph,
   });
   return { url: entryInfo.tmpUrl, isTemp: true };
 }
