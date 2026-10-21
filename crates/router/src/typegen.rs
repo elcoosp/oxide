@@ -161,12 +161,9 @@ pub(crate) fn typegen_impl(
         // overload when the project has i18n enabled. The locale parameter
         // sits LAST so an existing `href('/blog', {slug})` call still
         // compiles — no breaking change to non-i18n projects.
-        let locales_literal: Option<String> = locales.filter(|l| !l.is_empty()).map(|l| {
-            l.iter()
-                .map(|s| ts_lit(s))
-                .collect::<Vec<_>>()
-                .join(" | ")
-        });
+        let locales_literal: Option<String> = locales
+            .filter(|l| !l.is_empty())
+            .map(|l| l.iter().map(|s| ts_lit(s)).collect::<Vec<_>>().join(" | "));
         let default_literal: Option<String> = default_locale.map(ts_lit);
         for (ts, _, params, _) in &rows {
             if params.is_empty() {
@@ -643,8 +640,14 @@ mod tests {
             .unwrap();
         let dts = std::fs::read_to_string(&dts_path).unwrap();
         // Locale union emitted.
-        assert!(dts.contains(r#"export type Locale = "en" | "fr" | "pt-BR";"#), "{dts}");
-        assert!(dts.contains(r#"export type DefaultLocale = "en";"#), "{dts}");
+        assert!(
+            dts.contains(r#"export type Locale = "en" | "fr" | "pt-BR";"#),
+            "{dts}"
+        );
+        assert!(
+            dts.contains(r#"export type DefaultLocale = "en";"#),
+            "{dts}"
+        );
         // href gains a locale parameter on both no-params and with-params routes.
         assert!(
             dts.contains(r#"href(route: "/", locale: "en" | "fr" | "pt-BR"): string"#),
@@ -665,6 +668,4 @@ mod tests {
         assert!(!dts.contains("export type Locale"), "{dts}");
         assert!(!dts.contains("locale:"), "{dts}");
     }
-
-
 }
