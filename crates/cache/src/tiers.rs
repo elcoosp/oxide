@@ -306,8 +306,7 @@ impl DiskTier {
         txn.commit().map_err(dberr)?;
         // S-08: update the byte counter and prune oldest-first past the budget.
         let new_size = compressed.len() as u64;
-        self.cur_bytes
-            .fetch_sub(prev_size, Ordering::Relaxed);
+        self.cur_bytes.fetch_sub(prev_size, Ordering::Relaxed);
         let after = self.cur_bytes.fetch_add(new_size, Ordering::Relaxed) + new_size;
         if after > self.max_bytes {
             self.prune_oldest_until(self.max_bytes * 9 / 10);
