@@ -251,10 +251,11 @@ fn fn_request(method: &str, id: &str, body: &str, ct: &str) -> OxideRequest {
     OxideRequest {
         method: method.to_string(),
         url: format!("/_oxide/fn/{id}"),
-        headers: vec![
+        headers: std::sync::Arc::new(vec![
             ("content-type".into(), ct.into()),
             ("sec-fetch-site".into(), "same-origin".into()),
-        ],
+        ]),
+        header_index: Default::default(),
         body: bytes::Bytes::from(body.to_string()),
         request_id: "test-fn".into(),
         trace: None,
