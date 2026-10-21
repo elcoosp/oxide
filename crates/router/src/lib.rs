@@ -139,9 +139,8 @@ pub struct RouteTree {
     /// P-02: per-route layout chains, computed once on first match instead of
     /// re-scanning every entry (and sorting) on every request. Shared across
     /// clones; cleared by [`RouteTree::insert`].
-    layout_chains: std::sync::Arc<
-        std::sync::RwLock<std::collections::HashMap<String, Vec<RouteId>>>,
-    >,
+    layout_chains:
+        std::sync::Arc<std::sync::RwLock<std::collections::HashMap<String, Vec<RouteId>>>>,
     /// P-06: middleware/error/not-found indexes, built once on first use.
     dispatch: std::sync::Arc<std::sync::RwLock<Option<std::sync::Arc<DispatchIndex>>>>,
 }
@@ -223,21 +222,15 @@ impl RouteTree {
         for e in &self.entries {
             match e.kind {
                 RouteKind::Middleware => {
-                    let base = e
-                        .id
-                        .0
-                        .strip_suffix("/middleware")
-                        .unwrap_or(&e.id.0)
-                        .to_string();
+                    let base =
+                        e.id.0
+                            .strip_suffix("/middleware")
+                            .unwrap_or(&e.id.0)
+                            .to_string();
                     middleware.push((base, e.file.clone(), e.id.0.len()));
                 }
                 RouteKind::Error => {
-                    let base = e
-                        .id
-                        .0
-                        .strip_suffix("/error")
-                        .unwrap_or(&e.id.0)
-                        .to_string();
+                    let base = e.id.0.strip_suffix("/error").unwrap_or(&e.id.0).to_string();
                     errors.push((base, e.id.0.clone(), e.id.0.len()));
                 }
                 RouteKind::NotFound if not_found.is_none() => {
@@ -365,7 +358,6 @@ impl RouteTree {
     ) -> Result<String> {
         typegen::typegen_impl(self, out_dir, Some(routes_root), locales, default_locale)
     }
-
 
     /// Sorted deterministic listing for `oxide routes` (§19.1) incl. inferred modes.
     pub fn table(&self) -> Vec<(String, String, Vec<String>)> {
