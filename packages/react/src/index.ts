@@ -83,18 +83,17 @@ export interface AdapterOptions extends Partial<RealAdapterOptions> {
 }
 
 /**
- * Build a {@link FrameworkAdapter}. With `componentFor` set, the adapter
- * dispatches `render()` to the real upstream renderer (`react-dom/server`,
- * `@vue/server-renderer`, `svelte/server`, `@solidjs/web`) for every route
- * the resolver returns a component for, falling back to the neutral-IR
- * renderer when `ssr: 'auto'`. Without `componentFor`, the IR adapter is
- * returned unchanged.
+ * Build a {@link FrameworkAdapter} (§7). Real upstream SSR is selected by
+ * `ssr: 'real'` (or `'auto'` with an explicit `componentFor` override); the
+ * route components themselves are supplied by the runtime resolver built
+ * from the generated `dist/server/ssr/index.js` (§6.4). A config therefore
+ * needs no component imports — `framework: react({ ssr: 'real' })`.
  */
 export function createAdapter(opts: AdapterOptions = {}): FrameworkAdapter {
-  if (typeof opts.componentFor === 'function') {
+  if (opts.ssr === 'real' || opts.ssr === 'auto' || typeof opts.componentFor === 'function') {
     return createRealAdapter({
       ssr: opts.ssr ?? 'auto',
-      componentFor: opts.componentFor,
+      ...(typeof opts.componentFor === 'function' ? { componentFor: opts.componentFor } : {}),
       layoutFor: opts.layoutFor,
     })
   }
