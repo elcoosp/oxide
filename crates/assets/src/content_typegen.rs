@@ -54,7 +54,9 @@ pub fn write_content_dts(
                 }
             }
             None => {
-                out.push_str("  /** Unchecked/External schema — frontmatter shape is not typed. */\n");
+                out.push_str(
+                    "  /** Unchecked/External schema — frontmatter shape is not typed. */\n",
+                );
                 out.push_str("  readonly [field: string]: unknown;\n");
             }
         }
@@ -81,8 +83,16 @@ pub fn write_content_dts(
         out.push_str("export interface ContentApi {\n");
         for c in collections {
             let iface = interface_name(&c.collection.name);
-            let _ = writeln!(out, "  /** Every entry in the `{}` collection. */", c.collection.name);
-            let _ = writeln!(out, "  readonly {}: {{", ts_property_key(&c.collection.name));
+            let _ = writeln!(
+                out,
+                "  /** Every entry in the `{}` collection. */",
+                c.collection.name
+            );
+            let _ = writeln!(
+                out,
+                "  readonly {}: {{",
+                ts_property_key(&c.collection.name)
+            );
             let _ = writeln!(out, "    all(): readonly {iface}[];");
             let _ = writeln!(out, "    bySlug(slug: string): {iface} | undefined;");
             out.push_str("  };\n");
@@ -129,7 +139,10 @@ fn ts_property_key(collection: &str) -> String {
     if collection
         .chars()
         .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
-        && !collection.chars().next().is_some_and(|c| c.is_ascii_digit())
+        && !collection
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_digit())
     {
         collection.to_string()
     } else {
@@ -251,9 +264,15 @@ mod tests {
         required.insert("title".to_string(), FieldType::String);
         required.insert("draft".to_string(), FieldType::Bool);
         let mut optional = BTreeMap::new();
-        optional.insert("tags".to_string(), FieldType::Array(Box::new(FieldType::String)));
+        optional.insert(
+            "tags".to_string(),
+            FieldType::Array(Box::new(FieldType::String)),
+        );
         let schema = NativeSchema { required, optional };
-        let tc = TypedCollection { collection: &collection, schema: Some(&schema) };
+        let tc = TypedCollection {
+            collection: &collection,
+            schema: Some(&schema),
+        };
 
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("content.d.ts");
@@ -264,10 +283,16 @@ mod tests {
         assert!(body.contains("readonly slug: string;"), "{body}");
         assert!(body.contains("readonly title: string;"), "{body}");
         assert!(body.contains("readonly draft: boolean;"), "{body}");
-        assert!(body.contains("readonly tags?: readonly string[];"), "{body}");
+        assert!(
+            body.contains("readonly tags?: readonly string[];"),
+            "{body}"
+        );
         assert!(body.contains("blog: BlogEntry;"), "{body}");
         assert!(body.contains("all(): readonly BlogEntry[];"), "{body}");
-        assert!(body.contains("bySlug(slug: string): BlogEntry | undefined;"), "{body}");
+        assert!(
+            body.contains("bySlug(slug: string): BlogEntry | undefined;"),
+            "{body}"
+        );
     }
 
     #[test]
@@ -301,10 +326,21 @@ mod tests {
             ],
         };
         let schema = infer_schema(&collection);
-        assert_eq!(schema.required.get("title"), Some(&FieldType::String), "title required");
-        assert_eq!(schema.optional.get("draft"), Some(&FieldType::Bool), "draft optional");
+        assert_eq!(
+            schema.required.get("title"),
+            Some(&FieldType::String),
+            "title required"
+        );
+        assert_eq!(
+            schema.optional.get("draft"),
+            Some(&FieldType::Bool),
+            "draft optional"
+        );
         assert!(schema.optional.contains_key("tags"), "tags optional");
-        assert!(!schema.required.contains_key("draft"), "draft is not required");
+        assert!(
+            !schema.required.contains_key("draft"),
+            "draft is not required"
+        );
     }
 
     #[test]
@@ -324,11 +360,17 @@ mod tests {
             dir: std::path::PathBuf::from("content/changelog"),
             entries: vec![],
         };
-        let tc = TypedCollection { collection: &collection, schema: None };
+        let tc = TypedCollection {
+            collection: &collection,
+            schema: None,
+        };
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("content.d.ts");
         write_content_dts(&[tc], &out).unwrap();
         let body = std::fs::read_to_string(&out).unwrap();
-        assert!(body.contains("readonly [field: string]: unknown;"), "{body}");
+        assert!(
+            body.contains("readonly [field: string]: unknown;"),
+            "{body}"
+        );
     }
 }
