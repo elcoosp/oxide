@@ -205,6 +205,94 @@ fn empty_tree() -> std::sync::Arc<oxide_router::RouteTree> {
     std::sync::Arc::new(oxide_router::RouteTree::new())
 }
 
+/// B-27: streams a static shell with one deferred boundary, then the
+/// resolved fragment — exactly the shape a streaming adapter emits.
+struct PprRenderer;
+
+#[async_trait::async_trait]
+impl oxide_server::PageRenderer for PprRenderer {
+    fn name(&self) -> &str {
+        "ppr"
+    }
+    async fn render(&self, _input: oxide_server::PageRenderInput) -> oxide_server::Result<String> {
+        Ok("<!doctype html><html><body>PPR</body></html>".into())
+    }
+    async fn render_streaming(
+        &self,
+        _input: oxide_server::PageRenderInput,
+    ) -> oxide_server::Result<oxide_server::RenderStream> {
+        let items: Vec<oxide_server::Result<bytes::Bytes>> = vec![
+            Ok(bytes::Bytes::from_static(
+                b"<!doctype html><html><body><h1>STATIC-SHELL</h1><template data-ox-b='1'><p>fallback</p></template>",
+            )),
+            Ok(bytes::Bytes::from_static(
+                b"<template data-ox-c='1'><p>LIVE-HOLE</p></template>",
+            )),
+            Ok(bytes::Bytes::from_static(b"</body></html>")),
+        ];
+        Ok(Box::pin(futures::stream::iter(items)))
+    }
+}
+
+#[tokio::test]
+async fn ppr_serves_cached_shell_and_streams_holes() {
+    use std::sync::Arc;
+
+    let tree = empty_tree();
+    let metrics = Arc::new(oxide_server::Metrics::new());
+    let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(PprRenderer));
+    let shells: crate::PprShells =
+        Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+
+    let dispatch = build_dispatch(
+        tree,
+        metrics,
+        Vec::new(),
+        renderer,
+        None,
+        std::path::PathBuf::new(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        Vec::new(),
+        None, // no waterfall recorder in tests
+        None, // no session codec in tests
+        Some(shells),
+    );
+
+    // First request: full streamed document (tap mode); the shell is stored.
+    let first =
+        String::from_utf8(collect_response_body(dispatch(test_request("GET", "/")).await).await)
+            .unwrap();
+    assert!(first.contains("STATIC-SHELL"));
+    assert!(first.contains("LIVE-HOLE"));
+
+    // Second request: the cached shell is served immediately and only the
+    // resolved fragment is forwarded into it.
+    let second =
+        String::from_utf8(collect_response_body(dispatch(test_request("GET", "/")).await).await)
+            .unwrap();
+    assert!(
+        second.contains("<ox-hole id=\"1\">"),
+        "shell has the hole: {second}"
+    );
+    assert!(second.contains("client_resolver") || second.contains("template[data-ox-c]"));
+    assert!(
+        second.contains("LIVE-HOLE"),
+        "hole content streams in: {second}"
+    );
+    assert!(
+        !second.contains("fallback"),
+        "static fallback is not re-served"
+    );
+}
+
 #[tokio::test]
 async fn dispatch_routes_through_page_renderer_when_attached() {
     use std::sync::Arc;
@@ -236,6 +324,7 @@ async fn dispatch_routes_through_page_renderer_when_attached() {
         Vec::new(),
         None, // no waterfall recorder in tests
         None, // no session codec in tests
+        None, // no PPR shells in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -284,6 +373,7 @@ async fn dispatch_uses_ir_placeholder_when_no_renderer() {
         Vec::new(),
         None, // no waterfall recorder in tests
         None, // no session codec in tests
+        None, // no PPR shells in tests
     );
 
     let resp = dispatch(test_request("GET", "/some/page")).await;
@@ -331,6 +421,7 @@ async fn dispatch_propagates_renderer_error_as_500() {
         Vec::new(),
         None, // no waterfall recorder in tests
         None, // no session codec in tests
+        None, // no PPR shells in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -492,6 +583,7 @@ async fn loader_feeds_data_to_renderer() {
         Vec::new(),
         None, // no waterfall recorder in tests
         None, // no session codec in tests
+        None, // no PPR shells in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -541,6 +633,7 @@ async fn loader_404_short_circuits_render() {
         Vec::new(),
         None, // no waterfall recorder in tests
         None, // no session codec in tests
+        None, // no PPR shells in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -590,6 +683,7 @@ async fn loader_redirect_short_circuits_with_location() {
         Vec::new(),
         None, // no waterfall recorder in tests
         None, // no session codec in tests
+        None, // no PPR shells in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -652,6 +746,7 @@ async fn no_server_module_skips_loader() {
         Vec::new(),
         None, // no waterfall recorder in tests
         None, // no session codec in tests
+        None, // no PPR shells in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -3069,6 +3164,7 @@ async fn live_render_injects_odf_payload_script() {
         Vec::new(),
         None, // no waterfall recorder in tests
         None, // no session codec in tests
+        None, // no PPR shells in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -3156,6 +3252,7 @@ async fn error_status_marker_yields_http_500() {
             Vec::new(),
             None, // no waterfall recorder in tests
             None, // no session codec in tests
+            None, // no PPR shells in tests
         );
         let resp = dispatch(test_request("GET", "/")).await;
         assert_eq!(resp.status, 500, "{name} → HTTP 500");
@@ -3300,6 +3397,7 @@ impl oxide_server::LoaderRunner for LocalsCapturingLoader {
             headers: Vec::new(),
             deferred,
             meta: None,
+            session: None,
         })
     }
 }
@@ -3396,6 +3494,7 @@ async fn middleware_rewrite_does_not_rerun_outer_layers() {
         Vec::new(),
         None,
         None,
+        None, // no PPR shells in tests
     );
     let resp = dispatch(test_request("GET", "/shop")).await;
     assert_eq!(resp.status, 200);
@@ -3510,6 +3609,7 @@ async fn inner_middleware_header_overwrites_outer() {
         Vec::new(),
         None,
         None,
+        None, // no PPR shells in tests
     );
     let resp = dispatch(test_request("GET", "/shop")).await;
     assert_eq!(resp.status, 200);
@@ -3562,6 +3662,7 @@ async fn middleware_headers_ride_page_and_data_responses() {
         Vec::new(),
         None, // no waterfall recorder in tests
         None, // no session codec in tests
+        None, // no PPR shells in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
     assert_eq!(resp.status, 200);
@@ -3601,6 +3702,7 @@ async fn middleware_headers_ride_page_and_data_responses() {
         Vec::new(),
         None, // no waterfall recorder in tests
         None, // no session codec in tests
+        None, // no PPR shells in tests
     );
     let resp = dispatch(test_request("GET", "/__data?route=%2F")).await;
     assert_eq!(resp.status, 200, "data response for a matched route");
@@ -3708,6 +3810,7 @@ async fn middleware_headers_ride_l0_hits() {
         Vec::new(),
         None, // no waterfall recorder in tests
         None, // no session codec in tests
+        None, // no PPR shells in tests
     );
 
     // First request: an L0 miss. It renders and stores the entry; the
@@ -3886,6 +3989,7 @@ async fn layout_and_page_overlap_when_page_does_not_call_parent() {
         Vec::new(),
         None,
         None,
+        None, // no PPR shells in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
     assert_eq!(resp.status, 200, "matched page renders");
@@ -3933,6 +4037,7 @@ async fn layout_then_page_sequential_when_page_calls_parent() {
         Vec::new(),
         None,
         None,
+        None, // no PPR shells in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
     assert_eq!(resp.status, 200, "matched page renders");
@@ -4174,6 +4279,7 @@ async fn middleware_chain_runs_outer_to_inner_and_threads_locals() {
         Vec::new(),
         None, // no waterfall recorder
         None, // no session codec
+        None, // no PPR shells in tests
     );
     let resp = dispatch(test_request("GET", "/blog/post")).await;
     assert_eq!(resp.status, 200, "matched page renders");
@@ -4405,6 +4511,7 @@ async fn session_codec_decodes_into_locals_session() {
         Vec::new(),
         None,
         Some(codec),
+        None, // no PPR shells in tests
     );
 
     // Request with the encoded cookie.
@@ -4456,6 +4563,7 @@ async fn session_change_from_middleware_sets_cookie() {
         Vec::new(),
         None,
         Some(Arc::clone(&codec)),
+        None, // no PPR shells in tests
     );
     let resp = dispatch(test_request("GET", "/")).await;
     let set_cookie = resp
@@ -4502,6 +4610,7 @@ async fn session_codec_tampered_cookie_yields_empty_session() {
         Vec::new(),
         None,
         Some(codec),
+        None, // no PPR shells in tests
     );
 
     let mut req = test_request("GET", "/");
@@ -6027,4 +6136,28 @@ async fn no_settles_leaves_the_document_unchanged() {
         all.extend_from_slice(&item.expect("chunk"));
     }
     assert_eq!(all, body, "no-settle output equals the input bytes");
+}
+
+// ─── Wave D: loader session write-back ───────────────────────────────────
+
+/// A loader that returns a `session` has it parsed into `LoaderOutput`;
+/// a loader that returns none leaves it `None`.
+#[test]
+fn loader_output_parses_session() {
+    use crate::loader_shim::output_from_raw;
+    let raw = serde_json::json!({
+        "status": 200,
+        "data": {},
+        "session": { "visits": 2 },
+    });
+    let out = output_from_raw(&raw).expect("parse");
+    assert_eq!(
+        out.session,
+        Some(serde_json::json!({"visits": 2})),
+        "the loader's session is carried through",
+    );
+
+    let raw = serde_json::json!({ "status": 200, "data": {} });
+    let out = output_from_raw(&raw).expect("parse");
+    assert!(out.session.is_none(), "no session field -> None");
 }
