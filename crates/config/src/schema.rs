@@ -66,6 +66,11 @@ pub fn config_schema() -> Value {
                     "default": {
                         "type": "string",
                         "enum": ["auto", "static", "isr", "dynamic", "spa", "islands"]
+                    },
+                    "ppr": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "§10.8 partial prerendering: serve the cached static shell instantly and stream holes live"
                     }
                 }
             },
