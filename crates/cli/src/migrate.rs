@@ -54,16 +54,36 @@ pub struct Conversion {
 
 impl Conversion {
     fn rename(from: PathBuf, to: PathBuf) -> Self {
-        Self { from, to: Some(to), note: None, body: None }
+        Self {
+            from,
+            to: Some(to),
+            note: None,
+            body: None,
+        }
     }
     fn rename_with_note(from: PathBuf, to: PathBuf, note: String) -> Self {
-        Self { from, to: Some(to), note: Some(note), body: None }
+        Self {
+            from,
+            to: Some(to),
+            note: Some(note),
+            body: None,
+        }
     }
     fn rewrite(from: PathBuf, to: PathBuf, body: String) -> Self {
-        Self { from, to: Some(to), note: None, body: Some(body) }
+        Self {
+            from,
+            to: Some(to),
+            note: None,
+            body: Some(body),
+        }
     }
     fn skip(from: PathBuf, note: String) -> Self {
-        Self { from, to: None, note: Some(note), body: None }
+        Self {
+            from,
+            to: None,
+            note: Some(note),
+            body: None,
+        }
     }
     pub fn converted(&self) -> bool {
         self.to.is_some()
@@ -161,18 +181,29 @@ fn collect_files(dir: &Path) -> Vec<PathBuf> {
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     let mut entries: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
     entries.sort();
     for p in entries {
-        let Ok(meta) = std::fs::symlink_metadata(&p) else { continue };
+        let Ok(meta) = std::fs::symlink_metadata(&p) else {
+            continue;
+        };
         if meta.is_dir() {
             let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
             // Never descend into vendor / build / VCS dirs.
             if matches!(
                 name,
-                "node_modules" | "dist" | ".git" | "target" | ".oxide"
-                    | ".next" | ".nuxt" | ".svelte-kit" | ".output"
+                "node_modules"
+                    | "dist"
+                    | ".git"
+                    | "target"
+                    | ".oxide"
+                    | ".next"
+                    | ".nuxt"
+                    | ".svelte-kit"
+                    | ".output"
             ) {
                 continue;
             }
@@ -238,9 +269,7 @@ fn plan_next_page(root: &Path, src: &Path, out: &mut Vec<Conversion>) {
                 dst = dst.join(parent);
             }
         }
-        let dir_name = strip_ext(
-            api_rel.file_name().and_then(|n| n.to_str()).unwrap_or(""),
-        );
+        let dir_name = strip_ext(api_rel.file_name().and_then(|n| n.to_str()).unwrap_or(""));
         let dst = dst.join(dir_name).join(format!("route.{ext}"));
         out.push(Conversion::rename(src.to_path_buf(), dst));
         return;
@@ -346,7 +375,9 @@ fn rewrite_next_body(src: &Path) -> Result<Option<(String, Vec<String>)>, String
     let mut notes: Vec<String> = Vec::new();
     let mut changed = false;
     for (fn_name, static_mode) in [("getServerSideProps", false), ("getStaticProps", true)] {
-        let Some((start, end)) = find_export_function(&body, fn_name) else { continue };
+        let Some((start, end)) = find_export_function(&body, fn_name) else {
+            continue;
+        };
         let original = body[start..end].to_string();
         if original.contains("redirect:") || original.contains("notFound:") {
             return Err(format!(
@@ -388,9 +419,13 @@ fn find_export_function(src: &str, name: &str) -> Option<(usize, usize)> {
         format!("export function {name}"),
     ];
     for pat in &patterns {
-        let Some(idx) = src.find(pat.as_str()) else { continue };
+        let Some(idx) = src.find(pat.as_str()) else {
+            continue;
+        };
         let after = &src[idx..];
-        let Some(open_rel) = after.find('{') else { continue };
+        let Some(open_rel) = after.find('{') else {
+            continue;
+        };
         let mut depth = 0i32;
         let mut end_rel = 0usize;
         for (i, c) in after[open_rel..].char_indices() {
@@ -585,8 +620,7 @@ fn plan_vite(root: &Path) -> Result<MigrationPlan, String> {
             };
             conv.push(Conversion::skip(
                 anchor,
-                "no src/main.{tsx,ts,jsx,js} found — port the mount by hand"
-                    .to_string(),
+                "no src/main.{tsx,ts,jsx,js} found — port the mount by hand".to_string(),
             ));
         }
     }
@@ -603,8 +637,7 @@ fn plan_vite(root: &Path) -> Result<MigrationPlan, String> {
 /// emit `export default App;`; otherwise we emit a placeholder that reports
 /// what to fill in).
 fn rewrite_vite_main(src: &Path) -> Result<(String, Vec<String>), String> {
-    let body = std::fs::read_to_string(src)
-        .map_err(|e| format!("read {}: {e}", src.display()))?;
+    let body = std::fs::read_to_string(src).map_err(|e| format!("read {}: {e}", src.display()))?;
     let mut notes: Vec<String> = Vec::new();
 
     // Find a `createRoot` or `ReactDOM.render` call and the identifier it
