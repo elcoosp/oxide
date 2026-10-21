@@ -31,11 +31,11 @@ function buildHead(input: RenderInput): HeadTags {
 }
 
 /**
- * Build a Svelte adapter. `componentFor(route)` MUST return a Svelte 5
- * component (the default export of a compiled SFC) or undefined. When `ssr`
- * is 'auto' (default), a missing component or missing `svelte` dep falls
- * back to the neutral-IR renderer; when 'real', the failure is emitted as
- * an HTML comment.
+ * Build a Svelte adapter. Components come from the runtime resolver
+ * (`RenderInput.resolve`, §6.4): the default export of a compiled SFC. An
+ * explicit `componentFor` overrides it. When `ssr` is 'auto' (default), a
+ * missing component or missing `svelte` dep falls back to the neutral-IR
+ * renderer; when 'real', a missing page is the §10.2 OX-500 diagnostic.
  */
 export function createRealAdapter(opts: RealAdapterOptions) {
   return makeRealAdapter({
