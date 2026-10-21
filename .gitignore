@@ -24,3 +24,4 @@ dump.txt
 test-results/
 tests/playwright/test-results/
 oxide-launch-content
+.DS_Store
