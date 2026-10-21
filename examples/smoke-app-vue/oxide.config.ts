@@ -1,19 +1,14 @@
 import vue from '@oxide/vue'
 import { defineConfig } from 'oxide'
 
-// The page is .vue; the worker's tsx-loader.mjs compiles it at load time
-// through @vue/compiler-sfc, so the config can import it directly.
-// @ts-expect-error - .vue module resolved at runtime by the worker's loader
-import Home from './src/routes/index/page.vue'
-
-const components: Record<string, unknown> = {
-  'routes/index': Home,
-}
+// §14.1: this config declares *where* routes live and which adapter to use.
+// Route components are discovered from `src/routes` at build time and
+// resolved at render time from the generated component surface (§6.4) — no
+// hand-imported page/layout/error map belongs here.
 
 export default defineConfig({
   framework: vue({
     ssr: 'real',
-    componentFor: (route: string) => components[route],
   }),
   routes: { dir: 'src/routes' },
   server: { port: 3000, compression: ['zstd', 'br'], http3: false },
