@@ -43,11 +43,12 @@ function buildHead(input: RenderInput): HeadTags {
 }
 
 /**
- * Build a Vue adapter. `componentFor(route)` MUST return a Vue component
- * (SFC output, `h()`-built component object, or `defineComponent` result)
- * or undefined. When `ssr` is 'auto' (default), a missing component or
- * missing `vue`/`@vue/server-renderer` deps falls back to the neutral-IR
- * renderer; when 'real', the failure is emitted as an HTML comment.
+ * Build a Vue adapter. Components come from the runtime resolver
+ * (`RenderInput.resolve`, §6.4): an SFC output, `h()`-built object, or
+ * `defineComponent` result. An explicit `componentFor` overrides it. When
+ * `ssr` is 'auto' (default), a missing component or missing
+ * `vue`/`@vue/server-renderer` deps falls back to the neutral-IR renderer;
+ * when 'real', a missing page is the §10.2 OX-500 diagnostic.
  */
 export function createRealAdapter(opts: RealAdapterOptions) {
   return makeRealAdapter({
