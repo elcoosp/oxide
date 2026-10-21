@@ -16,10 +16,13 @@ fn req(method: &str, url: &str, headers: &[(&str, &str)]) -> OxideRequest {
     OxideRequest {
         method: method.into(),
         url: url.into(),
-        headers: headers
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect(),
+        headers: Arc::new(
+            headers
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        ),
+        header_index: Default::default(),
         body: Bytes::new(),
         request_id: "req-test".into(),
         trace: None,
@@ -1946,7 +1949,12 @@ fn ws_origin_gate_matches_authority() {
     assert!(!ws_origin_ok(None, Some("app.com"), &none, false));
     assert!(ws_origin_ok(None, Some("app.com"), &none, true));
     // Malformed origin rejected.
-    assert!(!ws_origin_ok(Some("not a uri"), Some("app.com"), &none, false));
+    assert!(!ws_origin_ok(
+        Some("not a uri"),
+        Some("app.com"),
+        &none,
+        false
+    ));
 }
 
 /// S-21.1: `dev_host_allowed` accepts loopback literals and the bind IP, and
@@ -2119,6 +2127,51 @@ async fn perf06_dynamic_compression() {
     assert_eq!(resp.body.len(), body.len());
 }
 
+/// P-15: a streamed HTML body is compressed on the fly; the concatenated
+/// chunks decode to the exact uncompressed bytes.
+#[tokio::test]
+async fn p15_streamed_html_is_compressed() {
+    use futures::StreamExt as _;
+    let p = pipeline(
+        RulesEngine::default(),
+        None,
+        Limits::default(),
+        SecuritySettings::default(),
+    );
+    let body = "<html><body>".to_string() + &"streamed oxide ".repeat(400) + "</body></html>";
+    let expected = body.clone();
+    let d = {
+        let body = body.clone();
+        move |_r: OxideRequest| {
+            let body = body.clone();
+            Box::pin(async move {
+                let chunks: Vec<std::result::Result<Bytes, std::io::Error>> = body
+                    .as_bytes()
+                    .chunks(97)
+                    .map(|c| Ok(Bytes::copy_from_slice(c)))
+                    .collect();
+                let st = futures::stream::iter(chunks);
+                OxideResponse::stream(200, Box::pin(st))
+                    .with_header("content-type", "text/html; charset=utf-8")
+            }) as BoxFuture<'static, OxideResponse>
+        }
+    };
+
+    let resp = p
+        .serve_request(req("GET", "/", &[("accept-encoding", "zstd")]), &d)
+        .await;
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.header("content-encoding"), Some("zstd"));
+    assert!(resp.header("vary").is_some(), "Vary: Accept-Encoding set");
+    let mut st = resp.stream.expect("streamed body");
+    let mut wire = Vec::new();
+    while let Some(chunk) = st.next().await {
+        wire.extend_from_slice(&chunk.expect("chunk"));
+    }
+    let decoded = zstd::stream::decode_all(&wire[..]).expect("valid zstd");
+    assert_eq!(String::from_utf8(decoded).unwrap(), expected);
+}
+
 /// PERF-06: the framework dispatch path emits a real `Server-Timing` total
 /// (not the previous all-zero `RequestTimings::default()`).
 #[tokio::test]
@@ -2155,13 +2208,37 @@ fn ssrf_forwardable_headers_drops_credentials() {
     ];
     let out = oxide_server::ssrf_forwardable_headers(&headers);
     let names: Vec<&str> = out.iter().map(|(k, _)| k.as_str()).collect();
-    assert!(!names.iter().any(|n| n.eq_ignore_ascii_case("authorization")), "Authorization dropped: {names:?}");
-    assert!(!names.iter().any(|n| n.eq_ignore_ascii_case("cookie")), "Cookie dropped: {names:?}");
-    assert!(!names.iter().any(|n| n.eq_ignore_ascii_case("x-custom")), "unknown dropped: {names:?}");
-    assert!(names.iter().any(|n| n.eq_ignore_ascii_case("accept")), "accept kept");
-    assert!(names.iter().any(|n| n.eq_ignore_ascii_case("content-type")), "content-type kept");
-    assert!(names.iter().any(|n| n.eq_ignore_ascii_case("user-agent")), "user-agent kept");
-    assert_eq!(out.len(), 3, "exactly the three allowlisted headers survive");
+    assert!(
+        !names
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case("authorization")),
+        "Authorization dropped: {names:?}"
+    );
+    assert!(
+        !names.iter().any(|n| n.eq_ignore_ascii_case("cookie")),
+        "Cookie dropped: {names:?}"
+    );
+    assert!(
+        !names.iter().any(|n| n.eq_ignore_ascii_case("x-custom")),
+        "unknown dropped: {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n.eq_ignore_ascii_case("accept")),
+        "accept kept"
+    );
+    assert!(
+        names.iter().any(|n| n.eq_ignore_ascii_case("content-type")),
+        "content-type kept"
+    );
+    assert!(
+        names.iter().any(|n| n.eq_ignore_ascii_case("user-agent")),
+        "user-agent kept"
+    );
+    assert_eq!(
+        out.len(),
+        3,
+        "exactly the three allowlisted headers survive"
+    );
 }
 
 // ─── Wave A: asset-cache TTL (A5) ────────────────────────────────────────
@@ -2169,20 +2246,26 @@ fn ssrf_forwardable_headers_drops_credentials() {
 #[test]
 fn asset_cache_ttl_defaults_and_overrides() {
     // Default when the env var is unset.
-    unsafe { std::env::remove_var("OXIDE_ASSET_CACHE_TTL_SECS"); }
+    unsafe {
+        std::env::remove_var("OXIDE_ASSET_CACHE_TTL_SECS");
+    }
     assert_eq!(
         oxide_server::asset_cache_ttl(),
         std::time::Duration::from_secs(300),
         "default TTL is 300s",
     );
     // Override.
-    unsafe { std::env::set_var("OXIDE_ASSET_CACHE_TTL_SECS", "5"); }
+    unsafe {
+        std::env::set_var("OXIDE_ASSET_CACHE_TTL_SECS", "5");
+    }
     assert_eq!(
         oxide_server::asset_cache_ttl(),
         std::time::Duration::from_secs(5),
         "env overrides the TTL",
     );
-    unsafe { std::env::remove_var("OXIDE_ASSET_CACHE_TTL_SECS"); }
+    unsafe {
+        std::env::remove_var("OXIDE_ASSET_CACHE_TTL_SECS");
+    }
 }
 
 // ─── Wave A: OG rate limit (A3) ──────────────────────────────────────────
