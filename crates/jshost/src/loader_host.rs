@@ -17,6 +17,12 @@ pub struct LoaderHost {
     pool: Arc<dyn Pool>,
 }
 
+/// B5 kill switch: whether the buffered (await-all) path is requested.
+/// Pure so it is testable without mutating the process environment.
+fn buffered_from(value: Option<String>) -> bool {
+    value.map(|v| v == "1").unwrap_or(false)
+}
+
 impl LoaderHost {
     pub fn new(pool: Arc<dyn Pool>) -> Self {
         Self { pool }
@@ -107,11 +113,25 @@ impl LoaderHost {
         &self,
         module_path: &str,
         input: Value,
-    ) -> Result<(
-        Value,
-        tokio::sync::mpsc::Receiver<Value>,
-    )> {
-        let payload = Self::build_payload(module_path, &input);
+    ) -> Result<(Value, tokio::sync::mpsc::Receiver<Value>)> {
+        let mut payload = Self::build_payload(module_path, &input);
+        // B-03: the V8 backend reads this flag to stream settle lines; the
+        // Node worker always streams when the loader registered `defer()`s
+        // and ignores the key.
+        //
+        // B5 kill switch: `OXIDE_DEFER_BUFFERED=1` falls back to the
+        // await-all path for one release. It is the escape hatch if the
+        // per-settle delivery misbehaves in a deployment — the caller still
+        // gets a complete payload, just later.
+        let buffered = buffered_from(std::env::var("OXIDE_DEFER_BUFFERED").ok());
+        if buffered {
+            let v = self.run(module_path, input).await?;
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
+            return Ok((v, rx));
+        }
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("__oxide_stream".to_string(), true.into());
+        }
         let route = payload
             .get("route")
             .and_then(|v| v.as_str())
@@ -132,7 +152,10 @@ impl LoaderHost {
         match stream {
             crate::CallStream::Complete(bytes) => {
                 let v = serde_json::from_slice::<Value>(&bytes).map_err(|e| {
-                    crate::err("JSH-LOADER", format!("loader:run returned invalid JSON: {e}"))
+                    crate::err(
+                        "JSH-LOADER",
+                        format!("loader:run returned invalid JSON: {e}"),
+                    )
                 })?;
                 if let Some(m) = v.get("__oxide_error").and_then(|x| x.as_str()) {
                     return Err(crate::err("JSH-LOADER", m.to_string()));
@@ -173,7 +196,10 @@ impl LoaderHost {
                     }
                 });
                 let init = init_rx.await.map_err(|_| {
-                    crate::err("JSH-LOADER", "loader stream ended before the initial payload")
+                    crate::err(
+                        "JSH-LOADER",
+                        "loader stream ended before the initial payload",
+                    )
                 })??;
                 if let Some(m) = init.get("__oxide_error").and_then(|x| x.as_str()) {
                     return Err(crate::err("JSH-LOADER", m.to_string()));
@@ -997,9 +1023,8 @@ impl SocketHost {
 /// is populated exactly as the old await-all path populated it — while the
 /// worker no longer blocks on the slowest defer.
 fn merge_settle_stream(bytes: &[u8]) -> Result<Value> {
-    let text = std::str::from_utf8(bytes).map_err(|e| {
-        crate::err("JSH-LOADER", format!("loader:run stream is not UTF-8: {e}"))
-    })?;
+    let text = std::str::from_utf8(bytes)
+        .map_err(|e| crate::err("JSH-LOADER", format!("loader:run stream is not UTF-8: {e}")))?;
     let mut lines = text.lines().filter(|l| !l.trim().is_empty());
     let first = lines
         .next()
@@ -1042,7 +1067,8 @@ mod settle_stream_tests {
 
     #[test]
     fn merges_settle_lines_into_deferred() {
-        let bytes = br#"{"ok":true,"status":200,"data":{"t":"x"},"deferred":{},"deferredPending":["1","2"]}
+        let bytes =
+            br#"{"ok":true,"status":200,"data":{"t":"x"},"deferred":{},"deferredPending":["1","2"]}
 {"deferredSettle":{"id":"1","value":{"a":1}}}
 {"deferredSettle":{"id":"2","error":"boom"}}
 "#;
@@ -1064,5 +1090,20 @@ mod settle_stream_tests {
         // for the single-chunk shape by checking the bytes parse directly.
         let v: Value = serde_json::from_slice(bytes).expect("single");
         assert_eq!(v["status"], 200);
+    }
+}
+
+#[cfg(test)]
+mod kill_switch_tests {
+    use super::buffered_from;
+
+    /// The switch is a pure predicate over the env value, so it is testable
+    /// in a crate that forbids `unsafe` (which `set_var` needs).
+    #[test]
+    fn buffered_flag_semantics() {
+        assert!(!buffered_from(None), "unset -> streaming");
+        assert!(!buffered_from(Some("0".into())), "0 -> streaming");
+        assert!(!buffered_from(Some("true".into())), "anything but 1 -> streaming");
+        assert!(buffered_from(Some("1".into())), "1 -> buffered");
     }
 }
