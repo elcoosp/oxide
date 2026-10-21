@@ -393,7 +393,9 @@ mod tests {
             "security.sessionKeys missing"
         );
         assert!(
-            v["properties"]["fonts"]["properties"].get("families").is_some(),
+            v["properties"]["fonts"]["properties"]
+                .get("families")
+                .is_some(),
             "fonts.families missing"
         );
     }
