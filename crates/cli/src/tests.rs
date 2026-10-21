@@ -190,7 +190,8 @@ fn test_request(method: &str, url: &str) -> oxide_server::OxideRequest {
     oxide_server::OxideRequest {
         method: method.into(),
         url: url.into(),
-        headers: Vec::new(),
+        headers: std::sync::Arc::new(Vec::new()),
+        header_index: Default::default(),
         body: bytes::Bytes::new(),
         request_id: "dispatch-test".into(),
         trace: None,
@@ -4409,7 +4410,7 @@ async fn session_codec_decodes_into_locals_session() {
     // Request with the encoded cookie.
     let mut req = test_request("GET", "/");
     // B-05: browsers deliver the sealed token in the `Cookie` header.
-    req.headers
+    std::sync::Arc::make_mut(&mut req.headers)
         .push(("cookie".to_string(), format!("oxide_session={cookie}")));
     let resp = dispatch(req).await;
     assert_eq!(resp.status, 200, "request served");
@@ -4504,7 +4505,7 @@ async fn session_codec_tampered_cookie_yields_empty_session() {
     );
 
     let mut req = test_request("GET", "/");
-    req.headers.push((
+    std::sync::Arc::make_mut(&mut req.headers).push((
         "cookie".to_string(),
         "oxide_session=not-a-real-token".to_string(),
     ));
