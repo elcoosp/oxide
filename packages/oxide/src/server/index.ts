@@ -646,3 +646,4 @@ export function srcset(widths: ReadonlyArray<number>, baseUrl: string): string {
   const sep = baseUrl.includes('?') ? '&' : '?'
   return sorted.map((w) => `${baseUrl}${sep}w=${w} ${w}w`).join(', ')
 }
+export * from './content.ts'

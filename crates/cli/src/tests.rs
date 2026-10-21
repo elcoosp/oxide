@@ -2799,6 +2799,30 @@ async fn build_emits_content_search_index_for_collection() {
 
     let out = String::from_utf8_lossy(&buf);
     assert!(out.contains("content index: posts"), "{out}");
+
+    // §16 / K1: the entries file exists alongside the search index — the
+    // loader-facing data surface (`getCollection` / `getEntry`). Its
+    // presence is what makes a loader able to read the collection bodies,
+    // not just the search terms.
+    let entries_path = root.join("dist/content/posts.entries.json");
+    assert!(
+        entries_path.is_file(),
+        "entries file emitted alongside the search index"
+    );
+    let entries_body = std::fs::read_to_string(&entries_path).unwrap();
+    let entries_doc: serde_json::Value = serde_json::from_str(&entries_body).unwrap();
+    assert_eq!(
+        entries_doc["name"], "posts",
+        "collection name recorded: {entries_body}"
+    );
+    let entries = entries_doc["entries"].as_array().expect("entries array");
+    assert_eq!(entries.len(), 2, "both .md entries present");
+    // Each entry has the shape the loader consumes.
+    for e in entries {
+        assert!(e.get("slug").and_then(|s| s.as_str()).is_some());
+        assert!(e.get("frontmatter").is_some());
+        assert!(e.get("body").and_then(|s| s.as_str()).is_some());
+    }
 }
 
 // ------------------------------------------------------- §20 W3C trace context

@@ -2266,6 +2266,25 @@ fn emit_content_search_indexes(
         let json = oxide_assets::search_index_to_json(&idx)
             .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
         std::fs::write(out_dir.join(format!("{}.index.json", coll.name)), json)?;
+        // §16 / K1: emit the full entries too. The search index is a
+        // *projection* (terms + slugs + title/fields), too lossy for a
+        // loader that needs the body. A page.server.ts's
+        // `getCollection(name)` reads this file at request time.
+        let entries_json = serde_json::json!({
+            "name": scanned.name,
+            "entries": scanned.entries.iter().map(|e| serde_json::json!({
+                "slug": e.slug,
+                "frontmatter": e.frontmatter,
+                "body": e.body_markdown,
+                "is_mdx": e.is_mdx,
+            })).collect::<Vec<_>>(),
+        });
+        if let Ok(pretty) = serde_json::to_string_pretty(&entries_json) {
+            let _ = std::fs::write(
+                out_dir.join(format!("{}.entries.json", coll.name)),
+                pretty,
+            );
+        }
         outln!(
             w,
             "content index: {} ({} entries) -> dist/content/{}.index.json",
