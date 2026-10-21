@@ -337,6 +337,21 @@ pub async fn op_oxide_cache_tag(#[string] tag: String) -> String {
 /// `#[op2]` turns the decorated wrapper into a 0-arg `OpDecl` generator,
 /// which cannot be invoked as a normal async function.
 pub async fn compile_module_impl(path: String, code: String, lang: String) -> String {
+    // B-13: memoise by (path, lang, content hash). The Node worker gates
+    // recompiles by source hash too; this keeps the Oxc pass from re-running
+    // when a V8 caller asks for the same module twice. Capped so plugin
+    // transforms of many distinct files cannot grow the map without bound.
+    static COMPILE_MEMO: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, String>>,
+    > = std::sync::OnceLock::new();
+    let memo = COMPILE_MEMO.get_or_init(Default::default);
+    let key = format!(
+        "{path}\u{0}{lang}\u{0}{}",
+        blake3::hash(code.as_bytes()).to_hex()
+    );
+    if let Some(hit) = memo.lock().unwrap().get(&key).cloned() {
+        return hit;
+    }
     let source = if let Some(h) = transform_handler() {
         match h.transform(&path, &code).await {
             Ok(s) => s,
@@ -366,14 +381,24 @@ pub async fn compile_module_impl(path: String, code: String, lang: String) -> St
         dev: true,
         jsx_import_source: None,
     };
-    match oxide_compiler::OxcTransformer.transform_passes_only(&input) {
+    let result = match oxide_compiler::OxcTransformer.transform_passes_only(&input) {
         Ok(out) => serde_json::json!({ "code": out }).to_string(),
         Err(e) => serde_json::json!({
             "code": e.0.code,
             "error": format!("compile_module failed for {path}: {}", e.0.message),
         })
         .to_string(),
+    };
+    {
+        let mut m = memo.lock().unwrap();
+        if m.len() >= 1024 {
+            // Simple bound: drop the memo rather than track LRU order. A
+            // dropped memo only costs a recompile, never correctness.
+            m.clear();
+        }
+        m.insert(key, result.clone());
     }
+    result
 }
 
 /// §6.2 / §15: compile a user server module (TS/TSX/MJS) — the V8 parity
