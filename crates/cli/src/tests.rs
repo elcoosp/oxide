@@ -6681,3 +6681,23 @@ async fn strip_close_and_append_settles_records_settle_stage() {
     );
 }
 
+// ------------------------------ §20 / O3c: parallel-load savings
+
+#[test]
+fn parallel_load_savings_equals_shorter_side() {
+    // Parallel path: layout took 40ms, page took 15ms. Sequential would
+    // cost 55ms; parallel costs 40ms. Saving = 15ms = min(a, b).
+    assert!((parallel_load_savings_ms(40.0, 15.0) - 15.0).abs() < 0.001);
+    assert!((parallel_load_savings_ms(15.0, 40.0) - 15.0).abs() < 0.001);
+}
+
+#[test]
+fn parallel_load_savings_zero_when_equal_or_sequential() {
+    // Equal durations — nothing saved.
+    assert!((parallel_load_savings_ms(20.0, 20.0) - 20.0).abs() < 0.001);
+    // Sequential caller passes one side as 0 — no saving to record.
+    assert!((parallel_load_savings_ms(20.0, 0.0) - 0.0).abs() < 0.001);
+    assert!((parallel_load_savings_ms(0.0, 20.0) - 0.0).abs() < 0.001);
+    // Never negative even with a clock skew into the past.
+    assert!((parallel_load_savings_ms(-1.0, 20.0) - 0.0).abs() < 0.001);
+}

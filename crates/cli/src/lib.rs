@@ -1335,6 +1335,18 @@ fn enrich_manifest_layout_chains(
     Ok(())
 }
 
+/// §9.2 / §20 / O3c: the wall-clock time the parallel load path saved.
+/// When the last-layout load and the page load run under `tokio::join!`,
+/// the total load phase is `max(a, b)` instead of `a + b`; the saving is
+/// `min(a, b)`. Zero when they are the same duration (nothing saved) or
+/// when the sequential path ran (caller passes 0.0 for one side).
+///
+/// Pure so the arithmetic is testable without a real server: the
+/// arithmetic *is* the marking, the recorder just carries the number.
+fn parallel_load_savings_ms(a_ms: f64, b_ms: f64) -> f64 {
+    a_ms.min(b_ms).max(0.0)
+}
+
 fn canonical_route_id(id: &str) -> String {
     id.strip_suffix("/page").unwrap_or(id).to_string()
 }
@@ -7036,7 +7048,37 @@ fn build_dispatch(
                 // Page does not call `parent()`, so this value is unused.
                 pinput.parent_data = serde_json::Value::Null;
 
-                let (layout_res, page_res) = tokio::join!(runner.run(linput), runner.run(pinput));
+                // §20 / O3c: time each side of the join. The wall-clock
+                // saving vs a sequential layout→page chain is
+                // `min(layout_ms, page_ms)`; recording it on the request's
+                // waterfall lets a user tell whether the route's schema
+                // actually exercised the parallel path or whether `needs_
+                // parent` silently forced a sequential chain.
+                let (layout_res, layout_ms, page_res, page_ms) = {
+                    let layout_start = std::time::Instant::now();
+                    let (lr, pr) = tokio::join!(
+                        async {
+                            let r = runner.run(linput).await;
+                            (r, layout_start.elapsed().as_secs_f64() * 1000.0)
+                        },
+                        async {
+                            let start = std::time::Instant::now();
+                            let r = runner.run(pinput).await;
+                            (r, start.elapsed().as_secs_f64() * 1000.0)
+                        }
+                    );
+                    let (layout_res, layout_ms) = lr;
+                    let (page_res, page_ms) = pr;
+                    (layout_res, layout_ms, page_res, page_ms)
+                };
+                if let Some(rec) = waterfall.as_ref() {
+                    let saved = parallel_load_savings_ms(layout_ms, page_ms);
+                    rec.record_staged(
+                        &req_owned.request_id,
+                        vec![("load-overlap".to_string(), saved)],
+                        req_owned.trace.as_ref().map(|t| t.trace_id.clone()),
+                    );
+                }
 
                 // Layout result first (precedence: matches sequential).
                 match layout_res {
