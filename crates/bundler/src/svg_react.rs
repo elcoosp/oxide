@@ -87,7 +87,11 @@ pub fn svg_to_react_component(source: &str, path_for_errors: &str) -> Result<Str
         match key.as_str() {
             // Numeric geometry props can stay strings; React accepts both.
             "width" | "height" | "viewBox" | "fill" | "stroke" | "class" | "className" => {
-                let k = if key == "class" { "className" } else { key.as_str() };
+                let k = if key == "class" {
+                    "className"
+                } else {
+                    key.as_str()
+                };
                 prop_parts.push(format!("{k}: {val}"));
             }
             _ => {
