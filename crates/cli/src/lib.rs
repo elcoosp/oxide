@@ -7701,25 +7701,45 @@ fn build_dispatch(
                         // shell at once and stream only the dynamic boundary
                         // fragments into it; the first request taps the full
                         // render and stores its shell on completion.
-                        let body = match (ppr_for_request.as_ref(), error_status) {
-                            (Some(shells), 0) => {
-                                let pkey = format!("{l0_route}\x1f{}", req_owned.url);
-                                let cached = shells.lock().ok().and_then(|m| m.get(&pkey).cloned());
-                                match cached {
-                                    Some(shell) => ppr_filter_stream(
-                                        shell.replace(l0_cache::NONCE_SENTINEL, &nonce),
-                                        body,
-                                        nonce.clone(),
-                                    ),
-                                    None => ppr_tap_stream(
-                                        body,
-                                        std::sync::Arc::clone(shells),
-                                        pkey,
-                                        nonce.clone(),
-                                    ),
+                        // §10.8 / P0-4 / r8-P0.3: a PPR shell is a *shared*
+                        // asset (the static frame every visitor reuses), so
+                        // it must never be captured from a response that
+                        // varies per user. The concrete case the audit found:
+                        // a login page (or any loader that sets a session
+                        // cookie) freezes its user-specific body into a
+                        // shell served to every subsequent visitor. The L0
+                        // store 30 lines below correctly refuses
+                        // cookie-setting responses; this is the same guard.
+                        // An error-status render is likewise never a shell.
+                        let body = if error_status == 0 && loader_set_cookies.is_empty() {
+                            match ppr_for_request.as_ref() {
+                                Some(shells) => {
+                                    let pkey = format!("{l0_route}\x1f{}", req_owned.url);
+                                    let cached = shells
+                                        .lock()
+                                        .ok()
+                                        .and_then(|m| m.get(&pkey).cloned());
+                                    match cached {
+                                        Some(shell) => ppr_filter_stream(
+                                            shell.replace(l0_cache::NONCE_SENTINEL, &nonce),
+                                            body,
+                                            nonce.clone(),
+                                        ),
+                                        None => ppr_tap_stream(
+                                            body,
+                                            std::sync::Arc::clone(shells),
+                                            pkey,
+                                            nonce.clone(),
+                                        ),
+                                    }
                                 }
+                                None => body,
                             }
-                            _ => body,
+                        } else {
+                            // No PPR on a per-user / error response: the
+                            // body is served live to this caller, never
+                            // tapped for a shell, never filtered from one.
+                            body
                         };
                         // §11 L0: when this response is cacheable, collect
                         // the streamed body once so it can be stored, then

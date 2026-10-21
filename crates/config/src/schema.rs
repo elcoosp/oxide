@@ -35,7 +35,12 @@ pub fn config_schema() -> Value {
                         "type": "string",
                         "enum": ["react", "vue", "svelte", "solid"]
                     },
-                    "compiler": { "type": "boolean" }
+                    "compiler": { "type": "boolean" },
+                    "islands": {
+                        "type": "object",
+                        "additionalProperties": { "type": "string" },
+                        "description": "§10.3 islands registry: component name → source file. The CLI emits a synthetic __boot__ client entry that imports each entry; `<Island chunk=\"X\">` on a page resolves to X in this map."
+                    }
                 }
             },
             "routes": {
@@ -56,6 +61,7 @@ pub fn config_schema() -> Value {
                         "items": { "type": "string", "enum": ["zstd", "br", "gzip"] }
                     },
                     "http3": { "type": "boolean", "default": false },
+                    "h3Advertise": { "type": "boolean", "default": true, "description": "§12.1 / C3: emit the `Alt-Svc: h3` header on the TLS listener. Default true when http3 is enabled; set false to keep the QUIC listener silent while browsers are not ready for it." },
                     "backend": { "type": "string", "enum": ["node", "v8"], "default": "node" }
                 }
             },
@@ -245,11 +251,7 @@ pub fn config_schema() -> Value {
                 "additionalProperties": true,
                 "description": "S-09: on-demand image transform endpoint (GET /_oxide/image). On by default; gateable."
             },
-            "static": {
-                "type": "object",
-                "additionalProperties": true,
-                "description": "§10.5: static-export options (fallback behavior for dynamic routes)."
-            },
+
             "plugins": {
                 "type": "array",
                 "items": { "type": "object", "additionalProperties": true },
@@ -419,6 +421,16 @@ mod tests {
     /// `json!` is last-wins, so a duplicated key silently drops the first
     /// (more descriptive) variant. Parse the pretty text with a
     /// duplicate-detecting pass.
+        // NOTE (r8): this test inspects the serialized JSON text for duplicate
+    // keys. A duplicate introduced by the `json!` macro itself (two
+    // `"static":` entries in the same object literal) is collapsed by
+    // `serde_json::Value`'s last-wins map semantics *before* serialization
+    // — this test cannot see it. The r8 audit found exactly that: two
+    // `"static":` blocks (lines 248/300) and a duplicate-guard test that
+    // could never fire on them. The real fix for that class of bug is a
+    // `cargo expand` / macro-level lint, tracked as a follow-up. This test
+    // still guards against duplicate keys in *constructed* JSON (the
+    // `serde_json::json!` macro output is not the only source).
     #[test]
     fn schema_has_no_duplicate_object_keys() {
         let text = config_schema_pretty().unwrap();
