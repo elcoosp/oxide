@@ -6,6 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 description = "Edge subset: router, odf, head, cache keys (spec 2 D18, 18)"
 
+# B-01: `cdylib` is what makes `cargo build --target wasm32-unknown-unknown`
+# emit a `.wasm`; `rlib` keeps the crate usable from `cargo test` and the CLI.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
 oxide-odf = { workspace = true }
 oxide-router = { workspace = true }
@@ -13,3 +18,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 blake3 = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
