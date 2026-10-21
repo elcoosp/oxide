@@ -23,7 +23,7 @@ if [ ! -x "$CLI" ]; then
     exit 1
 fi
 
-now_us() { perl -MTime::HiRes=time -e 'printf "%d\n", time*1000000'; }
+now_us() { perl -MTime::HiRes=time -e 'printf "%d\n", time*1000'; }
 
 wait_health() {
     local port="$1"
@@ -86,7 +86,7 @@ for fx in smoke-app-react smoke-app-vue smoke-app-svelte smoke-app-solid; do
             *bypass*)   bypass=$((bypass+1)) ;;
         esac
         # time_total is in seconds (float); turn into microseconds (integer).
-        us=$(awk -v t="$lat" 'BEGIN { printf "%d\n", t * 1000000 }')
+        us=$(awk -v t="$lat" 'BEGIN { printf "%d\n", t * 1000 }')
         printf '%s\n' "$us" >> "$tmp"
     done
 
