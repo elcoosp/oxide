@@ -366,10 +366,7 @@ impl ContentStore {
     /// A caller whose cache may contain pre-envelope (raw) blobs should fall
     /// back to [`ContentStore::get`] on `GRAPH-CORRUPT` — the key is still
     /// valid, only the format differs.
-    pub fn get_sealed(
-        &self,
-        key: &CasKey,
-    ) -> Result<Option<crate::artifacts::ArtifactEnvelope>> {
+    pub fn get_sealed(&self, key: &CasKey) -> Result<Option<crate::artifacts::ArtifactEnvelope>> {
         let Some(bytes) = self.get(key)? else {
             return Ok(None);
         };
