@@ -19,7 +19,10 @@ fn sample_head() -> HeadTags {
     HeadTags {
         title: Some("Hello & <World>".to_string()),
         meta: vec![
-            ("name:description".to_string(), "A \"quoted\" desc".to_string()),
+            (
+                "name:description".to_string(),
+                "A \"quoted\" desc".to_string(),
+            ),
             ("property:og:title".to_string(), "OG".to_string()),
             ("charset".to_string(), "utf-8".to_string()),
         ],
@@ -46,18 +49,12 @@ fn snapshot_head_to_html_empty() {
 
 #[test]
 fn snapshot_escape_attr() {
-    insta::assert_snapshot!(
-        "escape_attr",
-        escape_attr("a&b<c>d\"e'f")
-    );
+    insta::assert_snapshot!("escape_attr", escape_attr("a&b<c>d\"e'f"));
 }
 
 #[test]
 fn snapshot_escape_text() {
-    insta::assert_snapshot!(
-        "escape_text",
-        escape_text("a&b<c>d\"e'f")
-    );
+    insta::assert_snapshot!("escape_text", escape_text("a&b<c>d\"e'f"));
 }
 
 // ---------------------------------------------------------------- boundary protocol (§7.1)
@@ -80,10 +77,7 @@ fn snapshot_boundary_content() {
 
 #[test]
 fn snapshot_swapper_script() {
-    insta::assert_snapshot!(
-        "swapper_script",
-        swapper_script("nonce-xyz")
-    );
+    insta::assert_snapshot!("swapper_script", swapper_script("nonce-xyz"));
 }
 
 // ---------------------------------------------------------------- islands (§10.3)
@@ -96,10 +90,7 @@ fn snapshot_island_element() {
         strategy: IslandStrategy::Load,
         props_b64: "T0RGMQAK".to_string(),
     };
-    insta::assert_snapshot!(
-        "island_element",
-        island_element(&d, "<span>3</span>")
-    );
+    insta::assert_snapshot!("island_element", island_element(&d, "<span>3</span>"));
 }
 
 // ---------------------------------------------------------------- script placeholder (§16.6)
@@ -140,11 +131,16 @@ fn snapshot_stream_error_recovery() {
 
 #[test]
 fn snapshot_inject_into_html() {
-    let mut inj = Injector::new(HeadTags::default(), "NONCE4".to_string(), "routes/index/page".to_string());
+    let mut inj = Injector::new(
+        HeadTags::default(),
+        "NONCE4".to_string(),
+        "routes/index/page".to_string(),
+    );
     inj.odf_payload_b64 = Some("T0RGMQAK".to_string());
     inj.css_links = vec!["/app.css".to_string()];
     inj.preload = vec!["/chunk.js".to_string()];
-    let html = "<!doctype html><html><head><title>x</title></head><body><main>hi</main></body></html>";
+    let html =
+        "<!doctype html><html><head><title>x</title></head><body><main>hi</main></body></html>";
     insta::assert_snapshot!(
         "inject_into_html",
         inj.inject_into_html(html).expect("inject")
