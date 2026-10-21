@@ -20,3 +20,4 @@ export {
   setRouteComponentSource, getRouteComponentSource, isParamSegment,
   type ClientManifestLike, type RouteComponentSource, type RouteManifestEntry,
 } from './route-manifest.ts'
+export * from './search.ts'

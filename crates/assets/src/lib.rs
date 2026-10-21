@@ -13,12 +13,16 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 mod content;
+pub mod route_search;
 pub mod content_collection;
 pub mod content_typegen;
 #[cfg(feature = "subset")]
 mod font_subset;
 pub use content::{
     ContentFormat, MdxCompileRequest, parse_content_entry_with_format, parse_mdx_source,
+};
+pub use route_search::{
+    build_route_search_index, extract_from_html, route_search_index_to_json, RouteSearchEntry, RouteSearchIndex,
 };
 pub use content_collection::{
     Collection, CollectionConfig, CollectionEntry, FieldType, IndexedEntry, NativeSchema,

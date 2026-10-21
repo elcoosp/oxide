@@ -5195,6 +5195,31 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         let _ = tree.archive_to(&archive_path);
     }
 
+    // §16 / K2: emit the route search index. Same source as the L0 seed
+    // manifest — the `prerendered` map (route_id → output paths) — but a
+    // different shape and consumer: a client-side island reads it to
+    // answer a query. Extracting from the emitted HTML (not the source
+    // AST) means a loader-injected `<title>`, a plugin-added heading, or
+    // a `defineMeta` override all reach the index as the user sees them.
+    if !prerendered.is_empty() {
+        let search_index = oxide_assets::route_search::build_route_search_index(
+            &prerendered,
+            &dist,
+        );
+        if let Ok(json) = oxide_assets::route_search::route_search_index_to_json(&search_index) {
+            let path = dist.join("client/search-index.json");
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let _ = std::fs::write(&path, json);
+            outln!(
+                w,
+                "search index: {} route(s) -> dist/client/search-index.json",
+                search_index.entries.len()
+            );
+        }
+    }
+
     // PERF-04: write the L0 seed manifest. Each prerendered page's sentineled
     // HTML is stored so `oxide start` can insert it into L0 at boot — a
     // seeded route is an L0 hit on the very first request (no warm-up miss).
