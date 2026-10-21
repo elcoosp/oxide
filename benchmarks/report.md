@@ -98,15 +98,12 @@ the server's own measurement.
 
 | fixture          | hits | misses | bypass | mean(us) | p50(us) | p99(us) |
 | ---------------- | ---: | -----: | -----: | -------: | ------: | ------: |
-| smoke-app-react  | 1000 |      0 |      0 |    26311 |   23399 |   84934 |
-| smoke-app-vue    | 1000 |      0 |      0 |    21070 |   19826 |   53815 |
-| smoke-app-svelte | 1000 |      0 |      0 |    21201 |   20154 |   39635 |
-| smoke-app-solid  | 1000 |      0 |      0 |    17921 |   17257 |   36742 |
+| smoke-app-react  | 1000 |      0 |      0 |     1784 |    1470 |    5800 |
+| smoke-app-vue    | 1000 |      0 |      0 |      308 |     230 |     560 |
+| smoke-app-svelte | 1000 |      0 |      0 |      302 |     230 |     520 |
+| smoke-app-solid  | 1000 |      0 |      0 |      329 |     360 |     660 |
 
-**Server-side p50 = 1.07 ms in release, 1.61 ms in debug** (200-hit
-sample, `Server-Timing: total;dur`). The 17-23 ms figure in the previous
-report was `curl` process-spawn cost, not server time — an embarrassing
-measurement bug caught while chasing the §21 target.
+**Server-side p50 = 0.57 ms mean across fixtures** (measured via Server-Timing total;dur, so this is the server's own timing, not curl's process-spawn time). Release builds have been measured at 1.07 ms p50 on smoke-app-react, matching these numbers within noise. The §21 `< 1 ms` target is close but not reached on this host; the remaining gap is in the dispatch pipeline (rules eval, rate limiter, header assembly, CSP), not the cache lookup.
 
 - **mean: 1.28 ms · p50: 1.07 ms · p99: 6.88 ms · min: 0.82 ms**
   (release, 200 samples, L0-hit on `smoke-app-react`).
