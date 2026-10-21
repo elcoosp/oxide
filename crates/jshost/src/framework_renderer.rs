@@ -21,7 +21,29 @@ use bytes::Bytes;
 use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::sync::Arc;
+
+/// §6.4 / WP-B1: where the adapter resolves route components from.
+///
+/// Production: `entry` is the build-emitted `dist/server/ssr/index.js`, whose
+/// `routes` map is imported once per module generation. Dev: `sources` maps a
+/// canonical route id to an importable source file (or its precompiled JS).
+/// Both are additive to the §7 wire shape; the config no longer carries a
+/// component closure.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ComponentSource {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sources: BTreeMap<String, String>,
+}
+
+impl ComponentSource {
+    pub fn is_empty(&self) -> bool {
+        self.entry.is_none() && self.sources.is_empty()
+    }
+}
 
 /// The per-request shape the pipeline hands to a renderer (spec §7 RenderInput).
 ///
@@ -54,6 +76,11 @@ pub struct FrameworkRenderInput {
     /// as `input.errorRoute`.
     #[serde(default)]
     pub error_route_id: Option<String>,
+    /// §6.4: the build-emitted component surface (or the dev source map).
+    /// Filled by the renderer from the stack's shared source; absent keeps
+    /// the legacy adapter behaviour (an explicit `componentFor` override).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub components: Option<ComponentSource>,
 }
 
 impl FrameworkRenderInput {
@@ -69,12 +96,13 @@ impl FrameworkRenderInput {
             }),
             layouts: Vec::new(),
             error_route_id: None,
+            components: None,
         }
     }
 
     /// Serialize into the JSON payload the JS-side worker expects.
     fn to_payload(&self) -> Value {
-        serde_json::json!({
+        let mut payload = serde_json::json!({
             "route": self.route,
             "url": self.url,
             "params": self.params,
@@ -82,7 +110,13 @@ impl FrameworkRenderInput {
             "head": self.head,
             "layouts": self.layouts,
             "errorRoute": self.error_route_id,
-        })
+        });
+        if let Some(cs) = &self.components {
+            if !cs.is_empty() {
+                payload["components"] = serde_json::to_value(cs).unwrap_or(Value::Null);
+            }
+        }
+        payload
     }
 }
 
