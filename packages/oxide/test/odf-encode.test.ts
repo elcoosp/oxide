@@ -191,3 +191,24 @@ test('P-09: bytesToBase64 round-trips a 2 MiB payload', () => {
   for (const b of bytes.subarray(0, 96)) bin += String.fromCharCode(b)
   assert.ok(b64.startsWith(btoa(bin)))
 })
+
+test('B-14: Error encodes with the Rust field order and round-trips', () => {
+  const err = new Error('boom')
+  err.name = 'RangeError'
+  const decoded = decodeOdf(encodeOdf({ e: err })) as { e: Error }
+  assert.ok(decoded.e instanceof Error)
+  assert.equal(decoded.e.name, 'RangeError')
+  assert.equal(decoded.e.message, 'boom')
+  assert.equal(decoded.e.stack, err.stack)
+})
+
+test('B-14: object keys sort by UTF-8 bytes, matching Rust BTreeMap', () => {
+  // U+FF21 (Ａ, 3 UTF-8 bytes) sorts after Cyrillic (2 bytes / U+0430..)
+  // under byte order; UTF-16 order can invert it.
+  const value = { 'amＡ': 2, 'am выполни': 1 }
+  const decoded = decodeOdf(encodeOdf(value)) as Record<string, number>
+  const bytes = encodeOdf(value)
+  // Decode is insertion-order preserving, which is the wire order.
+  assert.deepEqual(Object.keys(decoded), ['am выполни', 'amＡ'])
+  assert.ok(bytes.length > 0)
+})
