@@ -4,8 +4,13 @@
 # and runs, but `ld64` prints ~30 "could not find symbol" lines per link step
 # that bury real warnings.
 #
-# [target.<host>] only applies when `--target <host>` is passed explicitly;
-# builds without a --target read `[build].rustflags`. Use the latter so the
-# suppression applies to plain `cargo build` too.
-[build]
+# `-Wl,-w` is a *compiler-driver* prefix — it tells the driver to forward `-w`
+# to the linker. On host builds rustc invokes `cc` (which strips the prefix);
+# when `--target wasm32-unknown-unknown` is passed, rustc invokes `rust-lld`
+# directly and `rust-lld` receives the literal string `-Wl,-w` (unknown arg).
+#
+# The flag is scoped to host triples so wasm32 builds don't see it. Note: this
+# means a plain `cargo build` (no --target) DOES apply the flag on the host,
+# because cargo evaluates the host triple as the implicit target.
+[target.aarch64-apple-darwin]
 rustflags = ["-C", "link-arg=-Wl,-w"]

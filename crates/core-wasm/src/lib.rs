@@ -191,8 +191,12 @@ pub mod bindings {
     /// JSON value in, ODF bytes out (JS `Uint8Array`).
     #[wasm_bindgen]
     pub fn encode_odf(json: &[u8]) -> Vec<u8> {
-        let value: serde_json::Value =
+        // `oxide_odf::Value` is the ODF model; `serde_json::Value` is the wire
+        // form the caller passes. `Value::from_json` is the bridge (the same
+        // one the native encoder uses at the boundary).
+        let json_value: serde_json::Value =
             serde_json::from_slice(json).unwrap_or(serde_json::Value::Null);
+        let value = crate::Value::from_json(&json_value);
         crate::encode_odf(&value).unwrap_or_default()
     }
 
@@ -201,6 +205,10 @@ pub mod bindings {
     pub fn decode_odf(odf: &[u8]) -> Result<Vec<u8>, JsValue> {
         let v = crate::decode_odf(odf)
             .map_err(|e| JsValue::from_str(&format!("edge decode_odf: {}", e.0.message)))?;
-        serde_json::to_vec(&v).map_err(|e| JsValue::from_str(&format!("edge decode_odf: {e}")))
+        // `Value::to_json` is the inverse of `from_json` above (a lossy but
+        // total projection: Ref → null, Deferred → {"__deferred": id}, etc).
+        let json_value = v.to_json();
+        serde_json::to_vec(&json_value)
+            .map_err(|e| JsValue::from_str(&format!("edge decode_odf: {e}")))
     }
 }
