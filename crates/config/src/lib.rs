@@ -136,11 +136,34 @@ pub struct OxideConfig {
 #[serde(rename_all = "camelCase", default)]
 pub struct OgConfig {
     pub enabled: bool,
+    /// A3: per-peer token-bucket limit applied before rasterization.
+    /// Defaults to 10 renders / 60s.
+    pub rate_limit: OgRateLimit,
 }
 
 impl Default for OgConfig {
     fn default() -> Self {
-        Self { enabled: false }
+        Self {
+            enabled: false,
+            rate_limit: OgRateLimit::default(),
+        }
+    }
+}
+
+/// A3: the `og.rateLimit` knob. `max` renders per `windowSecs` per peer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct OgRateLimit {
+    pub max: u32,
+    pub window_secs: u64,
+}
+
+impl Default for OgRateLimit {
+    fn default() -> Self {
+        Self {
+            max: 10,
+            window_secs: 60,
+        }
     }
 }
 
@@ -409,6 +432,14 @@ pub enum CacheHandlerConfig {
 pub struct ImagesConfig {
     pub formats: Vec<String>,
     pub remote_patterns: Vec<RemotePattern>,
+    /// §16.1: maximum concurrent rasterizations. Each transform is CPU-bound;
+    /// unbounded concurrency lets a few clients saturate every core.
+    #[serde(default = "default_image_concurrency")]
+    pub max_concurrency: usize,
+    /// §16.1: largest accepted `w`/`h`. A user-supplied size is not trusted
+    /// to allocate an arbitrarily large canvas.
+    #[serde(default = "default_image_max_dimension")]
+    pub max_dimension: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -424,8 +455,18 @@ impl Default for ImagesConfig {
         Self {
             formats: vec!["avif".into(), "webp".into()],
             remote_patterns: Vec::new(),
+            max_concurrency: default_image_concurrency(),
+            max_dimension: default_image_max_dimension(),
         }
     }
+}
+
+fn default_image_concurrency() -> usize {
+    4
+}
+
+fn default_image_max_dimension() -> u32 {
+    8192
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -557,6 +598,11 @@ pub struct BuildConfig {
     /// trusted-branch write). Reads `GIT_BRANCH` at build time.
     #[serde(default)]
     pub write_branches: Option<Vec<String>>,
+    /// §16 / K2: emit the route-search index (`dist/client/search-index.json`).
+    /// On by default when prerendered pages exist; set `false` for projects
+    /// that do not ship a client-side search UI.
+    #[serde(default = "default_true")]
+    pub route_search: bool,
 }
 impl Default for BuildConfig {
     fn default() -> Self {
@@ -566,6 +612,7 @@ impl Default for BuildConfig {
             ssr_externals: Vec::new(),
             remote_cache: None,
             write_branches: None,
+            route_search: true,
         }
     }
 }
