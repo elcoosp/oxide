@@ -100,6 +100,11 @@ export interface ClientInput {
   /** SPEC-10: the resolved request locale for this route, when the project
    *  configures i18n. Absent otherwise. */
   locale?: string
+  /** §17.1 / §7.1: the CSP nonce for this render. An adapter stamps it on
+   *  any `<script>` it emits — notably the deferred-boundary swapper. Under
+   *  `strict-dynamic` a script without it is blocked. Absent when the
+   *  deployment configures no CSP. */
+  nonce?: string
   /** Previous navigation input, when diffing (optional). */
   from?: ClientInput
   /** Search params of the navigation. */
