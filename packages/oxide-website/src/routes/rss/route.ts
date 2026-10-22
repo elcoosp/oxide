@@ -5,7 +5,7 @@ import { listPosts, xmlEsc } from '../../lib/md.server.ts'
 import { site } from '../../lib/site.ts'
 
 export async function GET(_request: Request): Promise<Response> {
-  const items = listPosts()
+  const items = (await listPosts())
     .map(
       (p) => `    <item>
       <title>${xmlEsc(p.title)}</title>
