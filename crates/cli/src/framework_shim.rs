@@ -133,6 +133,7 @@ fn to_fw_input(input: PageRenderInput) -> FrameworkRenderInput {
         components: None,
         locale: input.locale,
         deferred: input.deferred,
+        nonce: input.nonce,
     }
 }
 
@@ -158,6 +159,7 @@ impl PageRenderer for AdapterPageRenderer {
             error_route_id: None,
             locale: None,
             deferred: std::collections::BTreeMap::new(),
+            nonce: None,
         };
         let _ = self.render(synthetic).await;
         Ok(())
