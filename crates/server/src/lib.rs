@@ -1265,6 +1265,16 @@ impl RateLimiter {
     pub fn allow(&self, key: &str, max: u32, window_secs: u64) -> bool {
         let mut map = self.buckets.lock().unwrap();
         let now = Instant::now();
+        // A3 / S-10: bound the bucket map. Keys are attacker-influenced (the
+        // peer IP or a forwarded address), so without eviction a long-lived
+        // process accumulates one entry per address forever. Drop buckets
+        // idle longer than the largest window we can observe (one hour) once
+        // the map grows past a sane bound. A bucket that is evicted while
+        // still active simply starts full again — the same coarse limit the
+        // token bucket already has between processes.
+        if map.len() > 4096 {
+            map.retain(|_, (_, last)| now.duration_since(*last).as_secs() < 3600);
+        }
         let rate = max as f64 / window_secs.max(1) as f64;
         let bucket = map.entry(key.to_string()).or_insert((max as f64, now));
         let elapsed = now.duration_since(bucket.1).as_secs_f64();
@@ -1633,6 +1643,8 @@ pub trait ActionDispatcher: Send + Sync {
         // middleware. An action's `event.locals` reads this; absent (empty
         // object) when no middleware ran.
         locals: &serde_json::Value,
+        // §20: W3C trace context for outgoing fetches inside the action.
+        trace: Option<&serde_json::Value>,
     ) -> std::result::Result<ActionRunResult, DispatchError>;
 }
 
@@ -1728,6 +1740,41 @@ pub struct ImageEndpoint {
     /// Byte ceiling on a single remote fetch. Protects the server from a
     /// source that streams an unbounded body.
     pub remote_max_bytes: usize,
+    /// §16.1: transformed-result cache keyed by source bytes + transform
+    /// params. Shared across clones of the endpoint (the remote-image arm
+    /// rebuilds the struct per request), so it is an `Arc`.
+    pub result_cache: Arc<std::sync::Mutex<std::collections::HashMap<String, ImageCacheEntry>>>,
+    /// §16.1: concurrent-transform ceiling. `None` means unlimited (tests).
+    pub max_concurrency: usize,
+    /// Live transforms. Incremented before `process`, decremented after.
+    pub in_flight: Arc<std::sync::atomic::AtomicUsize>,
+    /// §16.1: largest accepted width/height.
+    pub max_dimension: u32,
+}
+
+/// §16.1: attach an LQIP data URI (if the backend produced one) as a
+/// response header. Repeating a 2 KB data URI in every `<img>` body is not
+/// the protocol here; the client reads it from the response metadata.
+trait ImagePlaceholderExt {
+    fn pipe_image_placeholder(self, placeholder: Option<String>) -> Self;
+}
+
+impl ImagePlaceholderExt for OxideResponse {
+    fn pipe_image_placeholder(self, placeholder: Option<String>) -> Self {
+        match placeholder {
+            Some(p) => self.with_header("x-oxide-lqip", p),
+            None => self,
+        }
+    }
+}
+
+/// §16.1: one cached transformed image.
+#[derive(Debug, Clone)]
+pub struct ImageCacheEntry {
+    pub bytes: bytes::Bytes,
+    pub content_type: String,
+    pub etag: String,
+    pub placeholder: Option<String>,
 }
 
 /// §16.1: one allow-listed remote image host.
@@ -1751,6 +1798,12 @@ fn clone_image_endpoint(e: &ImageEndpoint) -> ImageEndpoint {
         remote_patterns: e.remote_patterns.clone(),
         ssrf_allow_list: e.ssrf_allow_list.clone(),
         remote_max_bytes: e.remote_max_bytes,
+        // Shared, not copied: the cache and the in-flight counter must be
+        // the same across per-request endpoint clones.
+        result_cache: Arc::clone(&e.result_cache),
+        max_concurrency: e.max_concurrency,
+        in_flight: Arc::clone(&e.in_flight),
+        max_dimension: e.max_dimension,
     }
 }
 
@@ -1773,6 +1826,8 @@ pub struct ImageEndpointRequest {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub quality: Option<u8>,
+    /// §16.1: `blur` / `pixelate` LQIP request, passed through to the backend.
+    pub placeholder: Option<String>,
 }
 
 /// Bytes plus the chosen content type and a cache key.
@@ -1781,6 +1836,8 @@ pub struct ImageEndpointResult {
     pub bytes: Vec<u8>,
     pub content_type: &'static str,
     pub cache_key: String,
+    /// §16.1: optional LQIP data URI when the request asked for one.
+    pub placeholder: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -2204,30 +2261,109 @@ fn serve_image_endpoint(endpoint: Option<&ImageEndpoint>, raw_url: &str) -> Nati
     };
 
     let format_static = parsed.format;
+    // §16.1: never allocate a canvas larger than the configured ceiling.
+    for (name, dim) in [("w", parsed.width), ("h", parsed.height)] {
+        if let Some(d) = dim {
+            if d == 0 || d > endpoint.max_dimension {
+                return NativePrefix::Raw(
+                    OxideResponse::new(400, format!("image `{name}` out of range (max {})", endpoint.max_dimension))
+                        .with_header("content-type", "text/plain; charset=utf-8"),
+                );
+            }
+        }
+    }
+    // §16.1: cache the transformed bytes by (source, format, w, h, q). The
+    // source bytes are hashed, so a changed file naturally misses. The key
+    // is also the ETag, independent of the backend's own cache key.
+    let mut key_hasher = blake3::Hasher::new();
+    key_hasher.update(&source);
+    key_hasher.update(format_static.unwrap_or("").as_bytes());
+    key_hasher.update(&parsed.width.unwrap_or(0).to_le_bytes());
+    key_hasher.update(&parsed.height.unwrap_or(0).to_le_bytes());
+    key_hasher.update(&[parsed.quality.unwrap_or(0)]);
+    let key = key_hasher.finalize().to_hex().to_string();
+    if let Some(cached) = endpoint
+        .result_cache
+        .lock()
+        .ok()
+        .and_then(|c| c.get(&key).cloned())
+    {
+        return NativePrefix::Raw(
+            OxideResponse::new(200, cached.bytes)
+                .with_header("content-type", cached.content_type)
+                .with_header("Cache-Control", "public, max-age=31536000, immutable")
+                .with_header("ETag", cached.etag)
+                .with_header("Vary", "Accept")
+                .pipe_image_placeholder(cached.placeholder),
+        );
+    }
+    // §16.1: bound concurrent CPU-bound transforms. A request that arrives
+    // over the ceiling is shed with 503 + Retry-After rather than queueing
+    // behind every other transform (the work is synchronous, so queueing
+    // would pin a request thread).
+    if endpoint.max_concurrency > 0 {
+        let live = endpoint
+            .in_flight
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if live >= endpoint.max_concurrency {
+            endpoint
+                .in_flight
+                .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            return NativePrefix::Raw(
+                OxideResponse::new(503, "image transform concurrency limit reached")
+                    .with_header("retry-after", "1")
+                    .with_header("content-type", "text/plain; charset=utf-8"),
+            );
+        }
+    }
     let req = ImageEndpointRequest {
         source,
         format: format_static,
         width: parsed.width,
         height: parsed.height,
         quality: parsed.quality,
+        placeholder: parsed.placeholder.clone(),
     };
 
-    match endpoint.backend.process(req) {
-        Ok(result) => NativePrefix::Raw(
-            OxideResponse::new(200, Bytes::from(result.bytes))
-                .with_header("content-type", result.content_type)
-                // §16.1: transformed images are content-addressed by the
-                // backend's cache key, so they are safe to cache immutably.
-                .with_header("Cache-Control", "public, max-age=31536000, immutable")
-                .with_header(
-                    "ETag",
-                    format!(
-                        "\"{}\"",
-                        &result.cache_key[..16.min(result.cache_key.len())]
-                    ),
-                )
-                .with_header("Vary", "Accept"),
-        ),
+    let result = endpoint.backend.process(req);
+    if endpoint.max_concurrency > 0 {
+        endpoint
+            .in_flight
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    match result {
+        Ok(result) => {
+            let etag = format!(
+                "\"{}\"",
+                &result.cache_key[..16.min(result.cache_key.len())]
+            );
+            if let Ok(mut c) = endpoint.result_cache.lock() {
+                // Bound the cache; entries are immutable, so dropping the
+                // oldest-inserted half is safe and cheap.
+                if c.len() > 256 {
+                    let keep: Vec<String> = c.keys().skip(128).cloned().collect();
+                    c.retain(|k, _| keep.contains(k));
+                }
+                c.insert(
+                    key,
+                    ImageCacheEntry {
+                        bytes: Bytes::from(result.bytes.clone()),
+                        content_type: result.content_type.to_string(),
+                        etag: etag.clone(),
+                        placeholder: result.placeholder.clone(),
+                    },
+                );
+            }
+            NativePrefix::Raw(
+                OxideResponse::new(200, Bytes::from(result.bytes))
+                    .with_header("content-type", result.content_type)
+                    // §16.1: transformed images are content-addressed by the
+                    // backend's cache key, so they are safe to cache immutably.
+                    .with_header("Cache-Control", "public, max-age=31536000, immutable")
+                    .with_header("ETag", etag)
+                    .with_header("Vary", "Accept"),
+            )
+        }
         Err(msg) => NativePrefix::Raw(
             OxideResponse::new(400, format!("image transform failed: {msg}"))
                 .with_header("content-type", "text/plain; charset=utf-8"),
@@ -2246,6 +2382,7 @@ struct ImageQuery {
     height: Option<u32>,
     format: Option<&'static str>,
     quality: Option<u8>,
+    placeholder: Option<String>,
     signature: Option<String>,
 }
 
@@ -2255,6 +2392,7 @@ fn parse_image_query(query: &str) -> std::result::Result<ImageQuery, String> {
     let mut height = None;
     let mut format: Option<&'static str> = None;
     let mut quality = None;
+    let mut placeholder = None;
     let mut signature = None;
     for pair in query.split('&').filter(|p| !p.is_empty()) {
         let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
@@ -2295,6 +2433,13 @@ fn parse_image_query(query: &str) -> std::result::Result<ImageQuery, String> {
                 }
                 quality = Some(q as u8);
             }
+            "placeholder" => {
+                let p = v.to_ascii_lowercase();
+                if p != "blur" && p != "pixelate" {
+                    return Err(format!("unknown `placeholder`: {v:?}"));
+                }
+                placeholder = Some(p);
+            }
             "s" => signature = Some(v.to_string()),
             _ => {}
         }
@@ -2305,6 +2450,7 @@ fn parse_image_query(query: &str) -> std::result::Result<ImageQuery, String> {
         height,
         format,
         quality,
+        placeholder,
         signature,
     })
 }
@@ -2389,6 +2535,7 @@ pub fn plan_remote_image_for_test(
         height: None,
         format: None,
         quality: None,
+        placeholder: None,
         signature: None,
     };
     plan_remote_image(endpoint, &parsed)
@@ -2441,6 +2588,7 @@ fn plan_remote_image(
             width: parsed.width,
             height: parsed.height,
             quality: parsed.quality,
+            placeholder: parsed.placeholder.clone(),
         },
         parsed.format,
     ))
@@ -2494,6 +2642,7 @@ async fn fetch_remote_image(
         width: request.width,
         height: request.height,
         quality: request.quality,
+        placeholder: request.placeholder.clone(),
     };
     match endpoint.backend.process(ireq) {
         Ok(result) => OxideResponse::new(200, Bytes::from(result.bytes))
@@ -2858,6 +3007,8 @@ pub async fn run_action(
     headers: &[(String, String)],
     // §8.1 middleware.ts / §9.1: request-scoped locals injected by middleware.
     locals: &serde_json::Value,
+    // §20: W3C trace context for outgoing fetches inside the action.
+    trace: Option<&serde_json::Value>,
 ) -> OxideResponse {
     let Some(dispatcher) = dispatcher else {
         return OxideResponse::json(
@@ -2875,6 +3026,7 @@ pub async fn run_action(
             method,
             headers,
             locals,
+            trace,
         )
         .await
     {
@@ -3331,13 +3483,10 @@ impl Pipeline {
                 // A3: resvg rasterization is CPU-bound and the endpoint is
                 // unauthenticated. Rate-limit per peer before the work, not
                 // after. `og_rate_limiter` is shared across requests.
-                let peer = req
-                    .header("x-forwarded-for")
-                    .and_then(|v| v.split(',').next())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("unknown")
-                    .to_string();
+                // Use the same trusted-proxy-aware key as the general
+                // rate-limit rule; a raw leftmost `X-Forwarded-For` is
+                // spoofable and let one client mint unbounded buckets.
+                let peer = self.client_key(req);
                 if !self
                     .og_rate_limiter
                     .allow(&peer, self.og_rate_max, self.og_rate_window_secs)
