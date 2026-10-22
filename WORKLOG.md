@@ -4385,3 +4385,32 @@ Each part was load-bearing: reverting any of the three makes the bench
 drop from 15/15 to 0/15. Committed as a single fix with the regression
 verified manually at every step.
 
+
+## Wiring pass — 2026-10-22
+
+Closed the remaining README "built, wiring in progress" items that were
+reachable without re-architecting. All changes are covered by existing
+suites; `cargo check --workspace`, `cargo test -p oxide-cli --lib`
+(214 pass), `cargo test -p oxide-config -p oxide-server --lib` (24 + 43
+pass) and `pnpm test:packages` (387 pass) are green.
+
+- **Defer streaming, parallel arm** (`crates/cli/src/lib.rs`): the
+  page-does-not-call-`parent()` path still used buffered `runner.run`
+  inside `tokio::join!`. It now uses `run_streaming`, stores the settle
+  receiver in `page_settles`, and therefore flushes deferred boundaries
+  per settle in both layout shapes.
+- **`handleHotUpdate` in the long-running dev loop**: the watcher only
+  invalidated the graph after the initial probe. It now calls every
+  plugin hook per changed path and publishes a `FullReload` when any
+  plugin returns `{ reload: true }`.
+- **Tracing, images, sessions, meta, i18n, message subsets, secret scan,
+  route-search, OG rate limit, `/__data` deadlines**: threaded through
+  actions/endpoints; image result cache + concurrency/dimension caps +
+  reachable LQIP; layout/`/__data` session persistence; neutral route
+  meta lifting; dynamic `<html lang>` and boot-time catalog load; subset
+  merge and suffix key resolution; scan-before-fingerprint ordering;
+  `build.route_search` opt-out; `og.rate_limit`; 30 s collect deadline.
+- **README** now names only the genuinely open threads: PPR↔L0/vary,
+  socket fan-out/presence, the remaining plugin last mile, edge cache-key
+  divergence, collections consumers/dev re-read, ICU formatting, the SW
+  browser test, MDX beyond the reachable arm, and IR layout nesting.
