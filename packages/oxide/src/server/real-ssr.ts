@@ -143,6 +143,70 @@ function streamOf(html: string): ReadableStream<Uint8Array> {
  * when the caller supplies a component and the framework deps are installed,
  * falling back to the neutral-IR renderer otherwise.
  */
+/**
+ * §7.1 / §9.2: replace every `{ "__deferred": id }` placeholder in a loader
+ * data tree with the value the loader's `event.defer()` resolved to.
+ *
+ * `RenderInput.data` carries placeholders because the loader returns
+ * immediately and the promises settle later; `RenderInput.deferred` is the
+ * map the pipeline filled once they did. Without this substitution a
+ * component reads `props.data.comments` as `{ __deferred: 1 }` and renders
+ * that object — which is what every adapter did before the map was threaded
+ * through at all.
+ *
+ * Cycle-safe and depth-capped like the ODF decoder (§17.1 parity), and it
+ * skips `__proto__` / `constructor` so a hostile payload cannot pollute.
+ *
+ * A placeholder with no resolved value is left in place: it means the
+ * settle failed or never arrived, and a visibly wrong object is a better
+ * signal than silently becoming `undefined`.
+ */
+export function resolveDeferredPlaceholders(
+  value: unknown,
+  deferred: Record<string, unknown> | undefined,
+  depth = 1,
+  seen = new WeakSet<object>(),
+): unknown {
+  if (depth > 512 || value === null || typeof value !== 'object') return value
+  if (seen.has(value)) return value
+  seen.add(value)
+
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      value[i] = resolveDeferredPlaceholders(value[i], deferred, depth + 1, seen)
+    }
+    return value
+  }
+  const maybePlaceholder = value as { __deferred?: unknown }
+  if (
+    typeof maybePlaceholder.__deferred === 'number' &&
+    Object.keys(value as object).length === 1
+  ) {
+    const id = String(maybePlaceholder.__deferred)
+    if (deferred && Object.prototype.hasOwnProperty.call(deferred, id)) {
+      return deferred[id]
+    }
+    return value
+  }
+  if (value instanceof Map) {
+    for (const [k, v] of value) {
+      value.set(k, resolveDeferredPlaceholders(v, deferred, depth + 1, seen))
+    }
+    return value
+  }
+  if (value instanceof Set) {
+    return new Set(
+      [...value].map((v) => resolveDeferredPlaceholders(v, deferred, depth + 1, seen)),
+    )
+  }
+  const obj = value as Record<string, unknown>
+  for (const k of Object.keys(obj)) {
+    if (k === '__proto__' || k === 'constructor') continue
+    obj[k] = resolveDeferredPlaceholders(obj[k], deferred, depth + 1, seen)
+  }
+  return obj
+}
+
 export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
   const strategy = cfg.opts.ssr ?? 'auto'
   // §6.4: components come from the runtime resolver; the config's
@@ -254,8 +318,11 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
         // and the catch (error.tsx render). Declaring it here keeps it in
         // scope after the try frame unwinds — a `const` inside the try
         // would be `ReferenceError` in the catch handler.
+        // §7.1 / §9.2: resolve `{__deferred: id}` placeholders against the
+        // loader's resolved map before the component tree sees them.
+        const data = resolveDeferredPlaceholders(input.data, input.deferred)
         const props: Record<string, unknown> = {
-          route: input.route, url: input.url, params: input.params, data: input.data,
+          route: input.route, url: input.url, params: input.params, data,
         }
         try {
           // Build the innermost descriptor = the page itself.
