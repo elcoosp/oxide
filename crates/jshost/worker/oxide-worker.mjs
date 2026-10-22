@@ -473,8 +473,9 @@ async function dispatchToolingModule(id, input) {
 // production, or from a CLI-generated source map in dev. The config is
 // imported for the adapter; it is never the component graph root.
 //
-// The config module is dynamic-imported fresh on every call so dev edits
-// take effect immediately (HMR-lite). Caching by mtime is a follow-up.
+// The config module is cached per `moduleGeneration`; `framework:invalidate`
+// bumps the generation (the watcher does this on a config edit), so dev edits
+// take effect without paying a config import on every render.
 
 // ---------------------------------------------------------------------------
 // SPEC-17 / §15.1: the JS plugin bridge. A plugin module exports hook
@@ -559,6 +560,22 @@ async function dispatchPluginCall(id, input) {
   }
 }
 
+// §6.4 / WP-B3: the config supplies only the adapter descriptor. Import it
+// once per module generation (the watcher bumps `moduleGeneration` on a
+// config edit), never once per request — sequential renders reuse the cached
+// module instead of re-evaluating the config graph each time.
+const frameworkConfigCache = new Map(); // `${path}:gen${generation}` -> Promise<object>
+function loadFrameworkConfig(path) {
+  const key = `${path}:gen${moduleGeneration}`;
+  if (!frameworkConfigCache.has(key)) {
+    for (const k of frameworkConfigCache.keys()) {
+      if (k.startsWith(`${path}:`)) frameworkConfigCache.delete(k);
+    }
+    frameworkConfigCache.set(key, import(versioned(pathToFileURL(path).href)));
+  }
+  return frameworkConfigCache.get(key);
+}
+
 async function dispatchFrameworkLoad(id, input) {
   const { path } = input.payload ?? {};
   if (typeof path !== "string" || path.length === 0) {
@@ -566,7 +583,7 @@ async function dispatchFrameworkLoad(id, input) {
     return;
   }
   try {
-    const mod = await import(versioned(pathToFileURL(path).href));
+    const mod = await loadFrameworkConfig(path);
     const cfg = mod.default ?? mod;
     const framework = cfg?.framework;
     if (!framework || typeof framework !== "object") {
@@ -684,7 +701,7 @@ async function dispatchFrameworkRender(id, input) {
     return;
   }
   try {
-    const mod = await import(versioned(pathToFileURL(path).href));
+    const mod = await loadFrameworkConfig(path);
     const cfg = mod.default ?? mod;
     const framework = cfg?.framework;
     if (!framework || typeof framework.render !== "function") {
