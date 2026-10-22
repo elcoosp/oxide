@@ -528,7 +528,7 @@ fn convert(
                     css: c.css.clone(),
                     js_bytes,
                     modules: mods,
-                layout_chain: Vec::new(),
+                    layout_chain: Vec::new(),
                 },
             );
         }
