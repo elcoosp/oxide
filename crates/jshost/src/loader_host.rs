@@ -392,17 +392,18 @@ mod tests {
             "trace": trace.clone(),
         });
         let p = LoaderHost::build_payload("/x/page.server.ts", &input);
-        assert_eq!(
-            p["trace"], trace,
-            "trace forwarded: {p}"
-        );
+        assert_eq!(p["trace"], trace, "trace forwarded: {p}");
     }
 
     #[test]
     fn build_payload_defaults_trace_to_null() {
         let input = serde_json::json!({ "url": "/x" });
         let p = LoaderHost::build_payload("/x/page.server.ts", &input);
-        assert_eq!(p["trace"], serde_json::Value::Null, "trace defaults to null: {p}");
+        assert_eq!(
+            p["trace"],
+            serde_json::Value::Null,
+            "trace defaults to null: {p}"
+        );
     }
 
     #[test]
