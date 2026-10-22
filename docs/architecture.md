@@ -60,6 +60,29 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
   smoke, middleware, island hydration, loading boundary, WebSocket, and SSE
   (14 specs).
 
+## Route component resolution (§6.4, §7)
+
+`oxide.config.ts` declares `routes.dir` and the adapter — nothing else. The
+build's route scan owns the component graph:
+
+- `RouteKind::{Page, Layout, Error, NotFound, Template}` all enter the SSR and
+  client entry scans; canonical ids use the directory form
+  (`routes/blog/[slug]`, no `/page`).
+- `oxide build` emits `dist/server/ssr/index.js`
+  (`export const routes = { "<id>": moduleNamespace }`) and
+  `server.manifest.json`. The server manifest and the client manifest carry
+  the same canonical keys; rows for error/not-found/template have
+  `render_mode: null`.
+- The worker imports the entry once per `moduleGeneration` and builds
+  `input.resolve(id)`; the adapters (`real-ssr.ts`) call it for the page,
+  layout chain and error route. A missing page is `OX-500`, never a silent
+  skip.
+- Dev has no bundle, so `cmd_dev` builds a canonical-id → source-file map
+  (precompiling `.vue`/`.svelte`/Solid JSX into `.oxide/components/`) and
+  hands it to the same resolver. HMR bumps the generation, which re-imports.
+- `componentFor`/`layoutFor` remain as explicit advanced overrides; they are
+  not part of the config surface and the smoke apps do not use them.
+
 ## Testing beyond unit tests
 
 - `cargo test --workspace` — Rust crates
