@@ -514,7 +514,7 @@ function buildShell(input: RenderInput, state: RenderState): Shell {
   const walked = walk(rootDiv, state, 1, true)
   const merged = mergeHead(mergeHead(LAYOUT_HEAD, input.head), headNodesToTags(walked.head))
   const dataScript = input.odf ? hydrationBootstrap(Buffer.from(input.odf).toString('base64'), input.route) : ''
-  const headHtml = `<!doctype html>\n<html lang="en"><head>${renderHeadHtml(merged)}</head>`
+  const headHtml = `<!doctype html>\n<html lang="${input.locale && /^[A-Za-z0-9_-]+$/.test(input.locale) ? input.locale : 'en'}"><head>${renderHeadHtml(merged)}</head>`
   const bodyHtml = `<body>${walked.html}${dataScript}</body></html>`
   return { headHtml, bodyHtml, defers: state.defers }
 }
@@ -540,7 +540,7 @@ function errorShell(input: RenderInput, err: unknown): Shell {
       const walked = walk(tree, state, 1, true)
       const head = mergeHead(LAYOUT_HEAD, input.head)
       return {
-        headHtml: `<!doctype html>\n<html lang="en"><head>${renderHeadHtml(head)}</head>`,
+        headHtml: `<!doctype html>\n<html lang="${input.locale && /^[A-Za-z0-9_-]+$/.test(input.locale) ? input.locale : 'en'}"><head>${renderHeadHtml(head)}</head>`,
         bodyHtml: `<body>${walked.html}</body></html>`,
         defers: state.defers,
       }
@@ -550,7 +550,7 @@ function errorShell(input: RenderInput, err: unknown): Shell {
   }
   const head = mergeHead(LAYOUT_HEAD, { title: 'Error', meta: [], link: [], style: [], script: [] })
   return {
-    headHtml: `<!doctype html>\n<html lang="en"><head>${renderHeadHtml(head)}</head>`,
+    headHtml: `<!doctype html>\n<html lang="${input.locale && /^[A-Za-z0-9_-]+$/.test(input.locale) ? input.locale : 'en'}"><head>${renderHeadHtml(head)}</head>`,
     bodyHtml: `<body>${errorBoundary('OX-500', message)}</body></html>`,
     defers: [],
   }
