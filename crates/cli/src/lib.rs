@@ -7940,7 +7940,7 @@ fn build_dispatch(
                                     let cached = shells
                                         .lock()
                                         .ok()
-                                        .and_then(|m| m.get(&pkey).cloned());
+                                        .and_then(|s| s.get(&pkey).cloned());
                                     match cached {
                                         Some(shell) => ppr_filter_stream(
                                             shell.replace(l0_cache::NONCE_SENTINEL, &nonce),
@@ -9903,7 +9903,7 @@ async fn start_server_inner_full(
         // §10.8: PPR shells exist only when `render.ppr` is enabled.
         cfg.render
             .ppr
-            .then(|| std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()))),
+            .then(|| std::sync::Arc::new(std::sync::Mutex::new(PprShellStore::default()))),
     );
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (tx, rx) = tokio::sync::watch::channel(false);
@@ -12802,11 +12802,74 @@ fn strip_close_and_append_settles(
     Box::pin(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)))
 }
 
-// §10.8 / B-27: process-local PPR shell cache, keyed by route id + URL. One
-// map per server; only populated when `render.ppr` is enabled.
-type PprShells = std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>;
+// §10.8 / B-27: process-local PPR shell cache, keyed by (build id, route,
+// params, vary). One store per server; only populated when `render.ppr` is
+// enabled.
+//
+// Bounded by PPR_SHELLS_MAX with least-recently-inserted eviction. The pre-r9
+// behavior cleared the whole map on the 256th insert, so every visitor paid
+// the first-request tap again after the cap.
+type PprShells = std::sync::Arc<std::sync::Mutex<PprShellStore>>;
 
 const PPR_SHELLS_MAX: usize = 256;
+
+/// Bounded LRU store for PPR shells. Insertion-order, not access-order: a
+/// shell being served will be re-fetched if evicted, which re-inserts it.
+/// A miss costs a tap, not a wrong answer.
+pub(crate) struct PprShellStore {
+    map: std::collections::HashMap<String, String>,
+    /// Insertion order for eviction. A re-insert appends a fresh occurrence;
+    /// the older one is skipped on evict (the map lookup says which is live).
+    order: std::collections::VecDeque<String>,
+}
+
+impl Default for PprShellStore {
+    fn default() -> Self {
+        Self {
+            map: std::collections::HashMap::new(),
+            order: std::collections::VecDeque::new(),
+        }
+    }
+}
+
+impl PprShellStore {
+    pub(crate) fn get(&self, key: &str) -> Option<&String> {
+        self.map.get(key)
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    /// Insert, evicting the oldest live key when at capacity.
+    ///
+    /// Re-insert of an existing key removes its old order entry first, so a
+    /// refreshed shell is at the *back* of the eviction queue. The earlier
+    /// form appended a duplicate order entry and relied on the map lookup
+    /// to skip stale occurrences — but a re-insert keeps the key in the
+    /// map, so the lookup could not distinguish the stale occurrence from
+    /// the live one and evicted the freshly-refreshed key.
+    ///
+    /// `VecDeque::remove(pos)` is O(256); taps run once per route per
+    /// process, so the scan is invisible next to the render itself.
+    pub(crate) fn insert(&mut self, key: String, shell: String) {
+        if self.map.contains_key(&key) {
+            // Refresh: drop the stale order occurrence so age is reset.
+            if let Some(pos) = self.order.iter().position(|k| k == &key) {
+                self.order.remove(pos);
+            }
+        } else if self.map.len() >= PPR_SHELLS_MAX {
+            // New key at capacity: evict the oldest live entry.
+            while let Some(oldest) = self.order.pop_front() {
+                if self.map.remove(&oldest).is_some() {
+                    break;
+                }
+            }
+        }
+        self.map.insert(key.clone(), shell);
+        self.order.push_back(key);
+    }
+}
 
 /// First request for a PPR route: the render is streamed through unchanged,
 /// while the completed document is split into a shell (holes for each
@@ -12838,25 +12901,14 @@ fn ppr_tap_stream(
                 }
             }
         }
-        // TEMP DIAG: prove the tap ran and what it saw.
-        eprintln!("[PPR-TAP] stream ended, collected={} bytes", collected.len());
+        // The client already saw EOF; storing after this point adds no latency.
         if let Ok(html) = String::from_utf8(collected) {
-            match oxide_render::ppr::split_shell(&html) {
-                Ok(shell) => {
-                    eprintln!("[PPR-TAP] split_shell ok, hole_ids={:?}", shell.hole_ids);
-                    if !shell.hole_ids.is_empty() {
-                        let stored = shell.html.replace(&nonce, l0_cache::NONCE_SENTINEL);
-                        if let Ok(mut map) = shells.lock() {
-                            if map.len() >= PPR_SHELLS_MAX {
-                                map.clear();
-                            }
-                            eprintln!("[PPR-TAP] inserting key={}", key.replace(char::from(0x1f), "|"));
-                                map.insert(key, stored);
-                        }
+            if let Ok(shell) = oxide_render::ppr::split_shell(&html) {
+                if !shell.hole_ids.is_empty() {
+                    let stored = shell.html.replace(&nonce, l0_cache::NONCE_SENTINEL);
+                    if let Ok(mut store) = shells.lock() {
+                        store.insert(key, stored);
                     }
-                }
-                Err(e) => {
-                    eprintln!("[PPR-TAP] split_shell FAILED: {:?}", e);
                 }
             }
         }

@@ -272,7 +272,7 @@ async fn ppr_serves_cached_shell_and_streams_holes() {
     let metrics = Arc::new(oxide_server::Metrics::new());
     let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(PprRenderer));
     let shells: crate::PprShells =
-        Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        Arc::new(std::sync::Mutex::new(crate::PprShellStore::default()));
 
     let dispatch = build_dispatch(
         tree,
@@ -7269,7 +7269,7 @@ async fn ppr_never_shells_a_loader_cookie_response() {
     use std::sync::Arc;
 
     let shells: crate::PprShells =
-        Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        Arc::new(std::sync::Mutex::new(crate::PprShellStore::default()));
     let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(PprRenderer));
     let loader: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(Arc::new(CookieLoader));
 
@@ -7299,7 +7299,7 @@ async fn ppr_never_shells_a_middleware_cookie_response() {
     use std::sync::Arc;
 
     let shells: crate::PprShells =
-        Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        Arc::new(std::sync::Mutex::new(crate::PprShellStore::default()));
     let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(PprRenderer));
     let mw: Option<Arc<dyn oxide_server::MiddlewareDispatcher>> =
         Some(Arc::new(ScriptedMiddleware {
@@ -7472,7 +7472,7 @@ async fn ppr_shell_key_ignores_query_string() {
     use std::sync::Arc;
 
     let shells: crate::PprShells =
-        Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        Arc::new(std::sync::Mutex::new(crate::PprShellStore::default()));
     let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(PprRenderer));
 
     let dispatch = build_dispatch(
@@ -7510,3 +7510,32 @@ async fn ppr_shell_key_ignores_query_string() {
     );
 }
 
+// ------------------------------ §10.8 / r9: PPR shell LRU eviction
+
+#[test]
+fn ppr_shell_store_evicts_oldest_at_capacity() {
+    let mut store = crate::PprShellStore::default();
+    for i in 0..crate::PPR_SHELLS_MAX {
+        store.insert(format!("k{i}"), format!("shell{i}"));
+    }
+    assert_eq!(store.len(), crate::PPR_SHELLS_MAX);
+    assert!(store.get("k0").is_some(), "k0 present before eviction");
+
+    store.insert("k256".to_string(), "shell256".to_string());
+    assert_eq!(store.len(), crate::PPR_SHELLS_MAX);
+    assert!(store.get("k0").is_none(), "k0 is the evicted oldest");
+    assert!(store.get("k1").is_some(), "k1 survived");
+    assert!(store.get("k256").is_some(), "new key landed");
+}
+
+#[test]
+fn ppr_shell_store_reinsert_refreshes_age() {
+    let mut store = crate::PprShellStore::default();
+    for i in 0..crate::PPR_SHELLS_MAX {
+        store.insert(format!("k{i}"), format!("shell{i}"));
+    }
+    store.insert("k0".to_string(), "refreshed".to_string());
+    store.insert("k256".to_string(), "shell256".to_string());
+    assert!(store.get("k0").is_some(), "k0 refreshed, not evicted");
+    assert!(store.get("k1").is_none(), "k1 (now oldest) was evicted");
+}
