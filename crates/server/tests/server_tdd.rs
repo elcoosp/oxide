@@ -77,7 +77,7 @@ fn pipeline(
         sockets: None,
         http3_port: 0,
         http3_advertise: false,
-    ..Default::default()
+        ..Default::default()
     }
 }
 
@@ -836,7 +836,7 @@ async fn metrics_endpoint_renders_prometheus_text() {
         sockets: None,
         http3_port: 0,
         http3_advertise: false,
-    ..Default::default()
+        ..Default::default()
     };
     let d = &echo_dispatch();
     let resp = p.serve_request(req("GET", "/_oxide/metrics", &[]), d).await;
@@ -891,7 +891,7 @@ async fn vitals_endpoint_records_samples_into_metrics() {
         sockets: None,
         http3_port: 0,
         http3_advertise: false,
-    ..Default::default()
+        ..Default::default()
     };
     let body = br#"[{"name":"LCP","value":1234.5,"route":"/home"},{"name":"CLS","value":0.05,"route":"/home"}]"#;
     let mut r = req("POST", "/_oxide/vitals", &[]);
@@ -942,7 +942,7 @@ async fn vitals_endpoint_tolerates_a_malformed_beacon() {
         sockets: None,
         http3_port: 0,
         http3_advertise: false,
-    ..Default::default()
+        ..Default::default()
     };
     let mut r = req("POST", "/_oxide/vitals", &[]);
     r.body = bytes::Bytes::from_static(b"not json");
@@ -979,7 +979,7 @@ async fn metrics_endpoint_404_when_not_configured() {
         sockets: None,
         http3_port: 0,
         http3_advertise: false,
-    ..Default::default()
+        ..Default::default()
     };
     let d = &echo_dispatch();
     let resp = p.serve_request(req("GET", "/_oxide/metrics", &[]), d).await;
@@ -1020,7 +1020,7 @@ async fn pipeline_observes_native_branch_requests() {
         sockets: None,
         http3_port: 0,
         http3_advertise: false,
-    ..Default::default()
+        ..Default::default()
     };
     let d = &echo_dispatch();
     // Health is a native-prefix branch (_native label).
@@ -1067,7 +1067,7 @@ async fn with_metrics_attaches_registry() {
         sockets: None,
         http3_port: 0,
         http3_advertise: false,
-    ..Default::default()
+        ..Default::default()
     };
     let p = p.with_metrics(Arc::clone(&m));
     assert!(p.metrics().is_some());
@@ -1124,7 +1124,7 @@ fn inspector_pipeline() -> Pipeline {
         sockets: None,
         http3_port: 0,
         http3_advertise: false,
-    ..Default::default()
+        ..Default::default()
     }
 }
 
