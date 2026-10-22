@@ -97,6 +97,12 @@ pub struct FrameworkRenderInput {
     /// (`suspense: 'native'` vs `<Defer>`), a separate change.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub deferred: std::collections::BTreeMap<String, serde_json::Value>,
+
+    /// §17.1 / §7.1: the request's CSP nonce. Forwarded to the adapter so
+    /// the scripts it emits — notably the deferred-boundary swapper — carry
+    /// it under `strict-dynamic`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
 }
 
 impl FrameworkRenderInput {
@@ -115,6 +121,7 @@ impl FrameworkRenderInput {
             components: None,
             locale: None,
             deferred: std::collections::BTreeMap::new(),
+            nonce: None,
         }
     }
 
@@ -143,6 +150,9 @@ impl FrameworkRenderInput {
         // `{__deferred: id}` in `data` with these values before rendering.
         if !self.deferred.is_empty() {
             payload["deferred"] = serde_json::to_value(&self.deferred).unwrap_or(Value::Null);
+        }
+        if let Some(n) = &self.nonce {
+            payload["nonce"] = Value::String(n.clone());
         }
         payload
     }
