@@ -23,6 +23,7 @@ check() {
         2>/dev/null \
         | grep -v 'docs/scorecard-r9.md' \
         | grep -v 'docs/scorecard-r8.md' \
+        | grep -v 'auditing-our-own-framework' \
         || true)
     if [ -n "$hits" ]; then
         echo "STALE: '$pattern' ($why)"
@@ -31,15 +32,41 @@ check() {
     fi
 }
 
-check '91 / 100|91/100'                 'r9 score is 93/100'
-check '349 TypeScript|1,116 Rust'       'r9 counts are 361 TS / 1,153 Rust'
-check '333/333'                         'r8 red-suite accounting artefact; real is 361/361 now'
+check '91 / 100|91/100'                 'the audited score moved past 91'
+check '93 / 100|93/100'                 'r10 scores 95/100'
+check '349 TypeScript|1,116 Rust'       'stale counts; see the README badge for the current numbers'
+check '361 TypeScript|1,153 Rust'       'stale counts; see the README badge for the current numbers'
+check '333/333'                         'r8 red-suite accounting artefact; the suite is green now'
+check 'twelve gates|12 gates|12 CI'     'the workflow runs fourteen gates'
 check 'preview/ is a static design'     'preview/ folder has never existed in the repo'
 check 'scaffolder still emits a flat'   'scaffolder emits the nested l0 shape since a672411'
 check 'componentFor. is config-side'    'components resolve from the build entry since f5b5335'
 check 'fixed in this same push'         'r8 claims P0-1/P0-2 were fixed; both are still open'
 check 'fixed in follow-up commits'      'same as above; both P0s remain open'
 check 'in the repository.s PR history'  'no PR history exists; the audit is not in-repo'
+
+# A "K1, wired" claim is only honest while a shipped loader actually calls
+# the collections API. The grep above cannot express that condition, so it is
+# checked here: if any launch-facing file says collections are wired, at
+# least one non-test, non-generated source file must import and call
+# `getCollection`/`getEntry` from `oxide/server`.
+if grep -rqE 'K1, wired|collections (are|is) wired' \
+    --include='*.md' --include='*.tsx' --include='*.ts' \
+    packages/oxide-website/content packages/oxide-website/src packages/oxide-website/README.md \
+    packages/oxide-website/oxide.config.ts 2>/dev/null; then
+    callers=$(grep -rlE '\bget(Collection|Entry)\(' \
+        --include='*.ts' --include='*.tsx' \
+        packages/oxide-website/src 2>/dev/null \
+        | grep -vE '\.oxide\.ts$' \
+        | grep -v '/content\.ts$' \
+        | wc -l | tr -d ' ')
+    if [ "$callers" -eq 0 ]; then
+        echo "STALE: 'K1, wired' claimed but no shipped loader calls getCollection/getEntry"
+        FAIL=1
+    else
+        echo "k1-wired: PASS ($callers caller file(s))"
+    fi
+fi
 
 if [ "$FAIL" -eq 0 ]; then
     echo "launch-content: PASS (no stale launch-facing claims)"
