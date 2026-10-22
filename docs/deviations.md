@@ -36,3 +36,24 @@ WOFF2 glyf/loca transform plus Brotli - a project in itself.
 `crates/assets/tests/font_woff2_deviation_tdd.rs` is the tripwire: it asserts
 the `.ttf` extension and the documented deviation, so an encoder swap updates
 both deliberately.
+
+## Dev route additions require a dev-server restart (WP-C1)
+
+**What the spec asks.** Adding a route file under `routes.dir` should render in
+dev without editing `oxide.config.ts` or restarting (§13 hot updates).
+
+**What lands.** Dev resolves components from the route table, so any route that
+exists at boot renders without config edits, and edits to existing components
+are picked up by the watcher (module-generation bump). A **newly created or
+deleted route file** is not re-scanned: `cmd_dev` discovers routes once at boot
+and the HTTP dispatch table is built from that tree.
+
+**Why.** Reloading the route table means rebuilding the matcher, the server
+manifest view, and the dev component map, then swapping them atomically under
+live connections. That is a separate change to `oxide-dev`'s watcher contract;
+the component-resolution half of WP-C1 (the part that unblocked config
+decoupling) is done.
+
+**What would change it.** A route-table generation in `cmd_dev` that re-runs
+`scan_routes` on `Created`/`Removed` events for `routes.dir` and rebuilds
+`dev_component_sources` for the new canonical ids.
