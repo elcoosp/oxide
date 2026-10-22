@@ -7944,3 +7944,92 @@ async fn dev_dispatch_serves_normally_when_no_file_change() {
     assert_eq!(resp.status, 200);
     assert!(String::from_utf8_lossy(&resp.body).contains("fresh render"));
 }
+
+// ------------------------------ §6.4 / P0-10: zero-import render e2e
+
+/// The evidence chain r9 asked for and r10 kept open: `oxide render` on a
+/// config with **no `componentFor` and no component imports** must reach
+/// real SSR through the resolver, using the `dist/server/ssr/index.js`
+/// entry the build emits.
+///
+/// The sibling test above (`cli_render_dispatches_real_react_ssr`) supplies
+/// a `componentFor` closure — it proves the worker/render pipeline, but not
+/// the resolver path the §14.1 literal config depends on. This test writes
+/// the `routes` entry module by hand (the exact shape a build emits), points
+/// a bare `@oxide/react` config at the project, and asserts the component
+/// came from that module.
+#[tokio::test]
+#[ignore = "spawns a Node worker; needs workspace node_modules"]
+async fn cli_render_resolves_components_from_the_built_entry() {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest.parent().unwrap().parent().unwrap();
+    let e2e_dir = workspace.join("packages/react/.tmp-e2e-resolver");
+    let _ = fs::remove_dir_all(&e2e_dir);
+    fs::create_dir_all(e2e_dir.join("dist/server/ssr")).expect("mkdir dist");
+
+    // The config: a bare `@oxide/react` import. No `componentFor`, no
+    // component imports — the literal §14.1 shape.
+    let config_src = r#"import react from '@oxide/react'
+export default { framework: react({ compiler: true }) }
+"#;
+    fs::write(e2e_dir.join("oxide.config.mjs"), config_src).expect("write config");
+
+    // The built route module: what the SSR adapter entry exports.
+    let route_src = r#"import { createElement } from 'react'
+export default function ResolverPage(props) {
+  return createElement('h1', { className: 'from-entry' },
+    'RESOLVER-E2E: ' + String((props && props.data && props.data.name) || 'unknown'))
+}
+"#;
+    fs::write(e2e_dir.join("dist/server/routes/probe.js"), {
+        fs::create_dir_all(e2e_dir.join("dist/server/routes")).ok();
+        route_src
+    })
+    .expect("write route");
+
+    // The adapter entry: the exact `routes` map shape a build emits
+    // (verified against examples/smoke-app-react/dist/server/ssr/index.js).
+    let entry_src = r#"import * as probe from '../routes/probe.js'
+export const routes = { 'routes/probe': probe }
+"#;
+    fs::write(e2e_dir.join("dist/server/ssr/index.js"), entry_src).expect("write entry");
+
+    // A manifest naming the entry, so `resolve_ssr_entry` takes step (1).
+    let manifest_src = r#"{"build_id":"e2e","routes":{},"adapter_entry":"ssr/index.js"}"#;
+    fs::write(
+        e2e_dir.join("dist/server/server.manifest.json"),
+        manifest_src,
+    )
+    .expect("write manifest");
+
+    let root_str = e2e_dir.to_string_lossy().to_string();
+    let (code, out) = run_ok(&[
+        "oxide",
+        "render",
+        "routes/probe",
+        "--root",
+        &root_str,
+        "--data",
+        r#"{"name":"RESOLVED"}"#,
+    ])
+    .await;
+
+    let _ = fs::remove_dir_all(&e2e_dir);
+
+    assert_eq!(code, 0, "oxide render exit code; output:\n{out}");
+    assert!(
+        out.starts_with("<!doctype html>"),
+        "html should start with doctype:\n{out}"
+    );
+    assert!(
+        out.contains("RESOLVER-E2E: RESOLVED"),
+        "the component must come from the built entry, not a config closure:\n{out}"
+    );
+    assert!(
+        out.contains("data-reactroot"),
+        "real React SSR root marker present:\n{out}"
+    );
+}
