@@ -196,6 +196,26 @@ fn test_request_with_trace(
     req
 }
 
+fn test_request_with_cookie(
+    method: &str,
+    url: &str,
+    cookie: &str,
+) -> oxide_server::OxideRequest {
+    let headers = vec![("cookie".to_string(), cookie.to_string())];
+    oxide_server::OxideRequest {
+        method: method.into(),
+        url: url.into(),
+        headers: std::sync::Arc::new(headers),
+        header_index: Default::default(),
+        body: bytes::Bytes::new(),
+        request_id: "dispatch-test-cookie".into(),
+        trace: None,
+        peer: None,
+        rewrite_hops: 0,
+        mw_resume_after: None,
+    }
+}
+
 fn test_request(method: &str, url: &str) -> oxide_server::OxideRequest {
     oxide_server::OxideRequest {
         method: method.into(),
@@ -7309,6 +7329,85 @@ async fn ppr_never_shells_a_middleware_cookie_response() {
     assert_eq!(
         stored, 0,
         "a middleware-cookie response must not be captured as a PPR shell"
+    );
+}
+
+// ------------------------------ §16.6 / WP-r9-3: /__data session parity
+
+/// A loader that returns the session unchanged (no cookie should be
+/// re-issued) — the exact shape WP-r9-3 fixed. Pre-fix, every /__data
+/// request from a client holding a session re-issued `oxide_session`
+/// because the helper compared the loader's returned session against
+/// `None` (the site passed no `before`), not against the inbound state.
+struct UnchangedSessionLoader;
+#[async_trait::async_trait]
+impl oxide_server::LoaderRunner for UnchangedSessionLoader {
+    fn name(&self) -> &str {
+        "unchanged-session"
+    }
+    async fn run(
+        &self,
+        input: oxide_server::LoaderRunInput,
+    ) -> oxide_server::Result<oxide_server::LoaderOutput> {
+        // Echo the inbound session — a real loader's untouched behavior.
+        let inbound = input
+            .locals
+            .get("session")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        Ok(oxide_server::LoaderOutput {
+            status: 200,
+            data: serde_json::json!({}),
+            session: Some(inbound),
+            ..Default::default()
+        })
+    }
+}
+
+#[tokio::test]
+async fn __data_untouched_session_does_not_reissue_a_cookie() {
+    use std::sync::Arc;
+
+    let codec = Arc::new(oxide_server::SessionCodec::new(&[vec![9u8; 32]]).unwrap());
+    // Seal a session so the request carries a real token.
+    let mut sess = oxide_server::Session::new();
+    sess.insert("user", serde_json::json!("alice"));
+    let token = sess.encode(&codec).expect("seal");
+
+    let dispatch = build_dispatch(
+        tree_with_page_and_server_module(),
+        Arc::new(oxide_server::Metrics::new()),
+        Vec::new(),
+        None,
+        Some(Arc::new(UnchangedSessionLoader) as Arc<dyn oxide_server::LoaderRunner>),
+        std::path::PathBuf::new(),
+        None, None, None, None, None, None, None, None,
+        false,
+        Vec::new(),
+        None,
+        Some(Arc::clone(&codec)),
+        None,
+    );
+
+    let cookie_header = format!("oxide_session={token}");
+    let resp = dispatch(test_request_with_cookie(
+        "GET",
+        "/__data?route=/",
+        &cookie_header,
+    ))
+    .await;
+
+    // The loader echoed the session; no cookie should ride the response.
+    let set_cookies: Vec<&str> = resp
+        .headers
+        .iter()
+        .filter(|(k, _)| k.eq_ignore_ascii_case("set-cookie"))
+        .map(|(_, v)| v.as_str())
+        .collect();
+    assert!(
+        set_cookies.is_empty(),
+        "an untouched session must not re-issue a cookie on /__data; got {:?}",
+        set_cookies
     );
 }
 

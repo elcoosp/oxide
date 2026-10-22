@@ -48,6 +48,22 @@ impl NativePlugin {
             Self::Manifest => "manifest",
         }
     }
+    /// §15.2 / WP-J2: the feature gates this plugin activates. Each
+    /// native plugin owns a feature domain of the same name; a plugin
+    /// that declares no gate is validation-only (a name for aliasing,
+    /// nothing to toggle). `cmd_check` reports these so a user sees
+    /// the actual activated set, not just the declared names.
+    pub fn enables(&self) -> &'static [&'static str] {
+        match self {
+            NativePlugin::Images => &["images"],
+            NativePlugin::Fonts => &["fonts"],
+            NativePlugin::I18n => &["i18n"],
+            NativePlugin::Mdx => &["mdx"],
+            NativePlugin::Tailwind => &["tailwind"],
+            NativePlugin::Manifest => &["manifest"],
+        }
+    }
+
 
     pub fn all_names() -> &'static str {
         "images, fonts, i18n, mdx, tailwind, manifest"
@@ -161,5 +177,30 @@ mod tests {
         let e = parse_native_plugins(&cfg).unwrap_err();
         assert_eq!(e.0.code, "OX-PLUGIN");
         assert!(e.0.message.contains("missing a `name`"));
+    }
+
+
+    #[test]
+    fn enables_returns_the_variant_gate() {
+        assert_eq!(NativePlugin::Images.enables(), &["images"]);
+        assert_eq!(NativePlugin::I18n.enables(), &["i18n"]);
+        assert_eq!(NativePlugin::Mdx.enables(), &["mdx"]);
+        // Every variant today has at least one gate; a future
+        // validation-only variant would need a note here.
+        let all = [
+            NativePlugin::Images,
+            NativePlugin::Fonts,
+            NativePlugin::I18n,
+            NativePlugin::Mdx,
+            NativePlugin::Tailwind,
+            NativePlugin::Manifest,
+        ];
+        for p in all {
+            assert!(
+                !p.enables().is_empty(),
+                "variant {} declares no gate — is that intentional?",
+                p.name()
+            );
+        }
     }
 }

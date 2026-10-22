@@ -10274,6 +10274,18 @@ async fn cmd_check(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
             } else {
                 let names: Vec<&str> = plugins.iter().map(|p| p.name()).collect();
                 outln!(w, "native plugins: {}", names.join(", "));
+                // §15.2 / WP-J2: surface what each native plugin *enables*.
+                // The `enables()` wrapper is the activation table; a plugin
+                // that declares no gate is inert (validation-only).
+                let enabled: Vec<&str> = plugins
+                    .iter()
+                    .flat_map(|p| p.enables().iter().copied())
+                    .collect();
+                if enabled.is_empty() {
+                    outln!(w, "native plugin gates: (none — all are validation-only)");
+                } else {
+                    outln!(w, "native plugin gates: {}", enabled.join(", "));
+                }
             }
         }
         Err(e) => {
