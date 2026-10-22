@@ -556,10 +556,9 @@ pub async fn build_framework_stack(
     // moved into the pipeline.
     let pool_for_stack: Arc<dyn oxide_jshost::Pool> = Arc::clone(&pool);
 
-    let component_source: Arc<std::sync::RwLock<oxide_jshost::ComponentSource>> =
-        Arc::new(std::sync::RwLock::new(
-            oxide_jshost::ComponentSource::default(),
-        ));
+    let component_source: Arc<std::sync::RwLock<oxide_jshost::ComponentSource>> = Arc::new(
+        std::sync::RwLock::new(oxide_jshost::ComponentSource::default()),
+    );
     // The page renderer needs a config file. Its absence is normal.
     let page_renderer: Option<Arc<dyn PageRenderer>> = match config_path {
         Some(path) => {
