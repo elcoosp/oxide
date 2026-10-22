@@ -3830,7 +3830,15 @@ async fn route_data_response_inner(
                 // that also mutated `event.session` must persist it.
                 if let Some(cookie) = encode_session_cookie(
                     out.session.as_ref(),
-                    None,
+                    // §16.6 / WP-r9-3: pass the request's decoded session
+                    // as `before`. `middleware_locals["session"]` is set at
+                    // :6735 from the inbound cookie and refined by any
+                    // middleware mutation, so it is the exact state the
+                    // loader started with — an untouched loader matches it
+                    // and no cookie is emitted. Passing `None` here meant
+                    // every /__data request from a client holding a session
+                    // re-issued the cookie.
+                    middleware_locals.get("session"),
                     session_codec,
                 ) {
                     resp = resp.with_header("set-cookie", cookie);
@@ -3846,7 +3854,15 @@ async fn route_data_response_inner(
                 // rides the envelope.
                 if let Some(cookie) = encode_session_cookie(
                     out.session.as_ref(),
-                    None,
+                    // §16.6 / WP-r9-3: pass the request's decoded session
+                    // as `before`. `middleware_locals["session"]` is set at
+                    // :6735 from the inbound cookie and refined by any
+                    // middleware mutation, so it is the exact state the
+                    // loader started with — an untouched loader matches it
+                    // and no cookie is emitted. Passing `None` here meant
+                    // every /__data request from a client holding a session
+                    // re-issued the cookie.
+                    middleware_locals.get("session"),
                     session_codec,
                 ) {
                     data_path_session_cookie = Some(cookie);
@@ -3890,15 +3906,17 @@ async fn route_data_response_inner(
     metrics.observe("_data", started.elapsed(), 200);
     let mut resp = oxide_server::OxideResponse::new(200, body)
         .with_header("content-type", "application/oxide+odf");
-    // §16.6 / WP-D1: a session mutation on the page load rides
-    // the data envelope. (The short-circuit cases attach their own
-    // cookie before returning.)
-    if let Some(cookie) = data_path_session_cookie {
-        resp = resp.with_header("set-cookie", cookie);
-    }
-    // §8.5: headers the middleware phase added ride the data response too.
+    // §8.5 / §16.6 / WP-r9-3: middleware headers FIRST, then the loader's
+    // session cookie — the loader is the later mutation and wins on the
+    // wire (HTTP applies same-name Set-Cookies in arrival order). This
+    // matches the render path's order (WP-D1's 663201a fix); the /__data
+    // envelope was inverted, so a /__data request from a client with a
+    // middleware-mutated session saw the OLD value reach the browser.
     for (k, v) in middleware_headers {
         resp = resp.with_header(k, v.clone());
+    }
+    if let Some(cookie) = data_path_session_cookie {
+        resp = resp.with_header("set-cookie", cookie);
     }
     resp
 }

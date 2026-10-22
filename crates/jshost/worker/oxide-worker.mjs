@@ -1201,6 +1201,13 @@ async function dispatchLoaderRun(id, input) {
           status: err.status,
           location: err.location ?? null,
           data: { message: err.message ?? "" },
+          // §16.6 / WP-r9-3: a loader that mutates \`event.session\` and then
+          // throws a redirect/error must still have that mutation persisted.
+          // Without this line, the four SSR short-circuit arms in the Rust
+          // dispatch had \`out.session == None\` by construction — the
+          // encode calls were dead code. Now they fire when the loader set
+          // a session on the way out.
+          session: event.session,
           setCookies: [...pendingCookies.values()],
           headers: extraHeaders,
         });
