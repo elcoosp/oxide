@@ -140,6 +140,14 @@ jobs:
       - name: Stale-string grep
         run: ./scripts/check-stale-strings.sh
 
+  launch-content:
+    name: launch-content gate (WP-r9-2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Launch-content grep
+        run: ./scripts/check-launch-content.sh
+
   hmr-latency:
     name: HMR latency harness (§13.3 / §21)
     runs-on: ubuntu-latest
