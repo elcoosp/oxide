@@ -7199,6 +7199,20 @@ fn build_dispatch(
                                 for (k, v) in &out.headers {
                                     resp = resp.with_header(k, v.clone());
                                 }
+                                // §8.5: the worker returns a middleware
+                                // redirect as a sibling `redirect` field
+                                // (`{ short: true, status, redirect }`), not
+                                // as a `location` header. Without this the
+                                // browser got a 302 with no destination.
+                                if let Some(loc) = out.redirect.as_deref() {
+                                    if !resp
+                                        .headers
+                                        .iter()
+                                        .any(|(k, _)| k.eq_ignore_ascii_case("location"))
+                                    {
+                                        resp = resp.with_header("location", loc);
+                                    }
+                                }
                                 // §16.6 / WP-r10-1 / B-05: a middleware that
                                 // mutates `locals.session` AND short-circuits
                                 // must persist the mutation. The post-loop
