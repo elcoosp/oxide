@@ -782,7 +782,11 @@ async fn offline_plugins_env_reaches_the_worker_and_denies_fetch() {
     let worker = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("worker")
         .join("offline_probe_worker.mjs");
-    assert!(worker.is_file(), "probe worker present: {}", worker.display());
+    assert!(
+        worker.is_file(),
+        "probe worker present: {}",
+        worker.display()
+    );
 
     let mut cfg = PoolConfig {
         size: 1,
