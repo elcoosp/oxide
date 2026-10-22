@@ -2,4 +2,4 @@
 source: crates/render/tests/snapshots_render.rs
 expression: "stream_error_recovery(\"boundary-7\", &diag, \"NONCE3\")"
 ---
-<template data-ox-c='boundary-7'><div class='ox-error' data-ox-error='OX-500'>OX-500: the data module exploded &lt;bad&gt;</div></template><script nonce='NONCE3'>(function(id){var t=document.querySelector("template[data-ox-c='"+id+"']"),p=document.querySelector("template[data-ox-b='"+id+"']");if(t&&p){var d=document.createElement("div");d.innerHTML=t.innerHTML;p.replaceWith.apply(p,d.childNodes);document.dispatchEvent(new CustomEvent("ox:swap",{detail:{id:id,value:t.innerHTML}}))}})('boundary-7')</script>
+<template data-ox-c='boundary-7'><div class='ox-error' data-ox-error='OX-500'>OX-500: the data module exploded &lt;bad&gt;</div></template><script nonce='NONCE3'>(function(id){var t=document.querySelector("[data-ox-c='"+id+"']"),p=document.querySelector("[data-ox-b='"+id+"']");if(t&&p){var d=document.createElement("div");d.innerHTML=t.innerHTML;p.replaceWith.apply(p,d.childNodes);document.dispatchEvent(new CustomEvent("ox:swap",{detail:{id:id,value:t.innerHTML}}))}})('boundary-7')</script>
