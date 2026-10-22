@@ -200,6 +200,25 @@ export async function runSuite(adapter: Adapter, opts: SuiteOptions = {}): Promi
     return 'swap ok'
   })
 
+  await push('streaming: a non-template boundary host swaps too', async () => {
+    // §7.1 gives `suspense: 'core'` adapters a `<Defer>` component. A
+    // framework cannot render the placeholder through `<template>`: Vue
+    // emits its hydration markers inside one, and the swapper's
+    // `innerHTML` would move those markers into the live DOM. So the host
+    // is a framework element — `<ox-defer data-ox-*>` — and the swapper's
+    // selectors are attribute-only to match either shape.
+    const host = `<ox-defer data-ox-b='0'><p>fallback</p></ox-defer>`
+    const dom = createFakeDom(`<body>${host}</body>`)
+    let swaps = 0
+    dom.doc.addEventListener('ox:swap', () => swaps++)
+    const resolution = `<template data-ox-c='0'><p>resolved</p></template>`
+    assert(simulateSwap(dom.doc, resolution), 'swapper found the framework host')
+    assert(swaps === 1, 'ox:swap dispatched once')
+    assert(dom.body!.innerHTML.includes('resolved'), 'resolved content replaced the host')
+    assert(!dom.doc.querySelector("[data-ox-b='0']"), 'host removed')
+    return 'attribute-only selector'
+  })
+
   await push('streaming: rejected boundary streams the error boundary', async () => {
     const { chunks, html } = await drain(adapter.render(asRenderInput(atlas.streamingError)))
     assert(html.includes(expect.error.boundary), 'error boundary in the stream (§10.2 step 5)')
