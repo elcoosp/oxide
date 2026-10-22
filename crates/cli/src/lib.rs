@@ -3665,12 +3665,16 @@ async fn route_data_response(
     .await;
     if let Some(rec) = waterfall {
         let total = started.elapsed().as_secs_f64() * 1000.0;
-        rec.record(
+        // §20 / WP-r9 nit: /__data rows carried `trace_id: null` because
+        // this site used the trace-less `record` shim while SSR/action
+        // rows use `record_with_trace`. `req.trace` is in scope here.
+        rec.record_with_trace(
             &request_id,
             vec![
                 ("middleware".to_string(), middleware_ms),
                 ("load".to_string(), (total - middleware_ms).max(0.0)),
             ],
+            req.trace.as_ref().map(|t| t.trace_id.clone()),
         );
     }
     resp
@@ -12668,6 +12672,10 @@ fn strip_close_and_append_settles(
         // the settle window only, not the whole request (which is already
         // recorded by the caller at dispatch time).
         let settles_started = std::time::Instant::now();
+        // §20 / WP-r9 nit: count actual settles so we do not record a
+        // ~0 ms "deferred-settles" row on a no-defer stream. An empty
+        // record_staged is noise in the inspector.
+        let mut settle_count: usize = 0;
         // One resolution script per settle, in settle order. A sender that
         // is never dropped would otherwise hold the document open forever;
         // 30s is far past any real defer and turns a leak into a closed page.
@@ -12685,6 +12693,7 @@ fn strip_close_and_append_settles(
             let Some(obj) = v.get("deferredSettle") else {
                 continue;
             };
+            settle_count += 1;
             let Some(id) = obj.get("id").and_then(|x| x.as_str()) else {
                 continue;
             };
@@ -12709,13 +12718,15 @@ fn strip_close_and_append_settles(
         // §20 / O3b: record the settle window on the request's waterfall
         // row. Merges with the initial middleware/load/render record via
         // `record_staged` — the two calls produce one row per request.
-        if let Some(rec) = waterfall {
-            let settle_ms = settles_started.elapsed().as_secs_f64() * 1000.0;
-            rec.record_staged(
-                &request_id,
-                vec![("deferred-settles".to_string(), settle_ms)],
-                trace_id,
-            );
+        if settle_count > 0 {
+            if let Some(rec) = waterfall {
+                let settle_ms = settles_started.elapsed().as_secs_f64() * 1000.0;
+                rec.record_staged(
+                    &request_id,
+                    vec![("deferred-settles".to_string(), settle_ms)],
+                    trace_id,
+                );
+            }
         }
         // Close the document only after every settle has been delivered.
         let _ = tx.send(Ok(Bytes::from_static(CLOSE))).await;

@@ -293,7 +293,7 @@ impl OxideMcp {
     }
 
     #[tool(
-        description = "Live request wateraflls from the running `oxide dev` server: \
+        description = "Live request waterfalls from the running `oxide dev` server: \
                        the last 50 requests, each with per-stage timings \
                        (middleware / load / render ms). Read from the dev \
                        server's persistent `.oxide/last-waterfalls.json`. \

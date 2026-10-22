@@ -760,7 +760,7 @@ async function dispatchFrameworkRender(id, input) {
     const stream = framework.render(rinput, resolver ?? undefined);
     // Emit the adapter's ReadableStream<Uint8Array> as chunked frames of
     // RAW HTML bytes — no JSON envelope. Rust consumers (render for the
-    // collected shape, render_streaming for the incremental shape) both
+    // collected shape and the per-settle streaming shape (WP-B1)) both
     // get the same HTML; the difference is only whether they buffer.
     //
     // Chunk size: 8 KB. Small enough for reasonable TTFB once we wire a
