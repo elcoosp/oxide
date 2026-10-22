@@ -41,7 +41,6 @@ const KNOWN_KEYS: &[&str] = &[
     "dev",
     "siteUrl",
     "manifest",
-
     "sw",
     "og",
     "imagesEndpoint",
