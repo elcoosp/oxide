@@ -455,7 +455,7 @@ export function simulateSwap(doc: FakeDocument, resolutionChunkHtml: string): bo
   const m = /<template data-ox-c='([^']+)'>([\s\S]*?)<\/template>/.exec(resolutionChunkHtml)
   if (!m) return false
   const [, id, contentHtml] = m
-  const placeholder = doc.querySelector(`template[data-ox-b='${id}']`)
+  const placeholder = doc.querySelector(`[data-ox-b='${id}']`)
   if (!placeholder) return false
   const holder = doc.createElement('div')
   holder.innerHTML = contentHtml
