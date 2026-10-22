@@ -1374,6 +1374,14 @@ fn parallel_load_savings_ms(a_ms: f64, b_ms: f64) -> f64 {
     a_ms.min(b_ms).max(0.0)
 }
 
+/// The stage name the parallel arm records. It is a **counterfactual**: the
+/// wall-clock the overlapping loads would have cost had they run
+/// sequentially (`min(a, b)`), not a duration anyone measured. It is
+/// recorded as a saving so the inspector's total reconciles, and the name
+/// says so — `overlap-saved` rather than a bare `load-overlap` that reads
+/// like a phase.
+const LOAD_OVERLAP_STAGE: &str = "overlap-saved";
+
 /// §16.6 / WP-D1: encode a loader's post-run session into a `Set-Cookie`
 /// value, but only when it actually changed. Compares against the inbound
 /// session (the object decoded from the request's cookie); an untouched
@@ -7859,7 +7867,7 @@ fn build_dispatch(
                     let saved = parallel_load_savings_ms(layout_ms, page_ms);
                     rec.record_staged(
                         &req_owned.request_id,
-                        vec![("load-overlap".to_string(), saved)],
+                        vec![(LOAD_OVERLAP_STAGE.to_string(), saved)],
                         req_owned.trace.as_ref().map(|t| t.trace_id.clone()),
                     );
                 }
