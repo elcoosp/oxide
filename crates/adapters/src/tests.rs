@@ -677,4 +677,3 @@ fn edge_merge_head_is_js_only() {
         "encodeOdf still prefers wasm"
     );
 }
-

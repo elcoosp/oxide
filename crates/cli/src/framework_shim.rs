@@ -650,7 +650,11 @@ pub(crate) fn resolve_ssr_entry(dist_server: &std::path::Path) -> Option<String>
     let declared = std::fs::read(dist_server.join("server.manifest.json"))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-        .and_then(|v| v.get("adapter_entry").and_then(|s| s.as_str()).map(str::to_string));
+        .and_then(|v| {
+            v.get("adapter_entry")
+                .and_then(|s| s.as_str())
+                .map(str::to_string)
+        });
 
     // (2) Prefer the lazy sibling of the declared entry (Wave M perf win).
     let prefer_eager = std::env::var_os("OXIDE_SSR_EAGER").is_some();

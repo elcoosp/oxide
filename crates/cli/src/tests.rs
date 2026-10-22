@@ -196,11 +196,7 @@ fn test_request_with_trace(
     req
 }
 
-fn test_request_with_cookie(
-    method: &str,
-    url: &str,
-    cookie: &str,
-) -> oxide_server::OxideRequest {
+fn test_request_with_cookie(method: &str, url: &str, cookie: &str) -> oxide_server::OxideRequest {
     let headers = vec![("cookie".to_string(), cookie.to_string())];
     oxide_server::OxideRequest {
         method: method.into(),
@@ -271,8 +267,7 @@ async fn ppr_serves_cached_shell_and_streams_holes() {
     let tree = empty_tree();
     let metrics = Arc::new(oxide_server::Metrics::new());
     let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(PprRenderer));
-    let shells: crate::PprShells =
-        Arc::new(std::sync::Mutex::new(crate::PprShellStore::default()));
+    let shells: crate::PprShells = Arc::new(std::sync::Mutex::new(crate::PprShellStore::default()));
 
     let dispatch = build_dispatch(
         tree,
@@ -7101,11 +7096,10 @@ async fn parallel_arm_persists_session_mutation() {
             })
         }
     }
-    let loader: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(Arc::new(
-        RepeatableSessionLoader {
+    let loader: Option<Arc<dyn oxide_server::LoaderRunner>> =
+        Some(Arc::new(RepeatableSessionLoader {
             session: serde_json::json!({ "user": "alice", "visits": 1 }),
-        },
-    ));
+        }));
     let codec = Arc::new(oxide_server::SessionCodec::new(&[vec![7u8; 32]]).unwrap());
 
     let dispatch = build_dispatch(
@@ -7115,7 +7109,14 @@ async fn parallel_arm_persists_session_mutation() {
         renderer,
         loader,
         dir.path().to_path_buf(),
-        None, None, None, None, None, None, None, None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
         false,
         Vec::new(),
         None,
@@ -7184,7 +7185,14 @@ async fn request_trace_reaches_the_loader() {
         None,
         Some(loader as Arc<dyn oxide_server::LoaderRunner>),
         dir.path().to_path_buf(),
-        None, None, None, None, None, None, None, None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
         false,
         Vec::new(),
         None,
@@ -7268,8 +7276,7 @@ impl oxide_server::LoaderRunner for CookieLoader {
 async fn ppr_never_shells_a_loader_cookie_response() {
     use std::sync::Arc;
 
-    let shells: crate::PprShells =
-        Arc::new(std::sync::Mutex::new(crate::PprShellStore::default()));
+    let shells: crate::PprShells = Arc::new(std::sync::Mutex::new(crate::PprShellStore::default()));
     let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(PprRenderer));
     let loader: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(Arc::new(CookieLoader));
 
@@ -7280,8 +7287,18 @@ async fn ppr_never_shells_a_loader_cookie_response() {
         renderer,
         loader,
         std::path::PathBuf::new(),
-        None, None, None, None, None, None, None, None,
-        false, Vec::new(), None, None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        Vec::new(),
+        None,
+        None,
         Some(Arc::clone(&shells)),
     );
 
@@ -7298,8 +7315,7 @@ async fn ppr_never_shells_a_loader_cookie_response() {
 async fn ppr_never_shells_a_middleware_cookie_response() {
     use std::sync::Arc;
 
-    let shells: crate::PprShells =
-        Arc::new(std::sync::Mutex::new(crate::PprShellStore::default()));
+    let shells: crate::PprShells = Arc::new(std::sync::Mutex::new(crate::PprShellStore::default()));
     let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(PprRenderer));
     let mw: Option<Arc<dyn oxide_server::MiddlewareDispatcher>> =
         Some(Arc::new(ScriptedMiddleware {
@@ -7317,9 +7333,18 @@ async fn ppr_never_shells_a_middleware_cookie_response() {
         renderer,
         None,
         std::path::PathBuf::new(),
-        None, None, None, None, None, None, None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
         mw,
-        false, Vec::new(), None, None,
+        false,
+        Vec::new(),
+        None,
+        None,
         Some(Arc::clone(&shells)),
     );
 
@@ -7381,7 +7406,14 @@ async fn __data_untouched_session_does_not_reissue_a_cookie() {
         None,
         Some(Arc::new(UnchangedSessionLoader) as Arc<dyn oxide_server::LoaderRunner>),
         std::path::PathBuf::new(),
-        None, None, None, None, None, None, None, None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
         false,
         Vec::new(),
         None,
@@ -7430,8 +7462,7 @@ fn resolve_ssr_entry_honours_the_manifest() {
 
     // Manifest says eager, but the lazy sibling exists and the A/B env is
     // unset — the render path prefers lazy.
-    let resolved = crate::framework_shim::resolve_ssr_entry(dist_server)
-        .expect("entry resolved");
+    let resolved = crate::framework_shim::resolve_ssr_entry(dist_server).expect("entry resolved");
     assert!(
         resolved.ends_with("ssr/lazy.js"),
         "lazy sibling preferred when present: {resolved}"
@@ -7446,8 +7477,7 @@ fn resolve_ssr_entry_falls_back_to_convention_without_a_manifest() {
     std::fs::write(dist_server.join("ssr/index.js"), "// eager").unwrap();
 
     // No manifest: filesystem convention finds the eager entry.
-    let resolved = crate::framework_shim::resolve_ssr_entry(dist_server)
-        .expect("entry resolved");
+    let resolved = crate::framework_shim::resolve_ssr_entry(dist_server).expect("entry resolved");
     assert!(
         resolved.ends_with("ssr/index.js"),
         "convention fallback: {resolved}"
@@ -7471,8 +7501,7 @@ fn resolve_ssr_entry_is_none_when_nothing_exists() {
 async fn ppr_shell_key_ignores_query_string() {
     use std::sync::Arc;
 
-    let shells: crate::PprShells =
-        Arc::new(std::sync::Mutex::new(crate::PprShellStore::default()));
+    let shells: crate::PprShells = Arc::new(std::sync::Mutex::new(crate::PprShellStore::default()));
     let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(PprRenderer));
 
     let dispatch = build_dispatch(
@@ -7487,7 +7516,14 @@ async fn ppr_shell_key_ignores_query_string() {
         renderer,
         None,
         std::path::PathBuf::new(),
-        None, None, None, None, None, None, None, None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
         false,
         Vec::new(),
         None,

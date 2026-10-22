@@ -64,7 +64,6 @@ impl NativePlugin {
         }
     }
 
-
     pub fn all_names() -> &'static str {
         "images, fonts, i18n, mdx, tailwind, manifest"
     }
@@ -178,7 +177,6 @@ mod tests {
         assert_eq!(e.0.code, "OX-PLUGIN");
         assert!(e.0.message.contains("missing a `name`"));
     }
-
 
     #[test]
     fn enables_returns_the_variant_gate() {

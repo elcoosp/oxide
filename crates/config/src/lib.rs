@@ -471,7 +471,9 @@ impl Default for I18nConfig {
     }
 }
 
-fn default_session_ttl_secs() -> u64 { 1800 }
+fn default_session_ttl_secs() -> u64 {
+    1800
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase", default)]

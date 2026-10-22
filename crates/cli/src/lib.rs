@@ -1294,9 +1294,11 @@ fn compute_layout_chain(tree: &oxide_router::RouteTree, route_id: &str) -> Vec<S
     for i in 0..segments.len() {
         let prefix = segments[..=i].join("/");
         let layout_id = format!("{prefix}/layout");
-        if tree.entries.iter().any(|e| {
-            matches!(e.kind, oxide_router::RouteKind::Layout) && e.id.0 == layout_id
-        }) {
+        if tree
+            .entries
+            .iter()
+            .any(|e| matches!(e.kind, oxide_router::RouteKind::Layout) && e.id.0 == layout_id)
+        {
             chain.push(layout_id);
         }
     }
@@ -1314,7 +1316,7 @@ fn enrich_manifest_layout_chains(
 ) -> anyhow::Result<()> {
     let bytes = match std::fs::read(manifest_path) {
         Ok(b) => b,
-        Err(_) => return Ok(()),  // no manifest yet — nothing to enrich
+        Err(_) => return Ok(()), // no manifest yet — nothing to enrich
     };
     let mut doc: serde_json::Value = serde_json::from_slice(&bytes)
         .map_err(|e| anyhow::anyhow!("manifest {} invalid JSON: {e}", manifest_path.display()))?;
@@ -1375,8 +1377,7 @@ fn parallel_load_savings_ms(a_ms: f64, b_ms: f64) -> f64 {
 /// `build_dispatch`'s closure cannot see `cfg`; the CLI runs one server
 /// per process (documented single-server assumption). Tests use the
 /// default 1800 until they opt in.
-static SESSION_TTL_SECS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(1800);
+static SESSION_TTL_SECS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1800);
 
 fn session_ttl_secs() -> u64 {
     SESSION_TTL_SECS.load(std::sync::atomic::Ordering::Relaxed)
@@ -2348,14 +2349,8 @@ fn emit_content_search_indexes(
             // WP-r9-1: do not swallow the write error. A silent failure
             // here surfaces later as a misleading "no entries file" from
             // `getCollection` at request time; the build should fail loud.
-            std::fs::write(
-                out_dir.join(format!("{}.entries.json", coll.name)),
-                pretty,
-            )
-            .map_err(|e| anyhow::anyhow!(
-                "write content/{}.entries.json: {e}",
-                coll.name
-            ))?;
+            std::fs::write(out_dir.join(format!("{}.entries.json", coll.name)), pretty)
+                .map_err(|e| anyhow::anyhow!("write content/{}.entries.json: {e}", coll.name))?;
         }
         outln!(
             w,
@@ -2929,7 +2924,11 @@ fn emit_pwa_worker(
         .with_extension("html")
         .is_file()
         || offline_fallback == "/";
-    let effective_fallback = if fallback_exists { &offline_fallback } else { "/" };
+    let effective_fallback = if fallback_exists {
+        &offline_fallback
+    } else {
+        "/"
+    };
 
     let mut precache: Vec<String> = vec!["/".to_string()];
     if let Some(routes) = client_manifest.get("routes").and_then(|r| r.as_object()) {
@@ -3189,7 +3188,10 @@ fn prefixed_prerender_path(
     cfg: &oxide_config::OxideConfig,
 ) -> (String, String) {
     if locale.is_empty() {
-        return (format!("prerendered/{base_rel}"), url_path_from_rel(base_rel));
+        return (
+            format!("prerendered/{base_rel}"),
+            url_path_from_rel(base_rel),
+        );
     }
     let should_prefix = match cfg.i18n.strategy.as_str() {
         "prefix-always" => true,
@@ -3200,7 +3202,10 @@ fn prefixed_prerender_path(
         let url = url_path_from_rel(&format!("{locale}/{base_rel}"));
         (format!("prerendered/{locale}/{base_rel}"), url)
     } else {
-        (format!("prerendered/{base_rel}"), url_path_from_rel(base_rel))
+        (
+            format!("prerendered/{base_rel}"),
+            url_path_from_rel(base_rel),
+        )
     }
 }
 
@@ -3783,11 +3788,9 @@ async fn route_data_response_inner(
                     }
                     // §16.6 / WP-D1: a short-circuit (redirect / error)
                     // that also mutated `event.session` must persist it.
-                    if let Some(cookie) = encode_session_cookie(
-                        out.session.as_ref(),
-                        None,
-                        session_codec,
-                    ) {
+                    if let Some(cookie) =
+                        encode_session_cookie(out.session.as_ref(), None, session_codec)
+                    {
                         resp = resp.with_header("set-cookie", cookie);
                     }
                     metrics.observe("_data", started.elapsed(), out.status);
@@ -3835,9 +3838,8 @@ async fn route_data_response_inner(
         // §20 / G2: thread the inbound W3C trace so the loader's
         // server-side fetch calls join the request trace.
         input.trace = req.trace.as_ref().and_then(|t| {
-            t.to_traceparent(&t.parent_id).map(|tp| {
-                serde_json::json!({"traceparent": tp, "tracestate": t.tracestate})
-            })
+            t.to_traceparent(&t.parent_id)
+                .map(|tp| serde_json::json!({"traceparent": tp, "tracestate": t.tracestate}))
         });
         match runner.run(input).await {
             Ok(out) if out.short_circuits() => {
@@ -4090,7 +4092,9 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // against the project, not the shell's cwd. Edition 2024:
     // set_var is process-global; this runs before any worker
     // thread spawns.
-    unsafe { std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref()); }
+    unsafe {
+        std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref());
+    }
     let dist = rootp.join("dist");
 
     // §5.1 early cutoff. The fingerprint walk is only paid when the previous
@@ -5243,7 +5247,12 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 reused_prerender_count += reused;
                 let mut outs: Vec<String> = Vec::with_capacity(rows.len());
                 for (t, html, prerender_status) in rows {
-                    let PrerenderTarget { rel, url_path, locale, .. } = t;
+                    let PrerenderTarget {
+                        rel,
+                        url_path,
+                        locale,
+                        ..
+                    } = t;
                     seed_bodies.push((
                         route_id.clone(),
                         url_path.clone(),
@@ -5316,7 +5325,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                                 format!("{}.html", segs.join("/"))
                             };
                             for locale in &locales {
-                                let (rel, url_path) = prefixed_prerender_path(&base_rel, locale, &cfg);
+                                let (rel, url_path) =
+                                    prefixed_prerender_path(&base_rel, locale, &cfg);
                                 targets.push(PrerenderTarget {
                                     rel,
                                     url_path,
@@ -5347,7 +5357,12 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                         reused_prerender_count += reused;
                         let mut outs: Vec<String> = Vec::with_capacity(rows.len());
                         for (t, html, prerender_status) in rows {
-                            let PrerenderTarget { rel, url_path, locale, .. } = t;
+                            let PrerenderTarget {
+                                rel,
+                                url_path,
+                                locale,
+                                ..
+                            } = t;
                             seed_bodies.push((
                                 route_id.clone(),
                                 url_path.clone(),
@@ -5564,10 +5579,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // AST) means a loader-injected `<title>`, a plugin-added heading, or
     // a `defineMeta` override all reach the index as the user sees them.
     if !prerendered.is_empty() {
-        let search_index = oxide_assets::route_search::build_route_search_index(
-            &prerendered,
-            &dist,
-        );
+        let search_index =
+            oxide_assets::route_search::build_route_search_index(&prerendered, &dist);
         if let Ok(json) = oxide_assets::route_search::route_search_index_to_json(&search_index) {
             let path = dist.join("client/search-index.json");
             if let Some(parent) = path.parent() {
@@ -7375,9 +7388,9 @@ fn build_dispatch(
                     // §20 / G2: thread the inbound W3C trace so the loader's
                     // server-side fetch calls join the request trace.
                     linput.trace = req_owned.trace.as_ref().and_then(|t| {
-                        t.to_traceparent(&t.parent_id).map(|tp| {
-                            serde_json::json!({"traceparent": tp, "tracestate": t.tracestate})
-                        })
+                        t.to_traceparent(&t.parent_id).map(
+                            |tp| serde_json::json!({"traceparent": tp, "tracestate": t.tracestate}),
+                        )
                     });
                     linput.parent_data = layout_data_chain
                         .last()
@@ -7453,9 +7466,9 @@ fn build_dispatch(
                 // §20 / G2: thread the inbound W3C trace so the loader's
                 // server-side fetch calls join the request trace.
                 linput.trace = req_owned.trace.as_ref().and_then(|t| {
-                    t.to_traceparent(&t.parent_id).map(|tp| {
-                        serde_json::json!({"traceparent": tp, "tracestate": t.tracestate})
-                    })
+                    t.to_traceparent(&t.parent_id).map(
+                        |tp| serde_json::json!({"traceparent": tp, "tracestate": t.tracestate}),
+                    )
                 });
                 linput.parent_data = layout_data_chain
                     .last()
@@ -7480,9 +7493,9 @@ fn build_dispatch(
                 // §20 / G2: thread the inbound W3C trace so the loader's
                 // server-side fetch calls join the request trace.
                 pinput.trace = req_owned.trace.as_ref().and_then(|t| {
-                    t.to_traceparent(&t.parent_id).map(|tp| {
-                        serde_json::json!({"traceparent": tp, "tracestate": t.tracestate})
-                    })
+                    t.to_traceparent(&t.parent_id).map(
+                        |tp| serde_json::json!({"traceparent": tp, "tracestate": t.tracestate}),
+                    )
                 });
 
                 // §20 / O3c: time each side of the join. The wall-clock
@@ -7652,9 +7665,9 @@ fn build_dispatch(
                     // §20 / G2: thread the inbound W3C trace so the loader's
                     // server-side fetch calls join the request trace.
                     input.trace = req_owned.trace.as_ref().and_then(|t| {
-                        t.to_traceparent(&t.parent_id).map(|tp| {
-                            serde_json::json!({"traceparent": tp, "tracestate": t.tracestate})
-                        })
+                        t.to_traceparent(&t.parent_id).map(
+                            |tp| serde_json::json!({"traceparent": tp, "tracestate": t.tracestate}),
+                        )
                     });
                     // §9.2: the innermost layout's data — what `parent()`
                     // reads in a page load.
@@ -8061,10 +8074,8 @@ fn build_dispatch(
                                     let pkey = format!(
                                         "{ppr_build_id}\x1f{l0_route}\x1f{l0_params}\x1f{l0_vary}"
                                     );
-                                    let cached = shells
-                                        .lock()
-                                        .ok()
-                                        .and_then(|s| s.get(&pkey).cloned());
+                                    let cached =
+                                        shells.lock().ok().and_then(|s| s.get(&pkey).cloned());
                                     match cached {
                                         Some(shell) => ppr_filter_stream(
                                             shell.replace(l0_cache::NONCE_SENTINEL, &nonce),
@@ -9590,7 +9601,9 @@ async fn start_server_inner_full(
     // against the project, not the shell's cwd. Edition 2024:
     // set_var is process-global; this runs before any worker
     // thread spawns.
-    unsafe { std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref()); }
+    unsafe {
+        std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref());
+    }
     let mut cfg = load_config_or_default(&rootp, "production");
     set_session_ttl(cfg.security.session_ttl_secs);
     // §10.1: refine inferred render modes from the AST, exactly as `oxide build`
@@ -11290,7 +11303,9 @@ async fn cmd_render(
     // against the project, not the shell's cwd. Edition 2024:
     // set_var is process-global; this runs before any worker
     // thread spawns.
-    unsafe { std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref()); }
+    unsafe {
+        std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref());
+    }
     let config_path = find_config_file(&rootp)?;
     // Load the config to find `routes.dir` for the loader lookup. Non-strict:
     // a config that the Rust extractor cannot fully parse (e.g. a
