@@ -106,7 +106,9 @@ pub trait PageRenderer: Send + Sync {
     /// pay those one-time costs. Errors are logged and ignored: readiness
     /// flips even on warmup failure (a broken renderer fails every
     /// request, not just the first).
-    async fn warm(&self) -> crate::Result<()> { Ok(()) }
+    async fn warm(&self) -> crate::Result<()> {
+        Ok(())
+    }
 
     /// Human-readable name (`react` / `vue` / `svelte` / `solid` / `fake`).
     /// Surfaces in the inspector (§13.4) and log lines.
