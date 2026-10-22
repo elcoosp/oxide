@@ -7539,3 +7539,75 @@ fn ppr_shell_store_reinsert_refreshes_age() {
     assert!(store.get("k0").is_some(), "k0 refreshed, not evicted");
     assert!(store.get("k1").is_none(), "k1 (now oldest) was evicted");
 }
+
+// ------------------------------ §18 / P0-1b: edge bundle
+
+#[test]
+fn find_edge_entry_prefers_ts_over_js() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join("src/edge.ts"),
+        "export default () => new Response('ts');\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/edge.js"),
+        "export default () => new Response('js');\n",
+    )
+    .unwrap();
+    let found = crate::find_edge_entry(root).expect("found one");
+    assert_eq!(
+        found.file_name().unwrap(),
+        "edge.ts",
+        "typed extension preferred; found {found:?}"
+    );
+}
+
+#[test]
+fn find_edge_entry_ignores_a_directory_named_edge() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    // A directory named `src/edge/` is not an entry; only a file
+    // `src/edge.{ts,mjs,js,tsx,jsx}` is.
+    std::fs::create_dir_all(root.join("src/edge")).unwrap();
+    assert!(
+        crate::find_edge_entry(root).is_none(),
+        "directory named edge must not masquerade as an entry"
+    );
+}
+
+#[tokio::test]
+async fn bundle_edge_entry_emits_edge_bundle_js() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join("src/edge.mjs"),
+        "export default function(req, env, ctx) {\n  return new Response('edge');\n}\n",
+    )
+    .unwrap();
+    let entry = root.join("src/edge.mjs");
+    let dist = root.join("dist");
+    std::fs::create_dir_all(&dist).unwrap();
+
+    let css = oxide_bundler::CssTransformHook::new(|_, src, _, _| {
+        Ok((src.to_string(), std::collections::BTreeMap::new()))
+    });
+
+    let mut buf: Vec<u8> = Vec::new();
+    let out = crate::bundle_edge_entry(root, &dist, &entry, css, &mut buf)
+        .await
+        .expect("bundle_edge_entry");
+    assert!(out.is_some(), "an entry chunk was emitted");
+    let target = dist.join("deploy/edge_bundle.js");
+    assert!(target.is_file(), "edge_bundle.js emitted at {target:?}");
+    let bytes = std::fs::metadata(&target).unwrap().len();
+    assert!(bytes > 0, "edge_bundle.js is non-empty");
+    let src = std::fs::read_to_string(&target).unwrap();
+    assert!(
+        src.contains("edge"),
+        "bundle carries the entry source; got {src}"
+    );
+}

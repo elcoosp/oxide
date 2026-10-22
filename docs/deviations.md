@@ -81,3 +81,36 @@ with its own tests against the edge shape, exposed as a new export
 (`merge_head_structured`). Reusing `merge_head` is a type mismatch by
 design, not by accident.
 
+
+## Edge bundle: no externals; chunked output (P0-1b)
+
+**What the spec asks.** §18 / D18: an `oxide build` for a Cloudflare
+target should produce a deployable Worker that includes the project's
+edge entry (if any).
+
+**What lands.** `cmd_build` for `Target::Cloudflare | Target::CloudflarePages`
+detects `src/edge.{ts,mjs,js,tsx,jsx}` (typed extension preferred) and
+bundles it with a single-entry `BundleEnv::Edge` pass into
+`dist/deploy/edge_bundle.js`. The existing `edge_handler.js` does
+`import("./edge_bundle.js")` and calls its default export. A project with
+no edge entry is fine — the handler's try/catch on `Cannot find module`
+falls through to the built-in JS path.
+
+**Two design decisions worth recording.**
+
+- **No externals.** The edge handler must be self-contained: a bare npm
+  import either resolves to the package's edge entry at build time or
+  fails with `BLD-RESOLVE`. `node:*` imports are not special-cased —
+  a project using them gets the build-time resolve error, which is the
+  honest signal (Cloudflare Workers' node-compat is a runtime flag the
+  build cannot know about).
+- **Chunked output allowed.** Rolldown may emit shared chunks alongside
+  the entry. All chunks are written to `dist/deploy/` (Cloudflare Workers
+  deploys the directory as a whole); only the entry chunk is renamed to
+  `edge_bundle.js`, and its relative imports of the sibling chunks
+  resolve at their hashed names.
+
+**What would change it.** A declared externalisation API
+(`build.edgeExternals`), or a Rolldown option to force a single-chunk
+bundle at the cost of duplication. Either is a follow-up; the current
+build is deployable.

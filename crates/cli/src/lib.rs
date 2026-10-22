@@ -3984,6 +3984,101 @@ fn build_secret(rootp: &std::path::Path) -> anyhow::Result<String> {
     Ok(s)
 }
 
+/// §18 / P0-1b: locate the project's edge entry.
+///
+/// Cloudflare Workers convention: a single `src/edge.{ts,mjs,js,tsx,jsx}`
+/// exports `default (req, env, ctx) => Response`. The typed extension is
+/// preferred so a project with a stale `.js` and a real `.ts` gets the
+/// typed one. Returns `None` when no entry exists -- the emitted
+/// `edge_handler.js` catches the resulting `Cannot find module` and falls
+/// through to the built-in JS path.
+fn find_edge_entry(root: &Path) -> Option<PathBuf> {
+    for ext in ["ts", "mjs", "js", "tsx", "jsx"] {
+        let candidate = root.join("src").join("edge").with_extension(ext);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// §18 / P0-1b: bundle the edge entry into `dist/deploy/edge_bundle.js`.
+///
+/// The emitted `edge_handler.js` does `import("./edge_bundle.js")` and
+/// calls its default export. This helper produces that file: a
+/// single-entry bundle in `BundleEnv::Edge` (production defines,
+/// minified, no sourcemap) written next to the handler.
+///
+/// **Chunking:** rolldown may emit shared chunks alongside the entry when
+/// the entry imports common code. All chunks are written to
+/// `dist/deploy/` (the whole directory deploys together for Cloudflare
+/// Workers); only the entry chunk is renamed to `edge_bundle.js`. Its
+/// relative imports of the sibling chunks resolve at their hashed names.
+///
+/// **Externals:** none. The edge handler must self-contain relative
+/// imports; a bare npm import either resolves to the package's edge
+/// entry or fails with BLD-RESOLVE at build time. `node:*` imports are
+/// not specially handled -- a project using them gets the build-time
+/// resolve error, which is the honest signal (Cloudflare Workers'
+/// node-compat is a runtime flag the build cannot know about).
+async fn bundle_edge_entry(
+    root: &Path,
+    dist: &Path,
+    entry: &Path,
+    css_transform: oxide_bundler::CssTransformHook,
+    w: Writer<'_>,
+) -> anyhow::Result<Option<PathBuf>> {
+    use oxide_bundler::Bundler as _;
+    let out_dir = dist.join("deploy");
+    std::fs::create_dir_all(&out_dir)?;
+
+    let mut entries: BTreeMap<String, PathBuf> = BTreeMap::new();
+    entries.insert("edge".to_string(), entry.to_path_buf());
+
+    let opts = bundle_env_options(
+        oxide_bundler::BundleEnv::Edge,
+        entries,
+        out_dir.clone(),
+        BTreeMap::new(),
+        None,
+        "edge".to_string(),
+        None,
+        css_transform,
+        Vec::new(),
+        false,
+        true,
+    );
+
+    let bundler = oxide_bundler::RolldownBundler::new(root);
+    let out = bundler
+        .bundle(&opts)
+        .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+
+    let entry_chunks: Vec<_> = out
+        .chunks
+        .iter()
+        .filter(|c| c.kind == oxide_bundler::ChunkKind::Entry)
+        .collect();
+    if entry_chunks.is_empty() {
+        return Ok(None);
+    }
+    let entry_chunk = entry_chunks[0];
+    let produced = out_dir.join(&entry_chunk.file);
+    let target = out_dir.join("edge_bundle.js");
+    if target.exists() {
+        std::fs::remove_file(&target)?;
+    }
+    std::fs::rename(&produced, &target)?;
+    let bytes = std::fs::metadata(&target)?.len();
+    outln!(
+        w,
+        "edge bundle: {} ({} bytes, env=edge)",
+        target.display(),
+        bytes
+    );
+    Ok(Some(target))
+}
+
 async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<i32> {
     // Canonicalize once at entry. Downstream joins (routes scan, bundler,
     // write_prerender) all expect absolute paths so a nested `root.join`
@@ -4380,7 +4475,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         jsx_source,
         build_secret,
         transform_hook,
-        css_transform,
+        css_transform.clone(),
         cfg.build.ssr_externals.clone(),
         cfg.build.sourcemap != "off",
         true, // production build minifies
@@ -5819,6 +5914,35 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     w,
                     "edge wasm build failed: {e}; the Worker falls back to JS"
                 );
+            }
+        }
+    }
+
+    // §18 / P0-1b: for the two Cloudflare targets, bundle the project's
+    // edge entry (src/edge.{ts,mjs,js,tsx,jsx}) into
+    // dist/deploy/edge_bundle.js BEFORE emit writes the handler that
+    // imports it. A project without an edge entry is fine -- the handler's
+    // try/catch on `Cannot find module` falls through to the built-in JS
+    // path.
+    if matches!(
+        target,
+        oxide_adapters::Target::Cloudflare | oxide_adapters::Target::CloudflarePages
+    ) {
+        if let Some(edge_entry) = find_edge_entry(&rootp) {
+            match bundle_edge_entry(&rootp, &dist, &edge_entry, css_transform, w).await {
+                Ok(Some(path)) => {
+                    outln!(w, "edge_bundle.js: {}", path.display());
+                }
+                Ok(None) => {
+                    outln!(
+                        w,
+                        "edge entry `{}` produced no entry chunk; edge_handler.js will use its JS fallback",
+                        edge_entry.display()
+                    );
+                }
+                Err(e) => {
+                    anyhow::bail!("edge bundle failed: {e}");
+                }
             }
         }
     }
