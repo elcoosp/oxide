@@ -400,20 +400,14 @@ pub async fn op_oxide_cache_tag(#[string] tag: String) -> String {
 /// current-thread runtime — the same bridge the CLI's plugin hooks use. The
 /// tooling pool has its own runtime (fixed in bdfe82f), so blocking here does
 /// not starve it.
-pub fn compile_module_sync(
-    path: String,
-    code: String,
-    lang: String,
-) -> crate::Result<String> {
+pub fn compile_module_sync(path: String, code: String, lang: String) -> crate::Result<String> {
     std::thread::scope(|scope| {
         scope
             .spawn(|| {
                 let rt = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
-                    .map_err(|e| {
-                        crate::err("JSH-V8COMPILE", format!("bridge runtime: {e}"))
-                    })?;
+                    .map_err(|e| crate::err("JSH-V8COMPILE", format!("bridge runtime: {e}")))?;
                 // `compile_module_impl` returns the op's JSON string — a
                 // `{code: ...}` object on success, an error object otherwise.
                 let json = rt.block_on(compile_module_impl(path, code, lang));
@@ -438,7 +432,10 @@ pub fn compile_module_sync(
             })
             .join()
             .unwrap_or_else(|_| {
-                Err(crate::err("JSH-V8COMPILE", "compile bridge thread panicked"))
+                Err(crate::err(
+                    "JSH-V8COMPILE",
+                    "compile bridge thread panicked",
+                ))
             })
     })
 }
