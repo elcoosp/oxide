@@ -7,6 +7,6 @@ import { listPosts } from '../../lib/md.server.ts'
 
 export const load = defineLoad(async () => {
   return {
-    latest: listPosts().slice(0, 3),
+    latest: (await listPosts()).slice(0, 3),
   }
 })
