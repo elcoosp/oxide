@@ -1029,19 +1029,19 @@ async fn http_get(addr: std::net::SocketAddr, path: &str) -> String {
 /// long-running server path: config load → stack build → dispatch →
 /// page renderer → HTTP response.
 ///
-/// ## Known limitation (documented, not asserted away)
+/// ## What is asserted, and why
 ///
-/// The smoke-app's `oxide.config.ts` calls `react({ compiler: true })` —
-/// it declares only `ssr: 'real'` — route components resolve through
-/// the build-emitted entry (`dist/server/ssr/index.js`), not a
-/// `componentFor` closure in the config (§6.4).
-/// runs in 'auto' mode and the render falls through to the adapter's IR
-/// fallback (the conformance-suite Atlas registry). The smoke-app's own
-/// `src/routes/*/page.tsx` files are NOT compiled into the worker yet.
-/// The tests below therefore assert the framework *shape* (200, root
-/// marker, no not-found boundary) and parameter threading, not on the
-/// content of the smoke-app's `page.tsx`. Compiling user TSX into the
-/// adapter's component tree is the next slice.
+/// The smoke app's `oxide.config.ts` declares `react({ ssr: 'real' })` with
+/// no `componentFor` and no component imports (§14.1). Route components come
+/// from the build-emitted adapter entry at `dist/server/ssr/index.js`, which
+/// `resolve_ssr_entry` locates via the server manifest (§6.4).
+///
+/// These tests assert the framework *shape* — 200, the React root marker, no
+/// not-found boundary — plus parameter threading through to the loader. They
+/// deliberately do not assert the smoke app's `page.tsx` markup: that would
+/// couple a dispatch test to fixture copy, and the same property is covered
+/// end-to-end by `cli_render_resolves_components_from_the_built_entry`,
+/// which owns its own entry and marker.
 ///
 /// `#[ignore]` because it spawns Node, binds a port, and requires the
 /// workspace `node_modules` (from `pnpm install`). Run with:
@@ -1118,15 +1118,12 @@ async fn dev_server_serves_smoke_app_over_http() {
         "streaming response must use chunked transfer encoding; got:\n{}",
         resp_home
     );
-    // The smoke-app's config is `react({ compiler: true })` — no
-    // `componentFor`, so `createRealAdapter` dispatches to the real
-    /// renderer with the runtime-supplied `resolve`.
-    // render falls through to the adapter's IR fallback (the Atlas
-    // registry the conformance suite uses). That's why we assert the
-    // *framework* shape rather than the smoke-app's `page.tsx` content:
-    // compiling the user's TSX and feeding it through the runtime
-    /// resolver (`input.resolve`).
-    // next slice.
+    // §14.1 / §6.4: the smoke app declares `react({ ssr: 'real' })` with no
+    // `componentFor`, so `createRealAdapter` resolves the page through the
+    // runtime-supplied `resolve` (fed from the build-emitted entry). The
+    // assertion is on the *framework* shape — the React root marker — not on
+    // the fixture's page markup: that coupling is covered by
+    // `cli_render_resolves_components_from_the_built_entry`.
     assert!(
         resp_home.contains("data-reactroot"),
         "home body should carry the framework root marker:\n{}",
