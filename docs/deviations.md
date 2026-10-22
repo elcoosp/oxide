@@ -121,11 +121,30 @@ build is deployable.
 target produces an accelerated `edge.wasm` alongside the JS handler.
 
 **What lands.** The CI job `wasm32-edge` installs `wasm32-unknown-unknown`
-and builds `oxide-core-wasm` for it; the workspace's `cargo build -p
-oxide-core-wasm --target wasm32-unknown-unknown --release` is green. A
-`#[ignore]`'d test in `crates/cli/src/tests.rs`
-(`compile_edge_wasm_from_workspace_root_emits_edge_wasm`) can be run
-on-demand and passes when the target is installed.
+and builds `oxide-core-wasm` for it. A `#[ignore]`'d test in
+`crates/cli/src/tests.rs`
+(`compile_edge_wasm_from_workspace_root_emits_edge_wasm`) runs the same
+build on demand and asserts `dist/edge.wasm` exists and is non-empty.
+
+**Two bugs the gate caught on first run.** Before the gate existed,
+`oxide-core-wasm` did *not* actually compile for `wasm32-unknown-unknown`:
+
+1. The `#[cfg(target_arch = "wasm32")] bindings` module was never compiled
+   on host, so two type errors survived every prior gate:
+   - `encode_odf` passed a `serde_json::Value` into `crate::encode_odf(&Value)`,
+     which expects `oxide_odf::Value` (E0308: distinct types).
+   - `decode_odf` called `serde_json::to_vec` on `oxide_odf::Value`, which
+     does not implement `Serialize` by design (E0277 — ODF is the wire
+     format, JSON is a lossy projection).
+   Fixed by routing through the existing `Value::from_json` /
+   `Value::to_json` bridges.
+
+2. `.cargo/config.toml` carried `[build] rustflags = ["-C",
+   "link-arg=-Wl,-w"]` to suppress macOS `ld64` warnings about
+   v8 template-weak symbols. `-Wl,` is a compiler-driver prefix; when
+   `--target wasm32-unknown-unknown` is passed, rustc invokes `rust-lld`
+   directly and `rust-lld` receives the literal string `-Wl,-w` (unknown
+   argument). Scoped the flag to the explicit host triple.
 
 **Why it does not work for a real user project.** `compile_edge_wasm(root,
 dist)` runs `cargo build -p oxide-core-wasm ...` with `current_dir(root)`.
