@@ -21,8 +21,11 @@ fn edge_handler_prefers_wasm_for_cache_key_and_odf() {
         js.contains(r#"useWasm("encode_odf""#),
         "odf encoder uses wasm"
     );
-    // The JS fallbacks must remain: a Worker without edge.wasm is still correct.
-    assert!(js.contains(r#"["edge", route, params, vary, build_id].join"#));
+    // The JS fallback must remain, and it must produce the same canonical
+    // blake3 L0 key as native and wasm (P0-4: it used to emit a raw
+    // `edge\0...` composite, a documented divergence).
+    assert!(js.contains(r#"["L0", route, params, vary, build_id].join"#));
+    assert!(js.contains("function blake3Hex("));
 }
 
 // P0-1a: `merge_head` must NOT be routed through wasm. This is the negative
