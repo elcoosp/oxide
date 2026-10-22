@@ -27,7 +27,7 @@ pnpm test:playwright                      # boots oxide start + drives the brows
 | `sse.spec.ts`        | §9.6 SSE headers + progressive streaming             | `api/events` |
 
 Each spec boots its own `oxide start` server on its own port (3100-3105)
-in `beforeAll`, so the six specs can run in any order (or in parallel).
+in `beforeAll`, so the seven specs can run in any order (or in parallel).
 
 ## Running one spec
 
@@ -38,8 +38,10 @@ in `beforeAll`, so the six specs can run in any order (or in parallel).
 
 ## CI
 
-Not wired into the default `.github/workflows/ci.yml` (Chromium install +
-six server boots make the job slow). When ready, add a separate job that
-runs `pnpm install`, `pnpm --filter @oxide/playwright install-browsers`,
+Wired into `.github/workflows/ci.yml` as the `playwright` job: cargo
+build, install workspace deps, `playwright install --with-deps chromium`,
+then `playwright test`. One job, not one-per-spec; the suite boots each
+spec's server on its own port (3100-3106) so a shared Chromium does not
+make the job slower than a serialised split would.
 then `pnpm --filter @oxide/playwright test`. It is orthogonal to the Rust
 and node jobs and can run on a longer timeout.

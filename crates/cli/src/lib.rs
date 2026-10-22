@@ -695,7 +695,9 @@ async fn scan_routes(
         let unmerged: Vec<&str> = m
             .hooks
             .iter()
-            .filter(|h| h.as_str() != "transform")
+            // §15 / WP-r9: keep in sync with the message — transform,
+            // resolveId and load all route through the pipeline.
+            .filter(|h| !matches!(h.as_str(), "transform" | "resolveId" | "load"))
             .map(|s| s.as_str())
             .collect();
         eprintln!(
