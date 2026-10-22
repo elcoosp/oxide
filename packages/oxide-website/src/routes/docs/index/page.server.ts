@@ -6,7 +6,7 @@ import { readDoc } from '../../../lib/md.server.ts'
 export const config = { render: 'isr', revalidate: 3600, tags: ['docs'] }
 
 export const load = defineLoad(async () => {
-  const doc = readDoc('getting-started')
+  const doc = await readDoc('getting-started')
   if (!doc) error(500, 'content/docs/getting-started.md missing')
   return { doc, path: 'getting-started' }
 })
