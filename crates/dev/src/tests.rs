@@ -298,12 +298,12 @@ fn inspector_renders_waterfalls() {
                 ("load".to_string(), 12.0),
                 ("render".to_string(), 30.0),
             ],
-        trace_id: None,
+            trace_id: None,
         },
         RequestTimingsRow {
             request_id: "req-hit".to_string(),
             waterfall_ms: vec![("cache-hit".to_string(), 0.4)],
-        trace_id: None,
+            trace_id: None,
         },
     ];
     let html = render_inspector_html(&state);
@@ -391,9 +391,16 @@ fn record_staged_merges_by_request_id() {
     assert_eq!(snap.len(), 1, "one row per request_id, not two: {snap:?}");
     let row = &snap[0];
     assert_eq!(row.request_id, "req-1");
-    assert_eq!(row.trace_id.as_deref(), Some("trace-abc"), "trace preserved");
+    assert_eq!(
+        row.trace_id.as_deref(),
+        Some("trace-abc"),
+        "trace preserved"
+    );
     let names: Vec<_> = row.waterfall_ms.iter().map(|(n, _)| n.as_str()).collect();
-    assert_eq!(names, vec!["middleware", "load", "render", "deferred-settles"]);
+    assert_eq!(
+        names,
+        vec!["middleware", "load", "render", "deferred-settles"]
+    );
 }
 
 #[test]
@@ -406,11 +413,7 @@ fn record_staged_settle_first_still_merges() {
         vec![("deferred-settles".to_string(), 8.0)],
         Some("trace-xyz".to_string()),
     );
-    rec.record_staged(
-        "req-2",
-        vec![("render".to_string(), 15.0)],
-        None,
-    );
+    rec.record_staged("req-2", vec![("render".to_string(), 15.0)], None);
     let snap = rec.snapshot();
     assert_eq!(snap.len(), 1);
     assert_eq!(snap[0].trace_id.as_deref(), Some("trace-xyz"));
