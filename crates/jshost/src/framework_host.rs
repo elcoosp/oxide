@@ -112,9 +112,7 @@ impl FrameworkHost {
         // (`dispatchFrameworkRender`) and the V8 dispatcher see it.
         // Without this, `input.components` is set but the resolver is
         // never built and every real-SSR render emits 500.
-        let components = input
-            .as_object_mut()
-            .and_then(|o| o.remove("components"));
+        let components = input.as_object_mut().and_then(|o| o.remove("components"));
         let route_key = input
             .get("route")
             .and_then(|v| v.as_str())
@@ -169,12 +167,14 @@ impl FrameworkHost {
     ///
     /// Callers **must** drain the stream to EOF. Leaving it un-drained keeps
     /// the channel alive, holding a worker slot in the pool.
-    pub async fn render_streaming(&self, config_path: &str, mut input: Value) -> Result<CallStream> {
+    pub async fn render_streaming(
+        &self,
+        config_path: &str,
+        mut input: Value,
+    ) -> Result<CallStream> {
         // §6.4 / WP-B3: same hoist as `render` — the worker sees
         // `{ path, input, components }`, not `{ path, input: {..., components} }`.
-        let components = input
-            .as_object_mut()
-            .and_then(|o| o.remove("components"));
+        let components = input.as_object_mut().and_then(|o| o.remove("components"));
         let route_key = input
             .get("route")
             .and_then(|v| v.as_str())
