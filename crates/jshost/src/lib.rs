@@ -71,6 +71,12 @@ pub struct PoolConfig {
     pub recycle_after_requests: u64,
     /// Heap limit per isolate (bytes).
     pub heap_limit_bytes: u64,
+    /// §17.2: `--offline-plugins` — deny all outbound network from the
+    /// worker's fetch shim. Wired via the `OXIDE_OFFLINE_PLUGINS=1` env
+    /// var to each worker child; the shim refuses instead of falling
+    /// back to native fetch. This is the supply-chain guard the spec's
+    /// CI mode names: a plugin / tooling module cannot phone home.
+    pub offline_plugins: bool,
 }
 
 impl Default for PoolConfig {
@@ -80,6 +86,7 @@ impl Default for PoolConfig {
             max_in_flight_per_worker: 64,
             recycle_after_requests: 10_000,
             heap_limit_bytes: 512 * 1024 * 1024,
+            offline_plugins: std::env::var_os("OXIDE_OFFLINE_PLUGINS").is_some(),
         }
     }
 }
@@ -132,11 +139,28 @@ impl CallStream {
     /// defence.
     pub async fn collect(&mut self) -> Result<Bytes> {
         const MAX_COLLECT_BYTES: usize = 8 * 1024 * 1024;
+        // WP-B2 / P0-2: cap the *duration* too. A worker that stops
+        // emitting chunks (a stuck defer promise, a hung loader) must not
+        // pin the host request forever; the serve path already bounds
+        // settle delivery at 30s, so collection uses the same budget.
+        const COLLECT_DEADLINE: Duration = Duration::from_secs(30);
         match self {
             CallStream::Complete(b) => Ok(b.clone()),
             CallStream::Chunked(rx) => {
                 let mut buf = Vec::new();
-                while let Some(chunk) = rx.recv().await {
+                loop {
+                    let chunk = match tokio::time::timeout(COLLECT_DEADLINE, rx.recv()).await {
+                        Ok(next) => next,
+                        Err(_) => {
+                            return Err(crate::err(
+                                "JSH-DEADLINE",
+                                "chunked stream did not finish within 30s".to_string(),
+                            ));
+                        }
+                    };
+                    let Some(chunk) = chunk else {
+                        break;
+                    };
                     let bytes = chunk?;
                     if buf.len() + bytes.len() > MAX_COLLECT_BYTES {
                         return Err(crate::err(
@@ -2813,8 +2837,18 @@ struct Worker {
 /// Uses `tokio::process::Command` directly (tokio 1.53 has no `Child::from(std)`);
 /// `spawn()` is sync but requires the caller to run inside a tokio runtime — pool
 /// creation always happens there (§4.2 pools are built from async host code).
-fn spawn_child(node_bin: &str, worker_script: &Path) -> Result<(Child, ChildStdin, ChildStdout)> {
+fn spawn_child(
+    node_bin: &str,
+    worker_script: &Path,
+    offline_plugins: bool,
+) -> Result<(Child, ChildStdin, ChildStdout)> {
     let mut cmd = tokio::process::Command::new(node_bin);
+    // §17.2: --offline-plugins. Passed as an env var to the child; the
+    // worker's fetch shim reads it and refuses all outbound network.
+    cmd.env(
+        "OXIDE_OFFLINE_PLUGINS",
+        if offline_plugins { "1" } else { "0" },
+    );
     // Register the TSX loader hook so `import './page.tsx'` resolves
     // via sucrase (JSX lowering). Node's built-in type stripper handles
     // .ts but not .tsx; the loader bridges the gap.
@@ -2926,6 +2960,7 @@ impl NodePool {
                 node_bin,
                 &worker_script,
                 counters.clone(),
+                cfg.offline_plugins,
             )?);
         }
         Ok(Arc::new(NodePool {
@@ -2969,8 +3004,10 @@ impl NodePool {
         node_bin: &str,
         worker_script: &Path,
         counters: Arc<PoolCounters>,
+        offline_plugins: bool,
     ) -> Result<Arc<Worker>> {
-        let (child, stdin, stdout) = spawn_child(node_bin, worker_script)?;
+        let (child, stdin, stdout) =
+            spawn_child(node_bin, worker_script, offline_plugins)?;
         let worker = Arc::new(Worker {
             stdin: tokio::sync::Mutex::new(stdin),
             child: tokio::sync::Mutex::new(child),
@@ -3018,7 +3055,8 @@ impl NodePool {
             let mut c = worker.child.lock().await;
             let _ = c.kill().await;
         }
-        let (child, stdin, stdout) = spawn_child(&self.node_bin, &self.worker_script)?;
+        let (child, stdin, stdout) =
+            spawn_child(&self.node_bin, &self.worker_script, self.cfg.offline_plugins)?;
         *worker.child.lock().await = child;
         *worker.stdin.lock().await = stdin;
         worker.pending.lock().unwrap().clear();
