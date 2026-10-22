@@ -9,6 +9,7 @@
 // with plain fakes — no jsdom.
 
 import { decodeOdf } from './odf-decode.ts'
+import { layoutChunksFor, type ClientManifestLike } from './route-manifest.ts'
 import type { ClientInput, ClientManifest, FrameworkAdapter } from '../types.ts'
 
 /** Minimal DOM surface the router needs (hand-rolled fakes in tests). */
@@ -229,6 +230,11 @@ export function createRouter(opts: RouterOptions): Router {
     const segs = path.split('/').filter(Boolean)
     let best: string[] | undefined
     let bestStaticCount = -1
+    // O1: capture the winning route id so the layout chain's chunks can
+    // be appended after the loop. Without this a prefetch warms the page
+    // but not its layouts, so the first navigation fetches the layout
+    // chunk mid-render -- the latency the prefetch exists to hide.
+    let matchedRouteId: string | undefined
     for (const [routeId, entry] of Object.entries(routeManifest.routes)) {
       if (routeId === '__boot__') continue
       // `routes/<...>/page` → the pattern segments; `/route` entries
@@ -260,9 +266,19 @@ export function createRouter(opts: RouterOptions): Router {
       if (staticCount > bestStaticCount) {
         bestStaticCount = staticCount
         best = entry.preload ?? entry.chunks ?? []
+        matchedRouteId = routeId
       }
     }
-    const result = best ?? []
+    // O1: append the layout chain's chunks. Page chunks stay first so the
+    // page's own entry resolves before layout hydration; the layout chunk
+    // lands in the same preload call.
+    const layoutChunks = matchedRouteId
+      ? layoutChunksFor(
+          matchedRouteId,
+          routeManifest as unknown as ClientManifestLike,
+        )
+      : []
+    const result = [...(best ?? []), ...layoutChunks]
     manifestCache.set(path, result)
     return result
   }

@@ -6,7 +6,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  routeIdFor, componentFor, pageComponentExport,
+  routeIdFor, componentFor, pageComponentExport, layoutChunksFor,
   setRouteComponentSource, getRouteComponentSource, isParamSegment,
   type ClientManifestLike,
 } from '../src/client/route-manifest.ts'
@@ -168,3 +168,53 @@ test('componentFor: absolute URLs pass through the importer untouched', async ()
   await componentFor('/about')
   assert.deepEqual(loaded, ['https://cdn.test/about.js'])
 })
+
+// ------------------------------ O1: layout chain preload
+
+test('layoutChunksFor walks the chain and returns layout chunk names', () => {
+  const manifest: ClientManifestLike = {
+    buildId: 'b1',
+    routes: {
+      'routes/blog/[slug]/page': {
+        entry_chunk: 'slug-page.js',
+        preload: ['slug-shared.js'],
+        layout_chain: ['routes/layout'],
+      },
+      'routes/layout': {
+        entry_chunk: 'root-layout.js',
+        preload: ['root-layout-shared.js'],
+      },
+      'routes/nested/[id]/page': {
+        entry_chunk: 'nested-page.js',
+        layout_chain: ['routes/layout', 'routes/nested/layout'],
+      },
+      'routes/nested/layout': {
+        entry_chunk: 'nested-layout.js',
+      },
+    },
+  }
+  assert.deepEqual(
+    layoutChunksFor('routes/blog/[slug]/page', manifest),
+    ['root-layout.js', 'root-layout-shared.js'],
+  )
+  assert.deepEqual(
+    layoutChunksFor('routes/nested/[id]/page', manifest),
+    ['root-layout.js', 'root-layout-shared.js', 'nested-layout.js'],
+  )
+})
+
+test('layoutChunksFor returns empty on missing chain / missing layouts / no entry', () => {
+  const manifest: ClientManifestLike = {
+    routes: {
+      'routes/plain/page': { entry_chunk: 'plain.js' },
+      'routes/ghost/page': {
+        entry_chunk: 'ghost.js',
+        layout_chain: ['routes/missing-layout'],
+      },
+    },
+  }
+  assert.deepEqual(layoutChunksFor('routes/plain/page', manifest), [])
+  assert.deepEqual(layoutChunksFor('routes/ghost/page', manifest), [])
+  assert.deepEqual(layoutChunksFor('routes/absent/page', manifest), [])
+})
+
