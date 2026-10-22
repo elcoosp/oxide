@@ -76,9 +76,13 @@ export async function loadMessages(locale?: string): Promise<Messages> {
   if (inflight) return inflight
   inflight = (async () => {
     try {
-      // Per-route subset first: a route that named its keys ships only
-      // those. A 404 means this route has no subset, and the full catalog
-      // is the fallback.
+      // Start from the full catalog, then overlay the route's subset. The
+      // subset is a *preference*, not a replacement: a route that names a
+      // few keys must still see shared keys (`nav.home`) that live in the
+      // full catalog. Previously the first successful subset fetch
+      // replaced the catalog wholesale.
+      const merged: Record<string, string> = {}
+      let subset: Record<string, string> | null = null
       const routeKey = routeKeyFromPage()
       if (routeKey) {
         try {
@@ -87,18 +91,26 @@ export async function loadMessages(locale?: string): Promise<Messages> {
           )
           if (sub.ok) {
             const body = (await sub.json()) as CatalogFile
-            const msgs: Messages = Object.freeze({ ...(body.messages ?? {}) })
-            cache.set(l, msgs)
-            return msgs
+            subset = body.messages ?? {}
           }
         } catch {
           // fall through to the full catalog
         }
       }
-      const res = await globalThis.fetch(`/client/messages/${encodeURIComponent(l)}.json`)
-      if (!res.ok) return {}
-      const body = (await res.json()) as CatalogFile
-      const msgs: Messages = Object.freeze({ ...(body.messages ?? {}) })
+      try {
+        const res = await globalThis.fetch(`/client/messages/${encodeURIComponent(l)}.json`)
+        if (res.ok) {
+          const body = (await res.json()) as CatalogFile
+          Object.assign(merged, body.messages ?? {})
+        }
+      } catch {
+        // A missing full catalog is not fatal; the subset below may still
+        // cover what this route needs.
+      }
+      // Subset wins over the full catalog for the keys it carries, but the
+      // full catalog stays for every shared key it does not.
+      if (subset) Object.assign(merged, subset)
+      const msgs: Messages = Object.freeze(merged)
       cache.set(l, msgs)
       return msgs
     } catch {
@@ -116,7 +128,22 @@ export async function loadMessages(locale?: string): Promise<Messages> {
 export function t(key: string, values?: Record<string, string | number>): string {
   const l = detectLocale()
   const msgs = cache.get(l) ?? {}
-  let out = msgs[key] ?? key
+  // Catalog keys are namespaced by the locale filename they came from
+  // (`locales/en/common.json` → `common.nav.home`), but authors write
+  // `t('nav.home')`: the namespace is a file-location artifact, not part of
+  // the message id. Fall back to a `.`-boundary suffix match, which is the
+  // same rule the build uses when it selects a per-route subset.
+  let out = msgs[key]
+  if (out === undefined) {
+    const suffix = '.' + key
+    for (const k of Object.keys(msgs)) {
+      if (k.endsWith(suffix)) {
+        out = msgs[k]
+        break
+      }
+    }
+  }
+  out = out ?? key
   if (values) {
     out = out.replace(/\{(\w+)\}/g, (_, name: string) =>
       name in values ? String(values[name]) : `{${name}}`,
