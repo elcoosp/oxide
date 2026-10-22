@@ -335,7 +335,14 @@ impl StaticAssets {
         // (their names change with their content).
         const SW_CACHE_CTL: &str = "public, max-age=0, must-revalidate";
         const CACHE_CTL: &str = "public, max-age=31536000, immutable";
-        let is_service_worker = path == "/sw.js" || path == "/pwa-register.js";
+        // §16 / K2 / WP-r9-7: the search index is an unhashed,
+        // rebuilt-every-build file. `immutable` would pin a stale index in
+        // every visitor's browser for a year. Same must-revalidate class
+        // as the SW: cheap to re-check, correct when the build changes.
+        let is_service_worker = path == "/sw.js"
+            || path == "/pwa-register.js"
+            || path == "/client/search-index.json"
+            || path == "/search-index.json";
         let cache_ctl: &str = if is_service_worker {
             SW_CACHE_CTL
         } else {

@@ -120,13 +120,34 @@ pub enum CallStream {
 }
 
 impl CallStream {
+    /// Drain the stream to completion.
+    ///
+    /// §4.3 / P0-2 / WP-r9: a chunked stream must not be allowed to grow
+    /// without bound. `/__data` (and any future caller that collects a
+    /// loader stream) inherited the whole-collection shape with no cap,
+    /// so a worker bug or a hostile app could hold an unbounded buffer
+    /// on the host. Cap matches the h3 body drain: 8 MiB, 413-class on
+    /// overflow. A complete payload is not capped here — it is already a
+    /// `Bytes` the worker chose to send whole; the cap is a chunked-stream
+    /// defence.
     pub async fn collect(&mut self) -> Result<Bytes> {
+        const MAX_COLLECT_BYTES: usize = 8 * 1024 * 1024;
         match self {
             CallStream::Complete(b) => Ok(b.clone()),
             CallStream::Chunked(rx) => {
                 let mut buf = Vec::new();
                 while let Some(chunk) = rx.recv().await {
-                    buf.extend_from_slice(&chunk?);
+                    let bytes = chunk?;
+                    if buf.len() + bytes.len() > MAX_COLLECT_BYTES {
+                        return Err(crate::err(
+                            "JSH-OVERFLOW",
+                            format!(
+                                "chunked stream exceeded the {} MiB collect cap",
+                                MAX_COLLECT_BYTES / (1024 * 1024)
+                            ),
+                        ));
+                    }
+                    buf.extend_from_slice(&bytes);
                 }
                 Ok(Bytes::from(buf))
             }
