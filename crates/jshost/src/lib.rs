@@ -4043,3 +4043,66 @@ mod bug03_tests {
         assert!(host.static_snapshot().is_none());
     }
 }
+
+#[cfg(test)]
+mod p0_2_overflow_tests {
+    use super::*;
+
+    /// §4.3 / P0-2 / WP-r9 / WP-r10-3: the chunked-stream collect is
+    /// capped at 8 MiB; an overflow returns `JSH-OVERFLOW` before the
+    /// buffer grows past the cap. The `Complete` variant is exempt
+    /// (already a `Bytes` the worker chose to send whole).
+    #[tokio::test]
+    async fn collect_chunked_overflow_returns_jsh_overflow() {
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        let mut stream = CallStream::Chunked(rx);
+
+        // Spawn a producer that sends 9 chunks of 1 MiB each — 9 MiB total,
+        // 1 MiB over the 8 MiB cap. The overflow check fires on the 9th.
+        tokio::spawn(async move {
+            let chunk = bytes::Bytes::from(vec![0u8; 1024 * 1024]);
+            for _ in 0..9 {
+                if tx.send(Ok(chunk.clone())).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        let err = stream.collect().await.expect_err("overflow must fail");
+        assert_eq!(err.0.code, "JSH-OVERFLOW", "got: {}", err.0.code);
+        assert!(
+            err.0.message.contains("8 MiB"),
+            "message names the cap: {}",
+            err.0.message
+        );
+    }
+
+    /// The `Complete` variant is not capped — it's already a `Bytes` the
+    /// worker chose to send whole, so the cap is a chunked-stream defence.
+    #[tokio::test]
+    async fn collect_complete_is_not_capped() {
+        let big = bytes::Bytes::from(vec![0u8; 20 * 1024 * 1024]);
+        let mut stream = CallStream::Complete(big.clone());
+        let out = stream.collect().await.expect("Complete is exempt");
+        assert_eq!(out.len(), big.len());
+    }
+
+    /// Under the cap: a chunked stream collects normally.
+    #[tokio::test]
+    async fn collect_chunked_under_cap_succeeds() {
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        let mut stream = CallStream::Chunked(rx);
+
+        tokio::spawn(async move {
+            let chunk = bytes::Bytes::from_static(b"hello");
+            for _ in 0..3 {
+                if tx.send(Ok(chunk.clone())).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        let out = stream.collect().await.expect("under cap");
+        assert_eq!(&out[..], b"hellohellohello");
+    }
+}

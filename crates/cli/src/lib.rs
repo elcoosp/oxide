@@ -3788,9 +3788,17 @@ async fn route_data_response_inner(
                     }
                     // §16.6 / WP-D1: a short-circuit (redirect / error)
                     // that also mutated `event.session` must persist it.
-                    if let Some(cookie) =
-                        encode_session_cookie(out.session.as_ref(), None, session_codec)
-                    {
+                    // §16.6 / WP-r10-1: the baseline must be the inbound
+                    // session (post-middleware), not `None` — `None`
+                    // re-issues a cookie on every untouched-session
+                    // short-circuit. This is the same class of bug
+                    // 119b9ec fixed in the /__data page arms; it missed
+                    // the layout arm.
+                    if let Some(cookie) = encode_session_cookie(
+                        out.session.as_ref(),
+                        middleware_locals.get("session"),
+                        session_codec,
+                    ) {
                         resp = resp.with_header("set-cookie", cookie);
                     }
                     metrics.observe("_data", started.elapsed(), out.status);
@@ -7414,6 +7422,18 @@ fn build_dispatch(
                             for (k, v) in &out.headers {
                                 resp = resp.with_header(k, v.clone());
                             }
+                            // §16.6 / WP-D1 / WP-r10-1: a short-circuit that
+                            // also mutated `event.session` must persist it.
+                            // `session_before` is the inbound (post-middleware)
+                            // session snapshot, so an untouched loader does
+                            // not re-issue a cookie.
+                            if let Some(cookie) = encode_session_cookie(
+                                out.session.as_ref(),
+                                session_before.as_ref(),
+                                session_codec.as_deref(),
+                            ) {
+                                resp = resp.with_header("set-cookie", cookie);
+                            }
                             metrics.observe(&label, started.elapsed(), out.status);
                             return resp;
                         }
@@ -7549,6 +7569,15 @@ fn build_dispatch(
                         for (k, v) in &out.headers {
                             resp = resp.with_header(k, v.clone());
                         }
+                        // §16.6 / WP-D1 / WP-r10-1: a layout short-circuit
+                        // (parallel arm) must persist any session mutation.
+                        if let Some(cookie) = encode_session_cookie(
+                            out.session.as_ref(),
+                            session_before.as_ref(),
+                            session_codec.as_deref(),
+                        ) {
+                            resp = resp.with_header("set-cookie", cookie);
+                        }
                         metrics.observe(&label, started.elapsed(), out.status);
                         return resp;
                     }
@@ -7595,6 +7624,15 @@ fn build_dispatch(
                         }
                         for (k, v) in &out.headers {
                             resp = resp.with_header(k, v.clone());
+                        }
+                        // §16.6 / WP-D1 / WP-r10-1: a page short-circuit
+                        // (parallel arm) must persist any session mutation.
+                        if let Some(cookie) = encode_session_cookie(
+                            out.session.as_ref(),
+                            session_before.as_ref(),
+                            session_codec.as_deref(),
+                        ) {
+                            resp = resp.with_header("set-cookie", cookie);
                         }
                         metrics.observe(&label, started.elapsed(), out.status);
                         return resp;
@@ -7696,6 +7734,16 @@ fn build_dispatch(
                                 }
                                 for (k, v) in &out.headers {
                                     resp = resp.with_header(k, v.clone());
+                                }
+                                // §16.6 / WP-D1 / WP-r10-1: a page
+                                // short-circuit (sequential arm, streaming
+                                // path) must persist any session mutation.
+                                if let Some(cookie) = encode_session_cookie(
+                                    out.session.as_ref(),
+                                    session_before.as_ref(),
+                                    session_codec.as_deref(),
+                                ) {
+                                    resp = resp.with_header("set-cookie", cookie);
                                 }
                                 metrics.observe(&label, started.elapsed(), out.status);
                                 return resp;
@@ -8119,6 +8167,12 @@ fn build_dispatch(
                                 // cached — a 500 is per-request state, not a
                                 // shareable response.
                                 && error_status == 0
+                                // §10.8 / WP-r10-3: a middleware Set-Cookie
+                                // response also varies per user — the L0
+                                // store shared PPR's old blind spot. Refuse
+                                // both. `middleware_sets_cookie` is defined
+                                // above for the PPR guard.
+                                && !middleware_sets_cookie
                         {
                             if let Some(cache) = l0.as_ref() {
                                 let nonce = oxide_server::nonce_for(&req_owned.request_id);
