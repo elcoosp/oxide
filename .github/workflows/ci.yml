@@ -12,8 +12,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - run: rustup target add wasm32-unknown-unknown
       - run: cargo fmt --all --check
       - run: cargo test --workspace
+  wasm32-edge:
+    name: wasm32 edge bundle gate (P0-1c)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Build oxide-core-wasm for wasm32
+        run: cargo build -p oxide-core-wasm --target wasm32-unknown-unknown --release
+      - name: Assert edge.wasm was produced
+        run: test -s target/wasm32-unknown-unknown/release/oxide_core_wasm.wasm
   node:
     runs-on: ubuntu-latest
     steps:

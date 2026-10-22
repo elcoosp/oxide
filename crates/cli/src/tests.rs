@@ -7611,3 +7611,30 @@ async fn bundle_edge_entry_emits_edge_bundle_js() {
         "bundle carries the entry source; got {src}"
     );
 }
+
+// ------------------------------ §18 / P0-1c: wasm32 edge compile
+
+#[test]
+#[ignore = "compiles wasm32-unknown-unknown --release; requires the target installed and takes minutes"]
+fn compile_edge_wasm_from_workspace_root_emits_edge_wasm() {
+    // `compile_edge_wasm(root, dist)` runs `cargo build -p oxide-core-wasm`
+    // with `current_dir(root)`, so `root` must be a workspace that contains
+    // `oxide-core-wasm`. This self-hosting test passes the oxide workspace
+    // root via CARGO_MANIFEST_DIR. A real user project would not satisfy the
+    // `-p oxide-core-wasm` resolution — see docs/deviations.md "Edge wasm
+    // build requires self-hosting layout".
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let ws = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root");
+    let dir = tempfile::tempdir().unwrap();
+    let dist = dir.path().to_path_buf();
+
+    let out = crate::compile_edge_wasm(ws, &dist)
+        .expect("compile_edge_wasm")
+        .expect("wasm32 target was installed");
+    assert!(out.is_file(), "edge.wasm produced at {out:?}");
+    let len = std::fs::metadata(&out).unwrap().len();
+    assert!(len > 0, "edge.wasm is non-empty");
+}

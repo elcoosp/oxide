@@ -114,3 +114,31 @@ falls through to the built-in JS path.
 (`build.edgeExternals`), or a Rolldown option to force a single-chunk
 bundle at the cost of duplication. Either is a follow-up; the current
 build is deployable.
+
+## Edge wasm build requires self-hosting layout (P0-1c)
+
+**What the spec asks.** §18 / D18: an `oxide build` for a Cloudflare
+target produces an accelerated `edge.wasm` alongside the JS handler.
+
+**What lands.** The CI job `wasm32-edge` installs `wasm32-unknown-unknown`
+and builds `oxide-core-wasm` for it; the workspace's `cargo build -p
+oxide-core-wasm --target wasm32-unknown-unknown --release` is green. A
+`#[ignore]`'d test in `crates/cli/src/tests.rs`
+(`compile_edge_wasm_from_workspace_root_emits_edge_wasm`) can be run
+on-demand and passes when the target is installed.
+
+**Why it does not work for a real user project.** `compile_edge_wasm(root,
+dist)` runs `cargo build -p oxide-core-wasm ...` with `current_dir(root)`.
+A real user's oxide project is a JS/TS tree, not a cargo workspace that
+contains `oxide-core-wasm` — the command exits non-zero (`no such
+package`), `cmd_build` logs `edge wasm build failed` and the Worker ships
+the pure-JS fallback (which is semantically identical, spec D18). The
+accelerated path only fires for the self-hosting case (root = oxide
+workspace).
+
+**What would change it.** Either (a) embed the wasm via `include_bytes!`
+in oxide-cli with a `build.rs` that produces it once at CLI build time,
+or (b) ship a pre-built `edge.wasm` in the oxide-cli binary's resource
+set and copy it into `dist/edge.wasm` per build. Both are M-effort; the
+CI gate landed here is the honest S-effort scope — the wasm *builds*;
+the user-project plumbing is a separate change.
