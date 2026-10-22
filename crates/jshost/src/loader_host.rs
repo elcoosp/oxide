@@ -578,6 +578,8 @@ impl ActionHost {
         // §8.1 middleware.ts / §9.1: request-scoped locals injected by
         // middleware; delivered to the action's `event.locals`.
         locals: &Value,
+        // §20: W3C trace context for outgoing fetches inside the action.
+        trace: Option<&Value>,
     ) -> Result<ActionOutcome> {
         let payload = serde_json::json!({
             "module_path": module_path,
@@ -588,6 +590,7 @@ impl ActionHost {
             "method": method,
             "headers": headers,
             "locals": locals,
+            "trace": trace,
         });
         let call_input = CallInput {
             payload,
@@ -691,6 +694,8 @@ impl EndpointHost {
         // §8.1 middleware.ts / §9.1: request-scoped locals injected by
         // middleware; delivered to the route.ts handler's `ctx.locals`.
         locals: &Value,
+        // §20: W3C trace context for outgoing fetches inside the endpoint.
+        trace: Option<&Value>,
     ) -> Result<EndpointOutcome> {
         use base64::Engine as _;
         let body_b64 = if body.is_empty() {
@@ -706,6 +711,7 @@ impl EndpointHost {
             "headers": headers,
             "body_b64": body_b64,
             "locals": locals,
+            "trace": trace,
         });
         let call_input = CallInput {
             payload,
