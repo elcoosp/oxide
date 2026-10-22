@@ -16,6 +16,7 @@
 
 import type { RenderInput, RenderCtx, HeadTags } from '../../oxide/src/types.ts'
 import { encodePropsB64 } from '../../oxide/src/odf-encode.ts'
+import { resolveDeferredPlaceholders } from '../../oxide/src/server/deferred.ts'
 import {
   el, t, raw, frag, deferred, island, deferPromise, escapeText, escapeAttr, hash6, toBase64,
   type Node, type ComponentFn, type DeferSource,
@@ -589,7 +590,15 @@ export function walkTreeForHandlers(tree: Node): HandlerBinding[] {
  * (`template[data-ox-c]` + swapper, §7.1). A rejecting boundary streams the
  * error boundary content instead (§10.2 step 5).
  */
-export function render(input: RenderInput): ReadableStream<Uint8Array> {
+export function render(rawInput: RenderInput): ReadableStream<Uint8Array> {
+  // §7.1 / §9.2: a loader returns `{ __deferred: id }` placeholders; the
+  // pipeline collects the settles and passes them as `deferred`. Resolve
+  // before the tree is walked — otherwise a `deferred(...)` boundary awaits
+  // a plain object and hands the placeholder to the render callback.
+  const input: RenderInput = {
+    ...rawInput,
+    data: resolveDeferredPlaceholders(rawInput.data, rawInput.deferred) as RenderInput['data'],
+  }
   const encoder = new TextEncoder()
   let state: RenderState
   let shell: Shell
