@@ -339,51 +339,28 @@ Redis/S3 payloads, a moka asset-body cache, build-time font subsetting, locale-a
 (508), `oxide check` with tsgo + oxlint, and the introspection tooling (`doctor`, `why`,
 `analyze`, `schema`, `mcp`).
 
-**Built, wiring in progress** — defer streaming's last mile (the parallel layout arm — the
-no-`parent()` shape — still buffers via `join!`, there is no deadline on `/__data` or
-prerender collects even though they are now 8 MiB-capped, and a mid-stream worker crash
-still closes the document silently), partial
-prerendering is experimental and honest about it (`render.ppr` turns on a runtime shell
-cache for `defer()` boundaries in dev and `oxide start` — first request captured, later
-requests stream fresh holes; it is not the post-MLP PPR of spec §10.4, refuses shells from
-loader- and middleware-cookie responses and keys shells by the L0 key shape with LRU
-eviction, but the L0 store's own guard still has the middleware-cookie blind spot and
-shells are still not integrated with L0/vary), the edge build's consumer chain
-(`dist/edge.wasm` builds and emits and head merge is JS-only by documented deviation, but
-nothing yet emits the `edge_bundle.js` the Worker dispatches to, and
-the edge cache key is a documented divergence from the L0 key),
+**Built, wiring in progress** — partial prerendering is experimental and honest about it
+(`render.ppr` turns on a runtime shell cache for `defer()` boundaries in dev and
+`oxide start`; first request captured, later requests stream fresh holes; shells are
+refused for loader- and middleware-cookie responses and keyed by the L0 key shape with
+LRU eviction, but they are not yet integrated with the L0/vary store's eviction and
+invalidation), the edge build's consumer chain (`dist/edge.wasm` builds and emits,
+`dist/deploy/edge_bundle.js` is emitted and head merge is JS-only by documented
+deviation, but the edge cache key is a documented divergence from the L0 key),
 socket fan-out / presence (sends reach only the calling socket), the *last mile* of the
-plugin hook surface (`handleHotUpdate` fires on the once-probe path only, 8 hooks receive
-arguments via a positional fallback table, module `routes` / `serverMiddleware` pools are
-passed only at serve boot, and `cacheHandler` is consulted in dev+build but not in
-`start`), plugin-transform coverage on the V8 path beyond module loads (module loads now route
-through the shared compile/transform pipeline with a blake3 memo; op-level coverage still
-trails Node), client-side i18n hydration (the server resolves the locale but emits a
-hardcoded `<html lang="en">`, so the client catalog loader always falls back to `'en'`;
-ICU formatting is not yet evaluated at render time), image-result caching and concurrency limits (every request
-re-transforms; `sizes` is user-supplied and the LQIP placeholder arm is unreachable), the
-collections loader wiring (the `getCollection`/`getEntry` runtime is shipped with
-content-hash invalidation, entries-before-prerender and root resolution in
-build/start/render — but no shipped loader calls it yet, dev content changes are not
-re-read, and the only consumers are tests), route `meta` exports (title path wired; the
-flat shape drops richer head fields), loader-session mutation persistence for layout
-loaders and short-circuits (layout-loader mutations drop on the SSR path in every arm —
-short-circuit and Ok — even though the worker now sends `session` on throw; the `/__data`
-layout short-circuit still re-issues cookies for untouched sessions; a short-circuiting
-middleware skips the B-05 write-back; `sessionTtlSecs` is ignored by `oxide dev`),
-rate-limit keying that still trusts
-`x-forwarded-for` (spoofable, unbounded buckets, no `og.rate_limit` config knob yet),
-the per-route message-subset bridge (the emitter ships namespaced keys the client looks
-up exactly, and a subset replaces the catalog instead of merging), per-route chunk records
-whose only reader is client prefetch (the server-manifest `layout_chain` copy is still
-write-only), the secret-scan→fingerprint ordering that lets a failed scan
-go green on retry, the route-search index (emitted unconditionally with no opt-out), the
-service worker (fallback precache shipped; no browser-level SW test), trace-context
-threading into actions and endpoints (all six loader
-sites are threaded), MDX compilation beyond
-the reachable compile arm, and the neutral IR renderer's layout nesting (dev-fixture path
-only; the bare-factory `ssr` default is also still undecided — spec-shaped configs reach
-real SSR, but the literal §14.1 example needs `ssr: 'real'`). See
+plugin hook surface (8 hooks receive arguments via a documented positional table,
+module `routes` / `serverMiddleware` pools are passed only at serve boot, and a
+`cacheHandler`-driven config change is still picked up by restart rather than in place),
+plugin-transform coverage on the V8 path beyond module loads (module loads route
+through the shared compile/transform pipeline with a blake3 memo; op-level coverage
+still trails Node), ICU message formatting at render time, the collections loader
+wiring (the `getCollection`/`getEntry` runtime ships with content-hash invalidation,
+entries-before-prerender and root resolution in build/start/render — but no shipped
+loader calls it yet, dev content changes are not re-read, and the only consumers are
+tests), the remaining middleware short-circuit session write-back and
+`sessionTtlSecs` support in `oxide dev`, the service worker (fallback precache
+shipped; no browser-level SW test), MDX compilation beyond the reachable compile arm,
+and the neutral IR renderer's layout nesting (dev-fixture path only). See
 [`docs/deviations.md`](docs/deviations.md) and [`WORKLOG.md`](WORKLOG.md) for the current
 thread list and what remains (the 2026-10-19 `HANDOFF.md` is superseded).
 
