@@ -224,9 +224,18 @@ fn boundary_content_script_is_self_contained_iife_with_id_baked() {
         !script.contains("window.__oxSwap"),
         "boundary script must not depend on the shared swapper: {script}"
     );
-    // DOM mechanics: find content template, swap into placeholder, dispatch ox:swap.
-    assert!(script.contains("template[data-ox-c='"), "{script}");
-    assert!(script.contains("template[data-ox-b='"), "{script}");
+    // DOM mechanics: find the content host, swap into the placeholder,
+    // dispatch ox:swap. The selectors are attribute-only so the same
+    // swapper drives both host shapes — the IR renderer's
+    // `template[data-ox-*]` and a `suspense: 'core'` framework's
+    // `<ox-defer data-ox-*>`.
+    assert!(script.contains("[data-ox-c='"), "{script}");
+    assert!(script.contains("[data-ox-b='"), "{script}");
+    assert!(
+        !script.contains("template[data-ox-c='"),
+        "selector must not be template-scoped — a framework host element is \
+         not a template: {script}"
+    );
     assert!(script.contains("replaceWith"), "{script}");
     assert!(script.contains("ox:swap"), "{script}");
     assert!(script.contains("CustomEvent"), "{script}");
