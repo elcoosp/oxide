@@ -11,7 +11,7 @@ export const config = { render: 'isr', revalidate: 3600, tags: ['blog'] }
 
 export const load = defineLoad(async ({ params }) => {
   const slug = String(params?.slug ?? '')
-  const post = readPost(slug)
+  const post = await readPost(slug)
   if (!post) error(404, `no blog post for "${slug}"`)
   return { post }
 })
