@@ -248,7 +248,6 @@ mod tests {
         h.publish_invalidation("t", true).await.unwrap();
     }
 
-
     /// §11.3 / P0-8: a tampered (or unsealed/legacy) payload is a miss,
     /// not a hit and not an error. The same contract redis/s3 pin; the
     /// audit found HttpCacheHandler missing the seal entirely — a
@@ -298,7 +297,9 @@ mod tests {
                 let mut body = buf[head_end + 4..].to_vec();
                 while body.len() < clen {
                     let n = s.read(&mut tmp).unwrap_or(0);
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                     body.extend_from_slice(&tmp[..n]);
                 }
                 let method = reqline.split_whitespace().next().unwrap_or("");
@@ -324,7 +325,9 @@ mod tests {
                         let _ = s.write_all(b"HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
                     }
                 } else {
-                    let _ = s.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    let _ = s.write_all(
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    );
                 }
             }
         });
@@ -377,4 +380,5 @@ mod tests {
             h.get("k1").await.unwrap().is_none(),
             "tampered sealed entry is a miss",
         );
-    }}
+    }
+}
