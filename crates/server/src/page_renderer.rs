@@ -81,6 +81,19 @@ pub struct PageRenderInput {
     /// *correct*, not *incremental*.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub deferred: BTreeMap<String, Value>,
+    /// §17.1 / §7.1: the CSP nonce for this render. The adapter stamps it on
+    /// any `<script>` it emits — including the deferred-boundary swapper,
+    /// which the IR renderer streams as `template[data-ox-c]` + an inline
+    /// IIFE. Under `strict-dynamic` a script without the nonce is blocked,
+    /// so without this the streamed resolution never runs in a browser that
+    /// enforces the policy.
+    ///
+    /// The live path passes `nonce_for(request_id)`; the prerender path
+    /// passes the build-time nonce it already uses for its own injected
+    /// tags. `None` means "no CSP configured" — the adapter then omits the
+    /// attribute, which is what a policy-free deployment wants.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
 }
 
 impl PageRenderInput {
@@ -99,6 +112,7 @@ impl PageRenderInput {
             error_route_id: None,
             locale: None,
             deferred: BTreeMap::new(),
+            nonce: None,
         }
     }
 }
