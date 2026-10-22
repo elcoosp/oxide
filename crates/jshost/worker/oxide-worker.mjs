@@ -198,6 +198,13 @@ function __headersToObject(h) {
 }
 
 globalThis.fetch = async function oxideFetch(input, init = {}) {
+  // §17.2: `--offline-plugins` — deny every outbound request from a worker
+  // spawned under the flag. A plugin/tooling module cannot phone home.
+  if (process.env.OXIDE_OFFLINE_PLUGINS === "1") {
+    const e = new Error("outbound network disabled by --offline-plugins");
+    e.code = "JSH-OFFLINE";
+    throw e;
+  }
   const url = typeof input === "string" ? input : (input && input.url) || String(input);
   const method = (init.method || (input && input.method) || "GET").toUpperCase();
   const headers = __headersToObject(init.headers || (input && input.headers));
