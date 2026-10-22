@@ -3433,6 +3433,11 @@ async fn remote_cache_handler_maps_handler_config() {
 struct ScriptedMiddleware {
     headers: Vec<(String, String)>,
     locals: Option<serde_json::Value>,
+    /// When set, the middleware short-circuits with this status instead of
+    /// falling through to the loader/render phase.
+    short_status: Option<u16>,
+    /// The `location` header a short-circuit redirect carries.
+    location: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -3449,11 +3454,11 @@ impl oxide_server::MiddlewareDispatcher for ScriptedMiddleware {
     ) -> std::result::Result<oxide_server::MiddlewareRunResult, oxide_server::MiddlewareRunError>
     {
         Ok(oxide_server::MiddlewareRunResult {
-            short: false,
-            status: 200,
+            short: self.short_status.is_some(),
+            status: self.short_status.unwrap_or(200),
             headers: self.headers.clone(),
             body: Vec::new(),
-            redirect: None,
+            redirect: self.location.clone(),
             rewrite: None,
             locals: self.locals.clone(),
         })
@@ -3738,6 +3743,8 @@ async fn middleware_headers_ride_page_and_data_responses() {
         Some(Arc::new(ScriptedMiddleware {
             headers: vec![("x-oxide-mw".to_string(), "on".to_string())],
             locals: Some(serde_json::json!({ "tenant": "acme" })),
+            short_status: None,
+            location: None,
         }));
 
     // §8.5: the accumulated `middleware_headers` previously died in a dead
@@ -3927,6 +3934,8 @@ async fn middleware_headers_ride_l0_hits() {
         Some(Arc::new(ScriptedMiddleware {
             headers: vec![("x-oxide-mw".to_string(), "on".to_string())],
             locals: None,
+            short_status: None,
+            location: None,
         }));
 
     // A renderer is attached so the FIRST request takes the render path and
@@ -4689,6 +4698,8 @@ async fn session_change_from_middleware_sets_cookie() {
         Some(Arc::new(ScriptedMiddleware {
             headers: Vec::new(),
             locals: Some(serde_json::json!({ "session": { "user": "ada" } })),
+            short_status: None,
+            location: None,
         }));
     let dispatch = build_dispatch(
         tree_with_page_and_middleware(),
@@ -7328,6 +7339,8 @@ async fn ppr_never_shells_a_middleware_cookie_response() {
                 "oxide_session=mw-mutated".to_string(),
             )],
             locals: None,
+            short_status: None,
+            location: None,
         }));
 
     let dispatch = build_dispatch(
@@ -8031,5 +8044,163 @@ export const routes = { 'routes/probe': probe }
     assert!(
         out.contains("data-reactroot"),
         "real React SSR root marker present:\n{out}"
+    );
+}
+
+// ------------------------------ WP-r10-7: the untested-real cluster
+
+/// P0-4's L0 half. The PPR tap has a negative test for a
+/// middleware-cookie response (`ppr_never_shells_a_middleware_cookie_response`);
+/// the L0 store — the guard WP-r9-4 mirrored — had none, so a regression
+/// that cached a middleware-mutating route cross-user would be invisible.
+///
+/// Load-bearing: it asserts the SECOND request is not an L0 hit. With the
+/// `!middleware_sets_cookie` term removed from the store condition, the
+/// first response is cached and the second comes back `L0-hit`.
+#[tokio::test]
+async fn l0_never_caches_a_middleware_cookie_response() {
+    use std::sync::Arc;
+
+    let tier: Arc<dyn oxide_cache::CacheHandler> =
+        Arc::new(oxide_cache::TieredCache::new(8 * 1024 * 1024));
+    let l0 = Arc::new(l0_cache::L0Cache::new(
+        tier,
+        "test-build",
+        std::time::Duration::from_secs(300),
+    ));
+
+    let mw: Option<Arc<dyn oxide_server::MiddlewareDispatcher>> =
+        Some(Arc::new(ScriptedMiddleware {
+            headers: vec![(
+                "set-cookie".to_string(),
+                "oxide_session=mw-mutated".to_string(),
+            )],
+            locals: None,
+            short_status: None,
+            location: None,
+        }));
+    let renderer: Option<Arc<dyn oxide_server::PageRenderer>> =
+        Some(Arc::new(DataCapturingRenderer::new()));
+
+    let dispatch = build_dispatch(
+        tree_with_static_page_and_middleware(),
+        Arc::new(oxide_server::Metrics::new()),
+        Vec::new(),
+        renderer,
+        None,
+        routes_root(),
+        None,
+        Some(Arc::clone(&l0)),
+        None,
+        None,
+        None,
+        None,
+        None,
+        mw,
+        false,
+        Vec::new(),
+        None,
+        None,
+        None,
+    );
+
+    let first = dispatch(test_request("GET", "/")).await;
+    assert_eq!(first.status, 200);
+    assert!(
+        first
+            .headers
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("set-cookie") && v.starts_with("oxide_session=")),
+        "middleware cookie rides the first response: {:?}",
+        first.headers
+    );
+
+    // The second request must re-render, not be served from L0. A cached
+    // middleware-mutating response would be served to a different user.
+    let second = dispatch(test_request("GET", "/")).await;
+    let cache = second
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-cache"))
+        .map(|(_, v)| v.as_str());
+    assert!(
+        !matches!(cache, Some("L0-hit") | Some("L0-coalesced")),
+        "a middleware-cookie response must never be L0-cached; got {:?}",
+        second.headers
+    );
+}
+
+/// P0-7's untested path: a middleware that mutates `event.session` **and**
+/// short-circuits. The post-loop B-05 write-back never runs on a
+/// short-circuit, so the encode had to move onto the return path
+/// (`cli:7146-7180`). `154fed2` shipped that fix with a helper-level test
+/// only — this drives it through a real dispatch.
+#[tokio::test]
+async fn middleware_short_circuit_persists_session_mutation() {
+    use std::sync::Arc;
+
+    let codec = Arc::new(oxide_server::SessionCodec::new(&[vec![0x55u8; 32]]).unwrap());
+    let mw: Option<Arc<dyn oxide_server::MiddlewareDispatcher>> =
+        Some(Arc::new(ScriptedMiddleware {
+            headers: Vec::new(),
+            // `locals.session` is the shape the B-05 write-back diffs.
+            locals: Some(serde_json::json!({ "session": { "user": "ada" } })),
+            short_status: Some(302),
+            location: Some("/login-done".to_string()),
+        }));
+
+    let dispatch = build_dispatch(
+        tree_with_page_and_middleware(),
+        Arc::new(oxide_server::Metrics::new()),
+        Vec::new(),
+        Some(Arc::new(DataCapturingRenderer::new())),
+        None,
+        routes_root(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        mw,
+        false,
+        Vec::new(),
+        None,
+        Some(Arc::clone(&codec)),
+        None,
+    );
+
+    let resp = dispatch(test_request("GET", "/")).await;
+    assert_eq!(
+        resp.status, 302,
+        "the middleware short-circuited: {:?}",
+        resp.headers
+    );
+    assert_eq!(
+        resp.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("location"))
+            .map(|(_, v)| v.as_str()),
+        Some("/login-done"),
+        "redirect location rides the short-circuit"
+    );
+
+    let cookie = resp
+        .headers
+        .iter()
+        .find(|(k, v)| k.eq_ignore_ascii_case("set-cookie") && v.starts_with("oxide_session="))
+        .map(|(_, v)| v.clone())
+        .expect("a short-circuiting middleware that mutates session must seal it");
+
+    let token = cookie
+        .strip_prefix("oxide_session=")
+        .and_then(|r| r.split(';').next())
+        .unwrap();
+    let sess = oxide_server::Session::decode(&codec, token).expect("sealed session decodes");
+    assert_eq!(
+        sess.to_value()["user"],
+        "ada",
+        "the persisted session carries the middleware's mutation"
     );
 }
