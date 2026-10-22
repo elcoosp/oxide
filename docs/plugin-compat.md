@@ -76,3 +76,39 @@ Fixing the JS side to match is part of §15-A.
 
 These rules keep a misconfigured plugin visible without breaking a build
 that would have silently ignored it.
+## Native plugins and `enables()`
+
+A `native` plugin's identity *is* its feature domain: declaring
+`plugins: [{ kind: "native", name: "mdx" }]` says "this project uses MDX."
+The `enables()` table on `NativePlugin` maps each variant to the gate
+name(s) it activates:
+
+| Native plugin | `enables()` |
+|---|---|
+| `images` | `["images"]` |
+| `fonts` | `["fonts"]` |
+| `i18n` | `["i18n"]` |
+| `mdx` | `["mdx"]` |
+| `tailwind` | `["tailwind"]` |
+| `manifest` | `["manifest"]` |
+
+**What consumes it today:** `oxide check` reports the project's enabled
+set, so a project's current gate set is visible without reading the
+plugin source. The free function `native_plugins::enables(cfg, plugin)`
+is the query API a future gate reads.
+
+**What does not consume it, and why:** every build-pipeline feature gate
+is config-driven (`cfg.fonts.families`, `cfg.i18n.locales`,
+`cfg.manifest`, `content.collections`), and the security endpoints
+(`images_endpoint`, `og`) are explicit opt-ins. A plugin declaration
+must never *implicitly* open a CPU-bound endpoint or override a config
+gate — the two knobs would be in conflict with no tiebreaker.
+`enables()` is a **declaration of intent for a feature the plugin's
+domain owns**, not a substitute for the feature's own config gate. The
+two coexist without overriding each other.
+
+Adding an `enables()` check at a site that is already config-gated would
+create a second switch for one feature. The honest state is: the table is
+populated, the query API is real, `oxide check` reports it, and every
+gate in the tree has exactly one switch.
+
