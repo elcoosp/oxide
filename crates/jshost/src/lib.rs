@@ -3006,8 +3006,7 @@ impl NodePool {
         counters: Arc<PoolCounters>,
         offline_plugins: bool,
     ) -> Result<Arc<Worker>> {
-        let (child, stdin, stdout) =
-            spawn_child(node_bin, worker_script, offline_plugins)?;
+        let (child, stdin, stdout) = spawn_child(node_bin, worker_script, offline_plugins)?;
         let worker = Arc::new(Worker {
             stdin: tokio::sync::Mutex::new(stdin),
             child: tokio::sync::Mutex::new(child),
@@ -3055,8 +3054,11 @@ impl NodePool {
             let mut c = worker.child.lock().await;
             let _ = c.kill().await;
         }
-        let (child, stdin, stdout) =
-            spawn_child(&self.node_bin, &self.worker_script, self.cfg.offline_plugins)?;
+        let (child, stdin, stdout) = spawn_child(
+            &self.node_bin,
+            &self.worker_script,
+            self.cfg.offline_plugins,
+        )?;
         *worker.child.lock().await = child;
         *worker.stdin.lock().await = stdin;
         worker.pending.lock().unwrap().clear();
