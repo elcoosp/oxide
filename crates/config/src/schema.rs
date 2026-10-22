@@ -421,7 +421,7 @@ mod tests {
     /// `json!` is last-wins, so a duplicated key silently drops the first
     /// (more descriptive) variant. Parse the pretty text with a
     /// duplicate-detecting pass.
-        // NOTE (r8): this test inspects the serialized JSON text for duplicate
+    // NOTE (r8): this test inspects the serialized JSON text for duplicate
     // keys. A duplicate introduced by the `json!` macro itself (two
     // `"static":` entries in the same object literal) is collapsed by
     // `serde_json::Value`'s last-wins map semantics *before* serialization
