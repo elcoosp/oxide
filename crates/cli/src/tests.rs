@@ -7859,3 +7859,84 @@ async fn build_reports_no_side_effect_for_a_function_scoped_timer() {
         "§4.4 lint must not false-positive on a function-scoped timer: {out}"
     );
 }
+
+// ------------------------------ §5.6: cancellation (stale work aborts)
+
+/// §5.6: a file change mid-flight must abort the dispatch and produce a
+/// retryable 503, not serve a result computed from pre-change source.
+#[tokio::test]
+async fn dev_dispatch_aborts_on_mid_flight_file_change() {
+    use std::sync::Arc;
+
+    let hub = Arc::new(oxide_dev::HmrHub::new());
+
+    // A slow dispatch — 200 ms — so the bump lands squarely mid-flight.
+    let slow: Arc<dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync> =
+        Arc::new(|_req: oxide_server::OxideRequest| {
+            Box::pin(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                oxide_server::OxideResponse::html(200, "rendered with pre-change source")
+            })
+        });
+
+    let wrapped = crate::wrap_dispatch_with_stale_guard(slow, Arc::clone(&hub));
+
+    // Bump 40 ms in — well inside the dispatch window.
+    let hub_bump = Arc::clone(&hub);
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+        hub_bump.bump_stale_generation();
+    });
+
+    let resp = wrapped(test_request("GET", "/stale-probe")).await;
+    assert_eq!(
+        resp.status,
+        503,
+        "a mid-flight file change must produce 503, got {}: {}",
+        resp.status,
+        String::from_utf8_lossy(&resp.body)
+    );
+    let has_retry_after = resp
+        .headers
+        .iter()
+        .any(|(k, v)| k.eq_ignore_ascii_case("retry-after") && v == "0");
+    assert!(
+        has_retry_after,
+        "retry-after: 0 present: {:?}",
+        resp.headers
+    );
+    let has_stale_gen = resp
+        .headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("x-oxide-stale-generation"));
+    assert!(
+        has_stale_gen,
+        "x-oxide-stale-generation present: {:?}",
+        resp.headers
+    );
+
+    // The body must NOT carry the stale render — the §5.6 property.
+    let body = String::from_utf8_lossy(&resp.body);
+    assert!(
+        !body.contains("pre-change source"),
+        "the stale render body leaked: {body}"
+    );
+}
+
+/// §5.6: the no-change case is a plain pass-through — the guard must not
+/// alter a normal dispatch.
+#[tokio::test]
+async fn dev_dispatch_serves_normally_when_no_file_change() {
+    use std::sync::Arc;
+
+    let hub = Arc::new(oxide_dev::HmrHub::new());
+    let fast: Arc<dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync> =
+        Arc::new(|_req: oxide_server::OxideRequest| {
+            Box::pin(async move { oxide_server::OxideResponse::html(200, "fresh render") })
+        });
+    let wrapped = crate::wrap_dispatch_with_stale_guard(fast, Arc::clone(&hub));
+
+    let resp = wrapped(test_request("GET", "/fresh-probe")).await;
+    assert_eq!(resp.status, 200);
+    assert!(String::from_utf8_lossy(&resp.body).contains("fresh render"));
+}

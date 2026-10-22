@@ -379,6 +379,17 @@ pub struct HmrHub {
     /// a stale tab. Set from the client manifest's `build_id`; `"dev"` when
     /// no build exists (a fresh `oxide dev`).
     build_id: String,
+    /// §5.6: a monotonically increasing generation bumped on every file
+    /// change that invalidates framework modules. In-flight dev dispatches
+    /// capture the generation at entry and are aborted if a bump lands
+    /// mid-flight — that is the "newer file change cancels in-flight
+    /// stale work" side of §5.6. Reset is never needed (u64 wrap is a
+    /// practical impossibility).
+    stale_generation: std::sync::atomic::AtomicU64,
+    /// §5.6: notifications on the generation bump. `wait_stale_generation`
+    /// awaits this; the dispatch `tokio::select!`s between the dispatch
+    /// future and this future so a mid-flight change aborts.
+    stale_notify: tokio::sync::Notify,
 }
 
 impl HmrHub {
@@ -393,6 +404,8 @@ impl HmrHub {
         Self {
             tx,
             build_id: build_id.into(),
+            stale_generation: std::sync::atomic::AtomicU64::new(0),
+            stale_notify: tokio::sync::Notify::new(),
         }
     }
 
@@ -401,6 +414,8 @@ impl HmrHub {
         Self {
             tx,
             build_id: "dev".to_string(),
+            stale_generation: std::sync::atomic::AtomicU64::new(0),
+            stale_notify: tokio::sync::Notify::new(),
         }
     }
 
@@ -427,6 +442,34 @@ impl HmrHub {
 
     pub fn subscriber_count(&self) -> usize {
         self.tx.receiver_count()
+    }
+
+    /// §5.6: current stale generation. Zero at first boot; each
+    /// `bump_stale_generation` monotonic-advances it.
+    pub fn stale_generation(&self) -> u64 {
+        self.stale_generation
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// §5.6: invalidate in-flight dispatches. Called by `cmd_dev` on every
+    /// file change that would invalidate the framework module cache.
+    /// Returns the post-bump generation (for the caller's logging, if any).
+    pub fn bump_stale_generation(&self) -> u64 {
+        let g = self
+            .stale_generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        // `notify_waiters` wakes every dispatch currently in `select!`.
+        // `notify_one` would wake only one — wrong for N parallel requests.
+        self.stale_notify.notify_waiters();
+        g
+    }
+
+    /// §5.6: await the next generation bump. The dev dispatch's
+    /// `tokio::select!` races this against the dispatch future so a
+    /// mid-flight change aborts instead of serving pre-change output.
+    pub async fn wait_stale_generation(&self) {
+        self.stale_notify.notified().await;
     }
 }
 

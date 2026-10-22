@@ -2125,6 +2125,18 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 tracing::info!("lockfile change — resolver epoch bump");
             }
             invalidate_framework_modules(&hmr_pool, &rootp).await;
+            // §5.6: bump the stale generation BEFORE releasing the loop,
+            // so any in-flight dev dispatch's `select!` (see
+            // `wrap_dispatch_with_stale_guard` below) aborts and returns
+            // a retryable 503 rather than a result computed from the
+            // pre-change source. The bump is also what distinguishes a
+            // "file changed" from "in-flight" — the dispatch reads the
+            // generation at entry and the exit check is only needed if
+            // the bump lands while the dispatch was already running.
+            if let Some(hub) = started.hmr.as_ref() {
+                let g = hub.bump_stale_generation();
+                tracing::debug!(generation = g, "stale generation bumped");
+            }
             idle_since = std::time::Instant::now();
             warmed = false;
         }
@@ -6442,6 +6454,77 @@ fn action_from_query(url: &str) -> Option<String> {
     Some(oxide_server::percent_decode(rest))
 }
 
+/// §5.6: wrap a dispatch so a mid-flight file change aborts instead of
+/// serving a result computed from pre-change source.
+///
+/// Behaviour:
+///   - Record the stale generation at entry.
+///   - `tokio::select!` races the dispatch future against
+///     `hub.wait_stale_generation()`.
+///   - If the dispatch completes first AND the generation is unchanged:
+///     serve normally.
+///   - If the dispatch completes first BUT the generation changed during
+///     the window (a race the select! poll order can produce): 503 + retry.
+///   - If the change notification fires first: abort the dispatch (drop
+///     the future, releasing the renderer / loader resources it held) and
+///     503 + retry.
+///
+/// The 503 response carries:
+///   - `retry-after: 0` — a browser fetch with default redirect mode will
+///     not auto-retry, but the dev HMR client (which reloads on every file
+///     change event) will. A manual reload also gets fresh content.
+///   - `x-oxide-stale-generation: <new>` — audit trail: the request was
+///     refused because the world advanced past its entry generation.
+///
+/// Streaming responses are unaffected: a streaming dispatch completes
+/// its `OxideResponse` (with a live body stream) early, so the select!
+/// window is a few milliseconds — the abort almost never fires. Non-
+/// streaming (SSR, `/__data`, loaders) get the full guard.
+pub(crate) fn wrap_dispatch_with_stale_guard(
+    dispatch: std::sync::Arc<dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync>,
+    hub: std::sync::Arc<oxide_dev::HmrHub>,
+) -> std::sync::Arc<dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync> {
+    std::sync::Arc::new(move |req: oxide_server::OxideRequest| {
+        let hub = std::sync::Arc::clone(&hub);
+        let inner = std::sync::Arc::clone(&dispatch);
+        Box::pin(async move {
+            let start = hub.stale_generation();
+            let fut = inner(req);
+            let result = tokio::select! {
+                r = fut => r,
+                _ = hub.wait_stale_generation() => {
+                    return stale_503(start, hub.stale_generation());
+                }
+            };
+            // Exit check: the select! poll order can let the dispatch
+            // future complete on the first tick without polling the
+            // notification future — a bump between entry and completion
+            // would then be missed. This catches that narrow race.
+            let now = hub.stale_generation();
+            if now != start {
+                return stale_503(start, now);
+            }
+            result
+        })
+    })
+}
+
+/// §5.6: the retryable 503 a mid-flight file change produces.
+fn stale_503(start: u64, now: u64) -> oxide_server::OxideResponse {
+    let body = format!(
+        "<!doctype html><html><head><title>stale</title></head><body>\
+         <p>file changed during dispatch (generation {} to {}); retry</p>\
+         </body></html>",
+        start, now
+    );
+    let mut resp = oxide_server::OxideResponse::html(503, body);
+    resp.headers
+        .push(("retry-after".to_string(), "0".to_string()));
+    resp.headers
+        .push(("x-oxide-stale-generation".to_string(), now.to_string()));
+    resp
+}
+
 fn build_dispatch(
     tree: std::sync::Arc<oxide_router::RouteTree>,
     metrics: std::sync::Arc<oxide_server::Metrics>,
@@ -10168,6 +10251,14 @@ async fn start_server_inner_full(
             .ppr
             .then(|| std::sync::Arc::new(std::sync::Mutex::new(PprShellStore::default()))),
     );
+    // §5.6: dev-mode stale guard. When a HMR hub is wired, wrap the
+    // dispatch so a mid-flight file change aborts the render (no serving
+    // a result computed from pre-change source). Prod (no hub) is
+    // untouched — zero overhead.
+    let dispatch = match hmr.as_ref() {
+        Some(hub) => wrap_dispatch_with_stale_guard(dispatch, std::sync::Arc::clone(hub)),
+        None => dispatch,
+    };
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let (tx, rx) = tokio::sync::watch::channel(false);
     // §12.1: HTTP/3 rides QUIC over UDP on the same port. Enabled by
