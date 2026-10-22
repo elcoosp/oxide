@@ -766,3 +766,91 @@ async fn chunked_stream_fails_on_worker_crash_not_silent_partial() {
     let st = pool.stats();
     assert!(st.crashed >= 1, "crashed counter: {st:?}");
 }
+
+// ------------------------------ §17.2: --offline-plugins (contract)
+
+/// §17.2: `PoolConfig::offline_plugins = true` must reach the worker child
+/// as `OXIDE_OFFLINE_PLUGINS=1`. That env var is the contract the real
+/// worker's fetch shim reads; a worker that consumes the contract and
+/// refuses fetch on it is what makes the spec's deny real. This test
+/// exercises both the wiring and the deny through a self-contained probe
+/// worker (a test-only fixture in this directory).
+#[tokio::test]
+async fn offline_plugins_env_reaches_the_worker_and_denies_fetch() {
+    use std::path::PathBuf;
+
+    let worker = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("worker")
+        .join("offline_probe_worker.mjs");
+    assert!(worker.is_file(), "probe worker present: {}", worker.display());
+
+    let mut cfg = PoolConfig {
+        size: 1,
+        recycle_after_requests: 1_000,
+        ..Default::default()
+    };
+    // Explicit set — do NOT rely on the process env (the other tests share
+    // this process; env is process-global; this test owns its own state).
+    cfg.offline_plugins = true;
+
+    let pool = NodePool::spawn("node", worker, cfg).unwrap();
+    let mut s = pool
+        .call(entry("fetch:probe"), input(json!({})))
+        .await
+        .expect("probe call");
+    let out = s.collect().await.expect("collect");
+    let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+
+    // (1) wiring: the child sees the env var the Rust side set.
+    assert_eq!(
+        v["offline_env"].as_str(),
+        Some("1"),
+        "PoolConfig::offline_plugins must reach the child env: {v}"
+    );
+    // (2) deny: under the flag, a fetch attempt refuses before egress.
+    assert_eq!(
+        v["fetch"]["error_code"].as_str(),
+        Some("JSH-OFFLINE"),
+        "offline-plugins must deny fetch with JSH-OFFLINE: {v}"
+    );
+}
+
+/// §17.2: the negative half — with `offline_plugins = false`, the child
+/// sees `OXIDE_OFFLINE_PLUGINS=0` and the gate is open (a fetch to a
+/// closed port fails for a network reason, not `JSH-OFFLINE`). Without
+/// this test, the positive test could pass even if the child was always
+/// offline, or if the flag never toggled.
+#[tokio::test]
+async fn offline_plugins_disabled_leaves_fetch_gate_open() {
+    use std::path::PathBuf;
+
+    let worker = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("worker")
+        .join("offline_probe_worker.mjs");
+
+    let mut cfg = PoolConfig {
+        size: 1,
+        recycle_after_requests: 1_000,
+        ..Default::default()
+    };
+    cfg.offline_plugins = false;
+
+    let pool = NodePool::spawn("node", worker, cfg).unwrap();
+    let mut s = pool
+        .call(entry("fetch:probe"), input(json!({})))
+        .await
+        .expect("probe call");
+    let out = s.collect().await.expect("collect");
+    let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+
+    assert_eq!(
+        v["offline_env"].as_str(),
+        Some("0"),
+        "offline disabled → env reports '0': {v}"
+    );
+    assert_ne!(
+        v["fetch"]["error_code"].as_str(),
+        Some("JSH-OFFLINE"),
+        "gate is open when offline_plugins=false: {v}"
+    );
+}
