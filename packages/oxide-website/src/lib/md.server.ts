@@ -1,21 +1,14 @@
 // src/lib/md.server.ts — server-only content helpers for the site.
 //
-// Why a mini renderer instead of markdown imports? Oxide's build-time
-// content collections already scan/validate/index these files (see
-// `content.collections` in oxide.config.ts), but the runtime query surface
-// (`content.blog.all()` etc.) is still being wired, so the loaders read the
-// .md files directly. This module is the interim glue — when the typed
-// query surface lands, it shrinks to a thin wrapper.
+// The collection query surface (`getCollection` / `getEntry`) reads the
+// entries emitted by `oxide build` / `oxide dev`; this module maps those
+// typed entries onto the site's post/doc shape and renders the Markdown
+// subset below.
 //
 // Supported markdown subset (keep posts inside it): headings #..####,
 // paragraphs, -/* and 1. lists, pipe tables, > blockquotes, ``` fences,
 // --- rules, inline `code`, **bold**, [links](https://… or /relative).
-import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
-
-const ROOT = process.cwd()
-const BLOG_DIR = join(ROOT, 'content', 'blog')
-const DOCS_DIR = join(ROOT, 'content', 'docs')
+import { getCollection, getEntry } from 'oxide/server'
 
 export interface Frontmatter {
   [key: string]: string
@@ -44,21 +37,6 @@ function esc(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
-}
-
-function parseFrontmatter(src: string): { fm: Frontmatter; body: string } {
-  const text = src.replace(/\r\n/g, '\n')
-  if (!text.startsWith('---\n')) return { fm: {}, body: text }
-  const end = text.indexOf('\n---', 3)
-  if (end === -1) return { fm: {}, body: text }
-  const head = text.slice(4, end)
-  const body = text.slice(end + 4).replace(/^\n+/, '')
-  const fm: Frontmatter = {}
-  for (const line of head.split('\n')) {
-    const m = /^([A-Za-z][\w-]*)\s*:\s*(.*)$/.exec(line)
-    if (m) fm[m[1]] = m[2].trim()
-  }
-  return { fm, body }
 }
 
 function parseTags(raw: string | undefined): string[] {
@@ -176,73 +154,73 @@ export function mdToHtml(md: string): string {
   return out.join('\n')
 }
 
-function readDirMd(dir: string): { slug: string; fm: Frontmatter; body: string }[] {
-  let files: string[] = []
-  try {
-    files = readdirSync(dir)
-  } catch {
-    return []
-  }
-  const entries: { slug: string; fm: Frontmatter; body: string }[] = []
-  for (const f of files) {
-    if (!f.endsWith('.md') || f.startsWith('_')) continue
-    const slug = f.slice(0, -3)
-    if (!SLUG_RE.test(slug)) continue
-    const { fm, body } = parseFrontmatter(readFileSync(join(dir, f), 'utf8'))
-    entries.push({ slug, fm, body })
-  }
-  return entries
+function fmString(v: unknown, fallback = ''): string {
+  if (typeof v === 'string') return v
+  if (v == null) return fallback
+  if (Array.isArray(v)) return v.map(String).join(', ')
+  return String(v)
 }
 
-export function listPosts(): PostMeta[] {
-  return readDirMd(BLOG_DIR)
-    .map(({ slug, fm }) => ({
-      slug,
-      title: fm.title ?? slug,
-      description: fm.description ?? '',
-      date: fm.date ?? '',
-      tags: parseTags(fm.tags),
+function fmTags(v: unknown): string[] {
+  if (Array.isArray(v)) return v.map(String).map((t) => t.trim()).filter(Boolean)
+  return parseTags(fmString(v))
+}
+
+export async function listPosts(): Promise<PostMeta[]> {
+  const entries = await getCollection('blog')
+  return entries
+    .map((e) => ({
+      slug: e.slug,
+      title: fmString(e.frontmatter.title, e.slug),
+      description: fmString(e.frontmatter.description),
+      date: fmString(e.frontmatter.date),
+      tags: fmTags(e.frontmatter.tags),
     }))
     .sort((a, b) => (a.date < b.date ? 1 : -1))
 }
 
-export function readPost(slug: string): { meta: PostMeta; html: string } | null {
+export async function readPost(
+  slug: string,
+): Promise<{ meta: PostMeta; html: string } | null> {
   if (!SLUG_RE.test(slug)) return null
-  const hit = readDirMd(BLOG_DIR).find((e) => e.slug === slug)
+  const hit = await getEntry('blog', slug)
   if (!hit) return null
   return {
     meta: {
       slug: hit.slug,
-      title: hit.fm.title ?? hit.slug,
-      description: hit.fm.description ?? '',
-      date: hit.fm.date ?? '',
-      tags: parseTags(hit.fm.tags),
+      title: fmString(hit.frontmatter.title, hit.slug),
+      description: fmString(hit.frontmatter.description),
+      date: fmString(hit.frontmatter.date),
+      tags: fmTags(hit.frontmatter.tags),
     },
     html: mdToHtml(hit.body),
   }
 }
 
-export function listDocs(): DocMeta[] {
-  return readDirMd(DOCS_DIR)
-    .map(({ slug, fm }) => ({
-      slug,
-      title: fm.title ?? slug,
-      description: fm.description ?? '',
-      order: Number(fm.order ?? 99),
+export async function listDocs(): Promise<DocMeta[]> {
+  const entries = await getCollection('docs')
+  return entries
+    .map((e) => ({
+      slug: e.slug,
+      title: fmString(e.frontmatter.title, e.slug),
+      description: fmString(e.frontmatter.description),
+      order: Number(e.frontmatter.order ?? 99),
     }))
     .sort((a, b) => a.order - b.order)
 }
 
-export function readDoc(slug: string): { meta: DocMeta; html: string } | null {
+export async function readDoc(
+  slug: string,
+): Promise<{ meta: DocMeta; html: string } | null> {
   if (!SLUG_RE.test(slug)) return null
-  const hit = readDirMd(DOCS_DIR).find((e) => e.slug === slug)
+  const hit = await getEntry('docs', slug)
   if (!hit) return null
   return {
     meta: {
       slug: hit.slug,
-      title: hit.fm.title ?? hit.slug,
-      description: hit.fm.description ?? '',
-      order: Number(hit.fm.order ?? 99),
+      title: fmString(hit.frontmatter.title, hit.slug),
+      description: fmString(hit.frontmatter.description),
+      order: Number(hit.frontmatter.order ?? 99),
     },
     html: mdToHtml(hit.body),
   }
