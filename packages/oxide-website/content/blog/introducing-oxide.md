@@ -62,13 +62,13 @@ Fair question, and the answer matters:
 
 The numbers, because they're checkable:
 
-- **1,153 Rust test functions** across 17 crates — including `proptest` suites on the router and
+- **1,190 Rust test functions** across 17 crates — including `proptest` suites on the router and
   graph engines and `cargo-fuzz` harnesses on the ODF decoder
-- **361 TypeScript test cases**, all green, zero runtime npm dependencies
+- **387 TypeScript test cases**, all green, zero runtime npm dependencies
 - **96 conformance checks per release**: one reference app, one 24-assertion suite, all four
   adapters — a release is blocked the moment any adapter drifts
 - **A public compliance scorecard**: we wrote a 21-section specification and audit ourselves
-  against it every round — currently **93 / 100**, findings public, [including the ugly
+  against it every round — currently **95 / 100**, findings public, [including the ugly
   ones](/blog/auditing-our-own-framework-91-of-100)
 
 ## Try it
