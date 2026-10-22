@@ -57,3 +57,27 @@ decoupling) is done.
 **What would change it.** A route-table generation in `cmd_dev` that re-runs
 `scan_routes` on `Created`/`Removed` events for `routes.dir` and rebuilds
 `dev_component_sources` for the new canonical ids.
+## Edge `mergeHead` is JS-only (P0-1)
+
+**What the spec asks.** The edge handler (D18) prefers the wasm export for
+each of the three named functions — `edge_cache_key`, `merge_head`,
+`encode_odf` — and falls back to a semantically identical JS path when
+wasm is absent.
+
+**What lands.** `edge_cache_key` and `encode_odf` prefer the wasm export
+as specified. `merge_head` is JS-only.
+
+**Why.** The Rust `merge_head` merges flat `Vec<(String, String)>` pairs
+(one key per entry); the edge head model is structured
+(`{title, meta: [[k,v], ...], links, json_ld}`) with per-kind dedup. They
+are different algorithms, not two encodings of one. The previous wasm
+path *silently* returned `[]`: `serde_json::from_str::<Vec<(String,String)>>`
+fails on object input, `unwrap_or_default()` discards the error, the
+returned `"[]"` parses as `[]`, and the JS fallback therefore never ran —
+an empty head on every edge response.
+
+**What would change it.** A Rust-side port of the structured head merge,
+with its own tests against the edge shape, exposed as a new export
+(`merge_head_structured`). Reusing `merge_head` is a type mismatch by
+design, not by accident.
+

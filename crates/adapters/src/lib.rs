@@ -935,12 +935,18 @@ function cacheKey(route, params, vary, build_id) {
 
 // ---- head merge -------------------------------------------------------------
 // Merge two head-tag models: layout (parent) then page (child). Dedupe by
-// (kind, key) with page winning. Matches `oxide_core_wasm::merge_head`.
+// (kind, key) with page winning.
+//
+// NOTE (P0-1): NOT routed through wasm. The Rust `merge_head` merges flat
+// `Vec<(String, String)>` pairs (one key per entry); the edge head model is
+// structured (`{title, meta: [[k,v], ...], links, json_ld}`) with per-kind
+// dedup. They are different algorithms, not two encodings of one. The old
+// path silently returned [] (serde_json::from_str on an object into
+// Vec<(String,String)> fails, unwrap_or_default discards the error, the
+// parse of "[]" yields [] with no throw so the JS fallback never ran).
+// The JS implementation is the shipped path; a Rust port would be a
+// separate function with its own tests, not a reuse of merge_head.
 function mergeHead(a, b) {
-  const viaWasm = useWasm("merge_head", JSON.stringify(a), JSON.stringify(b));
-  if (typeof viaWasm === "string") {
-    try { return JSON.parse(viaWasm); } catch { /* fall through */ }
-  }
   const out = { title: null, meta: [], links: [], json_ld: [] };
   for (const src of [a, b]) {
     if (!src) continue;

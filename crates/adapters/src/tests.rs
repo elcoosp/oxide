@@ -642,3 +642,39 @@ fn edge_handler_js_is_deterministic_and_contains_build_id() {
     assert!(a.contains("build_id: edge-xyz"));
     assert!(a.contains("edge_cache_key") || a.contains("cacheKey"));
 }
+
+/// P0-1: the edge handler's `mergeHead` must be JS-only. The Rust
+/// `merge_head` merges flat `Vec<(String, String)>` pairs; the edge head
+/// model is structured and deduped per kind. The old wasm path returned
+/// `[]` silently (serde_json deserialize failure swallowed by
+/// `unwrap_or_default`, then the parse of `"[]"` returned `[]` with no
+/// throw, so the JS fallback never ran). This test ensures the template
+/// cannot regress into that path.
+#[test]
+fn edge_merge_head_is_js_only() {
+    let js = edge_handler_js("build-abc123");
+    // No wasm call for merge_head.
+    assert!(
+        !js.contains(r#"useWasm("merge_head""#),
+        "mergeHead must not call wasm (semantic mismatch: flat pairs vs structured head): \n{}",
+        js.lines()
+            .filter(|l| l.contains("merge_head"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    // The JS implementation is present.
+    assert!(
+        js.contains("function mergeHead(a, b)"),
+        "mergeHead JS implementation must be present"
+    );
+    // The other two wasm-routed functions still prefer wasm.
+    assert!(
+        js.contains(r#"useWasm("edge_cache_key""#),
+        "cacheKey still prefers wasm"
+    );
+    assert!(
+        js.contains(r#"useWasm("encode_odf""#),
+        "encodeOdf still prefers wasm"
+    );
+}
+
