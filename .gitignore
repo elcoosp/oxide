@@ -11,8 +11,10 @@ crates/jshost/tests/.tmp-e2e/
 examples/*/dist/
 examples/*/.oxide/
 /.oxide/
+packages/*/.oxide/
 # §6.3 precompile temp files (dropped by the test gates).
 examples/**/.*.oxide.ts
+packages/**/.*.oxide.ts
 # PH0-03: the V8 gate's temp roots.
 examples/.v8-gate-*/
 examples/.v8-*/
