@@ -62,13 +62,13 @@ Fair question, and the answer matters:
 
 The numbers, because they're checkable:
 
-- **1,116 Rust test functions** across 17 crates — including `proptest` suites on the router and
+- **1,153 Rust test functions** across 17 crates — including `proptest` suites on the router and
   graph engines and `cargo-fuzz` harnesses on the ODF decoder
-- **349 TypeScript test cases**, all green, zero runtime npm dependencies
+- **361 TypeScript test cases**, all green, zero runtime npm dependencies
 - **96 conformance checks per release**: one reference app, one 24-assertion suite, all four
   adapters — a release is blocked the moment any adapter drifts
 - **A public compliance scorecard**: we wrote a 21-section specification and audit ourselves
-  against it every round — currently **91 / 100**, findings public, [including the ugly
+  against it every round — currently **93 / 100**, findings public, [including the ugly
   ones](/blog/auditing-our-own-framework-91-of-100)
 
 ## Try it
@@ -87,9 +87,9 @@ This very site is rendered by Oxide — streaming SSR, one island, OG image card
 ## Honest status
 
 Oxide is **pre-alpha**, built against a published specification, and the gaps are documented in
-public: partial prerendering's shell splitter is tested but not wired into a render path yet; the
+public: partial prerendering's shell splitter is wired at runtime (first-request shell cache; a build-time shell and rebuild invalidation are the r9 follow-up); the
 edge build emits a WASM blob that no consumer chain reads yet; socket fan-out currently reaches
-only the calling socket. The full list lives in the repo README and HANDOFF — we update it every
+only the calling socket. The full list lives in the r9 scorecard (`docs/scorecard-r9.md`); the README carries the summary; the 2026-10-19 HANDOFF is superseded.
 audit round, and we don't market the list's contents as features.
 
 If you want production-hardened, wait six months. If you want to watch a framework grow with its

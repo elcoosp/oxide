@@ -24,10 +24,12 @@ Each audit round runs the same loop:
    *claims*, not facts. Every claim is traced to a call chain with file-and-line evidence and
    gets a verdict: **LIVE** (production-reachable), **SEAM-ONLY** (tested in isolation, not
    wired into the real path), **REFUTED**, or **MIXED**.
-3. **Tests are executed, not counted.** The TypeScript suites run for real — the last round:
-   333/333 green, zero skipped on this machine (the last r8 run reported 351/362 — the 11
-   red tests were fixed post-audit). The Rust suites are statically counted (test functions, ignored
-   gates, TDD-written contract suites) until a full toolchain run is available.
+3. **Tests are executed, not counted.** The TypeScript suites run for real — 361 pass /
+   0 fail across the six packages plus conformance at the current HEAD, zero skipped. (The
+   r8 audit itself ran against a red suite: 351/362, the 11 fails all fixed post-audit in
+   r9's WP-1.) The Rust suites are statically counted at 1,153 (test functions, ignored
+   gates, TDD-written contract suites) until a full toolchain run is available; `cargo
+   nextest --workspace` reports 1,109 executed.
 4. **21 sections, scored.** The spec's sections map to 21 scored areas; the score is the plain
    average, no weighting games.
 
@@ -92,13 +94,24 @@ more teeth, the best contribution is a machine-checkable assertion for a section
 
 ---
 
-*r8 → post-audit corrections (2026-10-21):* the 91/100 above is the r7
-score; r8 re-scored at ~92 with the ComponentSource main path closed. The
-audit's own findings are now (mostly) fixed: the TS suite is green, the
-scaffolder emits the current config shape, PPR refuses to cache
-cookie-setting responses, and the schema carries the two keys it was
-missing. What remains open — P0-1's `edge_bundle.js`, P0-8's L2 sealing,
-P0-2's `/__data` unbounded collect, and the half of the migration the
-website config itself was on — is tracked in the r8 scorecard and fixed in
-this same push. The post is a point-in-time record; the scorecard is the
-live document.
+*r8 → post-audit corrections:* the score above is the r7 score; r8
+re-scored at ~92 with the ComponentSource main path closed; r9 re-scored
+at ~93. The r8 audit's own findings, as of r9:
+
+**Fixed:** the red TS suite, the scaffolder's config shape, PPR's
+cookie-leak guard, the schema drift (`server.h3Advertise`,
+`framework.islands`, the duplicate `static`), the three CI-theater stubs,
+P0-8's L2 sealing, the bench report's p99 framing (half — the retracted
+paragraph itself is a r9 fix), and G2's trace threading at every live
+loader site.
+
+**Still open:** P0-1 (`edge_bundle.js`), P0-2 (`/__data` unbounded
+`collect`), P0-4 (a build-time PPR shell and rebuild invalidation), and
+P0-10's residues (`oxide render` attaches no ComponentSource, the
+`adapter_entry` manifest field is unread, the `ssr:'real'` default is
+undecided). None of these were "fixed in the same push"; they are the
+honest open list.
+
+The live document is now `docs/scorecard-r9.md`. This post is a
+point-in-time record; the number above is the r7 score the r8 round
+re-anchored from.

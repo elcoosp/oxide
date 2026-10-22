@@ -53,19 +53,19 @@ Check the wire: `curl -s localhost:3000/_oxide/health`,
 
 ## Notes / known deviations
 
-- **`componentFor` is config-side** — that is the current SSR reality, not an
-  accident. The spec-conformant shape (routes as a *path* + build-time
-  collection, spec §6.4/D8) silently degrades to the IR renderer today; this
-  is audit finding **P0-10** and is on the fix list. The config file is
-  written so the migration is a delete-and-shrink.
+- **Components resolve at build time** (§6.4). The config declares
+  `routes.dir` and the adapter — no page/layout/error imports and no
+  `componentFor` closure. Page, layout and error-boundary components are
+  collected from `src/routes` into the emitted SSR adapter entry and
+  resolved by the worker (`input.resolve(id)`). `componentFor`/`layoutFor`
+  survive as explicit advanced overrides for custom hosts; they are not
+  the config surface.
 - **Cache key is nested** `cache.l0.maxSize` (§14.1). The create-oxide
-  scaffolder still emits a flat `l0MaxSize`, which `CacheConfig`'s
-  `deny_unknown_fields` rejects — don't copy it from there.
+  scaffolder emits the same shape; a flat `l0MaxSize` is rejected by
+  `CacheConfig`'s `deny_unknown_fields`.
 - **HTTP/3** is off in the committed config for plain local dev; flip
   `server.http3` to `true` when serving over TLS (Alt-Svc advertisement is
   automatic on the TLS listener).
-- `preview/` is a static design snapshot for people without the Rust
-  toolchain — it is not part of the app and is not deployed.
 
 ## Deploy
 
