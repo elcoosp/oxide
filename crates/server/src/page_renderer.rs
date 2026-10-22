@@ -67,6 +67,20 @@ pub struct PageRenderInput {
     /// that reads it, matching the live dispatch's `LoaderRunInput.locale`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locale: Option<String>,
+    /// §7.1 / §9.2: the loader's `event.defer()` values, keyed by the id
+    /// the loader assigned. `data` carries `{ "__deferred": id }`
+    /// placeholders; this map is what they resolve to. The adapter
+    /// substitutes them before the component tree is built, so a component
+    /// reads the value rather than the placeholder.
+    ///
+    /// Already resolved: the pipeline collects the settle stream before it
+    /// calls `render_streaming`, so this is a value map, not a promise map.
+    /// Streaming a hole as its promise settles is the §7.1 per-adapter
+    /// path (`suspense: 'native'` for react/solid, `<Defer>` for
+    /// vue/svelte) and is a separate change — this makes `defer()`
+    /// *correct*, not *incremental*.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub deferred: BTreeMap<String, Value>,
 }
 
 impl PageRenderInput {
@@ -84,6 +98,7 @@ impl PageRenderInput {
             layouts: Vec::new(),
             error_route_id: None,
             locale: None,
+            deferred: BTreeMap::new(),
         }
     }
 }
