@@ -3,7 +3,9 @@
 #[test]
 fn config_schema_has_the_known_top_level_sections() {
     let schema = oxide_config::config_schema();
-    let obj = schema.as_object().expect("config_schema() must return a JSON object");
+    let obj = schema
+        .as_object()
+        .expect("config_schema() must return a JSON object");
     let props = obj
         .get("properties")
         .and_then(|v| v.as_object())
@@ -42,8 +44,14 @@ fn config_schema_serializes_to_valid_json() {
     // `config_schema_pretty` is pretty-printed with a trailing newline so
     // the output is paste-friendly; trim before asserting on the shape.
     let trimmed = pretty.trim_end();
-    assert!(trimmed.starts_with('{'), "pretty JSON starts with a brace: {trimmed:?}");
-    assert!(trimmed.ends_with('}'), "pretty JSON ends with a brace: {trimmed:?}");
-    let _: serde_json::Value = serde_json::from_str(trimmed)
-        .expect("config_schema_pretty() output must reparse as JSON");
+    assert!(
+        trimmed.starts_with('{'),
+        "pretty JSON starts with a brace: {trimmed:?}"
+    );
+    assert!(
+        trimmed.ends_with('}'),
+        "pretty JSON ends with a brace: {trimmed:?}"
+    );
+    let _: serde_json::Value =
+        serde_json::from_str(trimmed).expect("config_schema_pretty() output must reparse as JSON");
 }
