@@ -1,0 +1,573 @@
+{
+  "$id": "https://oxide.dev/schema/oxide-config-v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Typed configuration for an Oxide project (spec §14).",
+  "properties": {
+    "adapter": {
+      "enum": [
+        "binary",
+        "node",
+        "static",
+        "docker",
+        "cloudflare",
+        "lambda",
+        "vercel",
+        "netlify",
+        "deno",
+        "bun"
+      ],
+      "type": "string"
+    },
+    "budgets": {
+      "additionalProperties": false,
+      "properties": {
+        "clientJs": {
+          "type": "string"
+        },
+        "routeJs": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "build": {
+      "additionalProperties": false,
+      "properties": {
+        "remoteCache": {
+          "description": "§5.4: remote build-cache URL (http://). Read-through on a local miss, write-back on store.",
+          "type": "string"
+        },
+        "routeSearch": {
+          "default": true,
+          "description": "§16 / K2: emit the route-search index (dist/client/search-index.json). On by default when prerendered pages exist; set false for projects that do not ship a client-side search UI.",
+          "type": "boolean"
+        },
+        "sourcemap": {
+          "enum": [
+            "hidden",
+            "inline",
+            "external",
+            "off"
+          ],
+          "type": "string"
+        },
+        "ssrExternals": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "target": {
+          "type": "string"
+        },
+        "writeBranches": {
+          "description": "§5.4 / SPEC-5D: git branches trusted to write the shared remote cache. Default main/master + release/* when remoteCache is set.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "cache": {
+      "additionalProperties": false,
+      "properties": {
+        "handler": {
+          "properties": {
+            "bucket": {
+              "description": "Bucket name for `type: \"s3\"`.",
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "memory",
+                "disk",
+                "redis",
+                "s3",
+                "http"
+              ],
+              "type": "string"
+            },
+            "url": {
+              "description": "Remote base URL for `type: \"http\"` or `type: \"redis\"`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        "l0": {
+          "additionalProperties": false,
+          "properties": {
+            "maxSize": {
+              "default": "512mb",
+              "pattern": "^[0-9]+(kb|mb|gb)$",
+              "type": "string"
+            },
+            "ttlSecs": {
+              "description": "P-05: L0 freshness window in seconds (default 300).",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "vary": {
+              "description": "Request headers the L0 fingerprint varies on. The primary language tag of accept-language is normalized automatically.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "content": {
+      "additionalProperties": false,
+      "properties": {
+        "collections": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "dir": {
+                "type": "string"
+              },
+              "indexedFields": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "dir"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "dev": {
+      "additionalProperties": true,
+      "description": "§13.5: dev-server options (https, host, qr, open, proxy).",
+      "type": "object"
+    },
+    "environments": {
+      "additionalProperties": true,
+      "description": "§14.2: per-environment Rolldown overrides (client / ssr).",
+      "type": "object"
+    },
+    "extends": {
+      "description": "§14.2: shared configs to merge before this file.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "fonts": {
+      "additionalProperties": false,
+      "properties": {
+        "families": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "family": {
+                "type": "string"
+              },
+              "localPaths": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "styles": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "weights": {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "providers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "subset": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "framework": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "enum": [
+            "react",
+            "vue",
+            "svelte",
+            "solid"
+          ],
+          "type": "string"
+        },
+        "compiler": {
+          "type": "boolean"
+        },
+        "islands": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "§10.3 islands registry: component name → source file. The CLI emits a synthetic __boot__ client entry that imports each entry; `<Island chunk=\"X\">` on a page resolves to X in this map.",
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "i18n": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "type": "string"
+        },
+        "locales": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "strategy": {
+          "description": "Locale routing strategy: `prefix` (always), `prefix-except-default` (omit the default locale), `none` (no path prefix; cookie/Accept-Language only).",
+          "enum": [
+            "prefix",
+            "prefix-except-default",
+            "none"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "images": {
+      "additionalProperties": false,
+      "properties": {
+        "formats": {
+          "items": {
+            "enum": [
+              "avif",
+              "webp",
+              "jpeg",
+              "png"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "maxConcurrency": {
+          "default": 4,
+          "description": "§16.1: maximum concurrent rasterizations. Each transform is CPU-bound; unbounded concurrency lets a few clients saturate every core.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "maxDimension": {
+          "default": 8192,
+          "description": "§16.1: largest accepted `w`/`h`. A user-supplied size is not trusted to allocate an arbitrarily large canvas.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "remotePatterns": {
+          "items": {
+            "properties": {
+              "host": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "host"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "imagesEndpoint": {
+      "additionalProperties": true,
+      "description": "S-09: on-demand image transform endpoint (GET /_oxide/image). On by default; gateable.",
+      "type": "object"
+    },
+    "manifest": {
+      "additionalProperties": true,
+      "description": "§16.3: web app manifest (PWA). Present -> oxide build emits manifest.webmanifest + a service worker.",
+      "type": "object"
+    },
+    "modules": {
+      "description": "§15.4: distributable modules to install.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "og": {
+      "additionalProperties": true,
+      "description": "S-09: on-demand OG-image endpoint (GET /_oxide/og). Off by default; opt in with og.enabled = true.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "rateLimit": {
+          "additionalProperties": false,
+          "description": "A3: per-peer token-bucket limit applied before rasterization.",
+          "properties": {
+            "max": {
+              "default": 10,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "windowSecs": {
+              "default": 60,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "plugins": {
+      "description": "§15: plugin entries (native, wasm, or js).",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "render": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "enum": [
+            "auto",
+            "static",
+            "isr",
+            "dynamic",
+            "spa",
+            "islands"
+          ],
+          "type": "string"
+        },
+        "ppr": {
+          "default": false,
+          "description": "§10.8 partial prerendering: serve the cached static shell instantly and stream holes live",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "routes": {
+      "additionalProperties": false,
+      "properties": {
+        "dir": {
+          "default": "src/routes",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "rules": {
+      "items": {
+        "additionalProperties": true,
+        "properties": {
+          "destination": {
+            "type": "string"
+          },
+          "redirect": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "security": {
+      "additionalProperties": false,
+      "properties": {
+        "cookieKeys": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "csp": {
+          "enum": [
+            "strict",
+            "hash",
+            "off"
+          ],
+          "type": "string"
+        },
+        "csrf": {
+          "enum": [
+            "origin",
+            "token",
+            "off"
+          ],
+          "type": "string"
+        },
+        "exposeCacheHeader": {
+          "description": "S-21.3: emit the `x-oxide-cache` status header. Default true.",
+          "type": "boolean"
+        },
+        "hostAllowList": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sessionKeys": {
+          "description": "≥32-byte base64 keys for the ChaCha20-Poly1305 session codec; first seals, all decrypt (rotation).",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "sessionTtlSecs": {
+          "default": 1800,
+          "description": "§16.6: session cookie lifetime in seconds.",
+          "minimum": 60,
+          "type": "integer"
+        },
+        "ssrfAllowList": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "trustedProxies": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "server": {
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "default": "node",
+          "enum": [
+            "node",
+            "v8"
+          ],
+          "type": "string"
+        },
+        "compression": {
+          "items": {
+            "enum": [
+              "zstd",
+              "br",
+              "gzip"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "h3Advertise": {
+          "default": true,
+          "description": "§12.1 / C3: emit the `Alt-Svc: h3` header on the TLS listener. Default true when http3 is enabled; set false to keep the QUIC listener silent while browsers are not ready for it.",
+          "type": "boolean"
+        },
+        "host": {
+          "default": "localhost",
+          "type": "string"
+        },
+        "http3": {
+          "default": false,
+          "type": "boolean"
+        },
+        "port": {
+          "default": 3000,
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "siteUrl": {
+      "description": "§16.3: absolute site origin used by sitemap.xml and robots.txt.",
+      "type": "string"
+    },
+    "static": {
+      "additionalProperties": false,
+      "properties": {
+        "fallback": {
+          "description": "Path to a fallback HTML file emitted for dynamic routes without prerendered output (§10.5).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "sw": {
+      "additionalProperties": false,
+      "description": "§16 / K3: service worker configuration. Present only when the project wants to control emission beyond the default (manifest presence).",
+      "properties": {
+        "enabled": {
+          "description": "§16 / K3: emit the service worker at build. Default true when `manifest` is present; an explicit `false` disables emission even with a manifest.",
+          "type": "boolean"
+        },
+        "offlineFallback": {
+          "description": "§16 / K3: the offline-fallback route the worker serves for a navigation miss. Default `/offline` when the build produced that route; otherwise `/`.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "title": "Oxide config",
+  "type": "object"
+}
