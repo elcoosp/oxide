@@ -56,8 +56,13 @@ pub struct RouteSearchIndex {
 /// route/url are caller-supplied (the build knows them; the HTML does
 /// not always carry a canonical route id in a machine-readable way).
 pub fn extract_from_html(route: &str, url: &str, html: &str) -> RouteSearchEntry {
+    // Headings and the excerpt both run through `strip_tags`; the title did
+    // not, so a `<title>` with an entity or an inline tag would carry raw
+    // markup into the search index and into whatever renders the result.
+    // (A well-formed `<title>` has no children, which is why this was
+    // invisible — the inconsistency is what the strip is guarding against.)
     let title = extract_tag_text(html, "title").and_then(|t| {
-        let t = t.trim().to_string();
+        let t = strip_tags(&t).trim().to_string();
         (!t.is_empty()).then_some(t)
     });
 
@@ -242,6 +247,28 @@ fn url_from_rel(rel: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extract_strips_markup_from_the_title_too() {
+        // A title carrying an inline tag must not reach the index with raw
+        // markup — headings and the excerpt already go through `strip_tags`,
+        // the title did not. (`strip_tags` removes tags and collapses the
+        // boundary to a space; it does not decode entities, which is a
+        // separate concern and consistent with the headings/excerpt path.)
+        let html = "<html><head><title>Oxide <em>and friends</em></title></head>\
+                    <body><p>x</p></body></html>";
+        let e = extract_from_html("routes/index", "/", html);
+        assert_eq!(
+            e.title.as_deref(),
+            Some("Oxide and friends"),
+            "the title must be stripped like the headings and excerpt"
+        );
+        assert!(
+            !e.title.as_deref().unwrap_or("").contains('<'),
+            "no raw markup in the title: {:?}",
+            e.title
+        );
+    }
 
     #[test]
     fn extract_reads_title_headings_and_excerpt() {
