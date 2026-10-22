@@ -1,5 +1,20 @@
 # Oxide handoff — Session 2026-10-19 (post-§5-A + §15-E)
 
+> [!WARNING]
+> **SUPERSEDED — do not treat anything below as current.**
+>
+> This file is a snapshot from `4e38dec` (2026-10-19) and is retained only
+> as a historical record (it is cited as an input to `docs/spec-v0.2-draft.md`
+> and by the audit post). Every number and every "what remains" line in it
+> is stale by hundreds of commits.
+>
+> **Current state lives in:**
+> - `docs/deviations.md` — the numbered, TDD-locked spec deviations
+> - `README.md` — the "Built, wiring in progress" list
+> - `WORKLOG.md` — the session log
+>
+> If a statement here contradicts the tree, trust the tree.
+
 **Date:** 2026-10-19
 **HEAD:** `4e38dec` (`feat(mcp): §19-D oxide_graph reads the last build's DemandGraph snapshot`)
 **Baseline:** `origin/main` = `4e38dec` — **fully pushed, nothing ahead.**
