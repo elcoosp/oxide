@@ -186,6 +186,16 @@ impl oxide_server::PageRenderer for FailingRenderer {
     }
 }
 
+fn test_request_with_trace(
+    method: &str,
+    url: &str,
+    traceparent: &str,
+) -> oxide_server::OxideRequest {
+    let mut req = test_request(method, url);
+    req.trace = oxide_server::trace_context::TraceContext::parse_traceparent(traceparent);
+    req
+}
+
 fn test_request(method: &str, url: &str) -> oxide_server::OxideRequest {
     oxide_server::OxideRequest {
         method: method.into(),
@@ -3810,6 +3820,33 @@ async fn middleware_headers_ride_page_and_data_responses() {
 // ---------------------------------------------------------------------------
 
 /// A cacheable route (static mode, no server module) so `l0_eligible` is true.
+fn tree_with_layout_and_parentless_page() -> std::sync::Arc<oxide_router::RouteTree> {
+    let mut tree = oxide_router::RouteTree::new();
+    tree.insert(oxide_router::RouteEntry {
+        id: oxide_router::RouteId("routes/layout".into()),
+        kind: oxide_router::RouteKind::Layout,
+        segments: vec![],
+        file: std::path::PathBuf::from("layout.tsx"),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: false,
+        slot: None,
+        needs_parent: false,
+    });
+    tree.insert(oxide_router::RouteEntry {
+        id: oxide_router::RouteId("routes/index/page".into()),
+        kind: oxide_router::RouteKind::Page,
+        segments: vec![],
+        file: std::path::PathBuf::from("index/page.tsx"),
+        render_mode: Some("static".into()),
+        tags: Vec::new(),
+        has_server_module: true,
+        slot: None,
+        needs_parent: false,
+    });
+    std::sync::Arc::new(tree)
+}
+
 fn tree_with_static_page_and_middleware() -> std::sync::Arc<oxide_router::RouteTree> {
     let mut tree = oxide_router::RouteTree::new();
     tree.insert(oxide_router::RouteEntry {
@@ -6983,3 +7020,155 @@ async fn dispatch_without_l0_never_emits_a_cache_header() {
         );
     }
 }
+
+// ------------------------------ §16.6 / WP-D1: parallel-arm session persistence
+
+/// The parallel layout+page arm is the common case — page.server.ts does
+/// not call parent() by default — and it used to drop `out.session` because
+/// the page-loader arm copied data/meta/set_cookies/headers but not session.
+/// This test uses a tree with a real layout and a parentless page and a
+/// scripted loader that returns a session mutation, then asserts the
+/// response carries a Set-Cookie.
+#[tokio::test]
+async fn parallel_arm_persists_session_mutation() {
+    use std::sync::Arc;
+
+    // Layout's `layout.server.ts` must exist for `layout_module_paths` to
+    // be non-empty, which is what makes `run_parallel` true.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("layout.server.ts"), "// stub").unwrap();
+
+    let renderer: Option<Arc<dyn oxide_server::PageRenderer>> =
+        Some(Arc::new(DataCapturingRenderer::new()));
+    // The parallel arm calls the loader twice: once for the layout, once
+    // for the page (run_parallel && layout_module_paths.len() == 1 → the
+    // last-layout arm of the join). ScriptedLoader has a "called at most
+    // once" guard that other tests rely on; use a repeatable inline
+    // loader instead.
+    struct RepeatableSessionLoader {
+        session: serde_json::Value,
+    }
+    #[async_trait::async_trait]
+    impl oxide_server::LoaderRunner for RepeatableSessionLoader {
+        fn name(&self) -> &str {
+            "repeatable-session"
+        }
+        async fn run(
+            &self,
+            _input: oxide_server::LoaderRunInput,
+        ) -> oxide_server::Result<oxide_server::LoaderOutput> {
+            Ok(oxide_server::LoaderOutput {
+                status: 200,
+                data: serde_json::json!({}),
+                session: Some(self.session.clone()),
+                ..Default::default()
+            })
+        }
+    }
+    let loader: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(Arc::new(
+        RepeatableSessionLoader {
+            session: serde_json::json!({ "user": "alice", "visits": 1 }),
+        },
+    ));
+    let codec = Arc::new(oxide_server::SessionCodec::new(&[vec![7u8; 32]]).unwrap());
+
+    let dispatch = build_dispatch(
+        tree_with_layout_and_parentless_page(),
+        Arc::new(oxide_server::Metrics::new()),
+        Vec::new(),
+        renderer,
+        loader,
+        dir.path().to_path_buf(),
+        None, None, None, None, None, None, None, None,
+        false,
+        Vec::new(),
+        None,
+        Some(codec),
+        None,
+    );
+
+    let resp = dispatch(test_request("GET", "/")).await;
+    assert_eq!(resp.status, 200, "page renders");
+
+    let cookies: Vec<&str> = resp
+        .headers
+        .iter()
+        .filter(|(k, _)| k.eq_ignore_ascii_case("set-cookie"))
+        .map(|(_, v)| v.as_str())
+        .collect();
+    assert!(
+        cookies.iter().any(|c| c.starts_with("oxide_session=")),
+        "parallel arm persists the loader's session mutation as Set-Cookie: {:?}",
+        cookies
+    );
+}
+
+// ------------------------------ §20 / G2: traceparent threading
+
+/// A loader that captures the `.trace` the dispatch attached to its input.
+struct TraceCapturingLoader {
+    captured_trace: std::sync::Arc<std::sync::Mutex<Option<serde_json::Value>>>,
+}
+
+#[async_trait::async_trait]
+impl oxide_server::LoaderRunner for TraceCapturingLoader {
+    fn name(&self) -> &str {
+        "trace-capture"
+    }
+    async fn run(
+        &self,
+        input: oxide_server::LoaderRunInput,
+    ) -> oxide_server::Result<oxide_server::LoaderOutput> {
+        *self.captured_trace.lock().unwrap() = input.trace.clone();
+        Ok(oxide_server::LoaderOutput::ok(serde_json::json!({})))
+    }
+}
+
+/// G2: a request with a traceparent must have that trace forwarded to the
+/// loader — the worker joins its server-side fetch calls to the same trace.
+/// Pre-G2 the field was dropped between the Rust dispatch and the worker;
+/// the fix threaded it at every loader call site. This test pins the
+/// parallel arm, which shares the assignment shape with the other four.
+#[tokio::test]
+async fn request_trace_reaches_the_loader() {
+    use std::sync::Arc;
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("layout.server.ts"), "// stub").unwrap();
+
+    let captured = Arc::new(std::sync::Mutex::new(None));
+    let loader = Arc::new(TraceCapturingLoader {
+        captured_trace: Arc::clone(&captured),
+    });
+
+    let dispatch = build_dispatch(
+        tree_with_layout_and_parentless_page(),
+        Arc::new(oxide_server::Metrics::new()),
+        Vec::new(),
+        None,
+        Some(loader as Arc<dyn oxide_server::LoaderRunner>),
+        dir.path().to_path_buf(),
+        None, None, None, None, None, None, None, None,
+        false,
+        Vec::new(),
+        None,
+        None,
+        None,
+    );
+
+    let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+    let _ = dispatch(test_request_with_trace("GET", "/", traceparent)).await;
+
+    let captured = captured.lock().unwrap().clone();
+    assert!(
+        captured.is_some(),
+        "loader saw a trace object (was `.trace` dropped?)"
+    );
+    let trace = captured.unwrap();
+    assert_eq!(
+        trace["traceparent"].as_str(),
+        Some(traceparent),
+        "the request's traceparent is forwarded unchanged: {trace}"
+    );
+}
+
