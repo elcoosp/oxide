@@ -2367,7 +2367,11 @@ fn serve_image_endpoint(endpoint: Option<&ImageEndpoint>, raw_url: &str) -> Nati
                     // backend's cache key, so they are safe to cache immutably.
                     .with_header("Cache-Control", "public, max-age=31536000, immutable")
                     .with_header("ETag", etag)
-                    .with_header("Vary", "Accept"),
+                    .with_header("Vary", "Accept")
+                    // §16.1: the LQIP was only piped on the cache-hit branch,
+                    // so a client saw `x-oxide-lqip` on the second request and
+                    // never on the first. The fresh render carries it too.
+                    .pipe_image_placeholder(result.placeholder.clone()),
             )
         }
         Err(msg) => NativePrefix::Raw(
@@ -5344,5 +5348,234 @@ mod streaming_response_tests {
         assert!(cloned.stream.is_none(), "clone drops the stream");
         // Original still owns it.
         assert!(resp.stream.is_some());
+    }
+}
+
+// ------------------------------ §16.1: image endpoint behavior
+
+#[cfg(test)]
+mod image_endpoint_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    /// Counts `process()` calls and returns a deterministic body, so the
+    /// test can tell a cache hit (0 extra calls) from a miss (1 per request).
+    struct CountingBackend {
+        calls: Arc<AtomicUsize>,
+        concurrency_seen: Arc<AtomicUsize>,
+        peak: Arc<AtomicUsize>,
+        placeholder: Option<String>,
+    }
+
+    impl ImageEndpointBackend for CountingBackend {
+        fn process(
+            &self,
+            req: ImageEndpointRequest,
+        ) -> std::result::Result<ImageEndpointResult, String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let live = self.concurrency_seen.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(live, Ordering::SeqCst);
+            // Keep the transform observable as "in flight" for a moment is
+            // not needed here; the peak check is a single-threaded assertion.
+            self.concurrency_seen.fetch_sub(1, Ordering::SeqCst);
+            Ok(ImageEndpointResult {
+                bytes: format!(
+                    "W{}H{}Q{}",
+                    req.width.unwrap_or(0),
+                    req.height.unwrap_or(0),
+                    req.quality.unwrap_or(0)
+                )
+                .into_bytes(),
+                content_type: "image/png",
+                cache_key: format!(
+                    "k{}-{}-{}",
+                    req.width.unwrap_or(0),
+                    req.height.unwrap_or(0),
+                    req.format.unwrap_or("png")
+                ),
+                placeholder: self.placeholder.clone(),
+            })
+        }
+    }
+
+    fn endpoint_with(
+        backend: Arc<dyn ImageEndpointBackend>,
+        max_concurrency: usize,
+        max_dimension: u32,
+    ) -> (tempfile::TempDir, ImageEndpoint) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("a.png"), b"not-a-real-png-but-bytes")
+            .expect("write source");
+        let ep = ImageEndpoint {
+            asset_root: dir.path().to_path_buf(),
+            signing_secret: None,
+            backend,
+            remote_patterns: Vec::new(),
+            ssrf_allow_list: Vec::new(),
+            remote_max_bytes: 1024 * 1024,
+            result_cache: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            max_concurrency,
+            in_flight: Arc::new(AtomicUsize::new(0)),
+            max_dimension,
+        };
+        (dir, ep)
+    }
+
+    fn body_of(p: NativePrefix) -> (u16, Vec<(String, String)>, Vec<u8>) {
+        match p {
+            NativePrefix::Raw(r) => (r.status, r.headers, r.body.to_vec()),
+            _ => panic!("expected a Raw response from the image endpoint"),
+        }
+    }
+
+    /// The second identical request must not reach the backend — the
+    /// transformed-result cache is content+params keyed, and it replays the
+    /// bytes, the ETag, the immutable Cache-Control and any LQIP header.
+    #[test]
+    fn identical_requests_replay_from_the_result_cache() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let backend = Arc::new(CountingBackend {
+            calls: Arc::clone(&calls),
+            concurrency_seen: Arc::new(AtomicUsize::new(0)),
+            peak: Arc::new(AtomicUsize::new(0)),
+            placeholder: Some("data:image/png;base64,AAAA".to_string()),
+        });
+        let (_dir, ep) = endpoint_with(backend, 0, 8192);
+
+        let url = "/_oxide/image?url=/a.png&w=400&h=300&q=75";
+        let (s1, h1, b1) = body_of(serve_image_endpoint(Some(&ep), url));
+        assert_eq!(s1, 200);
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "first request renders");
+        assert_eq!(String::from_utf8_lossy(&b1), "W400H300Q75");
+        let etag1 = h1
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("etag"))
+            .map(|(_, v)| v.clone());
+        assert!(etag1.is_some(), "ETag on the first response: {h1:?}");
+        assert!(
+            h1.iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case("cache-control") && v.contains("immutable")),
+            "immutable Cache-Control: {h1:?}"
+        );
+        assert!(
+            h1.iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("x-oxide-lqip")),
+            "LQIP header piped: {h1:?}"
+        );
+
+        // Second identical request: cache hit, backend untouched.
+        let (s2, h2, b2) = body_of(serve_image_endpoint(Some(&ep), url));
+        assert_eq!(s2, 200);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "cache hit must not call the backend"
+        );
+        assert_eq!(b1, b2, "replayed bytes are identical");
+        assert_eq!(
+            h2.iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("etag"))
+                .map(|(_, v)| v.clone()),
+            etag1,
+            "replayed ETag is identical"
+        );
+        assert!(
+            h2.iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("x-oxide-lqip")),
+            "replayed LQIP header: {h2:?}"
+        );
+    }
+
+    /// A different `w` is a different cache key — the backend runs again.
+    #[test]
+    fn a_different_width_misses_the_cache() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let backend = Arc::new(CountingBackend {
+            calls: Arc::clone(&calls),
+            concurrency_seen: Arc::new(AtomicUsize::new(0)),
+            peak: Arc::new(AtomicUsize::new(0)),
+            placeholder: None,
+        });
+        let (_dir, ep) = endpoint_with(backend, 0, 8192);
+
+        let _ = body_of(serve_image_endpoint(
+            Some(&ep),
+            "/_oxide/image?url=/a.png&w=400",
+        ));
+        let _ = body_of(serve_image_endpoint(
+            Some(&ep),
+            "/_oxide/image?url=/a.png&w=800",
+        ));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "a different width is a different transform"
+        );
+    }
+
+    /// §16.1: a size over `max_dimension` is refused before the backend ever
+    /// allocates a canvas.
+    #[test]
+    fn oversize_dimension_is_refused_before_rasterizing() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let backend = Arc::new(CountingBackend {
+            calls: Arc::clone(&calls),
+            concurrency_seen: Arc::new(AtomicUsize::new(0)),
+            peak: Arc::new(AtomicUsize::new(0)),
+            placeholder: None,
+        });
+        let (_dir, ep) = endpoint_with(backend, 0, 1000);
+
+        let (status, _, body) = body_of(serve_image_endpoint(
+            Some(&ep),
+            "/_oxide/image?url=/a.png&w=1001",
+        ));
+        assert_eq!(status, 400, "oversize width refused");
+        assert!(
+            String::from_utf8_lossy(&body).contains("out of range"),
+            "message names the ceiling: {}",
+            String::from_utf8_lossy(&body)
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "the backend must never run for an oversize request"
+        );
+    }
+
+    /// §16.1: over the concurrency ceiling the endpoint sheds with 503 +
+    /// `Retry-After` instead of queueing a CPU-bound transform.
+    #[test]
+    fn concurrency_ceiling_sheds_with_retry_after() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let backend = Arc::new(CountingBackend {
+            calls: Arc::clone(&calls),
+            concurrency_seen: Arc::new(AtomicUsize::new(0)),
+            peak: Arc::new(AtomicUsize::new(0)),
+            placeholder: None,
+        });
+        let (_dir, ep) = endpoint_with(backend, 1, 8192);
+        // Simulate one transform already in flight.
+        ep.in_flight.store(1, Ordering::SeqCst);
+
+        let (status, headers, _) = body_of(serve_image_endpoint(
+            Some(&ep),
+            "/_oxide/image?url=/a.png&w=400",
+        ));
+        assert_eq!(status, 503, "over the ceiling is a shed, not a queue");
+        assert!(
+            headers
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case("retry-after") && v == "1"),
+            "Retry-After present: {headers:?}"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0, "no transform ran");
+        // The counter is restored so the next request is admitted.
+        assert_eq!(
+            ep.in_flight.load(Ordering::SeqCst),
+            1,
+            "the shed decremented its own slot"
+        );
     }
 }
