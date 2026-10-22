@@ -185,6 +185,14 @@ jobs:
         run: |
           cargo test -p oxide-jshost --test loader_host_e2e -- --ignored --test-threads=1
           cargo test -p oxide-jshost --test framework_host_e2e -- --ignored --test-threads=1
+      - name: Run the CLI render e2e (resolver path)
+        # P0-10's evidence chain: `oxide render` on a zero-import config
+        # must reach real SSR through the built entry. Drives the CLI
+        # in-process (no binary build) but spawns a Node worker and reads
+        # packages/react, so it belongs here with the other Node e2e.
+        run: |
+          cargo test -p oxide-cli --lib cli_render_dispatches_real_react_ssr -- --ignored --test-threads=1
+          cargo test -p oxide-cli --lib cli_render_resolves_components_from_the_built_entry -- --ignored --test-threads=1
 
   playwright:
     name: Playwright e2e (§22)
