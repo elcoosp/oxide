@@ -71,9 +71,10 @@ export const clientAdapter: FrameworkAdapter = {
 
 // ---------------------------------------------------------------------------
 // Config surface (spec §14): a callable default export so oxide.config.ts can
-// write `framework: react({ ssr: 'real', componentFor })`. With no component
-// resolver supplied, react() returns the IR adapter (the same object as the
-// named `adapter` export), so the config surface is a pure opt-in.
+// write `framework: react({ ssr: 'real' })`. Components come from the runtime
+// resolver (§6.4), not from the config. With no options, react() returns the
+// IR adapter (the same object as the named `adapter` export), so the config
+// surface is a pure opt-in.
 // ---------------------------------------------------------------------------
 
 /** Options accepted by the adapter factory from oxide.config.ts. */
@@ -102,7 +103,7 @@ export function createAdapter(opts: AdapterOptions = {}): FrameworkAdapter {
 
 /**
  * The default export is a callable factory so `oxide.config.ts` reads
- * naturally: `framework: react({ ssr: 'real', componentFor })`. Named
+ * naturally: `framework: react({ ssr: 'real' })`. Named
  * exports (`adapter`, `createAdapter`, `createRealAdapter`) remain
  * available for tests and internal use.
  */
