@@ -25,7 +25,8 @@ Each audit round runs the same loop:
    gets a verdict: **LIVE** (production-reachable), **SEAM-ONLY** (tested in isolation, not
    wired into the real path), **REFUTED**, or **MIXED**.
 3. **Tests are executed, not counted.** The TypeScript suites run for real — 361 pass /
-   0 fail across the six packages plus conformance at the current HEAD, zero skipped. (The
+   0 fail across the six packages plus conformance *as measured for the round this post
+   describes*, zero skipped. (The
    r8 audit itself ran against a red suite: 351/362, the 11 fails all fixed post-audit in
    r9's WP-1.) The Rust suites are statically counted at 1,153 (test functions, ignored
    gates, TDD-written contract suites) until a full toolchain run is available; `cargo
