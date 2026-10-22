@@ -16,6 +16,7 @@ import { loadScripts } from './scripts.ts'
 import { setRouteComponentSource, isParamSegment, type ClientManifestLike } from './route-manifest.ts'
 import { attachDeferGlue, type DeferGlue } from './defer-glue.ts'
 import type { FrameworkAdapter } from '../types.ts'
+import { loadMessages } from './messages.ts'
 
 interface BootState {
   adapter?: FrameworkAdapter
@@ -86,6 +87,11 @@ export function boot(): void {
   if (typeof run !== 'function') return
   const doc = (globalThis as { document?: Document }).document
   if (!doc) return
+  // §16 / §16.4: warm the active locale's catalog. `<html lang>` is now
+  // emitted from the resolved locale, so this loads the matching catalog
+  // instead of always falling back to `en`. Fire-and-forget: `t()` returns
+  // the key until the catalog lands, which is the documented degradation.
+  void loadMessages()
   if (doc.readyState === 'loading') {
     doc.addEventListener('DOMContentLoaded', run, { once: true })
   } else {
@@ -147,6 +153,7 @@ export function bootWithRouter(
 ): () => void {
   const doc = opts.doc ?? (globalThis as { document?: Document }).document
   if (!doc) return () => {}
+  void loadMessages()
   const w = globalThis as {
     __oxide?: { route?: string; data?: string; layouts?: string[] }
     __oxideBoot?: BootState
