@@ -1261,7 +1261,10 @@ async fn smoke_app_builds_its_own_pages() {
     for id in ["routes/error", "routes/not-found"] {
         assert!(routes.contains_key(id), "manifest has `{id}`: {routes:?}");
         assert!(
-            routes[id].get("render_mode").map(|v| v.is_null()).unwrap_or(false),
+            routes[id]
+                .get("render_mode")
+                .map(|v| v.is_null())
+                .unwrap_or(false),
             "`{id}` has a null render_mode: {}",
             routes[id]
         );
@@ -4926,10 +4929,8 @@ async fn audit_json_mode_emits_stable_schema() {
     let root = dir.path().to_path_buf();
     // No package-lock.json → read_package_lock errors; JSON mode emits a
     // stable error envelope.
-    let cli = Cli::try_parse_from([
-        "oxide", "audit", "--root", root.to_str().unwrap(), "--json",
-    ])
-    .expect("parse");
+    let cli = Cli::try_parse_from(["oxide", "audit", "--root", root.to_str().unwrap(), "--json"])
+        .expect("parse");
     let mut buf: Vec<u8> = Vec::new();
     let code = run_with_writer(cli, &mut buf).await.expect("run");
     let out = String::from_utf8_lossy(&buf).to_string();
@@ -4940,7 +4941,6 @@ async fn audit_json_mode_emits_stable_schema() {
     assert!(v.get("error").is_some(), "error key: {v}");
     assert_eq!(v.get("exit_code").and_then(|x| x.as_u64()), Some(2));
 }
-
 
 #[tokio::test]
 async fn audit_no_lockfile_is_a_clear_error() {
@@ -6145,7 +6145,14 @@ async fn settles_flush_per_settle_and_close_last() {
             .await;
     });
 
-    let out = crate::strip_close_and_append_settles(src, rx, "NONCE".to_string(), None, String::new(), None);
+    let out = crate::strip_close_and_append_settles(
+        src,
+        rx,
+        "NONCE".to_string(),
+        None,
+        String::new(),
+        None,
+    );
     let mut out = out;
     let mut all: Vec<u8> = Vec::new();
     while let Some(item) = out.next().await {
@@ -6192,7 +6199,8 @@ async fn close_tag_split_across_chunks_is_still_withheld() {
     // observe the channel closed, not wait for a message that never arrives.
     drop(tx);
 
-    let mut out = crate::strip_close_and_append_settles(src, rx, "N".into(), None, String::new(), None);
+    let mut out =
+        crate::strip_close_and_append_settles(src, rx, "N".into(), None, String::new(), None);
     let mut all: Vec<u8> = Vec::new();
     while let Some(item) = out.next().await {
         all.extend_from_slice(&item.expect("chunk"));
@@ -6220,7 +6228,8 @@ async fn no_settles_leaves_the_document_unchanged() {
     let (tx, rx) = tokio::sync::mpsc::channel::<serde_json::Value>(1);
     drop(tx);
 
-    let mut out = crate::strip_close_and_append_settles(src, rx, "N".into(), None, String::new(), None);
+    let mut out =
+        crate::strip_close_and_append_settles(src, rx, "N".into(), None, String::new(), None);
     let mut all: Vec<u8> = Vec::new();
     while let Some(item) = out.next().await {
         all.extend_from_slice(&item.expect("chunk"));
@@ -6561,7 +6570,10 @@ fn compute_layout_chain_finds_root_and_nested_layouts() {
     // A nested page sees BOTH layouts, outermost first.
     assert_eq!(
         compute_layout_chain(&tree, "routes/nested"),
-        vec!["routes/layout".to_string(), "routes/nested/layout".to_string()],
+        vec![
+            "routes/layout".to_string(),
+            "routes/nested/layout".to_string()
+        ],
         "grandparent + parent chain for a two-level nested page"
     );
 
@@ -6625,10 +6637,16 @@ fn waterfall_records_trace_id() {
     let snap = rec.snapshot();
     assert_eq!(snap.len(), 2, "two rows recorded");
 
-    let with_trace = snap.iter().find(|r| r.request_id == "req-abc").expect("traced row");
+    let with_trace = snap
+        .iter()
+        .find(|r| r.request_id == "req-abc")
+        .expect("traced row");
     assert_eq!(with_trace.trace_id.as_deref(), Some(trace_id));
 
-    let untraced = snap.iter().find(|r| r.request_id == "req-untraced").expect("untraced row");
+    let untraced = snap
+        .iter()
+        .find(|r| r.request_id == "req-untraced")
+        .expect("untraced row");
     assert_eq!(untraced.trace_id, None, "no inbound trace → None");
 }
 
@@ -6651,18 +6669,22 @@ async fn strip_close_and_append_settles_records_settle_stage() {
     );
 
     // A source stream with the document body ending in the close marker.
-    let src: oxide_server::BodyStream = Box::pin(futures::stream::iter(vec![
-        Ok(bytes::Bytes::from_static(b"<body>shell</body></html>")),
-    ]));
+    let src: oxide_server::BodyStream = Box::pin(futures::stream::iter(vec![Ok(
+        bytes::Bytes::from_static(b"<body>shell</body></html>"),
+    )]));
 
     // Settle channel: send two settles, then close.
     let (tx, rx) = tokio::sync::mpsc::channel::<serde_json::Value>(4);
     tx.send(serde_json::json!({
         "deferredSettle": { "id": "d1", "value": 42 }
-    })).await.unwrap();
+    }))
+    .await
+    .unwrap();
     tx.send(serde_json::json!({
         "deferredSettle": { "id": "d2", "value": 99 }
-    })).await.unwrap();
+    }))
+    .await
+    .unwrap();
     drop(tx); // close the channel
 
     let out = strip_close_and_append_settles(
@@ -6684,7 +6706,10 @@ async fn strip_close_and_append_settles_records_settle_stage() {
         }
     }
     let s = String::from_utf8_lossy(&all);
-    assert!(s.contains("application/oxide-deferred"), "settle tags emitted: {s}");
+    assert!(
+        s.contains("application/oxide-deferred"),
+        "settle tags emitted: {s}"
+    );
     assert!(s.contains("d1"), "first settle rendered");
     assert!(s.contains("d2"), "second settle rendered");
 
@@ -6744,14 +6769,10 @@ async fn sw_emitter_emits_swr_and_fallback() {
     std::fs::create_dir_all(dist.join("prerendered")).unwrap();
     // The offline fallback must exist for the emitter to prefer it over
     // the shell (`/`). We write prerendered/offline.html to trigger that.
-    std::fs::write(
-        dist.join("prerendered/offline.html"),
-        "<h1>offline</h1>",
-    )
-    .unwrap();
+    std::fs::write(dist.join("prerendered/offline.html"), "<h1>offline</h1>").unwrap();
 
     // Config with a manifest (triggers emission) and default sw config.
-        let cfg: oxide_config::OxideConfig = serde_json::from_value(serde_json::json!({
+    let cfg: oxide_config::OxideConfig = serde_json::from_value(serde_json::json!({
         "manifest": {
             "name": "Test App",
             "short_name": "Test"
@@ -6792,8 +6813,14 @@ async fn sw_emitter_emits_swr_and_fallback() {
     // Precache list contains the shell, the route's entry, preload, CSS,
     // and the asset.
     assert!(body.contains(r#"  "/","#), "shell in precache");
-    assert!(body.contains(r#"  "/client/index-abc.js","#), "entry in precache");
-    assert!(body.contains(r#"  "/client/chunk-def.js","#), "preload in precache");
+    assert!(
+        body.contains(r#"  "/client/index-abc.js","#),
+        "entry in precache"
+    );
+    assert!(
+        body.contains(r#"  "/client/chunk-def.js","#),
+        "preload in precache"
+    );
     assert!(body.contains(r#"  "/style-ghi.css","#), "css in precache");
     assert!(body.contains(r#"  "/logo.png","#), "asset in precache");
     // SWR branch present.
@@ -6834,7 +6861,7 @@ async fn sw_emitter_skips_when_manifest_absent() {
     std::fs::create_dir_all(dist).unwrap();
 
     // No manifest — the emitter is a no-op.
-        let cfg: oxide_config::OxideConfig =
+    let cfg: oxide_config::OxideConfig =
         serde_json::from_value(serde_json::json!({})).expect("parse config");
 
     let client_manifest = serde_json::json!({ "build_id": "x", "routes": {}, "assets": {} });
@@ -6842,7 +6869,10 @@ async fn sw_emitter_skips_when_manifest_absent() {
     emit_pwa_worker(&cfg, dist, &client_manifest, &mut buf).expect("emit ok");
 
     assert!(!dist.join("sw.js").exists(), "no manifest → no sw.js");
-    assert!(!dist.join("pwa-register.js").exists(), "no manifest → no register script");
+    assert!(
+        !dist.join("pwa-register.js").exists(),
+        "no manifest → no register script"
+    );
 }
 
 #[tokio::test]
@@ -6851,7 +6881,7 @@ async fn sw_emitter_respects_sw_disabled() {
     let dist = dir.path();
     std::fs::create_dir_all(dist).unwrap();
 
-        let mut cfg: oxide_config::OxideConfig = serde_json::from_value(serde_json::json!({
+    let mut cfg: oxide_config::OxideConfig = serde_json::from_value(serde_json::json!({
         "manifest": {"name": "X", "short_name": "X"},
     }))
     .expect("parse config");
@@ -6873,7 +6903,7 @@ async fn sw_emitter_falls_back_to_shell_when_offline_route_missing() {
     // No prerendered/offline.html — the fallback stays `/`.
     std::fs::create_dir_all(dist.join("prerendered")).unwrap();
 
-        let cfg: oxide_config::OxideConfig = serde_json::from_value(serde_json::json!({
+    let cfg: oxide_config::OxideConfig = serde_json::from_value(serde_json::json!({
         "manifest": {"name": "X", "short_name": "X"},
     }))
     .expect("parse config");
@@ -6949,4 +6979,3 @@ async fn dispatch_without_l0_never_emits_a_cache_header() {
         );
     }
 }
-
