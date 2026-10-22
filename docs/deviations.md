@@ -161,3 +161,57 @@ or (b) ship a pre-built `edge.wasm` in the oxide-cli binary's resource
 set and copy it into `dist/edge.wasm` per build. Both are M-effort; the
 CI gate landed here is the honest S-effort scope — the wasm *builds*;
 the user-project plumbing is a separate change.
+
+## `<Defer>` for `suspense: 'core'` adapters is designed, not shipped (§7.1)
+
+**What the spec asks.** §7.1: "Adapters with `suspense: 'native'` use their
+own mechanism; adapters with `suspense: 'core'` get boundaries from a
+`<Defer>` component the core exports per framework (generated from the
+adapter)."
+
+**What lands.** The wire protocol exists and is tested — `template[data-ox-b]`
+placeholder, `template[data-ox-c]` + swapper resolution, `ox:swap` dispatch,
+error-boundary mapping (`conformance/suite.ts`, four assertions per adapter
+against the IR renderer). The IR renderer is its reference implementation.
+Vue and Svelte have **no `<Defer>`**; a `deferred(...)` value in a
+`suspense: 'core'` real adapter renders its resolved value inline (the
+`defer()` fixes below) but never streams.
+
+**Why this is not a small component.** Three obstacles, each found while
+attempting the implementation:
+
+1. **Placeholder markup cannot go through VNode rendering.** A Vue
+   `<Defer>` that returns `h('template', …)` renders as
+   `<template data-ox-b="0"><!--[-->fallback<!--]--></template>` — Vue's
+   hydration comment markers land inside the template, and the swapper
+   moves `t.innerHTML` into the page, so the markers end up in the DOM.
+   The placeholder must be emitted as raw HTML, which needs a render
+   escape hatch (a `v-html` wrapper, or an adapter that post-processes a
+   sentinel).
+
+2. **Svelte needs a compiled component.** The package ships `.ts` only
+   (`src/Image.svelte` is the one exception, declared in `exports`).
+   `<Defer>` would have to be a `.svelte` file with its own build step, or
+   a string-template rendered through `svelte/server` — a different
+   mechanism from Vue's, which means the "one `<Defer>` per framework" in
+   the spec is genuinely two implementations, not one shared one.
+
+3. **The swapper `<script>` has no nonce.** `boundaryContent(id, html)`
+   defaults `nonce` to empty, and the IR renderer calls it without one
+   (`packages/react/src/render.ts`) — so under `strict-dynamic` CSP the
+   swapper is already blocked. That is a **pre-existing bug in the IR
+   path**, not something `<Defer>` introduces, but any streaming adapter
+   inherits it. The adapter has no nonce at render time; the pipeline
+   injects CSP nonces into the response, not into the worker's chunks.
+
+**What was tried and reverted.** A render-scoped registry
+(`createBoundaryRegistry` / `withBoundaryRegistry` / `registerBoundary` /
+`deferredIdOf`) plus a Vue `<Defer>` emitting `h('template', …)`. Reverted
+on hitting obstacle 1 — the emitted markup was wrong in a way that would
+have shipped broken boundaries.
+
+**What would change it.** Solve obstacle 1 first (a raw-HTML escape hatch
+the adapter can use), then 3 (thread the request nonce to the worker, or
+have the pipeline rewrite the swapper's script tag on the way out), then
+implement Vue and Svelte separately. Obstacle 3 alone is worth fixing
+regardless: the IR path's swapper is currently CSP-blocked in production.
