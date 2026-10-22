@@ -728,3 +728,41 @@ fn op_decls_returns_the_documented_ops() {
         );
     }
 }
+
+// ------------------------------ §4.3 / P0-2(b): mid-stream crash
+
+/// A worker that emits one chunk then exits mid-stream must produce a
+/// `JSH-CRASH` from `CallStream::collect()`, not a clean partial.
+///
+/// Before the fix, `fail_all` cleared the `streams` map — dropping every
+/// `Sender` — so a `CallStream::Chunked` receiver saw `recv() == None` and
+/// `collect()` returned `Ok(partial)`. A user got a 200 with a silently
+/// truncated body. The fix sends `Err(JSH-CRASH)` to each open stream
+/// before dropping the sender.
+#[tokio::test]
+async fn chunked_stream_fails_on_worker_crash_not_silent_partial() {
+    let pool = NodePool::spawn("node", NodeHost::worker_script_default(), node_cfg(1)).unwrap();
+
+    // The worker sends one chunk (`partial`), sleeps 20 ms so the host
+    // observes it and builds `CallStream::Chunked`, then exits.
+    let mut s = pool
+        .call(entry("stream-die"), input(json!({})))
+        .await
+        .unwrap();
+
+    // `collect()` must surface the crash, not silently return the partial
+    // bytes as a success.
+    let e = s
+        .collect()
+        .await
+        .expect_err("mid-stream crash must error, not return a truncated Ok");
+    assert_eq!(
+        e.0.code, "JSH-CRASH",
+        "mid-stream crash code; message: {}",
+        e.0.message
+    );
+
+    // The crashed counter advanced — same accounting as a mid-call crash.
+    let st = pool.stats();
+    assert!(st.crashed >= 1, "crashed counter: {st:?}");
+}

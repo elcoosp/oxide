@@ -3373,7 +3373,25 @@ fn spawn_reader(
 /// Fail every pending call (worker exit / protocol error). `streams` senders are
 /// dropped, which closes any chunked collector's stream.
 fn fail_all(worker: &Worker, code: String, message: String) {
-    worker.streams.lock().unwrap().clear();
+    // §4.3 / P0-2(b): a worker that crashes mid-stream must produce an
+    // **error**, not a clean end-of-stream with truncated bytes. Before
+    // this fix, clearing the `streams` map dropped every `Sender` without
+    // an error frame: the consumer's `CallStream::Chunked(rx)` saw a
+    // graceful channel close (`recv() == None`) and `collect()` returned
+    // `Ok(partial_bytes)` — a 200 with a truncated body. Now each open
+    // stream gets an `Err(JSH-CRASH)` pushed first, so `collect()`'s
+    // `chunk?` surfaces the crash to the caller.
+    {
+        let mut streams = worker.streams.lock().unwrap();
+        for (_, tx) in streams.drain() {
+            // Best-effort: a consumer that already went away dropped the
+            // receiver; that stream is closed and has no one to notify.
+            let _ = tx.try_send(Err(OxideError(Diagnostic::error(
+                code.clone(),
+                message.clone(),
+            ))));
+        }
+    }
     let mut pending = worker.pending.lock().unwrap();
     for (_, p) in pending.drain() {
         let _ = p.tx.send(Err(OxideError(Diagnostic::error(

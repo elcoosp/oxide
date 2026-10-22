@@ -2018,6 +2018,15 @@ async function handleCallInner(msg) {
   if (entry.kind === "endpoint:run") { await dispatchEndpointRun(id, input); return; }
   if (entry.kind === "socket:run") { await dispatchSocketRun(id, input); return; }
   if (entry.kind === "middleware:run") { await dispatchMiddlewareRun(id, input); return; }
+  if (entry.kind === "stream-die") {
+    // P0-2(b): emit one chunk so the host builds a `CallStream::Chunked`,
+    // give the host a tick to observe it, then die mid-stream. The host
+    // must turn the mid-stream EOF into JSH-CRASH, not a truncated
+    // success.
+    out({ t: "call_chunk", id, data_b64: b64(Buffer.from("partial", "utf8")) });
+    await new Promise((r) => setTimeout(r, 20));
+    process.exit(1);
+  }
   if (entry.kind === "die") process.exit(1);
   if (entry.kind === "sleep") {
     await new Promise((r) => setTimeout(r, Number(input.payload?.ms ?? 100)));
