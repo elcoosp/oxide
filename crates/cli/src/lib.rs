@@ -3654,6 +3654,13 @@ async fn write_prerender(
         // but never gave them to the render, so a prerendered deferred
         // boundary resolved against `{__deferred: id}` instead of the value.
         input.deferred = deferred_values.clone();
+        // §17.1 / §7.1: the build-time nonce this prerender already stamps
+        // on its own injected tags. The adapter needs it for the deferred
+        // swapper; a prerendered page served under `strict-dynamic` must
+        // carry the same nonce in both places.
+        if !nonce.is_empty() {
+            input.nonce = Some(nonce.to_string());
+        }
         // §15.2: merge the plugin's `renderHead` contribution into the
         // neutral model. The adapter's own `head()` output and the plugin's
         // both land in `PageRenderInput.head`, which the adapter's head
@@ -8262,6 +8269,12 @@ fn build_dispatch(
                 // before the component tree is built. Without this a
                 // component reads the placeholder object, never the value.
                 input.deferred = deferred_values.clone();
+                // §17.1 / §7.1: the request's CSP nonce. The adapter stamps it
+                // on any script it emits — including the deferred-boundary
+                // swapper, which is an inline IIFE and would be blocked under
+                // `strict-dynamic` without it. Same value the pipeline uses
+                // for its own injected tags.
+                input.nonce = Some(oxide_server::nonce_for(&req_owned.request_id));
                 // 16-G: the route's own `meta` joins the neutral head model.
                 // The live path has no plugin `renderHead` contribution to
                 // merge with here (that is a build-time hook); the route's
