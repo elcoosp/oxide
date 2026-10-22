@@ -1569,6 +1569,28 @@ async fn ensure_dev_client_bundle(
     }
 }
 
+/// True when any event touches a configured content-collection directory.
+/// The dev loop rewrites `dist/content` when this is true; `getCollection`
+/// then re-reads by content hash, so no worker restart or cache clear is
+/// needed.
+fn content_source_changed(
+    root: &Path,
+    cfg: &oxide_config::OxideConfig,
+    events: &[oxide_dev::FileEvent],
+) -> bool {
+    events.iter().any(|ev| {
+        let p = match ev {
+            oxide_dev::FileEvent::Modified(p)
+            | oxide_dev::FileEvent::Created(p)
+            | oxide_dev::FileEvent::Removed(p) => p,
+        };
+        cfg.content
+            .collections
+            .iter()
+            .any(|c| !c.dir.is_empty() && p.starts_with(root.join(&c.dir)))
+    })
+}
+
 async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
     let mut cfg = load_config_or_default(&rootp, "development");
@@ -1577,6 +1599,9 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         anyhow::bail!("{} {}", e.0.code, e.0.message);
     }
     let tree = scan_routes(&rootp, &cfg, None).await?;
+    // §16.5: emit content entries before the server starts so a dev loader's
+    // first `getCollection` call works without a prior `oxide build`.
+    emit_content_search_indexes(&rootp, &cfg, &rootp.join("dist"), w)?;
     // Prebundle decision (§6.5): key by lockfile hash.
     let lockfile = [
         "package-lock.json",
@@ -2023,6 +2048,9 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         let events = watcher
             .poll(&mut seen)
             .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+        if content_source_changed(&rootp, &cfg, &events) {
+            emit_content_search_indexes(&rootp, &cfg, &rootp.join("dist"), w)?;
+        }
         // §15.2: `handleHotUpdate` gets every changed file and may return
         // `{reload: bool}`. A plugin that wants a full reload (a config
         // change, a new dependency) forces one; the default is the graph
@@ -2111,9 +2139,21 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                     | oxide_dev::FileEvent::Removed(p) => p,
                 };
                 !p.components().any(|c| c.as_os_str() == ".oxide")
+                    && !p.starts_with(rootp.join("dist"))
             })
             .collect();
         if !events.is_empty() {
+            // §16.5: rescan collections before the loaders for this batch run.
+            // The write is atomic (`write_content_atomic`) and lands under
+            // `dist`, which the filter above ignores to avoid a notify loop.
+            if content_source_changed(&rootp, &cfg, &events) {
+                emit_content_search_indexes(&rootp, &cfg, &rootp.join("dist"), w)?;
+                if let Some(hub) = started.hmr.as_ref() {
+                    hub.publish(oxide_dev::HmrMessage::FullReload {
+                        reason: "content collection changed".to_string(),
+                    });
+                }
+            }
             // SPEC-5E: a lockfile change is a resolver-epoch change. The
             // worker-generation bump makes every versioned() import pick up
             // a fresh URL, so the next resolve re-reads the lockfile. The
@@ -2346,6 +2386,14 @@ fn compile_edge_wasm(root: &Path, dist: &Path) -> anyhow::Result<Option<PathBuf>
 /// A collection whose directory is missing is reported and skipped; the build
 /// itself succeeds (content often lives outside the main pipeline's blast
 /// radius).
+/// Write via a sibling temp file + rename, so a dev-loop rescan cannot
+/// expose a half-written entries file to a concurrent `getCollection`.
+fn write_content_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path)
+}
+
 fn emit_content_search_indexes(
     root: &Path,
     cfg: &oxide_config::OxideConfig,
@@ -2389,7 +2437,10 @@ fn emit_content_search_indexes(
         let idx = oxide_assets::build_search_index(&scanned, &coll.indexed_fields);
         let json = oxide_assets::search_index_to_json(&idx)
             .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
-        std::fs::write(out_dir.join(format!("{}.index.json", coll.name)), json)?;
+        write_content_atomic(
+            &out_dir.join(format!("{}.index.json", coll.name)),
+            json.as_bytes(),
+        )?;
         // §16 / K1: emit the full entries too. The search index is a
         // *projection* (terms + slugs + title/fields), too lossy for a
         // loader that needs the body. A page.server.ts's
@@ -2407,8 +2458,11 @@ fn emit_content_search_indexes(
             // WP-r9-1: do not swallow the write error. A silent failure
             // here surfaces later as a misleading "no entries file" from
             // `getCollection` at request time; the build should fail loud.
-            std::fs::write(out_dir.join(format!("{}.entries.json", coll.name)), pretty)
-                .map_err(|e| anyhow::anyhow!("write content/{}.entries.json: {e}", coll.name))?;
+            write_content_atomic(
+                &out_dir.join(format!("{}.entries.json", coll.name)),
+                pretty.as_bytes(),
+            )
+            .map_err(|e| anyhow::anyhow!("write content/{}.entries.json: {e}", coll.name))?;
         }
         outln!(
             w,
@@ -7367,6 +7421,24 @@ fn build_dispatch(
                                 }
                             }
                         }
+                        // PPR shells carry the same tags; drop them with the
+                        // L0 entries so a revalidate action cannot leave a
+                        // stale shell serving the old document.
+                        if let Some(shells) = ppr_for_request.as_ref() {
+                            for (kind, value) in &events {
+                                if let Ok(mut store) = shells.lock() {
+                                    match kind.as_str() {
+                                        "tag" => {
+                                            store.invalidate_tag(value);
+                                        }
+                                        "path" => {
+                                            store.invalidate_path(value);
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
                     }
                     // §8.5: headers the middleware phase added ride the
                     // action response (they were accumulated but never
@@ -7428,6 +7500,15 @@ fn build_dispatch(
                         if hit.stale {
                             let bg = cache.clone();
                             let bg_path = l0_path.clone();
+                            if let Some(shells) = ppr_for_request.as_ref() {
+                                let bg_shells = std::sync::Arc::clone(shells);
+                                let bg_shell_path = bg_path.clone();
+                                tokio::spawn(async move {
+                                    if let Ok(mut store) = bg_shells.lock() {
+                                        store.invalidate_path(&bg_shell_path);
+                                    }
+                                });
+                            }
                             tokio::spawn(async move {
                                 let _ = bg.invalidate_path(&bg_path, false).await;
                             });
@@ -8352,16 +8433,28 @@ fn build_dispatch(
                                     //      were distinct shells on a site
                                     //      with search, so 256 distinct
                                     //      queries cleared the map.
-                                    // The L0 key already models the right
-                                    // identity (route + params + vary) and
-                                    // carries the build id via `build_id()`.
+                                    // The shell key is the canonical L0 key
+                                    // itself, not a hand-rolled join: same
+                                    // build id, route id, sorted params and
+                                    // normalized Vary, hashed by
+                                    // `CacheKey::canonical_parts`. Dev has no
+                                    // L0 object, so use the stable `"dev"`
+                                    // namespace; the watcher clears shells on
+                                    // every edit.
                                     let ppr_build_id = l0
                                         .as_ref()
-                                        .map(|c| c.build_id().to_string())
-                                        .unwrap_or_default();
-                                    let pkey = format!(
-                                        "{ppr_build_id}\x1f{l0_route}\x1f{l0_params}\x1f{l0_vary}"
+                                        .map(|c| c.build_id())
+                                        .unwrap_or("dev");
+                                    let pkey = l0_cache::L0Cache::key_for(
+                                        &l0_route,
+                                        &l0_params,
+                                        &l0_vary,
+                                        ppr_build_id,
                                     );
+                                    let ppr_tags = vec![
+                                        l0_route.clone(),
+                                        format!("path:{l0_path}"),
+                                    ];
                                     let cached =
                                         shells.lock().ok().and_then(|s| s.get(&pkey).cloned());
                                     match cached {
@@ -8375,6 +8468,7 @@ fn build_dispatch(
                                             std::sync::Arc::clone(shells),
                                             pkey,
                                             nonce.clone(),
+                                            ppr_tags,
                                         ),
                                     }
                                 }
@@ -13374,8 +13468,15 @@ const PPR_SHELLS_MAX: usize = 256;
 /// Bounded LRU store for PPR shells. Insertion-order, not access-order: a
 /// shell being served will be re-fetched if evicted, which re-inserts it.
 /// A miss costs a tap, not a wrong answer.
+pub(crate) struct PprShellEntry {
+    html: String,
+    /// Same tags the L0 entry carries (`route`, `path:<path>`), so a
+    /// revalidate action or SWR refresh can drop the shell with it.
+    tags: Vec<String>,
+}
+
 pub(crate) struct PprShellStore {
-    map: std::collections::HashMap<String, String>,
+    map: std::collections::HashMap<String, PprShellEntry>,
     /// Insertion order for eviction. A re-insert appends a fresh occurrence;
     /// the older one is skipped on evict (the map lookup says which is live).
     order: std::collections::VecDeque<String>,
@@ -13392,7 +13493,34 @@ impl Default for PprShellStore {
 
 impl PprShellStore {
     pub(crate) fn get(&self, key: &str) -> Option<&String> {
-        self.map.get(key)
+        self.map.get(key).map(|e| &e.html)
+    }
+
+    /// Drop every shell carrying `tag` (hard invalidation).
+    pub(crate) fn invalidate_tag(&mut self, tag: &str) -> usize {
+        let doomed: Vec<String> = self
+            .map
+            .iter()
+            .filter(|(_, e)| e.tags.iter().any(|t| t == tag))
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in &doomed {
+            self.map.remove(k);
+            if let Some(pos) = self.order.iter().position(|o| o == k) {
+                self.order.remove(pos);
+            }
+        }
+        doomed.len()
+    }
+
+    /// Drop every shell carrying `path:<path>` (hard invalidation).
+    pub(crate) fn invalidate_path(&mut self, path: &str) -> usize {
+        self.invalidate_tag(&format!("path:{path}"))
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.map.clear();
+        self.order.clear();
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -13411,6 +13539,10 @@ impl PprShellStore {
     /// `VecDeque::remove(pos)` is O(256); taps run once per route per
     /// process, so the scan is invisible next to the render itself.
     pub(crate) fn insert(&mut self, key: String, shell: String) {
+        self.insert_tagged(key, shell, Vec::new());
+    }
+
+    pub(crate) fn insert_tagged(&mut self, key: String, shell: String, tags: Vec<String>) {
         if self.map.contains_key(&key) {
             // Refresh: drop the stale order occurrence so age is reset.
             if let Some(pos) = self.order.iter().position(|k| k == &key) {
@@ -13424,7 +13556,7 @@ impl PprShellStore {
                 }
             }
         }
-        self.map.insert(key.clone(), shell);
+        self.map.insert(key.clone(), PprShellEntry { html: shell, tags });
         self.order.push_back(key);
     }
 }
@@ -13438,6 +13570,7 @@ fn ppr_tap_stream(
     shells: PprShells,
     key: String,
     nonce: String,
+    tags: Vec<String>,
 ) -> oxide_server::BodyStream {
     use futures::StreamExt as _;
     let (tx, mut rx) =
@@ -13465,7 +13598,7 @@ fn ppr_tap_stream(
                 if !shell.hole_ids.is_empty() {
                     let stored = shell.html.replace(&nonce, l0_cache::NONCE_SENTINEL);
                     if let Ok(mut store) = shells.lock() {
-                        store.insert(key, stored);
+                        store.insert_tagged(key, stored, tags);
                     }
                 }
             }
