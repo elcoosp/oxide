@@ -648,7 +648,10 @@ export function render(rawInput: RenderInput): ReadableStream<Uint8Array> {
         })
       }
       const r = resolved.shift()!
-      yield encoder.encode(boundaryContent(r.id, r.html))
+      // §17.1: the swapper is an inline IIFE — without the request's nonce
+      // it is blocked under `strict-dynamic`, so the streamed resolution
+      // never runs in a CSP-enforcing browser.
+      yield encoder.encode(boundaryContent(r.id, r.html, input.nonce ?? ''))
     }
   })()
   return new ReadableStream<Uint8Array>({
