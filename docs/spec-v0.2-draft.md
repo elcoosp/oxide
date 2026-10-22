@@ -6,7 +6,7 @@
 
 # Part II. Oxide v0.2 Specification (implementation edition)
 
-*Baseline: repository HEAD `3975f2a` (18 Oct 2026), 17 crates, 6 TypeScript packages, about 78k lines. Inputs: the full code dump, the three research reports (perf, compiler, deps), `docs/oxide-v0.2-feature-designs.md`, and the HANDOFF files. This part is written so an implementing agent with no prior context can execute each work package (WP) from its text alone. Where Part II conflicts with Part I, Part II wins for v0.2. Part I section numbers are written as §n; Part II sections are V2.n.*
+*Baseline: repository HEAD `3975f2a` (18 Oct 2026), 17 crates, 6 TypeScript packages, about 78k lines. Inputs: the full code dump, the three research reports (perf, compiler, deps), `docs/ideas/oxide-v0.2-feature-designs.md`, and the HANDOFF files. This part is written so an implementing agent with no prior context can execute each work package (WP) from its text alone. Where Part II conflicts with Part I, Part II wins for v0.2. Part I section numbers are written as §n; Part II sections are V2.n.*
 
 ## V2.0 Agent contract (read before touching code)
 
@@ -145,7 +145,7 @@ The adapter contract stays `contract: 1`. v0.2 adds optional fields only (`capab
 
 ## V2.4 Work package index
 
-IDs: **A** foundations, **B** performance, **C** compilers and toolchain, **F** the 20 v0.2 features (numbering from `docs/oxide-v0.2-feature-designs.md`), **E** DX and ecosystem, **R** release. B09 lands first (it records the baseline) even though its number is last.
+IDs: **A** foundations, **B** performance, **C** compilers and toolchain, **F** the 20 v0.2 features (numbering from `docs/ideas/oxide-v0.2-feature-designs.md`), **E** DX and ecosystem, **R** release. B09 lands first (it records the baseline) even though its number is last.
 
 | ID | Work package | Size | Depends on | Main files |
 | --- | --- | --- | --- | --- |
@@ -1732,7 +1732,7 @@ Tests: fake executables written to a temp `node_modules/.bin` that exit 0 or 1 d
 
 ## V2.8 Wave F: the twenty v0.2 features
 
-Design source: `docs/oxide-v0.2-feature-designs.md`. This section turns each design into an implementable WP. Wave 0 of that document (router boot, layouts, defer values, real hydration, `route.ts`, middleware, loading, streaming) is **already done** (V2.1.1), so F01, F03 and F05 are unblocked. Every F WP ends with three obligations (V2.0 item 12): conformance assertion, capability-matrix row (R02), config schema key.
+Design source: `docs/ideas/oxide-v0.2-feature-designs.md`. This section turns each design into an implementable WP. Wave 0 of that document (router boot, layouts, defer values, real hydration, `route.ts`, middleware, loading, streaming) is **already done** (V2.1.1), so F01, F03 and F05 are unblocked. Every F WP ends with three obligations (V2.0 item 12): conformance assertion, capability-matrix row (R02), config schema key.
 
 ### V2-F01 Mixed-framework islands (M, depends on A04)
 
@@ -3010,7 +3010,7 @@ Copy into `WORKLOG.md` and update as WPs merge. Status values: `todo`, `doing`, 
 
 ```bash
 # 1. orient
-cat CONVENTIONS.md HANDOFF.md docs/oxide-v0.2-feature-designs.md
+cat CONVENTIONS.md HANDOFF.md docs/ideas/oxide-v0.2-feature-designs.md
 git log --oneline -5            # expect 3975f2a at the top for this spec
 # 2. prove the baseline is green before changing anything
 cargo test --workspace --no-fail-fast 2>&1 | tail -20
