@@ -101,6 +101,8 @@ jobs:
         run: ./benchmarks/run.sh | tee /tmp/bench.txt
       - name: Compare to report.md (>5% regression fails)
         run: ./benchmarks/gate.sh /tmp/bench.txt benchmarks/report.md
+      - name: Prose ranges match the table
+        run: ./benchmarks/check-prose.sh
 
   redis:
     name: Redis L2 wire tests (§11.2)
