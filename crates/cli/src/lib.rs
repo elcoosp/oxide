@@ -3671,7 +3671,9 @@ async fn write_prerender(
         // belong in it, so the head is built from their merged model rather
         // than hardcoded empty.
         let head_model = match route_meta.as_ref() {
-            Some(meta) => merge_neutral_head(plugin_head.clone(), normalize_route_meta(meta.clone())),
+            Some(meta) => {
+                merge_neutral_head(plugin_head.clone(), normalize_route_meta(meta.clone()))
+            }
             None => plugin_head.clone(),
         };
         format!(
@@ -7363,9 +7365,9 @@ fn build_dispatch(
                         serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string())
                     };
                     let action_trace = req_owned.trace.as_ref().and_then(|t| {
-                        t.to_traceparent(&t.parent_id).map(|tp| {
-                            serde_json::json!({"traceparent": tp, "tracestate": t.tracestate})
-                        })
+                        t.to_traceparent(&t.parent_id).map(
+                            |tp| serde_json::json!({"traceparent": tp, "tracestate": t.tracestate}),
+                        )
                     });
                     let resp = oxide_server::run_action(
                         Some(dispatcher),
@@ -8107,9 +8109,9 @@ fn build_dispatch(
             ) {
                 let module_path_s = mp.to_string_lossy().to_string();
                 let endpoint_trace = req_owned.trace.as_ref().and_then(|t| {
-                    t.to_traceparent(&t.parent_id).map(|tp| {
-                        serde_json::json!({"traceparent": tp, "tracestate": t.tracestate})
-                    })
+                    t.to_traceparent(&t.parent_id).map(
+                        |tp| serde_json::json!({"traceparent": tp, "tracestate": t.tracestate}),
+                    )
                 });
                 match dispatcher
                     .dispatch(
@@ -8441,20 +8443,16 @@ fn build_dispatch(
                                     // L0 object, so use the stable `"dev"`
                                     // namespace; the watcher clears shells on
                                     // every edit.
-                                    let ppr_build_id = l0
-                                        .as_ref()
-                                        .map(|c| c.build_id())
-                                        .unwrap_or("dev");
+                                    let ppr_build_id =
+                                        l0.as_ref().map(|c| c.build_id()).unwrap_or("dev");
                                     let pkey = l0_cache::L0Cache::key_for(
                                         &l0_route,
                                         &l0_params,
                                         &l0_vary,
                                         ppr_build_id,
                                     );
-                                    let ppr_tags = vec![
-                                        l0_route.clone(),
-                                        format!("path:{l0_path}"),
-                                    ];
+                                    let ppr_tags =
+                                        vec![l0_route.clone(), format!("path:{l0_path}")];
                                     let cached =
                                         shells.lock().ok().and_then(|s| s.get(&pkey).cloned());
                                     match cached {
@@ -9095,7 +9093,16 @@ impl oxide_server::EndpointDispatcher for EndpointDispatcherImpl {
     ) -> std::result::Result<oxide_server::EndpointRunResult, oxide_server::EndpointRunError> {
         match self
             .host
-            .run(module_path, method, url, params, headers, body, locals, trace)
+            .run(
+                module_path,
+                method,
+                url,
+                params,
+                headers,
+                body,
+                locals,
+                trace,
+            )
             .await
         {
             Ok(out) => {
@@ -13556,7 +13563,8 @@ impl PprShellStore {
                 }
             }
         }
-        self.map.insert(key.clone(), PprShellEntry { html: shell, tags });
+        self.map
+            .insert(key.clone(), PprShellEntry { html: shell, tags });
         self.order.push_back(key);
     }
 }
