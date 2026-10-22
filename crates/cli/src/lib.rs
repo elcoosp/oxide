@@ -6986,6 +6986,41 @@ fn build_dispatch(
                                 for (k, v) in &out.headers {
                                     resp = resp.with_header(k, v.clone());
                                 }
+                                // §16.6 / WP-r10-1 / B-05: a middleware that
+                                // mutates `locals.session` AND short-circuits
+                                // must persist the mutation. The post-loop
+                                // write-back (below) never runs for a
+                                // short-circuit, so this return path is the
+                                // only place the cookie can ride.
+                                if let Some(codec) = session_codec.as_deref() {
+                                    let after =
+                                        out.locals.as_ref().and_then(|l| l.get("session")).cloned();
+                                    if after.is_some() && after != session_before {
+                                        let mut sess = oxide_server::Session::new();
+                                        if let Some(obj) =
+                                            after.as_ref().and_then(|v| v.as_object())
+                                        {
+                                            for (k, v) in obj {
+                                                sess.insert(k.clone(), v.clone());
+                                            }
+                                        }
+                                        if let Ok(token) = sess.encode(codec) {
+                                            resp = resp.with_header(
+                                                "set-cookie",
+                                                format!(
+                                                    "oxide_session={token}; Path=/; \
+                                                     HttpOnly; SameSite=Lax; Max-Age={}",
+                                                    session_ttl_secs()
+                                                )
+                                                .replace(
+                                                    "\
+", "",
+                                                )
+                                                .replace("  ", " "),
+                                            );
+                                        }
+                                    }
+                                }
                                 return resp;
                             }
                             // B-06: last-writer-wins per header name — an
@@ -7439,7 +7474,22 @@ fn build_dispatch(
                         }
                         Ok(out) => {
                             layout_data_chain.push(out.data);
-                            layout_side_effects.push((out.set_cookies, out.headers));
+                            // §16.6 / WP-r10-1 / D1: a layout loader that
+                            // mutates `event.session` must persist it. The
+                            // short-circuit arm (above) already does; this
+                            // Ok arm used to drop `out.session` entirely,
+                            // so a layout mutation was lost on the common
+                            // non-short-circuit path. Encode and append to
+                            // the same cookies vec that flattens below.
+                            let mut cookies = out.set_cookies;
+                            if let Some(cookie) = encode_session_cookie(
+                                out.session.as_ref(),
+                                session_before.as_ref(),
+                                session_codec.as_deref(),
+                            ) {
+                                cookies.push(cookie);
+                            }
+                            layout_side_effects.push((cookies, out.headers));
                         }
                         Err(e) => {
                             tracing::error!(code = %e.0.code, error = %e.0.message, "layout loader failed");
@@ -7588,6 +7638,17 @@ fn build_dispatch(
                         }
                         for (k, v) in &out.headers {
                             loader_headers.push((k.clone(), v.clone()));
+                        }
+                        // §16.6 / WP-r10-1 / D1: the parallel layout Ok arm
+                        // also dropped `out.session`. Same fix as the
+                        // sequential arm — encode and push through the
+                        // cookies stream that lands on the response.
+                        if let Some(cookie) = encode_session_cookie(
+                            out.session.as_ref(),
+                            session_before.as_ref(),
+                            session_codec.as_deref(),
+                        ) {
+                            loader_set_cookies.push(cookie);
                         }
                     }
                     Err(e) => {
@@ -9658,7 +9719,18 @@ async fn start_server_inner_full(
     unsafe {
         std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref());
     }
-    let mut cfg = load_config_or_default(&rootp, "production");
+    // §16.6 / WP-r10-1: the config env must match the server mode.
+    // Before this fix, dev loaded "production" and so ignored
+    // `security.sessionTtlSecs` set in the dev config (a common
+    // testing knob — set a 60s TTL in dev, 1800s in prod). This is the
+    // only place the TTL is published, so fixing the env here is the
+    // whole fix.
+    let cfg_env = if with_inspector {
+        "development"
+    } else {
+        "production"
+    };
+    let mut cfg = load_config_or_default(&rootp, cfg_env);
     set_session_ttl(cfg.security.session_ttl_secs);
     // §10.1: refine inferred render modes from the AST, exactly as `oxide build`
     // does — otherwise the live server sees the scanner's line-oriented guess

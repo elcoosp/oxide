@@ -7674,3 +7674,134 @@ fn compile_edge_wasm_from_workspace_root_emits_edge_wasm() {
     let len = std::fs::metadata(&out).unwrap().len();
     assert!(len > 0, "edge.wasm is non-empty");
 }
+
+// ------------------------------ §16.6 / WP-r10-1: D1 endgame
+
+/// The direct contract of `encode_session_cookie` — the helper the fix
+/// invokes on the middleware short-circuit return and the two layout Ok
+/// arms. Pins: mutation → cookie; untouched → no cookie; no codec → no
+/// cookie. Complements the dispatch-level tests below.
+#[tokio::test]
+async fn session_encode_contract_mutation_vs_untouched() {
+    let codec = oxide_server::SessionCodec::new(&[vec![7u8; 32]]).expect("codec");
+    let after = serde_json::json!({"role": "admin"});
+    let before = serde_json::Value::Null;
+
+    // Mutation → a `set-cookie` value with the standard attributes.
+    let cookie = crate::encode_session_cookie(Some(&after), Some(&before), Some(&codec))
+        .expect("cookie emitted for a mutation");
+    assert!(
+        cookie.starts_with("oxide_session="),
+        "cookie shape: {cookie}"
+    );
+    assert!(
+        cookie.contains("HttpOnly") && cookie.contains("SameSite=Lax"),
+        "cookie attributes: {cookie}"
+    );
+
+    // Same input → no re-issue (the untouched case).
+    let untouched = crate::encode_session_cookie(Some(&after), Some(&after), Some(&codec));
+    assert!(
+        untouched.is_none(),
+        "an untouched session re-issued a cookie: {untouched:?}"
+    );
+
+    // No codec → no cookie, regardless of mutation.
+    let no_codec = crate::encode_session_cookie(Some(&after), Some(&before), None);
+    assert!(no_codec.is_none(), "no codec must produce no cookie");
+}
+
+/// A loader that mutates `event.session` on the Ok path. Used by the
+/// sequential layout test below.
+struct MutateSessionLoader;
+#[async_trait::async_trait]
+impl oxide_server::LoaderRunner for MutateSessionLoader {
+    fn name(&self) -> &str {
+        "mutate-session-loader"
+    }
+    async fn run(
+        &self,
+        _input: oxide_server::LoaderRunInput,
+    ) -> oxide_server::Result<oxide_server::LoaderOutput> {
+        Ok(oxide_server::LoaderOutput {
+            status: 200,
+            data: serde_json::json!({"ok": true}),
+            session: Some(serde_json::json!({"user": "u1"})),
+            ..Default::default()
+        })
+    }
+}
+
+/// Tree: a page and a root layout, both with a server module. With
+/// `needs_parent: false` on the page, the dispatcher takes the *parallel*
+/// layout arm (last-layout + page under `tokio::join!`). The fix in
+/// `f1a9397` covered the parallel arm's short-circuit path; the Ok arm
+/// was still dropping `out.session` and is now fixed. This test pins the
+/// Ok arm — the case the audit named "the common case".
+fn tree_with_layout_and_page_server_modules() -> std::sync::Arc<oxide_router::RouteTree> {
+    let mut tree = oxide_router::RouteTree::new();
+    tree.insert(oxide_router::RouteEntry {
+        id: oxide_router::RouteId("routes/layout".into()),
+        kind: oxide_router::RouteKind::Layout,
+        segments: vec![],
+        file: std::path::PathBuf::from("routes/layout.tsx"),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: true, // ← layout loader arm must run
+        needs_parent: false,
+        slot: None,
+    });
+    tree.insert(oxide_router::RouteEntry {
+        id: oxide_router::RouteId("routes/index".into()),
+        kind: oxide_router::RouteKind::Page,
+        segments: vec![],
+        file: std::path::PathBuf::from("routes/page.tsx"),
+        render_mode: Some("dynamic".into()),
+        tags: Vec::new(),
+        has_server_module: true,
+        needs_parent: false, // ← sequential arm, not parallel
+        slot: None,
+    });
+    std::sync::Arc::new(tree)
+}
+
+#[tokio::test]
+async fn layout_ok_arm_persists_session_mutation() {
+    use std::sync::Arc;
+
+    let loader: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(Arc::new(MutateSessionLoader));
+    let codec = Arc::new(oxide_server::SessionCodec::new(&[vec![9u8; 32]]).unwrap());
+
+    let dispatch = build_dispatch(
+        tree_with_layout_and_page_server_modules(),
+        Arc::new(oxide_server::Metrics::new()),
+        Vec::new(),
+        None, // no renderer — session persistence happens on the loader arm
+        loader,
+        std::path::PathBuf::new(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        Vec::new(),
+        None,
+        Some(codec),
+        None,
+    );
+
+    let resp = dispatch(test_request("GET", "/")).await;
+    let has_session_cookie = resp
+        .headers
+        .iter()
+        .any(|(k, v)| k.eq_ignore_ascii_case("set-cookie") && v.starts_with("oxide_session="));
+    assert!(
+        has_session_cookie,
+        "sequential layout Ok arm must persist the session mutation; headers: {:?}",
+        resp.headers
+    );
+}
