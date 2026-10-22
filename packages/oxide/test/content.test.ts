@@ -75,7 +75,7 @@ test('getCollection throws a helpful error on a missing collection', async () =>
   unsetRoot()
 })
 
-test('getCollection caches by mtime — a second read is free', async () => {
+test('getCollection caches by content hash — a second read is free', async () => {
   await fixture('blog', [{ slug: 'a', frontmatter: {}, body: 'a' }])
   const first = await getCollection('blog')
   const second = await getCollection('blog')
