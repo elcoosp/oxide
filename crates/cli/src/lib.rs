@@ -8251,6 +8251,11 @@ fn build_dispatch(
                 // adapter cannot emit `<html lang>` and the client catalog
                 // loader falls back to `en`.
                 input.locale = Some(resolved_locale.clone());
+                // §7.1 / §9.2: hand the loader's resolved `defer()` values to
+                // the adapter so it can replace `{__deferred: id}` in `data`
+                // before the component tree is built. Without this a
+                // component reads the placeholder object, never the value.
+                input.deferred = deferred_values.clone();
                 // 16-G: the route's own `meta` joins the neutral head model.
                 // The live path has no plugin `renderHead` contribution to
                 // merge with here (that is a build-time hook); the route's
