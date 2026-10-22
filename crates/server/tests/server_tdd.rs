@@ -2362,3 +2362,104 @@ async fn alt_svc_names_the_port_when_enabled() {
     assert!(v.contains("8443"), "names the port: {v}");
     assert!(v.contains("h3"), "names h3: {v}");
 }
+
+// ------------------------------ §12.2: zero-downtime reload (SO_REUSEPORT)
+
+/// §12.2: "zero-downtime reload by starting a new process on the same port
+/// via `SO_REUSEPORT`." The bind is implemented (`bind_reusable` uses
+/// `set_reuse_port`) but had no test — r10's audit flagged it as
+/// implemented-but-untested. This is that test.
+///
+/// Shape: start server A; start server B on the SAME port (legal because
+/// SO_REUSEPORT is set on both). While both run, requests succeed — the
+/// kernel picks a listener. Drain A (the "old process"); the port stays
+/// alive — B keeps serving. This is the reload pattern a real deploy uses.
+///
+/// Gated to Unix (minus Solaris) because that is exactly where the
+/// implementation sets `set_reuse_port`. Windows has no SO_REUSEPORT; the
+/// reload story there is an OS-level LB, which is not this crate's
+/// responsibility.
+#[cfg(all(unix, not(target_os = "solaris")))]
+#[tokio::test]
+async fn zero_downtime_reload_via_so_reuseport() {
+    let addr = free_port_addr().await;
+
+    let make_server = |label: &'static str| {
+        let p = Arc::new(pipeline(
+            RulesEngine::default(),
+            None,
+            Limits::default(),
+            SecuritySettings::default(),
+        ));
+        let dispatch: Arc<dyn Fn(OxideRequest) -> BoxFuture<'static, OxideResponse> + Send + Sync> =
+            Arc::new(move |r: OxideRequest| {
+                Box::pin(async move { OxideResponse::html(200, format!("{label}:{}", r.url)) })
+            });
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        let handle = tokio::spawn(Server::serve(addr, p, dispatch, rx));
+        (tx, handle)
+    };
+
+    // Start A (the "old process").
+    let (tx_a, server_a) = make_server("A");
+    wait_for_listener(addr).await;
+
+    // Start B on the SAME addr — the reload. Without SO_REUSEPORT this
+    // bind fails with EADDRINUSE; with it, both listeners accept.
+    let (tx_b, server_b) = make_server("B");
+    wait_for_listener(addr).await;
+
+    // Both up: requests succeed (kernel load-balances across the two).
+    // `label` in the body is either "A" or "B" — we only assert shape.
+    for _ in 0..4 {
+        let r = raw_http(
+            addr,
+            "GET /ping HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n",
+        )
+        .await;
+        assert!(
+            r.starts_with("HTTP/1.1 200"),
+            "both up, request must succeed: {r}"
+        );
+    }
+
+    // Drain A gracefully — the old process finishes in-flight work and
+    // releases its listener. The port is NOT freed (B still holds it).
+    tx_a.send(true).unwrap();
+    let drained = tokio::time::timeout(Duration::from_secs(10), server_a).await;
+    assert!(
+        drained.is_ok(),
+        "old listener did not drain within 10s — reload would stall the port"
+    );
+
+    // The port stays alive through the handoff — B serves post-drain.
+    // This is the property that makes the reload zero-downtime.
+    let r = raw_http(
+        addr,
+        "GET /after-reload HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n",
+    )
+    .await;
+    assert!(
+        r.starts_with("HTTP/1.1 200"),
+        "new listener must serve after old drains: {r}"
+    );
+    assert!(
+        r.contains("B:/after-reload"),
+        "the surviving listener is B (the new process): {r}"
+    );
+
+    tx_b.send(true).unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(5), server_b).await;
+}
+
+/// Wait until `addr` accepts a TCP connection. Generous budget for parallel
+/// test load; returns on the first successful connect.
+async fn wait_for_listener(addr: std::net::SocketAddr) {
+    for _ in 0..200 {
+        if tokio::net::TcpStream::connect(addr).await.is_ok() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("listener at {addr} never came up within 10s");
+}
