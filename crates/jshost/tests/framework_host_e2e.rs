@@ -146,6 +146,90 @@ async fn end_to_end_load_and_render_real_react_config() {
     assert!(html.contains("<title>E2E"), "title emitted: {html}");
 }
 
+/// §6.4 / WP-B1–B3: with no `componentFor` in the config, the renderer must
+/// consume `components.sources` (dev) and `components.entry` (prod) through
+/// the worker's resolver. This is the end-to-end proof that route components
+/// no longer live in `oxide.config.ts`.
+#[tokio::test]
+#[ignore]
+async fn end_to_end_resolver_supplies_components_without_component_for() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/.tmp-e2e");
+    fs::create_dir_all(&dir).expect("mkdir .tmp-e2e");
+    let nonce = unique_nonce();
+    let comp_a = dir.join(format!("comp-a-{nonce}.mjs"));
+    let comp_b = dir.join(format!("comp-b-{nonce}.mjs"));
+    let entry = dir.join(format!("entry-{nonce}.mjs"));
+    fs::write(
+        &comp_a,
+        "import { createElement } from 'react'\nexport default () => createElement('h1', null, 'dev A')\n",
+    )
+    .unwrap();
+    fs::write(
+        &comp_b,
+        "import { createElement } from 'react'\nexport const Page = () => createElement('h2', null, 'dev B')\n",
+    )
+    .unwrap();
+    fs::write(
+        &entry,
+        format!(
+            "import A from './comp-a-{nonce}.mjs'\nimport {{ Page as B }} from './comp-b-{nonce}.mjs'\nexport const routes = {{ 'routes/index': {{ default: A }}, 'routes/other': {{ Page: B }} }}\n"
+        ),
+    )
+    .unwrap();
+
+    struct Cleanup(Vec<PathBuf>);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            for p in &self.0 {
+                let _ = fs::remove_file(p);
+            }
+        }
+    }
+    let _cleanup = Cleanup(vec![comp_a.clone(), comp_b.clone(), entry.clone()]);
+
+    let config_file = E2eConfigFile::new();
+    fs::write(
+        config_file.path(),
+        "import { createRealAdapter } from '../src/real-adapter.ts'\n\
+         export default { framework: createRealAdapter({ ssr: 'real' }) }\n",
+    )
+    .unwrap();
+    let config_str = config_file.path_str();
+
+    let host = NodeHost::new(NodeHost::worker_script_default());
+    let pool = host
+        .tooling_pool(PoolConfig::default())
+        .expect("spawn node worker");
+    let fw = FrameworkHost::new(pool);
+
+    let mut dev_input = serde_json::json!({
+        "route": "routes/other",
+        "url": "/other",
+        "params": {}, "data": {}, "head": { "title": "x", "meta": [], "link": [], "style": [], "script": [] },
+        "components": { "sources": {
+            "routes/other": comp_b.to_string_lossy(),
+        } },
+    });
+    let html = fw
+        .render(&config_str, dev_input.clone())
+        .await
+        .expect("dev render");
+    assert!(html.contains("dev B"), "dev sources resolved: {html}");
+
+    dev_input["route"] = serde_json::json!("routes/other");
+    dev_input["components"] = serde_json::json!({
+        "entry": entry.to_string_lossy(),
+    });
+    let html = fw
+        .render(&config_str, dev_input)
+        .await
+        .expect("prod entry render");
+    assert!(
+        html.contains("dev B"),
+        "prod entry resolved (named export): {html}"
+    );
+}
+
 #[tokio::test]
 #[ignore]
 async fn end_to_end_missing_config_surfaces_clear_error() {
