@@ -56,7 +56,7 @@ the process binds, health goes 200, then `PageRenderer::warm()` runs a
 synthetic render to prime the pool (~360ms `match;dur`) and load the
 component entry. Benchmarks poll `/_oxide/ready`, so `start(ms)` really
 means "until can serve." A real deployment trades one 1.1s boot for a
-140-190ms first request — this is the standard "readiness gate at start"
+134-158ms first request — this is the standard "readiness gate at start"
 trade.
 
 **`cold(ms)` = 1704-3027** — warm-cache variance on this host is 5-15%
