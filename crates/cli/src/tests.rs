@@ -1007,7 +1007,9 @@ async fn http_get(addr: std::net::SocketAddr, path: &str) -> String {
 /// ## Known limitation (documented, not asserted away)
 ///
 /// The smoke-app's `oxide.config.ts` calls `react({ compiler: true })` —
-/// it does not provide a `componentFor` resolver. So `createRealAdapter`
+/// it declares only `ssr: 'real'` — route components resolve through
+/// the build-emitted entry (`dist/server/ssr/index.js`), not a
+/// `componentFor` closure in the config (§6.4).
 /// runs in 'auto' mode and the render falls through to the adapter's IR
 /// fallback (the conformance-suite Atlas registry). The smoke-app's own
 /// `src/routes/*/page.tsx` files are NOT compiled into the worker yet.
@@ -1092,11 +1094,13 @@ async fn dev_server_serves_smoke_app_over_http() {
         resp_home
     );
     // The smoke-app's config is `react({ compiler: true })` — no
-    // `componentFor`, so `createRealAdapter` runs in 'auto' mode and the
+    // `componentFor`, so `createRealAdapter` dispatches to the real
+    /// renderer with the runtime-supplied `resolve`.
     // render falls through to the adapter's IR fallback (the Atlas
     // registry the conformance suite uses). That's why we assert the
     // *framework* shape rather than the smoke-app's `page.tsx` content:
-    // compiling the user's TSX and feeding it to `componentFor` is the
+    // compiling the user's TSX and feeding it through the runtime
+    /// resolver (`input.resolve`).
     // next slice.
     assert!(
         resp_home.contains("data-reactroot"),
