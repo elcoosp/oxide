@@ -7,11 +7,12 @@
 // Usage:
 //
 //   import { createRealAdapter } from '@oxide/react/real-adapter'
-//   const adapter = createRealAdapter({
-//     ssr: 'auto',
-//     componentFor: (route) => routes[route]?.component,
-//     layoutFor: () => AppLayout,
-//   })
+//   const adapter = createRealAdapter({ ssr: 'real' })
+//
+// Components are supplied by the runtime resolver (§6.4): the worker builds
+// it from the generated `dist/server/ssr/index.js` (or, in dev, from the
+// route-table source map). `componentFor`/`layoutFor` remain as explicit
+// overrides for tests and advanced hosts.
 //
 // Head merge order (spec §16.3, matching the IR renderer's buildShell):
 //     mergeHead( mergeHead( LAYOUT_HEAD, input.head ), head(ctx) )
