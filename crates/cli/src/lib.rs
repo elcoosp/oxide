@@ -3795,6 +3795,13 @@ async fn route_data_response_inner(
         input.locals = middleware_locals.clone();
         input.locale = locale.to_string();
         input.parent_data = parent_data;
+        // §20 / G2: thread the inbound W3C trace so the loader's
+        // server-side fetch calls join the request trace.
+        input.trace = req.trace.as_ref().and_then(|t| {
+            t.to_traceparent(&t.parent_id).map(|tp| {
+                serde_json::json!({"traceparent": tp, "tracestate": t.tracestate})
+            })
+        });
         match runner.run(input).await {
             Ok(out) if out.short_circuits() => {
                 let body = out
@@ -7175,6 +7182,13 @@ fn build_dispatch(
                     linput.params = params.clone();
                     linput.locals = middleware_locals.clone();
                     linput.locale = resolved_locale.clone();
+                    // §20 / G2: thread the inbound W3C trace so the loader's
+                    // server-side fetch calls join the request trace.
+                    linput.trace = req_owned.trace.as_ref().and_then(|t| {
+                        t.to_traceparent(&t.parent_id).map(|tp| {
+                            serde_json::json!({"traceparent": tp, "tracestate": t.tracestate})
+                        })
+                    });
                     linput.parent_data = layout_data_chain
                         .last()
                         .cloned()
@@ -7246,6 +7260,13 @@ fn build_dispatch(
                 linput.params = params.clone();
                 linput.locals = middleware_locals.clone();
                 linput.locale = resolved_locale.clone();
+                // §20 / G2: thread the inbound W3C trace so the loader's
+                // server-side fetch calls join the request trace.
+                linput.trace = req_owned.trace.as_ref().and_then(|t| {
+                    t.to_traceparent(&t.parent_id).map(|tp| {
+                        serde_json::json!({"traceparent": tp, "tracestate": t.tracestate})
+                    })
+                });
                 linput.parent_data = layout_data_chain
                     .last()
                     .cloned()
@@ -7266,6 +7287,13 @@ fn build_dispatch(
                 pinput.locale = resolved_locale.clone();
                 // Page does not call `parent()`, so this value is unused.
                 pinput.parent_data = serde_json::Value::Null;
+                // §20 / G2: thread the inbound W3C trace so the loader's
+                // server-side fetch calls join the request trace.
+                pinput.trace = req_owned.trace.as_ref().and_then(|t| {
+                    t.to_traceparent(&t.parent_id).map(|tp| {
+                        serde_json::json!({"traceparent": tp, "tracestate": t.tracestate})
+                    })
+                });
 
                 // §20 / O3c: time each side of the join. The wall-clock
                 // saving vs a sequential layout→page chain is
@@ -7431,6 +7459,13 @@ fn build_dispatch(
                     input.locals = middleware_locals.clone();
                     // SPEC-10: expose the resolved locale to `load()`.
                     input.locale = resolved_locale.clone();
+                    // §20 / G2: thread the inbound W3C trace so the loader's
+                    // server-side fetch calls join the request trace.
+                    input.trace = req_owned.trace.as_ref().and_then(|t| {
+                        t.to_traceparent(&t.parent_id).map(|tp| {
+                            serde_json::json!({"traceparent": tp, "tracestate": t.tracestate})
+                        })
+                    });
                     // §9.2: the innermost layout's data — what `parent()`
                     // reads in a page load.
                     input.parent_data = layout_data_chain
