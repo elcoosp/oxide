@@ -69,3 +69,56 @@ fn session_ttl_secs_round_trips() {
     .expect("custom");
     assert_eq!(custom.security.session_ttl_secs, 3600);
 }
+
+#[test]
+fn checked_in_schema_matches_the_function() {
+    // §19.3: "JSON Schema for config". The schema is consumable by editors
+    // only when it exists at a stable path — `schemas/oxide-config.schema.json`
+    // at the repo root. This gate fails when a config key is added to
+    // `config_schema()` without regenerating the file:
+    //
+    //   cargo run -p oxide-config --bin oxide-schema -- \
+    //     > schemas/oxide-config.schema.json
+    //
+    // The same pattern `docs-check` uses for generated docs (§v0.2 draft):
+    // regeneration is a one-liner, and forgetting is a red build.
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root is crates/config/../..");
+    let checked_in = repo_root.join("schemas/oxide-config.schema.json");
+    let on_disk = std::fs::read_to_string(&checked_in).unwrap_or_else(|e| {
+        panic!(
+            "cannot read {}: {e}. Regenerate with:\n  \
+             cargo run -p oxide-config --bin oxide-schema -- \
+             > schemas/oxide-config.schema.json",
+            checked_in.display()
+        )
+    });
+    let generated = oxide_config::config_schema_pretty().expect("schema renders");
+
+    // Byte-for-byte. A reformatted file is drift too — regenerate, do not
+    // hand-edit the checked-in artifact.
+    if on_disk != generated {
+        // Show the first differing line for a useful failure.
+        let a: Vec<&str> = on_disk.lines().collect();
+        let b: Vec<&str> = generated.lines().collect();
+        let first_diff = a
+            .iter()
+            .zip(b.iter())
+            .position(|(x, y)| x != y)
+            .unwrap_or(a.len().min(b.len()));
+        panic!(
+            "schemas/oxide-config.schema.json is stale (first diff at line {}).\n\
+             checked-in: {:?}\n\
+             generated:  {:?}\n\
+             Regenerate with:\n  \
+             cargo run -p oxide-config --bin oxide-schema -- \
+             > schemas/oxide-config.schema.json",
+            first_diff + 1,
+            a.get(first_diff),
+            b.get(first_diff),
+        );
+    }
+}
