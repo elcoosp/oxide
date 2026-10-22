@@ -55,3 +55,19 @@ fn config_schema_serializes_to_valid_json() {
     let _: serde_json::Value =
         serde_json::from_str(trimmed).expect("config_schema_pretty() output must reparse as JSON");
 }
+
+#[test]
+fn session_ttl_secs_round_trips() {
+    // §16.6 / WP-r9: the field exists, defaults to 1800, and parses.
+    let default: oxide_config::OxideConfig =
+        serde_json::from_value(serde_json::json!({})).expect("default");
+    assert_eq!(default.security.session_ttl_secs, 1800);
+
+    let custom: oxide_config::OxideConfig =
+        serde_json::from_value(serde_json::json!({
+            "security": { "sessionTtlSecs": 3600 }
+        }))
+        .expect("custom");
+    assert_eq!(custom.security.session_ttl_secs, 3600);
+}
+

@@ -471,6 +471,8 @@ impl Default for I18nConfig {
     }
 }
 
+fn default_session_ttl_secs() -> u64 { 1800 }
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase", default)]
 pub struct SecurityConfig {
@@ -496,6 +498,11 @@ pub struct SecurityConfig {
     /// cookies fall back to the signed-only `sign_cookie` primitive (payload
     /// visible). Set this to make session payloads confidential.
     pub session_keys: Vec<String>,
+    /// §16.6 / WP-r9: session cookie lifetime in seconds. 1800 (30 min)
+    /// matches the previous hardcoded value; explicit so a project can
+    /// tighten or extend it without a rebuild of the CLI.
+    #[serde(default = "default_session_ttl_secs")]
+    pub session_ttl_secs: u64,
     /// S-21.3: emit the `x-oxide-cache` status header (`L0-hit`/`miss`/…).
     /// Default `true`; a strict deployment can set it `false` to avoid
     /// telling clients whether a response came from cache.
@@ -511,6 +518,7 @@ impl Default for SecurityConfig {
             trusted_proxies: Vec::new(),
             cookie_keys: Vec::new(),
             session_keys: Vec::new(),
+            session_ttl_secs: 1800,
             expose_cache_header: true,
         }
     }

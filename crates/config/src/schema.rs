@@ -169,6 +169,7 @@ pub fn config_schema() -> Value {
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
+                        "sessionTtlSecs": { "type": "integer", "minimum": 60, "default": 1800, "description": "§16.6: session cookie lifetime in seconds." },
                     "csp": { "type": "string", "enum": ["strict", "hash", "off"] },
                     "csrf": { "type": "string", "enum": ["origin", "token", "off"] },
                     "hostAllowList": { "type": "array", "items": { "type": "string" } },

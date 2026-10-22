@@ -1368,6 +1368,24 @@ fn parallel_load_savings_ms(a_ms: f64, b_ms: f64) -> f64 {
 /// when the session is unchanged or absent. Extracted so the four serve
 /// paths (sequential page, parallel page, /__data short-circuit, /__data
 /// page) share one implementation instead of four near-copies.
+/// §16.6 / WP-r9: session cookie lifetime, sourced from
+/// `security.sessionTtlSecs` at server start. Process-global because
+/// `build_dispatch`'s closure cannot see `cfg`; the CLI runs one server
+/// per process (documented single-server assumption). Tests use the
+/// default 1800 until they opt in.
+static SESSION_TTL_SECS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1800);
+
+fn session_ttl_secs() -> u64 {
+    SESSION_TTL_SECS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Set the session cookie TTL. Called by the CLI at server start from
+/// `cfg.security.session_ttl_secs`.
+pub(crate) fn set_session_ttl(ttl: u64) {
+    SESSION_TTL_SECS.store(ttl, std::sync::atomic::Ordering::Relaxed);
+}
+
 fn encode_session_cookie(
     after: Option<&serde_json::Value>,
     before: Option<&serde_json::Value>,
@@ -1375,6 +1393,7 @@ fn encode_session_cookie(
 ) -> Option<String> {
     let codec = codec?;
     let after = after?;
+    let ttl_secs = session_ttl_secs();
     // Unchanged object → no cookie. `Some({})` (the worker's default for a
     // project with no inbound cookie) equals `None` before → not a change.
     let is_empty_object = after.as_object().map(|o| o.is_empty()).unwrap_or(false);
@@ -1393,7 +1412,7 @@ fn encode_session_cookie(
     }
     match sess.encode(codec) {
         Ok(token) => Some(format!(
-            "oxide_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=1800"
+            "oxide_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={ttl_secs}"
         )),
         Err(e) => {
             tracing::warn!(error = %e.0.message, "session encode failed; cookie not set");
@@ -6898,7 +6917,8 @@ fn build_dispatch(
                         Ok(token) => middleware_headers.push((
                             "set-cookie".to_string(),
                             format!(
-                                "oxide_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=1800"
+                                "oxide_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
+                                session_ttl_secs()
                             ),
                         )),
                         Err(e) => tracing::warn!(
@@ -9425,6 +9445,7 @@ async fn start_server_inner_full(
     // thread spawns.
     unsafe { std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref()); }
     let mut cfg = load_config_or_default(&rootp, "production");
+    set_session_ttl(cfg.security.session_ttl_secs);
     // §10.1: refine inferred render modes from the AST, exactly as `oxide build`
     // does — otherwise the live server sees the scanner's line-oriented guess
     // (and `None` for a route with no `page.server.ts`), and the §11 L0 layer
