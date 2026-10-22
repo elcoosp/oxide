@@ -7460,3 +7460,53 @@ fn resolve_ssr_entry_is_none_when_nothing_exists() {
     assert!(crate::framework_shim::resolve_ssr_entry(dir.path()).is_none());
 }
 
+// ------------------------------ §10.8 / WP-r9: PPR shell key
+
+/// The PPR shell key is the L0 key's identity (build id + route + params
+/// + vary), not the raw URL. This test drives two requests to the same
+/// route with different query strings and asserts one shell is stored,
+/// not two — the pre-fix behavior was a query-string explosion that
+/// cleared the whole map on a search-heavy site.
+#[tokio::test]
+async fn ppr_shell_key_ignores_query_string() {
+    use std::sync::Arc;
+
+    let shells: crate::PprShells =
+        Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(PprRenderer));
+
+    let dispatch = build_dispatch(
+        // empty_tree() -- the same fixture the passing PPR test uses. A
+        // *matched* static route (tree_with_static_page_and_middleware)
+        // does not reach the PPR branch with L0 = None: the static path
+        // skips render entirely. That is a separate gap, not what this
+        // test verifies.
+        empty_tree(),
+        Arc::new(oxide_server::Metrics::new()),
+        Vec::new(),
+        renderer,
+        None,
+        std::path::PathBuf::new(),
+        None, None, None, None, None, None, None, None,
+        false,
+        Vec::new(),
+        None,
+        None,
+        Some(Arc::clone(&shells)),
+    );
+
+    // The tap runs in a tokio::spawn; draining the response body forces
+    // the tap's tx to close, which is when the task inserts the shell.
+    // Without draining, both dispatches tap against an empty map.
+    let first = dispatch(test_request("GET", "/?utm=twitter")).await;
+    let _ = collect_response_body(first).await;
+    let second = dispatch(test_request("GET", "/?utm=facebook")).await;
+    let _ = collect_response_body(second).await;
+
+    let stored = shells.lock().unwrap().len();
+    assert_eq!(
+        stored, 1,
+        "both query variants share one shell (route-key, not URL-key); got {stored}"
+    );
+}
+

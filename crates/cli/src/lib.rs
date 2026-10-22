@@ -7915,7 +7915,28 @@ fn build_dispatch(
                         {
                             match ppr_for_request.as_ref() {
                                 Some(shells) => {
-                                    let pkey = format!("{l0_route}\x1f{}", req_owned.url);
+                                    // §10.8 / WP-r9: the shell key must
+                                    // match the L0 key's identity, not the
+                                    // raw URL. Two bugs the raw-URL form
+                                    // had:
+                                    //   1. No build id — a rebuild served
+                                    //      stale shells until the next
+                                    //      clear-all.
+                                    //   2. Query-string explosion —
+                                    //      ?utm=twitter and ?utm=facebook
+                                    //      were distinct shells on a site
+                                    //      with search, so 256 distinct
+                                    //      queries cleared the map.
+                                    // The L0 key already models the right
+                                    // identity (route + params + vary) and
+                                    // carries the build id via `build_id()`.
+                                    let ppr_build_id = l0
+                                        .as_ref()
+                                        .map(|c| c.build_id().to_string())
+                                        .unwrap_or_default();
+                                    let pkey = format!(
+                                        "{ppr_build_id}\x1f{l0_route}\x1f{l0_params}\x1f{l0_vary}"
+                                    );
                                     let cached = shells
                                         .lock()
                                         .ok()
@@ -12817,17 +12838,25 @@ fn ppr_tap_stream(
                 }
             }
         }
-        // The client already saw EOF; storing after this point adds no latency.
+        // TEMP DIAG: prove the tap ran and what it saw.
+        eprintln!("[PPR-TAP] stream ended, collected={} bytes", collected.len());
         if let Ok(html) = String::from_utf8(collected) {
-            if let Ok(shell) = oxide_render::ppr::split_shell(&html) {
-                if !shell.hole_ids.is_empty() {
-                    let stored = shell.html.replace(&nonce, l0_cache::NONCE_SENTINEL);
-                    if let Ok(mut map) = shells.lock() {
-                        if map.len() >= PPR_SHELLS_MAX {
-                            map.clear();
+            match oxide_render::ppr::split_shell(&html) {
+                Ok(shell) => {
+                    eprintln!("[PPR-TAP] split_shell ok, hole_ids={:?}", shell.hole_ids);
+                    if !shell.hole_ids.is_empty() {
+                        let stored = shell.html.replace(&nonce, l0_cache::NONCE_SENTINEL);
+                        if let Ok(mut map) = shells.lock() {
+                            if map.len() >= PPR_SHELLS_MAX {
+                                map.clear();
+                            }
+                            eprintln!("[PPR-TAP] inserting key={}", key.replace(char::from(0x1f), "|"));
+                                map.insert(key, stored);
                         }
-                        map.insert(key, stored);
                     }
+                }
+                Err(e) => {
+                    eprintln!("[PPR-TAP] split_shell FAILED: {:?}", e);
                 }
             }
         }
