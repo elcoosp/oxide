@@ -3010,7 +3010,7 @@ Copy into `WORKLOG.md` and update as WPs merge. Status values: `todo`, `doing`, 
 
 ```bash
 # 1. orient
-cat CONVENTIONS.md HANDOFF.md docs/ideas/oxide-v0.2-feature-designs.md
+cat CONVENTIONS.md docs/deviations.md docs/ideas/oxide-v0.2-feature-designs.md
 git log --oneline -5            # expect 3975f2a at the top for this spec
 # 2. prove the baseline is green before changing anything
 cargo test --workspace --no-fail-fast 2>&1 | tail -20
