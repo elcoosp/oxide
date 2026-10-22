@@ -10,7 +10,7 @@
 
 ## V2.0 Agent contract (read before touching code)
 
-1. **Read order:** `CONVENTIONS.md`, the newest `HANDOFF*.md`, then the WP. If a statement here contradicts the tree, **trust the tree** and record the drift in `WORKLOG.md`.
+1. **Read order:** `CONVENTIONS.md`, `docs/deviations.md`, then the WP. If a statement here contradicts the tree, **trust the tree** and record the drift in `WORKLOG.md`.
 2. **Locate by symbol, not by line number.** Line numbers below are as of `3975f2a` and will move. Each WP gives a `grep` command that finds the code.
 3. **TDD is mandatory.** Write the failing test, run it and see it fail, then implement. Put tests where they do not pay the V8 link cost (CONVENTIONS §8): pure logic belongs in `oxide-router`, `oxide-cache`, `oxide-odf`, and the new `oxide-dispatch` crate (V2-A02). Do not add tests to the `oxide-cli` test target unless they need the in-process CLI.
 4. **Own your files.** Each WP lists files to create and modify. Public API changes are additive. A change outside the list needs a one-line note in `WORKLOG.md`.
