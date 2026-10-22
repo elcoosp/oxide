@@ -138,14 +138,18 @@ pub fn build_route_search_index(
     }
     // Byte-stable order across builds (the determinism test pins this).
     entries.sort_by(|a, b| a.route.cmp(&b.route).then_with(|| a.url.cmp(&b.url)));
-    RouteSearchIndex { version: 1, entries }
+    RouteSearchIndex {
+        version: 1,
+        entries,
+    }
 }
 
 /// Serialize to pretty JSON. Byte-stable across runs (BTreeMap + sort
 /// above + serde_json's stable map ordering means the output does not
 /// depend on hashing).
 pub fn route_search_index_to_json(idx: &RouteSearchIndex) -> crate::Result<String> {
-    serde_json::to_string_pretty(idx).map_err(|e| crate::err("AST-IDX", format!("route search index serialization: {e}")))
+    serde_json::to_string_pretty(idx)
+        .map_err(|e| crate::err("AST-IDX", format!("route search index serialization: {e}")))
 }
 
 // ---------------------------------------------------------------------------
@@ -173,9 +177,13 @@ fn extract_all_tag_text(html: &str, tag: &str) -> Vec<String> {
     let mut i = 0;
     while let Some(rel_open) = html[i..].find(&open) {
         let open_start = i + rel_open;
-        let Some(rel_gt) = html[open_start..].find('>') else { break };
+        let Some(rel_gt) = html[open_start..].find('>') else {
+            break;
+        };
         let text_start = open_start + rel_gt + 1;
-        let Some(rel_close) = html[text_start..].find(&close) else { break };
+        let Some(rel_close) = html[text_start..].find(&close) else {
+            break;
+        };
         let text_end = text_start + rel_close;
         out.push(html[text_start..text_end].to_string());
         i = text_end + close.len();
@@ -244,8 +252,14 @@ mod tests {
         assert_eq!(e.route, "routes/blog/[slug]");
         assert_eq!(e.url, "/blog/hello");
         assert_eq!(e.title.as_deref(), Some("Blog Hello"));
-        assert_eq!(e.headings, vec!["Welcome".to_string(), "First section".to_string()]);
-        assert_eq!(e.excerpt.as_deref(), Some("This is the excerpt, with markup inside."));
+        assert_eq!(
+            e.headings,
+            vec!["Welcome".to_string(), "First section".to_string()]
+        );
+        assert_eq!(
+            e.excerpt.as_deref(),
+            Some("This is the excerpt, with markup inside.")
+        );
     }
 
     #[test]
@@ -298,8 +312,14 @@ mod tests {
         .unwrap();
 
         let mut prerendered = BTreeMap::new();
-        prerendered.insert("routes/index".to_string(), vec!["prerendered/index.html".to_string()]);
-        prerendered.insert("routes/about".to_string(), vec!["prerendered/about.html".to_string()]);
+        prerendered.insert(
+            "routes/index".to_string(),
+            vec!["prerendered/index.html".to_string()],
+        );
+        prerendered.insert(
+            "routes/about".to_string(),
+            vec!["prerendered/about.html".to_string()],
+        );
 
         let a = build_route_search_index(&prerendered, dist);
         let b = build_route_search_index(&prerendered, dist);
@@ -321,7 +341,10 @@ mod tests {
         // the whole index — it just misses that one entry.
         let dir = tempfile::tempdir().unwrap();
         let mut prerendered = BTreeMap::new();
-        prerendered.insert("routes/x".to_string(), vec!["prerendered/x.html".to_string()]);
+        prerendered.insert(
+            "routes/x".to_string(),
+            vec!["prerendered/x.html".to_string()],
+        );
         let idx = build_route_search_index(&prerendered, dir.path());
         assert!(idx.entries.is_empty(), "missing file → skipped, no panic");
     }
