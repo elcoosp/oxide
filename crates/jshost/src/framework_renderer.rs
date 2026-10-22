@@ -86,6 +86,17 @@ pub struct FrameworkRenderInput {
     /// `t()` / `getLocale()` and know which language it renders in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locale: Option<String>,
+
+    /// §7.1 / §9.2: the loader's resolved `event.defer()` values, keyed by
+    /// the id it assigned. `data` carries `{ "__deferred": id }`
+    /// placeholders; the adapter substitutes them before building the
+    /// component tree so a component reads the value, not the placeholder.
+    ///
+    /// Already resolved — the pipeline collects the settle stream before
+    /// calling render. Per-settle streaming is the §7.1 per-adapter path
+    /// (`suspense: 'native'` vs `<Defer>`), a separate change.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub deferred: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 impl FrameworkRenderInput {
@@ -103,6 +114,7 @@ impl FrameworkRenderInput {
             error_route_id: None,
             components: None,
             locale: None,
+            deferred: std::collections::BTreeMap::new(),
         }
     }
 
@@ -126,6 +138,11 @@ impl FrameworkRenderInput {
             if !loc.is_empty() {
                 payload["locale"] = Value::String(loc.clone());
             }
+        }
+        // §7.1 / §9.2: the resolved `defer()` map. The adapter substitutes
+        // `{__deferred: id}` in `data` with these values before rendering.
+        if !self.deferred.is_empty() {
+            payload["deferred"] = serde_json::to_value(&self.deferred).unwrap_or(Value::Null);
         }
         payload
     }
