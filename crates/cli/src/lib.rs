@@ -3648,6 +3648,12 @@ async fn write_prerender(
         if !locale.is_empty() {
             input.locale = Some(locale.to_string());
         }
+        // §7.1 / §9.2: hand the loader's resolved `defer()` values to the
+        // adapter here too. The live-dispatch path populates this; the
+        // prerender path collected the same values for the `<script>` tag
+        // but never gave them to the render, so a prerendered deferred
+        // boundary resolved against `{__deferred: id}` instead of the value.
+        input.deferred = deferred_values.clone();
         // §15.2: merge the plugin's `renderHead` contribution into the
         // neutral model. The adapter's own `head()` output and the plugin's
         // both land in `PageRenderInput.head`, which the adapter's head
