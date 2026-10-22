@@ -8020,16 +8020,19 @@ fn build_dispatch(
                             inject_ms: 0.0,
                         };
                         resp = resp.with_header("Server-Timing", t.server_timing());
+                        // §16.6 / WP-D1: middleware side effects apply
+                        // BEFORE the loader's. The loader runs after
+                        // middleware and its session mutation is the later
+                        // intent; on the wire, HTTP applies same-name
+                        // Set-Cookies in arrival order, so loader-after-
+                        // middleware means the loader's value survives.
+                        for (k, v) in &middleware_headers {
+                            resp = resp.with_header(k, v.clone());
+                        }
                         for c in &loader_set_cookies {
                             resp = resp.with_header("set-cookie", c.clone());
                         }
                         for (k, v) in &loader_headers {
-                            resp = resp.with_header(k, v.clone());
-                        }
-                        // §8.5: headers the middleware phase added ride the
-                        // page response (previously accumulated into a dead
-                        // variable and dropped).
-                        for (k, v) in &middleware_headers {
                             resp = resp.with_header(k, v.clone());
                         }
                         resp
@@ -8058,17 +8061,16 @@ fn build_dispatch(
                     ),
                 );
                 // D1: the loader's side effects belong on the response
-                // whichever render path produced the body. The placeholder
-                // path previously dropped them, so a loader's session
-                // mutation (or any `set-cookie`) vanished for a project
-                // without a framework renderer.
+                // whichever render path produced the body.
+                // §16.6 / WP-D1 precedence: middleware applies first, then
+                // the loader — see the render path above for the reasoning.
+                for (k, v) in &middleware_headers {
+                    resp = resp.with_header(k, v.clone());
+                }
                 for c in &loader_set_cookies {
                     resp = resp.with_header("set-cookie", c.clone());
                 }
                 for (k, v) in &loader_headers {
-                    resp = resp.with_header(k, v.clone());
-                }
-                for (k, v) in &middleware_headers {
                     resp = resp.with_header(k, v.clone());
                 }
                 resp
