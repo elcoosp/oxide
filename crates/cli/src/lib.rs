@@ -3744,6 +3744,15 @@ async fn route_data_response_inner(
                     if let Some(loc) = out.location {
                         resp = resp.with_header("location", loc);
                     }
+                    // §16.6 / WP-D1: a short-circuit (redirect / error)
+                    // that also mutated `event.session` must persist it.
+                    if let Some(cookie) = encode_session_cookie(
+                        out.session.as_ref(),
+                        None,
+                        session_codec,
+                    ) {
+                        resp = resp.with_header("set-cookie", cookie);
+                    }
                     metrics.observe("_data", started.elapsed(), out.status);
                     return resp;
                 }
@@ -3764,6 +3773,9 @@ async fn route_data_response_inner(
         }
     }
 
+    // §16.6 / WP-D1: session cookie for the data path
+    // (attached to the envelope after the loads complete).
+    let mut data_path_session_cookie: Option<String> = None;
     let mut data = serde_json::Value::Object(Default::default());
     // §7.1 / §9.2: resolved defer() values — the /__data envelope carries
     // them so the client router can resolve defer slots after a client-side
@@ -3795,12 +3807,31 @@ async fn route_data_response_inner(
                 if let Some(loc) = out.location {
                     resp = resp.with_header("location", loc);
                 }
+                // §16.6 / WP-D1: a short-circuit (redirect / error)
+                // that also mutated `event.session` must persist it.
+                if let Some(cookie) = encode_session_cookie(
+                    out.session.as_ref(),
+                    None,
+                    session_codec,
+                ) {
+                    resp = resp.with_header("set-cookie", cookie);
+                }
                 metrics.observe("_data", started.elapsed(), out.status);
                 return resp;
             }
             Ok(out) => {
                 data = out.data;
                 deferred = out.deferred;
+                // §16.6 / WP-D1: persist a session mutation on the
+                // data path. The response is built below; the cookie
+                // rides the envelope.
+                if let Some(cookie) = encode_session_cookie(
+                    out.session.as_ref(),
+                    None,
+                    session_codec,
+                ) {
+                    data_path_session_cookie = Some(cookie);
+                }
             }
             Err(e) => {
                 metrics.observe("_data", started.elapsed(), 500);
@@ -3840,6 +3871,12 @@ async fn route_data_response_inner(
     metrics.observe("_data", started.elapsed(), 200);
     let mut resp = oxide_server::OxideResponse::new(200, body)
         .with_header("content-type", "application/oxide+odf");
+    // §16.6 / WP-D1: a session mutation on the page load rides
+    // the data envelope. (The short-circuit cases attach their own
+    // cookie before returning.)
+    if let Some(cookie) = data_path_session_cookie {
+        resp = resp.with_header("set-cookie", cookie);
+    }
     // §8.5: headers the middleware phase added ride the data response too.
     for (k, v) in middleware_headers {
         resp = resp.with_header(k, v.clone());
