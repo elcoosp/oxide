@@ -12,8 +12,8 @@ Every `@oxide/react`, `@oxide/vue`, `@oxide/svelte`, `@oxide/solid` exports:
 | Export | Shape | Purpose |
 | :--- | :--- | :--- |
 | `adapter` | `FrameworkAdapter` | The neutral-IR renderer. Byte-stable, no framework deps, drives §22. |
-| `createAdapter(opts)` | `(AdapterOptions) => FrameworkAdapter` | Factory. With `componentFor`, dispatches to the real renderer for resolved routes. Without, returns `adapter`. |
-| `createRealAdapter(opts)` | `(RealAdapterOptions) => FrameworkAdapter` | Lower-level factory: requires `componentFor` at construction; exposed for tests. |
+| `createAdapter(opts)` | `(AdapterOptions) => FrameworkAdapter` | Factory. Selects the real renderer for `ssr: 'real' \| 'auto'` (or an explicit `componentFor` override); components come from the runtime resolver. With no options it returns `adapter`. |
+| `createRealAdapter(opts)` | `(RealAdapterOptions) => FrameworkAdapter` | Lower-level factory over `makeRealAdapter`; exposed for tests and custom hosts. |
 | *default* export | `(opts?) => FrameworkAdapter` | Callable alias for `createAdapter`. Config surface. |
 
 ## The config surface (spec §14)
@@ -23,10 +23,15 @@ Every `@oxide/react`, `@oxide/vue`, `@oxide/svelte`, `@oxide/solid` exports:
 ```ts
 import react from '@oxide/react'
 export default defineConfig({
-  framework: react({ compiler: true, ssr: 'auto', componentFor: (route) => routes[route]?.component }),
-  // …
+  framework: react({ ssr: 'real' }),
+  routes: { dir: 'src/routes' },
 })
 ```
+
+The config is the §14.1 literal shape: no page/layout/error imports and no
+`componentFor` closure. Route components are collected from `routes.dir` at
+build time. `componentFor`/`layoutFor` survive only as explicit advanced
+overrides (custom hosts, tests); the generated resolver wins by default.
 
 `framework` receives whatever the default export returns — a
 `FrameworkAdapter` (contract 1). The Rust CLI at build time must:
@@ -46,10 +51,27 @@ export default defineConfig({
    `hydrateIsland` / `mount` / `update` exports (bundled into the client
    entry, spec §6.4).
 
+## Where components come from (spec §6.4)
+
+The build emits `dist/server/ssr/index.js` with
+`export const routes = { "<canonical id>": moduleNamespace }`. The worker
+imports it once per module generation and builds the resolver the adapter
+sees as `input.resolve(id)`:
+
+- **prod:** the generated entry (one import per generation — never the config
+  graph per render);
+- **dev:** the route-table → source-file map, imported through the tooling
+  loader so `.tsx`/`.vue`/`.svelte` recompile on HMR.
+
+Canonical ids are the directory form (`routes/blog/[slug]`), no `/page`
+suffix. The resolver unwraps the module namespace (`default`, `Page`, …).
+A missing **page** is the §10.2 `OX-500` diagnostic (HTTP 500), never a
+silent blank body; a missing layout/error logs a diagnostic.
+
 ## What the CLI does NOT need to know
 
-- **Which framework a route uses.** `componentFor(route)` is the caller's
-  responsibility; the adapter asks the caller, not the reverse.
+- **Which framework a route uses.** The runtime resolver owns id → component;
+  the adapter asks the input, not the config.
 - **IR vs real dispatch.** The adapter decides internally based on `opts.ssr`
   and whether the framework deps are installed.
 - **Escaping, streaming, boundary protocol.** All of that lives behind the
@@ -65,18 +87,11 @@ the upstream framework — React, Vue, Svelte, and Solid all emit
 deterministic SSR markup given the same input tree, which is what the
 per-adapter `real-ssr.test.ts` files verify.
 
-## What remains (Rust side)
+## Rust-side status
 
-The Rust CLI does not yet load `oxide.config.ts` at build time. Until it
-does:
-
-- `oxide dev` / `oxide build` / `oxide start` continue to work against the
-  neutral-IR renderer via the existing `crates/render`, `crates/server`, and
-  `crates/jshost` wiring.
-- The real-adapter path is fully exercised by JS tests
-  (`packages/*/test/real-adapter.test.ts`, `real-ssr.test.ts`,
-  `adapter-factory.test.ts`) and by the §22 conformance suite, which
-  imports the named `adapter` export and would continue to do so.
-- Wiring is a §6.3 / §7 pipeline change: the CLI must call `JsHost::call`
-  with the config's `framework` value on a real V8 pool, then route the
-  returned `FrameworkAdapter` through the existing pipeline.
+Wired end to end: `oxide build` emits the entry + manifests, `oxide start`
+dispatches renders with the entry-derived resolver, `oxide dev` supplies the
+source map, and the V8 and Node backends both consume it. See
+`crates/cli/src/framework_shim.rs` (`dev_component_sources`,
+`LazyFrameworkRenderer::with_components`) and
+`crates/jshost/src/framework_renderer.rs` (`ComponentSource`).
