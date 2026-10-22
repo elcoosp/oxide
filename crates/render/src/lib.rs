@@ -282,7 +282,21 @@ pub fn boundary_fallback(id: u32, fallback_html: &str) -> String {
 /// `defer()` returns a placeholder; the server streams the *rendered* boundary,
 /// not the raw data value), but at least the swap event now carries what it
 /// swapped in.
-pub const SWAPPER_SRC: &str = r#"function(id){var t=document.querySelector("template[data-ox-c='"+id+"']"),p=document.querySelector("template[data-ox-b='"+id+"']");if(t&&p){var d=document.createElement("div");d.innerHTML=t.innerHTML;p.replaceWith.apply(p,d.childNodes);document.dispatchEvent(new CustomEvent("ox:swap",{detail:{id:id,value:t.innerHTML}}))}}"#;
+/// The §7.1 swapper.
+///
+/// The selectors are attribute-only (`[data-ox-c='<id>']`, not
+/// `template[data-ox-c='<id>']`) so the same script drives both boundary
+/// hosts:
+///   - the IR renderer emits `<template data-ox-*>` (a template is the
+///     natural inert container and needs no wrapper element);
+///   - a `suspense: 'core'` framework emits its own host element —
+///     `<ox-defer data-ox-*>` — because a Vue/Svelte `<template>` renders
+///     with the framework's hydration markers inside it, which `innerHTML`
+///     would then move into the live DOM.
+///
+/// `querySelector` matches either. A deployment that emits one host shape
+/// is unaffected by the selector being wider.
+pub const SWAPPER_SRC: &str = r#"function(id){var t=document.querySelector("[data-ox-c='"+id+"']"),p=document.querySelector("[data-ox-b='"+id+"']");if(t&&p){var d=document.createElement("div");d.innerHTML=t.innerHTML;p.replaceWith.apply(p,d.childNodes);document.dispatchEvent(new CustomEvent("ox:swap",{detail:{id:id,value:t.innerHTML}}))}}"#;
 
 /// Streamed boundary resolution (§7.1): the content template plus a self-contained
 /// swapper IIFE with `id` baked in. The script does not depend on `window.__oxSwap`
