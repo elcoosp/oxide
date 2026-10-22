@@ -4179,7 +4179,7 @@ path (or documenting it as a dev-only hook) is the follow-up.
 Six of seven user-visible Bucket-2 gaps closed and end-to-end proven
 (router boot, nested layouts, not-found, error.tsx, route.ts, middleware).
 Loading boundaries remain open. Full detail in
-`docs/HANDOFF-bucket2-session.md`.
+`docs/HANDOFF-bucket2-session.md (retired; recoverable from git history)` (retired; recoverable from git history).
 
 ## Session 2026-10-17 (bucket-2 COMPLETE)
 
@@ -4189,7 +4189,7 @@ error.tsx, route.ts, middleware (incl. rewrite + locals everywhere),
 defer data resolution, non-React hydration, loading boundaries,
 streaming SSR (React/Vue/Solid), and manifest chunk preloading.
 260 Rust tests + 240 TS tests green. Detail in
-`docs/HANDOFF-bucket2-complete.md`.
+`docs/HANDOFF-bucket2-complete.md (retired; recoverable from git history)` (retired; recoverable from git history).
 
 ## Session 2026-10-19 — Wave 3 close-out
 
