@@ -116,7 +116,7 @@ export default function Page(props: Props) {
         <div className="container">
           <h2>Features</h2>
           <p className="lede">
-            Everything below ships today behind tests — 1,153 Rust test functions, 361 TypeScript
+            Everything below ships today behind tests — 1,190 Rust test functions, 387 TypeScript
             cases, and a 96-check conformance gate run on every release.
           </p>
           <div className="features">
@@ -209,7 +209,7 @@ export default function Page(props: Props) {
             <p>
               Oxide is pre-alpha software built against a published specification — and audited
               against it: a 21-section compliance scorecard currently at{' '}
-              <strong>93 / 100</strong>, with every finding public, including the ones we are not
+              <strong>95 / 100</strong>, with every finding public, including the ones we are not
               proud of. If you want production-hardened today, wait; if you want to watch a
               framework grow with its test suite open, welcome.
             </p>
