@@ -64,7 +64,7 @@ pool, and collected into the emitted SSR adapter entry. No config-side
 imports, no `componentFor` closure.
 
 `ssr: 'real'` renders through `@vue/server-renderer`;
-`ssr: 'auto'` (default) does the same when Vue is installed and falls back
+`createAdapter()` with no options defaults to real SSR (§14.1); `ssr: 'auto'` explicitly prefers real SSR and falls back to the IR renderer when the framework deps are absent; `ssr: 'ir'` selects the IR renderer directly. `ssr: 'real'` requires real SSR and emits a diagnostic instead of a silent IR fallback
 to the neutral IR renderer otherwise; `ssr: 'ir'` forces the fallback.
 
 ## Capabilities

@@ -72,6 +72,15 @@ export const clientAdapter: FrameworkAdapter = {
 
 /** Options accepted by the adapter factory from oxide.config.ts. */
 export interface AdapterOptions extends Partial<RealAdapterOptions> {
+  /**
+   * §14.1: the default is real SSR. \`ssr: 'real'\` requires it; \`'auto'\`
+   * (the internal strategy value) prefers it and falls back to the IR
+   * renderer when the framework deps are unavailable; \`'ir'\` is the
+   * explicit escape hatch — the pre-§14.1 behavior, useful when an app
+   * ships no framework runtime and only needs the meta-framework's IR
+   * placeholders.
+   */
+  ssr?: 'real' | 'auto' | 'ir'
   /** Reserved: build-time compiler flags (currently informational). */
   compiler?: boolean | Record<string, unknown>
 }
@@ -84,7 +93,15 @@ export interface AdapterOptions extends Partial<RealAdapterOptions> {
  * needs no component imports — `framework: react({ ssr: 'real' })`.
  */
 export function createAdapter(opts: AdapterOptions = {}): FrameworkAdapter {
-  if (opts.ssr === 'real' || opts.ssr === 'auto' || typeof opts.componentFor === 'function') {
+  // §14.1: the default is real SSR. Before this change, \`react({compiler:
+  // true})\` — the literal spec example — returned the IR adapter because
+  // the outer guard only accepted explicit \`ssr\` values. Now the guard is
+  // inverted: everything except the explicit \`'ir'\` escape hatch routes
+  // through \`createRealAdapter\` (with the internal strategy defaulting to
+  // \`'auto'\`, i.e. real SSR with IR fallback when framework deps are
+  // absent — the honest behavior the spec's "framework-agnostic" pitch
+  // needs).
+  if (opts.ssr !== 'ir') {
     return createRealAdapter({
       ssr: opts.ssr ?? 'auto',
       ...(typeof opts.componentFor === 'function' ? { componentFor: opts.componentFor } : {}),

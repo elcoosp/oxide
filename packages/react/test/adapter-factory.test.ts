@@ -30,11 +30,41 @@ test('factory: default export is callable and returns a §7-shaped adapter', () 
   assert.deepEqual(a.extensions, adapter.extensions)
 })
 
-test('factory: createAdapter() with no componentFor returns the IR adapter behavior', async () => {
+test('factory: createAdapter() defaults to real SSR (§14.1)', async () => {
+  // §14.1: the literal config shape has no `ssr` field. Pre-fix, a bare
+  // `createAdapter()` fell through to the IR adapter. Post-fix it routes
+  // through the real adapter.
+  //
+  // Proof: the real adapter (unlike the IR one) consults `input.resolve`
+  // — the runtime-supplied resolver that substitutes for a config-side
+  // `componentFor`. The IR adapter never calls it. So `resolve` firing is
+  // observable evidence the default reached real-ssr. (Real SSR in `auto`
+  // mode still falls back to IR when `resolve` returns nothing and deps
+  // are absent, so the rendered bytes are expected to match — that is the
+  // spec's "framework-agnostic" fallback, not a regression.)
   const a = createAdapter()
-  const html = await drain(a.render(input()))
-  const irHtml = await drain(adapter.render(input()))
-  assert.equal(html, irHtml, 'identical to the named `adapter` export')
+  const calls: string[] = []
+  const html = await drain(
+    a.render(
+      input({
+        // @ts-expect-error — test attaches the resolver the runtime would.
+        resolve: (id: string) => {
+          calls.push(id)
+          return undefined
+        },
+      }),
+    ),
+  )
+  assert.ok(calls.length > 0, `default reached real SSR (resolve consulted): ${calls.length} call(s)`)
+  assert.ok(html.startsWith('<!doctype html>'), 'auto-mode fallback still renders a page')
+})
+
+test('factory: createAdapter({ ssr: "ir" }) is the explicit IR escape hatch', async () => {
+  // The pre-§14.1 behavior, opt-in. Bypasses the real adapter entirely.
+  const a = createAdapter({ ssr: 'ir' })
+  const html = await drain(a.render(input({ route: 'routes/missing' })))
+  const irHtml = await drain(adapter.render(input({ route: 'routes/missing' })))
+  assert.equal(html, irHtml, 'ssr:ir == named `adapter` byte-for-byte')
 })
 
 test('factory: createAdapter({ ssr: "real", componentFor: () => undefined }) emits the OX-500 page', async () => {

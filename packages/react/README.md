@@ -49,7 +49,7 @@ No `componentFor` closure, no hand-imported page map — the build owns the
 route → component mapping (§6.4).
 
 `ssr: 'real'` renders through `react-dom/server` streaming;
-`ssr: 'auto'` (the default) does the same when React is installed and falls
+`createAdapter()` with no options defaults to real SSR (§14.1); `ssr: 'auto'` explicitly prefers real SSR and falls back to the IR renderer when the framework deps are absent; `ssr: 'ir'` selects the IR renderer directly. `ssr: 'real'` requires real SSR and emits a diagnostic instead of a silent IR fallback
 back to the neutral IR renderer otherwise; `ssr: 'ir'` forces the fallback.
 
 ## Capabilities

@@ -1,10 +1,12 @@
 // Config-surface conformance (spec §14 + §6.4 + §7). Every adapter must
 // expose a callable default export that:
-//   (a) with no options returns an adapter byte-identical to the named
-//       `adapter` export on the home route (IR contract preserved),
-//   (b) with `ssr: 'real'` and NO componentFor still selects the real
+//   (a) with `ssr: 'ir'` returns an adapter byte-identical to the named
+//       `adapter` export on the home route (the explicit IR escape hatch),
+//   (b) with no `ssr` field defaults to real SSR (§14.1's literal example) —
+//       a missing route must emit the real adapter's OX-500 diagnostic,
+//   (c) with `ssr: 'real'` and NO componentFor still selects the real
 //       renderer — components come from the runtime resolver (§6.4), and
-//   (c) the smoke apps' configs contain no component imports/closure: the
+//   (d) the smoke apps' configs contain no component imports/closure: the
 //       §14.1 literal shape is the only supported one.
 
 import { test } from 'node:test'
@@ -44,11 +46,42 @@ for (const b of BUNDLES) {
     assert.equal(a.name, b.adapter.name, 'name matches the named `adapter` export')
   })
 
-  test(`config: ${b.name} createAdapter() returns byte-identical IR output`, async () => {
-    const a = b.createAdapter()
+  test(`config: ${b.name} createAdapter({ ssr: 'ir' }) returns byte-identical IR output`, async () => {
+    // The explicit IR escape hatch — pre-§14.1 behavior, opt-in.
+    const a = b.createAdapter({ ssr: 'ir' })
     const viaFactory = await drain(a.render(asRenderInput(atlas.home)))
     const viaNamed = await drain(b.adapter.render(asRenderInput(atlas.home)))
-    assert.equal(viaFactory, viaNamed, 'factory with no opts == named adapter byte-for-byte')
+    assert.equal(viaFactory, viaNamed, 'ssr:ir == named adapter byte-for-byte')
+  })
+
+  test(`config: ${b.name} createAdapter() defaults to real SSR — §14.1 literal`, async () => {
+    // §14.1's literal example is `react({ compiler: true })` with no `ssr`
+    // field. Pre-fix this fell through to the IR adapter. Post-fix it
+    // routes through the real adapter.
+    //
+    // Observable proof: only the real adapter consults `input.resolve`
+    // — the runtime-supplied resolver. The IR adapter never calls it.
+    // (In `auto` mode, real-ssr still falls back to IR when `resolve`
+    // returns nothing and the framework deps are absent, so the bytes
+    // are expected to match — that fallback is the spec's design.)
+    const a = b.createAdapter({ compiler: true })
+    const calls: string[] = []
+    await drain(
+      a.render(
+        asRenderInput({
+          ...atlas.home,
+          // @ts-expect-error — test attaches the resolver the runtime would.
+          resolve: (id: string) => {
+            calls.push(id)
+            return undefined
+          },
+        }),
+      ),
+    )
+    assert.ok(
+      calls.length > 0,
+      `${b.name} default reached real SSR (resolve consulted: ${calls.length} call(s))`,
+    )
   })
 
   test(`config: ${b.name} real SSR needs no componentFor (resolver supplies components)`, async () => {
