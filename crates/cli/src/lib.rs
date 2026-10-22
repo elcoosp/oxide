@@ -2893,6 +2893,23 @@ fn emit_pwa_worker(
     // to boot offline. Route-specific chunks are SWR'd on first use rather
     // than precached (a large site's full chunk set would blow the install
     // window).
+    // §16 / K3 / WP-r9-8: resolve the offline fallback BEFORE building the
+    // precache list, so an existing fallback route can be precached. The
+    // old order validated the fallback but never added it — `caches.match`
+    // missed on every offline navigation and degraded to the `/` shell.
+    let offline_fallback = cfg
+        .sw
+        .offline_fallback
+        .clone()
+        .unwrap_or_else(|| "/offline".to_string());
+    let fallback_exists = dist
+        .join("prerendered")
+        .join(offline_fallback.trim_start_matches('/'))
+        .with_extension("html")
+        .is_file()
+        || offline_fallback == "/";
+    let effective_fallback = if fallback_exists { &offline_fallback } else { "/" };
+
     let mut precache: Vec<String> = vec!["/".to_string()];
     if let Some(routes) = client_manifest.get("routes").and_then(|r| r.as_object()) {
         for row in routes.values() {
@@ -2920,6 +2937,12 @@ fn emit_pwa_worker(
             precache.push(orig.clone());
         }
     }
+    // §16 / K3 / WP-r9-8: precache the resolved fallback route. `install`
+    // runs `caches.addAll(PRECACHE)`, so the offline navigation's
+    // `caches.match(OFFLINE_FALLBACK)` only hits if the fallback is here.
+    if effective_fallback != "/" {
+        precache.push(effective_fallback.to_string());
+    }
     precache.sort();
     precache.dedup();
     let list = precache
@@ -2927,24 +2950,6 @@ fn emit_pwa_worker(
         .map(|s| format!("  {s:?},"))
         .collect::<Vec<_>>()
         .join("\n");
-
-    // §16 / K3: offline fallback. Default `/offline` if the project has
-    // that route; otherwise `/` (the precached shell).
-    let offline_fallback = cfg
-        .sw
-        .offline_fallback
-        .clone()
-        .unwrap_or_else(|| "/offline".to_string());
-    // Check the fallback actually exists in the build. If not, fall back
-    // to the shell (`/`) so a broken nav still gets *something* from cache
-    // rather than a browser offline page.
-    let fallback_exists = dist
-        .join("prerendered")
-        .join(offline_fallback.trim_start_matches('/'))
-        .with_extension("html")
-        .is_file()
-        || offline_fallback == "/";
-    let effective_fallback = if fallback_exists { &offline_fallback } else { "/" };
 
     let sw = format!(
         r#"// Oxide service worker (§16.6 / K3). Stale-while-revalidate for

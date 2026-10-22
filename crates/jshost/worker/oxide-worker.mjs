@@ -566,7 +566,13 @@ async function dispatchPluginCall(id, input) {
 // module instead of re-evaluating the config graph each time.
 const frameworkConfigCache = new Map(); // `${path}:gen${generation}` -> Promise<object>
 function loadFrameworkConfig(path) {
-  const key = `${path}:gen${moduleGeneration}`;
+  // §6.4 / WP-r9-5: key on the DISK generation, not this worker's in-memory
+  // `moduleGeneration`. `framework:invalidate` bumps the counter on exactly
+  // one worker; the pool dispatches renders to any of N, so keying on the
+  // per-worker counter left the other N-1 serving the stale config forever.
+  // `currentGeneration()` reads `.oxide/hmr-generation` fresh (the same
+  // reason `versioned()` uses it).
+  const key = `${path}:gen${currentGeneration()}`;
   if (!frameworkConfigCache.has(key)) {
     for (const k of frameworkConfigCache.keys()) {
       if (k.startsWith(`${path}:`)) frameworkConfigCache.delete(k);

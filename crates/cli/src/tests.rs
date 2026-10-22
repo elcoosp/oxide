@@ -7172,3 +7172,37 @@ async fn request_trace_reaches_the_loader() {
     );
 }
 
+/// §16 / K3 / WP-r9-8: when the offline fallback route exists in the
+/// build, it must be in the precache list. `install` runs
+/// `caches.addAll(PRECACHE)`; an offline navigation's
+/// `caches.match(OFFLINE_FALLBACK)` only hits if the fallback is cached.
+/// The fallback used to be resolved *after* the precache list was built,
+/// so it never entered the cache.
+#[tokio::test]
+async fn sw_emitter_precaches_the_offline_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    let dist = dir.path();
+    std::fs::create_dir_all(dist.join("prerendered")).unwrap();
+    std::fs::write(dist.join("prerendered/offline.html"), "<h1>offline</h1>").unwrap();
+
+    let cfg: oxide_config::OxideConfig = serde_json::from_value(serde_json::json!({
+        "manifest": { "name": "X", "short_name": "X" },
+    }))
+    .expect("parse config");
+    let client_manifest = serde_json::json!({ "build_id": "x", "routes": {}, "assets": {} });
+    let mut buf: Vec<u8> = Vec::new();
+    emit_pwa_worker(&cfg, dist, &client_manifest, &mut buf).expect("emit ok");
+
+    let body = std::fs::read_to_string(dist.join("sw.js")).unwrap();
+    // The fallback is the effective one (`/offline`, which exists) and is
+    // in PRECACHE.
+    assert!(
+        body.contains(r#"const OFFLINE_FALLBACK = "/offline";"#),
+        "fallback constant: {body}"
+    );
+    assert!(
+        body.contains(r#"  "/offline","#),
+        "fallback route is precached: {body}"
+    );
+}
+

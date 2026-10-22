@@ -14,8 +14,8 @@
     <img src="https://img.shields.io/badge/Node-%E2%89%A524-339933?style=flat-square&logo=node.js" alt="Node"/>
     <img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/>
     <img src="https://img.shields.io/badge/Workspace-17%20crates%20%2B%207%20packages-6F4E37?style=flat-square" alt="Workspace"/>
-    <img src="https://img.shields.io/badge/Code-%E2%89%88109k%20lines-9CF?style=flat-square" alt="Lines of code"/>
-    <img src="https://img.shields.io/badge/Tests-1133%20Rust%20%7C%20351%2F362%20TS-brightgreen?style=flat-square" alt="Tests"/>
+    <img src="https://img.shields.io/badge/Code-%E2%89%88111k%20lines-9CF?style=flat-square" alt="Lines of code"/>
+    <img src="https://img.shields.io/badge/Tests-1153%20Rust%20%7C%20376%2F377%20TS-brightgreen?style=flat-square" alt="Tests"/>
     <img src="https://img.shields.io/badge/ODF-16%20golden%20fixtures-00BFFF?style=flat-square" alt="ODF golden fixtures"/>
     <img src="https://img.shields.io/badge/TS%20runtime-zero%20npm%20deps-228B22?style=flat-square" alt="Zero dependencies"/>
   </p>
@@ -166,7 +166,7 @@ request → hyper 1.x → limits + request id → static assets (precompressed, 
 ```text
 crates/         cli · config · graph · compiler · bundler · jshost · router · server ·
                 render · cache · odf · assets · dev · plugin · adapters · core-wasm ·
-                diagnostics                                   (17 crates, ~84k lines)
+                diagnostics                                   (17 crates, ~85k lines)
 packages/       oxide (runtime) · @oxide/react · @oxide/vue · @oxide/svelte ·
                 @oxide/solid · create-oxide · oxide-website   (runtime pkgs: zero deps)
 conformance/    Atlas reference app — one assertion set × four adapters
@@ -218,7 +218,7 @@ typed arrays, `undefined`, cyclic and shared references, `Error` and deferred pr
 The repository is built test-first: each crate's `*_tdd.rs` suites were written against its
 contract before the implementation.
 
-- **1,133 Rust test functions** across 17 crates (50 of them engine-dependent e2e tests gated
+- **1,153 Rust test functions** across 17 crates (26 of them engine-dependent e2e tests gated
   behind `#[ignore]`), including `proptest` property suites on the router and graph engines,
   `cargo-fuzz` harnesses for the ODF decoder, router matcher, config extractor and path
   splitter, and acceptance tests for the cache-security closures (single-flight owner-drop
@@ -226,12 +226,15 @@ contract before the implementation.
   rebuilds) and the defer-streaming wave (per-settle flush with the close tag withheld and
   re-emitted last, close tags split across chunks, no-settle byte-identity, and client-side
   late-settle / rejection / dispose slot resolution).
-- **362 TypeScript test cases** across 47 files on Node's built-in test runner — including
+- **377 TypeScript test cases** across 50 files on Node's built-in test runner — including
   the ODF decoder against the same golden fixtures as the Rust encoder (typed values:
   `BigInt`, `Date`, `Map`, `Set`, `URL`, `RegExp`, typed arrays), router / island
   tests against a hand-rolled fake DOM (no jsdom, no deps), suites for the defer script
   protocol and client-side loading boundaries, the per-adapter `<Image>` components,
-  the client message-catalog loader, and the per-route message-subset preference.
+  the client message-catalog loader, the per-route message-subset preference, the
+  content-collections runtime (entry shape, content-hash caching, root resolution) and
+  the route-search client scorer (tokenize → prefix match → field-weighted, byte-stable
+  ties).
 - **Conformance gate** — the Atlas reference app runs one 24-assertion set (contract shape,
   SSR content + framework markers, merged head, deterministic markup, streaming boundaries,
   deferred boundaries in settle order, error / not-found, islands, actions JS-on/off, server
@@ -243,11 +246,12 @@ contract before the implementation.
   two-client isolation, ordered SSE streaming, and the config-gated `/_oxide/og` endpoint
   (PNG magic bytes, 400 on a missing title, byte-determinism).
 
-CI runs eleven gates: Rust fmt + tests on a Linux / macOS / Windows matrix, Node 24 package
+CI runs twelve gates: Rust fmt + tests on a Linux / macOS / Windows matrix, Node 24 package
 tests, the conformance suite, the V8 fixture check, a benchmark gate that **fails the
 build on >5% regression** against `benchmarks/report.md`, a Redis service-container job for
 the L2 integration suite, an ODF fuzz-property job, config-schema stability + stale-string
-gates, an HMR latency harness, and the Node-loader jshost e2e.
+gates, an HMR latency harness that fails on zero successful iterations, the Node-loader
+jshost e2e, and a Playwright Chromium job running the 18 browser specs.
 
 ## Project status
 
@@ -283,16 +287,27 @@ ancestor chains with threaded `event.locals` whose headers ride cached responses
 a routes dir and nothing more — reach real streaming SSR through the emitted adapter entry,
 no config-side imports), the lazy SSR entry with manifest-only module loads and a
 `/_oxide/ready` endpoint backed by renderer warm-up, `server.h3Advertise` gating of
-`Alt-Svc`, loader-session mutation persistence on the serve path, per-locale prerender
+`Alt-Svc`, loader-session mutation persistence on the serve path (sequential and parallel
+loader arms, `/__data`, with the loader cookie winning over middleware on render paths),
+per-locale prerender
 across all three prerender arms, a CAS-keyed MDX precompile cache, V8 module loads routed
 through the shared compile/transform pipeline with a blake3 memo, per-route `trace_id` on
-dev waterfalls and MCP rows, `audit --json`, `layout_chain` recorded in both manifests,
+dev waterfalls and MCP rows with `deferred-settles` and `load-overlap` stages recorded and
+MCP-exposed, trace-context threading through all six live loader call sites, `audit --json`,
+`layout_chain` recorded in both manifests,
+the content-collections runtime (`getCollection`/`getEntry` over build-emitted
+`entries.json`), a build-time route-search index over prerendered HTML with a dependency-
+free client-side scorer, a build-generated service worker (manifest-derived precache,
+stale-while-revalidate, offline fallback, build-id-scoped caches with old-cache eviction),
+MAC-sealed `http` L2 cache payloads, a worker-level e2e pinning resolver-supplied
+components without `componentFor`, and per-package adapter READMEs with logos,
 socket routes (RFC6455 handshake through `socket:run`),
 connected dev HMR including the loader-edit round trip and a one-time client bundle on
 fresh dev, `/_oxide/og` config-gated Open Graph PNG rendering (SVG → resvg → PNG with an
 MP area cap) now guarded by a token-bucket rate limit evaluated before the render (429 +
-`Retry-After`), strict MAC sealing for Redis/S3 cache payloads by default
-(`OXIDE_CACHE_SEALING=legacy` opts out for one migration window) with single-flight
+`Retry-After`), strict MAC sealing for remote L2 cache payloads by default
+(`OXIDE_CACHE_SEALING=legacy` opts out for one migration window; Redis, S3 and HTTP L2
+handlers all sealed) with single-flight
 cleanup that always clears the owner's entry, an allowlist for headers forwarded through
 SSRF-guarded fetches, a TTL'd asset-body cache, per-env client-bundle fingerprints that
 skip rebundling an unchanged env, per-route chunk-hash records in `.oxide/graph.json`,
@@ -302,9 +317,9 @@ effects of six hooks gated by the fixture CI job), per-adapter `<Image>` compone
 the signed AVIF/WebP/JPEG/PNG pipeline (build-time `srcset` + intrinsic dimensions,
 runtime `/_oxide/image` with `remotePatterns` + SSRF guards), per-locale message catalogs
 emitted at build with a client-side loader that prefers per-route subsets, code frames on
-the forbidden-import and snapshot-side-effect diagnostic families, and two documented,
+the forbidden-import and snapshot-side-effect diagnostic families, and three documented,
 TDD-locked spec deviations (per-chunk bundling → env-level reuse; WOFF2 → TrueType
-subsetting), `content.d.ts` typed-content emission, real
+subsetting; dev route additions require a dev-server restart), `content.d.ts` typed-content emission, real
 `oxide add` (package-manager-detected installs), `oxide audit` (live OSV queries with a
 24h cache) and `oxide migrate` with working `--write` codemods, per-route prerender reuse
 backed by the persisted DemandGraph (`.oxide/graph.json`, surfaced in `analyze` and `mcp`),
@@ -322,8 +337,9 @@ silently), partial
 prerendering is experimental and honest about it (`render.ppr` turns on a runtime shell
 cache for `defer()` boundaries in dev and `oxide start` — first request captured, later
 requests stream fresh holes; it is not build-time partial prerendering, is not integrated
-with L0/vary, does not invalidate shells on rebuild, and currently caches shells of
-cookie-setting responses — fix in flight), the edge build's consumer chain
+with L0/vary, refuses shells from loader-cookie and error responses but a middleware-cookie
+blind spot remains, does not invalidate shells on rebuild, and its 256-entry cap clears
+wholesale), the edge build's consumer chain
 (`dist/edge.wasm` now builds and emits, but nothing emits the `edge_bundle.js` the Worker
 dispatches to, the wasm-preference branches still mismatch the JS ABI for head merge, and
 the edge cache key is a documented divergence from the L0 key),
@@ -333,27 +349,34 @@ arguments via a positional fallback table, module `routes` / `serverMiddleware` 
 passed only at serve boot, and `cacheHandler` is consulted in dev+build but not in
 `start`), plugin-transform coverage on the V8 path beyond module loads (module loads now route
 through the shared compile/transform pipeline with a blake3 memo; op-level coverage still
-trails Node), client-side i18n hydration (the server resolves the locale but emits a
+trails Node), the dev framework-config cache (keyed per worker module-generation while
+cache invalidation reaches a single worker of the render pool — the other workers can serve
+a stale config after an edit), client-side i18n hydration (the server resolves the locale but emits a
 hardcoded `<html lang="en">`, so the client catalog loader always falls back to `'en'`;
 ICU formatting is not yet evaluated at render time), image-result caching and concurrency limits (every request
 re-transforms; `sizes` is user-supplied and the LQIP placeholder arm is unreachable), the
-collections runtime query surface (`content.d.ts` emits inferred types; declared schemas
-and typed queries are not wired), route `meta` exports (title path wired; the flat shape
-drops richer head fields), MAC sealing for the `http` cache handler (Redis/S3 are sealed;
-the HTTP L2 driver still serves plain JSON), rate-limit keying that still trusts
+collections loader wiring (the `getCollection`/`getEntry` runtime is shipped, but no shipped
+loader calls it yet, dev content changes are not re-read, `OXIDE_ROOT` is dev-only so
+`start`/`render` from a foreign cwd miss, and build-time prerender loaders run before the
+entries file is emitted), route `meta` exports (title path wired; the flat shape
+drops richer head fields), loader-session mutation persistence on
+mutate-then-redirect short-circuits (the worker omits `session` on thrown redirects;
+`/__data` also re-issues cookies for untouched sessions and inverts the middleware/loader
+precedence), rate-limit keying that still trusts
 `x-forwarded-for` (spoofable, unbounded buckets, no `og.rate_limit` config knob yet),
 the per-route message-subset bridge (the emitter ships namespaced keys the client looks
 up exactly, and a subset replaces the catalog instead of merging), per-route chunk records
 that no consumer reads yet, the secret-scan→fingerprint ordering that lets a failed scan
-go green on retry, config-schema drift (`framework.islands` and `server.h3Advertise`
-unpublished; a duplicated `static` key in the schema macro), the test half of the
-ComponentSource migration (11 TS assertions still pin the pre-migration adapter behavior —
-the suite is 351/362 until they land), the scaffolder (still emits the pre-ComponentSource
-config shape, and a flat `l0MaxSize` the typed cache config rejects), trace-context
-threading into five of six loader call sites, MDX compilation beyond
+go green on retry, the route-search index (emitted unconditionally with no opt-out and
+served `immutable` despite an unhashed name, so browsers can pin a stale index), the PWA
+offline fallback (validated at build but never precached, so offline navigations degrade
+to the `/` shell), trace-context threading into actions and endpoints (all six loader
+sites are threaded), MDX compilation beyond
 the reachable compile arm, and the neutral IR renderer's layout nesting (dev-fixture path
-only). See
-[`HANDOFF.md`](HANDOFF.md) for the current thread list and what remains.
+only; the bare-factory `ssr` default is also still undecided — spec-shaped configs reach
+real SSR, but the literal §14.1 example needs `ssr: 'real'`). See
+[`HANDOFF.md`](HANDOFF.md) and [`docs/deviations.md`](docs/deviations.md) for the current
+thread list and what remains.
 
 ## Documentation
 
