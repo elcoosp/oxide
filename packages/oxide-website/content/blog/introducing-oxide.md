@@ -87,10 +87,12 @@ This very site is rendered by Oxide — streaming SSR, one island, OG image card
 ## Honest status
 
 Oxide is **pre-alpha**, built against a published specification, and the gaps are documented in
-public: partial prerendering's shell splitter is wired at runtime (first-request shell cache; a build-time shell and rebuild invalidation are the r9 follow-up); the
-edge build emits a WASM blob that no consumer chain reads yet; socket fan-out currently reaches
-only the calling socket. The full list lives in the r9 scorecard (`docs/scorecard-r9.md`); the README carries the summary; the 2026-10-19 HANDOFF is superseded.
-audit round, and we don't market the list's contents as features.
+public: partial prerendering's shell splitter runs at request time, with a build-time shell and
+rebuild invalidation still to come; the edge bundle ships and is consumed, but its wasm
+acceleration only fires for the self-hosting layout; socket fan-out currently reaches only the
+calling socket. The full list lives in `docs/deviations.md` and the README's "wiring in
+progress" section — we update it every audit round, and we don't market the list's contents as
+features.
 
 If you want production-hardened, wait six months. If you want to watch a framework grow with its
 test suite open — or claim some of the ~40 open work packages — [the repo is
