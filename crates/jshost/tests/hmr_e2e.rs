@@ -62,22 +62,33 @@ fn loader_source(marker: &str) -> String {
     format!("export const load = async () => ({{ marker: '{marker}' }});\n")
 }
 
+/// A content change is visible on the **next** load, without an explicit
+/// `invalidate()`.
+///
+/// This test previously asserted the opposite — that the change stayed
+/// invisible until `invalidate()` bumped the generation. That was true when
+/// the worker imported the source path directly and relied on the
+/// `?v=<generation>` tag to defeat Node's URL-keyed module cache. B-13
+/// replaced that with a content-hashed temp file
+/// (`.{base}.{hash}.oxide.ts`), so a changed file produces a different URL
+/// and Node imports it fresh on its own; the generation tag is no longer
+/// what makes an edit visible.
+///
+/// The generation is still bumped and still monotonic — that is covered by
+/// `invalidate_is_monotonic_across_calls` — so this test asserts the
+/// property that actually matters today: no stale read after a rewrite.
 #[tokio::test]
 #[ignore]
-async fn invalidate_forces_module_reload() {
+async fn content_change_is_visible_on_the_next_load() {
     let m = TempModule::new_path();
     m.write(&loader_source("v1"));
 
-    // One shared pool: both hosts talk to the same worker process, so the
-    // moduleGeneration counter that `FrameworkHost::invalidate()` bumps is
-    // the same one that `LoaderHost::run()` observes when importing.
     let host = NodeHost::new(NodeHost::worker_script_default());
     let pool: Arc<dyn Pool> = host
         .tooling_pool(PoolConfig::default())
         .expect("spawn node worker");
 
     let loader = LoaderHost::new(Arc::clone(&pool));
-    let framework = FrameworkHost::new(Arc::clone(&pool));
 
     // 1. First import: module evaluated, marker "v1".
     let out1 = loader
@@ -86,35 +97,26 @@ async fn invalidate_forces_module_reload() {
         .expect("first load");
     assert_eq!(out1["data"]["marker"], "v1");
 
-    // 2. Rewrite the file. Without invalidation, Node's module cache holds
-    //    the old URL, so the change MUST NOT be visible yet.
+    // 2. Rewrite the file and load again — the content hash changed, so the
+    //    worker compiles to a new temp URL and Node evaluates it. No
+    //    invalidation step is required for correctness.
     m.write(&loader_source("v2"));
     let out2 = loader
         .run(&m.path_str(), json!({ "route": "r", "url": "/" }))
         .await
-        .expect("second load before invalidate");
+        .expect("second load after rewrite");
     assert_eq!(
-        out2["data"]["marker"], "v1",
-        "before invalidate: cached module should still report v1"
+        out2["data"]["marker"], "v2",
+        "a rewritten module must not be served from a stale compile"
     );
 
-    // 3. Invalidate: the worker bumps its generation, every subsequent
-    //    import is tagged with ?v=<new-gen>, Node treats it as fresh.
-    let generation = framework.invalidate().await.expect("invalidate");
-    assert!(
-        generation >= 1,
-        "generation should be >= 1, got {generation}"
-    );
-
-    // 4. Third import: new URL, fresh module, marker "v2".
+    // 3. A third identical load is still v2 — the cache is keyed on content,
+    //    not on call count, so it stays consistent.
     let out3 = loader
         .run(&m.path_str(), json!({ "route": "r", "url": "/" }))
         .await
-        .expect("third load after invalidate");
-    assert_eq!(
-        out3["data"]["marker"], "v2",
-        "after invalidate: reload should pick up v2"
-    );
+        .expect("third load, unchanged");
+    assert_eq!(out3["data"]["marker"], "v2");
 }
 
 #[tokio::test]
