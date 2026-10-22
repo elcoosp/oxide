@@ -365,6 +365,10 @@ fn endpoint_with(patterns: Vec<RemoteImagePattern>) -> ImageEndpoint {
         remote_patterns: patterns,
         ssrf_allow_list: Vec::new(),
         remote_max_bytes: 1024,
+        result_cache: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
+        max_concurrency: 0,
+        in_flight: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        max_dimension: 8192,
     }
 }
 
