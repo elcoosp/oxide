@@ -196,13 +196,16 @@ attempting the implementation:
    mechanism from Vue's, which means the "one `<Defer>` per framework" in
    the spec is genuinely two implementations, not one shared one.
 
-3. **The swapper `<script>` has no nonce.** `boundaryContent(id, html)`
-   defaults `nonce` to empty, and the IR renderer calls it without one
-   (`packages/react/src/render.ts`) — so under `strict-dynamic` CSP the
-   swapper is already blocked. That is a **pre-existing bug in the IR
-   path**, not something `<Defer>` introduces, but any streaming adapter
-   inherits it. The adapter has no nonce at render time; the pipeline
-   injects CSP nonces into the response, not into the worker's chunks.
+3. ~~**The swapper `<script>` has no nonce.**~~ **FIXED** — the nonce now
+   travels `PageRenderInput.nonce` → `FrameworkRenderInput.nonce` →
+   `RenderInput.nonce`, and each IR renderer passes it to
+   `boundaryContent`. Both call sites populate it: the live path with
+   `nonce_for(request_id)`, the prerender path with the build-time nonce it
+   already stamps on its own injected tags. Verified end-to-end — the
+   emitted swapper carries `nonce='…'`, and it is omitted when the
+   deployment configures no CSP. This was a pre-existing bug in the IR
+   path, independent of `<Defer>`, and would have blocked any streaming
+   adapter.
 
 **What was tried and reverted.** A render-scoped registry
 (`createBoundaryRegistry` / `withBoundaryRegistry` / `registerBoundary` /
@@ -211,7 +214,6 @@ on hitting obstacle 1 — the emitted markup was wrong in a way that would
 have shipped broken boundaries.
 
 **What would change it.** Solve obstacle 1 first (a raw-HTML escape hatch
-the adapter can use), then 3 (thread the request nonce to the worker, or
-have the pipeline rewrite the swapper's script tag on the way out), then
-implement Vue and Svelte separately. Obstacle 3 alone is worth fixing
-regardless: the IR path's swapper is currently CSP-blocked in production.
+the adapter can use), then obstacle 2 (Svelte needs a compiled component,
+so its `<Defer>` is a separate implementation). Obstacle 3 is fixed; the
+nonce now reaches every streaming render.
