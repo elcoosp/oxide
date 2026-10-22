@@ -83,20 +83,34 @@ test('getCollection caches by mtime — a second read is free', async () => {
   unsetRoot()
 })
 
-test('the cache is invalidated when the file changes', async () => {
+test('the cache is invalidated on a same-size rewrite', async () => {
+  // WP-r9-1: the previous cache key was (mtimeMs, size). Two same-size
+  // rewrites within one mtime quantum — or any mtime rounding on tmpfs —
+  // served stale entries. This test's two payloads are byte-length-
+  // identical by construction (`slug: 'a'` vs `slug: 'b'`, same JSON
+  // envelope); the content hash is what must detect the change.
   const root = await fixture('blog', [{ slug: 'a', frontmatter: {}, body: 'a' }])
   const first = await getCollection('blog')
   assert.equal(first.length, 1)
-  // Rewrite — different mtime and size, so the cache must re-read.
-  await writeFile(
-    join(root, 'dist', 'content', 'blog.entries.json'),
-    JSON.stringify({
-      name: 'blog',
-      entries: [{ slug: 'b', frontmatter: {}, body: 'b' }],
-    }),
+  assert.equal(first[0].slug, 'a')
+
+  const aBytes = JSON.stringify({
+    name: 'blog',
+    entries: [{ slug: 'a', frontmatter: {}, body: 'a' }],
+  })
+  const bBytes = JSON.stringify({
+    name: 'blog',
+    entries: [{ slug: 'b', frontmatter: {}, body: 'b' }],
+  })
+  assert.equal(
+    aBytes.length,
+    bBytes.length,
+    'premise: the two payloads are byte-length-identical',
   )
+
+  await writeFile(join(root, 'dist', 'content', 'blog.entries.json'), bBytes)
   const second = await getCollection('blog')
-  assert.equal(second[0].slug, 'b', 'mtime change -> fresh read')
+  assert.equal(second[0].slug, 'b', 'same-size rewrite is not served stale')
   unsetRoot()
 })
 

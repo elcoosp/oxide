@@ -22,7 +22,8 @@
 // process.cwd(). The env var is what a `--root` invocation needs — the
 // worker's cwd is inherited from the parent shell, not from the flag.
 
-import { readFile, stat } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 
 /** One entry as emitted by the build. `frontmatter` is the raw parsed
@@ -45,10 +46,7 @@ interface EntriesFile {
 
 // Per-collection cache keyed by (path, mtime_ms, size). A rebuild
 // bumps mtime; a read of the same file twice in one request is free.
-const cache = new Map<
-  string,
-  { mtimeMs: number; size: number; entries: ContentEntry[] }
->()
+const cache = new Map<string, { hash: string; entries: ContentEntry[] }>()
 
 function projectRoot(): string {
   return process.env.OXIDE_ROOT ?? process.cwd()
@@ -65,9 +63,10 @@ export async function getCollection(name: string): Promise<ContentEntry[]> {
     throw new Error('getCollection: name is required')
   }
   const path = join(projectRoot(), 'dist', 'content', `${name}.entries.json`)
-  let st
+  // Read once; a missing file becomes the "no entries" error below.
+  let raw: string
   try {
-    st = await stat(path)
+    raw = await readFile(path, 'utf8')
   } catch {
     throw new Error(
       `getCollection(${JSON.stringify(name)}): no entries file at ${path}. ` +
@@ -75,14 +74,18 @@ export async function getCollection(name: string): Promise<ContentEntry[]> {
         `\`oxide build\` run since it was added?`,
     )
   }
+  // §16 / K1 / WP-r9-1: key on a content hash, not (mtime, size). Two
+  // same-size rewrites within one mtime quantum — or any mtime rounding
+  // on tmpfs — used to serve stale entries. The file is small (a few KB
+  // per collection); hashing it is cheaper than a wrong answer.
+  const hash = createHash('sha256').update(raw).digest('hex')
   const cached = cache.get(path)
-  if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) {
+  if (cached && cached.hash === hash) {
     return cached.entries
   }
-  const raw = await readFile(path, 'utf8')
   const doc = JSON.parse(raw) as EntriesFile
   const entries = Array.isArray(doc.entries) ? doc.entries : []
-  cache.set(path, { mtimeMs: st.mtimeMs, size: st.size, entries })
+  cache.set(path, { hash, entries })
   return entries
 }
 

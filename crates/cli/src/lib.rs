@@ -2324,10 +2324,17 @@ fn emit_content_search_indexes(
             })).collect::<Vec<_>>(),
         });
         if let Ok(pretty) = serde_json::to_string_pretty(&entries_json) {
-            let _ = std::fs::write(
+            // WP-r9-1: do not swallow the write error. A silent failure
+            // here surfaces later as a misleading "no entries file" from
+            // `getCollection` at request time; the build should fail loud.
+            std::fs::write(
                 out_dir.join(format!("{}.entries.json", coll.name)),
                 pretty,
-            );
+            )
+            .map_err(|e| anyhow::anyhow!(
+                "write content/{}.entries.json: {e}",
+                coll.name
+            ))?;
         }
         outln!(
             w,
@@ -3935,6 +3942,12 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // cannot double the prefix — `PathBuf::join` returns the RHS unchanged
     // when it is absolute.
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
+    // §16 / K1 / WP-r9-1: thread the project root to worker
+    // subprocesses so `getCollection` resolves `dist/content`
+    // against the project, not the shell's cwd. Edition 2024:
+    // set_var is process-global; this runs before any worker
+    // thread spawns.
+    unsafe { std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref()); }
     let dist = rootp.join("dist");
 
     // §5.1 early cutoff. The fingerprint walk is only paid when the previous
@@ -3952,6 +3965,12 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     }
 
     let mut cfg = load_config_strict(&rootp, "production")?;
+
+    // §16 / K1 / WP-r9-1: emit content entries BEFORE the
+    // prerender phase. A prerendered loader that calls
+    // `getCollection` must see the current build's data — not
+    // the previous build's (or nothing, on a first build).
+    emit_content_search_indexes(&rootp, &cfg, &dist, w)?;
     // §15.2: `config` runs before the build uses the config; a plugin may
     // return a patch object. `configResolved` runs after, read-only. Both
     // need a pool, which the build has not built yet — so they fire through
@@ -5758,8 +5777,6 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
 
     let written = oxide_adapters::emit(target, &artifact, &dist.join("deploy"))
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
-    // §16.5: search indexes for every configured content collection.
-    emit_content_search_indexes(&rootp, &cfg, &dist, w)?;
     // under `.oxide/types/`. A failure is a warning (the app still ships).
     if plugin_declares_any(&rootp, &cfg, &["typegen"]) {
         let results = fire_lifecycle_hook(
@@ -9361,6 +9378,12 @@ async fn start_server_inner_full(
     // the client manifest) is absolute — the worker resolves a module path
     // against its own cwd, so a relative root breaks `action:run` / `loader:run`.
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
+    // §16 / K1 / WP-r9-1: thread the project root to worker
+    // subprocesses so `getCollection` resolves `dist/content`
+    // against the project, not the shell's cwd. Edition 2024:
+    // set_var is process-global; this runs before any worker
+    // thread spawns.
+    unsafe { std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref()); }
     let mut cfg = load_config_or_default(&rootp, "production");
     // §10.1: refine inferred render modes from the AST, exactly as `oxide build`
     // does — otherwise the live server sees the scanner's line-oriented guess
@@ -11042,6 +11065,12 @@ async fn cmd_render(
     use oxide_jshost::{FrameworkHost, JsHost, LoaderHost, NodeHost, PoolConfig};
 
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
+    // §16 / K1 / WP-r9-1: thread the project root to worker
+    // subprocesses so `getCollection` resolves `dist/content`
+    // against the project, not the shell's cwd. Edition 2024:
+    // set_var is process-global; this runs before any worker
+    // thread spawns.
+    unsafe { std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref()); }
     let config_path = find_config_file(&rootp)?;
     // Load the config to find `routes.dir` for the loader lookup. Non-strict:
     // a config that the Rust extractor cannot fully parse (e.g. a
