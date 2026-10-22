@@ -7855,7 +7855,20 @@ fn build_dispatch(
                         // store 30 lines below correctly refuses
                         // cookie-setting responses; this is the same guard.
                         // An error-status render is likewise never a shell.
-                        let body = if error_status == 0 && loader_set_cookies.is_empty() {
+                        // §10.8 / WP-r9-4: the tap guard must also refuse
+                        // a middleware Set-Cookie. `middleware_headers` is
+                        // applied at :8029 (after this decision) — without
+                        // this check a middleware-mutating route freezes its
+                        // shell exactly as a loader-mutating route did
+                        // before the r8-P0.3 guard. Both PPR and the L0
+                        // store shared this blind spot.
+                        let middleware_sets_cookie = middleware_headers
+                            .iter()
+                            .any(|(k, _)| k.eq_ignore_ascii_case("set-cookie"));
+                        let body = if error_status == 0
+                            && loader_set_cookies.is_empty()
+                            && !middleware_sets_cookie
+                        {
                             match ppr_for_request.as_ref() {
                                 Some(shells) => {
                                     let pkey = format!("{l0_route}\x1f{}", req_owned.url);

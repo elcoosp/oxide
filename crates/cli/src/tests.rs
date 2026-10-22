@@ -3847,6 +3847,22 @@ fn tree_with_layout_and_parentless_page() -> std::sync::Arc<oxide_router::RouteT
     std::sync::Arc::new(tree)
 }
 
+fn tree_with_page_and_server_module() -> std::sync::Arc<oxide_router::RouteTree> {
+    let mut tree = oxide_router::RouteTree::new();
+    tree.insert(oxide_router::RouteEntry {
+        id: oxide_router::RouteId("routes/index".into()),
+        kind: oxide_router::RouteKind::Page,
+        segments: vec![],
+        file: std::path::PathBuf::from("index/page.tsx"),
+        render_mode: Some("static".into()),
+        tags: Vec::new(),
+        has_server_module: true,
+        slot: None,
+        needs_parent: false,
+    });
+    std::sync::Arc::new(tree)
+}
+
 fn tree_with_static_page_and_middleware() -> std::sync::Arc<oxide_router::RouteTree> {
     let mut tree = oxide_router::RouteTree::new();
     tree.insert(oxide_router::RouteEntry {
@@ -7203,6 +7219,96 @@ async fn sw_emitter_precaches_the_offline_fallback() {
     assert!(
         body.contains(r#"  "/offline","#),
         "fallback route is precached: {body}"
+    );
+}
+
+// ------------------------------ §10.8 / WP-r9-4: PPR tap guard
+
+/// A loader whose only effect is a Set-Cookie — the exact shape the tap
+/// guard must refuse to shell.
+struct CookieLoader;
+#[async_trait::async_trait]
+impl oxide_server::LoaderRunner for CookieLoader {
+    fn name(&self) -> &str {
+        "cookie-loader"
+    }
+    async fn run(
+        &self,
+        _input: oxide_server::LoaderRunInput,
+    ) -> oxide_server::Result<oxide_server::LoaderOutput> {
+        Ok(oxide_server::LoaderOutput {
+            status: 200,
+            set_cookies: vec!["oxide_session=loader-mutated".to_string()],
+            ..Default::default()
+        })
+    }
+}
+
+#[tokio::test]
+async fn ppr_never_shells_a_loader_cookie_response() {
+    use std::sync::Arc;
+
+    let shells: crate::PprShells =
+        Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(PprRenderer));
+    let loader: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(Arc::new(CookieLoader));
+
+    let dispatch = build_dispatch(
+        tree_with_page_and_server_module(),
+        Arc::new(oxide_server::Metrics::new()),
+        Vec::new(),
+        renderer,
+        loader,
+        std::path::PathBuf::new(),
+        None, None, None, None, None, None, None, None,
+        false, Vec::new(), None, None,
+        Some(Arc::clone(&shells)),
+    );
+
+    let _ = dispatch(test_request("GET", "/")).await;
+
+    let stored = shells.lock().unwrap().len();
+    assert_eq!(
+        stored, 0,
+        "a loader-cookie response must not be captured as a PPR shell"
+    );
+}
+
+#[tokio::test]
+async fn ppr_never_shells_a_middleware_cookie_response() {
+    use std::sync::Arc;
+
+    let shells: crate::PprShells =
+        Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(PprRenderer));
+    let mw: Option<Arc<dyn oxide_server::MiddlewareDispatcher>> =
+        Some(Arc::new(ScriptedMiddleware {
+            headers: vec![(
+                "set-cookie".to_string(),
+                "oxide_session=mw-mutated".to_string(),
+            )],
+            locals: None,
+        }));
+
+    let dispatch = build_dispatch(
+        tree_with_static_page_and_middleware(),
+        Arc::new(oxide_server::Metrics::new()),
+        Vec::new(),
+        renderer,
+        None,
+        std::path::PathBuf::new(),
+        None, None, None, None, None, None, None,
+        mw,
+        false, Vec::new(), None, None,
+        Some(Arc::clone(&shells)),
+    );
+
+    let _ = dispatch(test_request("GET", "/")).await;
+
+    let stored = shells.lock().unwrap().len();
+    assert_eq!(
+        stored, 0,
+        "a middleware-cookie response must not be captured as a PPR shell"
     );
 }
 
