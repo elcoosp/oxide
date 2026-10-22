@@ -267,6 +267,8 @@ pub trait EndpointDispatcher: Send + Sync {
         // §8.1 middleware.ts / §9.1: request-scoped locals injected by
         // middleware. A route.ts's `ctx.locals` reads this.
         locals: &serde_json::Value,
+        // §20: W3C trace context for outgoing fetches inside the endpoint.
+        trace: Option<&serde_json::Value>,
     ) -> std::result::Result<EndpointRunResult, EndpointRunError>;
 }
 
