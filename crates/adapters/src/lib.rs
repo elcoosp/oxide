@@ -893,10 +893,11 @@ export default {
 /// `oxide-core-wasm`. When the wasm module is absent, the pure-JS fallbacks
 /// below produce identical output, so the Worker is correct either way.
 ///
-/// Edge cache keys are the **raw composite string** (`route\0params\0vary\0build_id`),
-/// not a hash: KV/R2 accept arbitrary-length keys up to 512 bytes, and this
-/// keeps the edge key space explicitly distinct from the binary server's
-/// blake3-hashed L0 keys (which would otherwise collide).
+/// Edge cache keys are canonical blake3 L0 keys (`blake3("L0" NUL route
+/// NUL params NUL vary NUL build_id)`, 64 hex chars), matching the native
+/// `oxide-cache` L0 key and the `oxide-core-wasm` export. The JS fallback
+/// carries a small BLAKE3 implementation so an edge deploy without the wasm
+/// module still produces the same key.
 pub fn edge_handler_js(build_id: &str) -> String {
     // Format! with escaped braces is painful; use a raw string + replace.
     let tpl = r#"// Oxide edge handler (spec §18, §2 D18). build_id: __BUILD_ID__
@@ -922,15 +923,108 @@ const useWasm = (fn, ...args) => {
   try { return wasm[fn](...args); } catch { return null; }
 };
 
+// ---- BLAKE3 (fallback only) -------------------------------------------------
+// Tiny single-key BLAKE3 for the no-wasm path. It replaces the old raw
+// composite fallback so edge keys are byte-identical to native L0 keys.
+const B3_IV = new Uint32Array([0x6A09E667,0xBB67AE85,0x3C6EF372,0xA54FF53A,0x510E527F,0x9B05688C,0x1F83D9AB,0x5BE0CD19]);
+const B3_PERM = [2,6,3,10,7,0,4,13,1,11,12,5,9,14,15,8];
+const b3u = (x) => x >>> 0;
+const b3rot = (x, n) => b3u((x >>> n) | (x << (32 - n)));
+function b3g(s, a, b, c, d, x, y) {
+  s[a] = b3u(s[a] + s[b] + x); s[d] = b3rot(s[d] ^ s[a], 16);
+  s[c] = b3u(s[c] + s[d]); s[b] = b3rot(s[b] ^ s[c], 12);
+  s[a] = b3u(s[a] + s[b] + y); s[d] = b3rot(s[d] ^ s[a], 8);
+  s[c] = b3u(s[c] + s[d]); s[b] = b3rot(s[b] ^ s[c], 7);
+}
+function b3compress(cv, block, counter, blockLen, flags) {
+  const s = new Uint32Array(16);
+  s.set(cv, 0); s[8] = B3_IV[0]; s[9] = B3_IV[1]; s[10] = B3_IV[2]; s[11] = B3_IV[3];
+  s[12] = b3u(counter); s[13] = b3u(Math.floor(counter / 4294967296)); s[14] = blockLen; s[15] = flags;
+  let m = block.slice();
+  for (let r = 0; r < 7; r++) {
+    b3g(s, 0, 4, 8, 12, m[0], m[1]); b3g(s, 1, 5, 9, 13, m[2], m[3]);
+    b3g(s, 2, 6, 10, 14, m[4], m[5]); b3g(s, 3, 7, 11, 15, m[6], m[7]);
+    b3g(s, 0, 5, 10, 15, m[8], m[9]); b3g(s, 1, 6, 11, 12, m[10], m[11]);
+    b3g(s, 2, 7, 8, 13, m[12], m[13]); b3g(s, 3, 4, 9, 14, m[14], m[15]);
+    if (r < 6) { const n = new Uint32Array(16); for (let i = 0; i < 16; i++) n[i] = m[B3_PERM[i]]; m = n; }
+  }
+  const out = new Uint32Array(16);
+  for (let i = 0; i < 16; i++) out[i] = s[i] ^ s[i + 8];
+  for (let i = 0; i < 8; i++) out[i + 8] = s[i + 8] ^ cv[i];
+  return out;
+}
+function b3words(bytes) {
+  const n = Math.max(1, Math.ceil(bytes.length / 64)) * 16;
+  const w = new Uint32Array(n);
+  for (let i = 0; i < bytes.length; i++) w[i >> 2] |= bytes[i] << ((i & 3) * 8);
+  return w;
+}
+function b3chunk(chunk, counter) {
+  const blocks = Math.max(1, Math.ceil(chunk.length / 64));
+  const w = b3words(chunk);
+  let cv = B3_IV.slice();
+  let out = null;
+  for (let i = 0; i < blocks; i++) {
+    const len = i < blocks - 1 ? 64 : chunk.length - i * 64;
+    const flags = (i === 0 ? 1 : 0) | (i === blocks - 1 ? 2 : 0);
+    out = b3compress(cv, w.slice(i * 16, (i + 1) * 16), counter, len, flags);
+    if (i < blocks - 1) cv = out.slice(0, 8);
+  }
+  return { cv: out.slice(0, 8), blocks, w, lastLen: chunk.length - (blocks - 1) * 64, counter };
+}
+function b3hex(bytes32) {
+  let h = "";
+  for (let i = 0; i < bytes32.length; i++) h += bytes32[i].toString(16).padStart(2, "0");
+  return h;
+}
+function b3root(out) {
+  const b = new Uint8Array(32);
+  const dv = new DataView(b.buffer);
+  for (let i = 0; i < 8; i++) dv.setUint32(i * 4, out[i], true);
+  return b;
+}
+function blake3Hex(input) {
+  const bytes = typeof input === "string" ? new TextEncoder().encode(input) : input;
+  const chunks = [];
+  for (let off = 0; off < bytes.length; off += 1024) chunks.push(bytes.subarray(off, Math.min(off + 1024, bytes.length)));
+  if (chunks.length === 0) chunks.push(new Uint8Array(0));
+  const leaves = chunks.map((c, i) => b3chunk(c, i));
+  if (leaves.length === 1) {
+    const l = leaves[0];
+    let cv = B3_IV.slice();
+    if (l.blocks > 1) {
+      for (let i = 0; i < l.blocks - 1; i++) {
+        const flags = i === 0 ? 1 : 0;
+        cv = b3compress(cv, l.w.slice(i * 16, (i + 1) * 16), l.counter, 64, flags).slice(0, 8);
+      }
+    }
+    const block = l.w.slice((l.blocks - 1) * 16, l.blocks * 16);
+    return b3hex(b3root(b3compress(cv, block, l.counter, l.lastLen, (l.blocks === 1 ? 1 : 0) | 2 | 8)));
+  }
+  let level = leaves.map((l) => l.cv);
+  while (level.length > 1) {
+    const next = [];
+    for (let i = 0; i < level.length; i += 2) {
+      if (i + 1 >= level.length) { next.push(level[i]); continue; }
+      const block = new Uint32Array(16);
+      block.set(level[i], 0); block.set(level[i + 1], 8);
+      const isRoot = level.length === 2;
+      const out = b3compress(B3_IV, block, 0, 64, 4 | (isRoot ? 8 : 0));
+      if (isRoot) return b3hex(b3root(out));
+      next.push(out.slice(0, 8));
+    }
+    level = next;
+  }
+  return "";
+}
+
 // ---- edge cache key ---------------------------------------------------------
-// The edge key is the raw composite string, NOT a hash. KV keys allow up to
-// 512 bytes; a hash would only save bytes we do not need. It also keeps edge
-// keys explicitly out of the binary-server's blake3 keyspace (which would
-// otherwise risk accidental collisions across processes).
+// Canonical L0 key: blake3 over layer, route, params, vary and build id,
+// NUL-separated — the same bytes as `oxide_cache::CacheKey::canonical_parts`.
 function cacheKey(route, params, vary, build_id) {
   const viaWasm = useWasm("edge_cache_key", route, params, vary, build_id);
   if (viaWasm !== null) return String(viaWasm);
-  return ["edge", route, params, vary, build_id].join("\u0000");
+  return blake3Hex(["L0", route, params, vary, build_id].join("\u0000"));
 }
 
 // ---- head merge -------------------------------------------------------------
