@@ -1358,6 +1358,50 @@ fn parallel_load_savings_ms(a_ms: f64, b_ms: f64) -> f64 {
     a_ms.min(b_ms).max(0.0)
 }
 
+/// §16.6 / WP-D1: encode a loader's post-run session into a `Set-Cookie`
+/// value, but only when it actually changed. Compares against the inbound
+/// session (the object decoded from the request's cookie); an untouched
+/// session — including the `Some({})` the worker returns for a
+/// no-cookie-start project — never re-issues a cookie.
+///
+/// Returns `Some(cookie)` when a cookie should ride the response, `None`
+/// when the session is unchanged or absent. Extracted so the four serve
+/// paths (sequential page, parallel page, /__data short-circuit, /__data
+/// page) share one implementation instead of four near-copies.
+fn encode_session_cookie(
+    after: Option<&serde_json::Value>,
+    before: Option<&serde_json::Value>,
+    codec: Option<&oxide_server::SessionCodec>,
+) -> Option<String> {
+    let codec = codec?;
+    let after = after?;
+    // Unchanged object → no cookie. `Some({})` (the worker's default for a
+    // project with no inbound cookie) equals `None` before → not a change.
+    let is_empty_object = after.as_object().map(|o| o.is_empty()).unwrap_or(false);
+    let changed = match (after, before) {
+        (a, Some(b)) => a != b,
+        (a, None) => !is_empty_object && !a.is_null(),
+    };
+    if !changed {
+        return None;
+    }
+    let mut sess = oxide_server::Session::new();
+    if let Some(obj) = after.as_object() {
+        for (k, v) in obj {
+            sess.insert(k.clone(), v.clone());
+        }
+    }
+    match sess.encode(codec) {
+        Ok(token) => Some(format!(
+            "oxide_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=1800"
+        )),
+        Err(e) => {
+            tracing::warn!(error = %e.0.message, "session encode failed; cookie not set");
+            None
+        }
+    }
+}
+
 fn canonical_route_id(id: &str) -> String {
     id.strip_suffix("/page").unwrap_or(id).to_string()
 }
@@ -3583,6 +3627,9 @@ async fn route_data_response(
     middleware_headers: &[(String, String)],
     layout_module_paths: &[(String, std::path::PathBuf)],
     locale: &str,
+    // §16.6 / WP-D1: session codec for re-sealing a loader-mutated
+    // session on the data path.
+    session_codec: Option<&oxide_server::SessionCodec>,
     // B-17: the `/__data` branch also shows up in the inspector waterfall,
     // split into the middleware phase it shares with SSR and its own load.
     middleware_ms: f64,
@@ -3601,6 +3648,7 @@ async fn route_data_response(
         middleware_headers,
         layout_module_paths,
         locale,
+        session_codec,
     )
     .await;
     if let Some(rec) = waterfall {
@@ -3634,6 +3682,8 @@ async fn route_data_response_inner(
     layout_module_paths: &[(String, std::path::PathBuf)],
     // SPEC-10: the resolved request locale.
     locale: &str,
+    // §16.6 / WP-D1: session codec (see the wrapper's doc).
+    session_codec: Option<&oxide_server::SessionCodec>,
 ) -> oxide_server::OxideResponse {
     // `?route=<percent-encoded path>` (default `/`).
     let route_q = req
@@ -6793,6 +6843,7 @@ fn build_dispatch(
                     &middleware_headers,
                     &layout_module_paths,
                     &resolved_locale,
+                    session_codec.as_deref(),
                     middleware_ms,
                     waterfall.as_ref(),
                 )
@@ -7290,6 +7341,19 @@ fn build_dispatch(
                         loader_set_cookies = out.set_cookies;
                         loader_headers = out.headers;
                         deferred_values = out.deferred;
+                        // §16.6 / WP-D1: the parallel arm (page + last
+                        // layout run under tokio::join!) had no session
+                        // encode. Any page that does not call parent() —
+                        // the default — dropped its session mutation. This
+                        // is the common case, so this is the highest-impact
+                        // of the four D1 gaps.
+                        if let Some(cookie) = encode_session_cookie(
+                            out.session.as_ref(),
+                            session_before.as_ref(),
+                            session_codec.as_deref(),
+                        ) {
+                            loader_set_cookies.push(cookie);
+                        }
                     }
                     Err(e) => {
                         tracing::error!(
@@ -7366,30 +7430,16 @@ fn build_dispatch(
                             loader_headers = out.headers;
                             deferred_values = out.deferred;
                             page_settles = Some(settles);
-                            // D1: a loader that mutated `event.session` has
-                            // its change persisted. Compare against the
-                            // inbound session so an untouched one does not
-                            // re-issue a cookie on every request.
-                            if let (Some(codec), Some(after)) =
-                                (session_codec.as_deref(), out.session.as_ref())
-                            {
-                                if Some(after) != session_before.as_ref() {
-                                    let mut sess = oxide_server::Session::new();
-                                    if let Some(obj) = after.as_object() {
-                                        for (k, v) in obj {
-                                            sess.insert(k.clone(), v.clone());
-                                        }
-                                    }
-                                    match sess.encode(codec) {
-                                        Ok(token) => loader_set_cookies.push(format!(
-                                            "oxide_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=1800"
-                                        )),
-                                        Err(e) => tracing::warn!(
-                                            error = %e.0.message,
-                                            "session encode failed; cookie not set",
-                                        ),
-                                    }
-                                }
+                            // §16.6 / WP-D1: a loader that mutated
+                            // `event.session` has its change persisted. The
+                            // helper compares against the inbound session so
+                            // an untouched one does not re-issue a cookie.
+                            if let Some(cookie) = encode_session_cookie(
+                                out.session.as_ref(),
+                                session_before.as_ref(),
+                                session_codec.as_deref(),
+                            ) {
+                                loader_set_cookies.push(cookie);
                             }
                         }
                         Err(e) => {
