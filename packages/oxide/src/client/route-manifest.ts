@@ -31,6 +31,14 @@ export interface RouteManifestEntry {
   renderMode?: string
   js_bytes?: number
   modules?: string[]
+  /**
+   * §8.2 / §16.3 / O1: layout chain, outermost → innermost. Each entry
+   * is a manifest route id (routes/layout, routes/nested/layout) — not
+   * a page key with a trailing slash-page segment. Populated by the
+   * build's enrichment pass; older manifests have no field and parse as
+   * the empty chain.
+   */
+  layout_chain?: string[]
 }
 
 /** The subset of the wire manifest the client runtime consumes (§6.4). */
@@ -167,6 +175,36 @@ export function routeIdFor(routeRef: string, manifest: ClientManifestLike): stri
     }
   }
   return best
+}
+
+/**
+ * §8.2 / O1: the layout chunks a route needs, given a matched manifest key.
+ *
+ * Each page's manifest entry carries `layout_chain` — the layout route ids
+ * (e.g. `routes/layout`), which the bundler emits directly as RouteBundles
+ * with no page suffix. This walks the chain and returns the layout chunk
+ * names (entry + preload) so a preload walk can warm them in parallel with
+ * the page.
+ *
+ * Pure and dependency-free: the caller has already resolved the page's
+ * manifest key. Returns an empty array when the route has no entry, no
+ * `layout_chain`, or a chain referencing ids the manifest does not carry —
+ * a missing layout chunk is simply not preloaded, never an error.
+ */
+export function layoutChunksFor(
+  routeId: string,
+  manifest: ClientManifestLike,
+): string[] {
+  const entry = manifest?.routes?.[routeId]
+  if (!entry?.layout_chain || entry.layout_chain.length === 0) return []
+  const out: string[] = []
+  for (const layoutId of entry.layout_chain) {
+    const layout = manifest.routes[layoutId]
+    if (!layout) continue
+    if (layout.entry_chunk) out.push(layout.entry_chunk)
+    if (layout.preload) out.push(...layout.preload)
+  }
+  return out
 }
 
 /**
