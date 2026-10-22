@@ -2266,8 +2266,14 @@ fn serve_image_endpoint(endpoint: Option<&ImageEndpoint>, raw_url: &str) -> Nati
         if let Some(d) = dim {
             if d == 0 || d > endpoint.max_dimension {
                 return NativePrefix::Raw(
-                    OxideResponse::new(400, format!("image `{name}` out of range (max {})", endpoint.max_dimension))
-                        .with_header("content-type", "text/plain; charset=utf-8"),
+                    OxideResponse::new(
+                        400,
+                        format!(
+                            "image `{name}` out of range (max {})",
+                            endpoint.max_dimension
+                        ),
+                    )
+                    .with_header("content-type", "text/plain; charset=utf-8"),
                 );
             }
         }
