@@ -11240,13 +11240,24 @@ async fn cmd_render(
         }
     }
 
-    let input = serde_json::json!({
+    let mut input = serde_json::json!({
         "route": route,
         "url": url_str,
         "params": params_json,
         "data": effective_data,
         "head": { "meta": [], "link": [], "style": [], "script": [] },
     });
+    // §6.4 / P0-10: `oxide render` must attach the same ComponentSource
+    // the serve path builds, or a real-SSR config renders through the
+    // worker's fallback path (which has no config-side component
+    // resolution anymore) and 500s on every page. The entry is resolved
+    // from the manifest by the same helper the renderer uses; the
+    // filesystem probe is the fallback for a project that has not built
+    // yet (in which case the worker's own IR path takes over and no
+    // component is needed).
+    if let Some(entry) = crate::framework_shim::resolve_ssr_entry(&rootp.join("dist/server")) {
+        input["components"] = serde_json::json!({ "entry": entry });
+    }
 
     let fw = FrameworkHost::new(pool);
     let path_str = config_path.to_string_lossy().to_string();

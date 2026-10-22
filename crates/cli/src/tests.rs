@@ -7411,3 +7411,52 @@ async fn __data_untouched_session_does_not_reissue_a_cookie() {
     );
 }
 
+// ------------------------------ §6.4 / P0-10: SSR entry resolution
+
+#[test]
+fn resolve_ssr_entry_honours_the_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    let dist_server = dir.path();
+    // A conventional lazy entry — the perf-preferred shape.
+    std::fs::create_dir_all(dist_server.join("ssr")).unwrap();
+    std::fs::write(dist_server.join("ssr/index.js"), "// eager").unwrap();
+    std::fs::write(dist_server.join("ssr/lazy.js"), "// lazy").unwrap();
+    // A manifest that names the eager entry (the bundler's contract).
+    std::fs::write(
+        dist_server.join("server.manifest.json"),
+        r#"{"build_id":"x","routes":{},"adapter_entry":"ssr/index.js"}"#,
+    )
+    .unwrap();
+
+    // Manifest says eager, but the lazy sibling exists and the A/B env is
+    // unset — the render path prefers lazy.
+    let resolved = crate::framework_shim::resolve_ssr_entry(dist_server)
+        .expect("entry resolved");
+    assert!(
+        resolved.ends_with("ssr/lazy.js"),
+        "lazy sibling preferred when present: {resolved}"
+    );
+}
+
+#[test]
+fn resolve_ssr_entry_falls_back_to_convention_without_a_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    let dist_server = dir.path();
+    std::fs::create_dir_all(dist_server.join("ssr")).unwrap();
+    std::fs::write(dist_server.join("ssr/index.js"), "// eager").unwrap();
+
+    // No manifest: filesystem convention finds the eager entry.
+    let resolved = crate::framework_shim::resolve_ssr_entry(dist_server)
+        .expect("entry resolved");
+    assert!(
+        resolved.ends_with("ssr/index.js"),
+        "convention fallback: {resolved}"
+    );
+}
+
+#[test]
+fn resolve_ssr_entry_is_none_when_nothing_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(crate::framework_shim::resolve_ssr_entry(dir.path()).is_none());
+}
+

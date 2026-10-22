@@ -635,6 +635,57 @@ pub struct LazyFrameworkRenderer {
     inner: tokio::sync::OnceCell<Arc<dyn FrameworkRenderer>>,
 }
 
+/// §6.4 / P0-10: resolve the build's SSR adapter entry.
+///
+/// The manifest's `adapter_entry` is the source of truth for *where* the
+/// entry lives (a build could emit it under a different name); the
+/// filesystem convention is the fallback for a build predating the
+/// manifest field. Within the resolved location, `lazy.js` is preferred
+/// for the render path — Wave M measured ~3x fewer first-request imports
+/// with it — unless `OXIDE_SSR_EAGER=1` forces the eager entry (the A/B
+/// escape hatch). `server-fn` / `action` dispatch always uses the eager
+/// entry; only the render path goes through here.
+pub(crate) fn resolve_ssr_entry(dist_server: &std::path::Path) -> Option<String> {
+    // (1) Ask the manifest where the entry is.
+    let declared = std::fs::read(dist_server.join("server.manifest.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|v| v.get("adapter_entry").and_then(|s| s.as_str()).map(str::to_string));
+
+    // (2) Prefer the lazy sibling of the declared entry (Wave M perf win).
+    let prefer_eager = std::env::var_os("OXIDE_SSR_EAGER").is_some();
+    if !prefer_eager {
+        if let Some(decl) = declared.as_deref() {
+            if let Some(lazy_sibling) = decl.strip_suffix("index.js") {
+                let lazy = dist_server.join(format!("{lazy_sibling}lazy.js"));
+                if lazy.is_file() {
+                    return Some(lazy.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
+    // (3) The declared entry itself.
+    if let Some(decl) = declared {
+        let entry = dist_server.join(&decl);
+        if entry.is_file() {
+            return Some(entry.to_string_lossy().to_string());
+        }
+    }
+
+    // (4) Filesystem convention (a build with no manifest, e.g. a test
+    // fixture that wrote chunks by hand).
+    let lazy = dist_server.join("ssr/lazy.js");
+    let eager = dist_server.join("ssr/index.js");
+    if !prefer_eager && lazy.is_file() {
+        Some(lazy.to_string_lossy().to_string())
+    } else if eager.is_file() {
+        Some(eager.to_string_lossy().to_string())
+    } else {
+        None
+    }
+}
+
 impl LazyFrameworkRenderer {
     /// Fill the component source for this render. Production derives
     /// `<project>/dist/server/ssr/index.js` when the build wrote one; dev
@@ -647,24 +698,11 @@ impl LazyFrameworkRenderer {
             .unwrap_or_default();
         if src.entry.is_none() && src.sources.is_empty() {
             if let Some(root) = std::path::Path::new(&self.config_path).parent() {
-                // §6.4 / Wave M: prefer the lazy entry — importing it is
-                // cheap, and the render path then pulls only the matched
-                // route + its layouts + error boundary, not the whole
-                // bundle. The eager `index.js` stays as the entry that
-                // server-fn / action dispatch consume (those modules
-                // register at import side effect).
-                // §6.4 / Wave M: prefer the lazy entry (importing it is
-                // cheap; the render path then pulls only the matched route
-                // + layouts + error boundary). `OXIDE_SSR_EAGER=1` forces
-                // the eager entry — used by the Wave M A/B measurement to
-                // confirm which shape is faster for a given app size.
-                let prefer_eager = std::env::var_os("OXIDE_SSR_EAGER").is_some();
-                let lazy = root.join("dist/server/ssr/lazy.js");
-                let eager = root.join("dist/server/ssr/index.js");
-                if !prefer_eager && lazy.is_file() {
-                    src.entry = Some(lazy.to_string_lossy().to_string());
-                } else if eager.is_file() {
-                    src.entry = Some(eager.to_string_lossy().to_string());
+                // §6.4 / P0-10: the manifest's `adapter_entry` names where
+                // the build wrote the SSR entry; `resolve_ssr_entry` reads
+                // it and prefers the lazy sibling (Wave M perf win).
+                if let Some(entry) = resolve_ssr_entry(&root.join("dist/server")) {
+                    src.entry = Some(entry);
                 }
             }
         }
