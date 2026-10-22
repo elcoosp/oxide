@@ -81,6 +81,9 @@ pub enum Command {
         r#static: bool,
         #[arg(long)]
         mode: Option<String>,
+        /// §17.2: deny outbound network from plugin/tooling workers.
+        #[arg(long)]
+        offline_plugins: bool,
     },
     /// Start the production server (binary target, §12).
     Start {
@@ -431,7 +434,16 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
             root,
             r#static,
             mode: _,
-        } => cmd_build(&root, r#static, w).await,
+            offline_plugins,
+        } => {
+            if offline_plugins {
+                // Read by `PoolConfig::default` for every worker pool the
+                // build spawns. Process-global is correct here: the build is
+                // one process and the flag applies to all its workers.
+                unsafe { std::env::set_var("OXIDE_OFFLINE_PLUGINS", "1") };
+            }
+            cmd_build(&root, r#static, w).await
+        }
         Command::Start { root, port } => cmd_serve(&root, port, "oxide start", w).await,
         Command::Preview { root } => cmd_serve(&root, None, "oxide preview", w).await,
         Command::Routes { root } => cmd_routes(&root, w).await,
@@ -2137,6 +2149,40 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 let g = hub.bump_stale_generation();
                 tracing::debug!(generation = g, "stale generation bumped");
             }
+            // §15.2: run every plugin's `handleHotUpdate` for this batch.
+            // The one-shot `dev` path already did this, but the long-running
+            // `dev` watcher only invalidated the graph — a plugin returning
+            // `{ reload: true }` had no effect after the initial build.
+            let mut force_reload = false;
+            if let Some(pool) = hmr_pool.as_ref() {
+                for ev in &events {
+                    let p = match ev {
+                        oxide_dev::FileEvent::Modified(p)
+                        | oxide_dev::FileEvent::Created(p)
+                        | oxide_dev::FileEvent::Removed(p) => p.clone(),
+                    };
+                    let results = call_js_plugin_hook(
+                        &rootp,
+                        &cfg,
+                        pool,
+                        "handleHotUpdate",
+                        serde_json::json!({ "path": p.to_string_lossy() }),
+                    )
+                    .await;
+                    for r in results {
+                        if r.get("reload").and_then(|b| b.as_bool()) == Some(true) {
+                            force_reload = true;
+                        }
+                    }
+                }
+            }
+            if force_reload {
+                if let Some(hub) = started.hmr.as_ref() {
+                    hub.publish(oxide_dev::HmrMessage::FullReload {
+                        reason: "plugin handleHotUpdate requested a reload".to_string(),
+                    });
+                }
+            }
             idle_since = std::time::Instant::now();
             warmed = false;
         }
@@ -3558,7 +3604,7 @@ async fn write_prerender(
         // same neutral model. Route-level head is the more specific intent,
         // so its entries land after a plugin's.
         if let Some(meta) = route_meta.as_ref() {
-            input.head = merge_neutral_head(input.head, meta.clone());
+            input.head = merge_neutral_head(input.head, normalize_route_meta(meta.clone()));
         }
         renderer
             .render(input)
@@ -3571,7 +3617,7 @@ async fn write_prerender(
         // belong in it, so the head is built from their merged model rather
         // than hardcoded empty.
         let head_model = match route_meta.as_ref() {
-            Some(meta) => merge_neutral_head(plugin_head.clone(), meta.clone()),
+            Some(meta) => merge_neutral_head(plugin_head.clone(), normalize_route_meta(meta.clone())),
             None => plugin_head.clone(),
         };
         format!(
@@ -3756,6 +3802,12 @@ async fn route_data_response_inner(
     // error) short-circuits the data response too — client navigation must
     // see what a full-page load would have seen.
     let mut parent_data: serde_json::Value = serde_json::Value::Null;
+    // §16.6 / WP-D1: layout loaders share the middleware locals, so a layout
+    // that mutates `event.session` must both persist the cookie and make the
+    // new state visible to the page loader that runs next. Keep a local
+    // copy rather than mutating the borrowed `middleware_locals`.
+    let mut locals_for_load = middleware_locals.clone();
+    let mut layout_session_cookie: Option<String> = None;
     if let Some(runner) = loader_runner {
         for (lid, lpath) in layout_module_paths {
             let mut linput = oxide_server::LoaderRunInput::new(
@@ -3783,7 +3835,7 @@ async fn route_data_response_inner(
             });
             linput.headers = req.headers.as_ref().clone();
             linput.params = params.clone();
-            linput.locals = middleware_locals.clone();
+            linput.locals = locals_for_load.clone();
             linput.locale = locale.to_string();
             linput.parent_data = parent_data.clone();
             match runner.run(linput).await {
@@ -3808,7 +3860,7 @@ async fn route_data_response_inner(
                     // the layout arm.
                     if let Some(cookie) = encode_session_cookie(
                         out.session.as_ref(),
-                        middleware_locals.get("session"),
+                        locals_for_load.get("session"),
                         session_codec,
                     ) {
                         resp = resp.with_header("set-cookie", cookie);
@@ -3818,6 +3870,19 @@ async fn route_data_response_inner(
                 }
                 Ok(out) => {
                     parent_data = out.data;
+                    // §16.6 / WP-D1: persist a layout mutation on the
+                    // non-short-circuit path too, mirroring SSR. The page
+                    // loader then starts from the mutated session.
+                    if let Some(cookie) = encode_session_cookie(
+                        out.session.as_ref(),
+                        locals_for_load.get("session"),
+                        session_codec,
+                    ) {
+                        layout_session_cookie = Some(cookie);
+                    }
+                    if let Some(sess) = out.session {
+                        locals_for_load["session"] = sess;
+                    }
                 }
                 Err(e) => {
                     metrics.observe("_data", started.elapsed(), 500);
@@ -3835,7 +3900,7 @@ async fn route_data_response_inner(
 
     // §16.6 / WP-D1: session cookie for the data path
     // (attached to the envelope after the loads complete).
-    let mut data_path_session_cookie: Option<String> = None;
+    let mut data_path_session_cookie: Option<String> = layout_session_cookie.clone();
     let mut data = serde_json::Value::Object(Default::default());
     // §7.1 / §9.2: resolved defer() values — the /__data envelope carries
     // them so the client router can resolve defer slots after a client-side
@@ -3852,7 +3917,7 @@ async fn route_data_response_inner(
         input.method = req.method.clone();
         input.headers = req.headers.as_ref().clone();
         input.params = params.clone();
-        input.locals = middleware_locals.clone();
+        input.locals = locals_for_load.clone();
         input.locale = locale.to_string();
         input.parent_data = parent_data;
         // §20 / G2: thread the inbound W3C trace so the loader's
@@ -3873,6 +3938,9 @@ async fn route_data_response_inner(
                 if let Some(loc) = out.location {
                     resp = resp.with_header("location", loc);
                 }
+                if let Some(cookie) = layout_session_cookie.clone() {
+                    resp = resp.with_header("set-cookie", cookie);
+                }
                 // §16.6 / WP-D1: a short-circuit (redirect / error)
                 // that also mutated `event.session` must persist it.
                 if let Some(cookie) = encode_session_cookie(
@@ -3885,7 +3953,7 @@ async fn route_data_response_inner(
                     // and no cookie is emitted. Passing `None` here meant
                     // every /__data request from a client holding a session
                     // re-issued the cookie.
-                    middleware_locals.get("session"),
+                    locals_for_load.get("session"),
                     session_codec,
                 ) {
                     resp = resp.with_header("set-cookie", cookie);
@@ -3909,7 +3977,7 @@ async fn route_data_response_inner(
                     // and no cookie is emitted. Passing `None` here meant
                     // every /__data request from a client holding a session
                     // re-issued the cookie.
-                    middleware_locals.get("session"),
+                    locals_for_load.get("session"),
                     session_codec,
                 ) {
                     data_path_session_cookie = Some(cookie);
@@ -4745,14 +4813,10 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             diagnostics: Vec::new(),
         }
     } else {
-        let o = rb.bundle(&client_opts).map_err(|e| {
+        rb.bundle(&client_opts).map_err(|e| {
             persist_diagnostics(&rootp, &[e.0.clone()]);
             anyhow::anyhow!("{} {}", e.0.code, e.0.message)
-        })?;
-        if let Err(e) = build_cache::env_store(&rootp, "client", &client_fp) {
-            eprintln!("warn: could not store client env fingerprint: {e}");
-        }
-        o
+        })?
     };
     // SPEC-02 / §4.6.3: a V8 build whose server modules need Node (a `.node`
     // addon or an unshimmed `node:` builtin) must fail loudly. The bundler
@@ -4998,6 +5062,16 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             "{} client secret(s) would leak to the browser (CMP-SECRET)",
             secret_hits.len()
         );
+    }
+    // Only record the client env fingerprint AFTER the client bundle passed
+    // every post-bundle gate (secret scan included). Storing it before the
+    // scan let a failed `CMP-SECRET` build look "unchanged" on the next run:
+    // `skip_client` was true, the scan saw no chunks, and the build went
+    // green without ever re-checking the leaking bundle.
+    if !skip_client {
+        if let Err(e) = build_cache::env_store(&rootp, "client", &client_fp) {
+            eprintln!("warn: could not store client env fingerprint: {e}");
+        }
     }
     let server_outcome = rb.bundle(&server_opts).map_err(|e| {
         let mut diags = client_outcome.diagnostics.clone();
@@ -5598,7 +5672,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // answer a query. Extracting from the emitted HTML (not the source
     // AST) means a loader-injected `<title>`, a plugin-added heading, or
     // a `defineMeta` override all reach the index as the user sees them.
-    if !prerendered.is_empty() {
+    if cfg.build.route_search && !prerendered.is_empty() {
         let search_index =
             oxide_assets::route_search::build_route_search_index(&prerendered, &dist);
         if let Ok(json) = oxide_assets::route_search::route_search_index_to_json(&search_index) {
@@ -7234,6 +7308,11 @@ fn build_dispatch(
                         let entries = parse_form_urlencoded(&req_owned.body);
                         serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string())
                     };
+                    let action_trace = req_owned.trace.as_ref().and_then(|t| {
+                        t.to_traceparent(&t.parent_id).map(|tp| {
+                            serde_json::json!({"traceparent": tp, "tracestate": t.tracestate})
+                        })
+                    });
                     let resp = oxide_server::run_action(
                         Some(dispatcher),
                         &module_path.to_string_lossy(),
@@ -7245,6 +7324,7 @@ fn build_dispatch(
                         &req_owned.method,
                         &req_owned.headers,
                         &middleware_locals,
+                        action_trace.as_ref(),
                     )
                     .await;
                     // B-17: actions get their own waterfall row so the
@@ -7666,7 +7746,11 @@ fn build_dispatch(
                         },
                         async {
                             let start = std::time::Instant::now();
-                            let r = runner.run(pinput).await;
+                            // B2 / P0-2: use the streaming entry so a page
+                            // that does not call parent() still flushes its
+                            // defer() settles per-settle instead of
+                            // buffering the whole document in this arm.
+                            let r = runner.run_streaming(pinput).await;
                             (r, start.elapsed().as_secs_f64() * 1000.0)
                         }
                     );
@@ -7752,7 +7836,7 @@ fn build_dispatch(
                 }
 
                 match page_res {
-                    Ok(out) if out.short_circuits() => {
+                    Ok((out, _settles)) if out.short_circuits() => {
                         let body = out
                             .data
                             .get("message")
@@ -7781,8 +7865,9 @@ fn build_dispatch(
                         metrics.observe(&label, started.elapsed(), out.status);
                         return resp;
                     }
-                    Ok(out) => {
+                    Ok((out, settles)) => {
                         data = out.data;
+                        page_settles = Some(settles);
                         // 16-G: the route's `meta = defineMeta(fn)` export,
                         // evaluated by the worker against this load's data.
                         route_meta = out.meta;
@@ -7940,6 +8025,11 @@ fn build_dispatch(
                 endpoint_module_path.as_ref(),
             ) {
                 let module_path_s = mp.to_string_lossy().to_string();
+                let endpoint_trace = req_owned.trace.as_ref().and_then(|t| {
+                    t.to_traceparent(&t.parent_id).map(|tp| {
+                        serde_json::json!({"traceparent": tp, "tracestate": t.tracestate})
+                    })
+                });
                 match dispatcher
                     .dispatch(
                         &module_path_s,
@@ -7949,6 +8039,7 @@ fn build_dispatch(
                         &req_owned.headers,
                         endpoint_body.as_ref(),
                         &middleware_locals,
+                        endpoint_trace.as_ref(),
                     )
                     .await
                 {
@@ -8050,12 +8141,17 @@ fn build_dispatch(
                 // §10.2 step 5: nearest ancestor `error.tsx` — the adapter
                 // renders it on an SSR throw instead of the generic 500.
                 input.error_route_id = error_route_id.clone();
+                // §16.4 / O2: thread the resolved request locale into the
+                // live render, exactly as prerender does. Without it the
+                // adapter cannot emit `<html lang>` and the client catalog
+                // loader falls back to `en`.
+                input.locale = Some(resolved_locale.clone());
                 // 16-G: the route's own `meta` joins the neutral head model.
                 // The live path has no plugin `renderHead` contribution to
                 // merge with here (that is a build-time hook); the route's
                 // meta is the whole contribution.
                 if let Some(meta) = route_meta.as_ref() {
-                    input.head = merge_neutral_head(input.head, meta.clone());
+                    input.head = merge_neutral_head(input.head, normalize_route_meta(meta.clone()));
                 }
                 match renderer.render_streaming(input).await {
                     Ok(render_stream) => {
@@ -8615,7 +8711,11 @@ impl oxide_server::ImageEndpointBackend for AssetsImageBackend {
             height: req.height,
             format,
             quality: req.quality.unwrap_or(75),
-            placeholder: None,
+            placeholder: req.placeholder.as_deref().and_then(|p| match p {
+                "blur" => Some(oxide_assets::PlaceholderKind::Blur),
+                "pixelate" => Some(oxide_assets::PlaceholderKind::Lqip),
+                _ => None,
+            }),
         };
 
         RustImageBackend
@@ -8624,6 +8724,7 @@ impl oxide_server::ImageEndpointBackend for AssetsImageBackend {
                 bytes: r.bytes,
                 content_type: r.format.mime(),
                 cache_key: r.cache_key,
+                placeholder: r.placeholder,
             })
             .map_err(|e| format!("{}: {}", e.0.code, e.0.message))
     }
@@ -8722,6 +8823,10 @@ fn build_image_endpoint(
         // §16.1: a source larger than 32 MiB is almost certainly a mistake
         // or a hostile payload; the fetch refuses it.
         remote_max_bytes: 32 * 1024 * 1024,
+        result_cache: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
+        max_concurrency: cfg.images.max_concurrency,
+        in_flight: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        max_dimension: cfg.images.max_dimension,
     }))
 }
 
@@ -8821,6 +8926,7 @@ impl oxide_server::ActionDispatcher for ActionDispatcherImpl {
         method: &str,
         headers: &[(String, String)],
         locals: &serde_json::Value,
+        trace: Option<&serde_json::Value>,
     ) -> std::result::Result<oxide_server::ActionRunResult, oxide_server::DispatchError> {
         match self
             .host
@@ -8833,6 +8939,7 @@ impl oxide_server::ActionDispatcher for ActionDispatcherImpl {
                 method,
                 headers,
                 locals,
+                trace,
             )
             .await
         {
@@ -8890,10 +8997,11 @@ impl oxide_server::EndpointDispatcher for EndpointDispatcherImpl {
         headers: &[(String, String)],
         body: &[u8],
         locals: &serde_json::Value,
+        trace: Option<&serde_json::Value>,
     ) -> std::result::Result<oxide_server::EndpointRunResult, oxide_server::EndpointRunError> {
         match self
             .host
-            .run(module_path, method, url, params, headers, body, locals)
+            .run(module_path, method, url, params, headers, body, locals, trace)
             .await
         {
             Ok(out) => {
@@ -9942,8 +10050,8 @@ async fn start_server_inner_full(
         // endpoint is unauthenticated; 10 renders per peer per minute bounds
         // the worst case without blocking a legitimate OG card.
         og_rate_limiter: oxide_server::RateLimiter::default(),
-        og_rate_max: 10,
-        og_rate_window_secs: 60,
+        og_rate_max: cfg.og.rate_limit.max,
+        og_rate_window_secs: cfg.og.rate_limit.window_secs,
 
         rules,
         assets,
@@ -10359,9 +10467,15 @@ async fn cmd_serve(
     // §7 / §9.1: build the framework stack (renderer + loader) for the
     // production server. Same wiring as `cmd_dev`.
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| std::path::PathBuf::from(root));
-    let cfg = load_config_or_default(&rootp, "production");
+    let mut cfg = load_config_or_default(&rootp, "production");
     let config_path_opt = find_config_file(&rootp).ok();
     let transform_handler = framework_shim::build_transform_handler(&rootp, &cfg);
+    // §15.2: `cacheHandler` — a plugin may select the cache backend. Dev and
+    // build already consult it; `start` must too, or the same project uses a
+    // different tier in production than it built against.
+    if let Ok(Some(chosen)) = resolve_cache_handler_via_plugin(&rootp, &cfg, w).await {
+        cfg.cache.handler = chosen;
+    }
     // §11.2: `cache.handler` is honored inside the stack (see cmd_dev).
     let stack = framework_shim::build_framework_stack(
         config_path_opt.as_deref(),
@@ -12887,6 +13001,21 @@ fn neutral_head_to_html(head: &serde_json::Value) -> String {
             out.push_str(&tag_out);
         }
     }
+    // §16.3: JSON-LD is a structured value, not a `script.content` string.
+    // Emit it as `<script type="application/ld+json">` so a `defineMeta`
+    // that returns structured data reaches the head.
+    if let Some(arr) = obj.get("jsonLd").and_then(|v| v.as_array()) {
+        for entry in arr {
+            let body = entry
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| entry.to_string());
+            out.push_str(&format!(
+                "<script type=\"application/ld+json\">{}</script>",
+                html_escape(&body)
+            ));
+        }
+    }
     out
 }
 
@@ -12896,6 +13025,77 @@ fn html_escape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+/// Normalize a route's flat `meta` export into the neutral head model.
+///
+/// `defineMeta` historically returns a flat object (`{ title, description,
+/// openGraph, canonical, jsonLd }`). The neutral model is structured
+/// (`{ title, meta: [...], link: [...], jsonLd: [...] }`). Projects that
+/// already return the structured shape pass through unchanged; a flat object
+/// is lifted field-by-field so richer fields are not silently dropped.
+fn normalize_route_meta(meta: serde_json::Value) -> serde_json::Value {
+    let Some(obj) = meta.as_object() else {
+        return meta;
+    };
+    const NEUTRAL: [&str; 5] = ["meta", "link", "style", "script", "jsonLd"];
+    if NEUTRAL.iter().any(|k| obj.contains_key(*k)) {
+        return meta;
+    }
+    let mut out = serde_json::Map::new();
+    let mut metas: Vec<serde_json::Value> = Vec::new();
+    let mut links: Vec<serde_json::Value> = Vec::new();
+    let mut json_ld: Vec<serde_json::Value> = Vec::new();
+    let stringify = |v: &serde_json::Value| {
+        v.as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| v.to_string())
+    };
+    for (k, v) in obj {
+        match k.as_str() {
+            "title" | "titleTemplate" | "base" => {
+                out.insert(k.clone(), v.clone());
+            }
+            "canonical" | "canonicalUrl" => {
+                links.push(serde_json::json!({"rel": "canonical", "href": stringify(v)}));
+            }
+            "openGraph" | "og" => {
+                if let Some(o) = v.as_object() {
+                    for (ok, ov) in o {
+                        metas.push(serde_json::json!({
+                            "property": format!("og:{ok}"),
+                            "content": stringify(ov),
+                        }));
+                    }
+                }
+            }
+            "twitter" => {
+                if let Some(o) = v.as_object() {
+                    for (tk, tv) in o {
+                        metas.push(serde_json::json!({
+                            "name": format!("twitter:{tk}"),
+                            "content": stringify(tv),
+                        }));
+                    }
+                }
+            }
+            "jsonLd" | "json_ld" => match v {
+                serde_json::Value::Array(a) => json_ld.extend(a.iter().cloned()),
+                _ => json_ld.push(v.clone()),
+            },
+            _ => {
+                metas.push(serde_json::json!({"name": k, "content": stringify(v)}));
+            }
+        }
+    }
+    out.insert("meta".into(), serde_json::Value::Array(metas));
+    if !links.is_empty() {
+        out.insert("link".into(), serde_json::Value::Array(links));
+    }
+    if !json_ld.is_empty() {
+        out.insert("jsonLd".into(), serde_json::Value::Array(json_ld));
+    }
+    serde_json::Value::Object(out)
 }
 
 /// Merge one neutral head model into another.
@@ -12912,7 +13112,7 @@ fn merge_neutral_head(outer: serde_json::Value, inner: serde_json::Value) -> ser
     let Some(inner_obj) = inner.as_object() else {
         return serde_json::Value::Object(out);
     };
-    for field in ["meta", "link", "style", "script"] {
+    for field in ["meta", "link", "style", "script", "jsonLd"] {
         match (out.get_mut(field), inner_obj.get(field)) {
             (Some(serde_json::Value::Array(a)), Some(serde_json::Value::Array(b))) => {
                 a.extend(b.iter().cloned());
@@ -12923,8 +13123,10 @@ fn merge_neutral_head(outer: serde_json::Value, inner: serde_json::Value) -> ser
             _ => {}
         }
     }
-    if let Some(t) = inner_obj.get("title") {
-        out.insert("title".to_string(), t.clone());
+    for scalar in ["title", "titleTemplate", "base"] {
+        if let Some(t) = inner_obj.get(scalar) {
+            out.insert(scalar.to_string(), t.clone());
+        }
     }
     serde_json::Value::Object(out)
 }
