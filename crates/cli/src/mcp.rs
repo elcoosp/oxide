@@ -340,7 +340,9 @@ impl OxideMcp {
                 report.waterfalls.push(WaterfallEntry {
                     request_id: rid,
                     stages,
-                trace_id: row.get("trace_id").and_then(|v| v.as_str().map(String::from)),
+                    trace_id: row
+                        .get("trace_id")
+                        .and_then(|v| v.as_str().map(String::from)),
                 });
             }
         }
