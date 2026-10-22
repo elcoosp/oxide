@@ -123,6 +123,11 @@ export function emitHead(head: HeadTags): string {
     ].join('')
     parts.push(`<script${attrs}>${s.content ? escText(s.content) : ''}</script>`)
   }
+  // §16.3: structured JSON-LD entries are their own script element.
+  for (const entry of head.jsonLd ?? []) {
+    const body = typeof entry === 'string' ? entry : JSON.stringify(entry)
+    parts.push(`<script type="application/ld+json">${escText(body)}</script>`)
+  }
   return parts.join('')
 }
 
@@ -197,7 +202,7 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
             // escaped; loud OX-500 page, not a comment-only blank body.
             const why = safeComment(cfg.lastError?.() ?? 'isAvailable=false, no recorded error')
             const head = cfg.buildHead(input)
-            yield enc.encode(`<!doctype html>\n<html lang="en"><head>${emitHead(head)}</head>`)
+            yield enc.encode(`<!doctype html>\n<html lang="${input.locale && /^[A-Za-z0-9_-]+$/.test(input.locale) ? input.locale : 'en'}"><head>${emitHead(head)}</head>`)
             yield enc.encode(`<body><div${cfg.rootAttrs}>`)
             yield enc.encode(`<div class='ox-error' data-ox-error='OX-500'>OX-500: ${escText(cfg.name)} SSR unavailable: ${escText(why)}</div>`)
             yield enc.encode(`</div></body></html>`)
@@ -273,7 +278,7 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
               props: { ...props, children: descriptor },
             }
           }
-          yield enc.encode(`<!doctype html>\n<html lang="en"><head>${emitHead(head)}</head>`)
+          yield enc.encode(`<!doctype html>\n<html lang="${input.locale && /^[A-Za-z0-9_-]+$/.test(input.locale) ? input.locale : 'en'}"><head>${emitHead(head)}</head>`)
           if (headWarnings.length > 0) {
             yield enc.encode(`<body>${headWarnings.join('')}<div${cfg.rootAttrs}>`)
           } else {
@@ -328,7 +333,7 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
                 // late-throw after the shell has already streamed keeps
                 // the original status (HTTP cannot retroactively change
                 // it — the pipeline documents this deviation).
-                yield enc.encode(`<!--oxide-status:500--><!doctype html>\n<html lang="en"><head>${emitHead(head)}</head>`)
+                yield enc.encode(`<!--oxide-status:500--><!doctype html>\n<html lang="${input.locale && /^[A-Za-z0-9_-]+$/.test(input.locale) ? input.locale : 'en'}"><head>${emitHead(head)}</head>`)
                 yield enc.encode(`<body><div${cfg.rootAttrs}>${body}</div></body></html>`)
                 return
               } catch {
@@ -342,7 +347,7 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
           // branch above) so the generic fallback also produces a 500 when
           // it forms the response's first chunk; the OX-500 boundary
           // attribute remains the pipeline's secondary signal.
-          yield enc.encode(`<!--oxide-status:500--><!doctype html>\n<html lang="en"><head>${emitHead(head)}</head>`)
+          yield enc.encode(`<!--oxide-status:500--><!doctype html>\n<html lang="${input.locale && /^[A-Za-z0-9_-]+$/.test(input.locale) ? input.locale : 'en'}"><head>${emitHead(head)}</head>`)
           yield enc.encode(`<body><div${cfg.rootAttrs}>`)
           yield enc.encode(`<div class='ox-error' data-ox-error='OX-500'>OX-500: ${escText(msg)}</div>`)
           yield enc.encode(`</div></body></html>`)
