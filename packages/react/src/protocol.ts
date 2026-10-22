@@ -26,8 +26,8 @@ export const BOUNDARY_CONTENT_ATTR = 'data-ox-c'
  * the `ox:swap` CustomEvent (detail: {id}) that triggers adapter hydration.
  */
 export const SWAPPER_SRC =
-  `function(id){var t=document.querySelector("template[data-ox-c='"+id+"']"),` +
-  `p=document.querySelector("template[data-ox-b='"+id+"']");` +
+  `function(id){var t=document.querySelector("[data-ox-c='"+id+"']"),` +
+  `p=document.querySelector("[data-ox-b='"+id+"']");` +
   `if(t&&p){var d=document.createElement("div");d.innerHTML=t.innerHTML;` +
   `p.replaceWith.apply(p,d.childNodes);` +
   `document.dispatchEvent(new CustomEvent("ox:swap",{detail:{id:id}}))}}`
