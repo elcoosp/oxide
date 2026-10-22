@@ -6,7 +6,7 @@ export const config = { render: 'isr', revalidate: 3600, tags: ['docs'] }
 
 export const load = defineLoad(async ({ params }) => {
   const slug = String(params?.page ?? '')
-  const doc = readDoc(slug)
+  const doc = await readDoc(slug)
   if (!doc) error(404, `no doc page for "${slug}"`)
   return { doc }
 })
