@@ -61,25 +61,61 @@ pub fn lint_top_level_side_effects(path: &str, source: &str) -> Vec<SideEffect> 
             "EventSource opened at module top level holds a live socket",
         ),
     ];
+    // Character-level scan: a pattern occurrence counts as a top-level side
+    // effect only when brace depth is 0 *at that position*. The previous
+    // line-granular scan sampled depth at the start of each line, so a
+    // function whose body opens and closes on the same line —
+    // `function f() { setTimeout(…) }` — was wrongly reported (the `{` and
+    // `}` on that line cancelled out, but the match had already been
+    // collected against the stale line-start depth).
+    //
+    // Known limitation, documented rather than silently wrong: an arrow
+    // body without braces (`const t = () => setTimeout(…)`) is still
+    // reported. That is a false positive in the *safe* (over-warning)
+    // direction for an advisory lint — the snapshot build itself fails on
+    // a real live handle, so the lint's job is to point at the source
+    // first, and a needless warning never ships a broken snapshot.
     let mut out = Vec::new();
     let mut depth: i32 = 0;
-    for (i, line) in source.lines().enumerate() {
-        let trimmed = line.trim_start();
-        if depth == 0 {
-            for (needle, msg) in PATTERNS {
-                if trimmed.contains(needle) {
-                    out.push(SideEffect {
-                        path: path.to_string(),
-                        line: (i + 1) as u32,
-                        message: (*msg).to_string(),
-                    });
-                }
+    let mut line: u32 = 1;
+    let mut i = 0usize;
+    while i < source.len() {
+        let b = source.as_bytes()[i];
+        match b {
+            b'\n' => {
+                line += 1;
+                i += 1;
             }
-        }
-        depth += line.matches('{').count() as i32;
-        depth -= line.matches('}').count() as i32;
-        if depth < 0 {
-            depth = 0;
+            b'{' => {
+                depth += 1;
+                i += 1;
+            }
+            b'}' => {
+                depth -= 1;
+                if depth < 0 {
+                    depth = 0;
+                }
+                i += 1;
+            }
+            _ => {
+                let mut advanced = 1;
+                if depth == 0 {
+                    if let Some(rest) = source.get(i..) {
+                        for (needle, msg) in PATTERNS {
+                            if rest.starts_with(needle) {
+                                out.push(SideEffect {
+                                    path: path.to_string(),
+                                    line,
+                                    message: (*msg).to_string(),
+                                });
+                                advanced = needle.len();
+                                break;
+                            }
+                        }
+                    }
+                }
+                i += advanced;
+            }
         }
     }
     out
@@ -435,6 +471,27 @@ mod tests {
     fn timer_inside_function_is_not_reported() {
         let src = "function start() {\n  setTimeout(() => {}, 100);\n}\n";
         assert!(lint_top_level_side_effects("entry.js", src).is_empty());
+    }
+
+    #[test]
+    fn timer_inside_a_single_line_function_is_not_reported() {
+        // Regression: the line-granular scan sampled depth at line start, so
+        // `{` and `}` on the same line cancelled out and the timer inside
+        // was reported as top-level. Found by the CLI-level §4.4 audit.
+        let src = "function start() { setTimeout(() => {}, 100); }\n";
+        assert!(
+            lint_top_level_side_effects("entry.js", src).is_empty(),
+            "a same-line function body is not top level"
+        );
+    }
+
+    #[test]
+    fn timer_after_a_same_line_function_is_reported() {
+        // The character scan must still flag a genuine top-level call that
+        // follows a closed block on the same line.
+        let src = "function f() {} setTimeout(() => {}, 100);\n";
+        let hits = lint_top_level_side_effects("entry.js", src);
+        assert_eq!(hits.len(), 1, "top-level timer after a closed block");
     }
 
     #[test]

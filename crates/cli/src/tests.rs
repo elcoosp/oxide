@@ -7805,3 +7805,57 @@ async fn layout_ok_arm_persists_session_mutation() {
         resp.headers
     );
 }
+
+// ------------------------------ §4.4: snapshot side-effect lint (audit)
+
+#[tokio::test]
+async fn build_reports_top_level_side_effect_in_page_server_module() {
+    // §4.4: "oxide build lints top-level side effects and reports them
+    // with source locations." The lint (`emit_snapshot_lint`) is wired at
+    // cli:4171 but had zero CLI-level tests — the r10 audit flagged it as
+    // implemented-but-unaudited. This is the positive case: a top-level
+    // `setTimeout` in a `page.server.ts` must produce a warning line on
+    // build output naming the culprit.
+    let (_d, root) = fixture_project();
+    std::fs::write(
+        root.join("src/routes/page.server.ts"),
+        "setTimeout(() => console.log('tick'), 1000);\nexport const config = {};\n",
+    )
+    .unwrap();
+
+    let (code, out) = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
+    assert_eq!(code, 0, "build exit code; output: {out}");
+    assert!(
+        out.contains("warn: snapshot side effect"),
+        "§4.4 lint fires on a top-level timer: {out}"
+    );
+    assert!(
+        out.contains("setTimeout"),
+        "the message names the culprit: {out}"
+    );
+    assert!(
+        out.contains("snapshot: 1 top-level side effect"),
+        "summary line present: {out}"
+    );
+}
+
+#[tokio::test]
+async fn build_reports_no_side_effect_for_a_function_scoped_timer() {
+    // Negative half — proves the lint discriminates. A timer *inside* a
+    // function is not a top-level side effect; a build with one must
+    // carry no `warn: snapshot side effect` line. Without this, the
+    // positive test above could pass with the lint firing on everything.
+    let (_d, root) = fixture_project();
+    std::fs::write(
+        root.join("src/routes/page.server.ts"),
+        "function start() { setTimeout(() => {}, 100); }\nexport const config = {};\n",
+    )
+    .unwrap();
+
+    let (code, out) = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
+    assert_eq!(code, 0, "build exit code; output: {out}");
+    assert!(
+        !out.contains("warn: snapshot side effect"),
+        "§4.4 lint must not false-positive on a function-scoped timer: {out}"
+    );
+}
