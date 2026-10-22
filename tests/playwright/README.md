@@ -12,6 +12,7 @@ more headroom.
 cargo build -p oxide-cli                  # one-time, produces target/debug/oxide-cli
 pnpm test:playwright:install              # downloads Chromium
 pnpm test:playwright                      # boots oxide start + drives the browser
+```
 
 ## Specs
 
@@ -22,6 +23,7 @@ pnpm test:playwright                      # boots oxide start + drives the brows
 | `middleware.spec.ts` | Middleware `locals` reach the loader; `redirect` short-circuits | `greeting`, `middleware` |
 | `loading.spec.ts`    | §8.4 loading overlay during client navigation        | `slow` |
 | `socket.spec.ts`     | §9.6 WebSocket greet + echo                          | `chat/socket` |
+| `og.spec.ts`         | S-09 OG endpoint rasterizes a real PNG              | `/_oxide/og` |
 | `sse.spec.ts`        | §9.6 SSE headers + progressive streaming             | `api/events` |
 
 Each spec boots its own `oxide start` server on its own port (3100-3105)
