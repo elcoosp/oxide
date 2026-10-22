@@ -628,7 +628,7 @@ impl std::fmt::Debug for WaterfallRecorder {
 
 impl WaterfallRecorder {
     /// SPEC-19.3 / §19-D: persist the current snapshot to `path` as JSON so
-    /// a separate process (the MCP server) can read the wateraflls of the
+    /// a separate process (the MCP server) can read the waterfalls of the
     /// running dev server. Best-effort — a write failure logs to stderr but
     /// never fails the request that called it.
     pub fn persist_to(&self, path: &std::path::Path) {
