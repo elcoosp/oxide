@@ -3,5 +3,5 @@ import { defineLoad } from 'oxide/server'
 import { listPosts } from '../../../lib/md.server.ts'
 
 export const load = defineLoad(async () => {
-  return { posts: listPosts() }
+  return { posts: await listPosts() }
 })
