@@ -127,6 +127,18 @@ pub fn config_schema() -> Value {
                             "properties": { "host": { "type": "string" } },
                             "required": ["host"]
                         }
+                    },
+                    "maxConcurrency": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 4,
+                        "description": "§16.1: maximum concurrent rasterizations. Each transform is CPU-bound; unbounded concurrency lets a few clients saturate every core."
+                    },
+                    "maxDimension": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 8192,
+                        "description": "§16.1: largest accepted `w`/`h`. A user-supplied size is not trusted to allocate an arbitrarily large canvas."
                     }
                 }
             },
@@ -217,7 +229,8 @@ pub fn config_schema() -> Value {
                     "sourcemap": { "type": "string", "enum": ["hidden", "inline", "external", "off"] },
                     "ssrExternals": { "type": "array", "items": { "type": "string" } },
                     "remoteCache": { "type": "string", "description": "§5.4: remote build-cache URL (http://). Read-through on a local miss, write-back on store." },
-                    "writeBranches": { "type": "array", "items": { "type": "string" }, "description": "§5.4 / SPEC-5D: git branches trusted to write the shared remote cache. Default main/master + release/* when remoteCache is set." }
+                    "writeBranches": { "type": "array", "items": { "type": "string" }, "description": "§5.4 / SPEC-5D: git branches trusted to write the shared remote cache. Default main/master + release/* when remoteCache is set." },
+                    "routeSearch": { "type": "boolean", "default": true, "description": "§16 / K2: emit the route-search index (dist/client/search-index.json). On by default when prerendered pages exist; set false for projects that do not ship a client-side search UI." }
                 }
             },
             "adapter": {
@@ -245,7 +258,19 @@ pub fn config_schema() -> Value {
             "og": {
                 "type": "object",
                 "additionalProperties": true,
-                "description": "S-09: on-demand OG-image endpoint (GET /_oxide/og). Off by default; opt in with og.enabled = true."
+                "description": "S-09: on-demand OG-image endpoint (GET /_oxide/og). Off by default; opt in with og.enabled = true.",
+                "properties": {
+                    "enabled": { "type": "boolean", "default": false },
+                    "rateLimit": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "description": "A3: per-peer token-bucket limit applied before rasterization.",
+                        "properties": {
+                            "max": { "type": "integer", "minimum": 0, "default": 10 },
+                            "windowSecs": { "type": "integer", "minimum": 0, "default": 60 }
+                        }
+                    }
+                }
             },
             "imagesEndpoint": {
                 "type": "object",
