@@ -28,6 +28,7 @@
 // byte-predictable for tests.
 
 import { createElement, type ReactNode } from 'react'
+import { deriveSizesFromSrcset } from '../../oxide/src/image-sizes.ts'
 
 /** The shape a `?w=` import produces. All fields optional so a plain `src`
  *  plus explicit `width`/`height` also satisfies the props. */
@@ -93,7 +94,8 @@ export function Image(props: ImageProps): ReactNode {
     ...rest,
   }
   if (srcset) imgProps.srcset = srcset
-  if (sizes) imgProps.sizes = sizes
+  const effectiveSizes = sizes ?? deriveSizesFromSrcset(srcset)
+  if (effectiveSizes) imgProps.sizes = effectiveSizes
   if (typeof width === 'number') imgProps.width = width
   if (typeof height === 'number') imgProps.height = height
   if (className) imgProps.className = className
@@ -114,7 +116,8 @@ export function Image(props: ImageProps): ReactNode {
   }
   if (srcset) {
     preloadProps.imagesrcset = srcset
-    if (sizes) preloadProps.imagesizes = sizes
+    const imSizes = sizes ?? deriveSizesFromSrcset(srcset)
+    if (imSizes) preloadProps.imagesizes = imSizes
   }
 
   return createElement(
