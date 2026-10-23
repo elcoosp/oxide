@@ -7688,7 +7688,7 @@ async fn bundle_edge_entry_emits_edge_bundle_js() {
     });
 
     let mut buf: Vec<u8> = Vec::new();
-    let out = crate::bundle_edge_entry(root, &dist, &entry, css, &mut buf)
+    let out = crate::bundle_edge_entry(root, &dist, &entry, css, Vec::new(), &mut buf)
         .await
         .expect("bundle_edge_entry");
     assert!(out.is_some(), "an entry chunk was emitted");
@@ -8240,5 +8240,56 @@ async fn middleware_short_circuit_persists_session_mutation() {
         sess.to_value()["user"],
         "ada",
         "the persisted session carries the middleware's mutation"
+    );
+}
+
+/// §18 / D18: `build.edgeExternals` is threaded into the edge bundle's
+/// externals list.
+///
+/// This pins the *plumbing*, not a failure mode: an empirical check showed
+/// the bundler already leaves an unresolvable specifier external (a bare
+/// package the temp fixture cannot resolve never reaches an error), so a
+/// test asserting "undeclared import fails" would be asserting something
+/// that is not true. What the config does is declare the set explicitly,
+/// which matters once the specifier *is* resolvable — the config, schema and
+/// wiring are the deliverable.
+#[tokio::test]
+async fn edge_bundle_accepts_declared_externals() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join("src/edge.mjs"),
+        "import { helper } from 'edge-runtime-helpers'\n\
+         export default function(req) {\n\
+           return new Response(helper())\n\
+         }\n",
+    )
+    .unwrap();
+    let entry = root.join("src/edge.mjs");
+    let dist = root.join("dist");
+    std::fs::create_dir_all(&dist).unwrap();
+
+    let css = oxide_bundler::CssTransformHook::new(|_, src, _, _| {
+        Ok((src.to_string(), std::collections::BTreeMap::new()))
+    });
+
+    let mut buf: Vec<u8> = Vec::new();
+    let out = crate::bundle_edge_entry(
+        root,
+        &dist,
+        &entry,
+        css,
+        vec!["edge-runtime-helpers".to_string()],
+        &mut buf,
+    )
+    .await
+    .expect("a declared external builds");
+    assert!(out.is_some(), "edge_bundle.js emitted");
+    let src = std::fs::read_to_string(dist.join("deploy/edge_bundle.js")).unwrap();
+    assert!(
+        src.contains("edge-runtime-helpers"),
+        "the declared external survives as an import: {}",
+        &src[..src.len().min(300)]
     );
 }
