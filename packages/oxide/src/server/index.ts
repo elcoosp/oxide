@@ -11,13 +11,14 @@ import type {
   DeferredRegistry,
   LoadEvent,
   ServerFnEvent,
+  SocketContext,
   SocketHandlers,
   StandardSchema,
 } from './json.ts'
 
 export type {
   ActionEvent, CookieOptions, CookieStore, DeferredPlaceholder, DeferredRegistry,
-  LoadEvent, LoadResult, ServerFnEvent, SocketHandlers, StandardSchema,
+  LoadEvent, LoadResult, ServerFnEvent, SocketContext, SocketHandlers, StandardSchema,
 } from './json.ts'
 
 /** Tag key on load fns (`fn.$$oxide === 'load'`). */
@@ -108,6 +109,19 @@ function convertDefers(value: unknown, registry: DeferredRegistry, allocate: () 
  * load pipeline recognizes. Prefer `event.defer()` inside loads — it assigns
  * the streaming id immediately.
  */
+export {
+  beginBoundaryCapture,
+  endBoundaryCapture,
+  drainBoundaries,
+  registerBoundary,
+  deferredIdOf,
+  boundaryFallback,
+  boundaryContent,
+  BOUNDARY_FALLBACK_ATTR,
+  BOUNDARY_CONTENT_ATTR,
+  type BoundaryRegistration,
+} from './boundary.ts'
+
 export function defer(promise: Promise<unknown>): { __oxide_defer: true; promise: Promise<unknown> } {
   return { __oxide_defer: true, promise }
 }
