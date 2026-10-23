@@ -1075,6 +1075,27 @@ async function dispatchLoaderRun(id, input) {
     const mod = await import(versioned(compiled.url));
     const load = mod.load;
     if (typeof load !== "function") {
+      // §9.3: a `page.server.ts` that exports only `actions` (or only
+      // `config`) is valid — the route has no loader, so its data is empty.
+      // Erroring here made an actions-only module unusable: the form POST
+      // could not re-render the page it belonged to. Only a module that
+      // exports neither is a genuine mistake worth surfacing.
+      const hasActions = mod.actions && typeof mod.actions === "object";
+      const hasConfig = mod.config && typeof mod.config === "object";
+      if (hasActions || hasConfig) {
+        callOk(id, {
+          ok: true,
+          status: 200,
+          location: null,
+          data: {},
+          session: null,
+          setCookies: [],
+          headers: [],
+          deferred: {},
+          deferredPending: [],
+        });
+        return;
+      }
       callErr(id, "JSH-LOADER", `module at ${module_path} has no \`load\` export`);
       return;
     }
