@@ -1811,6 +1811,9 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // would hydrate, navigate, or load a route's JS. Build it once (unminified)
     // if the manifest is missing. A `dev` after `build` finds it and skips.
     ensure_dev_client_bundle(&rootp, &cfg, &tree, w).await?;
+    // §16.4: tell the client whether this project has message
+    // catalogs, so it does not fetch one that cannot exist.
+    stamp_i18n_locales(&rootp, &cfg);
 
     // SPEC-14: the HMR hub. Its build id comes from the client manifest
     // when present (a `dev` start after `build`), else `"dev"`.
@@ -6210,6 +6213,9 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         )
         .await;
     }
+    // §16.4: stamp the client manifest now that catalogs are emitted — the
+    // stamp keys off `dist/client/messages/`, so it must run after that.
+    stamp_i18n_locales(&rootp, &cfg);
     outln!(
         w,
         "build ok — {} routes, {} prerendered, {} deploy file(s) for `{}` in dist/deploy",
@@ -9959,6 +9965,51 @@ fn build_transform_hook(root: &Path, cfg: &OxideConfig) -> Option<oxide_bundler:
         }));
     }
     None
+}
+
+/// §16.4: stamp the project's locales into `dist/client/client.manifest.json`.
+///
+/// The client fetches `/client/messages/<locale>.json` on every page load to
+/// warm the catalog. A project with no i18n has no such file, so that fetch
+/// is a guaranteed 404 — which Chromium reports as a console error and which
+/// breaks any test asserting a clean console.
+///
+/// The bundler does not know about i18n (it is framework- and feature-
+/// agnostic), so the CLI — which owns the config — stamps the answer into the
+/// manifest it already post-processes. The client then skips the fetch when
+/// the list is empty.
+fn stamp_i18n_locales(root: &Path, cfg: &oxide_config::OxideConfig) {
+    let manifest_path = root.join("dist/client/client.manifest.json");
+    let Ok(raw) = std::fs::read_to_string(&manifest_path) else {
+        return;
+    };
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return;
+    };
+    let Some(obj) = v.as_object_mut() else { return };
+    // The signal is "were catalogs emitted", not "what does config say":
+    // `i18n.locales` defaults to `["en"]` even for a project that defines no
+    // messages, so a config-driven check would claim catalogs exist and the
+    // client would 404 on every load. `dist/client/messages/` is the artifact
+    // that decides it.
+    let emitted = root.join("dist/client/messages");
+    let has_catalogs = std::fs::read_dir(&emitted)
+        .map(|rd| {
+            rd.flatten()
+                .any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+        })
+        .unwrap_or(false);
+    if has_catalogs {
+        obj.insert(
+            "i18n_locales".to_string(),
+            serde_json::json!(cfg.i18n.locales),
+        );
+    } else {
+        obj.remove("i18n_locales");
+    }
+    if let Ok(out) = serde_json::to_string_pretty(&v) {
+        let _ = std::fs::write(&manifest_path, out + "\n");
+    }
 }
 
 fn load_client_assets(rootp: &Path) -> Option<oxide_server::StaticAssets> {
