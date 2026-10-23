@@ -152,6 +152,9 @@ A real user's oxide project is a JS/TS tree, not a cargo workspace that
 contains `oxide-core-wasm` — the command exits non-zero (`no such
 package`), `cmd_build` logs `edge wasm build failed` and the Worker ships
 the pure-JS fallback (which is semantically identical, spec D18). The
+fallback's `cacheKey` used to hash a non-canonical composite; it now embeds
+a BLAKE3 implementation and emits the same `L0` key as the wasm/native path
+(checked against Rust vectors), so the fallback differs only in speed. The
 accelerated path only fires for the self-hosting case (root = oxide
 workspace).
 
