@@ -55,7 +55,7 @@ export default defineConfig({
 
   // §16.5 content collections: build-time scan/validation/indexing of the
   // markdown sources for the blog and the docs. Loaders call
-  // `getCollection('blog')` / `getEntry('blog', slug)` (K1, wired) which
+  // `getCollection('blog')` / `getEntry('blog', slug)` (§16.5, wired) which
   // reads the emitted `dist/content/*.entries.json`.
   content: {
     collections: [
