@@ -65,3 +65,18 @@ test('pass-through props (id, className, data-*) survive', () => {
   assert.equal(el.props.className, 'rounded')
   assert.equal(el.props['data-testid'], 'img')
 })
+
+// §16.1: sizes derived from srcset when absent; explicit sizes wins.
+test('sizes is derived from srcset when absent', () => {
+  const variant = {
+    src: '/_oxide/image?src=hero.png&w=1200',
+    srcset: '/_oxide/image?src=hero.png&w=400 400w, /_oxide/image?src=hero.png&w=800 800w, /_oxide/image?src=hero.png&w=1200 1200w',
+    width: 1200,
+    height: 630,
+  }
+  const out = Image({ ...variant, alt: 'Hero' }) as unknown as { props: Record<string, unknown> }
+  assert.equal(
+    out.props.sizes,
+    '(min-width: 1200px) 1200px, (min-width: 800px) 800px, (min-width: 400px) 400px, 100vw',
+  )
+})
