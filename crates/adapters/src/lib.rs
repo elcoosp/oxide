@@ -1038,9 +1038,23 @@ function cacheKey(route, params, vary, build_id) {
 // path silently returned [] (serde_json::from_str on an object into
 // Vec<(String,String)> fails, unwrap_or_default discards the error, the
 // parse of "[]" yields [] with no throw so the JS fallback never ran).
-// The JS implementation is the shipped path; a Rust port would be a
-// separate function with its own tests, not a reuse of merge_head.
+// A Rust port now exists — `merge_head_structured` in oxide-core-wasm, a
+// separate function with its own tests (not a reuse of the flat
+// `merge_head`). Prefer it when the wasm module is loaded; fall back to the
+// JS below, which is semantically identical.
 function mergeHead(a, b) {
+  const viaWasm = useWasm(
+    "merge_head_structured",
+    JSON.stringify(a ?? {}),
+    JSON.stringify(b ?? {}),
+  );
+  if (viaWasm !== null) {
+    try {
+      return JSON.parse(String(viaWasm));
+    } catch {
+      // A malformed wasm reply falls through to the JS implementation.
+    }
+  }
   const out = { title: null, meta: [], links: [], json_ld: [] };
   for (const src of [a, b]) {
     if (!src) continue;
