@@ -1,15 +1,13 @@
-// §9.3: a form-first action. `POST ?/comment` runs it with the submitted
-// form fields; the page re-renders with the result in `data.form`. Works
-// with JavaScript disabled — the §22 requirement `no-js.spec.ts` asserts.
+// §9.3: an **actions-only** server module — no `load`. The route has no
+// loader, so its data is empty and the page renders with `data.form` from
+// the action.
 //
-// The trivial `load` is not decorative: the worker treats any
-// `page.server.ts` as the route's data module and errors if it exports
-// `actions` without `load`. An actions-only module arguably should be
-// valid, but that is a change to the worker's contract, not to this
-// fixture.
-import { defineAction, defineLoad } from 'oxide/server'
-
-export const load = defineLoad(async () => ({}))
+// This shape used to be rejected: the worker treated any `page.server.ts`
+// as the route's data module and errored unless it exported `load`, which
+// made an actions-only route unusable — the form POST could not re-render
+// the page it belonged to. The worker now accepts `actions`-or-`config`-
+// only modules and yields empty data.
+import { defineAction } from 'oxide/server'
 
 export const actions = {
   comment: defineAction({
