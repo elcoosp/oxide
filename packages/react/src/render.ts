@@ -435,6 +435,25 @@ function AtlasLayout(props: PageProps & { page: Node }): Node {
   )
 }
 
+// Layout registry for the IR path. Layouts are IR-native components (plain
+// functions returning `Node`), keyed by route id like `PAGES`. A chain is
+// rendered outermost-first around the page. `AtlasLayout` is registered as
+// the root so a route that declares `routes/layout` behaves like the
+// default shell.
+function NestedLayout(props: PageProps & { children?: Node[]; page?: Node }): Node {
+  const inner = props.children && props.children.length > 0
+    ? props.children
+    : props.page
+      ? [props.page]
+      : []
+  return el('div', { 'data-oxide-layout': 'nested' }, ...inner)
+}
+
+const LAYOUTS: Record<string, AtlasPage> = {
+  'routes/layout': { component: AtlasLayout as unknown as ComponentFn },
+  'routes/nested/layout': { component: NestedLayout as unknown as ComponentFn },
+}
+
 // ---------------------------------------------------------------------------
 // Shell + streaming render
 // ---------------------------------------------------------------------------
@@ -462,21 +481,24 @@ function buildTree(input: RenderInput): Node {
     params: input.params,
     data: input.data as Record<string, unknown>,
   }
-  const pageNode = el(page.component, pageProps)
+  let node = el(page.component, pageProps)
 
-  // §8.2 / §16.3 layout nesting: this IR renderer is the **conformance**
-  // renderer for the Atlas reference app. Its `PAGES` registry holds page
-  // components only — there are no layout components to resolve a chain
-  // against, so `input.layouts` is deliberately ignored here and the page is
-  // always wrapped in the default `AtlasLayout` shell. That shell is the
-  // markup contract the real adapter (`real-adapter.ts` / `makeRealAdapter`)
-  // must also emit for a route with no layouts, and the real adapter's
-  // multi-level chain is asserted separately in
-  // `packages/oxide/test/nested-layouts.test.ts`. Resolving `input.layouts`
-  // here would risk a page id accidentally swallowing the page's children
-  // (a page component ignores `props.children`), so it is intentionally a
-  // no-op — the IR's job is the *shell* contract, not user component wiring.
-  return el(AtlasLayout, { ...pageProps, page: pageNode })
+  // §8.2 / §16.3: `input.layouts` is outermost → innermost, so wrap in
+  // reverse. Each IR layout receives the shared page props plus the child
+  // node (both `children` and the `page` convenience prop, matching
+  // `AtlasLayout`). Unresolved ids are skipped. With no resolved layout,
+  // keep the default Atlas shell (the conformance markup contract).
+  let wrapped = 0
+  for (const id of [...(input.layouts ?? [])].reverse()) {
+    const layout = LAYOUTS[id]
+    if (!layout) continue
+    node = el(layout.component, { ...pageProps, page: node }, node)
+    wrapped++
+  }
+  if (wrapped === 0) {
+    node = el(AtlasLayout, { ...pageProps, page: node })
+  }
+  return node
 }
 
 /** Convert head elements extracted from the page tree into the neutral model.
