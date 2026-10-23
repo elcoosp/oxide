@@ -7835,7 +7835,15 @@ async fn bundle_edge_entry_emits_edge_bundle_js() {
     });
 
     let mut buf: Vec<u8> = Vec::new();
-    let out = crate::bundle_edge_entry(root, &dist, &entry, css, Vec::new(), &mut buf)
+    let out = crate::bundle_edge_entry(
+        root,
+        &dist,
+        &entry,
+        css,
+        Vec::new(),
+        std::collections::BTreeMap::new(),
+        &mut buf,
+    )
         .await
         .expect("bundle_edge_entry");
     assert!(out.is_some(), "an entry chunk was emitted");
@@ -7848,6 +7856,173 @@ async fn bundle_edge_entry_emits_edge_bundle_js() {
         src.contains("edge"),
         "bundle carries the entry source; got {src}"
     );
+}
+
+/// §16.3 / WP-J: an `.mdx` module reachable from `src/edge.ts` must be
+/// precompiled by the same tooling-pool pass the client and SSR bundles
+/// use. Before this wiring the edge bundle passed `BTreeMap::new()`, so
+/// the bundler refused any `.mdx` the entry reached with BLD-FRAMEWORK.
+///
+/// Skips gracefully when Node or @mdx-js/mdx is unavailable: the test's
+/// job is to catch the wiring regression, not to require a specific MDX
+/// compiler in every environment.
+/// WP-J: `bundle_edge_entry` consults the `precompiled` map for a module
+/// instead of reading from disk. This is the deterministic proof of the
+/// wiring — no Node, no MDX compiler, no tooling pool required.
+///
+/// The fixture puts raw markdown at `content.mdx` on disk (which the JS
+/// parser would reject with `Unexpected JSX expression` or a parse error),
+/// and inserts a hand-written compiled-JS string into the precompiled map
+/// for the same path. If `bundle_edge_entry` uses the map, the bundle
+/// contains our marker; if it reads disk instead, the bundle fails to
+/// build.
+///
+/// The path is inserted under multiple key forms because the resolver and
+/// the bundler disagree about whether `/./` appears in the middle
+/// (precompile_entries produces `/tmp/x/./content.mdx` while the bundler
+/// looks up `/tmp/x/content.mdx`). Both forms map to the same content,
+/// which is what the real `cmd_build` path needs too — see the comment
+/// below for why the real path does not currently hit this because
+/// `precompile_entries` produces one shape and `bundle_env_options`
+/// normalizes on the way in.
+#[tokio::test]
+async fn bundle_edge_entry_uses_the_precompiled_map_for_mdx() {
+    let dir = tempfile::tempdir().unwrap();
+    let root_buf = dir.path().canonicalize().unwrap();
+    let root = root_buf.as_path();
+
+    std::fs::write(
+        root.join("edge.ts"),
+        "import content from './content.mdx'\nexport const handler = () => content\n",
+    )
+    .unwrap();
+    // Deliberately NOT valid JS: if the bundler reads this from disk, its
+    // parse fails. The point of the test is that it doesn't.
+    std::fs::write(root.join("content.mdx"), "# this is markdown, not JS\n").unwrap();
+
+    let entry = root.join("edge.ts");
+    let mdx_path = root.join("content.mdx");
+    let dist = root.join("dist");
+
+    // A minimal stand-in for compiled MDX: valid JS with an assertion marker.
+    let compiled_js =
+        "export default function MDXContent() { return 'PRECOMPILED_MDX_MARKER'; }\n".to_string();
+    let mut precompiled: std::collections::BTreeMap<std::path::PathBuf, String> =
+        std::collections::BTreeMap::new();
+    // Multiple key forms: whichever shape the bundler's resolver produces,
+    // the lookup hits.
+    precompiled.insert(mdx_path.clone(), compiled_js.clone());
+    precompiled.insert(root.join("./content.mdx"), compiled_js.clone());
+
+    let css = oxide_bundler::CssTransformHook::new(|_, src, _, _| {
+        Ok((src.to_string(), std::collections::BTreeMap::new()))
+    });
+
+    let mut buf: Vec<u8> = Vec::new();
+    let out = crate::bundle_edge_entry(
+        root,
+        &dist,
+        &entry,
+        css,
+        Vec::new(),
+        precompiled,
+        &mut buf,
+    )
+    .await
+    .expect("bundle_edge_entry")
+    .expect("entry chunk emitted");
+
+    assert!(out.is_file(), "edge bundle emitted at {out:?}");
+    let bundle = std::fs::read_to_string(&out).unwrap();
+    assert!(
+        bundle.contains("PRECOMPILED_MDX_MARKER"),
+        "bundle carries the precompiled content, not the disk file: {bundle}"
+    );
+}
+
+/// WP-J: integration-level check that a real `.mdx` file reachable from
+/// `src/edge.ts` compiles through the edge bundle. Requires
+/// `@mdx-js/mdx` installed in the workspace's node_modules and a working
+/// Node toolchain — hence `#[ignore]`. Run with:
+///
+///     cargo test -p oxide-cli --lib bundle_edge_entry_accepts_mdx -- --ignored
+///
+/// This is currently expected to FAIL when run: `compile_mdx` in
+/// `precompile.rs` requests `{ jsx: true }` from `@mdx-js/mdx`, which
+/// emits JSX syntax rather than a `_jsx()`-call module. Rolldown then
+/// rejects the JSX (`Unexpected JSX expression`). The fix is to add a
+/// JSX-transform pass after MDX compilation (or switch to the automatic
+/// runtime option that produces JS directly); it is out of scope for the
+/// wiring change this commit ships. The test is kept (ignored) so the
+/// gap is visible and can be un-ignored once compile_mdx is fixed.
+#[tokio::test]
+#[ignore = "requires @mdx-js/mdx + a compile_mdx fix to emit JS (not JSX)"]
+async fn bundle_edge_entry_accepts_mdx_reachable_from_the_entry() {
+    use oxide_jshost::JsHost as _;
+    use std::sync::Arc;
+    let dir = tempfile::tempdir().unwrap();
+    let root_buf = dir.path().canonicalize().expect("canonicalize tempdir");
+    let root = root_buf.as_path();
+
+    std::fs::write(
+        root.join("edge.ts"),
+        "import content from './content.mdx'\nexport const handler = () => content\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("content.mdx"), "# Hello\n\nThis is a test.\n").unwrap();
+
+    let entry = root.join("edge.ts");
+    let dist = root.join("dist");
+
+    let host = oxide_jshost::NodeHost::new(oxide_jshost::NodeHost::worker_script_default());
+    let pool: Arc<dyn oxide_jshost::Pool> = host
+        .tooling_pool(oxide_jshost::PoolConfig::default())
+        .expect("spawn Node worker");
+
+    let mut entries: std::collections::BTreeMap<String, std::path::PathBuf> =
+        std::collections::BTreeMap::new();
+    entries.insert("edge".into(), entry.clone());
+
+    let precompiled = crate::precompile::precompile_entries(
+        Some(&pool),
+        &entries,
+        "ssr",
+        Some("react"),
+        None,
+        env!("CARGO_PKG_VERSION"),
+    )
+    .await;
+
+    // Normalize keys so the bundler's resolver-form lookups hit.
+    let precompiled: std::collections::BTreeMap<std::path::PathBuf, String> = precompiled
+        .into_iter()
+        .flat_map(|(k, v)| {
+            let canonical = k.canonicalize().unwrap_or_else(|_| k.clone());
+            vec![(k, v.clone()), (canonical, v)]
+        })
+        .collect();
+
+    let css = oxide_bundler::CssTransformHook::new(|_, src, _, _| {
+        Ok((src.to_string(), std::collections::BTreeMap::new()))
+    });
+
+    let mut buf: Vec<u8> = Vec::new();
+    let out = crate::bundle_edge_entry(
+        root,
+        &dist,
+        &entry,
+        css,
+        Vec::new(),
+        precompiled,
+        &mut buf,
+    )
+    .await
+    .expect("bundle_edge_entry")
+    .expect("precompiled .mdx produced an entry chunk");
+
+    assert!(out.is_file(), "edge bundle emitted at {out:?}");
+    let bundle = std::fs::read_to_string(&out).unwrap();
+    assert!(!bundle.is_empty(), "edge bundle is non-empty");
 }
 
 // ------------------------------ §18 / P0-1c: wasm32 edge compile
@@ -8429,6 +8604,7 @@ async fn edge_bundle_accepts_declared_externals() {
         &entry,
         css,
         vec!["edge-runtime-helpers".to_string()],
+        std::collections::BTreeMap::new(),
         &mut buf,
     )
     .await
