@@ -2,6 +2,10 @@ name: CI
 on:
   push: { branches: [main] }
   pull_request:
+  # §22 names Miri; it needs a nightly toolchain and is minutes-slow, so it
+  # runs on a schedule rather than on every push.
+  schedule:
+    - cron: '0 4 * * *'
 jobs:
   rust:
     strategy:
@@ -232,3 +236,24 @@ jobs:
       - name: Run Playwright (${{ matrix.browser }})
         working-directory: tests/playwright
         run: pnpm exec playwright test --project=${{ matrix.browser }} --timeout=25000
+
+  miri:
+    name: Miri — undefined behaviour (§22)
+    # Nightly + minutes-slow: scheduled only. A UB report is not urgent enough
+    # to block a PR, and running it per-push would dominate the matrix.
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - name: Miri on the pure-Rust crates
+        # `oxide-odf` (the wire-format codec) and `oxide-diagnostics` are the
+        # crates with no FFI and no filesystem access, so Miri can execute
+        # their tests fully. `oxide-cache` cannot: `zstd`'s C FFI is
+        # unsupported under Miri. `oxide-router` aborts on a filesystem test
+        # (Miri isolation), not on undefined behaviour.
+        run: |
+          cargo +nightly miri test -p oxide-odf --lib
+          cargo +nightly miri test -p oxide-diagnostics --lib
