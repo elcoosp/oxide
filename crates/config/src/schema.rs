@@ -228,6 +228,7 @@ pub fn config_schema() -> Value {
                     "target": { "type": "string" },
                     "sourcemap": { "type": "string", "enum": ["hidden", "inline", "external", "off"] },
                     "ssrExternals": { "type": "array", "items": { "type": "string" } },
+                    "edgeExternals": { "type": "array", "items": { "type": "string" }, "description": "§18 / D18: specifiers left external in the edge bundle. Empty by default — the Worker must be self-contained unless it declares a node-compat layer." },
                     "remoteCache": { "type": "string", "description": "§5.4: remote build-cache URL (http://). Read-through on a local miss, write-back on store." },
                     "writeBranches": { "type": "array", "items": { "type": "string" }, "description": "§5.4 / SPEC-5D: git branches trusted to write the shared remote cache. Default main/master + release/* when remoteCache is set." },
                     "routeSearch": { "type": "boolean", "default": true, "description": "§16.5: emit the route-search index (dist/client/search-index.json). On by default when prerendered pages exist; set false for projects that do not ship a client-side search UI." }
