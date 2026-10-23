@@ -982,6 +982,8 @@ pub struct SocketHost {
 #[derive(Debug, Clone, Default)]
 pub struct SocketOutcome {
     pub sends: Vec<String>,
+    pub broadcasts: Vec<String>,
+    pub targets: Vec<(String, String)>,
     pub close: Option<(u16, String)>,
 }
 
@@ -1035,6 +1037,30 @@ impl SocketHost {
                 .collect(),
             _ => Vec::new(),
         };
+        let broadcasts = v
+            .get("broadcasts")
+            .and_then(|b| b.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let targets = v
+            .get("targets")
+            .and_then(|t| t.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|pair| {
+                        let p = pair.as_array()?;
+                        Some((
+                            p.first()?.as_str()?.to_string(),
+                            p.get(1)?.as_str()?.to_string(),
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let close = match v.get("close") {
             // Worker returns `close: null` for a phase that does NOT want
             // to end the socket (the smoke app's `open` calls `send` only).
@@ -1052,7 +1078,12 @@ impl SocketHost {
             }
             _ => None,
         };
-        Ok(SocketOutcome { sends, close })
+        Ok(SocketOutcome {
+            sends,
+            broadcasts,
+            targets,
+            close,
+        })
     }
 }
 
