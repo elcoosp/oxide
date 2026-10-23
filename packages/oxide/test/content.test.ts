@@ -1,4 +1,4 @@
-// §16 / K1 — getCollection / getEntry.
+// §16.5 — getCollection / getEntry.
 //
 // The helper resolves `dist/content/<name>.entries.json` from
 // OXIDE_ROOT (or process.cwd() when unset). Tests set OXIDE_ROOT to a
