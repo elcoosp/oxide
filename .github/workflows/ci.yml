@@ -150,6 +150,14 @@ jobs:
       - name: Launch-content grep
         run: ./scripts/check-launch-content.sh
 
+  spec-anchors:
+    name: spec-anchor gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Every cited §N must be a real heading
+        run: ./scripts/check-spec-anchors.sh
+
   hmr-latency:
     name: HMR latency harness (§13.3 / §21)
     runs-on: ubuntu-latest
