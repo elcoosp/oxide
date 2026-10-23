@@ -2151,6 +2151,14 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             })
             .collect();
         if !events.is_empty() {
+            // §10.8: PPR shells are keyed by build id; dev's id is stable, so
+            // a source edit must clear the store explicitly or the next
+            // visitor is served a shell from the pre-edit render.
+            if let Some(shells) = started.ppr_shells.as_ref() {
+                if let Ok(mut store) = shells.lock() {
+                    store.clear();
+                }
+            }
             // §16.5: rescan collections before the loaders for this batch run.
             // The write is atomic (`write_content_atomic`) and lands under
             // `dist`, which the filter above ignores to avoid a notify loop.
@@ -6385,6 +6393,10 @@ pub struct StartedServer {
     /// SPEC-14: the dev HMR hub, when dev. The dev loop publishes file
     /// changes to it; `/_oxide/hmr` subscribers receive them.
     pub hmr: Option<std::sync::Arc<oxide_dev::HmrHub>>,
+    /// §10.8: the PPR shell store, when `render.ppr` is on. The dev watcher
+    /// clears it on every change so a shell captured before an edit cannot
+    /// outlive the source it was rendered from.
+    pub(crate) ppr_shells: Option<PprShells>,
 }
 
 /// Boxed dispatch future. Structurally identical to `futures::future::BoxFuture<_,
@@ -9319,6 +9331,8 @@ impl oxide_server::SocketDispatcher for SocketDispatcherImpl {
         match self.host.run(module_path, phase, payload, socket_id).await {
             Ok(out) => Ok(oxide_server::SocketRunResult {
                 sends: out.sends,
+                broadcasts: out.broadcasts,
+                targets: out.targets,
                 close: out.close,
             }),
             Err(e) => Err(oxide_server::SocketRunError {
@@ -10121,6 +10135,9 @@ async fn start_server_inner_full(
             Some(std::sync::Arc::new(oxide_server::SocketService {
                 dispatcher,
                 routes: std::sync::Arc::new(routes),
+                registry: std::sync::Arc::new(std::sync::Mutex::new(
+                    std::collections::HashMap::new(),
+                )),
             }))
         }
         _ => None,
@@ -10470,6 +10487,12 @@ async fn start_server_inner_full(
                 .map(std::sync::Arc::new)
         })
         .flatten();
+    // §10.8: PPR shells exist only when `render.ppr` is enabled. Keep a
+    // handle for the dev watcher (cleared on every edit) and for tests.
+    let ppr_shells = cfg
+        .render
+        .ppr
+        .then(|| std::sync::Arc::new(std::sync::Mutex::new(PprShellStore::default())));
     let dispatch = build_dispatch(
         std::sync::Arc::clone(&tree),
         std::sync::Arc::clone(&metrics),
@@ -10502,9 +10525,7 @@ async fn start_server_inner_full(
         // §16.6: the session codec (None when no keys are configured).
         session_codec,
         // §10.8: PPR shells exist only when `render.ppr` is enabled.
-        cfg.render
-            .ppr
-            .then(|| std::sync::Arc::new(std::sync::Mutex::new(PprShellStore::default()))),
+        ppr_shells.clone(),
     );
     // §5.6: dev-mode stale guard. When a HMR hub is wired, wrap the
     // dispatch so a mid-flight file change aborts the render (no serving
@@ -10587,6 +10608,7 @@ async fn start_server_inner_full(
         metrics,
         dev_token,
         hmr,
+        ppr_shells,
     })
 }
 
