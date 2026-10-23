@@ -622,6 +622,22 @@ fn refine_render_modes_from_ast(root: &Path, cfg: &OxideConfig, mut tree: RouteT
     tree
 }
 
+/// Scan routes with a tooling pool when a plugin declares `routes` or
+/// `serverMiddleware`. Those two hooks contribute entries during the scan, so
+/// every command that builds a route table must pass a pool — not just serve.
+/// The pool is created lazily: a project with no such plugin pays nothing.
+async fn scan_routes_with_plugins(root: &Path, cfg: &OxideConfig) -> anyhow::Result<RouteTree> {
+    if !plugin_declares_any(root, cfg, &["routes", "serverMiddleware"]) {
+        return scan_routes(root, cfg, None).await;
+    }
+    use oxide_jshost::JsHost as _;
+    let host = oxide_jshost::NodeHost::new(oxide_jshost::NodeHost::worker_script_default());
+    let pool = host
+        .tooling_pool(oxide_jshost::PoolConfig::default())
+        .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+    scan_routes(root, cfg, Some(&pool)).await
+}
+
 async fn scan_routes(
     root: &Path,
     cfg: &OxideConfig,
@@ -1612,7 +1628,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     if let Err(e) = crate::native_plugins::parse_native_plugins(&cfg) {
         anyhow::bail!("{} {}", e.0.code, e.0.message);
     }
-    let tree = scan_routes(&rootp, &cfg, None).await?;
+    let tree = scan_routes_with_plugins(&rootp, &cfg).await?;
     // §16.5: emit content entries before the server starts so a dev loader's
     // first `getCollection` call works without a prior `oxide build`.
     emit_content_search_indexes(&rootp, &cfg, &rootp.join("dist"), w)?;
@@ -1812,6 +1828,12 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // payload the client has to fetch itself).
     let hmr_loader: Option<std::sync::Arc<dyn oxide_server::LoaderRunner>> =
         stack.loader_runner.clone();
+    // WP-B: the rescan arm rebuilds renderer component sources when a route
+    // file is added or removed, mirroring the boot-time population above.
+    // Clone the handles now so the watcher loop can reach them after `stack`
+    // is out of scope for the loop body.
+    let hmr_component_source = std::sync::Arc::clone(&stack.component_source);
+    let hmr_tooling_pool = stack.tooling_pool.clone();
 
     // §13.1 / P0-7: a fresh `oxide dev` has no client bundle, so nothing
     // would hydrate, navigate, or load a route's JS. Build it once (unminified)
@@ -2323,8 +2345,61 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                             match scan_routes(&rootp, &cfg, hmr_pool.as_ref()).await {
                                 Ok(fresh) => {
                                     let refined = refine_render_modes_from_ast(&rootp, &cfg, fresh);
-                                    started.swappable_tree.store(std::sync::Arc::new(refined));
-                                    tracing::info!("dev: route tree rebuilt after {pstr} change");
+                                    let new_tree = std::sync::Arc::new(refined);
+                                    // Rebuild renderer component sources BEFORE
+                                    // publishing the swap so the next request
+                                    // resolves the component in the same tick
+                                    // as the tree match. Without this, an added
+                                    // route matches the tree but fails at
+                                    // render with 'no component resolved'.
+                                    {
+                                        use oxide_router::RouteKind;
+                                        let routes_root = rootp.join(&cfg.routes.dir);
+                                        let entries: std::collections::BTreeMap<
+                                            String,
+                                            std::path::PathBuf,
+                                        > = new_tree
+                                            .entries
+                                            .iter()
+                                            .filter(|e| {
+                                                matches!(
+                                                    e.kind,
+                                                    RouteKind::Page
+                                                        | RouteKind::Layout
+                                                        | RouteKind::Error
+                                                        | RouteKind::NotFound
+                                                        | RouteKind::Template
+                                                )
+                                            })
+                                            .map(|e| {
+                                                (
+                                                    canonical_route_id(&e.id.0),
+                                                    routes_root.join(&e.file),
+                                                )
+                                            })
+                                            .collect();
+                                        if !entries.is_empty() {
+                                            let framework = cfg
+                                                .framework
+                                                .adapter
+                                                .as_deref()
+                                                .or(cfg.framework.name.as_deref());
+                                            let sources = framework_shim::dev_component_sources(
+                                                &rootp,
+                                                framework,
+                                                entries,
+                                                hmr_tooling_pool.as_ref(),
+                                            )
+                                            .await;
+                                            if let Ok(mut src) = hmr_component_source.write() {
+                                                src.sources = sources;
+                                            }
+                                        }
+                                    }
+                                    started.swappable_tree.store(new_tree);
+                                    tracing::info!(
+                                        "dev: route tree + component sources rebuilt after {pstr} change"
+                                    );
                                     hub.publish(HmrMessage::FullReload {
                                         reason: "route tree rebuilt".to_string(),
                                     });
@@ -4342,7 +4417,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     if let Err(e) = crate::native_plugins::parse_native_plugins(&cfg) {
         anyhow::bail!("{} {}", e.0.code, e.0.message);
     }
-    let tree = refine_render_modes_from_ast(&rootp, &cfg, scan_routes(&rootp, &cfg, None).await?);
+    let tree =
+        refine_render_modes_from_ast(&rootp, &cfg, scan_routes_with_plugins(&rootp, &cfg).await?);
     let routes_root = rootp.join(&cfg.routes.dir);
     // §4.4: report top-level side effects that would break a V8 snapshot.
     emit_snapshot_lint(&cfg, &rootp, &tree, w)?;
@@ -10854,7 +10930,8 @@ async fn cmd_routes(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     // authoritative mode rather than the scanner's line-oriented guess.
     // (Without it, a loader with `'…cookies…'` in a string literal reads
     // as dynamic here while the build treats it as static.)
-    let tree = refine_render_modes_from_ast(&rootp, &cfg, scan_routes(&rootp, &cfg, None).await?);
+    let tree =
+        refine_render_modes_from_ast(&rootp, &cfg, scan_routes_with_plugins(&rootp, &cfg).await?);
     let i18n_for_typegen: Option<&[String]> = match cfg.i18n.strategy.as_str() {
         "none" => None,
         _ if cfg.i18n.locales.is_empty() => None,
@@ -10910,7 +10987,7 @@ async fn cmd_routes(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
 async fn cmd_analyze(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = PathBuf::from(root);
     let cfg = load_config_or_default(&rootp, "production");
-    let tree = scan_routes(&rootp, &cfg, None).await?;
+    let tree = scan_routes_with_plugins(&rootp, &cfg).await?;
     let manifest =
         read_json(&rootp.join("dist/client/client.manifest.json")).unwrap_or(serde_json::json!({}));
     let manifest_routes = manifest
@@ -11094,7 +11171,7 @@ async fn cmd_check(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
         }
     }
     let cfg = load_config_or_default(&rootp, "development");
-    match scan_routes(&rootp, &cfg, None).await {
+    match scan_routes_with_plugins(&rootp, &cfg).await {
         Ok(tree) => outln!(w, "routes: OK ({} entries)", tree.entries.len()),
         Err(e) => {
             outln!(w, "routes: {e:#}");
