@@ -270,7 +270,7 @@ contract before the implementation.
   deferred boundaries in settle order, error / not-found, islands, actions JS-on/off, server
   functions, cache shapes, client router, prefetch) against all four adapters: 96 checks per
   release, and 21 Rust snapshot tests lock the emitted HTML and deploy artifacts byte-for-byte.
-- **Playwright** — 18 Chromium specs across 7 files that boot the real binary and drive a
+- **Playwright** — 23 specs across 9 files, run per browser (Chromium, Firefox, WebKit) that boot the real binary and drive a
   real browser: SSR identity with zero console errors, island hydration (click 3 → 4 → 5),
   navigation loading boundaries, middleware locals + redirect, socket round-trip and
   two-client isolation, ordered SSE streaming, and the config-gated `/_oxide/og` endpoint
@@ -283,7 +283,7 @@ fixture check, a benchmark gate that **fails the build on >5% regression** again
 fuzz-property job, config-schema stability + stale-string gates, a **launch-content gate**
 that greps the website and marketing content for stale claims and numbers, an HMR latency
 harness that fails on zero successful iterations, the Node-loader jshost e2e job, and a
-Playwright Chromium job running the 18 browser specs.
+Playwright job running every spec on all three engines, one matrix cell per browser.
 
 ## Project status
 
