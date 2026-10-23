@@ -2300,9 +2300,41 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                     HmrBehavior::ServerSwap => {
                         hub.publish(HmrMessage::ServerModuleSwap { path: pstr })
                     }
-                    HmrBehavior::RestartSubsystems => hub.publish(HmrMessage::FullReload {
-                        reason: format!("{pstr} changed"),
-                    }),
+                    HmrBehavior::RestartSubsystems => {
+                        // WP-B (deviation 3): a route-file change re-scans the
+                        // route tree and swaps it in place, so a newly added
+                        // route becomes reachable without restarting the dev
+                        // server. A non-route config change keeps the previous
+                        // behaviour (full reload only). A failed rescan keeps
+                        // the current tree and falls back to a full reload so
+                        // the client still sees something.
+                        let routes_dir = rootp.join(&cfg.routes.dir);
+                        if path.starts_with(&routes_dir) {
+                            match scan_routes(&rootp, &cfg, hmr_pool.as_ref()).await {
+                                Ok(fresh) => {
+                                    let refined = refine_render_modes_from_ast(&rootp, &cfg, fresh);
+                                    started.swappable_tree.store(std::sync::Arc::new(refined));
+                                    tracing::info!("dev: route tree rebuilt after {pstr} change");
+                                    hub.publish(HmrMessage::FullReload {
+                                        reason: "route tree rebuilt".to_string(),
+                                    });
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        error = %e,
+                                        "dev: route rescan failed; keeping current tree"
+                                    );
+                                    hub.publish(HmrMessage::FullReload {
+                                        reason: format!("{pstr} changed (route rescan failed)"),
+                                    });
+                                }
+                            }
+                        } else {
+                            hub.publish(HmrMessage::FullReload {
+                                reason: format!("{pstr} changed"),
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -6379,6 +6411,9 @@ pub struct StartedServer {
     /// clears it on every change so a shell captured before an edit cannot
     /// outlive the source it was rendered from.
     pub(crate) ppr_shells: Option<PprShells>,
+    /// WP-B: the route tree the dispatch reads through. The dev watcher
+    /// stores a fresh tree here after re-scanning; `cmd_serve` never swaps.
+    pub(crate) swappable_tree: SwappableRouteTree,
 }
 
 /// Boxed dispatch future. Structurally identical to `futures::future::BoxFuture<_,
@@ -6670,8 +6705,80 @@ fn stale_503(start: u64, now: u64) -> oxide_server::OxideResponse {
     resp
 }
 
+/// WP-B (deviation 3): a swappable slot for the route tree. The dispatch
+/// closure reads through this on every request, so a dev-watcher rescan can
+/// publish a fresh `RouteTree` without restarting the server. `build_dispatch`
+/// (used by every test) wraps a one-shot swappable that is never swapped; dev
+/// passes the live one to `build_dispatch_swappable` directly.
+#[derive(Clone)]
+pub(crate) struct SwappableRouteTree {
+    inner: std::sync::Arc<std::sync::RwLock<std::sync::Arc<oxide_router::RouteTree>>>,
+}
+
+impl SwappableRouteTree {
+    pub fn new(tree: std::sync::Arc<oxide_router::RouteTree>) -> Self {
+        Self {
+            inner: std::sync::Arc::new(std::sync::RwLock::new(tree)),
+        }
+    }
+
+    pub fn load(&self) -> std::sync::Arc<oxide_router::RouteTree> {
+        std::sync::RwLock::read(&self.inner)
+            .expect("route tree lock poisoned")
+            .clone()
+    }
+
+    pub fn store(&self, tree: std::sync::Arc<oxide_router::RouteTree>) {
+        *std::sync::RwLock::write(&self.inner).expect("route tree lock poisoned") = tree;
+    }
+}
+
 fn build_dispatch(
     tree: std::sync::Arc<oxide_router::RouteTree>,
+    metrics: std::sync::Arc<oxide_server::Metrics>,
+    proxy_rules: Vec<oxide_dev::ProxyRule>,
+    page_renderer: Option<std::sync::Arc<dyn oxide_server::PageRenderer>>,
+    loader_runner: Option<std::sync::Arc<dyn oxide_server::LoaderRunner>>,
+    routes_root: std::path::PathBuf,
+    boot_script_url: Option<String>,
+    l0: Option<std::sync::Arc<l0_cache::L0Cache>>,
+    actions: Option<std::sync::Arc<dyn oxide_server::ActionDispatcher>>,
+    archived: Option<std::sync::Arc<oxide_router::ArchivedTree>>,
+    pool: Option<std::sync::Arc<dyn oxide_jshost::Pool>>,
+    i18n_cfg: Option<oxide_assets::i18n::I18nConfig>,
+    endpoint_dispatcher: Option<std::sync::Arc<dyn oxide_server::EndpointDispatcher>>,
+    middleware_dispatcher: Option<std::sync::Arc<dyn oxide_server::MiddlewareDispatcher>>,
+    dev_hmr: bool,
+    vary_headers: Vec<String>,
+    waterfall: Option<oxide_dev::WaterfallRecorder>,
+    session_codec: Option<std::sync::Arc<oxide_server::SessionCodec>>,
+    ppr_shells: Option<PprShells>,
+) -> std::sync::Arc<dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync> {
+    build_dispatch_swappable(
+        SwappableRouteTree::new(tree),
+        metrics,
+        proxy_rules,
+        page_renderer,
+        loader_runner,
+        routes_root,
+        boot_script_url,
+        l0,
+        actions,
+        archived,
+        pool,
+        i18n_cfg,
+        endpoint_dispatcher,
+        middleware_dispatcher,
+        dev_hmr,
+        vary_headers,
+        waterfall,
+        session_codec,
+        ppr_shells,
+    )
+}
+
+fn build_dispatch_swappable(
+    swappable: SwappableRouteTree,
     metrics: std::sync::Arc<oxide_server::Metrics>,
     proxy_rules: Vec<oxide_dev::ProxyRule>,
     page_renderer: Option<std::sync::Arc<dyn oxide_server::PageRenderer>>,
@@ -6746,6 +6853,7 @@ fn build_dispatch(
     let dispatch_fn: std::sync::Arc<
         dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
     > = std::sync::Arc::new(move |req: oxide_server::OxideRequest| {
+        let tree = swappable.load();
         let started = std::time::Instant::now();
         // Rewrite-hop guard (§8.5 / S-20): the hop count is tracked on the
         // internal `rewrite_hops` field, never a client-supplied header — a
@@ -10541,8 +10649,9 @@ async fn start_server_inner_full(
         .render
         .ppr
         .then(|| std::sync::Arc::new(std::sync::Mutex::new(PprShellStore::default())));
-    let dispatch = build_dispatch(
-        std::sync::Arc::clone(&tree),
+    let swappable_tree = SwappableRouteTree::new(std::sync::Arc::clone(&tree));
+    let dispatch = build_dispatch_swappable(
+        swappable_tree.clone(),
         std::sync::Arc::clone(&metrics),
         proxy_rules.clone(),
         stack.page_renderer,
@@ -10657,6 +10766,7 @@ async fn start_server_inner_full(
         dev_token,
         hmr,
         ppr_shells,
+        swappable_tree,
     })
 }
 

@@ -318,6 +318,87 @@ async fn ppr_serves_cached_shell_and_streams_holes() {
     );
 }
 
+#[test]
+fn swappable_route_tree_store_and_load_round_trip() {
+    // WP-B (deviation 3): `SwappableRouteTree` is the slot the dev watcher
+    // writes a freshly-scanned tree into; the dispatch closure reads through
+    // it on every request. This test asserts the slot itself (store -> load
+    // identity) and the behavioural consequence (after a store, `load()`
+    // routes to the new tree's paths, not the old one's). The trees are
+    // built via `RouteTree::insert` (like `tree_with_server_route` above)
+    // rather than `scan_with_config`, so the test exercises the slot in
+    // isolation - the scanner is covered by oxide-router's own tests.
+    let mut tree_a_inner = oxide_router::RouteTree::new();
+    tree_a_inner.insert(oxide_router::RouteEntry {
+        id: oxide_router::RouteId("routes/index".into()),
+        kind: oxide_router::RouteKind::Page,
+        segments: vec![],
+        file: std::path::PathBuf::from("index/page.tsx"),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: false,
+        slot: None,
+        needs_parent: false,
+    });
+    let tree_a = std::sync::Arc::new(tree_a_inner);
+
+    let mut tree_b_inner = oxide_router::RouteTree::new();
+    tree_b_inner.insert(oxide_router::RouteEntry {
+        id: oxide_router::RouteId("routes/about".into()),
+        kind: oxide_router::RouteKind::Page,
+        segments: vec!["about".into()],
+        file: std::path::PathBuf::from("about/page.tsx"),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: false,
+        slot: None,
+        needs_parent: false,
+    });
+    let tree_b = std::sync::Arc::new(tree_b_inner);
+
+    // Sanity: the two trees route differently, so the round-trip proves
+    // something.
+    assert!(tree_a.match_path("/").is_some(), "tree_a routes /");
+    assert!(
+        tree_a.match_path("/about").is_none(),
+        "tree_a has no /about"
+    );
+    assert!(
+        tree_b.match_path("/about").is_some(),
+        "tree_b routes /about"
+    );
+    assert!(tree_b.match_path("/").is_none(), "tree_b has no /");
+
+    let swappable = crate::SwappableRouteTree::new(std::sync::Arc::clone(&tree_a));
+    assert!(
+        std::sync::Arc::ptr_eq(&swappable.load(), &tree_a),
+        "load returns the tree passed to new()"
+    );
+
+    swappable.store(std::sync::Arc::clone(&tree_b));
+    assert!(
+        std::sync::Arc::ptr_eq(&swappable.load(), &tree_b),
+        "load returns the tree passed to the last store()"
+    );
+
+    // Behavioural proof of the swap.
+    assert!(
+        swappable.load().match_path("/about").is_some(),
+        "after swap, /about routes"
+    );
+    assert!(
+        swappable.load().match_path("/").is_none(),
+        "after swap, / no longer routes"
+    );
+
+    // A second store swaps back, so the slot is reusable.
+    swappable.store(std::sync::Arc::clone(&tree_a));
+    assert!(
+        std::sync::Arc::ptr_eq(&swappable.load(), &tree_a),
+        "a second store swaps back"
+    );
+}
+
 #[tokio::test]
 async fn dispatch_routes_through_page_renderer_when_attached() {
     use std::sync::Arc;

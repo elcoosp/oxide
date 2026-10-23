@@ -37,7 +37,14 @@ WOFF2 glyf/loca transform plus Brotli - a project in itself.
 the `.ttf` extension and the documented deviation, so an encoder swap updates
 both deliberately.
 
-## Dev route additions require a dev-server restart (WP-C1)
+## Dev route additions require a dev-server restart (WP-C1) - closed by the dev route rescan
+
+**Status.** Closed in this change - the dev watcher re-scans the route
+table on a route-file event and swaps it into the running dispatch without
+a server restart. `SwappableRouteTree` is the slot; `build_dispatch_swappable`
+reads through it on every request; `build_dispatch` wraps a one-shot slot
+that is never swapped so tests are unaffected.
+
 
 **What the spec asks.** Adding a route file under `routes.dir` should render in
 dev without editing `oxide.config.ts` or restarting (§13 hot updates).
