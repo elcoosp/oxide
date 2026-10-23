@@ -1,4 +1,4 @@
-// §16 / K1: content collections as a data surface.
+// §16.5: content collections as a data surface.
 //
 // `oxide build` scans each collection (see `content.collections` in
 // `oxide.config.ts`) and emits two files to `dist/content/`:
@@ -74,7 +74,7 @@ export async function getCollection(name: string): Promise<ContentEntry[]> {
         `\`oxide build\` run since it was added?`,
     )
   }
-  // §16 / K1 / WP-r9-1: key on a content hash, not (mtime, size). Two
+  // §16.5 / WP-r9-1: key on a content hash, not (mtime, size). Two
   // same-size rewrites within one mtime quantum — or any mtime rounding
   // on tmpfs — used to serve stale entries. The file is small (a few KB
   // per collection); hashing it is cheaper than a wrong answer.
