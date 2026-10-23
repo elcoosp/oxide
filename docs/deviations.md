@@ -57,7 +57,7 @@ decoupling) is done.
 **What would change it.** A route-table generation in `cmd_dev` that re-runs
 `scan_routes` on `Created`/`Removed` events for `routes.dir` and rebuilds
 `dev_component_sources` for the new canonical ids.
-## Edge `mergeHead` is JS-only (P0-1)
+## Edge `mergeHead` was JS-only (P0-1) — closed by `merge_head_structured`
 
 **What the spec asks.** The edge handler (D18) prefers the wasm export for
 each of the three named functions — `edge_cache_key`, `merge_head`,
@@ -76,10 +76,19 @@ fails on object input, `unwrap_or_default()` discards the error, the
 returned `"[]"` parses as `[]`, and the JS fallback therefore never ran —
 an empty head on every edge response.
 
-**What would change it.** A Rust-side port of the structured head merge,
+**What would change it.** ~~A Rust-side port of the structured head merge,
 with its own tests against the edge shape, exposed as a new export
-(`merge_head_structured`). Reusing `merge_head` is a type mismatch by
-design, not by accident.
+(`merge_head_structured`).~~ **DONE.** `merge_head_structured` in
+`crates/core-wasm` takes and returns the structured model with the same
+semantics as the JS (`title` later-wins, `meta` dedupes by first element
+keeping the last occurrence, `links` dedupe by `(rel, href)`, `json_ld`
+concatenates). Six tests pin it against the JS behaviour. The wasm export
+is `merge_head_structured`, and the edge handler prefers it when the module
+is loaded, falling back to the identical JS.
+
+The **flat** `merge_head` export is still not routed through wasm — that
+type mismatch is by design, and the integration test now asserts both
+halves: the flat one absent, the structured one present.
 
 
 ## Edge bundle: declared externals; chunked output (P0-1b)
