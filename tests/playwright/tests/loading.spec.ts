@@ -22,7 +22,11 @@ const oxideBin = join(repoRoot, 'target', 'debug', 'oxide-cli')
 
 let server: ChildProcess | undefined
 
-test.beforeAll(async () => {
+test.beforeAll(async ({ browser }) => {
+  // beforeAll can spend longer than the file's 15s test timeout on the
+  // server-up poll, the warm-up navigation, or both; give it room.
+  test.setTimeout(60_000)
+
   if (!existsSync(oxideBin)) {
     throw new Error(
       `oxide-cli binary missing at ${oxideBin}; run \`cargo build -p oxide-cli\` first`,
@@ -33,14 +37,31 @@ test.beforeAll(async () => {
     env: { ...process.env },
   })
   const deadline = Date.now() + 30_000
+  let up = false
   while (Date.now() < deadline) {
     try {
       const r = await fetch('http://127.0.0.1:3103/_oxide/health')
-      if (r.ok) return
+      if (r.ok) { up = true; break }
     } catch { /* not up */ }
     await sleep(250)
   }
-  throw new Error('oxide start did not come up within 30s')
+  if (!up) throw new Error('oxide start did not come up within 30s')
+
+  // Warm-up navigation. The first `page.goto` + `waitForFunction(__oxide)`
+  // in this file has been observed to time out on WebKit's very first
+  // run (cold engine + cold server on the test's 10s budget), then pass
+  // on retry in ~2s once both are warm. A throw-away navigation here
+  // pays both costs once, outside any test's timeout, so the test below
+  // starts from a warm engine and a warm server.
+  const warmup = await browser.newPage()
+  try {
+    await warmup.goto('http://127.0.0.1:3103/')
+    await warmup.waitForFunction(() => (window as any).__oxide != null, {
+      timeout: 30_000,
+    })
+  } finally {
+    await warmup.close()
+  }
 })
 
 test.afterAll(() => {
