@@ -1222,6 +1222,77 @@ globalThis.__oxideDispatch = async function (kind, moduleUrl, exportName, payloa
   }
 };
 
+// §15.2: JS plugin bridge for the V8 backend. Mirrors the Node worker's
+// pluginCache / dispatchPluginLoad / dispatchPluginCall: import the module
+// once by path, then call hooks positionally with the documented argument
+// order. Without this the generic dispatch would call `mod[export](payload)`
+// and pass one object where a plugin expects `(code, id)`.
+const __oxidePlugins = new Map();
+const __oxidePluginHookArgs = {
+  transform: ['code', 'id'],
+  resolveId: ['specifier', 'from'],
+  load: ['id'],
+  renderChunk: ['file', 'code'],
+  generateBundle: ['files'],
+  transformHtml: ['route', 'html'],
+  config: ['config'],
+  configResolved: ['config'],
+  buildStart: [],
+  buildEnd: ['result'],
+  handleHotUpdate: ['ctx'],
+};
+globalThis.__oxidePluginLoad = async function (path) {
+  try {
+    const url = path.startsWith('file://')
+      ? path
+      : 'file://' + (path.startsWith('/') ? '' : '/') + path;
+    const mod = await import(globalThis.__oxideVersioned(url));
+    const plugin = mod.default ?? mod;
+    const hooks = Object.keys(plugin).filter((k) => typeof plugin[k] === 'function');
+    __oxidePlugins.set(path, plugin);
+    return JSON.stringify({ hooks, name: plugin.name ?? null });
+  } catch (e) {
+    return JSON.stringify({
+      __oxide_error: 'plugin import failed for ' + path + ': ' + ((e && e.message) || e),
+      __oxide_code: 'PLG-LOAD',
+    });
+  }
+};
+globalThis.__oxidePluginCall = async function (path, hook, args) {
+  const plugin = __oxidePlugins.get(path);
+  if (!plugin) {
+    return JSON.stringify({
+      __oxide_error: 'plugin not loaded: ' + path + ' (call plugin:load first)',
+      __oxide_code: 'PLG-LOAD',
+    });
+  }
+  const fn = plugin[hook];
+  if (typeof fn !== 'function') {
+    return JSON.stringify({
+      __oxide_error: 'plugin ' + path + ' has no `' + hook + '` hook',
+      __oxide_code: 'PLG-HOOK',
+    });
+  }
+  const order = __oxidePluginHookArgs[hook];
+  const callArgs = order
+    ? order.map((k) => (args ? args[k] : undefined))
+    : Object.values(args ?? {});
+  const ctx = {
+    warn: (m) => console.error('[plugin]', m),
+    error: (m) => { throw new Error(String(m)); },
+    resolve: async (spec) => spec,
+  };
+  try {
+    const value = await fn.call(ctx, ...callArgs);
+    return JSON.stringify({ ok: true, value: value === undefined ? null : value });
+  } catch (e) {
+    return JSON.stringify({
+      __oxide_error: 'plugin hook ' + hook + ' threw: ' + ((e && e.message) || e),
+      __oxide_code: 'PLG-CALL',
+    });
+  }
+};
+
 // B-07: §8.3 parsed search params — mirrors the Node worker:
 // `+`→space before percent-decode, repeated key → array, fragment stripped.
 // Shared by the loader and action events (B-07 wired both).
@@ -2208,6 +2279,59 @@ async fn v8_dispatch(
         )
         .await?;
         let bytes = serde_json::to_vec(&v).unwrap_or_default();
+        return Ok(CallStream::Complete(Bytes::from(bytes)));
+    }
+    if entry.kind == "plugin:load" {
+        let plugin_path = input
+            .payload
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if plugin_path.is_empty() {
+            return Err(err("PLG-LOAD", "plugin:load requires a `path`"));
+        }
+        let p = serde_json::to_string(plugin_path).unwrap_or_else(|_| "\"\"".into());
+        let v = exec_v8_json(
+            js,
+            "oxide:plugin-load",
+            format!("globalThis.__oxidePluginLoad({p})"),
+            "PLG-LOAD",
+        )
+        .await?;
+        let bytes = serde_json::to_vec(&v).unwrap_or_default();
+        return Ok(CallStream::Complete(Bytes::from(bytes)));
+    }
+    if entry.kind == "plugin:call" {
+        let path = input
+            .payload
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let hook = input
+            .payload
+            .get("hook")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if path.is_empty() || hook.is_empty() {
+            return Err(err("PLG-CALL", "plugin:call requires `path` and `hook`"));
+        }
+        let p = serde_json::to_string(path).unwrap_or_else(|_| "\"\"".into());
+        let h = serde_json::to_string(hook).unwrap_or_else(|_| "\"\"".into());
+        let args = input
+            .payload
+            .get("args")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let a = serde_json::to_string(&args).unwrap_or_else(|_| "null".into());
+        let v = exec_v8_json(
+            js,
+            "oxide:plugin-call",
+            format!("globalThis.__oxidePluginCall({p}, {h}, {a})"),
+            "PLG-CALL",
+        )
+        .await?;
+        let out = v.get("value").cloned().unwrap_or(serde_json::Value::Null);
+        let bytes = serde_json::to_vec(&out).unwrap_or_default();
         return Ok(CallStream::Complete(Bytes::from(bytes)));
     }
     if entry.kind == "tooling:module" {
