@@ -37,164 +37,60 @@ WOFF2 glyf/loca transform plus Brotli - a project in itself.
 the `.ttf` extension and the documented deviation, so an encoder swap updates
 both deliberately.
 
-## Dev route additions require a dev-server restart (WP-C1) - closed by the dev route rescan
+## Dev route additions require a dev-server restart (WP-C1) — closed by the dev route rescan
 
-**Status.** Closed in this change - the dev watcher re-scans the route
-table on a route-file event and swaps it into the running dispatch without
-a server restart. `SwappableRouteTree` is the slot; `build_dispatch_swappable`
-reads through it on every request; `build_dispatch` wraps a one-shot slot
-that is never swapped so tests are unaffected.
+**Status.** Closed. The dev watcher re-scans the route table on a
+`Created`/`Removed`/`Modified` event under `routes.dir`, refines the render
+modes, and swaps the result into `SwappableRouteTree`. Every request reads
+through that slot, so a new route renders without a server restart.
+`build_dispatch` wraps a one-shot slot that is never swapped, which keeps
+tests deterministic.
 
+**What the spec asked.** Adding a route file under `routes.dir` should render
+in dev without editing `oxide.config.ts` or restarting (§13).
 
-**What the spec asks.** Adding a route file under `routes.dir` should render in
-dev without editing `oxide.config.ts` or restarting (§13 hot updates).
+**What would have changed it.** A route-table generation in `cmd_dev` that
+re-runs `scan_routes` and rebuilds the component map. That is what landed;
+the "requires a restart" deviation is retired.
 
-**What lands.** Dev resolves components from the route table, so any route that
-exists at boot renders without config edits, and edits to existing components
-are picked up by the watcher (module-generation bump). A **newly created or
-deleted route file** is not re-scanned: `cmd_dev` discovers routes once at boot
-and the HTTP dispatch table is built from that tree.
-
-**Why.** Reloading the route table means rebuilding the matcher, the server
-manifest view, and the dev component map, then swapping them atomically under
-live connections. That is a separate change to `oxide-dev`'s watcher contract;
-the component-resolution half of WP-C1 (the part that unblocked config
-decoupling) is done.
-
-**What would change it.** A route-table generation in `cmd_dev` that re-runs
-`scan_routes` on `Created`/`Removed` events for `routes.dir` and rebuilds
-`dev_component_sources` for the new canonical ids.
 ## Edge `mergeHead` was JS-only (P0-1) — closed by `merge_head_structured`
 
-**What the spec asks.** The edge handler (D18) prefers the wasm export for
-each of the three named functions — `edge_cache_key`, `merge_head`,
-`encode_odf` — and falls back to a semantically identical JS path when
-wasm is absent.
+**Status.** Closed. `crates/core-wasm` exports `merge_head_structured`, which
+takes and returns the edge head model with the same semantics as the JS:
+`title` later-wins, `meta` dedupes by first element keeping the last
+occurrence, `links` dedupe by `(rel, href)`, `json_ld` concatenates. Six
+tests pin it against the JS behaviour. The edge handler prefers the wasm
+export when loaded and falls back to the identical JS.
 
-**What lands.** `edge_cache_key` and `encode_odf` prefer the wasm export
-as specified. `merge_head` is JS-only.
+**Why the old path was wrong.** The Rust `merge_head` merged flat
+`Vec<(String, String)>` pairs, but the edge head model is structured
+(`{title, meta: [[k,v], ...], links, json_ld}`) with per-kind dedup. The
+wasm call silently returned `[]`, so every edge response had an empty head.
 
-**Why.** The Rust `merge_head` merges flat `Vec<(String, String)>` pairs
-(one key per entry); the edge head model is structured
-(`{title, meta: [[k,v], ...], links, json_ld}`) with per-kind dedup. They
-are different algorithms, not two encodings of one. The previous wasm
-path *silently* returned `[]`: `serde_json::from_str::<Vec<(String,String)>>`
-fails on object input, `unwrap_or_default()` discards the error, the
-returned `"[]"` parses as `[]`, and the JS fallback therefore never ran —
-an empty head on every edge response.
-
-**What would change it.** ~~A Rust-side port of the structured head merge,
-with its own tests against the edge shape, exposed as a new export
-(`merge_head_structured`).~~ **DONE.** `merge_head_structured` in
-`crates/core-wasm` takes and returns the structured model with the same
-semantics as the JS (`title` later-wins, `meta` dedupes by first element
-keeping the last occurrence, `links` dedupe by `(rel, href)`, `json_ld`
-concatenates). Six tests pin it against the JS behaviour. The wasm export
-is `merge_head_structured`, and the edge handler prefers it when the module
-is loaded, falling back to the identical JS.
-
-The **flat** `merge_head` export is still not routed through wasm — that
-type mismatch is by design, and the integration test now asserts both
-halves: the flat one absent, the structured one present.
-
-
-## Edge bundle: declared externals; chunked output (P0-1b)
-
-**What the spec asks.** §18 / D18: an `oxide build` for a Cloudflare
-target should produce a deployable Worker that includes the project's
-edge entry (if any).
-
-**What lands.** `cmd_build` for `Target::Cloudflare | Target::CloudflarePages`
-detects `src/edge.{ts,mjs,js,tsx,jsx}` (typed extension preferred) and
-bundles it with a single-entry `BundleEnv::Edge` pass into
-`dist/deploy/edge_bundle.js`. The existing `edge_handler.js` does
-`import("./edge_bundle.js")` and calls its default export. A project with
-no edge entry is fine — the handler's try/catch on `Cannot find module`
-falls through to the built-in JS path.
-
-**Two design decisions worth recording.**
-
-- **Externals are declared, not inferred.** `build.edgeExternals` names the
-  specifiers the Worker's runtime provides (a node-compat layer, a
-  platform-injected module). The bundler also leaves an *unresolvable*
-  specifier external on its own — verified empirically: neither an
-  undeclared `node:crypto` nor an uninstalled bare package produces a build
-  error, both survive as imports — so the declaration's value is making the
-  contract explicit and stable, not gate-keeping. `node:*` is not
-  special-cased either way: a Worker without node-compat that imports
-  `node:crypto` builds fine and fails at runtime, which is the honest
-  signal (node-compat is a runtime flag the build cannot observe).
-- **Chunked output allowed.** Rolldown may emit shared chunks alongside
-  the entry. All chunks are written to `dist/deploy/` (Cloudflare Workers
-  deploys the directory as a whole); only the entry chunk is renamed to
-  `edge_bundle.js`, and its relative imports of the sibling chunks
-  resolve at their hashed names.
-
-**What would change it.** A declared externalisation API
-(`build.edgeExternals`), or a Rolldown option to force a single-chunk
-bundle at the cost of duplication. Either is a follow-up; the current
-build is deployable.
+**What would have changed it.** A Rust-side port of the structured merge,
+exposed as its own export. That is `merge_head_structured`; the flat export
+remains a different, intentionally-unrouted API.
 
 ## Edge wasm build requires self-hosting layout (P0-1c) — closed by embedded `edge.wasm`
 
-**Status.** Closed in `e616831` — the wasm-bindgen-processed
-`oxide-core-wasm` artifact is embedded in the `oxide-cli` binary via
-`include_bytes!` and written to `<dist>/edge.wasm` for every project,
-no cargo workspace required. `scripts/regen-edge-wasm.sh` regenerates
-the embedded bytes when the `#[wasm_bindgen]` surface changes.
+**Status.** Closed in `e616831`. `oxide-core-wasm` is built to
+`wasm32-unknown-unknown`, processed with `wasm-bindgen-cli` 0.2.129, embedded
+in the `oxide-cli` binary via `include_bytes!`, and written to
+`<dist>/edge.wasm` for every project. A user project no longer needs to be a
+cargo workspace. `scripts/regen-edge-wasm.sh` regenerates the checked-in
+artifact when the `#[wasm_bindgen]` surface changes; the CI job `wasm32-edge`
+keeps the compile path honest.
 
-**What the spec asks.** §18 / D18: an `oxide build` for a Cloudflare
-target produces an accelerated `edge.wasm` alongside the JS handler.
+**Why embedding rather than `build.rs`.** A `build.rs` would make every
+`cargo build -p oxide-cli` pay the wasm32 + wasm-bindgen cost even when the
+user never targets Cloudflare. The checked-in artifact is a build-time
+invariant; refreshing it is an explicit operation.
 
-**What lands.** The CI job `wasm32-edge` installs `wasm32-unknown-unknown`
-and builds `oxide-core-wasm` for it — the compile-time gate that the
-crate can target wasm. The embedded artifact is produced by
-`scripts/regen-edge-wasm.sh` (needs `wasm-bindgen-cli` 0.2.129 on `PATH`)
-and checked into `crates/cli/resources/edge.wasm`. A non-ignored test in
-`crates/cli/src/tests.rs`
-(`compile_edge_wasm_writes_embedded_artifact_for_any_root`) asserts that
-`compile_edge_wasm` writes bytes equal to `EDGE_WASM_BYTES` for any
-`root` — including one that is not a cargo workspace at all.
-
-**Two bugs the gate caught on first run.** Before the gate existed,
-`oxide-core-wasm` did *not* actually compile for `wasm32-unknown-unknown`:
-
-1. The `#[cfg(target_arch = "wasm32")] bindings` module was never compiled
-   on host, so two type errors survived every prior gate:
-   - `encode_odf` passed a `serde_json::Value` into `crate::encode_odf(&Value)`,
-     which expects `oxide_odf::Value` (E0308: distinct types).
-   - `decode_odf` called `serde_json::to_vec` on `oxide_odf::Value`, which
-     does not implement `Serialize` by design (E0277 — ODF is the wire
-     format, JSON is a lossy projection).
-   Fixed by routing through the existing `Value::from_json` /
-   `Value::to_json` bridges.
-
-2. `.cargo/config.toml` carried `[build] rustflags = ["-C",
-   "link-arg=-Wl,-w"]` to suppress macOS `ld64` warnings about
-   v8 template-weak symbols. `-Wl,` is a compiler-driver prefix; when
-   `--target wasm32-unknown-unknown` is passed, rustc invokes `rust-lld`
-   directly and `rust-lld` receives the literal string `-Wl,-w` (unknown
-   argument). Scoped the flag to the explicit host triple.
-
-**Why the previous implementation did not work for a real user project.** `compile_edge_wasm(root,
-dist)` runs `cargo build -p oxide-core-wasm ...` with `current_dir(root)`.
-A real user's oxide project is a JS/TS tree, not a cargo workspace that
-contains `oxide-core-wasm` — the command exits non-zero (`no such
-package`), `cmd_build` logs `edge wasm build failed` and the Worker ships
-the pure-JS fallback (which is semantically identical, spec D18). The
-fallback's `cacheKey` used to hash a non-canonical composite; it now embeds
-a BLAKE3 implementation and emits the same `L0` key as the wasm/native path
-(checked against Rust vectors), so the fallback differs only in speed. That
-was the pre-fix state; the embedded artifact below removes the
-self-hosting requirement entirely.
-
-**What changed it.** Option (b) from the previous paragraph — a
-checked-in resource embedded via `include_bytes!`, regenerated by an
-explicit `scripts/regen-edge-wasm.sh` rather than a `build.rs`. A
-`build.rs` was rejected because it makes every `cargo build -p oxide-cli`
-pay the wasm32 build and wasm-bindgen cost, even when the user never
-targets Cloudflare. The checked-in artifact is a build-time invariant;
-a fresh wasm is an explicit operation. See commit `e616831`.
+**What the gate caught.** The wasm target had two real type errors hidden by
+`#[cfg(target_arch = "wasm32")]` (an ODF/serde type mismatch in
+`encode_odf`/`decode_odf`) and a host-only rustflag that `rust-lld` rejected.
+Both are fixed, and a non-ignored test asserts the embedded bytes are written
+for a root that is not a cargo workspace.
 
 ## `<Defer>` for `suspense: 'core'` adapters is designed, not shipped (§7.1)
 
