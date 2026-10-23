@@ -88,3 +88,16 @@ test('priority loads eagerly and emits a preload link in head', async () => {
   assert.match(head, /as="image"/, head)
   assert.match(head, /href="\/hero\.png"/, head)
 })
+
+// §16.1: sizes derived from srcset when absent.
+test('sizes is derived from srcset when absent', async () => {
+  const mod = await load()
+  const body = renderToString(mod, {
+    src: '/_oxide/image?src=hero.png&w=1200',
+    srcset: '/_oxide/image?src=hero.png?w=400 400w, /_oxide/image?src=hero.png?w=800 800w, /_oxide/image?src=hero.png?w=1200 1200w',
+    width: 1200,
+    height: 630,
+    alt: 'Hero',
+  })
+  assert.match(body, /sizes="\(min-width: 1200px\) 1200px, \(min-width: 800px\) 800px, \(min-width: 400px\) 400px, 100vw"/, body)
+})
