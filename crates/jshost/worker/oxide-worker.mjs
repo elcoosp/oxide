@@ -1791,16 +1791,25 @@ async function dispatchSocketRun(id, input) {
     if (!record) { record = { locals: {} }; state.set(socket_id, record) }
 
     const sent = []
-    const send = (data) => {
-      sent.push(typeof data === "string" ? data : Buffer.from(data).toString("base64"))
-    }
+    const broadcasts = []
+    const targets = []
+    const encode = (data) =>
+      typeof data === "string" ? data : Buffer.from(data).toString("base64")
+    const send = (data) => { sent.push(encode(data)) }
+    const broadcast = (data) => { broadcasts.push(encode(data)) }
+    const sendTo = (id, data) => { targets.push([String(id), encode(data)]) }
+    const clients = Array.isArray(payload?.clients) ? payload.clients.map(String) : []
     let close = null
     const ctx = {
       data: phaseName === "message" ? payload?.data : undefined,
       code: phaseName === "close" ? (payload?.code ?? 1000) : undefined,
       reason: phaseName === "close" ? (payload?.reason ?? "") : undefined,
+      headers: payload?.headers ?? {},
       locals: record.locals,
+      clients,
       send,
+      broadcast,
+      sendTo,
     }
     try {
       await fn(ctx)
@@ -1814,6 +1823,8 @@ async function dispatchSocketRun(id, input) {
     if (phaseName === "close") state.delete(socket_id)
     callOk(id, {
       send: sent.length === 0 ? null : (sent.length === 1 ? sent[0] : sent),
+      broadcasts,
+      targets,
       close,
     })
   } catch (e) {
