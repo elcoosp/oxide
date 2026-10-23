@@ -145,6 +145,35 @@ function streamOf(html: string): ReadableStream<Uint8Array> {
  */
 export { resolveDeferredPlaceholders } from './deferred.ts'
 import { resolveDeferredPlaceholders } from './deferred.ts'
+import {
+  beginBoundaryCapture,
+  endBoundaryCapture,
+  drainBoundaries,
+  boundaryContent,
+  type BoundaryRegistration,
+} from './boundary.ts'
+
+/**
+ * §7.1: render one registered boundary as the `[data-ox-c]` + swapper chunk.
+ *
+ * Rendered standalone — a fresh render of the resolved content, not a
+ * continuation of the shell. That is what lets the shell stream before any
+ * boundary resolves.
+ */
+async function renderBoundary(
+  b: BoundaryRegistration,
+  cfg: RealAdapterConfig,
+  input: RenderInput,
+): Promise<string> {
+  let html: string
+  try {
+    html = await cfg.renderBody(b.Component, b.props)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    html = `<div class='ox-error' data-ox-error='OX-500'>OX-500: ${String(msg).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c] as string)}</div>`
+  }
+  return boundaryContent(b.id, html, input.nonce ?? '')
+}
 
 export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
   const strategy = cfg.opts.ssr ?? 'auto'
@@ -259,9 +288,33 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
         // would be `ReferenceError` in the catch handler.
         // §7.1 / §9.2: resolve `{__deferred: id}` placeholders against the
         // loader's resolved map before the component tree sees them.
-        const data = resolveDeferredPlaceholders(input.data, input.deferred)
+        // `resolveDeferredPlaceholders` substitutes in place, so the raw
+        // tree must be cloned before it is resolved — otherwise `rawData`
+        // would point at the already-substituted object and `<Defer>` would
+        // never see its placeholder.
+        const rawData = structuredClone(input.data)
+        const data = resolveDeferredPlaceholders(
+          structuredClone(input.data),
+          input.deferred,
+        )
+        // §7.1: a `suspense: 'core'` component registers its boundaries
+        // while the shell renders. The capture is restored afterwards so a
+        // nested render cannot clobber it.
+        const prevCapture = beginBoundaryCapture()
         const props: Record<string, unknown> = {
-          route: input.route, url: input.url, params: input.params, data,
+          route: input.route,
+          url: input.url,
+          params: input.params,
+          // The resolved view: a plain component reads `props.data.x` and
+          // gets the value.
+          data,
+          // §7.1: the same tree *before* substitution, so a `<Defer>` can
+          // see the `{ __deferred: id }` placeholder and know a boundary was
+          // requested. Without both, either plain reads get the placeholder
+          // object or `<Defer>` has nothing to detect — they cannot be the
+          // same value.
+          rawData,
+          deferred: input.deferred,
         }
         try {
           // Build the innermost descriptor = the page itself.
@@ -308,6 +361,15 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
             yield enc.encode(body)
           }
           yield enc.encode('</div></body></html>')
+          // §7.1: the shell is out; stream each boundary the shell
+          // registered. Drain BEFORE restoring: `endBoundaryCapture`
+          // removes the slot when there was no previous capture, so a drain
+          // after it would read an empty one.
+          const registered = drainBoundaries()
+          endBoundaryCapture(prevCapture)
+          for (const b of registered) {
+            yield enc.encode(await renderBoundary(b, cfg, input))
+          }
         } catch (err) {
           // §10.2 step 5: prefer the project's error.tsx over the generic
           // OX-500 placeholder. The pipeline hands `input.errorRoute` (nearest
