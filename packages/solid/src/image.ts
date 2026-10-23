@@ -12,6 +12,7 @@
 // it via the adapter's `head()`; documented in the compat notes.
 
 import * as web from '@solidjs/web'
+import { deriveSizesFromSrcset } from '../../oxide/src/image-sizes.ts'
 
 export interface ImageVariantModule {
   src?: string
@@ -58,7 +59,8 @@ export function Image(props: ImageProps): unknown {
     ...rest,
   }
   if (srcset) attrs.srcset = srcset
-  if (sizes) attrs.sizes = sizes
+  const effectiveSizes = sizes ?? deriveSizesFromSrcset(srcset)
+  if (effectiveSizes) attrs.sizes = effectiveSizes
   if (typeof width === 'number') attrs.width = width
   if (typeof height === 'number') attrs.height = height
   if (cls) attrs.class = cls
