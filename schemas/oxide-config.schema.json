@@ -34,13 +34,20 @@
     "build": {
       "additionalProperties": false,
       "properties": {
+        "edgeExternals": {
+          "description": "§18 / D18: specifiers left external in the edge bundle. Empty by default — the Worker must be self-contained unless it declares a node-compat layer.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "remoteCache": {
           "description": "§5.4: remote build-cache URL (http://). Read-through on a local miss, write-back on store.",
           "type": "string"
         },
         "routeSearch": {
           "default": true,
-          "description": "§16 / K2: emit the route-search index (dist/client/search-index.json). On by default when prerendered pages exist; set false for projects that do not ship a client-side search UI.",
+          "description": "§16.5: emit the route-search index (dist/client/search-index.json). On by default when prerendered pages exist; set false for projects that do not ship a client-side search UI.",
           "type": "boolean"
         },
         "sourcemap": {
@@ -554,14 +561,14 @@
     },
     "sw": {
       "additionalProperties": false,
-      "description": "§16 / K3: service worker configuration. Present only when the project wants to control emission beyond the default (manifest presence).",
+      "description": "§16.6: service worker configuration. Present only when the project wants to control emission beyond the default (manifest presence).",
       "properties": {
         "enabled": {
-          "description": "§16 / K3: emit the service worker at build. Default true when `manifest` is present; an explicit `false` disables emission even with a manifest.",
+          "description": "§16.6: emit the service worker at build. Default true when `manifest` is present; an explicit `false` disables emission even with a manifest.",
           "type": "boolean"
         },
         "offlineFallback": {
-          "description": "§16 / K3: the offline-fallback route the worker serves for a navigation miss. Default `/offline` when the build produced that route; otherwise `/`.",
+          "description": "§16.6: the offline-fallback route the worker serves for a navigation miss. Default `/offline` when the build produced that route; otherwise `/`.",
           "type": "string"
         }
       },
