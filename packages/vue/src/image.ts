@@ -8,6 +8,7 @@
 // Vue has no JSX intrinsic restriction, so `h('img', …)` renders directly.
 
 import { h, type VNode } from 'vue'
+import { deriveSizesFromSrcset } from '../../oxide/src/image-sizes.ts'
 
 export interface ImageVariantModule {
   src?: string
@@ -50,7 +51,8 @@ export function Image(props: ImageProps): VNode | VNode[] {
     ...rest,
   }
   if (srcset) imgProps.srcset = srcset
-  if (sizes) imgProps.sizes = sizes
+  const effectiveSizes = sizes ?? deriveSizesFromSrcset(srcset)
+  if (effectiveSizes) imgProps.sizes = effectiveSizes
   if (typeof width === 'number') imgProps.width = width
   if (typeof height === 'number') imgProps.height = height
   if (cls) imgProps.class = cls
@@ -66,7 +68,8 @@ export function Image(props: ImageProps): VNode | VNode[] {
   }
   if (srcset) {
     preloadProps.imagesrcset = srcset
-    if (sizes) preloadProps.imagesizes = sizes
+    const imSizes = sizes ?? deriveSizesFromSrcset(srcset)
+    if (imSizes) preloadProps.imagesizes = imSizes
   }
   return [h('link', preloadProps), img]
 }
