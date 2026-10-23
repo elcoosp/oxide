@@ -2833,7 +2833,7 @@ async fn build_emits_content_search_index_for_collection() {
     let out = String::from_utf8_lossy(&buf);
     assert!(out.contains("content index: posts"), "{out}");
 
-    // §16 / K1: the entries file exists alongside the search index — the
+    // §16.5: the entries file exists alongside the search index — the
     // loader-facing data surface (`getCollection` / `getEntry`). Its
     // presence is what makes a loader able to read the collection bodies,
     // not just the search terms.
@@ -6835,9 +6835,9 @@ fn parallel_load_savings_zero_when_equal_or_sequential() {
     assert!((parallel_load_savings_ms(-1.0, 20.0) - 0.0).abs() < 0.001);
 }
 
-// ------------------------------ §16 / K3: service worker emitter
+// ------------------------------ §16.6: service worker emitter
 
-/// §16 / K3: `emit_pwa_worker` writes an SW with SWR + an offline
+/// §16.6: `emit_pwa_worker` writes an SW with SWR + an offline
 /// fallback. Tested directly (unit) rather than through `oxide build`:
 /// the build path needs node_modules for the framework config, but the
 /// emitter is a pure function of (cfg, dist, client_manifest) — the SW
@@ -7228,7 +7228,7 @@ async fn request_trace_reaches_the_loader() {
     );
 }
 
-/// §16 / K3 / WP-r9-8: when the offline fallback route exists in the
+/// §16.6 / WP-r9-8: when the offline fallback route exists in the
 /// build, it must be in the precache list. `install` runs
 /// `caches.addAll(PRECACHE)`; an offline navigation's
 /// `caches.match(OFFLINE_FALLBACK)` only hits if the fallback is cached.
