@@ -30,18 +30,32 @@ Checked against the commits the plan names:
 **The corruption does not exist at any commit the plan names. The plan's
 "do this first" blocker is not reproducible.**
 
+## Full audit — B0 through B6
+
+Every claim below was checked against the tree at `e56a533` + `8df1b23`.
+
+| # | Plan's claim | Reality | Verdict |
+|---|---|---|---|
+| **B0** | V8 syntax corrupt at `crates/jshost/src/lib.rs:1269/:1276` — `pluginook]`/`__oxidePluginHookArgsook]` | Correct at every commit the plan names; 0 corrupt-pattern occurrences; both test suites pass | **FALSE** |
+| **B1** | README says "26 gated", "454 TS", "23 specs", "fourteen gates", "three closed" | README says 29/27 (bare/annotated, **swapped**), 443 (**right**), 26 specs 11 files (**right**), "sixteen gates" (**right**), "four closed two open" (**right**). Real: bare/annotated swap, and file count 72 vs 74. | **3 of 5 sub-claims FALSE**; two small real issues remain |
+| **B2** | TS swapper dispatches `{id}` only; glue reads `detail.value` | All five TS `SWAPPER_SRC` copies dispatch `{detail:{id:id}}`; Rust at `crates/render/src/lib.rs:299` dispatches `{detail:{id:id,value:t.innerHTML}}`; `defer-glue.ts:141` does `slot.resolve(detail.value)` | **TRUE** — fixed in this session |
+| **B3** | edge.wasm carries mandatory `__wbindgen_*` imports; glue is deleted; `useWasm` falls back | 13 `__wbindgen` occurrences in the committed wasm; `scripts/regen-edge-wasm.sh:27` does `rm -f crates/cli/resources/edge.js`. Confirmed structurally; execution test still needed. | **LIKELY TRUE** — needs execution test |
+| **B5** | `messages.ts` exact-match uses pre-offset `n`; `#` in `=N` doesn't thread pound | Two confirmed bugs: `options.get('=' + String(n))` should be `String(n - offset)`; exact branch passes `outerPound` (=`undefined` at top) not `n - offset` | **TRUE** — fixed in this session |
+| **B6** | Action `Set-Cookie` headers dropped on 200 re-render | `crates/cli/src/lib.rs:7683-7688` applies `middleware_headers` but not the action's own headers | **LIKELY TRUE** — needs dispatch test |
+
 ## What this means for the rest of the plan
 
-The plan's other claims (B1 README staleness, B2 swapper `detail.value`,
-B3 edge-wasm inert, B5 ICU exact-match, B6 action headers, R1–R5 release
-criteria) have **not** been audited in this session. Given that B0 — the
-plan's most-verified-sounding claim, with a specific file, specific lines,
-and a specific commit — is factually wrong, the remaining claims should be
-treated as unverified until each is checked the same way.
+B0 (the plan's "do this first, today, the only thing standing between this
+repo and a green main") is fabricated. B1's five specific claims are mostly
+wrong — the README is actually more accurate than the plan says. B2 and B5
+are real; both fixed in this session. B3 and B6 are structurally confirmed
+but need execution tests to close.
 
-**Recommendation: re-audit each wave from the plan against the actual tree
-before executing it.** Do not spend author-days on B1–B8 on the strength of
-a document whose one hard, falsifiable claim was wrong.
+**Recommendation stands: re-audit each wave from the plan against the actual
+tree before executing it.** The plan contains real findings (B2, B5) mixed
+with fabricated ones (B0, most of B1), and treats all of them with equal
+urgency. A document that says "do B0 today or CI stays red" when B0 doesn't
+exist cannot be trusted on the urgency or shape of B3/B6.
 
 ## What did land from WP-M
 
