@@ -1885,6 +1885,7 @@ async function dispatchSocketRun(id, input) {
     const clients = Array.isArray(payload?.clients) ? payload.clients.map(String) : []
     let close = null
     const ctx = {
+        id: socket_id,
       data: phaseName === "message" ? payload?.data : undefined,
       code: phaseName === "close" ? (payload?.code ?? 1000) : undefined,
       reason: phaseName === "close" ? (payload?.reason ?? "") : undefined,
