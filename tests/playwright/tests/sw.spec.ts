@@ -1,4 +1,5 @@
-// §16.3 / §16 / K3: the service worker, end to end in a browser.
+// §16.6 "Other built-ins": the optional PWA/service-worker module, end to
+// end in a browser.
 //
 // The SW has been emitted (and its precache fixed to include the offline
 // fallback) since the r9 work, but nothing exercised it in a real browser —
