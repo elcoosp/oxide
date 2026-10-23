@@ -1579,12 +1579,103 @@ pub struct SocketService {
     /// joined by `/` (a `:param` segment matches any value — see the lookup
     /// in `serve_request`).
     pub routes: Arc<std::collections::BTreeMap<String, std::path::PathBuf>>,
+    /// Live connections, keyed by socket id. `module_path` scopes fan-out to
+    /// sockets served by the same `socket.ts`; `tx` is that connection's
+    /// outbound queue, pumped by its writer task.
+    pub registry: Arc<std::sync::Mutex<std::collections::HashMap<String, SocketClient>>>,
+}
+
+/// One live socket. Public so tests and embedders can inspect presence.
+pub struct SocketClient {
+    pub module_path: String,
+    pub tx: tokio::sync::mpsc::UnboundedSender<String>,
+}
+
+/// RAII registration: dropping the guard removes the socket from the
+/// registry, including every early-return path in the upgrade task.
+pub struct SocketRegistration {
+    registry: Arc<std::sync::Mutex<std::collections::HashMap<String, SocketClient>>>,
+    id: String,
+}
+
+impl Drop for SocketRegistration {
+    fn drop(&mut self) {
+        if let Ok(mut reg) = self.registry.lock() {
+            reg.remove(&self.id);
+        }
+    }
+}
+
+impl SocketService {
+    /// Register a connection and return its drop guard.
+    pub fn register(
+        &self,
+        id: &str,
+        module_path: &str,
+        tx: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> SocketRegistration {
+        if let Ok(mut reg) = self.registry.lock() {
+            reg.insert(
+                id.to_string(),
+                SocketClient {
+                    module_path: module_path.to_string(),
+                    tx,
+                },
+            );
+        }
+        SocketRegistration {
+            registry: Arc::clone(&self.registry),
+            id: id.to_string(),
+        }
+    }
+
+    /// Presence: every live socket id served by the same module, including
+    /// `id` itself.
+    pub fn client_ids(&self, module_path: &str) -> Vec<String> {
+        let Ok(reg) = self.registry.lock() else {
+            return Vec::new();
+        };
+        let mut ids: Vec<String> = reg
+            .iter()
+            .filter(|(_, c)| c.module_path == module_path)
+            .map(|(id, _)| id.clone())
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    /// Fan out to every other socket on `module_path` (targeted frames are
+    /// delivered with [`Self::send_to`]).
+    pub fn broadcast(&self, module_path: &str, except: &str, data: &str) {
+        let Ok(reg) = self.registry.lock() else {
+            return;
+        };
+        for (id, client) in reg.iter() {
+            if id != except && client.module_path == module_path {
+                let _ = client.tx.send(data.to_string());
+            }
+        }
+    }
+
+    /// Deliver one frame to a specific live socket id.
+    pub fn send_to(&self, id: &str, data: &str) {
+        let Ok(reg) = self.registry.lock() else {
+            return;
+        };
+        if let Some(client) = reg.get(id) {
+            let _ = client.tx.send(data.to_string());
+        }
+    }
 }
 
 impl std::fmt::Debug for SocketService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SocketService")
             .field("routes", &self.routes.len())
+            .field(
+                "connections",
+                &self.registry.lock().map(|r| r.len()).unwrap_or(0),
+            )
             .finish()
     }
 }
@@ -4612,11 +4703,20 @@ fn ws_socket_upgrade(
         let (mut rd, mut wr) = tokio::io::split(io);
         let mp = module_path.to_string_lossy().to_string();
         let dispatcher = Arc::clone(&service.dispatcher);
+        // §9.6 / H1: register this connection so another socket's
+        // `ctx.broadcast` / `ctx.sendTo` can reach it, and so `ctx.clients`
+        // is a live presence list. Dropping the guard on every exit removes
+        // it.
+        let (push_tx, mut push_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let _registration = service.register(&socket_id, &mp, push_tx);
 
         // `open` phase. S-03: include the handshake headers (cookies,
         // authorization) so the handler can authenticate — the socket.ts
         // `open(ctx)` contract documents `{ headers }`.
-        let open_payload = serde_json::json!({ "headers": headers });
+        let open_payload = serde_json::json!({
+            "headers": headers,
+            "clients": service.client_ids(&mp),
+        });
         match dispatcher.run(&mp, "open", open_payload, &socket_id).await {
             Ok(out) => {
                 for text in &out.sends {
@@ -4630,6 +4730,12 @@ fn ws_socket_upgrade(
                     {
                         return;
                     }
+                }
+                for text in &out.broadcasts {
+                    service.broadcast(&mp, &socket_id, text);
+                }
+                for (id, text) in &out.targets {
+                    service.send_to(id, text);
                 }
                 if let Some((code, _)) = out.close {
                     let _ = wr
@@ -4660,10 +4766,32 @@ fn ws_socket_upgrade(
         // frame, so a well-behaved client never trips it.
         const MAX_PENDING_WS: usize = 1024 * 1024;
         loop {
-            let n = match rd.read(&mut chunk).await {
-                Ok(0) | Err(_) => break,
-                Ok(n) => n,
-            };
+            tokio::select! {
+                // A frame another socket broadcast (or sent directly to this
+                // id) is queued by the registry; write it just like a local
+                // `send`.
+                pushed = push_rx.recv() => {
+                    match pushed {
+                        Some(text) => {
+                            if wr
+                                .write_all(&crate::ws::encode(
+                                    &crate::ws::Frame::Text(text),
+                                    false,
+                                ))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        None => break,
+                    }
+                }
+                read = rd.read(&mut chunk) => {
+                    let n = match read {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => n,
+                    };
             if buf.len() + n > MAX_PENDING_WS {
                 tracing::warn!(%socket_id, "ws pending buffer exceeded; closing");
                 let _ = wr
@@ -4692,7 +4820,11 @@ fn ws_socket_upgrade(
             for frame in frames {
                 match frame {
                     crate::ws::Frame::Text(text) => {
-                        let payload = serde_json::json!({ "data": text, "headers": headers });
+                        let payload = serde_json::json!({
+                            "data": text,
+                            "headers": headers,
+                            "clients": service.client_ids(&mp),
+                        });
                         match dispatcher.run(&mp, "message", payload, &socket_id).await {
                             Ok(out) => {
                                 for send in &out.sends {
@@ -4706,6 +4838,12 @@ fn ws_socket_upgrade(
                                     {
                                         return;
                                     }
+                                }
+                                for send in &out.broadcasts {
+                                    service.broadcast(&mp, &socket_id, send);
+                                }
+                                for (id, send) in &out.targets {
+                                    service.send_to(id, send);
                                 }
                                 if let Some((code, _)) = out.close {
                                     close_code = Some(code);
@@ -4721,8 +4859,12 @@ fn ws_socket_upgrade(
                         // carries it without a second wire format.
                         use base64::Engine as _;
                         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                        let payload =
-                            serde_json::json!({ "data": b64, "binary": true, "headers": headers });
+                        let payload = serde_json::json!({
+                            "data": b64,
+                            "binary": true,
+                            "headers": headers,
+                            "clients": service.client_ids(&mp),
+                        });
                         if let Ok(out) = dispatcher.run(&mp, "message", payload, &socket_id).await {
                             for send in &out.sends {
                                 if wr
@@ -4735,6 +4877,12 @@ fn ws_socket_upgrade(
                                 {
                                     return;
                                 }
+                            }
+                            for send in &out.broadcasts {
+                                service.broadcast(&mp, &socket_id, send);
+                            }
+                            for (id, send) in &out.targets {
+                                service.send_to(id, send);
                             }
                             if let Some((code, _)) = out.close {
                                 close_code = Some(code);
@@ -4766,6 +4914,8 @@ fn ws_socket_upgrade(
                     ))
                     .await;
                 return;
+            }
+                }
             }
         }
         // The peer dropped without a close frame — still run the `close` phase
@@ -5577,5 +5727,63 @@ mod image_endpoint_tests {
             1,
             "the shed decremented its own slot"
         );
+    }
+}
+
+#[cfg(test)]
+mod socket_fanout_tests {
+    use super::*;
+
+    struct NoopDispatcher;
+
+    #[async_trait::async_trait]
+    impl SocketDispatcher for NoopDispatcher {
+        async fn run(
+            &self,
+            _module_path: &str,
+            _phase: &str,
+            _payload: serde_json::Value,
+            _socket_id: &str,
+        ) -> std::result::Result<SocketRunResult, SocketRunError> {
+            Ok(SocketRunResult::default())
+        }
+    }
+
+    fn service() -> SocketService {
+        SocketService {
+            dispatcher: Arc::new(NoopDispatcher),
+            routes: Arc::new(BTreeMap::new()),
+            registry: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        }
+    }
+
+    #[tokio::test]
+    async fn broadcast_skips_sender_and_other_modules() {
+        let svc = service();
+        let (a_tx, mut a_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (b_tx, mut b_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (c_tx, mut c_rx) = tokio::sync::mpsc::unbounded_channel();
+        let _a = svc.register("a", "/chat", a_tx);
+        let _b = svc.register("b", "/chat", b_tx);
+        let _c = svc.register("c", "/other", c_tx);
+
+        assert_eq!(svc.client_ids("/chat").len(), 2, "presence is per-module");
+        svc.broadcast("/chat", "a", "hello");
+        assert!(a_rx.try_recv().is_err(), "sender is excluded");
+        assert_eq!(b_rx.try_recv().unwrap(), "hello");
+        assert!(c_rx.try_recv().is_err(), "other modules are excluded");
+
+        svc.send_to("c", "direct");
+        assert_eq!(c_rx.try_recv().unwrap(), "direct");
+    }
+
+    #[test]
+    fn drop_unregisters_the_socket() {
+        let svc = service();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let guard = svc.register("a", "/chat", tx);
+        assert_eq!(svc.registry.lock().unwrap().len(), 1);
+        drop(guard);
+        assert!(svc.registry.lock().unwrap().is_empty());
     }
 }
