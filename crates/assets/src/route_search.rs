@@ -1,7 +1,7 @@
-//! §16 / K2: a route-level search index.
+//! §16.5: a route-level search index.
 //!
 //! The build already emits a per-collection search index
-//! (`build_search_index` in `content_collection.rs` — used by K1's data
+//! (`build_search_index` in `content_collection.rs` — used by §16.5's data
 //! surface). This module is the *route* index: one entry per prerendered
 //! route, with the page's title, `<h1>`–`<h6>` headings, and a short
 //! excerpt. A client-side island (a user pattern, not something the
