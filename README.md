@@ -15,7 +15,7 @@
     <img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/>
     <img src="https://img.shields.io/badge/Workspace-17%20crates%20%2B%207%20packages-6F4E37?style=flat-square" alt="Workspace"/>
     <img src="https://img.shields.io/badge/Code-%E2%89%88113k%20lines-9CF?style=flat-square" alt="Lines of code"/>
-    <img src="https://img.shields.io/badge/Tests-1210%20Rust%20%7C%20451%2F451%20TS-brightgreen?style=flat-square" alt="Tests"/>
+    <img src="https://img.shields.io/badge/Tests-1212%20Rust%20%7C%20454%2F454%20TS-brightgreen?style=flat-square" alt="Tests"/>
     <img src="https://img.shields.io/badge/ODF-16%20golden%20fixtures-00BFFF?style=flat-square" alt="ODF golden fixtures"/>
     <img src="https://img.shields.io/badge/TS%20runtime-zero%20npm%20deps-228B22?style=flat-square" alt="Zero dependencies"/>
   </p>
@@ -243,7 +243,7 @@ typed arrays, `undefined`, cyclic and shared references, `Error` and deferred pr
 The repository is built test-first: each crate's `*_tdd.rs` suites were written against its
 contract before the implementation.
 
-- **1,210 Rust test functions** across 17 crates (26 gated behind bare `#[ignore]` plus
+- **1,212 Rust test functions** across 17 crates (26 gated behind bare `#[ignore]` plus
   env-gated suites with stated reasons — the Node-loader e2e suite runs in CI's `jshost-e2e`
   job), including `proptest` property suites on the router and graph engines,
   `cargo-fuzz` harnesses for the ODF decoder, router matcher, config extractor and path
@@ -255,7 +255,7 @@ contract before the implementation.
   (cookie-refusal for both loader and middleware cookies on the shell **and** L0 paths,
   build-scoped shell keys, oldest-entry eviction, `/__data` no-reissue for untouched
   sessions, worker session-on-throw) and the §5.6 stale-dispatch cancellation tests.
-- **451 TypeScript test cases** across 69 files on Node's built-in test runner — including
+- **454 TypeScript test cases** across 67 files on Node's built-in test runner — including
   the ODF decoder against the same golden fixtures as the Rust encoder (typed values:
   `BigInt`, `Date`, `Map`, `Set`, `URL`, `RegExp`, typed arrays), router / island
   tests against a hand-rolled fake DOM (no jsdom, no deps), suites for the defer script
@@ -364,11 +364,12 @@ effects of six hooks gated by the fixture CI job), per-adapter `<Image>` compone
 the signed AVIF/WebP/JPEG/PNG pipeline (build-time `srcset` + intrinsic dimensions,
 runtime `/_oxide/image` with `remotePatterns` + SSRF guards), per-locale message catalogs
 emitted at build with a client-side loader that prefers per-route subsets, code frames on
-the forbidden-import and snapshot-side-effect diagnostic families, seven documented,
-TDD-locked spec deviations (per-chunk bundling → env-level reuse; WOFF2 → TrueType
-subsetting; dev route additions require a dev-server restart; the edge `mergeHead` is
-JS-only; the edge bundle ships no externals; edge wasm acceleration requires the
-self-hosting layout), `content.d.ts` typed-content emission, real
+the forbidden-import and snapshot-side-effect diagnostic families, six documented,
+TDD-locked spec deviations (three closed: dev route additions now rescan, the edge
+`mergeHead` has a Rust implementation, and edge wasm is embedded at CLI build time;
+four open: per-chunk bundling → env-level reuse, WOFF2 → TrueType subsetting, the edge
+bundle ships no externals, and `<Defer>` for `suspense: 'core'` adapters), `content.d.ts`
+typed-content emission, real
 `oxide add` (package-manager-detected installs), `oxide audit` (live OSV queries with a
 24h cache) and `oxide migrate` with working `--write` codemods, per-route prerender reuse
 backed by the persisted DemandGraph (`.oxide/graph.json`, surfaced in `analyze` and `mcp`),
@@ -379,29 +380,26 @@ Redis/S3 payloads, a moka asset-body cache, build-time font subsetting, locale-a
 (508), `oxide check` with tsgo + oxlint, and the introspection tooling (`doctor`, `why`,
 `analyze`, `schema`, `mcp`).
 
-**Built, wiring in progress** — defer streaming's last mile (the parallel layout arm now
-streams per-settle, but its double-buffer bounds have no dedicated test, and there is still
-**zero browser-level e2e for `defer()` streaming** — the 7 Playwright specs cover islands,
-loading, middleware, OG, socket and SSE but no deferred-boundary page), partial
-prerendering is experimental and honest about it (`render.ppr` turns on a runtime shell
-cache for `defer()` boundaries in dev and `oxide start` — first request captured, later
-requests stream fresh holes; it is not the post-MLP PPR of spec §10.4; the guard set is
-complete — loader- and middleware-cookie responses are refused on both the shell and L0
-paths, shells are build-id-scoped and query-excluded with one-at-a-time eviction, and
-shells now use the canonical L0 key, carry the same route/path tags, are invalidated by
-`revalidate` and SWR refresh, and are cleared on every dev edit), the edge build's wasm acceleration
-(`edge_bundle.js` is emitted and consumed; the wasm32 compile is CI-gated; but per
-documented deviation the wasm path only fires for the self-hosting layout — real user
-projects ship the JS fallback — whose cache-key output is now byte-identical to the
-wasm/native L0 key — and the bundle carries no externals), the *last mile* of the
-plugin hook surface (8 hooks receive arguments via a documented positional table and
-module `routes` / `serverMiddleware` pools are passed only at serve boot), plugin-transform
-coverage on the V8 path beyond module loads (module loads route
-through the shared compile/transform pipeline with a blake3 memo; op-level coverage still
-trails Node), client-side i18n depth (`<html lang>` now follows the resolved locale, but
-ICU formatting is not yet evaluated at render time), the route-search index (cachable and
-opt-out-able now; result titles are not yet stripped of markup), image pipeline depth (`sizes` is
-still user-supplied), and MDX compilation beyond the reachable compile arm. See
+**Built, wiring in progress** — deferred streaming now has coverage at both seams: a
+Rust test pins the close-window buffer across fragmented chunks, and the `/deferred`
+Playwright page asserts shell-first delivery, one resolution script per settle at distinct
+times, and the document closing last (the suite is now 11 spec files / 25 checks). Partial
+prerendering remains experimental and honest about it (`render.ppr` turns on a runtime
+shell cache for `defer()` boundaries in dev and `oxide start` — first request captured,
+later requests stream fresh holes; it is not the post-MLP PPR of spec §10.4). The edge
+build's wasm acceleration is embedded at CLI build time and preferred when loaded; real
+user projects no longer need the self-hosting layout, though the edge bundle still ships
+no externals. JS plugin hooks are all invoked, 11 of them receive arguments through a
+documented positional table (not 8), and `routes` / `serverMiddleware` pools are passed by
+build, dev, serve, routes, analyze and check. V8 now mirrors the Node `plugin:load` /
+`plugin:call` ops (module loads already routed through the shared transform pipeline with
+a blake3 memo). Client-side i18n evaluates the core ICU subset (`plural`,
+`selectordinal`, `select`, `number`, `date`, `time`, offsets and nesting) using `Intl`;
+route-search titles are stripped of markup; `<Image>` takes an optional user `sizes`
+attribute (the browser's default is `100vw`); and MDX compiles through `@mdx-js/mdx`.
+The remaining known deltas are the four open deviations linked below.
+
+See
 [`docs/deviations.md`](docs/deviations.md) and [`WORKLOG.md`](WORKLOG.md) for the current
 thread list and what remains (the 2026-10-19 `HANDOFF.md` is superseded; current state
 lives in `docs/deviations.md`).
@@ -416,7 +414,7 @@ lives in `docs/deviations.md`).
   [`docs/Oxide Technical Specification.md`](docs/Oxide%20Technical%20Specification.md), is
   content-frozen with a version-note banner so existing line anchors resolve
 - [`docs/deviations.md`](docs/deviations.md) — the numbered, TDD-locked spec deviations
-  (six entries; the current-state doc of record)
+  (seven entries; three closed, four open — the current-state doc of record)
 - [`schemas/oxide-config.schema.json`](schemas/oxide-config.schema.json) — the checked-in
   config JSON Schema (regenerate via `oxide-schema`; CI fails on drift)
 - [`docs/plugin-compat.md`](docs/plugin-compat.md) — plugin kinds × hooks compatibility
