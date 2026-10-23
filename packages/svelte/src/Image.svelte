@@ -29,18 +29,42 @@
   } = $props()
 
   const loading = $derived(lazy ?? !priority ? 'lazy' : 'eager')
+
+  /** Mirror of packages/oxide/src/image-sizes.ts, inlined for the same
+   *  reason Defer.svelte inlines its shape check: this .svelte file is
+   *  compiled by the consumer's compiler, and its emitted module sits
+   *  wherever the consumer's build puts it — a relative import to the
+   *  source would break. Keep this in sync with the shared helper. */
+  function deriveSizesFromSrcset(srcset) {
+    if (!srcset) return undefined
+    const widths = []
+    for (const part of srcset.split(',')) {
+      const m = /(?:\s|^)(\d+)w$/.exec(part.trim())
+      if (m) {
+        const w = Number(m[1])
+        if (Number.isFinite(w) && w > 0) widths.push(w)
+      }
+    }
+    const unique = [...new Set(widths)].sort((a, b) => b - a)
+    if (unique.length === 0) return undefined
+    const parts = unique.map((w) => `(min-width: ${w}px) ${w}px`)
+    parts.push('100vw')
+    return parts.join(', ')
+  }
+
+  const effectiveSizes = $derived(sizes ?? deriveSizesFromSrcset(srcset))
 </script>
 
 <svelte:head>
   {#if priority}
-    <link rel="preload" as="image" href={src} imagesrcset={srcset} imagesizes={sizes} />
+    <link rel="preload" as="image" href={src} imagesrcset={srcset} imagesizes={effectiveSizes} />
   {/if}
 </svelte:head>
 
 <img
   {src}
   {srcset}
-  {sizes}
+  {effectiveSizes}
   {width}
   {height}
   {alt}
