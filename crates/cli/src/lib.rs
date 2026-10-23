@@ -6869,6 +6869,27 @@ fn build_dispatch(
     )
 }
 
+/// §9.3 / B6: copy an action response's Set-Cookie headers into the
+/// middleware-headers list, which the render path applies to every response
+/// it produces. Before this helper existed, the 200 re-render path dropped
+/// the action response entirely (extracting only the body into action_form),
+/// so a cookie-setting action that re-rendered lost its cookie.
+///
+/// Kept as a named helper so a unit test can exercise the pattern without
+/// building a full dispatch fixture (an action fires only for a POST with
+/// `?/<action>` on a route that has a server module — a shape that takes a
+/// lot of scaffolding to reach).
+fn forward_action_set_cookies(
+    resp_headers: &[(String, String)],
+    middleware_headers: &mut Vec<(String, String)>,
+) {
+    for (k, v) in resp_headers {
+        if k.eq_ignore_ascii_case("set-cookie") {
+            middleware_headers.push((k.clone(), v.clone()));
+        }
+    }
+}
+
 fn build_dispatch_swappable(
     swappable: SwappableRouteTree,
     metrics: std::sync::Arc<oxide_server::Metrics>,
@@ -7688,6 +7709,13 @@ fn build_dispatch_swappable(
                     // through. Anything else (a redirect, a validation
                     // failure) is the action's own answer and returns.
                     if resp.status == 200 {
+                        // B6 fix: copy the action's Set-Cookie headers into
+                        // middleware_headers before the response is dropped —
+                        // the render path applies middleware_headers to every
+                        // response it produces, so the cookie rides the
+                        // re-rendered response. Non-200 responses return `resp`
+                        // directly (they already carry the headers).
+                        forward_action_set_cookies(&resp.headers, &mut middleware_headers);
                         action_form = serde_json::from_slice::<serde_json::Value>(&resp.body).ok();
                     } else {
                         metrics.observe(&label, started.elapsed(), resp.status);
