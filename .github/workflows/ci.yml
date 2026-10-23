@@ -61,7 +61,14 @@ jobs:
 
   conformance:
     name: conformance gate (D20)
-    runs-on: ubuntu-latest
+    # §22 / WP-M item 1: conformance suite runs on every platform the
+    # framework claims to support — the same three OSes as the rust
+    # workspace matrix above.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -70,7 +77,6 @@ jobs:
         with: { version: 9 }
       - name: Conformance suite (all four adapters)
         run: pnpm -C conformance test
-
   fixtures-v8:
     name: V8 backend fixture gate (PH0-03)
     runs-on: macos-latest   # V8 host is built/tested on macOS here; ubuntu if
