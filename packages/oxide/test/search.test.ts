@@ -1,4 +1,4 @@
-// §16 / K2 — client-side search index reader.
+// §16.5 — client-side search index reader.
 //
 // The build emits `dist/client/search-index.json`; this is what a
 // client-side island calls to answer a query. No network call, no WASM.
