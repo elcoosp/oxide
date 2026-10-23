@@ -36,7 +36,7 @@ pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
     OxideError(Diagnostic::error(code, msg))
 }
 
-/// §16 / K3: service worker configuration.
+/// §16.6: service worker configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SwConfig {
@@ -113,7 +113,7 @@ pub struct OxideConfig {
     /// available for the shell to include.
     #[serde(default)]
     pub manifest: Option<WebManifestConfig>,
-    /// §16 / K3: the service worker configuration. `None` keeps the
+    /// §16.6: the service worker configuration. `None` keeps the
     /// default (worker emitted when `manifest` is set, offline fallback
     /// from the shell). `sw.enabled = false` disables emission even when
     /// a manifest is present; `sw.offline_fallback` overrides the
@@ -598,7 +598,7 @@ pub struct BuildConfig {
     /// trusted-branch write). Reads `GIT_BRANCH` at build time.
     #[serde(default)]
     pub write_branches: Option<Vec<String>>,
-    /// §16 / K2: emit the route-search index (`dist/client/search-index.json`).
+    /// §16.5: emit the route-search index (`dist/client/search-index.json`).
     /// On by default when prerendered pages exist; set `false` for projects
     /// that do not ship a client-side search UI.
     #[serde(default = "default_true")]
