@@ -590,6 +590,14 @@ pub struct BuildConfig {
     /// from ~950 KB to a few KB. Externals are matched exactly on the
     /// specifier, so subpaths (`vue/server-renderer`) must be listed too.
     pub ssr_externals: Vec<String>,
+    /// §18 / D18: specifiers left external in the **edge** bundle. The edge
+    /// handler must be self-contained by default (no externals), so this is
+    /// empty unless a project declares its runtime's node-compat layer — a
+    /// Cloudflare Worker with `nodejs_compat` can `import 'node:crypto'`
+    /// only if the build does not try to resolve it.
+    ///
+    /// Matched exactly on the specifier, like `ssrExternals`.
+    pub edge_externals: Vec<String>,
     /// §5.4: a remote build-cache URL (`http://…`). When set, the precompile
     /// pass reads through it on a local miss and writes back on a store, so a
     /// CI job reuses another job's artifacts. `None` disables the remote.
@@ -610,6 +618,7 @@ impl Default for BuildConfig {
             target: "baseline-widely-available".into(),
             sourcemap: "hidden".into(),
             ssr_externals: Vec::new(),
+            edge_externals: Vec::new(),
             remote_cache: None,
             write_branches: None,
             route_search: true,
