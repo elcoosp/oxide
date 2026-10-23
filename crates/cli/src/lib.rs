@@ -2281,9 +2281,19 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                         // its offline fallback. A non-page server module (e.g.
                         // `layout.server.ts`) keeps the legacy file-path
                         // message — `hmr_route_data_update` returns "" for it.
-                        let (route_pattern, odf_b64) =
-                            hmr_route_data_update(path, &rootp, &cfg, &tree, hmr_loader.as_ref())
-                                .await;
+                        // WP-B: read through the swappable slot so a route
+                        // added since the watcher started maps correctly. The
+                        // outer `tree` binding is the one captured at cmd_dev
+                        // entry and would miss any post-boot addition.
+                        let live_tree = started.swappable_tree.load();
+                        let (route_pattern, odf_b64) = hmr_route_data_update(
+                            path,
+                            &rootp,
+                            &cfg,
+                            &live_tree,
+                            hmr_loader.as_ref(),
+                        )
+                        .await;
                         if route_pattern.is_empty() {
                             hub.publish(HmrMessage::RouteDataUpdate {
                                 route: pstr,
@@ -10634,15 +10644,23 @@ async fn start_server_inner_full(
     // PERF-07: prefer the mmap'd rkyv route archive when the build wrote one.
     // A missing/stale archive falls back to the in-memory tree (dev, or a
     // build with no archive).
-    let archived = rootp
-        .join(".oxide/routes.manifest")
-        .exists()
-        .then(|| {
-            oxide_router::ArchivedTree::load_archived(&rootp.join(".oxide/routes.manifest"))
-                .ok()
-                .map(std::sync::Arc::new)
-        })
-        .flatten();
+    // WP-B: in dev the route table is swappable, so a stale on-disk archive
+    // (written by a previous `oxide build`) must NOT shadow the live tree —
+    // otherwise a route added after that build 404s until the archive is
+    // rebuilt. Only the production (`serve`) path uses the mmap'd archive.
+    let archived = if is_dev {
+        None
+    } else {
+        rootp
+            .join(".oxide/routes.manifest")
+            .exists()
+            .then(|| {
+                oxide_router::ArchivedTree::load_archived(&rootp.join(".oxide/routes.manifest"))
+                    .ok()
+                    .map(std::sync::Arc::new)
+            })
+            .flatten()
+    };
     // §10.8: PPR shells exist only when `render.ppr` is enabled. Keep a
     // handle for the dev watcher (cleared on every edit) and for tests.
     let ppr_shells = cfg

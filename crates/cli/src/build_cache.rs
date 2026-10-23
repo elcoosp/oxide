@@ -107,10 +107,12 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
             if SKIP_FILES.contains(&name.as_ref()) {
                 continue;
             }
-            // §6.2: the worker writes a compiled-server-module temp file
-            // (`<name>.<hash>.oxide.ts`) next to the source. It is a build
-            // artifact, not an input — counting it made the fingerprint flip
-            // whenever a module was (re)compiled, forcing a spurious rebuild.
+            // §6.2: the worker writes compiled-server-module temp files
+            // (`<name>.<hash>.oxide.ts`) — historically next to the source
+            // (WP-C: now under os.tmpdir(), per-worker). This filter stays as
+            // defense: a project with leftover files from an old writer must
+            // still fingerprint cleanly, and a leftover is a build artifact,
+            // not an input.
             if name.ends_with(".oxide.ts") {
                 continue;
             }
@@ -211,9 +213,10 @@ mod tests {
 
     #[test]
     fn oxide_ts_temp_files_do_not_change_the_fingerprint() {
-        // The worker writes `<name>.<hash>.oxide.ts` next to a source module.
-        // It is a build artifact; if the fingerprint counted it, every
-        // compile would invalidate the next build.
+        // The worker writes `<name>.<hash>.oxide.ts` (originally next to the
+        // source; WP-C moved it into os.tmpdir()). Both shapes are build
+        // artifacts; if the fingerprint counted them, every compile would
+        // invalidate the next build.
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "src/page.server.ts", "export const load = 1;\n");
         let before = fingerprint(dir.path(), "production", false);

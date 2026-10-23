@@ -18,6 +18,30 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
 
+
+// WP-C: per-worker scratch directory for compiled modules. Compiled
+// output used to be written next to the source (`.${base}.${hash}.oxide.ts`
+// in `src/`), which both polluted the user tree and tripped the dev
+// watcher into a 503 stale-generation loop. The medium is now os.tmpdir()
+// in a per-process subdir: still `.ts` (Node's native type-stripper runs
+// on it), still content-hashed (Node caches modules by URL, so an edit
+// yields a new URL and a fresh import), but never inside the project.
+let _transformDir = null;
+async function transformDir() {
+  if (_transformDir) return _transformDir;
+  const os = await import("node:os");
+  const dir = pathMod.join(
+    os.tmpdir(),
+    `oxide-transform-${process.pid}-${Date.now()}`
+  );
+  await fs.mkdir(dir, { recursive: true });
+  _transformDir = dir;
+  process.once("exit", () => {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+  });
+  return dir;
+}
+
 const require = createRequire(import.meta.url);
 const sucrase = (() => { try { return require('sucrase') } catch { return null } })();
 const solidJsxOxc = (() => {
@@ -928,7 +952,17 @@ async function compileServerModule(entryPath) {
     // NOTE: tmpPath must be a NEW temp file, never the original .css path
     // (the loop below writes every tmpPath to disk).
     if (path.endsWith(".css")) {
-      const cssTmp = path + ".oxide.css.mjs";
+      // WP-C: the CSS stub is a scratch module; write it into the per-worker
+      // transform dir, not next to the source. Hash by path so distinct
+      // stylesheets land in distinct files in the shared scratch dir.
+      const cssHash = crypto
+        .createHash("sha256")
+        .update("css:\u0000")
+        .update(path)
+        .digest("hex")
+        .slice(0, 16);
+      const tDir = await transformDir();
+      const cssTmp = pathMod.join(tDir, `css-${cssHash}.mjs`);
       tempOf.set(path, { tmpPath: cssTmp, tmpUrl: pathToFileURL(cssTmp).href, content: 'export default "";', hash: "css" });
       continue;
     }
@@ -960,13 +994,16 @@ async function compileServerModule(entryPath) {
     if (typeof compiled !== "string") {
       throw new Error(`compile_module returned no code for ${path}`);
     }
-    const dir = pathMod.dirname(path);
-    const base = pathMod.basename(path);
+    // WP-C: emit into the per-worker scratch dir, never next to the source.
     // `.ts` (not `.mjs`): `transform_passes_only` runs the AST passes but
     // not the TypeScript strip, so the emitted module still carries type
     // annotations. Node's native type-stripper handles a `.ts` file on
     // import; a `.mjs` file would be parsed as-is and fail.
-    const tmpPath = pathMod.join(dir, `.${base}.${hash}.oxide.ts`);
+    //
+    // The hash already mixes in `path` (see the `crypto.createHash("sha256")`
+    // call above), so a flat hash-named file cannot collide across modules.
+    const tDir = await transformDir();
+    const tmpPath = pathMod.join(tDir, `${hash}.ts`);
     const info = { tmpPath, tmpUrl: pathToFileURL(tmpPath).href, content: compiled, hash };
     // Cache the *raw* compiled output; the import-specifier rewrite below
     // mutates only the per-request copy in `tempOf`, so a later hit never
