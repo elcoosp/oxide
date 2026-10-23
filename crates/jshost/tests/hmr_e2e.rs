@@ -70,11 +70,12 @@ fn loader_source(marker: &str) -> String {
 /// the worker imported the source path directly and relied on the
 /// `?v=<generation>` tag to defeat Node's URL-keyed module cache. B-13
 /// replaced that with a content-hashed scratch module whose URL differs
-/// when the source changes (originally `.{base}.{hash}.oxide.ts` next to
-/// the source; WP-C moved the scratch dir under os.tmpdir(), same
-/// content-hash contract), so a changed file produces a different URL and
-/// Node imports it fresh on its own; the generation tag is no longer what
-/// makes an edit visible.
+/// when the source changes. The scratch medium has moved twice (from
+/// `.{base}.{hash}.oxide.ts` next to the source, to os.tmpdir(), to
+/// `<root>/.oxide/transform/<hash>.ts` today), always preserving the
+/// contract: a content hash keyed into the URL, so a changed file
+/// produces a different URL and Node imports it fresh on its own; the
+/// generation tag is no longer what makes an edit visible.
 ///
 /// The generation is still bumped and still monotonic — that is covered by
 /// `invalidate_is_monotonic_across_calls` — so this test asserts the
