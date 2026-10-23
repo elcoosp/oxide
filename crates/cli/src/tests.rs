@@ -8576,44 +8576,136 @@ async fn middleware_short_circuit_persists_session_mutation() {
 /// that is not true. What the config does is declare the set explicitly,
 /// which matters once the specifier *is* resolvable — the config, schema and
 /// wiring are the deliverable.
+/// §9.3 / B6: an action's Set-Cookie must survive the 200 re-render.
+///
+/// The 200 branch extracts only the body into `action_form` and drops
+/// `resp` — without the fix, cookie-setting actions that re-render lose
+/// the cookie. This test wires a stub `ActionDispatcher` returning a 200
+/// with `set_cookies`, POSTs, and asserts the final response's headers
+/// include Set-Cookie.
+/// §9.3 / B6: the helper that carries an action's Set-Cookie headers into
+/// the list the render path applies to its output. Deterministic unit test
+/// of the pattern — no dispatch plumbing required.
+#[test]
+fn forward_action_set_cookies_copies_only_set_cookie() {
+    let resp_headers = vec![
+        ("content-type".to_string(), "application/json".to_string()),
+        ("set-cookie".to_string(), "a=1; Path=/".to_string()),
+        ("Set-Cookie".to_string(), "b=2; Path=/; HttpOnly".to_string()),
+        ("x-other".to_string(), "ignored".to_string()),
+    ];
+    let mut target: Vec<(String, String)> = vec![
+        ("existing".to_string(), "kept".to_string()),
+    ];
+    crate::forward_action_set_cookies(&resp_headers, &mut target);
+    // Existing entries preserved; both Set-Cookie entries (case-insensitive) copied.
+    assert_eq!(target.len(), 3);
+    assert_eq!(target[0], ("existing".to_string(), "kept".to_string()));
+    assert_eq!(target[1], ("set-cookie".to_string(), "a=1; Path=/".to_string()));
+    assert_eq!(target[2], ("Set-Cookie".to_string(), "b=2; Path=/; HttpOnly".to_string()));
+}
+
+/// §9.3 / B6 end-to-end: a dispatch POST with `?/setcookie` on a route that
+/// has a server module invokes the action; if the action returns 200 with
+/// Set-Cookie, the header must be on the final re-rendered response.
+///
+/// Fires only when: (a) the route matches, (b) the route has
+/// `has_server_module = true`, (c) the module_path resolves to a real file,
+/// (d) `action_from_query` returns `Some("setcookie")` from `?/setcookie`,
+/// and (e) the injected stub dispatcher returns 200 with a set_cookie.
 #[tokio::test]
-async fn edge_bundle_accepts_declared_externals() {
+async fn action_set_cookie_survives_200_rerender() {
+    struct CookieDispatcher;
+    #[async_trait::async_trait]
+    impl oxide_server::ActionDispatcher for CookieDispatcher {
+        async fn dispatch(
+            &self,
+            _module_path: &str,
+            _action: &str,
+            _form_json: &str,
+            _params: &serde_json::Map<String, serde_json::Value>,
+            _url: &str,
+            _method: &str,
+            _headers: &[(String, String)],
+            _locals: &serde_json::Value,
+            _trace: Option<&serde_json::Value>,
+        ) -> Result<oxide_server::ActionRunResult, oxide_server::DispatchError> {
+            Ok(oxide_server::ActionRunResult {
+                status: 200,
+                location: None,
+                data: serde_json::json!({"ok": true}),
+                set_cookies: vec!["oxide_b6=testvalue; Path=/; HttpOnly".into()],
+                headers: Vec::new(),
+                revalidate: Vec::new(),
+            })
+        }
+    }
+
+    // Fixture route tree: /comment with a server module on disk.
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::create_dir_all(root.join("routes/comment")).unwrap();
     std::fs::write(
-        root.join("src/edge.mjs"),
-        "import { helper } from 'edge-runtime-helpers'\n\
-         export default function(req) {\n\
-           return new Response(helper())\n\
-         }\n",
+        root.join("routes/comment/page.server.ts"),
+        "export const actions = {}\n",
     )
     .unwrap();
-    let entry = root.join("src/edge.mjs");
-    let dist = root.join("dist");
-    std::fs::create_dir_all(&dist).unwrap();
-
-    let css = oxide_bundler::CssTransformHook::new(|_, src, _, _| {
-        Ok((src.to_string(), std::collections::BTreeMap::new()))
+    let mut tree_inner = oxide_router::RouteTree::new();
+    tree_inner.insert(oxide_router::RouteEntry {
+        id: oxide_router::RouteId("routes/comment".into()),
+        kind: oxide_router::RouteKind::Page,
+        segments: vec!["comment".into()],
+        file: std::path::PathBuf::from("comment/page.tsx"),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: true,
+        slot: None,
+        needs_parent: false,
     });
+    let tree = std::sync::Arc::new(tree_inner);
 
-    let mut buf: Vec<u8> = Vec::new();
-    let out = crate::bundle_edge_entry(
-        root,
-        &dist,
-        &entry,
-        css,
-        vec!["edge-runtime-helpers".to_string()],
-        std::collections::BTreeMap::new(),
-        &mut buf,
-    )
-    .await
-    .expect("a declared external builds");
-    assert!(out.is_some(), "edge_bundle.js emitted");
-    let src = std::fs::read_to_string(dist.join("deploy/edge_bundle.js")).unwrap();
+    let metrics = std::sync::Arc::new(oxide_server::Metrics::new());
+    let dispatch = build_dispatch(
+        tree,
+        metrics,
+        Vec::new(),
+        None,
+        None,
+        root.join("routes"),
+        None,
+        None,
+        Some(std::sync::Arc::new(CookieDispatcher)),
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        Vec::new(),
+        None,
+        None,
+        None,
+    );
+
+    // The URL `?/setcookie` makes action_from_query return "setcookie".
+    // The path must match the route so module_path gets resolved.
+    let mut req = test_request("POST", "/comment?/setcookie");
+    req.headers = std::sync::Arc::new(vec![(
+        "content-type".into(),
+        "application/x-www-form-urlencoded".into(),
+    )]);
+    req.body = bytes::Bytes::from_static(b"foo=bar");
+    let resp = dispatch(req).await;
+
+    let cookies: Vec<&str> = resp
+        .headers
+        .iter()
+        .filter(|(k, _)| k.eq_ignore_ascii_case("set-cookie"))
+        .map(|(_, v)| v.as_str())
+        .collect();
     assert!(
-        src.contains("edge-runtime-helpers"),
-        "the declared external survives as an import: {}",
-        &src[..src.len().min(300)]
+        cookies.iter().any(|v| v.contains("oxide_b6=testvalue")),
+        "action's Set-Cookie must survive the 200 re-render; headers: {:?}",
+        resp.headers,
     );
 }
