@@ -45,6 +45,46 @@ check 'fixed in this same push'         'r8 claims P0-1/P0-2 were fixed; both ar
 check 'fixed in follow-up commits'      'same as above; both P0s remain open'
 check 'in the repository.s PR history'  'no PR history exists; the audit is not in-repo'
 
+# ---------------------------------------------------------------------------
+# README accuracy (WP-1). The README re-staled on arrival twice (r9, r10)
+# because its counts were hand-maintained. These checks compare it against
+# measured reality, so a stale number fails the same gate as a stale claim.
+# ---------------------------------------------------------------------------
+README=README.md
+if [ -f "$README" ]; then
+    # (a) The Rust test count in the badge and the prose must agree with the
+    #     static count. No toolchain run needed — it is an attribute count.
+    rust_measured=$(grep -rh '#\[test\]' crates/ --include='*.rs' 2>/dev/null | wc -l | tr -d ' ')
+    rust_tokio=$(grep -rh '#\[tokio::test\]' crates/ --include='*.rs' 2>/dev/null | wc -l | tr -d ' ')
+    rust_total=$((rust_measured + rust_tokio))
+    rust_badge=$(grep -oE 'Tests-[0-9]+%20Rust' "$README" | head -1 | sed -E 's/Tests-([0-9]+).*/\1/')
+    if [ -n "$rust_badge" ] && [ "$rust_badge" != "$rust_total" ]; then
+        echo "STALE: README badge says ${rust_badge} Rust tests; measured ${rust_total}"
+        FAIL=1
+    fi
+
+    # (b) The deviation count must match the headings in deviations.md.
+    dev_count=$(grep -c '^## ' docs/deviations.md 2>/dev/null || echo 0)
+    dev_word=$(grep -oE '(six|seven|eight|nine|ten) documented' "$README" | head -1 | awk '{print $1}')
+    case "$dev_word" in
+        six)   dev_claim=6 ;;  seven) dev_claim=7 ;;
+        eight) dev_claim=8 ;;  nine)  dev_claim=9 ;;  ten) dev_claim=10 ;;
+        *)     dev_claim=0 ;;
+    esac
+    if [ "$dev_claim" -ne 0 ] && [ "$dev_claim" != "$dev_count" ]; then
+        echo "STALE: README says '${dev_word} documented' deviations; deviations.md has ${dev_count}"
+        FAIL=1
+    fi
+
+    # (c) The collections-contradiction guard: the README must not claim no
+    #     shipped loader calls the API while one does.
+    if grep -q 'no shipped loader calls it yet' "$README" 2>/dev/null && \
+       grep -rq 'getCollection' packages/oxide-website/src/lib/md.server.ts 2>/dev/null; then
+        echo "STALE: README says no collections caller; md.server.ts calls getCollection"
+        FAIL=1
+    fi
+fi
+
 # A "K1, wired" claim is only honest while a shipped loader actually calls
 # the collections API. The grep above cannot express that condition, so it is
 # checked here: if any launch-facing file says collections are wired, at
