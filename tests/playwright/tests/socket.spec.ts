@@ -95,11 +95,9 @@ test('WebSocket at /chat greets on open and echoes on message', async ({ page })
 /// the connection state, a Rust-side single-slot registry) would pass the
 /// single-client test and fail here.
 ///
-/// The H1 fan-out work (broadcast / rooms / targeting) is a separate WP —
-/// this test deliberately does NOT assert that client B receives client
-/// A's messages. The current `SocketService` has no connection registry;
-/// `send` is per-connection only. When H1 lands, add a broadcast test
-/// alongside this one; do not weaken this one to make room.
+/// This test deliberately asserts isolation only. Fan-out is covered by the
+/// dedicated broadcast test below, which uses the smoke handler's explicit
+/// `{ type: 'broadcast' }` command so ordinary echoes stay isolated.
 test('two clients — independent welcome + echo, no cross-talk', async ({ page }) => {
   await page.goto('http://127.0.0.1:3104/')
   await page.waitForFunction(() => typeof (window as any).WebSocket === 'function')
@@ -162,3 +160,47 @@ test('two clients — independent welcome + echo, no cross-talk', async ({ page 
   expect(bPayload).not.toContain('"who":"A"')
 })
 
+// §9.6 / H1: `ctx.broadcast` reaches the other sockets on the same route,
+// and `ctx.clients` exposes the live presence list.
+test('broadcast fans out to peers and exposes presence', async ({ page }) => {
+  await page.goto('http://127.0.0.1:3104/')
+  await page.waitForFunction(() => typeof (window as any).WebSocket === 'function')
+
+  const result = await page.evaluate(async () => {
+    const openClient = () =>
+      new Promise<{ ws: WebSocket; welcome: string }>((resolve, reject) => {
+        const ws = new WebSocket('ws://127.0.0.1:3104/chat')
+        const timer = setTimeout(() => reject(new Error('open timed out')), 10_000)
+        ws.onmessage = (e) => {
+          clearTimeout(timer)
+          resolve({ ws, welcome: String(e.data) })
+        }
+        ws.onerror = (e) => { clearTimeout(timer); reject(new Error(String(e))) }
+      })
+
+    const a = await openClient()
+    const b = await openClient()
+
+    const peerFrame = new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('broadcast timed out')), 10_000)
+      b.ws.onmessage = (e) => { clearTimeout(timer); resolve(String(e.data)) }
+    })
+    const presence = new Promise<any>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('presence timed out')), 10_000)
+      a.ws.onmessage = (e) => {
+        const msg = JSON.parse(String(e.data))
+        if (msg.type === 'clients') { clearTimeout(timer); resolve(msg) }
+      }
+    })
+
+    a.ws.send(JSON.stringify({ type: 'broadcast' }))
+    const [frame, clients] = await Promise.all([peerFrame, presence])
+    a.ws.close(); b.ws.close()
+    return { frame: JSON.parse(frame), clients }
+  })
+
+  expect(result.frame.type).toBe('broadcast')
+  expect(result.clients.type).toBe('clients')
+  expect(Array.isArray(result.clients.clients)).toBe(true)
+  expect(result.clients.clients.length).toBeGreaterThanOrEqual(2)
+})
