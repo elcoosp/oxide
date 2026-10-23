@@ -78,11 +78,26 @@ export interface ServerFnEvent {
   input: unknown
 }
 
+/**
+ * The context every socket phase receives (§9.6). `send` targets the
+ * caller; `broadcast` every other socket on the same `socket.ts` route;
+ * `sendTo` a specific id from `clients`; `clients` is the live presence
+ * list for this route (including the caller).
+ */
+export interface SocketContext {
+  headers: Record<string, string>
+  locals: Record<string, unknown>
+  clients: string[]
+  send(data: string | Uint8Array): void
+  broadcast(data: string | Uint8Array): void
+  sendTo(socketId: string, data: string | Uint8Array): void
+}
+
 /** WebSocket route handlers (§9.6). */
 export interface SocketHandlers {
-  open(ctx: { send(data: string | Uint8Array): void }): void | Promise<void>
-  message(ctx: { data: string | Uint8Array; send(data: string | Uint8Array): void }): void | Promise<void>
-  close(ctx: { code: number; reason: string }): void | Promise<void>
+  open(ctx: SocketContext): void | Promise<void>
+  message(ctx: SocketContext & { data: string | Uint8Array }): void | Promise<void>
+  close(ctx: SocketContext & { code: number; reason: string }): void | Promise<void>
 }
 
 /** A Standard Schema validator (structural; any conforming lib). */
