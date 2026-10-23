@@ -204,3 +204,60 @@ test('broadcast fans out to peers and exposes presence', async ({ page }) => {
   expect(Array.isArray(result.clients.clients)).toBe(true)
   expect(result.clients.clients.length).toBeGreaterThanOrEqual(2)
 })
+
+// §9.6: ctx.sendTo(id, data) delivers to one specific socket, not to the
+// whole route. The last socket surface not covered above.
+test('sendTo delivers to the target, not the sender', async ({ page }) => {
+  await page.goto('http://127.0.0.1:3104/')
+  await page.waitForFunction(() => typeof (window as any).WebSocket === 'function')
+
+  const result = await page.evaluate(async () => {
+    return await new Promise<{
+      aId?: string
+      bId?: string
+      aDirect: any[]
+      bDirect: any[]
+    }>((resolve, reject) => {
+      const a = new WebSocket('ws://127.0.0.1:3104/chat')
+      const b = new WebSocket('ws://127.0.0.1:3104/chat')
+      const s: { aId?: string; bId?: string; aDirect: any[]; bDirect: any[] } = {
+        aDirect: [],
+        bDirect: [],
+      }
+      const timeout = setTimeout(() => {
+        a.close()
+        b.close()
+        reject(new Error('sendTo test timed out'))
+      }, 5000)
+
+      const fireIfReady = () => {
+        if (s.aId && s.bId) {
+          a.send(JSON.stringify({ type: 'sendto', to: s.bId, text: 'hello-B' }))
+          setTimeout(() => {
+            clearTimeout(timeout)
+            a.close()
+            b.close()
+            resolve(s)
+          }, 400)
+        }
+      }
+
+      a.onmessage = (e) => {
+        const m = JSON.parse(String(e.data))
+        if (m.type === 'welcome') { s.aId = m.id; fireIfReady() }
+        else if (m.type === 'direct') s.aDirect.push(m)
+      }
+      b.onmessage = (e) => {
+        const m = JSON.parse(String(e.data))
+        if (m.type === 'welcome') { s.bId = m.id; fireIfReady() }
+        else if (m.type === 'direct') s.bDirect.push(m)
+      }
+    })
+  })
+
+  expect(result.bDirect.length, 'B received the targeted frame').toBe(1)
+  expect(result.bDirect[0].type).toBe('direct')
+  expect(result.bDirect[0].to).toBe(result.bId)
+  expect(result.bDirect[0].text).toBe('hello-B')
+  expect(result.aDirect.length, 'A (sender) did not receive').toBe(0)
+})
