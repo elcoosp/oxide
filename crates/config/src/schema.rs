@@ -230,7 +230,7 @@ pub fn config_schema() -> Value {
                     "ssrExternals": { "type": "array", "items": { "type": "string" } },
                     "remoteCache": { "type": "string", "description": "§5.4: remote build-cache URL (http://). Read-through on a local miss, write-back on store." },
                     "writeBranches": { "type": "array", "items": { "type": "string" }, "description": "§5.4 / SPEC-5D: git branches trusted to write the shared remote cache. Default main/master + release/* when remoteCache is set." },
-                    "routeSearch": { "type": "boolean", "default": true, "description": "§16 / K2: emit the route-search index (dist/client/search-index.json). On by default when prerendered pages exist; set false for projects that do not ship a client-side search UI." }
+                    "routeSearch": { "type": "boolean", "default": true, "description": "§16.5: emit the route-search index (dist/client/search-index.json). On by default when prerendered pages exist; set false for projects that do not ship a client-side search UI." }
                 }
             },
             "adapter": {
@@ -250,10 +250,10 @@ pub fn config_schema() -> Value {
                     "type": "object",
                     "additionalProperties": false,
                     "properties": {
-                        "enabled": { "type": "boolean", "description": "§16 / K3: emit the service worker at build. Default true when `manifest` is present; an explicit `false` disables emission even with a manifest." },
-                        "offlineFallback": { "type": "string", "description": "§16 / K3: the offline-fallback route the worker serves for a navigation miss. Default `/offline` when the build produced that route; otherwise `/`." }
+                        "enabled": { "type": "boolean", "description": "§16.6: emit the service worker at build. Default true when `manifest` is present; an explicit `false` disables emission even with a manifest." },
+                        "offlineFallback": { "type": "string", "description": "§16.6: the offline-fallback route the worker serves for a navigation miss. Default `/offline` when the build produced that route; otherwise `/`." }
                     },
-                    "description": "§16 / K3: service worker configuration. Present only when the project wants to control emission beyond the default (manifest presence)."
+                    "description": "§16.6: service worker configuration. Present only when the project wants to control emission beyond the default (manifest presence)."
                 },
             "og": {
                 "type": "object",
