@@ -400,12 +400,8 @@ coverage on the V8 path beyond module loads (module loads route
 through the shared compile/transform pipeline with a blake3 memo; op-level coverage still
 trails Node), client-side i18n depth (`<html lang>` now follows the resolved locale, but
 ICU formatting is not yet evaluated at render time), the route-search index (cachable and
-opt-out-able now; result titles are not yet stripped of markup), image pipeline depth (the
-runtime result cache is real and wired, but has no behavioral test yet and `sizes` is
-still user-supplied), the service worker (fallback precache shipped; no browser-level SW
-test), MDX compilation beyond the reachable compile arm, and test-suite placement (`conformance/test/config-surface.test.ts` pins the §14.1
-factory default but the CI conformance job runs only `conformance.test.ts`; the CLI
-smoke-app e2e tests are not CI-run). See
+opt-out-able now; result titles are not yet stripped of markup), image pipeline depth (`sizes` is
+still user-supplied), and MDX compilation beyond the reachable compile arm. See
 [`docs/deviations.md`](docs/deviations.md) and [`WORKLOG.md`](WORKLOG.md) for the current
 thread list and what remains (the 2026-10-19 `HANDOFF.md` is superseded; current state
 lives in `docs/deviations.md`).
