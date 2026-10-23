@@ -17,28 +17,55 @@ import process from "node:process";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
+import * as fs from "node:fs";
+import * as pathMod from "node:path";
 
 
-// WP-C: per-worker scratch directory for compiled modules. Compiled
-// output used to be written next to the source (`.${base}.${hash}.oxide.ts`
-// in `src/`), which both polluted the user tree and tripped the dev
-// watcher into a 503 stale-generation loop. The medium is now os.tmpdir()
-// in a per-process subdir: still `.ts` (Node's native type-stripper runs
-// on it), still content-hashed (Node caches modules by URL, so an edit
-// yields a new URL and a fresh import), but never inside the project.
-let _transformDir = null;
-async function transformDir() {
-  if (_transformDir) return _transformDir;
-  const os = await import("node:os");
-  const dir = pathMod.join(
-    os.tmpdir(),
-    `oxide-transform-${process.pid}-${Date.now()}`
-  );
-  await fs.mkdir(dir, { recursive: true });
-  _transformDir = dir;
-  process.once("exit", () => {
-    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
-  });
+// Compiled modules are written to <projectRoot>/.oxide/transform/. Reasons
+// for that specific location rather than os.tmpdir() or next-to-source:
+//
+// 1. Bare-specifier resolution. A compiled page imports "react", the
+//    framework runtime, etc. Node resolves those by walking up from the
+//    module's URL. From <projectRoot>/.oxide/transform/<hash>.ts the walk
+//    finds <projectRoot>/node_modules (or the monorepo hoist above it) —
+//    the same resolution the raw source got. From os.tmpdir() the walk
+//    finds nothing and every import fails with `Cannot find package`.
+// 2. The dev watcher's exclusion filter matches a `.oxide` path
+//    *component*, so writes under <root>/.oxide/ don't self-trigger the
+//    stale-generation guard. The old sibling location tripped it.
+// 3. `src/` stays clean — the pollution complaint that motivated the
+//    os.tmpdir() attempt.
+//
+// Content hash still keys the URL: an edit produces a new hash, hence a
+// new URL, hence a fresh Node import. Same B-13 contract as before; only
+// the medium changed.
+const _transformDirs = new Map();
+
+function findProjectRoot(sourcePath) {
+  let dir = pathMod.dirname(sourcePath);
+  for (;;) {
+    if (
+      fs.existsSync(pathMod.join(dir, ".oxide")) ||
+      fs.existsSync(pathMod.join(dir, "oxide.config.ts")) ||
+      fs.existsSync(pathMod.join(dir, "oxide.config.mjs")) ||
+      fs.existsSync(pathMod.join(dir, "oxide.config.js")) ||
+      fs.existsSync(pathMod.join(dir, "package.json"))
+    ) {
+      return dir;
+    }
+    const parent = pathMod.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+async function transformDir(sourcePath) {
+  const root = findProjectRoot(sourcePath) ?? process.cwd();
+  const cached = _transformDirs.get(root);
+  if (cached) return cached;
+  const dir = pathMod.join(root, ".oxide", "transform");
+  fs.mkdirSync(dir, { recursive: true });
+  _transformDirs.set(root, dir);
   return dir;
 }
 
@@ -894,7 +921,6 @@ async function resolveRelative(fromPath, spec, pathMod) {
 async function compileServerModule(entryPath) {
   const fs = await import("node:fs/promises");
   const crypto = await import("node:crypto");
-  const pathMod = await import("node:path");
 
   if (typeof globalThis.__oxide_op_request !== "function") {
     return { url: pathToFileURL(entryPath).href, isTemp: false };
@@ -961,7 +987,7 @@ async function compileServerModule(entryPath) {
         .update(path)
         .digest("hex")
         .slice(0, 16);
-      const tDir = await transformDir();
+      const tDir = await transformDir(path);
       const cssTmp = pathMod.join(tDir, `css-${cssHash}.mjs`);
       tempOf.set(path, { tmpPath: cssTmp, tmpUrl: pathToFileURL(cssTmp).href, content: 'export default "";', hash: "css" });
       continue;
@@ -1002,7 +1028,7 @@ async function compileServerModule(entryPath) {
     //
     // The hash already mixes in `path` (see the `crypto.createHash("sha256")`
     // call above), so a flat hash-named file cannot collide across modules.
-    const tDir = await transformDir();
+    const tDir = await transformDir(path);
     const tmpPath = pathMod.join(tDir, `${hash}.ts`);
     const info = { tmpPath, tmpUrl: pathToFileURL(tmpPath).href, content: compiled, hash };
     // Cache the *raw* compiled output; the import-specifier rewrite below
