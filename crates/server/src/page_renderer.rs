@@ -396,7 +396,13 @@ pub trait SocketDispatcher: Send + Sync {
 
 #[derive(Debug, Clone, Default)]
 pub struct SocketRunResult {
+    /// Frames for the calling socket only.
     pub sends: Vec<String>,
+    /// Frames for every other socket connected to the same `socket.ts`
+    /// module (`ctx.broadcast`).
+    pub broadcasts: Vec<String>,
+    /// Frames for specific socket ids (`ctx.sendTo`), including the caller.
+    pub targets: Vec<(String, String)>,
     pub close: Option<(u16, String)>,
 }
 
