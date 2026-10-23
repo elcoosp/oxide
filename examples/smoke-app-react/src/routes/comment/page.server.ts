@@ -16,4 +16,13 @@ export const actions = {
       return { ok: true, received: text }
     },
   }),
+  setcookie: defineAction({
+    run: async () => new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: {
+        'content-type': 'application/json',
+        'set-cookie': 'oxide_b6=testvalue; Path=/; HttpOnly',
+      },
+    }),
+  }),
 }
