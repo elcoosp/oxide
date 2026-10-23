@@ -15,7 +15,7 @@
     <img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/>
     <img src="https://img.shields.io/badge/Workspace-17%20crates%20%2B%207%20packages-6F4E37?style=flat-square" alt="Workspace"/>
     <img src="https://img.shields.io/badge/Code-%E2%89%88113k%20lines-9CF?style=flat-square" alt="Lines of code"/>
-    <img src="https://img.shields.io/badge/Tests-1190%20Rust%20%7C%20387%2F387%20TS-brightgreen?style=flat-square" alt="Tests"/>
+    <img src="https://img.shields.io/badge/Tests-1202%20Rust%20%7C%20451%2F451%20TS-brightgreen?style=flat-square" alt="Tests"/>
     <img src="https://img.shields.io/badge/ODF-16%20golden%20fixtures-00BFFF?style=flat-square" alt="ODF golden fixtures"/>
     <img src="https://img.shields.io/badge/TS%20runtime-zero%20npm%20deps-228B22?style=flat-square" alt="Zero dependencies"/>
   </p>
@@ -243,7 +243,7 @@ typed arrays, `undefined`, cyclic and shared references, `Error` and deferred pr
 The repository is built test-first: each crate's `*_tdd.rs` suites were written against its
 contract before the implementation.
 
-- **1,190 Rust test functions** across 17 crates (26 gated behind bare `#[ignore]` plus
+- **1,202 Rust test functions** across 17 crates (26 gated behind bare `#[ignore]` plus
   env-gated suites with stated reasons — the Node-loader e2e suite runs in CI's `jshost-e2e`
   job), including `proptest` property suites on the router and graph engines,
   `cargo-fuzz` harnesses for the ODF decoder, router matcher, config extractor and path
@@ -255,7 +255,7 @@ contract before the implementation.
   (cookie-refusal for both loader and middleware cookies on the shell **and** L0 paths,
   build-scoped shell keys, oldest-entry eviction, `/__data` no-reissue for untouched
   sessions, worker session-on-throw) and the §5.6 stale-dispatch cancellation tests.
-- **387 TypeScript test cases** across 49 files on Node's built-in test runner — including
+- **451 TypeScript test cases** across 69 files on Node's built-in test runner — including
   the ODF decoder against the same golden fixtures as the Rust encoder (typed values:
   `BigInt`, `Date`, `Map`, `Set`, `URL`, `RegExp`, typed arrays), router / island
   tests against a hand-rolled fake DOM (no jsdom, no deps), suites for the defer script
@@ -364,7 +364,7 @@ effects of six hooks gated by the fixture CI job), per-adapter `<Image>` compone
 the signed AVIF/WebP/JPEG/PNG pipeline (build-time `srcset` + intrinsic dimensions,
 runtime `/_oxide/image` with `remotePatterns` + SSRF guards), per-locale message catalogs
 emitted at build with a client-side loader that prefers per-route subsets, code frames on
-the forbidden-import and snapshot-side-effect diagnostic families, six documented,
+the forbidden-import and snapshot-side-effect diagnostic families, seven documented,
 TDD-locked spec deviations (per-chunk bundling → env-level reuse; WOFF2 → TrueType
 subsetting; dev route additions require a dev-server restart; the edge `mergeHead` is
 JS-only; the edge bundle ships no externals; edge wasm acceleration requires the
