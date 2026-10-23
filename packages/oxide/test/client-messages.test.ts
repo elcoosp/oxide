@@ -1,7 +1,7 @@
 // Client message catalog loader (§16-D).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { loadMessages, t, _resetMessagesForTest } from '../src/client/messages.ts'
+import { formatIcu, loadMessages, t, _resetMessagesForTest } from '../src/client/messages.ts'
 
 /** Minimal document + fetch stubs — the module reads `document.documentElement`
  *  and `fetch`, nothing else. */
@@ -119,4 +119,61 @@ test('falls back to the full catalog when no subset exists', async () => {
     },
   )
   g.__oxide = saved
+})
+
+
+test('client ICU formats plural and select groups with offsets', () => {
+  assert.equal(
+    formatIcu('{count, plural, =0 {none} one {# item} other {# items}}', { count: 0 }, 'en'),
+    'none',
+  )
+  assert.equal(
+    formatIcu('{count, plural, =0 {none} one {# item} other {# items}}', { count: 1 }, 'en'),
+    '1 item',
+  )
+  assert.equal(
+    formatIcu('{count, plural, =0 {none} one {# item} other {# items}}', { count: 3 }, 'en'),
+    '3 items',
+  )
+  assert.equal(
+    formatIcu(
+      '{count, plural, offset:1 =0 {nobody} =1 {just you} one {you and # other} other {you and # others}}',
+      { count: 3 },
+      'en',
+    ),
+    'you and 2 others',
+  )
+  assert.equal(
+    formatIcu('{gender, select, male {He} female {She} other {They}}', { gender: 'female' }, 'en'),
+    'She',
+  )
+})
+
+test('client ICU uses the locale plural rules and handles nested messages', () => {
+  assert.equal(
+    formatIcu('{n, plural, one {# файл} few {# файла} many {# файлов} other {# файла}}', { n: 2 }, 'ru'),
+    '2 файла',
+  )
+  assert.equal(
+    formatIcu('{n, plural, one {# файл} few {# файла} many {# файлов} other {# файла}}', { n: 5 }, 'ru'),
+    '5 файлов',
+  )
+  assert.equal(
+    formatIcu(
+      '{gender, select, female {{count, plural, one {She has # item} other {She has # items}}} other {They have items}}',
+      { gender: 'female', count: 2 },
+      'en',
+    ),
+    'She has 2 items',
+  )
+})
+
+test('client ICU formats numbers, ordinals and preserves ordinary apostrophes', () => {
+  assert.equal(formatIcu('{n, number}', { n: 1234.5 }, 'en'), '1,234.5')
+  assert.equal(
+    formatIcu('{n, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}', { n: 2 }, 'en'),
+    '2nd',
+  )
+  assert.equal(formatIcu("l'utilisateur {name}", { name: 'Ada' }, 'fr'), "l'utilisateur Ada")
+  assert.equal(formatIcu('missing {value}', {}, 'en'), 'missing {value}')
 })
