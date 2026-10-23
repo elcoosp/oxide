@@ -335,7 +335,7 @@ impl StaticAssets {
         // (their names change with their content).
         const SW_CACHE_CTL: &str = "public, max-age=0, must-revalidate";
         const CACHE_CTL: &str = "public, max-age=31536000, immutable";
-        // §16 / K2 / WP-r9-7: the search index is an unhashed,
+        // §16.5 / WP-r9-7: the search index is an unhashed,
         // rebuilt-every-build file. `immutable` would pin a stale index in
         // every visitor's browser for a year. Same must-revalidate class
         // as the SW: cheap to re-check, correct when the build changes.
