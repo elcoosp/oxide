@@ -168,6 +168,94 @@ pub fn edge_manifest_routes(tree_json: &serde_json::Value) -> Result<Vec<String>
 #[cfg(test)]
 mod tests;
 
+/// §18 / D18: the edge head model, merged structurally.
+///
+/// The edge handler merges two head models of shape
+/// `{ title, meta: [[k, v], ...], links: [[k, v], ...], json_ld: [...] }`.
+/// This is **not** the flat `Vec<(String, String)>` `merge_head` above
+/// merges — that ABI mismatch is why the wasm path silently returned `[]`
+/// for every edge response (P0-1a). This function takes and returns the
+/// structured shape.
+///
+/// Semantics match the JS implementation the handler falls back to:
+/// later sources win on `title`; `meta` dedupes by the first pair element;
+/// `links` dedupe by `(rel, href)`; `json_ld` concatenates. Dedupe keeps
+/// the **last** occurrence, which is what `Map.set` in the JS loop does.
+pub fn merge_head_structured(
+    base: &serde_json::Value,
+    over: &serde_json::Value,
+) -> serde_json::Value {
+    let mut title = serde_json::Value::Null;
+    let mut meta: Vec<serde_json::Value> = Vec::new();
+    let mut links: Vec<serde_json::Value> = Vec::new();
+    let mut json_ld: Vec<serde_json::Value> = Vec::new();
+
+    for src in [base, over] {
+        let Some(obj) = src.as_object() else { continue };
+        if let Some(t) = obj.get("title") {
+            if !t.is_null() {
+                title = t.clone();
+            }
+        }
+        if let Some(arr) = obj.get("meta").and_then(|v| v.as_array()) {
+            meta.extend(arr.iter().cloned());
+        }
+        if let Some(arr) = obj.get("links").and_then(|v| v.as_array()) {
+            links.extend(arr.iter().cloned());
+        }
+        if let Some(arr) = obj.get("json_ld").and_then(|v| v.as_array()) {
+            json_ld.extend(arr.iter().cloned());
+        }
+    }
+
+    // Dedupe keeping the LAST occurrence: a `BTreeMap` from key → value,
+    // then the values in insertion order of their final occurrence. The JS
+    // implementation achieves the same with `Map.set` (which replaces the
+    // value but keeps the original insertion position); here the key order
+    // is rebuilt from the surviving entries' positions.
+    let dedupe_by = |items: Vec<serde_json::Value>, key: fn(&serde_json::Value) -> String| {
+        let mut last_at: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+        for (i, item) in items.iter().enumerate() {
+            last_at.insert(key(item), i);
+        }
+        // Keep items whose index is their key's last occurrence, in order.
+        let live: std::collections::BTreeSet<usize> = last_at.values().copied().collect();
+        items
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| live.contains(i))
+            .map(|(_, v)| v)
+            .collect::<Vec<_>>()
+    };
+
+    let meta = dedupe_by(meta, |t| {
+        t.as_array()
+            .and_then(|a| a.first())
+            .map(|v| v.to_string())
+            .unwrap_or_default()
+    });
+    let links = dedupe_by(links, |t| {
+        let a = t.as_array();
+        let k = a
+            .and_then(|a| a.first())
+            .map(|v| v.to_string())
+            .unwrap_or_default();
+        let href = a
+            .and_then(|a| a.get(1))
+            .map(|v| v.to_string())
+            .unwrap_or_default();
+        format!("{k}:{href}")
+    });
+
+    serde_json::json!({
+        "title": title,
+        "meta": meta,
+        "links": links,
+        "json_ld": json_ld,
+    })
+}
+
 /// B-01: wasm-bindgen exports for the edge Worker. Thin wrappers over the
 /// pure-Rust functions above (which remain the tested implementations).
 #[cfg(target_arch = "wasm32")]
@@ -186,6 +274,21 @@ pub mod bindings {
         let a: Vec<(String, String)> = serde_json::from_str(shell).unwrap_or_default();
         let b: Vec<(String, String)> = serde_json::from_str(head).unwrap_or_default();
         serde_json::to_string(&crate::merge_head(a, b)).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// §18 / D18: the structured head merge. `shell`/`head` are JSON
+    /// objects of shape `{ title, meta, links, json_ld }`; returns the
+    /// merged object as JSON.
+    ///
+    /// Distinct from `merge_head` above, which merges flat
+    /// `Vec<(String, String)>` pairs — the ABI mismatch that made the old
+    /// wasm path return `[]` for every edge response (P0-1a).
+    #[wasm_bindgen]
+    pub fn merge_head_structured(shell: &str, head: &str) -> String {
+        let a: serde_json::Value = serde_json::from_str(shell).unwrap_or(serde_json::Value::Null);
+        let b: serde_json::Value = serde_json::from_str(head).unwrap_or(serde_json::Value::Null);
+        serde_json::to_string(&crate::merge_head_structured(&a, &b))
+            .unwrap_or_else(|_| "{}".to_string())
     }
 
     /// JSON value in, ODF bytes out (JS `Uint8Array`).
@@ -210,5 +313,83 @@ pub mod bindings {
         let json_value = v.to_json();
         serde_json::to_vec(&json_value)
             .map_err(|e| JsValue::from_str(&format!("edge decode_odf: {e}")))
+    }
+}
+
+#[cfg(test)]
+mod merge_head_structured_tests {
+    use super::merge_head_structured;
+    use serde_json::json;
+
+    /// Later source wins on `title`, matching the JS `for (const src of [a, b])`.
+    #[test]
+    fn inner_title_wins() {
+        let out = merge_head_structured(
+            &json!({"title": "outer", "meta": [], "links": [], "json_ld": []}),
+            &json!({"title": "inner", "meta": [], "links": [], "json_ld": []}),
+        );
+        assert_eq!(out["title"], "inner");
+    }
+
+    /// A `null` title in the inner model does not clobber the outer one —
+    /// the JS guard is `if (src.title)`, which is falsy for null.
+    #[test]
+    fn null_inner_title_preserves_outer() {
+        let out = merge_head_structured(
+            &json!({"title": "outer", "meta": [], "links": [], "json_ld": []}),
+            &json!({"title": null, "meta": [], "links": [], "json_ld": []}),
+        );
+        assert_eq!(out["title"], "outer");
+    }
+
+    /// `meta` dedupes by the first pair element, keeping the LAST occurrence
+    /// (the JS `Map.set` semantics).
+    #[test]
+    fn meta_dedupes_by_key_keeping_last() {
+        let out = merge_head_structured(
+            &json!({"meta": [["description", "outer"], ["author", "ada"]]}),
+            &json!({"meta": [["description", "inner"]]}),
+        );
+        let meta = out["meta"].as_array().unwrap();
+        assert_eq!(meta.len(), 2, "two distinct keys survive: {meta:?}");
+        // The description pair is the inner value.
+        let desc = meta
+            .iter()
+            .find(|p| p[0] == "description")
+            .expect("description present");
+        assert_eq!(desc[1], "inner");
+    }
+
+    /// `links` dedupe by `(rel, href)`.
+    #[test]
+    fn links_dedupe_by_rel_and_href() {
+        let out = merge_head_structured(
+            &json!({"links": [["canonical", "/a"], ["preload", "/x"]]}),
+            &json!({"links": [["canonical", "/a"], ["canonical", "/b"]]}),
+        );
+        let links = out["links"].as_array().unwrap();
+        // `(canonical, /a)` collapses to one; `(canonical, /b)` and
+        // `(preload, /x)` are distinct.
+        assert_eq!(links.len(), 3, "got {links:?}");
+    }
+
+    /// `json_ld` concatenates without dedupe — the JS pushes both.
+    #[test]
+    fn json_ld_concatenates() {
+        let out = merge_head_structured(
+            &json!({"json_ld": [{"@type": "Article"}]}),
+            &json!({"json_ld": [{"@type": "Breadcrumb"}]}),
+        );
+        assert_eq!(out["json_ld"].as_array().unwrap().len(), 2);
+    }
+
+    /// A missing field on one side is treated as empty, not as a panic —
+    /// the edge handler passes whatever the layout and page produced.
+    #[test]
+    fn missing_fields_are_empty() {
+        let out = merge_head_structured(&json!({}), &json!({"title": "only"}));
+        assert_eq!(out["title"], "only");
+        assert_eq!(out["meta"].as_array().unwrap().len(), 0);
+        assert_eq!(out["links"].as_array().unwrap().len(), 0);
     }
 }
