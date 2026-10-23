@@ -29,4 +29,15 @@ export default defineConfig({
   // CPU-bound and unauthenticated. The Playwright `og.spec.ts` suite asserts
   // it end-to-end, so this fixture opts in.
   og: { enabled: true },
+  // §16.3 / §16 / K3: a web app manifest makes `oxide build` emit
+  // `manifest.webmanifest` and a service worker, and the boot entry then
+  // registers it. The Playwright `sw.spec.ts` suite is what asserts the
+  // precache contains the offline fallback and that an offline navigation
+  // serves it — the browser-level test the SW work was missing.
+  manifest: {
+    name: 'Oxide Smoke',
+    shortName: 'Smoke',
+    startUrl: '/',
+    display: 'standalone',
+  },
 })
