@@ -4204,6 +4204,10 @@ async fn bundle_edge_entry(
     dist: &Path,
     entry: &Path,
     css_transform: oxide_bundler::CssTransformHook,
+    // §18 / D18: specifiers left external in the edge bundle. Empty by
+    // default; a Worker declaring node-compat lists what it expects the
+    // runtime to provide.
+    edge_externals: Vec<String>,
     w: Writer<'_>,
 ) -> anyhow::Result<Option<PathBuf>> {
     use oxide_bundler::Bundler as _;
@@ -4227,6 +4231,11 @@ async fn bundle_edge_entry(
         true,
     );
 
+    // `bundle_env_options` only populates externals for the SSR env; the edge
+    // env is self-contained by default. Apply the declared set here rather
+    // than widening that function's signature for one caller.
+    let mut opts = opts;
+    opts.externals = edge_externals;
     let bundler = oxide_bundler::RolldownBundler::new(root);
     let out = bundler
         .bundle(&opts)
@@ -6124,7 +6133,16 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         oxide_adapters::Target::Cloudflare | oxide_adapters::Target::CloudflarePages
     ) {
         if let Some(edge_entry) = find_edge_entry(&rootp) {
-            match bundle_edge_entry(&rootp, &dist, &edge_entry, css_transform, w).await {
+            match bundle_edge_entry(
+                &rootp,
+                &dist,
+                &edge_entry,
+                css_transform,
+                cfg.build.edge_externals.clone(),
+                w,
+            )
+            .await
+            {
                 Ok(Some(path)) => {
                     outln!(w, "edge_bundle.js: {}", path.display());
                 }
