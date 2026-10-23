@@ -519,6 +519,84 @@ async fn v8_host_runs_a_module_export() {
 }
 
 #[tokio::test]
+async fn v8_plugin_ops_load_once_and_call_hooks_positionally() {
+    let dir = tempfile::tempdir().unwrap();
+    let module = v8_module(
+        dir.path(),
+        "plugin.mjs",
+        "export default {\n           name: 'demo',\n           transform(code, id) { return code.replace('__ID__', id); },\n           routes() { return { entries: [] }; },\n         };\n",
+    );
+    let host = V8Host::new();
+    // One worker so the plugin cache populated by plugin:load is visible to
+    // the plugin:call below.
+    let pool = host.tooling_pool(v8_cfg(1)).unwrap();
+
+    let mut s = pool
+        .call(
+            EntryRef {
+                kind: "plugin:load".into(),
+                module: module.clone(),
+                export: "default".into(),
+            },
+            input(json!({ "path": module })),
+        )
+        .await
+        .expect("plugin:load");
+    let loaded: serde_json::Value = serde_json::from_slice(&s.collect().await.unwrap()).unwrap();
+    assert_eq!(
+        loaded["name"], "demo",
+        "plugin default export loaded: {loaded}"
+    );
+    assert!(
+        loaded["hooks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|h| h == "transform")
+    );
+
+    let mut s = pool
+        .call(
+            EntryRef {
+                kind: "plugin:call".into(),
+                module: module.clone(),
+                export: "transform".into(),
+            },
+            input(json!({
+                "path": module,
+                "hook": "transform",
+                "args": { "code": "source __ID__", "id": "src/a.ts" }
+            })),
+        )
+        .await
+        .expect("plugin:call");
+    let out: serde_json::Value = serde_json::from_slice(&s.collect().await.unwrap()).unwrap();
+    assert_eq!(out, "source src/a.ts", "positional (code, id) order");
+
+    let mut s = pool
+        .call(
+            EntryRef {
+                kind: "plugin:call".into(),
+                module: module.clone(),
+                export: "routes".into(),
+            },
+            input(json!({
+                "path": module,
+                "hook": "routes",
+                "args": { "root": "/tmp/project" }
+            })),
+        )
+        .await
+        .expect("plugin:call routes");
+    let routes: serde_json::Value = serde_json::from_slice(&s.collect().await.unwrap()).unwrap();
+    assert_eq!(
+        routes["entries"],
+        json!([]),
+        "single-argument hook fallback"
+    );
+}
+
+#[tokio::test]
 async fn v8_host_boom_and_missing_module_report_errors() {
     let host = V8Host::new();
     let pool = host.tooling_pool(v8_cfg(1)).unwrap();
