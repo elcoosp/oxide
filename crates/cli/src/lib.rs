@@ -992,7 +992,7 @@ fn generate_island_boot_entry(
     // loading it from the boot entry is what the spec's "auto-registration"
     // means (previously the script was emitted but never loaded).
     if pwa {
-        // §16.6 / K3: register the service worker at runtime, not via a
+        // §16.6: register the service worker at runtime, not via a
         // static `import('/pwa-register.js')`. The latter is resolved by
         // rolldown at bundle time, but `/pwa-register.js` is written by
         // `emit_pwa_worker` AFTER bundling — so a clean build fails with
@@ -2460,7 +2460,7 @@ fn emit_content_search_indexes(
             &out_dir.join(format!("{}.index.json", coll.name)),
             json.as_bytes(),
         )?;
-        // §16 / K1: emit the full entries too. The search index is a
+        // §16.5: emit the full entries too. The search index is a
         // *projection* (terms + slugs + title/fields), too lossy for a
         // loader that needs the body. A page.server.ts's
         // `getCollection(name)` reads this file at request time.
@@ -3040,7 +3040,7 @@ fn emit_pwa_worker(
     // to boot offline. Route-specific chunks are SWR'd on first use rather
     // than precached (a large site's full chunk set would blow the install
     // window).
-    // §16 / K3 / WP-r9-8: resolve the offline fallback BEFORE building the
+    // §16.6 / WP-r9-8: resolve the offline fallback BEFORE building the
     // precache list, so an existing fallback route can be precached. The
     // old order validated the fallback but never added it — `caches.match`
     // missed on every offline navigation and degraded to the `/` shell.
@@ -3088,7 +3088,7 @@ fn emit_pwa_worker(
             precache.push(orig.clone());
         }
     }
-    // §16 / K3 / WP-r9-8: precache the resolved fallback route. `install`
+    // §16.6 / WP-r9-8: precache the resolved fallback route. `install`
     // runs `caches.addAll(PRECACHE)`, so the offline navigation's
     // `caches.match(OFFLINE_FALLBACK)` only hits if the fallback is here.
     if effective_fallback != "/" {
@@ -3103,7 +3103,7 @@ fn emit_pwa_worker(
         .join("\n");
 
     let sw = format!(
-        r#"// Oxide service worker (§16.6 / K3). Stale-while-revalidate for
+        r#"// Oxide service worker (§16.6). Stale-while-revalidate for
 // same-origin assets; network-first with an offline fallback for
 // navigations. Cache name is scoped by build id so a rebuild is a new
 // cache and a stale deploy self-evicts on activate.
@@ -4263,7 +4263,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // cannot double the prefix — `PathBuf::join` returns the RHS unchanged
     // when it is absolute.
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
-    // §16 / K1 / WP-r9-1: thread the project root to worker
+    // §16.5 / WP-r9-1: thread the project root to worker
     // subprocesses so `getCollection` resolves `dist/content`
     // against the project, not the shell's cwd. Edition 2024:
     // set_var is process-global; this runs before any worker
@@ -4289,7 +4289,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
 
     let mut cfg = load_config_strict(&rootp, "production")?;
 
-    // §16 / K1 / WP-r9-1: emit content entries BEFORE the
+    // §16.5 / WP-r9-1: emit content entries BEFORE the
     // prerender phase. A prerendered loader that calls
     // `getCollection` must see the current build's data — not
     // the previous build's (or nothing, on a first build).
@@ -5754,7 +5754,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         let _ = tree.archive_to(&archive_path);
     }
 
-    // §16 / K2: emit the route search index. Same source as the L0 seed
+    // §16.5: emit the route search index. Same source as the L0 seed
     // manifest — the `prerendered` map (route_id → output paths) — but a
     // different shape and consumer: a client-side island reads it to
     // answer a query. Extracting from the emitted HTML (not the source
@@ -10114,7 +10114,7 @@ async fn start_server_inner_full(
     // the client manifest) is absolute — the worker resolves a module path
     // against its own cwd, so a relative root breaks `action:run` / `loader:run`.
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
-    // §16 / K1 / WP-r9-1: thread the project root to worker
+    // §16.5 / WP-r9-1: thread the project root to worker
     // subprocesses so `getCollection` resolves `dist/content`
     // against the project, not the shell's cwd. Edition 2024:
     // set_var is process-global; this runs before any worker
@@ -11849,7 +11849,7 @@ async fn cmd_render(
     use oxide_jshost::{FrameworkHost, JsHost, LoaderHost, NodeHost, PoolConfig};
 
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
-    // §16 / K1 / WP-r9-1: thread the project root to worker
+    // §16.5 / WP-r9-1: thread the project root to worker
     // subprocesses so `getCollection` resolves `dist/content`
     // against the project, not the shell's cwd. Edition 2024:
     // set_var is process-global; this runs before any worker
