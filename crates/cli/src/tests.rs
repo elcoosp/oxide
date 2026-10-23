@@ -7590,6 +7590,47 @@ fn ppr_shell_store_reinsert_refreshes_age() {
     assert!(store.get("k1").is_none(), "k1 (now oldest) was evicted");
 }
 
+#[test]
+fn ppr_shell_store_invalidates_by_tag_and_path() {
+    let mut store = crate::PprShellStore::default();
+    store.insert_tagged(
+        "k1".to_string(),
+        "shell1".to_string(),
+        vec!["routes/a".to_string(), "path:/a".to_string()],
+    );
+    store.insert_tagged(
+        "k2".to_string(),
+        "shell2".to_string(),
+        vec!["routes/b".to_string(), "path:/b".to_string()],
+    );
+    assert_eq!(store.invalidate_path("/a"), 1);
+    assert!(
+        store.get("k1").is_none(),
+        "path invalidation drops the shell"
+    );
+    assert!(store.get("k2").is_some(), "unrelated shell survives");
+    assert_eq!(store.invalidate_tag("routes/b"), 1);
+    assert!(store.get("k2").is_none());
+    store.clear();
+    assert_eq!(store.len(), 0);
+}
+
+#[test]
+fn content_source_changed_scopes_to_collection_dirs() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut cfg = oxide_config::OxideConfig::default();
+    cfg.content.collections.push(oxide_config::CollectionDef {
+        name: "blog".to_string(),
+        dir: "content/blog".to_string(),
+        indexed_fields: Vec::new(),
+    });
+    let inside = oxide_dev::FileEvent::Modified(root.join("content/blog/post.md"));
+    let outside = oxide_dev::FileEvent::Modified(root.join("src/routes/index.tsx"));
+    assert!(crate::content_source_changed(root, &cfg, &[inside]));
+    assert!(!crate::content_source_changed(root, &cfg, &[outside]));
+}
+
 // ------------------------------ §18 / P0-1b: edge bundle
 
 #[test]
