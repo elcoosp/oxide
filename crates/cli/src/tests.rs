@@ -7706,29 +7706,29 @@ async fn bundle_edge_entry_emits_edge_bundle_js() {
 // ------------------------------ §18 / P0-1c: wasm32 edge compile
 
 #[test]
-#[ignore = "compiles wasm32-unknown-unknown --release; requires the target installed and takes minutes"]
-fn compile_edge_wasm_from_workspace_root_emits_edge_wasm() {
-    // `compile_edge_wasm(root, dist)` writes the embedded wasm-bindgen-processed
-    // `edge.wasm` (see `EDGE_WASM_BYTES`); no cargo build runs on this path
-    // with `current_dir(root)`, so `root` must be a workspace that contains
-    // `oxide-core-wasm`. This self-hosting test passes the oxide workspace
-    // root via CARGO_MANIFEST_DIR. A real user project would not satisfy the
-    // `-p oxide-core-wasm` resolution — see docs/deviations.md "Edge wasm
-    // build requires self-hosting layout".
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let ws = manifest
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("workspace root");
+fn compile_edge_wasm_writes_embedded_artifact_for_any_root() {
+    // The embedded wasm-bindgen-processed `oxide-core-wasm` artifact
+    // (`EDGE_WASM_BYTES`) is written verbatim to `<dist>/edge.wasm`. `root`
+    // is ignored — the write is unconditional, so a real user project (a
+    // JS/TS tree with no cargo workspace) gets the accelerated path without
+    // a `cargo build -p oxide-core-wasm` step (WP-C2; see docs/deviations.md
+    // "Edge wasm build requires self-hosting layout").
     let dir = tempfile::tempdir().unwrap();
+    // A `root` that is emphatically not a cargo workspace: an empty tempdir.
+    let empty_root = tempfile::tempdir().unwrap();
     let dist = dir.path().to_path_buf();
 
-    let out = crate::compile_edge_wasm(ws, &dist)
+    let out = crate::compile_edge_wasm(empty_root.path(), &dist)
         .expect("compile_edge_wasm")
-        .expect("wasm32 target was installed");
+        .expect("compile_edge_wasm always returns Some");
     assert!(out.is_file(), "edge.wasm produced at {out:?}");
-    let len = std::fs::metadata(&out).unwrap().len();
-    assert!(len > 0, "edge.wasm is non-empty");
+    let written = std::fs::read(&out).unwrap();
+    assert!(!written.is_empty(), "edge.wasm is non-empty");
+    assert_eq!(
+        written.as_slice(),
+        crate::EDGE_WASM_BYTES,
+        "written bytes equal the embedded artifact byte-for-byte"
+    );
 }
 
 // ------------------------------ §16.6 / WP-r10-1: D1 endgame
