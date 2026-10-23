@@ -1,4 +1,4 @@
-// §16 / K2: client-side route search.
+// §16.5: client-side route search.
 //
 // The build emits `dist/client/search-index.json` (see
 // `crates/assets/src/route_search.rs`): one entry per prerendered route,
