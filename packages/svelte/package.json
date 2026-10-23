@@ -10,7 +10,8 @@
     "./package.json": "./package.json",
     "./real-adapter": "./src/real-adapter.ts",
     "./render": "./src/render.ts",
-    "./image": "./src/Image.svelte"
+    "./image": "./src/Image.svelte",
+    "./defer": "./src/Defer.svelte"
   },
   "scripts": {
     "test": "node --test test/*.test.ts"
