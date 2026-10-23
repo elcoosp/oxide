@@ -122,6 +122,52 @@ test('falls back to the full catalog when no subset exists', async () => {
 })
 
 
+test('client ICU exact match uses post-offset value (== n - offset)', () => {
+  // ICU spec: the =N branch matches when (n - offset) == N, not when n == N.
+  // Before the fix, String(n) was used, so with count=1, offset:1 the code
+  // looked for '=1' but the branch present was '=0'.
+  assert.equal(
+    formatIcu(
+      '{count, plural, offset:1 =0 {nobody} =1 {just you} other {# others}}',
+      { count: 1 },
+      'en',
+    ),
+    'nobody',
+    'count=1, offset:1 → 1-1=0 → =0 branch (nobody)',
+  )
+  assert.equal(
+    formatIcu(
+      '{count, plural, offset:1 =0 {nobody} =1 {just you} other {# others}}',
+      { count: 2 },
+      'en',
+    ),
+    'just you',
+    'count=2, offset:1 → 2-1=1 → =1 branch (just you)',
+  )
+})
+
+test('client ICU # inside exact branch renders the post-offset value', () => {
+  // # in a =N branch should render n - offset, not literal '#' or undefined.
+  assert.equal(
+    formatIcu(
+      '{count, plural, =0 {# items exactly} other {other}}',
+      { count: 0 },
+      'en',
+    ),
+    '0 items exactly',
+    '=0 branch, no offset → # = 0',
+  )
+  assert.equal(
+    formatIcu(
+      '{count, plural, offset:1 =0 {# remaining after you} other {other}}',
+      { count: 1 },
+      'en',
+    ),
+    '0 remaining after you',
+    '=0 branch, offset:1 → # = 1-1 = 0',
+  )
+})
+
 test('client ICU formats plural and select groups with offsets', () => {
   assert.equal(
     formatIcu('{count, plural, =0 {none} one {# item} other {# items}}', { count: 0 }, 'en'),
