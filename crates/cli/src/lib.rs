@@ -7406,9 +7406,14 @@ fn build_dispatch(
                 .await;
             }
 
-            // §9.3: a form action POST runs the route's `actions[name]`
-            // and returns its result. This precedes the loader phase — an
-            // action is its own request, not a page render.
+            // §9.3: a form action POST runs the route's `actions[name]`.
+            // A successful action does NOT return its JSON to the browser —
+            // the spec's form-first contract is "runs, and re-renders the
+            // page with `form` result data". The result is carried into the
+            // render phase through this variable; a redirect or error status
+            // still returns directly (POST/redirect/GET, and a failed action
+            // must not render a success page).
+            let mut action_form: Option<serde_json::Value> = None;
             if let (Some(action), Some(module_path)) =
                 (action_name.as_deref(), module_path.as_deref())
             {
@@ -7503,8 +7508,15 @@ fn build_dispatch(
                     for (k, v) in &middleware_headers {
                         resp = resp.with_header(k, v.clone());
                     }
-                    metrics.observe(&label, started.elapsed(), resp.status);
-                    return resp;
+                    // §9.3: 200 → carry the result into the render and fall
+                    // through. Anything else (a redirect, a validation
+                    // failure) is the action's own answer and returns.
+                    if resp.status == 200 {
+                        action_form = serde_json::from_slice::<serde_json::Value>(&resp.body).ok();
+                    } else {
+                        metrics.observe(&label, started.elapsed(), resp.status);
+                        return resp;
+                    }
                 }
             }
 
@@ -8269,6 +8281,15 @@ fn build_dispatch(
                 let mut input =
                     oxide_server::PageRenderInput::new(route_for_render, req_owned.url.clone());
                 input.params = params;
+                // §9.3: a form POST re-renders the page with the action's
+                // result in `data.form`. Injected here rather than seeded
+                // before the loader because the loader assigns `data`
+                // wholesale; this runs after it, so both survive.
+                if let Some(form) = action_form.take() {
+                    if let Some(obj) = data.as_object_mut() {
+                        obj.insert("form".to_string(), form);
+                    }
+                }
                 input.data = data;
                 // §8.2: hand the layout chain to the adapter so it can
                 // nest the page. The adapter renders
