@@ -82,7 +82,7 @@ with its own tests against the edge shape, exposed as a new export
 design, not by accident.
 
 
-## Edge bundle: no externals; chunked output (P0-1b)
+## Edge bundle: declared externals; chunked output (P0-1b)
 
 **What the spec asks.** §18 / D18: an `oxide build` for a Cloudflare
 target should produce a deployable Worker that includes the project's
@@ -98,12 +98,16 @@ falls through to the built-in JS path.
 
 **Two design decisions worth recording.**
 
-- **No externals.** The edge handler must be self-contained: a bare npm
-  import either resolves to the package's edge entry at build time or
-  fails with `BLD-RESOLVE`. `node:*` imports are not special-cased —
-  a project using them gets the build-time resolve error, which is the
-  honest signal (Cloudflare Workers' node-compat is a runtime flag the
-  build cannot know about).
+- **Externals are declared, not inferred.** `build.edgeExternals` names the
+  specifiers the Worker's runtime provides (a node-compat layer, a
+  platform-injected module). The bundler also leaves an *unresolvable*
+  specifier external on its own — verified empirically: neither an
+  undeclared `node:crypto` nor an uninstalled bare package produces a build
+  error, both survive as imports — so the declaration's value is making the
+  contract explicit and stable, not gate-keeping. `node:*` is not
+  special-cased either way: a Worker without node-compat that imports
+  `node:crypto` builds fine and fails at runtime, which is the honest
+  signal (node-compat is a runtime flag the build cannot observe).
 - **Chunked output allowed.** Rolldown may emit shared chunks alongside
   the entry. All chunks are written to `dist/deploy/` (Cloudflare Workers
   deploys the directory as a whole); only the entry chunk is renamed to
