@@ -219,7 +219,7 @@ fn cache_key_for(
 /// entirely; on a miss the result is stored. A cache error is logged and the
 /// freshly compiled value is returned.
 
-/// §5.4 / K4: cached version of a compiler that may legitimately return
+/// §5.4: cached version of a compiler that may legitimately return
 /// `None` (an empty MDX file compiles to nothing). Mirrors `cached_compile`,
 /// but distinguishes "compiled to nothing" (Ok(None), not cached) from
 /// "compiled to JS" (Ok(Some(js))).
@@ -361,7 +361,7 @@ pub async fn precompile_entries(
                 }
             }
             "mdx" => {
-                // SPEC-16-C / §5.4 / K4: compile via @mdx-js/mdx in the
+                // SPEC-16-C / §5.4: compile via @mdx-js/mdx in the
                 // tooling pool, wrapped in the precompile cache so a
                 // warm build reuses the compiled output instead of
                 // re-invoking the JS compiler on every run.
