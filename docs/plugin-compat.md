@@ -7,15 +7,16 @@ hooks each kind supports and whether the support is wired end-to-end
 **Status legend:**
 
 - ✅ **wired** — the hook is invoked by the pipeline and its result is used
-- 🟡 **partial** — the enum/type exists and the host can call it, but the
-  pipeline has no production caller yet (see the master plan §15-B)
-- 🚫 **unsupported** — declaring it at load-time triggers `OX-PLUGIN-HOOK`
+- 🟡 **partial** — the enum/type exists and the host can call it, but some
+  call site or argument shape is still missing
+- 🚫 **unsupported** — declaring it at load time triggers `OX-PLUGIN-HOOK`
+- n/a — the kind does not expose this hook
 
 ## Kinds
 
 | Kind | What it is | Host |
 |---|---|---|
-| `js` | A Node ESM module exporting hook functions; runs in the tooling pool. | `plugin:call` op |
+| `js` | A Node ESM module exporting hook functions; runs in the tooling pool. | `plugin:load` / `plugin:call` (Node and V8 backends) |
 | `wasm` | A `wasmtime` component satisfying `oxide:plugin/hooks@0.1.0`. | `oxide_plugin::WasmPlugin` |
 | `native` | A built-in implementation (images, fonts, i18n, mdx). | Rust crate |
 
@@ -23,47 +24,70 @@ hooks each kind supports and whether the support is wired end-to-end
 
 | Hook | § | `js` | `wasm` | `native` | Notes |
 |---|---|---|---|---|---|
-| `config` | 15.2 | 🟡 | 🚫 | 🚫 | Called at load with the project config; returns a patch. |
-| `configResolved` | 15.2 | 🟡 | 🚫 | 🚫 | After the config is frozen; read-only view. |
-| `buildStart` | 15.2 | 🟡 | 🚫 | 🚫 | Once per build. |
-| `buildEnd` | 15.2 | 🟡 | 🚫 | 🚫 | Once per build, with the final result summary. |
-| `resolveId` | 15.2 | ✅ | 🚫 | 🚫 | `(specifier, from) → id \| null`. |
-| `load` | 15.2 | ✅ | 🚫 | 🚫 | `(id) → code \| null`; a virtual-module plugin uses this. |
-| `transform` | 15.2 | ✅ | ✅ | ✅ | `(code, id) → code`. **The one hook wired end-to-end today.** |
-| `renderChunk` | 15.2 | ✅ | 🚫 | 🚫 | `(chunk) → chunk`. |
-| `generateBundle` | 15.2 | ✅ | 🚫 | 🚫 | Called with the final bundle. |
-| `transformHtml` | 15.2 | ✅ | 🚫 | 🚫 | `(html, ctx) → html`; runs in the prerender finalizer. |
-| `handleHotUpdate` | 15.2 | 🟡 | 🚫 | 🚫 | `({path, content}) → {reload: bool}`. |
-| `routes` | 15.2 | 🟡 | 🚫 | 🚫 | Contributes route entries at scan time. |
-| `typegen` | 15.2 | 🟡 | 🚫 | 🚫 | Contributes `.d.ts` fragments. |
-| `diagnostics` | 15.2 | 🟡 | 🚫 | 🚫 | Adds project diagnostics before `oxide check`. |
-| `middleware` | 15.2 | 🟡 | 🚫 | 🚫 | Contributes a middleware to the chain. |
-| `configureServer` | 15.2 | 🟡 | 🚫 | 🚫 | Called with the dev server handle. |
-| `headers` | 15.2 | 🟡 | 🚫 | 🚫 | Contributes response headers. |
-| `redirects` | 15.2 | 🟡 | 🚫 | 🚫 | Contributes redirect rules. |
-| `adapter` | 15.2 | 🟡 | 🚫 | 🚫 | Registers a deploy target. |
+| `config` | 15.2 | ✅ | 🚫 | n/a | Load-time patch, merged before the build. |
+| `configResolved` | 15.2 | ✅ | 🚫 | n/a | Read-only view after the config is frozen. |
+| `buildStart` | 15.2 | ✅ | 🚫 | n/a | Once per build. |
+| `buildEnd` | 15.2 | ✅ | 🚫 | n/a | Once per successful build with a summary. |
+| `resolveId` | 15.2 | ✅ | 🚫 | n/a | `(specifier, from) → id \| null`. |
+| `load` | 15.2 | ✅ | 🚫 | n/a | `(id) → code \| null`; virtual modules work. |
+| `transform` | 15.2 | ✅ | ✅ | n/a | `(code, id) → code`; also reaches `compile_module`. |
+| `renderChunk` | 15.2 | ✅ | 🚫 | n/a | `(file, code) → code`. |
+| `generateBundle` | 15.2 | ✅ | 🚫 | n/a | Called with the final bundle. |
+| `transformHtml` | 15.2 | ✅ | 🚫 | n/a | `(route, html) → html` in the prerender finalizer. |
+| `handleHotUpdate` | 15.2 | ✅ | 🚫 | n/a | `({path}) → {reload: bool}` in dev. |
+| `routes` | 15.2 | ✅ | 🚫 | n/a | Contributes route entries at scan time. |
+| `typegen` | 15.2 | ✅ | 🚫 | n/a | Contributes `.d.ts` fragments after a build. |
+| `diagnostics` | 15.2 | ✅ | 🚫 | n/a | Adds project diagnostics to `oxide check`. |
+| `serverMiddleware` | 15.2 | ✅ | 🚫 | n/a | Contributes middleware source; alias `middleware`. |
+| `configureServer` | 15.2 | ✅ | 🚫 | n/a | Called with the dev server handle. |
+| `adapter` | 15.2 | ✅ | 🚫 | n/a | May select the deploy target; last result wins. |
+| `renderHead` | 15.2 | ✅ | 🚫 | n/a | Merges meta/link/style/script into the render head. |
+| `cacheHandler` | 15.2 | ✅ | 🚫 | n/a | Selects the cache backend before the stack is built. |
+
+## Argument shape
+
+JS hooks are positional on the plugin side, as in Vite. The Rust bridge sends
+a named object, and the worker maps it through a documented table:
+
+| Hook | Arguments |
+|---|---|
+| `transform` | `code, id` |
+| `resolveId` | `specifier, from` |
+| `load` | `id` |
+| `renderChunk` | `file, code` |
+| `generateBundle` | `files` |
+| `transformHtml` | `route, html` |
+| `config`, `configResolved` | `config` |
+| `buildStart` | — |
+| `buildEnd` | `result` |
+| `handleHotUpdate` | `ctx` |
+| other single-argument hooks | the one payload value |
+
+## Route and middleware pools
+
+`routes` and `serverMiddleware` run during `scan_routes`. A lazily-created
+tooling pool is passed by `build`, `dev` (boot and HMR rescan), `start`/serve,
+`routes`, `analyze`, and `check`. A project that declares neither hook never
+starts an extra Node child.
 
 ## What "partial" means concretely
 
-The `plugin:call` bridge in `crates/cli/src/lib.rs` hardcodes
-`hook: "transform"` and `export: "transform"` — every other hook can be
-declared on a plugin object but is not invoked. Making the remaining
-hooks live is the master plan's **§15-A + §15-B** work: parameterize the
-bridge to `{plugin_id, hook, args}` and add the resolve/load/renderChunk/
-generateBundle/transformHtml call sites in the bundler.
+Only WASM `transform` is wired today; the manifest accepts `load` and
+`resolveId` names, but the CLI does not invoke them yet. Native plugins are
+feature backends selected by config (`images`, `fonts`, `i18n`, `mdx`,
+`tailwind`, `manifest`); they do not participate in the JS hook chain.
 
 Declaring an unsupported hook at load time is a **fail-at-load** today
-for WASM components (`PLG-HOOKS` naming the missing export); the JS side
-is more forgiving (the plugin loads; the hook simply is not called).
-Fixing the JS side to match is part of §15-A.
+for WASM components (`PLG-HOOKS` naming the missing export); the JS side is
+more forgiving (the plugin loads; a hook it did not export is skipped).
 
 ## Testing the compat surface
 
 - `crates/plugin/tests/wasm_tdd.rs` — WASM hook export probing + transform
 - `crates/cli/tests.rs::build_transform_hook_*` — JS-side `transform`
-- Future: an `#[ignore]`d integration test that runs a fixture JS plugin
-  declaring every hook, and asserts the wired ones fire (adds coverage
-  for the resolved half of the table above).
+- `crates/cli/src/tests.rs` — route/middleware hook fixtures and adapters
+- `crates/jshost/tests/integration.rs::v8_plugin_ops_*` — V8 `plugin:load` /
+  `plugin:call` parity, including positional argument order
 
 ## Plugin kinds and load failure
 
@@ -76,39 +100,3 @@ Fixing the JS side to match is part of §15-A.
 
 These rules keep a misconfigured plugin visible without breaking a build
 that would have silently ignored it.
-## Native plugins and `enables()`
-
-A `native` plugin's identity *is* its feature domain: declaring
-`plugins: [{ kind: "native", name: "mdx" }]` says "this project uses MDX."
-The `enables()` table on `NativePlugin` maps each variant to the gate
-name(s) it activates:
-
-| Native plugin | `enables()` |
-|---|---|
-| `images` | `["images"]` |
-| `fonts` | `["fonts"]` |
-| `i18n` | `["i18n"]` |
-| `mdx` | `["mdx"]` |
-| `tailwind` | `["tailwind"]` |
-| `manifest` | `["manifest"]` |
-
-**What consumes it today:** `oxide check` reports the project's enabled
-set, so a project's current gate set is visible without reading the
-plugin source. The free function `native_plugins::enables(cfg, plugin)`
-is the query API a future gate reads.
-
-**What does not consume it, and why:** every build-pipeline feature gate
-is config-driven (`cfg.fonts.families`, `cfg.i18n.locales`,
-`cfg.manifest`, `content.collections`), and the security endpoints
-(`images_endpoint`, `og`) are explicit opt-ins. A plugin declaration
-must never *implicitly* open a CPU-bound endpoint or override a config
-gate — the two knobs would be in conflict with no tiebreaker.
-`enables()` is a **declaration of intent for a feature the plugin's
-domain owns**, not a substitute for the feature's own config gate. The
-two coexist without overriding each other.
-
-Adding an `enables()` check at a site that is already config-gated would
-create a second switch for one feature. The honest state is: the table is
-populated, the query API is real, `oxide check` reports it, and every
-gate in the tree has exactly one switch.
-
