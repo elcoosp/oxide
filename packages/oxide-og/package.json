@@ -1,7 +1,7 @@
 {
   "name": "oxide-og",
   "version": "0.1.0",
-  "description": "OpenGraph image generator for the Oxide project — turns docs/logo.png and the React/Vue/Svelte/Solid icons into a sleek premium OG image for github.com/elcoosp/oxide",
+  "description": "OpenGraph image generator for the Oxide project \u2014 turns docs/logo.png and the React/Vue/Svelte/Solid icons into a sleek premium OG image for github.com/elcoosp/oxide",
   "type": "module",
   "license": "MIT",
   "bin": {
@@ -15,7 +15,7 @@
   "dependencies": {
     "@fontsource/inter": "^5.1.0",
     "@fontsource/jetbrains-mono": "^5.1.0",
-    "playwright": "1.57.0"
+    "playwright": "^1.64.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
