@@ -92,12 +92,20 @@ invariant; refreshing it is an explicit operation.
 Both are fixed, and a non-ignored test asserts the embedded bytes are written
 for a root that is not a cargo workspace.
 
-## `<Defer>` for `suspense: 'core'` adapters — Vue shipped; Svelte component missing (§7.1)
+## `<Defer>` for `suspense: 'core'` adapters — closed (§7.1)
 
 
 
-**Status.** Open — narrowed to the residual gaps. The picture is narrower than the original "designed, not shipped" but not yet closed:
 
+**Status.** Closed — both `suspense: 'core'` adapters now have a tested `<Defer>`, and the wire protocol retains its end-to-end coverage from the React `suspense: 'native'` smoke app.
+
+The wire protocol (`<template data-ox-b>` / `<ox-defer data-ox-b>` placeholder, `<template data-ox-c>` + swapper, `ox:swap` dispatch) is verified end-to-end by `tests/playwright/tests/deferred.spec.ts`, which boots `oxide start` on the React smoke app and asserts two deferred settles arrive as distinct resolution scripts in the browser. The protocol is adapter-independent.
+
+Vue (`suspense: 'core'`): `packages/vue/src/defer.ts` is exported at `@oxide/vue/defer` (this change fixes a real gap — the file existed but was not in the exports map, so no consumer could reach it) and covered by `packages/vue/test/defer-component.test.ts`, which SSR-renders through `vue/server-renderer` and asserts the shell marker + fallback shape against a placeholder value, plus the resolved-inline path against a plain value.
+
+Svelte (`suspense: 'core'`): the `<Defer>` component ships as `packages/svelte/src/Defer.svelte`, exported at `@oxide/svelte/defer`, covered by `packages/svelte/test/defer-component.test.ts`. That test compiles the component through `svelte/compiler`, renders it via `svelte/server`, and asserts the placeholder marker + fallback, the resolved-inline path, and the exact-shape check that a wider object carrying `__deferred` alongside other keys is a plain object. This addresses the deviation's own obstacle 2 (Svelte ships `.ts`-only, so a `<Defer>` needs a compiled component): the component ships as source and the consumer's compiler handles it, and the test proves the compiled output emits the marker the swapper expects.
+
+The three obstacles the original entry listed: (1) VNode placeholder markup — solved by the attribute-only swapper selector `[data-ox-b]`; verified by conformance's `streaming: a non-template boundary host swaps too` assertion; (2) Svelte compiled-component requirement — solved by shipping `Defer.svelte` and testing its compiled output; (3) swapper nonce — solved earlier this session, verified in `defer-swapper-nonce.test.ts` per adapter.
 What is verified: the deferred streaming *wire protocol* — `<template data-ox-b>` placeholder, `<template data-ox-c>` + swapper, `ox:swap` dispatch — is tested end-to-end. `tests/playwright/tests/deferred.spec.ts` (added in a13c4e1) boots `oxide start` on the React smoke app and asserts two deferred settles arrive as distinct resolution scripts in the browser. The protocol is adapter-independent, so that test covers the wire contract every `suspense: 'core'` adapter consumes.
 
 What is shipped but untested: the Vue `<Defer>` component (`packages/vue/src/defer.ts`, 63 lines, Vue is `suspense: 'core'`). No test — no Vue smoke app, no conformance import — exercises that component. Its correctness rests on code review, not on a green test.
