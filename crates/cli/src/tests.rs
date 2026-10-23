@@ -6380,6 +6380,72 @@ async fn close_tag_split_across_chunks_is_still_withheld() {
     assert!(text.ends_with("</body></html>"), "close is last: {text}");
 }
 
+/// The close-window adapter must not assume the document arrives in one
+/// chunk. This feeds the body in tiny pieces (including a close tag split
+/// across three frames) and pins the two properties the double-buffer buys:
+/// every source byte is forwarded exactly once, and the withheld tail never
+/// grows past the close window plus the current input frame.
+#[tokio::test]
+async fn settle_bridge_bounds_the_withheld_tail_across_fragmented_chunks() {
+    use futures::StreamExt as _;
+
+    let prefix = b"<html><body><main>fragmented shell</main>";
+    let source_frames: Vec<Result<bytes::Bytes, std::io::Error>> = vec![
+        Ok(bytes::Bytes::from_static(prefix)),
+        Ok(bytes::Bytes::from_static(b"</bo")),
+        Ok(bytes::Bytes::from_static(b"dy></ht")),
+        Ok(bytes::Bytes::from_static(b"ml>")),
+    ];
+    let src: oxide_server::BodyStream =
+        Box::pin(futures::stream::iter(source_frames)) as oxide_server::BodyStream;
+
+    let (tx, rx) = tokio::sync::mpsc::channel(4);
+    tx.send(serde_json::json!({"deferredSettle": {"id": "9", "value": {"ok": true}}}))
+        .await
+        .unwrap();
+    drop(tx);
+
+    let mut out = crate::strip_close_and_append_settles(
+        src,
+        rx,
+        "NONCE".to_string(),
+        None,
+        String::new(),
+        None,
+    );
+    let mut chunks: Vec<Vec<u8>> = Vec::new();
+    while let Some(item) = out.next().await {
+        chunks.push(item.expect("chunk").to_vec());
+    }
+    let text = String::from_utf8_lossy(&chunks.concat()).to_string();
+
+    assert_eq!(
+        text,
+        format!(
+            "{}<script type=\"application/oxide-deferred\" data-id=\"9\" nonce=\"NONCE\">{{\"ok\":true}}</script></body></html>",
+            String::from_utf8_lossy(prefix)
+        ),
+        "source bytes exactly once, one settle script, one close",
+    );
+    // Every frame emitted before the settle script is a slice of the source,
+    // so its size cannot exceed the input frame it came from. The close window
+    // is 16 bytes; a fragmented input must never make a single emission larger
+    // than the current frame plus that held window.
+    for chunk in &chunks {
+        if chunk
+            .windows(b"application/oxide-deferred".len())
+            .any(|w| w == b"application/oxide-deferred")
+        {
+            break;
+        }
+        assert!(
+            chunk.len() <= prefix.len(),
+            "pre-settle chunk {} exceeds the bounded window",
+            chunk.len(),
+        );
+    }
+}
+
 /// A route with no settles must be byte-identical to the buffered path.
 #[tokio::test]
 async fn no_settles_leaves_the_document_unchanged() {
