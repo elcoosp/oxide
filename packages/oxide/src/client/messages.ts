@@ -69,11 +69,33 @@ function routeKeyFromPage(): string | null {
  *  catalog (`/client/messages/<locale>.json`). Resolves to an empty map on
  *  any failure — a missing catalog must not break a page; `t()` then returns
  *  the key, which is a visible-and-recoverable degradation, not a crash. */
+/**
+ * §16.4: whether this build emitted any message catalogs.
+ *
+ * Set from `client.manifest.json`'s `i18n_locales` (the CLI stamps it at
+ * build time). `undefined` means "not told" — the fetch proceeds, which is
+ * the pre-existing behaviour for a caller that never registered a manifest.
+ * An empty array means "the project has no i18n", and the fetch is skipped:
+ * without this, every page load of a non-i18n app requests
+ * `/client/messages/<locale>.json`, gets a 404, and Chromium reports it as a
+ * console error.
+ */
+let hasCatalogs: boolean | undefined
+
+/** Register the build's locale list (from the client manifest). */
+export function setMessageLocales(locales: string[] | undefined): void {
+  hasCatalogs = locales === undefined ? undefined : locales.length > 0
+}
+
 export async function loadMessages(locale?: string): Promise<Messages> {
   const l = locale ?? detectLocale()
   const cached = cache.get(l)
   if (cached) return cached
   if (inflight) return inflight
+  if (hasCatalogs === false) {
+    // The build emitted no catalogs; asking would 404.
+    return {}
+  }
   inflight = (async () => {
     try {
       // Start from the full catalog, then overlay the route's subset. The
