@@ -4414,3 +4414,33 @@ pass) and `pnpm test:packages` (387 pass) are green.
   socket fan-out/presence, the remaining plugin last mile, edge cache-key
   divergence, collections consumers/dev re-read, ICU formatting, the SW
   browser test, MDX beyond the reachable arm, and IR layout nesting.
+
+## Remaining substantive items — 2026-10-23
+
+Closed the five threads left by the previous pass. `cargo check --workspace`,
+`cargo test -p oxide-cli --lib` (227 pass), `cargo test -p oxide-server --lib`
+(49 pass) and `pnpm test:packages` (451 pass) are green.
+
+- **Socket fan-out / presence** (`crates/server/src/lib.rs`,
+  `crates/jshost/worker/oxide-worker.mjs`, `packages/oxide/src/server/json.ts`):
+  `SocketService` now owns a live registry with RAII registration; the upgrade
+  task multiplexes reader frames with registry pushes. `ctx.broadcast`,
+  `ctx.sendTo`, `ctx.clients` and `ctx.headers` are public; the smoke app and a
+  Playwright test exercise peer delivery and presence.
+- **PPR ↔ L0/vary** (`crates/cli/src/lib.rs`): shells now use
+  `CacheKey::canonical_parts` (route/params/vary/build id, `"dev"` in dev),
+  carry the same `route` and `path:` tags as L0, are invalidated by action
+  revalidate and SWR, and are cleared by the dev watcher through the new
+  `StartedServer.ppr_shells` handle.
+- **Edge cache key** (`crates/adapters/src/lib.rs`): the no-wasm fallback now
+  emits the canonical blake3 L0 key via an embedded BLAKE3 implementation
+  (verified against Rust vectors for empty, short, multi-block and multi-chunk
+  inputs), matching `oxide-core-wasm` and `oxide-cache`.
+- **Collections** (`crates/cli/src/lib.rs`, `packages/oxide-website`): dev
+  emits entries before serving and rescans on collection-dir changes (atomic
+  temp+rename writes; `dist` filtered from the watcher to avoid a loop). The
+  website's blog/docs loaders and RSS now call `getCollection`/`getEntry`.
+- **IR layout nesting** (all four `src/render.ts`): `buildTree` resolves
+  `input.layouts` outermost→innermost through an IR-native `LAYOUTS` registry,
+  with the default Atlas shell only when nothing resolves; tests added per
+  adapter.
