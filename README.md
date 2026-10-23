@@ -325,8 +325,9 @@ ancestor chains with threaded `event.locals` whose headers ride cached responses
 manifest-resolved adapter entry consumed by both serve and `oxide render`, the lazy SSR
 entry with manifest-only module loads and a `/_oxide/ready` endpoint backed by renderer
 warm-up, `server.h3Advertise` gating of `Alt-Svc`, PPR hardening completed (middleware-cookie
-refusal on the shell **and** L0 paths, build-id-scoped shell keys shaped like L0 keys,
-one-entry-at-a-time eviction, query strings excluded from keys), 8 MiB / 30 s bounded
+refusal on the shell **and** L0 paths, build-id-scoped shell keys that are the canonical
+L0 keys, one-entry-at-a-time eviction, query strings excluded from keys, and route/path
+tag invalidation on revalidate, SWR refresh and dev edits), 8 MiB / 30 s bounded
 `CallStream` collects with `JSH-OVERFLOW` / `JSH-DEADLINE` and mid-stream worker crashes
 surfacing as `JSH-CRASH` (crash-fixture tested), `--offline-plugins` end-to-end (flag →
 env → pool → worker → fetch-shim refusal, both directions tested), §5.6 stale-dispatch
@@ -337,7 +338,8 @@ merge, a runtime image result cache with ETag/immutable replay, concurrency cap 
 / `images.maxDimension` / `build.routeSearch` config knobs (the route-search index is now
 cacheable and opt-out-able), the content-collections runtime (`getCollection`/`getEntry`
 over build-emitted `entries.json`, sha256 content-hash invalidated, `OXIDE_ROOT` set in
-build/start/dev/render, write errors surfaced), a build-generated service worker whose
+build/start/dev/render, write errors surfaced, and the shipped website blog/docs loaders
+reading through it), a build-generated service worker whose
 precache includes the offline fallback (stale-while-revalidate, build-id-scoped caches with
 old-cache eviction), a build-time route-search index over prerendered HTML with a
 dependency-free client scorer (served `must-revalidate`), per-route `trace_id` on dev
@@ -345,7 +347,8 @@ waterfalls and MCP rows with trace context threaded into actions, endpoints and 
 live loader call sites, `audit --json`, `layout_chain` recorded in both manifests and
 consumed by client-side layout prefetch on hover/focus/viewport, `oxide check` reporting
 native-plugin gates via `enables()`, boot-warmed locale catalogs whose route subsets merge
-instead of replacing, socket routes (RFC6455 handshake through `socket:run`),
+instead of replacing, socket routes (RFC6455 handshake through `socket:run`, with `ctx.broadcast` /
+`ctx.sendTo` / `ctx.clients` fan-out and presence),
 connected dev HMR including the loader-edit round trip and a one-time client bundle on
 fresh dev, `/_oxide/og` config-gated Open Graph PNG rendering (SVG → resvg → PNG with an
 MP area cap) behind a token-bucket rate limit evaluated before the render (429 +
@@ -384,32 +387,23 @@ prerendering is experimental and honest about it (`render.ppr` turns on a runtim
 cache for `defer()` boundaries in dev and `oxide start` — first request captured, later
 requests stream fresh holes; it is not the post-MLP PPR of spec §10.4; the guard set is
 complete — loader- and middleware-cookie responses are refused on both the shell and L0
-paths, shells are build-id-scoped and query-excluded with one-at-a-time eviction — but
-shells are still not integrated with L0/vary semantics), the edge build's wasm acceleration
+paths, shells are build-id-scoped and query-excluded with one-at-a-time eviction, and
+shells now use the canonical L0 key, carry the same route/path tags, are invalidated by
+`revalidate` and SWR refresh, and are cleared on every dev edit), the edge build's wasm acceleration
 (`edge_bundle.js` is emitted and consumed; the wasm32 compile is CI-gated; but per
 documented deviation the wasm path only fires for the self-hosting layout — real user
-projects ship the JS fallback — and the bundle carries no externals),
-socket fan-out / presence (sends reach only the calling socket), the *last mile* of the
-plugin hook surface (`handleHotUpdate` fires on the once-probe path only, 8 hooks receive
-arguments via a positional fallback table, module `routes` / `serverMiddleware` pools are
-passed only at serve boot, and `cacheHandler` is consulted in dev+build but not in
-`start`), plugin-transform coverage on the V8 path beyond module loads (module loads route
+projects ship the JS fallback — whose cache-key output is now byte-identical to the
+wasm/native L0 key — and the bundle carries no externals), the *last mile* of the
+plugin hook surface (8 hooks receive arguments via a documented positional table and
+module `routes` / `serverMiddleware` pools are passed only at serve boot), plugin-transform
+coverage on the V8 path beyond module loads (module loads route
 through the shared compile/transform pipeline with a blake3 memo; op-level coverage still
 trails Node), client-side i18n depth (`<html lang>` now follows the resolved locale, but
-ICU formatting is not yet evaluated at render time), the collections consumer (the
-`getCollection`/`getEntry` runtime is shipped and correctly invalidated — content-hash
-keys, entries-before-prerender, `OXIDE_ROOT` everywhere, write errors surfaced — but **no
-shipped loader calls it yet**; the only consumers are tests, so marketing it as usable
-would be premature), route `meta` exports (title path wired; the flat shape drops richer
-head fields), the route-search index (cachable and opt-out-able now; result titles are not
-yet stripped of markup), image pipeline depth (the runtime result cache is real and
-wired, but has no behavioral test yet and `sizes` is still user-supplied), rate-limit
-keying that still trusts `x-forwarded-for` for non-OG routes (spoofable, unbounded
-buckets), the service worker (fallback precache shipped; no browser-level SW test), the
-secret-scan→fingerprint ordering that lets a failed scan
-go green on retry, MDX compilation beyond
-the reachable compile arm, the neutral IR renderer's layout nesting (dev-fixture path
-only), and test-suite placement (`conformance/test/config-surface.test.ts` pins the §14.1
+ICU formatting is not yet evaluated at render time), the route-search index (cachable and
+opt-out-able now; result titles are not yet stripped of markup), image pipeline depth (the
+runtime result cache is real and wired, but has no behavioral test yet and `sizes` is
+still user-supplied), the service worker (fallback precache shipped; no browser-level SW
+test), MDX compilation beyond the reachable compile arm, and test-suite placement (`conformance/test/config-surface.test.ts` pins the §14.1
 factory default but the CI conformance job runs only `conformance.test.ts`; the CLI
 smoke-app e2e tests are not CI-run). See
 [`docs/deviations.md`](docs/deviations.md) and [`WORKLOG.md`](WORKLOG.md) for the current
