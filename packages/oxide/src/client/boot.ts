@@ -16,7 +16,7 @@ import { loadScripts } from './scripts.ts'
 import { setRouteComponentSource, isParamSegment, type ClientManifestLike } from './route-manifest.ts'
 import { attachDeferGlue, type DeferGlue } from './defer-glue.ts'
 import type { FrameworkAdapter } from '../types.ts'
-import { loadMessages } from './messages.ts'
+import { loadMessages, setMessageLocales } from './messages.ts'
 
 interface BootState {
   adapter?: FrameworkAdapter
@@ -148,11 +148,29 @@ export function bootWithRouter(
      * renders the route's REAL page component instead of the IR registry.
      * Absent → data-only prefetch and the IR fallback.
      */
-    manifest?: ClientManifestLike
+    manifest?: ClientManifestLike & {
+      /**
+       * §16.4: the locales this build emitted catalogs for. Absent when the
+       * project has no i18n — `setMessageLocales(undefined)` then leaves the
+       * fetch enabled (the pre-existing behaviour); an empty array would too,
+       * so the CLI omits the field rather than sending `[]`.
+       */
+      i18n_locales?: string[]
+    }
   } = {},
 ): () => void {
   const doc = opts.doc ?? (globalThis as { document?: Document }).document
   if (!doc) return () => {}
+  // §16.4: the manifest says whether this build emitted any message
+  // catalogs. Registering it before the first `loadMessages` is what stops a
+  // non-i18n app from fetching a catalog that cannot exist (a guaranteed 404
+  // and a console error).
+  // §16.4: a *present* manifest without `i18n_locales` means the build
+  // emitted no catalogs — skip the fetch. No manifest at all (dev, a test)
+  // leaves the decision to the caller, which is the pre-existing behaviour.
+  setMessageLocales(
+    opts.manifest === undefined ? undefined : (opts.manifest.i18n_locales ?? []),
+  )
   void loadMessages()
   const w = globalThis as {
     __oxide?: { route?: string; data?: string; layouts?: string[] }
