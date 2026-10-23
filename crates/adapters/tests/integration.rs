@@ -28,17 +28,23 @@ fn edge_handler_prefers_wasm_for_cache_key_and_odf() {
     assert!(js.contains("function blake3Hex("));
 }
 
-// P0-1a: `merge_head` must NOT be routed through wasm. This is the negative
-// half of the contract — a future refactor that re-introduces
-// `useWasm("merge_head"` silently (the P0-1a bug) breaks this test.
+// P0-1a / WP-C1: the *flat* `merge_head` export must NOT be routed through
+// wasm — its signature takes `Vec<(String, String)>` while the edge head model
+// is structured, and the old path silently returned `[]`. The structured port
+// (`merge_head_structured`) is routed through wasm; the flat one is not.
 #[test]
-fn edge_handler_merge_head_is_js_only() {
+fn edge_handler_does_not_route_the_flat_merge_head_through_wasm() {
     let js = oxide_adapters::edge_handler_js("build-abc123");
     assert!(
         !js.contains(r#"useWasm("merge_head""#),
-        "merge_head must not be routed through wasm (P0-1a: the wasm path \
-         silently returned [] because the Rust signature is flat while the \
-         edge shape is structured)"
+        "the flat merge_head must not be routed through wasm (P0-1a: its \
+         signature is flat while the edge shape is structured, so it \
+         silently returned [])"
+    );
+    // The structured port IS preferred — that is the WP-C1 fix.
+    assert!(
+        js.contains(r#"useWasm("#) && js.contains(r#""merge_head_structured""#),
+        "merge_head_structured is preferred when wasm is present"
     );
     // The JS implementation must be present and reference the comment that
     // records the P0-1a deviation.
