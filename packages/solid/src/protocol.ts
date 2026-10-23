@@ -30,7 +30,7 @@ export const SWAPPER_SRC =
   `p=document.querySelector("[data-ox-b='"+id+"']");` +
   `if(t&&p){var d=document.createElement("div");d.innerHTML=t.innerHTML;` +
   `p.replaceWith.apply(p,d.childNodes);` +
-  `document.dispatchEvent(new CustomEvent("ox:swap",{detail:{id:id}}))}}`
+  `document.dispatchEvent(new CustomEvent("ox:swap",{detail:{id:id,value:t.innerHTML}}))}}`
 
 /** Streamed boundary placeholder — render::boundary_fallback. */
 export function boundaryFallback(id: number, fallbackHtml: string): string {
