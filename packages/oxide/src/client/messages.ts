@@ -338,8 +338,8 @@ function formatPlural(
   const n = Number(value)
   if (!Number.isFinite(n)) return String(value)
   const { options, offset } = parseOptions(style)
-  const exact = options.get('=' + String(n))
-  if (exact !== undefined) return formatIcu(exact, values, locale, outerPound)
+  const exact = options.get('=' + String(n - offset))
+  if (exact !== undefined) return formatIcu(exact, values, locale, n - offset)
   let category = 'other'
   try {
     category = new Intl.PluralRules(locale, { type: ordinal ? 'ordinal' : 'cardinal' }).select(n - offset)
