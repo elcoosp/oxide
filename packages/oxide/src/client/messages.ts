@@ -5,14 +5,12 @@
 // browser half: it fetches the active locale's catalog once, caches it, and
 // answers `t(key, values)` from a plain object.
 //
-// Why a plain object rather than ICU at runtime: the server formats ICU
-// messages (plural/select) at render time via `oxide-assets::i18n::format`.
-// An island is already hydrated with the *rendered* text in its props — a
-// client `t()` call is for messages the island composes after hydration
-// (a counter label, a toast), which are overwhelmingly plain substitutions.
-// An ICU placeholder (`{n}`) is substituted; a `plural`/`select` expression
-// is not — an island that needs one should use the server-rendered value in
-// its props. Documented limitation, not a silent one.
+// Messages are ICU MessageFormat strings. The server formats them with
+// `oxide-assets::i18n::format`; the browser half below implements the same
+// core subset without a dependency: placeholders, `plural`, `selectordinal`,
+// `select`, `number`, `date` and `time`, including nested messages and the
+// `offset:` form. An island that hydrates with server-rendered text still
+// gets the same strings when it formats a message itself after hydration.
 
 /** A loaded locale catalog, keyed by message id. */
 export type Messages = Readonly<Record<string, string>>
@@ -166,12 +164,252 @@ export function t(key: string, values?: Record<string, string | number>): string
     }
   }
   out = out ?? key
-  if (values) {
-    out = out.replace(/\{(\w+)\}/g, (_, name: string) =>
-      name in values ? String(values[name]) : `{${name}}`,
-    )
+  if (values) out = formatIcu(out, values, l)
+  return out
+}
+
+/** Format an ICU MessageFormat string with the browser's own `Intl` APIs.
+ *  Unknown placeholders are left intact (matching the previous substitution
+ *  behaviour) so a missing value is visible rather than silently empty. */
+export function formatIcu(
+  message: string,
+  values: Readonly<Record<string, string | number>>,
+  locale = detectLocale(),
+  pound?: number,
+): string {
+  let out = ''
+  let i = 0
+  while (i < message.length) {
+    const c = message[i]!
+    if (c === "'") {
+      const quoted = readQuoted(message, i)
+      if (quoted) {
+        out += quoted.value
+        i = quoted.next
+      } else {
+        out += c
+        i += 1
+      }
+      continue
+    }
+    if (c === '#') {
+      out += pound === undefined ? '#' : formatNumber(pound, locale)
+      i += 1
+      continue
+    }
+    if (c !== '{') {
+      out += c
+      i += 1
+      continue
+    }
+    const close = findClosingBrace(message, i)
+    if (close < 0) {
+      out += message.slice(i)
+      break
+    }
+    out += formatArgument(message.slice(i + 1, close), values, locale, pound)
+    i = close + 1
   }
   return out
+}
+
+function readQuoted(s: string, start: number): { value: string; next: number } | null {
+  const next = s[start + 1]
+  if (next === "'") return { value: "'", next: start + 2 }
+  // ICU starts a quoted literal only before syntax; an ordinary apostrophe
+  // in prose ("l'utilisateur") is a literal, not a quote.
+  if (next === undefined || !"{#}|".includes(next)) return null
+  let value = ''
+  let i = start + 1
+  while (i < s.length) {
+    if (s[i] === "'") {
+      if (s[i + 1] === "'") {
+        value += "'"
+        i += 2
+        continue
+      }
+      return { value, next: i + 1 }
+    }
+    value += s[i]
+    i += 1
+  }
+  return { value, next: i }
+}
+
+function findClosingBrace(s: string, open: number): number {
+  let depth = 0
+  let i = open
+  while (i < s.length) {
+    const c = s[i]!
+    if (c === "'") {
+      const quoted = readQuoted(s, i)
+      if (quoted) {
+        i = quoted.next
+        continue
+      }
+    }
+    if (c === '{') depth += 1
+    else if (c === '}') {
+      depth -= 1
+      if (depth === 0) return i
+    }
+    i += 1
+  }
+  return -1
+}
+
+function formatArgument(
+  inner: string,
+  values: Readonly<Record<string, string | number>>,
+  locale: string,
+  pound?: number,
+): string {
+  const comma = inner.indexOf(',')
+  if (comma < 0) {
+    const name = inner.trim()
+    if (!(name in values)) return `{${name}}`
+    return String(values[name])
+  }
+  const name = inner.slice(0, comma).trim()
+  const rest = inner.slice(comma + 1).trim()
+  if (!(name in values)) return `{${inner}}`
+  const value = values[name]
+  const second = rest.indexOf(',')
+  const type = (second < 0 ? rest : rest.slice(0, second)).trim()
+  const style = second < 0 ? '' : rest.slice(second + 1).trim()
+  switch (type) {
+    case 'plural':
+    case 'selectordinal':
+      return formatPlural(value, style, locale, type === 'selectordinal', values, pound)
+    case 'select':
+      return formatSelect(value, style, locale, values, pound)
+    case 'number':
+      return formatNumberValue(value, style, locale)
+    case 'date':
+    case 'time':
+      return formatDateTime(value, style, locale, type)
+    default:
+      return String(value)
+  }
+}
+
+interface IcuOptions {
+  options: Map<string, string>
+  offset: number
+}
+
+function parseOptions(source: string): IcuOptions {
+  const options = new Map<string, string>()
+  let offset = 0
+  let i = 0
+  while (i < source.length) {
+    while (i < source.length && /\s/.test(source[i]!)) i += 1
+    if (i >= source.length) break
+    const keyStart = i
+    while (i < source.length && !/\s/.test(source[i]!) && source[i] !== '{') i += 1
+    const key = source.slice(keyStart, i)
+    while (i < source.length && /\s/.test(source[i]!)) i += 1
+    if (key.startsWith('offset:')) {
+      const n = Number(key.slice('offset:'.length))
+      if (Number.isFinite(n)) offset = n
+      continue
+    }
+    if (source[i] !== '{') {
+      // Malformed option: skip one character so the loop cannot spin.
+      i += 1
+      continue
+    }
+    const close = findClosingBrace(source, i)
+    if (close < 0) break
+    options.set(key, source.slice(i + 1, close))
+    i = close + 1
+  }
+  return { options, offset }
+}
+
+function formatPlural(
+  value: string | number,
+  style: string,
+  locale: string,
+  ordinal: boolean,
+  values: Readonly<Record<string, string | number>>,
+  outerPound?: number,
+): string {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return String(value)
+  const { options, offset } = parseOptions(style)
+  const exact = options.get('=' + String(n))
+  if (exact !== undefined) return formatIcu(exact, values, locale, outerPound)
+  let category = 'other'
+  try {
+    category = new Intl.PluralRules(locale, { type: ordinal ? 'ordinal' : 'cardinal' }).select(n - offset)
+  } catch {
+    // Invalid locale: keep the English categories deterministic.
+    category = n - offset === 1 ? 'one' : 'other'
+  }
+  const branch = options.get(category) ?? options.get('other')
+  return branch === undefined ? '' : formatIcu(branch, values, locale, n - offset)
+}
+
+function formatSelect(
+  value: string | number,
+  style: string,
+  locale: string,
+  values: Readonly<Record<string, string | number>>,
+  pound?: number,
+): string {
+  const { options } = parseOptions(style)
+  const branch = options.get(String(value)) ?? options.get('other')
+  return branch === undefined ? '' : formatIcu(branch, values, locale, pound)
+}
+
+function formatNumber(n: number, locale: string): string {
+  try {
+    return new Intl.NumberFormat(locale).format(n)
+  } catch {
+    return String(n)
+  }
+}
+
+function formatNumberValue(value: string | number, style: string, locale: string): string {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return String(value)
+  const s = style.trim()
+  try {
+    if (s === 'integer') return new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(n)
+    if (s === 'percent') return new Intl.NumberFormat(locale, { style: 'percent' }).format(n)
+    if (s.startsWith('currency:')) {
+      return new Intl.NumberFormat(locale, {
+        style: 'currency',
+        currency: s.slice('currency:'.length),
+      }).format(n)
+    }
+  } catch {
+    // fall through to plain number formatting
+  }
+  return formatNumber(n, locale)
+}
+
+function formatDateTime(
+  value: string | number,
+  style: string,
+  locale: string,
+  kind: 'date' | 'time',
+): string {
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return String(value)
+  const s = style.trim()
+  const dateStyle = ['short', 'medium', 'long', 'full'].includes(s)
+    ? (s as 'short' | 'medium' | 'long' | 'full')
+    : undefined
+  try {
+    return new Intl.DateTimeFormat(locale, {
+      ...(kind === 'date' ? { dateStyle: dateStyle ?? 'medium' } : {}),
+      ...(kind === 'time' ? { timeStyle: dateStyle ?? 'medium' } : {}),
+    }).format(d)
+  } catch {
+    return String(value)
+  }
 }
 
 /** Test-only: reset the module-level cache. */
