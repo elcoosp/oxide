@@ -10,7 +10,8 @@
     "test:middleware": "playwright test tests/middleware.spec.ts",
     "test:loading": "playwright test tests/loading.spec.ts",
     "test:socket": "playwright test tests/socket.spec.ts",
-    "test:sse": "playwright test tests/sse.spec.ts"
+    "test:sse": "playwright test tests/sse.spec.ts",
+    "test:dev-rescan": "playwright test tests/dev-rescan.spec.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0"
