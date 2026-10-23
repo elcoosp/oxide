@@ -7708,7 +7708,8 @@ async fn bundle_edge_entry_emits_edge_bundle_js() {
 #[test]
 #[ignore = "compiles wasm32-unknown-unknown --release; requires the target installed and takes minutes"]
 fn compile_edge_wasm_from_workspace_root_emits_edge_wasm() {
-    // `compile_edge_wasm(root, dist)` runs `cargo build -p oxide-core-wasm`
+    // `compile_edge_wasm(root, dist)` writes the embedded wasm-bindgen-processed
+    // `edge.wasm` (see `EDGE_WASM_BYTES`); no cargo build runs on this path
     // with `current_dir(root)`, so `root` must be a workspace that contains
     // `oxide-core-wasm`. This self-hosting test passes the oxide workspace
     // root via CARGO_MANIFEST_DIR. A real user project would not satisfy the

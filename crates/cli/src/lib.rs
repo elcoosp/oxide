@@ -4,6 +4,12 @@
 //! add, generate, cache, audit, migrate, test (in-process app.fetch helper).
 
 use clap::{Parser, Subcommand};
+
+/// The wasm-bindgen-processed `oxide-core-wasm` artifact, embedded at
+/// CLI build time so a user project without a cargo workspace containing
+/// `oxide-core-wasm` still gets the accelerated edge path.
+/// Regenerated via `scripts/regen-edge-wasm.sh` (WP-C2, deviation 6).
+static EDGE_WASM_BYTES: &[u8] = include_bytes!("../resources/edge.wasm");
 use oxide_config::OxideConfig;
 use oxide_router::RouteTree;
 use std::collections::BTreeMap;
@@ -2333,68 +2339,20 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
 /// Worker's JS fallback handles it), `Err` on a genuine compile failure.
 /// Output goes to `<dist>/edge.wasm`, which is where the Cloudflare emit
 /// branch looks for it.
-fn compile_edge_wasm(root: &Path, dist: &Path) -> anyhow::Result<Option<PathBuf>> {
-    // Check the target is available first — a missing target would otherwise
-    // produce a confusing build error.
-    let installed = std::process::Command::new("rustup")
-        .args(["target", "list", "--installed"])
-        .output();
-    let has_target = match installed {
-        Ok(o) => String::from_utf8_lossy(&o.stdout)
-            .lines()
-            .any(|l| l.trim() == "wasm32-unknown-unknown"),
-        Err(_) => false,
-    };
-    if !has_target {
-        return Ok(None);
-    }
+fn compile_edge_wasm(_root: &Path, dist: &Path) -> anyhow::Result<Option<PathBuf>> {
+    // WP-C2: the wasm-bindgen-processed `oxide-core-wasm` artifact is embedded
+    // into the CLI binary at compile time (see `EDGE_WASM_BYTES` above and
+    // `scripts/regen-edge-wasm.sh`). The previous implementation ran
+    // `cargo build -p oxide-core-wasm` inside `root`, which only worked when
+    // `root` was the oxide workspace itself. A real user project is a JS/TS
+    // tree with no cargo workspace containing `oxide-core-wasm`, so that path
+    // failed with a non-zero exit for every real project, silently shipping
+    // the JS fallback (deviation 6, docs/deviations.md). Embedding the
+    // artifact at CLI build time is exactly what the deviation named as the
+    // fix.
     std::fs::create_dir_all(dist)?;
     let out = dist.join("edge.wasm");
-    let status = std::process::Command::new("cargo")
-        .args([
-            "build",
-            "-p",
-            "oxide-core-wasm",
-            "--release",
-            "--target",
-            "wasm32-unknown-unknown",
-        ])
-        .current_dir(root)
-        .status()
-        .map_err(|e| anyhow::anyhow!("cargo build for wasm failed to start: {e}"))?;
-    if !status.success() {
-        return Err(anyhow::anyhow!(
-            "cargo build -p oxide-core-wasm --target wasm32-unknown-unknown failed"
-        ));
-    }
-    // The raw cdylib artifact.
-    let produced = root.join("target/wasm32-unknown-unknown/release/oxide_core_wasm.wasm");
-    if !produced.is_file() {
-        return Ok(None);
-    }
-    // B-01: run wasm-bindgen so the emitted `edge.wasm` exposes the
-    // `edge_cache_key` / `merge_head` / `encode_odf` / `decode_odf` exports
-    // the edge handler calls. `--target web` keeps the glue dependency-free.
-    let bindgen_ok = std::process::Command::new("wasm-bindgen")
-        .arg(&produced)
-        .args(["--target", "web"])
-        .arg("--out-dir")
-        .arg(dist)
-        .args(["--out-name", "edge"])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if !bindgen_ok {
-        tracing::warn!("wasm-bindgen not on PATH; emitting raw cdylib without JS glue");
-        std::fs::copy(&produced, &out)?;
-        return Ok(Some(out));
-    }
-    // wasm-bindgen writes `edge_bg.wasm`; the handler + wrangler expect the
-    // single-artifact name `edge.wasm`.
-    let bg = dist.join("edge_bg.wasm");
-    if bg.is_file() {
-        std::fs::rename(&bg, &out)?;
-    }
+    std::fs::write(&out, EDGE_WASM_BYTES)?;
     Ok(Some(out))
 }
 
