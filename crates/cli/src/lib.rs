@@ -4283,6 +4283,11 @@ async fn bundle_edge_entry(
     // default; a Worker declaring node-compat lists what it expects the
     // runtime to provide.
     edge_externals: Vec<String>,
+    // §6.3 / §16.3: precompiled sources for SFCs and MDX reachable from
+    // the edge entry — the same async tooling-pool pass the client and
+    // SSR bundles use. Without it, the bundler refuses a
+    // .vue/.svelte/.mdx module reachable from src/edge.ts (BLD-FRAMEWORK).
+    precompiled: std::collections::BTreeMap<std::path::PathBuf, String>,
     w: Writer<'_>,
 ) -> anyhow::Result<Option<PathBuf>> {
     use oxide_bundler::Bundler as _;
@@ -4296,7 +4301,7 @@ async fn bundle_edge_entry(
         oxide_bundler::BundleEnv::Edge,
         entries,
         out_dir.clone(),
-        BTreeMap::new(),
+        precompiled,
         None,
         "edge".to_string(),
         None,
@@ -4736,7 +4741,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         oxide_bundler::BundleEnv::Ssr,
         server_entries.clone(),
         server_out.clone(),
-        server_precompiled,
+        server_precompiled.clone(),
         jsx_source,
         build_secret,
         transform_hook,
@@ -6215,6 +6220,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 &edge_entry,
                 css_transform,
                 cfg.build.edge_externals.clone(),
+                server_precompiled.clone(),
                 w,
             )
             .await
