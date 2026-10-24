@@ -78,14 +78,14 @@ interface PageProps {
 
 function pageTreeFor(input: ClientInput, client: ClientHooks): Node {
   const page = pageComponent(input.route)
-  const props: PageProps = {
+  const props: Record<string, unknown> = {
     route: input.route,
     url: input.url,
     params: input.params,
-    data: input.data as Record<string, unknown>,
+    data: input.data,
     client,
   }
-  return el(page, props as unknown as Record<string, unknown>)
+  return el(page, props)
 }
 
 function pageRenderInput(input: ClientInput): Parameters<typeof renderShellToString>[0] {
