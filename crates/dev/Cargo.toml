@@ -1,5 +1,5 @@
 [package]
-name = "oxide-dev"
+name = "oxide-fw-dev"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Watcher, HMR, overlay, inspector (spec 13)"
 
 [dependencies]
-oxide-diagnostics = { workspace = true }
+oxide-fw-diagnostics = { workspace = true }
 oxide-fw-graph = { workspace = true }
 notify = { workspace = true }
 tokio = { workspace = true }

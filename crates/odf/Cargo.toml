@@ -1,5 +1,5 @@
 [package]
-name = "oxide-odf"
+name = "oxide-fw-odf"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,7 +8,7 @@ repository.workspace = true
 description = "ODF wire format: devalue-compatible Rust encoder/decoder (spec 9.5, D11)"
 
 [dependencies]
-oxide-diagnostics = { workspace = true }
+oxide-fw-diagnostics = { workspace = true }
 bytes = { workspace = true }
 thiserror = { workspace = true }
 serde_json = { workspace = true }

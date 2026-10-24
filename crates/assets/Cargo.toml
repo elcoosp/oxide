@@ -1,5 +1,5 @@
 [package]
-name = "oxide-assets"
+name = "oxide-fw-assets"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Lightning-CSS-shaped pipeline, images, fonts, og, content (spec 16, D5, D19)"
 
 [dependencies]
-oxide-diagnostics = { workspace = true }
+oxide-fw-diagnostics = { workspace = true }
 lightningcss = { workspace = true }
 image = { workspace = true }
 syntect = { workspace = true }

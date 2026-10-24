@@ -1,5 +1,5 @@
 [package]
-name = "oxide-core-wasm"
+name = "oxide-fw-core-wasm"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,8 +13,8 @@ description = "Edge subset: router, odf, head, cache keys (spec 2 D18, 18)"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-oxide-odf = { workspace = true }
-oxide-router = { workspace = true }
+oxide-fw-odf = { workspace = true }
+oxide-fw-router = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

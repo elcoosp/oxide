@@ -14,7 +14,7 @@ bytes = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-oxide-diagnostics = { workspace = true }
+oxide-fw-diagnostics = { workspace = true }
 blake3 = { workspace = true }
 zstd = { workspace = true }
 redb = { workspace = true }

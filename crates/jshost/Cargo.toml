@@ -1,5 +1,5 @@
 [package]
-name = "oxide-jshost"
+name = "oxide-fw-jshost"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,12 +8,12 @@ repository.workspace = true
 description = "JsHost trait, NodeHost, ops, pools (spec 4, D2)"
 
 [dependencies]
-oxide-diagnostics = { workspace = true }
-oxide-compiler = { workspace = true }
+oxide-fw-diagnostics = { workspace = true }
+oxide-fw-compiler = { workspace = true }
 oxc_resolver = { workspace = true }
-oxide-cache = { workspace = true }
+oxide-fw-cache = { workspace = true }
 tracing = { workspace = true }
-oxide-odf = { workspace = true }
+oxide-fw-odf = { workspace = true }
 tokio = { workspace = true }
 bytes = { workspace = true }
 blake3 = { workspace = true }

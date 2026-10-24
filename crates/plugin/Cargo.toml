@@ -1,5 +1,5 @@
 [package]
-name = "oxide-plugin"
+name = "oxide-fw-plugin"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Plugin host, JS bridge, WASM host (spec 15)"
 
 [dependencies]
-oxide-diagnostics = { workspace = true }
+oxide-fw-diagnostics = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

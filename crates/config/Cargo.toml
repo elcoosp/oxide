@@ -1,5 +1,5 @@
 [package]
-name = "oxide-config"
+name = "oxide-fw-config"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Static extractor, schema, layering, env (spec 14, D14)"
 
 [dependencies]
-oxide-diagnostics = { workspace = true }
+oxide-fw-diagnostics = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

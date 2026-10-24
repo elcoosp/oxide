@@ -1,5 +1,5 @@
 [package]
-name = "oxide-server"
+name = "oxide-fw-server"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,14 +9,14 @@ description = "Hyper pipeline, static assets, compression, TLS, rules (spec 12, 
 
 [dependencies]
 async-trait = { workspace = true }
-oxide-diagnostics = { workspace = true }
-oxide-cache = { workspace = true }
-oxide-router = { workspace = true }
-oxide-render = { workspace = true }
-oxide-config = { workspace = true }
+oxide-fw-diagnostics = { workspace = true }
+oxide-fw-cache = { workspace = true }
+oxide-fw-router = { workspace = true }
+oxide-fw-render = { workspace = true }
+oxide-fw-config = { workspace = true }
 url = { workspace = true }
 base64 = { workspace = true }
-oxide-odf = { workspace = true }
+oxide-fw-odf = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true, features = ["server-auto", "server-graceful", "client", "client-legacy", "http1", "http2", "tokio"] }
 socket2 = { version = "0.5", features = ["all"] }

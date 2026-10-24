@@ -1,5 +1,5 @@
 [package]
-name = "oxide-diagnostics"
+name = "oxide-fw-diagnostics"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

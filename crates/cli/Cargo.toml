@@ -18,25 +18,25 @@ image = { workspace = true }
 mimalloc = { workspace = true }
 bytes = { workspace = true }
 async-trait = { workspace = true }
-oxide-diagnostics = { workspace = true }
-oxide-config = { workspace = true }
-oxide-router = { workspace = true }
+oxide-fw-diagnostics = { workspace = true }
+oxide-fw-config = { workspace = true }
+oxide-fw-router = { workspace = true }
 oxide-fw-graph = { workspace = true }
-oxide-compiler = { workspace = true }
-oxide-bundler = { workspace = true }
+oxide-fw-compiler = { workspace = true }
+oxide-fw-bundler = { workspace = true }
 blake3 = { workspace = true }
 rayon = { workspace = true }
-oxide-jshost = { workspace = true }
-oxide-cache = { workspace = true, features = ["redis", "s3"] }
+oxide-fw-jshost = { workspace = true }
+oxide-fw-cache = { workspace = true, features = ["redis", "s3"] }
 dashmap = { workspace = true }
-oxide-render = { workspace = true }
-oxide-server = { workspace = true }
+oxide-fw-render = { workspace = true }
+oxide-fw-server = { workspace = true }
 tokio-rustls = { workspace = true }
-oxide-assets = { workspace = true, features = ["subset"] }
-oxide-dev = { workspace = true }
-oxide-plugin = { workspace = true }
-oxide-adapters = { workspace = true }
-oxide-odf = { workspace = true }
+oxide-fw-assets = { workspace = true, features = ["subset"] }
+oxide-fw-dev = { workspace = true }
+oxide-fw-plugin = { workspace = true }
+oxide-fw-adapters = { workspace = true }
+oxide-fw-odf = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
 rmcp = { workspace = true }

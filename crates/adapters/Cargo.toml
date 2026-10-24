@@ -1,5 +1,5 @@
 [package]
-name = "oxide-adapters"
+name = "oxide-fw-adapters"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,7 +8,7 @@ repository.workspace = true
 description = "binary, node, static, docker, cloudflare, serverless (spec 18)"
 
 [dependencies]
-oxide-diagnostics = { workspace = true }
+oxide-fw-diagnostics = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 blake3 = { workspace = true }

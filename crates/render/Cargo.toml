@@ -1,5 +1,5 @@
 [package]
-name = "oxide-render"
+name = "oxide-fw-render"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,8 +8,8 @@ repository.workspace = true
 description = "Streaming pipeline, html injection, boundary protocol (spec 7.1, 10, D12)"
 
 [dependencies]
-oxide-diagnostics = { workspace = true }
-oxide-odf = { workspace = true }
+oxide-fw-diagnostics = { workspace = true }
+oxide-fw-odf = { workspace = true }
 lol_html = { workspace = true }
 bytes = { workspace = true }
 tokio = { workspace = true }

@@ -1,5 +1,5 @@
 [package]
-name = "oxide-bundler"
+name = "oxide-fw-bundler"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,9 +8,9 @@ repository.workspace = true
 description = "Rolldown integration point, environments, manifests (spec 6.4, D3)"
 
 [dependencies]
-oxide-diagnostics = { workspace = true }
+oxide-fw-diagnostics = { workspace = true }
 oxide-fw-graph = { workspace = true }
-oxide-compiler = { workspace = true }
+oxide-fw-compiler = { workspace = true }
 oxc_resolver = { workspace = true }
 rolldown = { workspace = true }
 rolldown_common = { workspace = true }

@@ -1,5 +1,5 @@
 [package]
-name = "oxide-router"
+name = "oxide-fw-router"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Route tree, matcher, typegen, rules engine (spec 8, D8)"
 
 [dependencies]
-oxide-diagnostics = { workspace = true }
+oxide-fw-diagnostics = { workspace = true }
 rkyv = { workspace = true }
 memmap2 = { workspace = true }
 regex = { workspace = true }
