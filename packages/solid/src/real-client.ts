@@ -57,8 +57,17 @@ async function load(): Promise<{
   // the canonical name).
   let core: SolidCoreLike | undefined
   try {
-    core = (await import('solid-js')) as unknown as { default?: SolidCoreLike } & SolidCoreLike
-    core = (core.default ?? core) as SolidCoreLike
+    const mod = (await import('solid-js')) as unknown as
+      | (SolidCoreLike & { default?: SolidCoreLike })
+      | { default: SolidCoreLike }
+    // Two possible module shapes: an ESM namespace with named exports
+    // (createElement/createComponent on `mod`), or an interop wrapper
+    // with the real object under `.default`.
+    if ('default' in mod && mod.default !== undefined) {
+      core = mod.default
+    } else {
+      core = mod
+    }
   } catch {
     return undefined
   }
