@@ -22,7 +22,7 @@
  * single documented existential-to-universal boundary. Same construction as
  * the heterogeneous fn registry in packages/core/src/server/index.ts
  * (`(...args: never[]) => unknown`). */
-export type ComponentFn = (props: never) => Node
+export type ComponentFn = (props: Record<string, unknown>) => Node
 
 /** The tree kinds: fragment / element / text / raw / defer / island. */
 export type Node = FragmentNode | ElementNode | TextNode | RawNode | DeferNode | IslandNode
