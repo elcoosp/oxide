@@ -64,9 +64,7 @@ test('factory: ssr=real + no component → OX-500 page (§10.2 step 5)', async (
 })
 
 test('factory: real strategy renders through react-dom/server', { skip: realSkip }, async () => {
-  const React = (await import('react')) as unknown as {
-    createElement(type: unknown, props: Record<string, unknown> | null, ...children: unknown[]): unknown
-  }
+  const React = await import('react')
   // Component reads from props.data — the framework-neutral adapter contract.
   const Greeting = (props: Record<string, unknown>) => {
     const data = (props.data ?? {}) as Record<string, unknown>
@@ -88,9 +86,7 @@ test('factory: real strategy renders through react-dom/server', { skip: realSkip
 })
 
 test('factory: route + params reach the component', { skip: realSkip }, async () => {
-  const React = (await import('react')) as unknown as {
-    createElement(type: unknown, props: Record<string, unknown> | null, ...children: unknown[]): unknown
-  }
+  const React = await import('react')
   const Post = (props: Record<string, unknown>) => {
     const params = (props.params ?? {}) as Record<string, unknown>
     return React.createElement('h1', null, `Post: ${String(params.slug ?? '')}`)
@@ -103,9 +99,7 @@ test('factory: route + params reach the component', { skip: realSkip }, async ()
 })
 
 test('factory: real strategy escapes text through the real renderer', { skip: realSkip }, async () => {
-  const React = (await import('react')) as unknown as {
-    createElement(type: unknown, props: Record<string, unknown> | null, ...children: unknown[]): unknown
-  }
+  const React = await import('react')
   const Dangerous = () => React.createElement('p', null, '<script>alert(1)</script>')
   const a = createRealAdapter({ ssr: 'real', componentFor: () => Dangerous })
   const html = await drain(a.render(input()))
