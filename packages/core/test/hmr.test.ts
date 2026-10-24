@@ -197,7 +197,7 @@ test('route-data-update without a payload re-fetches /__data for the current rou
     location: { pathname: '/slow', search: '?x=1' },
     fetch: (async (url: string) => {
       fetched.push(url)
-      return new Response(odf as unknown as BodyInit, { status: 200 })
+      return new Response(odf, { status: 200 })
     }) as typeof fetch,
   })
   try {
