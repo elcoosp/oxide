@@ -14,7 +14,7 @@ use crate::{
     ServerManifest, ServerRoute, err,
 };
 use arcstr::ArcStr;
-use oxide_diagnostics::Diagnostic;
+use oxide_fw_diagnostics::Diagnostic;
 use rolldown::{
     Bundler as RolldownCore, BundlerBuilder, BundlerOptions, InputItem, IsExternal, OutputFormat,
     Platform, RawMinifyOptions, ResolveOptions, SourceMapType, TsConfig,
@@ -780,9 +780,9 @@ fn oxide_plugins_with_sink(
             // The compiler's `Env` mirrors the bundler's `BundleEnv`
             // one-to-one; map rather than re-derive.
             match options.env {
-                BundleEnv::Client => oxide_compiler::Env::Client,
-                BundleEnv::Ssr => oxide_compiler::Env::Ssr,
-                BundleEnv::Edge => oxide_compiler::Env::Edge,
+                BundleEnv::Client => oxide_fw_compiler::Env::Client,
+                BundleEnv::Ssr => oxide_fw_compiler::Env::Ssr,
+                BundleEnv::Edge => oxide_fw_compiler::Env::Edge,
             },
             options.build_secret.clone(),
             root.to_path_buf(),
@@ -828,7 +828,7 @@ fn oxide_plugins(options: &BundleOptions, root: &Path) -> Vec<std::sync::Arc<Plu
 /// downstream, in Rolldown.
 #[derive(Debug)]
 pub struct OxidePassesPlugin {
-    env: oxide_compiler::Env,
+    env: oxide_fw_compiler::Env,
     build_secret: String,
     /// Absolute project root. A module outside it (a `node_modules`
     /// dependency, a linked workspace package) is skipped — the passes are
@@ -853,7 +853,7 @@ pub struct OxidePassesPlugin {
 
 impl OxidePassesPlugin {
     pub fn new(
-        env: oxide_compiler::Env,
+        env: oxide_fw_compiler::Env,
         build_secret: String,
         root: PathBuf,
         precompiled: BTreeMap<PathBuf, String>,
@@ -982,7 +982,7 @@ impl Plugin for OxidePassesPlugin {
                     }
                 }
             }
-            let input = oxide_compiler::TransformInput {
+            let input = oxide_fw_compiler::TransformInput {
                 path: args.id.to_string(),
                 code: source,
                 env: self.env,
@@ -991,7 +991,7 @@ impl Plugin for OxidePassesPlugin {
                 dev: false,
                 jsx_import_source: None,
             };
-            match oxide_compiler::OxcTransformer.transform_passes_only(&input) {
+            match oxide_fw_compiler::OxcTransformer.transform_passes_only(&input) {
                 Ok(code) if code != args.code.as_str() => Some(code),
                 // Unchanged output: return `None` so Rolldown keeps its own
                 // copy and any downstream map it has already built.

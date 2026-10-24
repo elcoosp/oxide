@@ -5,7 +5,7 @@
 //! plus client/server manifests. Per-module metadata and CSS-asset wiring are
 //! not asserted here (see docs/deviations.md for the remaining gap).
 
-use oxide_bundler::{BundleEnv, BundleOptions, Bundler, ChunkKind, RolldownBundler};
+use oxide_fw_bundler::{BundleEnv, BundleOptions, Bundler, ChunkKind, RolldownBundler};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -101,7 +101,7 @@ fn rolldown_emits_client_manifest_on_disk() {
     assert!(man.routes.contains_key("home"));
     let disk = dir.path().join("dist/client.manifest.json");
     assert!(disk.is_file(), "client manifest not written");
-    let round: oxide_bundler::ClientManifest =
+    let round: oxide_fw_bundler::ClientManifest =
         serde_json::from_str(&std::fs::read_to_string(&disk).unwrap()).unwrap();
     assert_eq!(round.build_id, man.build_id);
 }
@@ -417,7 +417,7 @@ fn rolldown_precompiled_plugin_serves_precompiled_js() {
 // return value replaces the source, and the replacement reaches the chunk.
 // ---------------------------------------------------------------------------
 
-use oxide_bundler::TransformHook;
+use oxide_fw_bundler::TransformHook;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -498,7 +498,7 @@ fn transform_hook_error_does_not_fail_the_build() {
     write(dir.path(), "src/index.js", "export const a = 1;\n");
 
     let hook = TransformHook::new(|_id: &str, _source: &str| {
-        Err(oxide_bundler::err("PLG-TEST", "simulated plugin failure"))
+        Err(oxide_fw_bundler::err("PLG-TEST", "simulated plugin failure"))
     });
     let mut o = opts(dir.path(), BundleEnv::Client, &[("index", "src/index.js")]);
     o.transform_hook = Some(hook);
@@ -518,7 +518,7 @@ fn transform_hook_error_does_not_fail_the_build() {
 // can run — this test pins the behaviour, not just the hook contract.
 // ---------------------------------------------------------------------------
 
-use oxide_bundler::CssTransformHook;
+use oxide_fw_bundler::CssTransformHook;
 
 #[test]
 fn rolldown_css_plugin_emits_transformed_stylesheet() {
@@ -614,7 +614,7 @@ fn render_chunk_hook_rewrites_emitted_files() {
 
     let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
     let seen_for_hook = seen.clone();
-    let hook = oxide_bundler::RenderChunkHook::new(move |file, src| {
+    let hook = oxide_fw_bundler::RenderChunkHook::new(move |file, src| {
         seen_for_hook.lock().unwrap().push(file.to_string());
         Ok(Some(format!("// renderChunk was here\n{src}")))
     });
@@ -622,8 +622,8 @@ fn render_chunk_hook_rewrites_emitted_files() {
     let mut o = opts(root, BundleEnv::Client, &[("main", "src/main.ts")]);
     o.render_chunk_hook = Some(hook);
 
-    let rb = oxide_bundler::RolldownBundler::new(root);
-    use oxide_bundler::Bundler as _;
+    let rb = oxide_fw_bundler::RolldownBundler::new(root);
+    use oxide_fw_bundler::Bundler as _;
     let _ = rb.bundle(&o).expect("bundle");
 
     assert!(
@@ -655,12 +655,12 @@ fn generate_bundle_hook_can_veto_a_chunk() {
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::write(root.join("src/main.ts"), "export const x = 1;\n").unwrap();
 
-    let hook = oxide_bundler::GenerateBundleHook::new(|_files| Ok(Some(Vec::new())));
+    let hook = oxide_fw_bundler::GenerateBundleHook::new(|_files| Ok(Some(Vec::new())));
     let mut o = opts(root, BundleEnv::Client, &[("main", "src/main.ts")]);
     o.generate_bundle_hook = Some(hook);
 
-    let rb = oxide_bundler::RolldownBundler::new(root);
-    use oxide_bundler::Bundler as _;
+    let rb = oxide_fw_bundler::RolldownBundler::new(root);
+    use oxide_fw_bundler::Bundler as _;
     let outcome = rb.bundle(&o).expect("bundle");
     assert!(
         outcome.chunks.is_empty(),

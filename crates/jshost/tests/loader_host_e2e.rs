@@ -14,7 +14,7 @@
 //! Test names describe the case: success, http-error, redirect, no-load,
 //! missing-module.
 
-use oxide_jshost::{JsHost, LoaderHost, NodeHost, Pool, PoolConfig};
+use oxide_fw_jshost::{JsHost, LoaderHost, NodeHost, Pool, PoolConfig};
 use serde_json::json;
 use std::fs;
 use std::path::PathBuf;

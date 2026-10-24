@@ -29,7 +29,7 @@
 //! A hit is served only while fresh; SWR / stale serving is a follow-up that
 //! needs the background-revalidation task from §11.3.
 
-use oxide_cache::{CacheHandler, CacheKey, Entry, Layer, Policy};
+use oxide_fw_cache::{CacheHandler, CacheKey, Entry, Layer, Policy};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -190,7 +190,7 @@ impl L0Cache {
     /// `CacheHandler` so the L1/handler path is honoured too (BUG-01).
     pub async fn invalidate_path(&self, path: &str, soft: bool) -> usize {
         self.handler
-            .invalidate_tag(&oxide_cache::tiers::path_tag(path), soft)
+            .invalidate_tag(&oxide_fw_cache::tiers::path_tag(path), soft)
             .await
             .unwrap_or(0)
     }
@@ -332,7 +332,7 @@ pub fn mode_is_cacheable(mode: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oxide_cache::TieredCache;
+    use oxide_fw_cache::TieredCache;
 
     fn cache(ttl_secs: u64) -> L0Cache {
         let tier = Arc::new(TieredCache::new(16 * 1024 * 1024));
@@ -493,11 +493,11 @@ mod tests {
         // stored_at`, and `is_fresh` is `now <= stored_at` (the cache crate
         // pins this boundary), so a same-millisecond read is still fresh —
         // the test stores an entry that is unambiguously in the past.
-        use oxide_cache::{CacheHandler as _, Entry, Policy};
+        use oxide_fw_cache::{CacheHandler as _, Entry, Policy};
         let tier = Arc::new(TieredCache::new(1 << 20));
         let c = L0Cache::new(tier.clone(), "build-x", Duration::from_secs(60));
         let key = {
-            use oxide_cache::{CacheKey, Layer};
+            use oxide_fw_cache::{CacheKey, Layer};
             CacheKey {
                 layer: Layer::L0,
                 route: "r".into(),
@@ -551,7 +551,7 @@ mod tests {
     /// a *stale* hit; past the window it is a miss.
     #[tokio::test]
     async fn swr_window_serves_stale_then_expires() {
-        use oxide_cache::{CacheHandler as _, CacheKey, Entry, Layer, Policy};
+        use oxide_fw_cache::{CacheHandler as _, CacheKey, Entry, Layer, Policy};
         let tier = Arc::new(TieredCache::new(1 << 20));
         let c = L0Cache::new(tier.clone(), "b", Duration::from_secs(1));
         let key = CacheKey {
@@ -753,12 +753,12 @@ mod tests {
         // A second writer on the same handler (the worker's cache_set).
         tier.set(
             "worker-entry",
-            oxide_cache::Entry {
+            oxide_fw_cache::Entry {
                 body: b"W".to_vec(),
                 status: 200,
                 headers: vec![],
                 tags: vec!["path:/worker".into()],
-                policy: oxide_cache::Policy::default(),
+                policy: oxide_fw_cache::Policy::default(),
                 stored_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()

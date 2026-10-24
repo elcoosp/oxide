@@ -4,8 +4,8 @@
 
 use bytes::Bytes;
 use futures::future::BoxFuture;
-use oxide_router::{NativeRule, RateLimit, RulesEngine};
-use oxide_server::*;
+use oxide_fw_router::{NativeRule, RateLimit, RulesEngine};
+use oxide_fw_server::*;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -51,7 +51,7 @@ fn pipeline(
     security: SecuritySettings,
 ) -> Pipeline {
     Pipeline {
-        og_rate_limiter: oxide_server::RateLimiter::default(),
+        og_rate_limiter: oxide_fw_server::RateLimiter::default(),
         og_rate_max: 10,
         og_rate_window_secs: 60,
         rules,
@@ -614,7 +614,7 @@ fn ssrf_allowed_table() {
 /// resolve-then-check is what defeats DNS rebinding.
 #[test]
 fn sec03_first_blocked_addr_catches_any_blocked_resolution() {
-    use oxide_server::first_blocked_addr;
+    use oxide_fw_server::first_blocked_addr;
     use std::net::IpAddr;
     let parse = |s: &str| s.parse::<IpAddr>().unwrap();
     // All public → None.
@@ -804,13 +804,13 @@ async fn pipeline_health_endpoint() {
 
 #[tokio::test]
 async fn metrics_endpoint_renders_prometheus_text() {
-    use oxide_server::Metrics;
+    use oxide_fw_server::Metrics;
     use std::sync::Arc;
 
     let m = Arc::new(Metrics::new());
     m.observe("/", std::time::Duration::from_millis(3), 200);
     let p = Pipeline {
-        og_rate_limiter: oxide_server::RateLimiter::default(),
+        og_rate_limiter: oxide_fw_server::RateLimiter::default(),
         og_rate_max: 10,
         og_rate_window_secs: 60,
         rules: RulesEngine::default(),
@@ -860,12 +860,12 @@ async fn metrics_endpoint_renders_prometheus_text() {
 async fn vitals_endpoint_records_samples_into_metrics() {
     // §16.6 / §20: the browser's reporting hook beacons web-vital samples to
     // `/_oxide/vitals`; the endpoint folds them into the Prometheus registry.
-    use oxide_server::Metrics;
+    use oxide_fw_server::Metrics;
     use std::sync::Arc;
 
     let m = Arc::new(Metrics::new());
     let p = Pipeline {
-        og_rate_limiter: oxide_server::RateLimiter::default(),
+        og_rate_limiter: oxide_fw_server::RateLimiter::default(),
         og_rate_max: 10,
         og_rate_window_secs: 60,
         rules: RulesEngine::default(),
@@ -913,10 +913,10 @@ async fn vitals_endpoint_records_samples_into_metrics() {
 #[tokio::test]
 async fn vitals_endpoint_tolerates_a_malformed_beacon() {
     // A beacon must never produce a page-visible error; a bad body is still 204.
-    use oxide_server::Metrics;
+    use oxide_fw_server::Metrics;
     use std::sync::Arc;
     let p = Pipeline {
-        og_rate_limiter: oxide_server::RateLimiter::default(),
+        og_rate_limiter: oxide_fw_server::RateLimiter::default(),
         og_rate_max: 10,
         og_rate_window_secs: 60,
         rules: RulesEngine::default(),
@@ -953,7 +953,7 @@ async fn vitals_endpoint_tolerates_a_malformed_beacon() {
 #[tokio::test]
 async fn metrics_endpoint_404_when_not_configured() {
     let p = Pipeline {
-        og_rate_limiter: oxide_server::RateLimiter::default(),
+        og_rate_limiter: oxide_fw_server::RateLimiter::default(),
         og_rate_max: 10,
         og_rate_window_secs: 60,
         rules: RulesEngine::default(),
@@ -988,13 +988,13 @@ async fn metrics_endpoint_404_when_not_configured() {
 
 #[tokio::test]
 async fn pipeline_observes_native_branch_requests() {
-    use oxide_server::Metrics;
+    use oxide_fw_server::Metrics;
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
 
     let m = Arc::new(Metrics::new());
     let p = Pipeline {
-        og_rate_limiter: oxide_server::RateLimiter::default(),
+        og_rate_limiter: oxide_fw_server::RateLimiter::default(),
         og_rate_max: 10,
         og_rate_window_secs: 60,
         rules: RulesEngine::default(),
@@ -1036,12 +1036,12 @@ async fn pipeline_observes_native_branch_requests() {
 
 #[tokio::test]
 async fn with_metrics_attaches_registry() {
-    use oxide_server::Metrics;
+    use oxide_fw_server::Metrics;
     use std::sync::Arc;
 
     let m = Arc::new(Metrics::new());
     let p = Pipeline {
-        og_rate_limiter: oxide_server::RateLimiter::default(),
+        og_rate_limiter: oxide_fw_server::RateLimiter::default(),
         og_rate_max: 10,
         og_rate_window_secs: 60,
         rules: RulesEngine::default(),
@@ -1092,7 +1092,7 @@ impl InspectorSnapshot for TestInspector {
 
 fn inspector_pipeline() -> Pipeline {
     Pipeline {
-        og_rate_limiter: oxide_server::RateLimiter::default(),
+        og_rate_limiter: oxide_fw_server::RateLimiter::default(),
         og_rate_max: 10,
         og_rate_window_secs: 60,
         rules: RulesEngine::default(),
@@ -1318,7 +1318,7 @@ async fn pipeline_serves_static_with_security_and_rule_headers() {
 
 #[allow(non_snake_case)]
 fn RequestTimings_default_server_timing() -> String {
-    use oxide_render::RequestTimings;
+    use oxide_fw_render::RequestTimings;
     RequestTimings::default().server_timing()
 }
 
@@ -1521,7 +1521,7 @@ async fn server_from_hyper_request_enforces_body_limit() {
 
 // ------------------------------------------------------------------ ws codec (§9.6)
 
-use oxide_server::ws::{self, Frame};
+use oxide_fw_server::ws::{self, Frame};
 
 #[test]
 fn ws_roundtrip_unmasked_frames() {
@@ -1884,7 +1884,7 @@ async fn csrf_token_issued_on_get_without_cookie() {
 /// untrusted peer's are ignored entirely.
 #[test]
 fn sec05_trusted_proxy_resolution() {
-    use oxide_server::{effective_client, peer_is_trusted};
+    use oxide_fw_server::{effective_client, peer_is_trusted};
     use std::net::IpAddr;
     let ip = |s: &str| s.parse::<IpAddr>().unwrap();
     let trusted = vec!["10.0.0.0/8".to_string(), "127.0.0.1/32".to_string()];
@@ -1929,7 +1929,7 @@ fn sec05_trusted_proxy_resolution() {
 /// in production but allowed in dev.
 #[test]
 fn ws_origin_gate_matches_authority() {
-    use oxide_server::ws_origin_ok;
+    use oxide_fw_server::ws_origin_ok;
     let none: Vec<String> = Vec::new();
     let allow = vec!["app.example.com".to_string()];
 
@@ -1977,7 +1977,7 @@ fn ws_origin_gate_matches_authority() {
 /// rejects an arbitrary host (DNS rebinding).
 #[test]
 fn dev_host_gate_rejects_rebinding() {
-    use oxide_server::dev_host_allowed;
+    use oxide_fw_server::dev_host_allowed;
     let bind: std::net::IpAddr = "127.0.0.1".parse().unwrap();
     assert!(dev_host_allowed("localhost", bind));
     assert!(dev_host_allowed("127.0.0.1:5173", bind));
@@ -2038,7 +2038,7 @@ async fn sec06_slow_header_drip_is_dropped() {
 /// it is 403, with it (query or header) is served.
 #[tokio::test]
 async fn sec09_inspector_requires_the_dev_token() {
-    use oxide_server::InspectorSnapshot;
+    use oxide_fw_server::InspectorSnapshot;
     #[derive(Debug)]
     struct FakeInsp;
     impl InspectorSnapshot for FakeInsp {
@@ -2089,7 +2089,7 @@ async fn sec09_inspector_requires_the_dev_token() {
 /// SEC-09: the dev-host check rejects a non-local Host (DNS rebinding).
 #[test]
 fn sec09_dev_host_allowed() {
-    use oxide_server::dev_host_allowed;
+    use oxide_fw_server::dev_host_allowed;
     use std::net::IpAddr;
     let ip = |s: &str| s.parse::<IpAddr>().unwrap();
     assert!(dev_host_allowed("localhost:3000", ip("127.0.0.1")));
@@ -2243,7 +2243,7 @@ fn ssrf_forwardable_headers_drops_credentials() {
         ("User-Agent".to_string(), "oxide-test".to_string()),
         ("X-Custom".to_string(), "dropped".to_string()),
     ];
-    let out = oxide_server::ssrf_forwardable_headers(&headers);
+    let out = oxide_fw_server::ssrf_forwardable_headers(&headers);
     let names: Vec<&str> = out.iter().map(|(k, _)| k.as_str()).collect();
     assert!(
         !names
@@ -2287,7 +2287,7 @@ fn asset_cache_ttl_defaults_and_overrides() {
         std::env::remove_var("OXIDE_ASSET_CACHE_TTL_SECS");
     }
     assert_eq!(
-        oxide_server::asset_cache_ttl(),
+        oxide_fw_server::asset_cache_ttl(),
         std::time::Duration::from_secs(300),
         "default TTL is 300s",
     );
@@ -2296,7 +2296,7 @@ fn asset_cache_ttl_defaults_and_overrides() {
         std::env::set_var("OXIDE_ASSET_CACHE_TTL_SECS", "5");
     }
     assert_eq!(
-        oxide_server::asset_cache_ttl(),
+        oxide_fw_server::asset_cache_ttl(),
         std::time::Duration::from_secs(5),
         "env overrides the TTL",
     );
@@ -2309,7 +2309,7 @@ fn asset_cache_ttl_defaults_and_overrides() {
 
 #[test]
 fn rate_limiter_allows_max_then_denies() {
-    let rl = oxide_server::RateLimiter::default();
+    let rl = oxide_fw_server::RateLimiter::default();
     // Capacity 10, one-minute window. The bucket starts full, so the first
     // ten calls succeed and the eleventh is denied (no time has passed to
     // refill).

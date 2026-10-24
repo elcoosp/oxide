@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use oxide_adapters::*;
+use oxide_fw_adapters::*;
 
 // ---------------------------------------------------------------- _headers
 

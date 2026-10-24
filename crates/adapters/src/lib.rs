@@ -7,7 +7,7 @@
 //! how absent ones degrade; the build refuses a configuration that needs an unavailable
 //! feature rather than failing at runtime.
 
-use oxide_diagnostics::{Diagnostic, OxideError};
+use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -1020,7 +1020,7 @@ function blake3Hex(input) {
 
 // ---- edge cache key ---------------------------------------------------------
 // Canonical L0 key: blake3 over layer, route, params, vary and build id,
-// NUL-separated — the same bytes as `oxide_cache::CacheKey::canonical_parts`.
+// NUL-separated — the same bytes as `oxide_fw_cache::CacheKey::canonical_parts`.
 function cacheKey(route, params, vary, build_id) {
   const viaWasm = useWasm("edge_cache_key", route, params, vary, build_id);
   if (viaWasm !== null) return String(viaWasm);

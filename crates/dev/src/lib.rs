@@ -6,7 +6,7 @@
 //! cache busting; the server environment reads transformed modules straight from the
 //! graph engine (no HTTP hop, D15). HMR protocol (§13.3) below.
 
-use oxide_diagnostics::{Diagnostic, OxideError};
+use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};

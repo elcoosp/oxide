@@ -16,7 +16,7 @@
 //! the universal `slug` still typed `string`.
 
 use crate::content_collection::{Collection, FieldType, NativeSchema, SchemaKind};
-use oxide_diagnostics::Result;
+use oxide_fw_diagnostics::Result;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 

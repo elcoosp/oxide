@@ -26,7 +26,7 @@ use futures::StreamExt;
 use futures::channel::mpsc;
 use lol_html::html_content::ContentType;
 use lol_html::{ElementContentHandlers, HtmlRewriter, RewriteStrSettings, Selector};
-use oxide_diagnostics::{Diagnostic, OxideError};
+use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::BTreeMap;

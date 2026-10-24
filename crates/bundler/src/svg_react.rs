@@ -23,7 +23,7 @@
 //! untrusted input. A `.svg?react` from `node_modules` is still
 //! user-approved by the import statement.
 
-use oxide_diagnostics::{OxideError, Result};
+use oxide_fw_diagnostics::{OxideError, Result};
 
 /// The React import the generated component needs. React 19-style: the
 /// runtime export `jsx`/`jsxs` are pulled in by the framework's own

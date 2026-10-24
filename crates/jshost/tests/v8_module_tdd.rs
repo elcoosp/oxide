@@ -5,7 +5,7 @@
 //! leaks an isolate (the same reason `snapshot_build`'s test is ignored) and
 //! is slow (~1s). Run with `--ignored` to exercise it.
 
-use oxide_jshost::{CallInput, EntryRef, JsHost, Pool, PoolConfig, V8Host};
+use oxide_fw_jshost::{CallInput, EntryRef, JsHost, Pool, PoolConfig, V8Host};
 
 fn input(payload: serde_json::Value) -> CallInput {
     CallInput {

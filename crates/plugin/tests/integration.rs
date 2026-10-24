@@ -5,7 +5,7 @@
 //! ordering (§15.1), WASM manifest validation (§15.1 kind 2, §17.2 sandboxing)
 //! and the JS bridge protocol messages.
 
-use oxide_plugin::*;
+use oxide_fw_plugin::*;
 
 fn plugin(
     name: &str,

@@ -6,5 +6,5 @@ use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     let src = String::from_utf8_lossy(data);
-    let _ = oxide_config::extract_public(&src);
+    let _ = oxide_fw_config::extract_public(&src);
 });

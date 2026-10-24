@@ -39,7 +39,7 @@ pub mod s3_handler;
 pub use s3_handler::S3CacheHandler;
 
 use blake3::Hasher;
-use oxide_diagnostics::{Diagnostic, OxideError};
+use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;

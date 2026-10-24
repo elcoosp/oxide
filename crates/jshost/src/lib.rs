@@ -21,7 +21,7 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use oxide_diagnostics::{Diagnostic, OxideError};
+use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -1860,7 +1860,7 @@ struct V8WorkerHandle {
 
 fn spawn_v8_worker(
     snapshot: Option<&'static [u8]>,
-    cache: Option<Arc<dyn oxide_cache::CacheHandler>>,
+    cache: Option<Arc<dyn oxide_fw_cache::CacheHandler>>,
     fetch_handler: Option<Arc<dyn FetchHandler>>,
     transform_handler: Option<Arc<dyn crate::TransformHandler>>,
 ) -> Result<Arc<V8WorkerHandle>> {
@@ -2415,7 +2415,7 @@ pub struct V8Host {
     /// reach through `oxide.cacheGet/Set/Tag`. `None` means those ops answer
     /// "no cache" (a miss / a no-op write) — honest, and the pre-BUG-02
     /// behavior.
-    cache_handler: Option<std::sync::Arc<dyn oxide_cache::CacheHandler>>,
+    cache_handler: Option<std::sync::Arc<dyn oxide_fw_cache::CacheHandler>>,
     /// PERF-05: the fetch handler each worker installs for the `fetch` op.
     fetch_handler: Option<std::sync::Arc<dyn FetchHandler>>,
     /// §6.2 / §15: the plugin `transform` hook applied to every module the
@@ -2464,7 +2464,7 @@ impl V8Host {
     /// `oxide.cacheGet/Set/Tag` ops through a thread-local installed at spawn.
     pub fn with_cache_handler(
         mut self,
-        handler: std::sync::Arc<dyn oxide_cache::CacheHandler>,
+        handler: std::sync::Arc<dyn oxide_fw_cache::CacheHandler>,
     ) -> Self {
         self.cache_handler = Some(handler);
         self
@@ -2570,7 +2570,7 @@ impl V8Host {
     fn build_pool(
         cfg: PoolConfig,
         snapshot: Option<&'static [u8]>,
-        cache: Option<std::sync::Arc<dyn oxide_cache::CacheHandler>>,
+        cache: Option<std::sync::Arc<dyn oxide_fw_cache::CacheHandler>>,
         fetch_handler: Option<std::sync::Arc<dyn FetchHandler>>,
         transform_handler: Option<std::sync::Arc<dyn crate::TransformHandler>>,
     ) -> Result<Arc<V8Pool>> {
@@ -2639,7 +2639,7 @@ pub struct V8Pool {
     /// restores. `None` means each worker evaluates the bootstrap fresh.
     snapshot: Option<&'static [u8]>,
     /// BUG-02: the cache tier every worker (and each replacement) installs.
-    cache_handler: Option<std::sync::Arc<dyn oxide_cache::CacheHandler>>,
+    cache_handler: Option<std::sync::Arc<dyn oxide_fw_cache::CacheHandler>>,
     /// PERF-05: the fetch handler every worker (and each replacement) installs.
     fetch_handler: Option<std::sync::Arc<dyn FetchHandler>>,
     /// §6.2 / §15: the plugin transform handler every worker's
@@ -2669,7 +2669,7 @@ impl V8Pool {
         counters: Arc<PoolCounters>,
         idx: usize,
         snapshot: Option<&'static [u8]>,
-        cache: Option<std::sync::Arc<dyn oxide_cache::CacheHandler>>,
+        cache: Option<std::sync::Arc<dyn oxide_fw_cache::CacheHandler>>,
         fetch_handler: Option<std::sync::Arc<dyn FetchHandler>>,
         transform_handler: Option<std::sync::Arc<dyn crate::TransformHandler>>,
     ) {
@@ -2948,7 +2948,7 @@ struct Worker {
     /// in-process Map is the only cache. A `Mutex` because the pool builds
     /// workers before the caller attaches a handler; the read happens once
     /// per op request, not on the hot path.
-    cache: Mutex<Option<Arc<dyn oxide_cache::CacheHandler>>>,
+    cache: Mutex<Option<Arc<dyn oxide_fw_cache::CacheHandler>>>,
     /// PERF-05: the fetch handler this worker's `fetch` op delegates to.
     fetch: Mutex<Option<Arc<dyn FetchHandler>>>,
     /// §6.2 / §15: the plugin `transform` hook this worker's `compile_module`
@@ -3033,7 +3033,7 @@ pub struct NodePool {
 impl NodePool {
     /// §9.3: attach the Rust cache tier. Also propagates to workers spawned
     /// later by `replace_worker`, so a recycled worker keeps the handler.
-    pub fn with_cache_handler(self: &Arc<Self>, handler: Arc<dyn oxide_cache::CacheHandler>) {
+    pub fn with_cache_handler(self: &Arc<Self>, handler: Arc<dyn oxide_fw_cache::CacheHandler>) {
         for w in &self.workers {
             *w.cache.lock().unwrap() = Some(Arc::clone(&handler));
         }
@@ -3359,7 +3359,7 @@ pub struct NodeHost {
     pub request_counter: AtomicU64,
     /// §9.3: the Rust cache tier a worker's `op_request` frames dispatch to.
     /// `None` means the runtime's in-process Map is the only cache.
-    pub cache_handler: Option<Arc<dyn oxide_cache::CacheHandler>>,
+    pub cache_handler: Option<Arc<dyn oxide_fw_cache::CacheHandler>>,
     /// PERF-05: the fetch handler a worker's `fetch` op dispatches to.
     pub fetch_handler: Option<Arc<dyn FetchHandler>>,
     /// §6.2 / §15: the plugin `transform` hook a worker's `compile_module`
@@ -3387,7 +3387,7 @@ impl NodeHost {
 
     /// §9.3: attach a cache tier. Workers spawned by this host dispatch
     /// `cache_get` / `cache_set` / `cache_tag` to it.
-    pub fn with_cache_handler(mut self, handler: Arc<dyn oxide_cache::CacheHandler>) -> Self {
+    pub fn with_cache_handler(mut self, handler: Arc<dyn oxide_fw_cache::CacheHandler>) -> Self {
         self.cache_handler = Some(handler);
         self
     }
@@ -3595,10 +3595,10 @@ fn drop_stream(worker: &Worker, id: u64) {
 /// worker answers with an "unimplemented" error, which the runtime sees as
 /// an op failure and can fall back on.
 async fn op_dispatch(
-    cache: Option<&dyn oxide_cache::CacheHandler>,
+    cache: Option<&dyn oxide_fw_cache::CacheHandler>,
     fetch: Option<&dyn FetchHandler>,
     transform: Option<&dyn TransformHandler>,
-    memo: Option<&oxide_cache::FetchMemo>,
+    memo: Option<&oxide_fw_cache::FetchMemo>,
     streams: Option<Arc<std::sync::Mutex<HashMap<u64, mpsc::Sender<Result<Bytes>>>>>>,
     op: Op,
     args: &serde_json::Value,
@@ -3670,12 +3670,12 @@ async fn op_dispatch(
                 .unwrap_or_default();
             let ttl_secs = args.get("ttl").and_then(|v| v.as_u64()).unwrap_or(0);
             let swr_secs = args.get("swr").and_then(|v| v.as_u64());
-            let entry = oxide_cache::Entry {
+            let entry = oxide_fw_cache::Entry {
                 body: bytes,
                 status: 200,
                 headers: Vec::new(),
                 tags,
-                policy: oxide_cache::Policy {
+                policy: oxide_fw_cache::Policy {
                     ttl: std::time::Duration::from_secs(ttl_secs),
                     swr: swr_secs.map(std::time::Duration::from_secs),
                     stale_if_error: None,
@@ -3729,12 +3729,12 @@ async fn op_dispatch(
             } else {
                 code.to_string()
             };
-            let input = oxide_compiler::TransformInput {
+            let input = oxide_fw_compiler::TransformInput {
                 path: path.to_string(),
                 code: source_owned,
                 // The loader path is server-side: the passes that matter
                 // here (`'use cache'` on a `.server.ts`) run on `Ssr`.
-                env: oxide_compiler::Env::Ssr,
+                env: oxide_fw_compiler::Env::Ssr,
                 lang,
                 // No bundle is being emitted on this path, so the id a
                 // server-fn stub would compute is unused. `'use cache'`
@@ -3744,7 +3744,7 @@ async fn op_dispatch(
                 dev: true,
                 jsx_import_source: None,
             };
-            match oxide_compiler::OxcTransformer.transform_passes_only(&input) {
+            match oxide_fw_compiler::OxcTransformer.transform_passes_only(&input) {
                 Ok(code) => Ok(serde_json::json!({ "code": code })),
                 Err(e) => Err(err(
                     "JSH-COMPILE",
@@ -3760,8 +3760,8 @@ async fn op_dispatch(
             let Some(value) = args.get("value") else {
                 return Err(err("JSH-OP", "serialize requires a `value` field"));
             };
-            let odf = oxide_odf::Value::from_json(value);
-            let bytes = oxide_odf::encode(&odf)
+            let odf = oxide_fw_odf::Value::from_json(value);
+            let bytes = oxide_fw_odf::encode(&odf)
                 .map_err(|e| err("JSH-OP", format!("serialize: {}", e.0.message)))?;
             use base64::Engine as _;
             let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
@@ -3805,7 +3805,7 @@ async fn op_dispatch(
                 .unwrap_or_default();
             // Memoize GETs only (a POST with a body is already keyed by the
             // body hash, but a side-effecting request should not be replayed).
-            let memo_key = (method == "GET").then(|| oxide_cache::memo_key(&method, url, &body));
+            let memo_key = (method == "GET").then(|| oxide_fw_cache::memo_key(&method, url, &body));
             if let (Some(m), Some(k)) = (memo, memo_key.as_deref()) {
                 if let Some(hit) = m.get(k) {
                     let v: serde_json::Value =
@@ -4091,7 +4091,7 @@ mod perf01_tests {
             .expect("valid base64");
         assert_eq!(&bytes[..4], b"ODF1", "ODF magic present");
         // Round-trip through the decoder to prove it is real ODF.
-        let decoded = oxide_odf::decode(&bytes).expect("decodes");
+        let decoded = oxide_fw_odf::decode(&bytes).expect("decodes");
         assert_eq!(
             decoded.to_json(),
             serde_json::json!({ "a": 1, "b": [true, null] })
@@ -4165,7 +4165,7 @@ mod perf05_tests {
     #[tokio::test]
     async fn fetch_op_memoizes_get() {
         let h = Echo;
-        let memo = oxide_cache::FetchMemo::default();
+        let memo = oxide_fw_cache::FetchMemo::default();
         let args = serde_json::json!({ "url": "https://x.test/memo", "method": "GET" });
         let _ = op_dispatch(None, Some(&h), None, Some(&memo), None, Op::Fetch, &args)
             .await

@@ -2,7 +2,7 @@
 //! splitting, shared-chunk heuristic, content-hashed output, client/server
 //! manifests, the §6.4 server-only guard, cycles, externals, minify/sourcemap.
 
-use oxide_bundler::{
+use oxide_fw_bundler::{
     BundleEnv, BundleOptions, BundleOutput, Bundler, Chunk, ChunkBundler, ChunkKind,
     ClientManifest, ServerManifest,
 };
@@ -646,7 +646,7 @@ fn css_transform_hook_rewrites_emitted_stylesheet() {
     let dir = tempfile::tempdir().unwrap();
     fixture(dir.path());
     let mut o = opts(dir.path(), BundleEnv::Client, CLIENT_ENTRIES);
-    o.css_transform = Some(oxide_bundler::CssTransformHook::new(
+    o.css_transform = Some(oxide_fw_bundler::CssTransformHook::new(
         |path: &str, source: &str, is_module: bool, minify: bool| {
             assert!(
                 path.ends_with("card.css"),
@@ -681,7 +681,7 @@ fn css_transform_hook_rewrites_emitted_stylesheet() {
 
 #[test]
 fn resolve_hook_can_alias_an_import() {
-    use oxide_bundler::{LoadHook, ResolveHook};
+    use oxide_fw_bundler::{LoadHook, ResolveHook};
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     // Entry imports `./from-alias` (which does not exist on disk);
@@ -726,7 +726,7 @@ fn resolve_hook_can_alias_an_import() {
 
 #[test]
 fn load_hook_overrides_an_existing_file() {
-    use oxide_bundler::LoadHook;
+    use oxide_fw_bundler::LoadHook;
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     // The target file EXISTS on disk with one content; the load hook
@@ -769,7 +769,7 @@ fn load_hook_overrides_an_existing_file() {
 
 #[test]
 fn load_hook_returning_none_falls_through_to_disk() {
-    use oxide_bundler::LoadHook;
+    use oxide_fw_bundler::LoadHook;
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     write(root, "src/message.ts", "export const msg = 'from-disk';\n");

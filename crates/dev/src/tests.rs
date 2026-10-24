@@ -1,7 +1,7 @@
 //! TDD test suite for oxide-dev (spec §13, §5.5).
 
 use super::*;
-use oxide_diagnostics::Location;
+use oxide_fw_diagnostics::Location;
 use std::fs;
 use tempfile::tempdir;
 

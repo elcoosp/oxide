@@ -8,8 +8,8 @@
 //! Each snapshot is a `.snap` file beside this test. Update with
 //! `INSTA_UPDATE=always cargo test -p oxide-render --test snapshots_render`.
 
-use oxide_diagnostics::Diagnostic;
-use oxide_render::*;
+use oxide_fw_diagnostics::Diagnostic;
+use oxide_fw_render::*;
 
 fn sample_head() -> HeadTags {
     let mut link_attrs = std::collections::BTreeMap::new();

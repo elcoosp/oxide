@@ -1,11 +1,11 @@
 //! TDD suite for oxide-compiler (spec §6.2–6.4, §9.3–9.4, §19.4).
 
-use oxide_compiler::{
+use oxide_fw_compiler::{
     DirectiveKind, Env, ScannerTransformer, TransformInput, Transformer, guard_server_only,
     inject_hmr_boundary, scan_import_spans, scan_imports, server_fn_id, transform_server_fn_stubs,
     transform_use_cache,
 };
-use oxide_diagnostics::Diagnostic;
+use oxide_fw_diagnostics::Diagnostic;
 use std::collections::BTreeMap;
 
 // ---------------------------------------------------------------- lexer / scan
@@ -489,7 +489,7 @@ fn transformer_client_page_dev_injects_refresh() {
 
 // ---------------- OxcTransformer AST-driven passes (D4) ----------------
 
-use oxide_compiler::{OxcTransformer, TransformOutput};
+use oxide_fw_compiler::{OxcTransformer, TransformOutput};
 
 fn oxc_transform(input: TransformInput) -> TransformOutput {
     OxcTransformer.transform(&input).unwrap()
@@ -827,7 +827,7 @@ fn use_cache_literal_tag_stays_a_plain_array() {
 // literal mentioning one of those names does not flip the mode.
 // ---------------------------------------------------------------------------
 
-use oxide_compiler::infer_render_mode;
+use oxide_fw_compiler::infer_render_mode;
 
 #[test]
 fn infer_static_for_a_plain_loader() {

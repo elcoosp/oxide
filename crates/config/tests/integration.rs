@@ -2,7 +2,7 @@
 //! through its public API: env-file parsing, size parsing, static extraction
 //! (including the exact §14.1 example), layering, validation and public env.
 
-use oxide_config::{OxideConfig, extract_static_config, load_with_env, parse_env_file, parse_size};
+use oxide_fw_config::{OxideConfig, extract_static_config, load_with_env, parse_env_file, parse_size};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -429,7 +429,7 @@ fn load_static_ts_end_to_end_with_spec_example() {
     assert_eq!(loaded.config.cache.l0.max_size, "512mb");
     assert_eq!(
         loaded.config.cache.handler,
-        oxide_config::CacheHandlerConfig::Disk
+        oxide_fw_config::CacheHandlerConfig::Disk
     );
     assert_eq!(loaded.config.rules.len(), 1);
     assert_eq!(loaded.config.rules[0].source, "/old/:slug");
@@ -704,7 +704,7 @@ fn load_uses_the_real_process_environment() {
         "oxide.config.ts",
         "export default defineConfig({ framework: react({ compiler: false }) })",
     )]);
-    let loaded = oxide_config::load(&dir, "dev", BTreeMap::new()).unwrap();
+    let loaded = oxide_fw_config::load(&dir, "dev", BTreeMap::new()).unwrap();
     assert_eq!(loaded.config.framework.adapter.as_deref(), Some("react"));
     assert_eq!(loaded.config.server.port, 3000);
 }
@@ -751,7 +751,7 @@ export default {
   }),
 }
 "#;
-    let v = oxide_config::extract_for_test(src).expect("should extract something");
+    let v = oxide_fw_config::extract_for_test(src).expect("should extract something");
     let islands = v
         .get("framework")
         .and_then(|f| f.get("islands"))
@@ -784,7 +784,7 @@ export default {
   }),
 }
 "#;
-    let v = oxide_config::extract_for_test(src).expect("should extract something");
+    let v = oxide_fw_config::extract_for_test(src).expect("should extract something");
     let islands = v
         .get("framework")
         .and_then(|f| f.get("islands"))
@@ -806,7 +806,7 @@ export default {
 fn islands_extractor_no_block_yields_none() {
     let src = "export default { framework: react({}) }
 ";
-    let v = oxide_config::extract_for_test(src);
+    let v = oxide_fw_config::extract_for_test(src);
     assert!(
         v.and_then(|x| x.get("framework").and_then(|f| f.get("islands")).cloned())
             .is_none(),
@@ -824,7 +824,7 @@ export default {
   }),
 }
 "#;
-    let v = oxide_config::extract_for_test(src).expect("should extract something");
+    let v = oxide_fw_config::extract_for_test(src).expect("should extract something");
     let islands = v
         .get("framework")
         .and_then(|f| f.get("islands"))

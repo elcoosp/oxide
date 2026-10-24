@@ -346,7 +346,7 @@ impl MessageFormatter {
                 std::sync::Arc::clone(c)
             } else {
                 let compiled = IcuMessageFormat::try_new(template).map_err(|e| {
-                    let d = oxide_diagnostics::Diagnostic::error(
+                    let d = oxide_fw_diagnostics::Diagnostic::error(
                         "AST-I18N",
                         format!("MessageFormat parse failed: {}", e.message),
                     )
@@ -354,7 +354,7 @@ impl MessageFormatter {
                         "check the ICU MessageFormat syntax; braces must balance and plural \
                          cases must include `other`",
                     );
-                    oxide_diagnostics::OxideError(d)
+                    oxide_fw_diagnostics::OxideError(d)
                 })?;
                 let compiled = std::sync::Arc::new(compiled);
                 cache.insert(template.to_string(), std::sync::Arc::clone(&compiled));

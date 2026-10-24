@@ -12,7 +12,7 @@
 //! Levenshtein ≤ 2 "did you mean" hint and requires `framework.adapter`.
 
 use crate::{OxideConfig, Result, err, extract_static_config, parse_env_file};
-use oxide_diagnostics::{Diagnostic, OxideError};
+use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

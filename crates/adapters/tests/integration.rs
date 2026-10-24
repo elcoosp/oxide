@@ -12,7 +12,7 @@ mod placeholder {}
 // one.
 #[test]
 fn edge_handler_prefers_wasm_for_cache_key_and_odf() {
-    let js = oxide_adapters::edge_handler_js("build-abc123");
+    let js = oxide_fw_adapters::edge_handler_js("build-abc123");
     assert!(
         js.contains(r#"useWasm("edge_cache_key""#),
         "cache key uses wasm"
@@ -34,7 +34,7 @@ fn edge_handler_prefers_wasm_for_cache_key_and_odf() {
 // (`merge_head_structured`) is routed through wasm; the flat one is not.
 #[test]
 fn edge_handler_does_not_route_the_flat_merge_head_through_wasm() {
-    let js = oxide_adapters::edge_handler_js("build-abc123");
+    let js = oxide_fw_adapters::edge_handler_js("build-abc123");
     assert!(
         !js.contains(r#"useWasm("merge_head""#),
         "the flat merge_head must not be routed through wasm (P0-1a: its \

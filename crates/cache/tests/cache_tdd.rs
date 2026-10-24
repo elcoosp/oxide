@@ -3,7 +3,7 @@
 //! driven by manipulating `Entry::stored_at` against the wall clock, never by waiting).
 
 use bytes::Bytes;
-use oxide_cache::{
+use oxide_fw_cache::{
     CacheHandler, CacheKey, Entry, FetchMemo, FlightSlot, Hit, Layer, Policy, SingleFlight,
     TieredCache, build_id, cache_control, conditional_response,
 };
@@ -101,7 +101,7 @@ async fn memory_evicts_to_stay_under_cap() {
     // moka's TinyLFU eviction is frequency-based, not strict LRU (spec §11.2:
     // "moka, TinyLFU, weighted by bytes"). This test asserts the invariants the
     // policy does guarantee: the byte cap is respected and the tier stays usable.
-    let mem = oxide_cache::MemoryTier::new(400);
+    let mem = oxide_fw_cache::MemoryTier::new(400);
     // weight(body=100, 1 header k=12+v=9 => 21) = 100 + 21 + 32 = 153
     let w = entry(&[b'a'; 100], &[], Policy::default());
     assert_eq!(mem.total_bytes(), 0);
@@ -137,7 +137,7 @@ async fn memory_byte_accounting_stays_under_cap() {
     // Under TinyLFU no specific entry is guaranteed to survive (the policy is
     // frequency-based, not LRU); the guarantees are the byte cap and non-emptiness
     // after a series of inserts.
-    let mem = oxide_cache::MemoryTier::new(300);
+    let mem = oxide_fw_cache::MemoryTier::new(300);
     for i in 0..10 {
         let mut e = entry(&[b'x'; 100], &[], Policy::default());
         e.etag = format!("\"e{i}\"");
@@ -149,7 +149,7 @@ async fn memory_byte_accounting_stays_under_cap() {
 
 #[tokio::test]
 async fn oversize_entry_is_rejected_not_stored() {
-    let mem = oxide_cache::MemoryTier::new(100);
+    let mem = oxide_fw_cache::MemoryTier::new(100);
     let big = entry(&[b'z'; 500], &[], Policy::default());
     mem.insert("big", big);
     assert!(
@@ -168,7 +168,7 @@ async fn oversize_entry_is_rejected_not_stored() {
 async fn disk_open_creates_dirs_and_roundtrips_compressed() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("nested/cache");
-    let disk = oxide_cache::DiskTier::open(root.clone()).unwrap();
+    let disk = oxide_fw_cache::DiskTier::open(root.clone()).unwrap();
     assert!(root.is_dir(), "open() creates the root");
     assert!(root.join("blobs").is_dir(), "open() creates the blob dir");
 
@@ -204,7 +204,7 @@ async fn disk_open_creates_dirs_and_roundtrips_compressed() {
 #[tokio::test]
 async fn disk_tag_lookup() {
     let dir = tempfile::tempdir().unwrap();
-    let disk = oxide_cache::DiskTier::open(dir.path().join("c")).unwrap();
+    let disk = oxide_fw_cache::DiskTier::open(dir.path().join("c")).unwrap();
     disk.set("k1", &entry(b"1", &["t1", "t2"], Policy::default()))
         .unwrap();
     disk.set("k2", &entry(b"2", &["t1"], Policy::default()))
@@ -227,7 +227,7 @@ async fn disk_tag_lookup() {
 async fn disk_corrupt_blob_is_a_miss_and_self_heals() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("c");
-    let disk = oxide_cache::DiskTier::open(root.clone()).unwrap();
+    let disk = oxide_fw_cache::DiskTier::open(root.clone()).unwrap();
     disk.set("k1", &entry(b"payload", &["t"], Policy::default()))
         .unwrap();
 
@@ -255,7 +255,7 @@ async fn disk_corrupt_blob_is_a_miss_and_self_heals() {
 async fn disk_delete_removes_blob_and_index() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("c");
-    let disk = oxide_cache::DiskTier::open(root.clone()).unwrap();
+    let disk = oxide_fw_cache::DiskTier::open(root.clone()).unwrap();
     disk.set("abcd", &entry(b"x", &[], Policy::default()))
         .unwrap();
     assert!(disk.get("abcd").unwrap().is_some());
@@ -558,11 +558,11 @@ impl FakeRemote {
 
 #[async_trait::async_trait]
 impl CacheHandler for FakeRemote {
-    async fn get(&self, key: &str) -> oxide_cache::Result<Option<Entry>> {
+    async fn get(&self, key: &str) -> oxide_fw_cache::Result<Option<Entry>> {
         self.gets.fetch_add(1, Ordering::Relaxed);
         Ok(self.store.get(key).map(|e| e.clone()))
     }
-    async fn set(&self, key: &str, entry: Entry) -> oxide_cache::Result<()> {
+    async fn set(&self, key: &str, entry: Entry) -> oxide_fw_cache::Result<()> {
         self.sets.fetch_add(1, Ordering::Relaxed);
         for t in &entry.tags {
             let mut list = self.tags.entry(t.clone()).or_default();
@@ -573,14 +573,14 @@ impl CacheHandler for FakeRemote {
         self.store.insert(key.to_string(), entry);
         Ok(())
     }
-    async fn delete(&self, key: &str) -> oxide_cache::Result<()> {
+    async fn delete(&self, key: &str) -> oxide_fw_cache::Result<()> {
         self.store.remove(key);
         Ok(())
     }
-    async fn tag_keys(&self, tag: &str) -> oxide_cache::Result<Vec<String>> {
+    async fn tag_keys(&self, tag: &str) -> oxide_fw_cache::Result<Vec<String>> {
         Ok(self.tags.get(tag).map(|l| l.clone()).unwrap_or_default())
     }
-    async fn invalidate_tag(&self, tag: &str, soft: bool) -> oxide_cache::Result<usize> {
+    async fn invalidate_tag(&self, tag: &str, soft: bool) -> oxide_fw_cache::Result<usize> {
         let keys = self.tag_keys(tag).await?;
         for k in &keys {
             if soft {
@@ -595,7 +595,7 @@ impl CacheHandler for FakeRemote {
         }
         Ok(keys.len())
     }
-    async fn publish_invalidation(&self, _tag: &str, _soft: bool) -> oxide_cache::Result<()> {
+    async fn publish_invalidation(&self, _tag: &str, _soft: bool) -> oxide_fw_cache::Result<()> {
         Ok(())
     }
 }
@@ -879,10 +879,10 @@ fn conditional_response_if_modified_since() {
 #[test]
 fn fetch_memo_roundtrip_and_body_sensitivity() {
     let memo = FetchMemo::default();
-    let k = oxide_cache::memo_key("GET", "https://api/x", b"");
-    assert_eq!(k, oxide_cache::memo_key("GET", "https://api/x", b""));
-    assert_ne!(k, oxide_cache::memo_key("GET", "https://api/x", b"body"));
-    assert_ne!(k, oxide_cache::memo_key("POST", "https://api/x", b""));
+    let k = oxide_fw_cache::memo_key("GET", "https://api/x", b"");
+    assert_eq!(k, oxide_fw_cache::memo_key("GET", "https://api/x", b""));
+    assert_ne!(k, oxide_fw_cache::memo_key("GET", "https://api/x", b"body"));
+    assert_ne!(k, oxide_fw_cache::memo_key("POST", "https://api/x", b""));
 
     memo.insert(k.clone(), Bytes::from_static(b"resp1"));
     assert_eq!(
@@ -918,11 +918,11 @@ fn entry_and_policy_serialize_with_camel_case_free_stable_shape() {
 /// the entry forever, poisoning the key.
 #[tokio::test]
 async fn owner_drop_clears_entry_even_with_a_live_follower() {
-    use oxide_cache::{FlightOwnerGuard, FlightSlot, SingleFlight};
+    use oxide_fw_cache::{FlightOwnerGuard, FlightSlot, SingleFlight};
     use std::sync::Arc;
     use tokio::sync::broadcast;
 
-    type Map = dashmap::DashMap<String, Arc<broadcast::Sender<Arc<oxide_cache::Entry>>>>;
+    type Map = dashmap::DashMap<String, Arc<broadcast::Sender<Arc<oxide_fw_cache::Entry>>>>;
     let map: Arc<Map> = Arc::new(dashmap::DashMap::new());
     let sf = SingleFlight::new();
 
@@ -946,11 +946,11 @@ async fn owner_drop_clears_entry_even_with_a_live_follower() {
 /// owner's live entry.
 #[tokio::test]
 async fn follower_drop_does_not_remove_the_owners_entry() {
-    use oxide_cache::{FlightOwnerGuard, FlightSlot, SingleFlight};
+    use oxide_fw_cache::{FlightOwnerGuard, FlightSlot, SingleFlight};
     use std::sync::Arc;
     use tokio::sync::broadcast;
 
-    type Map = dashmap::DashMap<String, Arc<broadcast::Sender<Arc<oxide_cache::Entry>>>>;
+    type Map = dashmap::DashMap<String, Arc<broadcast::Sender<Arc<oxide_fw_cache::Entry>>>>;
     let map: Arc<Map> = Arc::new(dashmap::DashMap::new());
     let sf = SingleFlight::new();
 
@@ -971,7 +971,7 @@ async fn follower_drop_does_not_remove_the_owners_entry() {
 /// A1: a tampered sealed entry never verifies, regardless of sealing mode.
 #[test]
 fn tampered_sealed_entry_never_verifies() {
-    use oxide_cache::auth;
+    use oxide_fw_cache::auth;
     let body = b"payload-under-test";
     let sealed = auth::seal_entry(body);
     assert_eq!(auth::open_entry(&sealed).as_deref(), Some(&body[..]));

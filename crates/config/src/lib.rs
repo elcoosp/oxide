@@ -8,7 +8,7 @@
 // default macro recursion limit (128). Raise it for this crate.
 #![recursion_limit = "512"]
 
-use oxide_diagnostics::{Diagnostic, OxideError};
+use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

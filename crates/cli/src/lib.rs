@@ -10,8 +10,8 @@ use clap::{Parser, Subcommand};
 /// `oxide-core-wasm` still gets the accelerated edge path.
 /// Regenerated via `scripts/regen-edge-wasm.sh` (WP-C2, deviation 6).
 static EDGE_WASM_BYTES: &[u8] = include_bytes!("../resources/edge.wasm");
-use oxide_config::OxideConfig;
-use oxide_router::RouteTree;
+use oxide_fw_config::OxideConfig;
+use oxide_fw_router::RouteTree;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -499,7 +499,7 @@ macro_rules! outln {
 /// Tolerant config load for informational commands (§14): a missing/invalid config
 /// falls back to defaults so `routes`/`doctor` still work on fresh projects.
 fn load_config_or_default(root: &Path, mode: &str) -> OxideConfig {
-    match oxide_config::load(root, mode, BTreeMap::new()) {
+    match oxide_fw_config::load(root, mode, BTreeMap::new()) {
         Ok(loaded) => {
             // BUG-11: a dynamic `oxide.config.ts` (one the static extractor
             // cannot read) means the CLI is running on a static-extracted
@@ -527,7 +527,7 @@ fn load_config_or_default(root: &Path, mode: &str) -> OxideConfig {
 
 /// Strict config load for commands that must surface validation errors (§19.1 check).
 fn load_config_strict(root: &Path, mode: &str) -> anyhow::Result<OxideConfig> {
-    oxide_config::load(root, mode, BTreeMap::new())
+    oxide_fw_config::load(root, mode, BTreeMap::new())
         .map(|l| l.config)
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))
 }
@@ -579,7 +579,7 @@ fn has_explicit_render_config(source: &str) -> bool {
 fn refine_render_modes_from_ast(root: &Path, cfg: &OxideConfig, mut tree: RouteTree) -> RouteTree {
     let routes_root = root.join(&cfg.routes.dir);
     for e in &mut tree.entries {
-        if !matches!(e.kind, oxide_router::RouteKind::Page) {
+        if !matches!(e.kind, oxide_fw_router::RouteKind::Page) {
             continue;
         }
         let server = routes_root.join(e.file.with_file_name("page.server.ts"));
@@ -616,7 +616,7 @@ fn refine_render_modes_from_ast(root: &Path, cfg: &OxideConfig, mut tree: RouteT
         if !inferred_by_scanner {
             continue;
         }
-        let m = oxide_compiler::infer_render_mode(&source, &server.to_string_lossy());
+        let m = oxide_fw_compiler::infer_render_mode(&source, &server.to_string_lossy());
         e.render_mode = Some(m.mode.to_string());
     }
     tree
@@ -630,10 +630,10 @@ async fn scan_routes_with_plugins(root: &Path, cfg: &OxideConfig) -> anyhow::Res
     if !plugin_declares_any(root, cfg, &["routes", "serverMiddleware"]) {
         return scan_routes(root, cfg, None).await;
     }
-    use oxide_jshost::JsHost as _;
-    let host = oxide_jshost::NodeHost::new(oxide_jshost::NodeHost::worker_script_default());
+    use oxide_fw_jshost::JsHost as _;
+    let host = oxide_fw_jshost::NodeHost::new(oxide_fw_jshost::NodeHost::worker_script_default());
     let pool = host
-        .tooling_pool(oxide_jshost::PoolConfig::default())
+        .tooling_pool(oxide_fw_jshost::PoolConfig::default())
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
     scan_routes(root, cfg, Some(&pool)).await
 }
@@ -641,7 +641,7 @@ async fn scan_routes_with_plugins(root: &Path, cfg: &OxideConfig) -> anyhow::Res
 async fn scan_routes(
     root: &Path,
     cfg: &OxideConfig,
-    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
+    pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
 ) -> anyhow::Result<RouteTree> {
     // Canonicalize `root` first so `dir` is absolute. `RouteTree::scan_with_config`
     // joins the override onto `dir`; if the override is already root-relative
@@ -692,11 +692,11 @@ async fn scan_routes(
                 if std::fs::write(&file, src).is_err() {
                     continue;
                 }
-                tree.insert(oxide_router::RouteEntry {
+                tree.insert(oxide_fw_router::RouteEntry {
                     // A root middleware: base dir `routes`, so it wraps every
                     // route (the chain rule is a prefix match).
-                    id: oxide_router::RouteId(format!("routes/{safe}.plugin-middleware")),
-                    kind: oxide_router::RouteKind::Middleware,
+                    id: oxide_fw_router::RouteId(format!("routes/{safe}.plugin-middleware")),
+                    kind: oxide_fw_router::RouteKind::Middleware,
                     segments: Vec::new(),
                     file,
                     render_mode: None,
@@ -771,11 +771,11 @@ async fn scan_routes(
                         continue;
                     }
                     let kind = match e.get("kind").and_then(|v| v.as_str()).unwrap_or("page") {
-                        "layout" => oxide_router::RouteKind::Layout,
-                        "endpoint" | "route" => oxide_router::RouteKind::Endpoint,
-                        "loading" => oxide_router::RouteKind::Loading,
-                        "error" => oxide_router::RouteKind::Error,
-                        _ => oxide_router::RouteKind::Page,
+                        "layout" => oxide_fw_router::RouteKind::Layout,
+                        "endpoint" | "route" => oxide_fw_router::RouteKind::Endpoint,
+                        "loading" => oxide_fw_router::RouteKind::Loading,
+                        "error" => oxide_fw_router::RouteKind::Error,
+                        _ => oxide_fw_router::RouteKind::Page,
                     };
                     let segments: Vec<String> = e
                         .get("segments")
@@ -786,8 +786,8 @@ async fn scan_routes(
                                 .collect()
                         })
                         .unwrap_or_default();
-                    tree.insert(oxide_router::RouteEntry {
-                        id: oxide_router::RouteId(id.to_string()),
+                    tree.insert(oxide_fw_router::RouteEntry {
+                        id: oxide_fw_router::RouteId(id.to_string()),
                         kind,
                         segments,
                         file,
@@ -849,18 +849,18 @@ fn read_json(path: &Path) -> Option<serde_json::Value> {
 }
 
 fn config_rules_to_router(
-    rules: &[oxide_config::native_rule::NativeRule],
-) -> Vec<oxide_router::NativeRule> {
+    rules: &[oxide_fw_config::native_rule::NativeRule],
+) -> Vec<oxide_fw_router::NativeRule> {
     rules
         .iter()
-        .map(|r| oxide_router::NativeRule {
+        .map(|r| oxide_fw_router::NativeRule {
             source: r.source.clone(),
             destination: r.destination.clone(),
             status: r.status,
             rule_type: r.rule_type.clone(),
             headers: r.headers.clone(),
             basic_auth: r.basic_auth.clone(),
-            rate_limit: r.rate_limit.as_ref().map(|rl| oxide_router::RateLimit {
+            rate_limit: r.rate_limit.as_ref().map(|rl| oxide_fw_router::RateLimit {
                 key: rl.key.clone(),
                 max: rl.max,
                 window_secs: rl.window_secs,
@@ -1091,14 +1091,14 @@ fn default_ssr_externals() -> Vec<String> {
 }
 
 fn bundle_env_options(
-    env: oxide_bundler::BundleEnv,
+    env: oxide_fw_bundler::BundleEnv,
     entries: BTreeMap<String, PathBuf>,
     out_dir: PathBuf,
     precompiled: BTreeMap<PathBuf, String>,
     jsx_import_source: Option<String>,
     build_secret: String,
-    transform_hook: Option<oxide_bundler::TransformHook>,
-    css_transform: oxide_bundler::CssTransformHook,
+    transform_hook: Option<oxide_fw_bundler::TransformHook>,
+    css_transform: oxide_fw_bundler::CssTransformHook,
     // §6.1: specifiers left external in the SSR bundle. Empty for client/edge
     // (a browser bundle cannot resolve a bare import) and for the default
     // self-contained server bundle; populated from `build.ssrExternals`.
@@ -1108,7 +1108,7 @@ fn bundle_env_options(
     // P-23: production builds minify; the dev client bundle stays unminified
     // for debugging and a faster fresh `oxide dev`.
     minify: bool,
-) -> oxide_bundler::BundleOptions {
+) -> oxide_fw_bundler::BundleOptions {
     // §6.1: `process.env.NODE_ENV` drives React's dev-vs-production
     // bundle selection. Setting it at the CLI level (rather than in the
     // bundler) keeps the bundler agnostic of a project's framework — the
@@ -1116,26 +1116,26 @@ fn bundle_env_options(
     // React ships the dev build (~1 MB) into every island chunk.
     let mut define: BTreeMap<String, String> = BTreeMap::new();
     match env {
-        oxide_bundler::BundleEnv::Client => {
+        oxide_fw_bundler::BundleEnv::Client => {
             define.insert(
                 "process.env.NODE_ENV".to_string(),
                 "\"production\"".to_string(),
             );
         }
-        oxide_bundler::BundleEnv::Ssr => {
+        oxide_fw_bundler::BundleEnv::Ssr => {
             // Server rendering must NOT bake in "production": loaders may
             // read `process.env.NODE_ENV` at request time to decide dev
             // diagnostics vs. silent failures, and a worker evaluates them
             // with the real environment. Left unset so the define is a
             // no-op on the server bundle.
         }
-        oxide_bundler::BundleEnv::Edge => {
+        oxide_fw_bundler::BundleEnv::Edge => {
             // Edge runtimes do not have a `process` global; a define
             // baking in "production" would be accurate but the runtime is
             // a browser-like sandbox, so leave it untouched for now.
         }
     }
-    oxide_bundler::BundleOptions {
+    oxide_fw_bundler::BundleOptions {
         env,
         entries,
         out_dir,
@@ -1146,7 +1146,7 @@ fn bundle_env_options(
         // §21: externals only apply to the server bundle; a browser bundle
         // must inline everything.
         externals: match env {
-            oxide_bundler::BundleEnv::Ssr => {
+            oxide_fw_bundler::BundleEnv::Ssr => {
                 let mut e = ssr_externals;
                 if e.is_empty() {
                     e = default_ssr_externals();
@@ -1186,7 +1186,7 @@ fn bundle_env_options(
 ///     The previous publisher sent the FILE path, which no client matcher
 ///     can compare against a URL.
 ///   * `odf_b64` — the ODF-encoded `{route, url, params, data}` payload
-///     (the same `oxide_odf::encode_to_bytes` shape the live hydration
+///     (the same `oxide_fw_odf::encode_to_bytes` shape the live hydration
 ///     payload and the L0 cache entries use), carrying the loader's FRESH
 ///     data. Params are empty: a file change has no request context, and
 ///     the inline HMR client re-fetches `/__data` for the concrete URL
@@ -1199,15 +1199,15 @@ async fn hmr_route_data_update(
     changed: &Path,
     rootp: &Path,
     cfg: &OxideConfig,
-    tree: &oxide_router::RouteTree,
-    loader: Option<&std::sync::Arc<dyn oxide_server::LoaderRunner>>,
+    tree: &oxide_fw_router::RouteTree,
+    loader: Option<&std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
 ) -> (String, String) {
     // Only a PAGE route's `page.server.ts` triggers a data update (a
     // `layout.server.ts` change maps to no single URL; the watcher falls
     // back to the file-path message for those).
     let routes_root = rootp.join(&cfg.routes.dir);
     let owned = match tree.entries.iter().find(|e| {
-        matches!(e.kind, oxide_router::RouteKind::Page)
+        matches!(e.kind, oxide_fw_router::RouteKind::Page)
             && routes_root.join(e.file.with_file_name("page.server.ts")) == changed
     }) {
         Some(e) => (
@@ -1235,7 +1235,7 @@ async fn hmr_route_data_update(
     let Some(loader) = loader else {
         return (pattern, String::new());
     };
-    let input = oxide_server::LoaderRunInput::new(module_path, route_for_loader, pattern.clone());
+    let input = oxide_fw_server::LoaderRunInput::new(module_path, route_for_loader, pattern.clone());
     match loader.run(input).await {
         Ok(out) if out.status == 200 => {
             let payload = serde_json::json!({
@@ -1244,7 +1244,7 @@ async fn hmr_route_data_update(
                 "params": {},
                 "data": out.data,
             });
-            match oxide_odf::encode_to_bytes(&oxide_odf::Value::from_json(&payload)) {
+            match oxide_fw_odf::encode_to_bytes(&oxide_fw_odf::Value::from_json(&payload)) {
                 Ok(bytes) => {
                     use base64::Engine as _;
                     (
@@ -1291,7 +1291,7 @@ async fn hmr_route_data_update(
 /// keys therefore use the sanitized form while the router tree uses the
 /// source form. Map a manifest key back to the canonical route id so
 /// layout-chain lookup can find the tree entry.
-fn canonicalize_manifest_key(tree: &oxide_router::RouteTree, key: &str) -> String {
+fn canonicalize_manifest_key(tree: &oxide_fw_router::RouteTree, key: &str) -> String {
     // Direct match: the manifest already carries the source form.
     if tree
         .entries
@@ -1322,7 +1322,7 @@ fn canonicalize_manifest_key(tree: &oxide_router::RouteTree, key: &str) -> Strin
     key.to_string()
 }
 
-fn compute_layout_chain(tree: &oxide_router::RouteTree, route_id: &str) -> Vec<String> {
+fn compute_layout_chain(tree: &oxide_fw_router::RouteTree, route_id: &str) -> Vec<String> {
     let segments: Vec<&str> = route_id.split('/').collect();
     let mut chain = Vec::new();
     for i in 0..segments.len() {
@@ -1331,7 +1331,7 @@ fn compute_layout_chain(tree: &oxide_router::RouteTree, route_id: &str) -> Vec<S
         if tree
             .entries
             .iter()
-            .any(|e| matches!(e.kind, oxide_router::RouteKind::Layout) && e.id.0 == layout_id)
+            .any(|e| matches!(e.kind, oxide_fw_router::RouteKind::Layout) && e.id.0 == layout_id)
         {
             chain.push(layout_id);
         }
@@ -1346,7 +1346,7 @@ fn compute_layout_chain(tree: &oxide_router::RouteTree, route_id: &str) -> Vec<S
 /// safe — the field is `#[serde(default)]`.
 fn enrich_manifest_layout_chains(
     manifest_path: &std::path::Path,
-    tree: &oxide_router::RouteTree,
+    tree: &oxide_fw_router::RouteTree,
 ) -> anyhow::Result<()> {
     let bytes = match std::fs::read(manifest_path) {
         Ok(b) => b,
@@ -1434,7 +1434,7 @@ pub(crate) fn set_session_ttl(ttl: u64) {
 fn encode_session_cookie(
     after: Option<&serde_json::Value>,
     before: Option<&serde_json::Value>,
-    codec: Option<&oxide_server::SessionCodec>,
+    codec: Option<&oxide_fw_server::SessionCodec>,
 ) -> Option<String> {
     let codec = codec?;
     let after = after?;
@@ -1449,7 +1449,7 @@ fn encode_session_cookie(
     if !changed {
         return None;
     }
-    let mut sess = oxide_server::Session::new();
+    let mut sess = oxide_fw_server::Session::new();
     if let Some(obj) = after.as_object() {
         for (k, v) in obj {
             sess.insert(k.clone(), v.clone());
@@ -1472,8 +1472,8 @@ fn canonical_route_id(id: &str) -> String {
 
 async fn ensure_dev_client_bundle(
     rootp: &Path,
-    cfg: &oxide_config::OxideConfig,
-    tree: &oxide_router::RouteTree,
+    cfg: &oxide_fw_config::OxideConfig,
+    tree: &oxide_fw_router::RouteTree,
     w: Writer<'_>,
 ) -> anyhow::Result<()> {
     let dist = rootp.join("dist");
@@ -1487,7 +1487,7 @@ async fn ensure_dev_client_bundle(
     let mut loading_entries: BTreeMap<String, PathBuf> = BTreeMap::new();
     for e in &tree.entries {
         match e.kind {
-            oxide_router::RouteKind::Loading => {
+            oxide_fw_router::RouteKind::Loading => {
                 loading_entries.insert(e.id.0.clone(), rootp.join(&cfg.routes.dir).join(&e.file));
             }
             // §8.2: layouts must be client entries too — the client hydrate
@@ -1495,17 +1495,17 @@ async fn ensure_dev_client_bundle(
             // via `componentFor`, which needs the layout chunk in
             // `client.manifest.json`. Without this the client can only
             // hydrate the bare page and React reports #418.
-            oxide_router::RouteKind::Layout => {
+            oxide_fw_router::RouteKind::Layout => {
                 entries.insert(e.id.0.clone(), rootp.join(&cfg.routes.dir).join(&e.file));
             }
-            oxide_router::RouteKind::Page
-            | oxide_router::RouteKind::Endpoint
+            oxide_fw_router::RouteKind::Page
+            | oxide_fw_router::RouteKind::Endpoint
             // §6.4 / WP-A1: error / not-found / template components are part
             // of the generated component surface too — the resolver must be
             // able to find them without a hand-written config map.
-            | oxide_router::RouteKind::Error
-            | oxide_router::RouteKind::NotFound
-            | oxide_router::RouteKind::Template => {
+            | oxide_fw_router::RouteKind::Error
+            | oxide_fw_router::RouteKind::NotFound
+            | oxide_fw_router::RouteKind::Template => {
                 entries.insert(e.id.0.clone(), rootp.join(&cfg.routes.dir).join(&e.file));
             }
             _ => {}
@@ -1518,7 +1518,7 @@ async fn ensure_dev_client_bundle(
     let has_page_routes = tree
         .entries
         .iter()
-        .any(|e| matches!(e.kind, oxide_router::RouteKind::Page));
+        .any(|e| matches!(e.kind, oxide_fw_router::RouteKind::Page));
     if has_page_routes {
         let framework = cfg
             .framework
@@ -1560,7 +1560,7 @@ async fn ensure_dev_client_bundle(
     // pass here — the Oxc path handles TS/JSX; SFC precompile is a build-time
     // optimization, and a dev start should not block on the tooling pool.
     let client_opts = bundle_env_options(
-        oxide_bundler::BundleEnv::Client,
+        oxide_fw_bundler::BundleEnv::Client,
         client_entries,
         client_out,
         BTreeMap::new(),
@@ -1572,8 +1572,8 @@ async fn ensure_dev_client_bundle(
         true,  // sourcemap on for dev
         false, // P-23: unminified dev client bundle
     );
-    use oxide_bundler::Bundler as _;
-    let rb = oxide_bundler::RolldownBundler::new(rootp);
+    use oxide_fw_bundler::Bundler as _;
+    let rb = oxide_fw_bundler::RolldownBundler::new(rootp);
     match rb.bundle(&client_opts) {
         Ok(outcome) => {
             outln!(
@@ -1605,14 +1605,14 @@ async fn ensure_dev_client_bundle(
 /// needed.
 fn content_source_changed(
     root: &Path,
-    cfg: &oxide_config::OxideConfig,
-    events: &[oxide_dev::FileEvent],
+    cfg: &oxide_fw_config::OxideConfig,
+    events: &[oxide_fw_dev::FileEvent],
 ) -> bool {
     events.iter().any(|ev| {
         let p = match ev {
-            oxide_dev::FileEvent::Modified(p)
-            | oxide_dev::FileEvent::Created(p)
-            | oxide_dev::FileEvent::Removed(p) => p,
+            oxide_fw_dev::FileEvent::Modified(p)
+            | oxide_fw_dev::FileEvent::Created(p)
+            | oxide_fw_dev::FileEvent::Removed(p) => p,
         };
         cfg.content
             .collections
@@ -1644,7 +1644,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     .find(|p| p.is_file());
     let lock_hash = match &lockfile {
         Some(p) => {
-            oxide_bundler::ChunkBundler::content_hash(&[&std::fs::read(p).unwrap_or_default()])
+            oxide_fw_bundler::ChunkBundler::content_hash(&[&std::fs::read(p).unwrap_or_default()])
         }
         None => "no-lockfile".to_string(),
     };
@@ -1675,9 +1675,9 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
 
     // Build the TLS config once when HTTPS is on.
     let tls_config = if flags.https {
-        let cert = oxide_dev::generate_dev_cert()
+        let cert = oxide_fw_dev::generate_dev_cert()
             .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
-        let cfg = oxide_server::Server::tls_config_from_pem(
+        let cfg = oxide_fw_server::Server::tls_config_from_pem(
             cert.cert_pem.as_bytes(),
             cert.key_pem.as_bytes(),
         )
@@ -1780,7 +1780,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // loader; SFCs are precompiled once here (and recompiled on watcher
     // invalidation, which re-imports through the bumped generation).
     {
-        use oxide_router::RouteKind;
+        use oxide_fw_router::RouteKind;
         let routes_root = rootp.join(&cfg.routes.dir);
         let entries: BTreeMap<String, PathBuf> = tree
             .entries
@@ -1821,12 +1821,12 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // §13.3: keep a pool handle for the watcher. On file change it bumps the
     // worker's module generation, so the next render/load re-evaluates the
     // edited module instead of serving the cached one.
-    let hmr_pool: Option<std::sync::Arc<dyn oxide_jshost::Pool>> = stack.pool.clone();
+    let hmr_pool: Option<std::sync::Arc<dyn oxide_fw_jshost::Pool>> = stack.pool.clone();
     // §13.3: keep a loader handle for the watcher too — a `page.server.ts`
     // change re-runs the route's loader so the published HMR
     // `route-data-update` message carries fresh ODF bytes (not an empty
     // payload the client has to fetch itself).
-    let hmr_loader: Option<std::sync::Arc<dyn oxide_server::LoaderRunner>> =
+    let hmr_loader: Option<std::sync::Arc<dyn oxide_fw_server::LoaderRunner>> =
         stack.loader_runner.clone();
     // WP-B: the rescan arm rebuilds renderer component sources when a route
     // file is added or removed, mirroring the boot-time population above.
@@ -1854,7 +1854,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 .map(str::to_string)
         })
         .unwrap_or_else(|| "dev".to_string());
-    let hmr_hub = std::sync::Arc::new(oxide_dev::HmrHub::with_build_id(hmr_build_id.clone()));
+    let hmr_hub = std::sync::Arc::new(oxide_fw_dev::HmrHub::with_build_id(hmr_build_id.clone()));
     // §15.2: `configureServer` — a plugin gets the dev server's handles and
     // may contribute HMR behaviour. Each result may carry
     // `{ reload: bool }` to force a full reload on a config-shaped change;
@@ -1887,18 +1887,18 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         Some(std::sync::Arc::clone(&hmr_hub)),
     )
     .await?;
-    let local = oxide_dev::local_url(started.addr.port(), flags.https);
+    let local = oxide_fw_dev::local_url(started.addr.port(), flags.https);
     outln!(w, "dev server listening on {local}");
     match &started.dev_token {
         Some(t) => outln!(w, "inspector: {local}/__oxide?token={t}"),
         None => outln!(w, "inspector: {local}/__oxide"),
     }
-    if let Some(net) = oxide_dev::network_url(started.addr.port(), flags.https) {
+    if let Some(net) = oxide_fw_dev::network_url(started.addr.port(), flags.https) {
         if flags.host {
             outln!(w, "network: {net}");
         }
         if flags.qr {
-            match oxide_dev::render_qr(&net) {
+            match oxide_fw_dev::render_qr(&net) {
                 Ok(qr) => {
                     outln!(w, "{qr}");
                 }
@@ -1906,7 +1906,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             }
         }
         if flags.open {
-            let opened = oxide_dev::open_browser(&local);
+            let opened = oxide_fw_dev::open_browser(&local);
             outln!(w, "browser open: {opened}");
         }
     }
@@ -1914,7 +1914,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // SPEC-16: watch the app AND any linked workspace packages, so an edit in
     // `packages/ui` (a `file:` dependency) invalidates the app.
     let mut watch_roots: Vec<std::path::PathBuf> = vec![rootp.clone()];
-    if let Some(ws) = oxide_config::detect_workspace_root(&rootp) {
+    if let Some(ws) = oxide_fw_config::detect_workspace_root(&rootp) {
         // Watch each workspace package that is not the app itself.
         if let Ok(rd) = std::fs::read_dir(&ws) {
             for e in rd.flatten() {
@@ -1935,7 +1935,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             }
         }
     }
-    let watcher = oxide_dev::Watcher::with_notify(watch_roots);
+    let watcher = oxide_fw_dev::Watcher::with_notify(watch_roots);
     let mut seen = std::collections::BTreeSet::new();
 
     // PERF-08: a `DemandGraph` over the watched modules. A node per source
@@ -1954,7 +1954,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         fn compute(
             &self,
             ctx: &mut oxide_fw_graph::ComputeCtx,
-        ) -> oxide_diagnostics::Result<oxide_fw_graph::NodeOutput> {
+        ) -> oxide_fw_diagnostics::Result<oxide_fw_graph::NodeOutput> {
             let bytes = ctx.fs.read_file(&self.0)?;
             let hash = blake3::hash(&bytes);
             Ok(oxide_fw_graph::NodeOutput {
@@ -1969,11 +1969,11 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // so the next render/load sees fresh code. Best-effort: log a warning
     // if the worker is unavailable; never fails the dev loop.
     async fn invalidate_framework_modules(
-        pool: &Option<std::sync::Arc<dyn oxide_jshost::Pool>>,
+        pool: &Option<std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
         root: &std::path::Path,
     ) {
         if let Some(pool) = pool.as_ref() {
-            let host = oxide_jshost::FrameworkHost::new(std::sync::Arc::clone(pool));
+            let host = oxide_fw_jshost::FrameworkHost::new(std::sync::Arc::clone(pool));
             match host.invalidate().await {
                 Ok(generation) => {
                     // SPEC-14: publish the new generation to disk so the
@@ -2002,11 +2002,11 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // returned set is non-empty only when a node actually recomputed (early
     // cutoff spares unchanged content), so the worker generation bumps only
     // when there is real new code to see.
-    fn graph_invalidated(dev_graph: &oxide_fw_graph::DemandGraph, ev: &oxide_dev::FileEvent) -> bool {
+    fn graph_invalidated(dev_graph: &oxide_fw_graph::DemandGraph, ev: &oxide_fw_dev::FileEvent) -> bool {
         let path = match ev {
-            oxide_dev::FileEvent::Modified(p)
-            | oxide_dev::FileEvent::Created(p)
-            | oxide_dev::FileEvent::Removed(p) => p.clone(),
+            oxide_fw_dev::FileEvent::Modified(p)
+            | oxide_fw_dev::FileEvent::Created(p)
+            | oxide_fw_dev::FileEvent::Removed(p) => p.clone(),
         };
         // §5.5 / §5-E: a lockfile change invalidates every resolver edge. A
         // `package-lock.json` / `pnpm-lock.yaml` / `yarn.lock` / `bun.lockb`
@@ -2043,7 +2043,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 fn compute(
                     &self,
                     ctx: &mut oxide_fw_graph::ComputeCtx,
-                ) -> oxide_diagnostics::Result<oxide_fw_graph::NodeOutput> {
+                ) -> oxide_fw_diagnostics::Result<oxide_fw_graph::NodeOutput> {
                     let bytes = ctx.fs.read_file(&self.0).unwrap_or_default();
                     Ok(oxide_fw_graph::NodeOutput {
                         hash: blake3::hash(&bytes),
@@ -2066,7 +2066,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             fn compute(
                 &self,
                 ctx: &mut oxide_fw_graph::ComputeCtx,
-            ) -> oxide_diagnostics::Result<oxide_fw_graph::NodeOutput> {
+            ) -> oxide_fw_diagnostics::Result<oxide_fw_graph::NodeOutput> {
                 let bytes = ctx.fs.read_file(&self.0).unwrap_or_default();
                 Ok(oxide_fw_graph::NodeOutput {
                     hash: blake3::hash(&bytes),
@@ -2098,9 +2098,9 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         if let Some(pool) = hmr_pool.as_ref() {
             for ev in &events {
                 let p = match ev {
-                    oxide_dev::FileEvent::Modified(p)
-                    | oxide_dev::FileEvent::Created(p)
-                    | oxide_dev::FileEvent::Removed(p) => p.clone(),
+                    oxide_fw_dev::FileEvent::Modified(p)
+                    | oxide_fw_dev::FileEvent::Created(p)
+                    | oxide_fw_dev::FileEvent::Removed(p) => p.clone(),
                 };
                 let results = call_js_plugin_hook(
                     &rootp,
@@ -2141,7 +2141,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     let page_routes: Vec<String> = tree
         .entries
         .iter()
-        .filter(|e| matches!(e.kind, oxide_router::RouteKind::Page))
+        .filter(|e| matches!(e.kind, oxide_fw_router::RouteKind::Page))
         .filter(|e| {
             e.segments
                 .iter()
@@ -2173,9 +2173,9 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             .into_iter()
             .filter(|ev| {
                 let p = match ev {
-                    oxide_dev::FileEvent::Modified(p)
-                    | oxide_dev::FileEvent::Created(p)
-                    | oxide_dev::FileEvent::Removed(p) => p,
+                    oxide_fw_dev::FileEvent::Modified(p)
+                    | oxide_fw_dev::FileEvent::Created(p)
+                    | oxide_fw_dev::FileEvent::Removed(p) => p,
                 };
                 !p.components().any(|c| c.as_os_str() == ".oxide")
                     && !p.starts_with(rootp.join("dist"))
@@ -2196,7 +2196,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             if content_source_changed(&rootp, &cfg, &events) {
                 emit_content_search_indexes(&rootp, &cfg, &rootp.join("dist"), w)?;
                 if let Some(hub) = started.hmr.as_ref() {
-                    hub.publish(oxide_dev::HmrMessage::FullReload {
+                    hub.publish(oxide_fw_dev::HmrMessage::FullReload {
                         reason: "content collection changed".to_string(),
                     });
                 }
@@ -2207,9 +2207,9 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             // explicit log is the audit trail §5.5 asks for.
             let has_lockfile = events.iter().any(|ev| {
                 let p = match ev {
-                    oxide_dev::FileEvent::Modified(p)
-                    | oxide_dev::FileEvent::Created(p)
-                    | oxide_dev::FileEvent::Removed(p) => p,
+                    oxide_fw_dev::FileEvent::Modified(p)
+                    | oxide_fw_dev::FileEvent::Created(p)
+                    | oxide_fw_dev::FileEvent::Removed(p) => p,
                 };
                 matches!(
                     p.file_name().and_then(|n| n.to_str()),
@@ -2244,9 +2244,9 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             if let Some(pool) = hmr_pool.as_ref() {
                 for ev in &events {
                     let p = match ev {
-                        oxide_dev::FileEvent::Modified(p)
-                        | oxide_dev::FileEvent::Created(p)
-                        | oxide_dev::FileEvent::Removed(p) => p.clone(),
+                        oxide_fw_dev::FileEvent::Modified(p)
+                        | oxide_fw_dev::FileEvent::Created(p)
+                        | oxide_fw_dev::FileEvent::Removed(p) => p.clone(),
                     };
                     let results = call_js_plugin_hook(
                         &rootp,
@@ -2265,7 +2265,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             }
             if force_reload {
                 if let Some(hub) = started.hmr.as_ref() {
-                    hub.publish(oxide_dev::HmrMessage::FullReload {
+                    hub.publish(oxide_fw_dev::HmrMessage::FullReload {
                         reason: "plugin handleHotUpdate requested a reload".to_string(),
                     });
                 }
@@ -2278,15 +2278,15 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             outln!(w, "change: {ev:?}");
             // SPEC-14: emit the HMR message for this change.
             if let Some(hub) = started.hmr.as_ref() {
-                use oxide_dev::{HmrBehavior, HmrMessage};
+                use oxide_fw_dev::{HmrBehavior, HmrMessage};
                 let path = match &ev {
-                    oxide_dev::FileEvent::Modified(p)
-                    | oxide_dev::FileEvent::Created(p)
-                    | oxide_dev::FileEvent::Removed(p) => p,
+                    oxide_fw_dev::FileEvent::Modified(p)
+                    | oxide_fw_dev::FileEvent::Created(p)
+                    | oxide_fw_dev::FileEvent::Removed(p) => p,
                 };
                 let pstr = path.to_string_lossy().to_string();
-                let kind = oxide_dev::classify_path(&pstr);
-                match oxide_dev::hmr_behavior(kind) {
+                let kind = oxide_fw_dev::classify_path(&pstr);
+                match oxide_fw_dev::hmr_behavior(kind) {
                     HmrBehavior::StyleSwap => hub.publish(HmrMessage::CssUpdate {
                         path: pstr,
                         code: String::new(),
@@ -2353,7 +2353,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                     // route matches the tree but fails at
                                     // render with 'no component resolved'.
                                     {
-                                        use oxide_router::RouteKind;
+                                        use oxide_fw_router::RouteKind;
                                         let routes_root = rootp.join(&cfg.routes.dir);
                                         let entries: std::collections::BTreeMap<
                                             String,
@@ -2490,7 +2490,7 @@ fn write_content_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 fn emit_content_search_indexes(
     root: &Path,
-    cfg: &oxide_config::OxideConfig,
+    cfg: &oxide_fw_config::OxideConfig,
     dist: &Path,
     w: Writer<'_>,
 ) -> anyhow::Result<()> {
@@ -2502,21 +2502,21 @@ fn emit_content_search_indexes(
     // §16-C: collect each scanned collection so a typed `content.d.ts` can be
     // emitted once the loop finishes. Config carries no schema field yet, so
     // the schema is inferred from the frontmatter actually on disk.
-    let mut scanned_collections: Vec<oxide_assets::Collection> = Vec::new();
-    let mut inferred_schemas: Vec<(String, oxide_assets::NativeSchema)> = Vec::new();
+    let mut scanned_collections: Vec<oxide_fw_assets::Collection> = Vec::new();
+    let mut inferred_schemas: Vec<(String, oxide_fw_assets::NativeSchema)> = Vec::new();
     for coll in &cfg.content.collections {
         if coll.name.is_empty() || coll.dir.is_empty() {
             outln!(w, "content collection skipped: name and dir are required");
             continue;
         }
         let dir = root.join(&coll.dir);
-        let cfg_in = oxide_assets::CollectionConfig {
+        let cfg_in = oxide_fw_assets::CollectionConfig {
             name: coll.name.clone(),
             dir: dir.clone(),
-            schema: oxide_assets::SchemaKind::Unchecked,
+            schema: oxide_fw_assets::SchemaKind::Unchecked,
             indexed_fields: coll.indexed_fields.clone(),
         };
-        let scanned = match oxide_assets::scan_collection(&cfg_in) {
+        let scanned = match oxide_fw_assets::scan_collection(&cfg_in) {
             Ok(c) => c,
             Err(e) => {
                 outln!(
@@ -2528,8 +2528,8 @@ fn emit_content_search_indexes(
                 continue;
             }
         };
-        let idx = oxide_assets::build_search_index(&scanned, &coll.indexed_fields);
-        let json = oxide_assets::search_index_to_json(&idx)
+        let idx = oxide_fw_assets::build_search_index(&scanned, &coll.indexed_fields);
+        let json = oxide_fw_assets::search_index_to_json(&idx)
             .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
         write_content_atomic(
             &out_dir.join(format!("{}.index.json", coll.name)),
@@ -2567,16 +2567,16 @@ fn emit_content_search_indexes(
         );
         inferred_schemas.push((
             coll.name.clone(),
-            oxide_assets::content_typegen::infer_schema(&scanned),
+            oxide_fw_assets::content_typegen::infer_schema(&scanned),
         ));
         scanned_collections.push(scanned);
     }
     // Pair each scanned collection with its inferred schema.
-    let typed_collections: Vec<oxide_assets::content_typegen::TypedCollection<'_>> =
+    let typed_collections: Vec<oxide_fw_assets::content_typegen::TypedCollection<'_>> =
         scanned_collections
             .iter()
             .enumerate()
-            .map(|(i, c)| oxide_assets::content_typegen::TypedCollection {
+            .map(|(i, c)| oxide_fw_assets::content_typegen::TypedCollection {
                 collection: c,
                 schema: Some(&inferred_schemas[i].1),
             })
@@ -2584,7 +2584,7 @@ fn emit_content_search_indexes(
     // §16-C: emit `.oxide/types/content.d.ts`. A typegen failure is a
     // warning, not a build failure — the app still ships.
     let dts_path = root.join(".oxide/types/content.d.ts");
-    match oxide_assets::content_typegen::write_content_dts(&typed_collections, &dts_path) {
+    match oxide_fw_assets::content_typegen::write_content_dts(&typed_collections, &dts_path) {
         Ok(()) => outln!(
             w,
             "content typegen: {} collection(s) -> .oxide/types/content.d.ts",
@@ -2619,8 +2619,8 @@ fn emit_content_search_indexes(
 /// the origin is more useful than no sitemap, and robots.txt simply omits
 /// the `Sitemap:` line rather than pointing at a broken URL.
 fn emit_sitemap_and_robots(
-    cfg: &oxide_config::OxideConfig,
-    tree: &oxide_router::RouteTree,
+    cfg: &oxide_fw_config::OxideConfig,
+    tree: &oxide_fw_router::RouteTree,
     dist: &Path,
     w: Writer<'_>,
 ) -> anyhow::Result<()> {
@@ -2644,7 +2644,7 @@ fn emit_sitemap_and_robots(
     // the ground truth for "which URL exists".
     let mut urls: Vec<String> = Vec::new();
     for e in &tree.entries {
-        if !matches!(e.kind, oxide_router::RouteKind::Page) {
+        if !matches!(e.kind, oxide_fw_router::RouteKind::Page) {
             continue;
         }
         if e.slot.is_some() {
@@ -2688,7 +2688,7 @@ fn emit_sitemap_and_robots(
     // store serves them at `/sitemap.xml` and `/robots.txt`.
     if !urls.is_empty() {
         let refs: Vec<&str> = urls.iter().map(String::as_str).collect();
-        let xml = oxide_assets::sitemap_xml(&refs);
+        let xml = oxide_fw_assets::sitemap_xml(&refs);
         std::fs::write(dist.join("sitemap.xml"), xml)
             .map_err(|e| anyhow::anyhow!("write sitemap.xml: {e}"))?;
     }
@@ -2697,7 +2697,7 @@ fn emit_sitemap_and_robots(
     // an empty rule list means. A project that wants to disallow adds a
     // rule in the future `robots` config field; today the default is the
     // sensible one — you do not ship a sitemap you want ignored.
-    let txt = oxide_assets::robots_txt(&[], sitemap_url.as_deref());
+    let txt = oxide_fw_assets::robots_txt(&[], sitemap_url.as_deref());
     std::fs::write(dist.join("robots.txt"), txt)
         .map_err(|e| anyhow::anyhow!("write robots.txt: {e}"))?;
 
@@ -2732,12 +2732,12 @@ fn emit_sitemap_and_robots(
 /// font-swap layout shift). A family whose files cannot be read is reported
 /// and skipped; fonts are never load-bearing for a build.
 fn emit_fonts(
-    cfg: &oxide_config::OxideConfig,
+    cfg: &oxide_fw_config::OxideConfig,
     root: &Path,
     dist: &Path,
     w: Writer<'_>,
 ) -> anyhow::Result<()> {
-    use oxide_assets::{DefaultFontBackend, FontBackend as _, FontSpec};
+    use oxide_fw_assets::{DefaultFontBackend, FontBackend as _, FontSpec};
 
     if cfg.fonts.families.is_empty() {
         return Ok(());
@@ -2803,7 +2803,7 @@ fn emit_fonts(
 /// a user can move the work behind a lazy initializer. Advisory: it never
 /// fails the build, because the snapshot fallback (a V8 code cache) is a
 /// valid degradation.
-fn persist_diagnostics(root: &Path, diags: &[oxide_diagnostics::Diagnostic]) {
+fn persist_diagnostics(root: &Path, diags: &[oxide_fw_diagnostics::Diagnostic]) {
     let dir = root.join(".oxide");
     let _ = std::fs::create_dir_all(&dir);
     let json = serde_json::to_string_pretty(diags).unwrap_or_else(|_| "[]".to_string());
@@ -2811,9 +2811,9 @@ fn persist_diagnostics(root: &Path, diags: &[oxide_diagnostics::Diagnostic]) {
 }
 
 fn emit_snapshot_lint(
-    cfg: &oxide_config::OxideConfig,
+    cfg: &oxide_fw_config::OxideConfig,
     root: &Path,
-    tree: &oxide_router::RouteTree,
+    tree: &oxide_fw_router::RouteTree,
     w: Writer<'_>,
 ) -> anyhow::Result<()> {
     let routes_root = root.join(&cfg.routes.dir);
@@ -2821,9 +2821,9 @@ fn emit_snapshot_lint(
     // 19-E: each side effect becomes a real Diagnostic — location plus a
     // code frame — so the persisted diagnostics file (and the editor / MCP
     // tool reading it) shows the offending line, not just a stderr line.
-    let mut diags: Vec<oxide_diagnostics::Diagnostic> = Vec::new();
+    let mut diags: Vec<oxide_fw_diagnostics::Diagnostic> = Vec::new();
     for e in &tree.entries {
-        if !matches!(e.kind, oxide_router::RouteKind::Page) {
+        if !matches!(e.kind, oxide_fw_router::RouteKind::Page) {
             continue;
         }
         let server = routes_root.join(e.file.with_file_name("page.server.ts"));
@@ -2835,7 +2835,7 @@ fn emit_snapshot_lint(
             .unwrap_or(&server)
             .to_string_lossy()
             .to_string();
-        for fx in oxide_jshost::lint_top_level_side_effects(&rel, &source) {
+        for fx in oxide_fw_jshost::lint_top_level_side_effects(&rel, &source) {
             outln!(
                 w,
                 "warn: snapshot side effect at {}:{} - {}",
@@ -2843,7 +2843,7 @@ fn emit_snapshot_lint(
                 fx.line,
                 fx.message
             );
-            let mut d = oxide_diagnostics::Diagnostic::warning(
+            let mut d = oxide_fw_diagnostics::Diagnostic::warning(
                 "SNP-SIDEEFFECT",
                 format!("{}: {}", fx.path, fx.message),
             )
@@ -2853,8 +2853,8 @@ fn emit_snapshot_lint(
             );
             let line = fx.line as usize;
             if line > 0 {
-                d = d.at(oxide_diagnostics::Location::file(&fx.path, fx.line, 1));
-                let frame = oxide_diagnostics::render_code_frame(&source, line, None);
+                d = d.at(oxide_fw_diagnostics::Location::file(&fx.path, fx.line, 1));
+                let frame = oxide_fw_diagnostics::render_code_frame(&source, line, None);
                 if !frame.is_empty() {
                     d = d.with_code_frame(frame);
                 }
@@ -2893,11 +2893,11 @@ fn emit_snapshot_blob(root: &Path, server_out: &Path, w: Writer<'_>) -> anyhow::
     // runtime in a context where blocking is not allowed"). `cmd_build` is
     // async, so run the snapshot on a dedicated thread where the inner runtime
     // is dropped outside any async context.
-    let built = std::thread::spawn(oxide_jshost::snapshot_build_runtime)
+    let built = std::thread::spawn(oxide_fw_jshost::snapshot_build_runtime)
         .join()
         .unwrap_or_else(|_| {
-            Err(oxide_diagnostics::OxideError(
-                oxide_diagnostics::Diagnostic::error(
+            Err(oxide_fw_diagnostics::OxideError(
+                oxide_fw_diagnostics::Diagnostic::error(
                     "SNP-PANIC",
                     "snapshot builder thread panicked",
                 ),
@@ -2913,7 +2913,7 @@ fn emit_snapshot_blob(root: &Path, server_out: &Path, w: Writer<'_>) -> anyhow::
             // `from_snapshot_file` can reject stale/foreign snapshots with
             // `JSH-SNAPVER` instead of an opaque deno_core error at spawn.
             let env = serde_json::json!({
-                "format": oxide_jshost::SNAPSHOT_FORMAT,
+                "format": oxide_fw_jshost::SNAPSHOT_FORMAT,
                 "oxide_version": env!("CARGO_PKG_VERSION"),
                 "source_hash": snap.source_hash,
                 "blob_b64": base64::Engine::encode(
@@ -2952,7 +2952,7 @@ fn emit_snapshot_blob(root: &Path, server_out: &Path, w: Writer<'_>) -> anyhow::
 /// the V8 renderer at it. A no-op for the Node backend, which imports the
 /// config directly.
 fn emit_config_bundle(
-    cfg: &oxide_config::OxideConfig,
+    cfg: &oxide_fw_config::OxideConfig,
     root: &Path,
     precompiled: BTreeMap<PathBuf, String>,
     w: Writer<'_>,
@@ -2980,12 +2980,12 @@ fn emit_config_bundle(
 
     let mut entries: BTreeMap<String, PathBuf> = BTreeMap::new();
     entries.insert("config".to_string(), config_file.clone());
-    let opts = oxide_bundler::BundleOptions {
+    let opts = oxide_fw_bundler::BundleOptions {
         // §4.6: the V8 sandbox is browser-like (Web globals, no Node built-ins).
         // Resolve with BROWSER conditions so `react-dom/server` picks
         // `server.browser.js` — the `server.node.js` build `require('stream')`
         // and fails with "require() is not available in the V8 runtime".
-        env: oxide_bundler::BundleEnv::Client,
+        env: oxide_fw_bundler::BundleEnv::Client,
         entries,
         out_dir: bundle_dir.clone(),
         minify: false,
@@ -3024,8 +3024,8 @@ fn emit_config_bundle(
         ]),
         virtual_modules: Default::default(),
     };
-    use oxide_bundler::Bundler as _;
-    let backend = oxide_bundler::RolldownBundler::new(root);
+    use oxide_fw_bundler::Bundler as _;
+    let backend = oxide_fw_bundler::RolldownBundler::new(root);
     match backend.bundle(&opts) {
         Ok(out) => {
             // The entry chunk is written as `<name>-<hash>.js`; rename it to
@@ -3037,7 +3037,7 @@ fn emit_config_bundle(
             let entry_file = out
                 .chunks
                 .iter()
-                .find(|c| c.kind == oxide_bundler::ChunkKind::Entry)
+                .find(|c| c.kind == oxide_fw_bundler::ChunkKind::Entry)
                 .map(|c| c.file.clone());
             match entry_file {
                 Some(file) => {
@@ -3098,7 +3098,7 @@ fn emit_config_bundle(
 /// registration snippet is emitted as `dist/pwa-register.js` so the page can
 /// `<script src="/pwa-register.js">` it (or the CLI can inject it).
 fn emit_pwa_worker(
-    cfg: &oxide_config::OxideConfig,
+    cfg: &oxide_fw_config::OxideConfig,
     dist: &Path,
     client_manifest: &serde_json::Value,
     w: Writer<'_>,
@@ -3267,7 +3267,7 @@ if ('serviceWorker' in navigator) {\n\
 }
 
 fn emit_web_manifest(
-    cfg: &oxide_config::OxideConfig,
+    cfg: &oxide_fw_config::OxideConfig,
     dist: &Path,
     w: Writer<'_>,
 ) -> anyhow::Result<()> {
@@ -3346,7 +3346,7 @@ fn url_path_from_rel(rel: &str) -> String {
 
 /// Write one prerendered HTML file. When `page_renderer` is attached (§7),
 /// the shell comes from the framework adapter; otherwise the neutral-IR
-/// placeholder. Either way, `oxide_render::Injector` wraps the shell with
+/// placeholder. Either way, `oxide_fw_render::Injector` wraps the shell with
 /// the CSP nonce + hydration bootstrap (§10.2 step 4).
 /// §10.3: inject the boot script into an SSR'd shell. Placed right before
 /// `</body>` so the parser sees the DOM the island scanner will walk.
@@ -3376,7 +3376,7 @@ fn inject_island_boot_script(shell: &str, boot_url: &str, nonce: &str) -> String
 /// §16.4 / O2: locale set to prerender for. A project without i18n
 /// config returns a single empty-string locale; one with i18n returns
 /// one entry per declared locale.
-fn prerender_locales(cfg: &oxide_config::OxideConfig) -> Vec<String> {
+fn prerender_locales(cfg: &oxide_fw_config::OxideConfig) -> Vec<String> {
     if cfg.i18n.locales.is_empty() || cfg.i18n.strategy == "none" {
         vec![String::new()]
     } else {
@@ -3391,7 +3391,7 @@ fn prerender_locales(cfg: &oxide_config::OxideConfig) -> Vec<String> {
 fn prefixed_prerender_path(
     base_rel: &str,
     locale: &str,
-    cfg: &oxide_config::OxideConfig,
+    cfg: &oxide_fw_config::OxideConfig,
 ) -> (String, String) {
     if locale.is_empty() {
         return (
@@ -3439,8 +3439,8 @@ async fn prerender_targets(
     targets: Vec<PrerenderTarget>,
     nonce: &str,
     nonce_for: &str,
-    page_renderer: Option<&std::sync::Arc<dyn oxide_server::PageRenderer>>,
-    loader_runner: Option<&std::sync::Arc<dyn oxide_server::LoaderRunner>>,
+    page_renderer: Option<&std::sync::Arc<dyn oxide_fw_server::PageRenderer>>,
+    loader_runner: Option<&std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
     module_path: Option<&Path>,
     boot_script_url: Option<&str>,
     layout_ids: &[String],
@@ -3548,8 +3548,8 @@ async fn write_prerender(
     params: &BTreeMap<String, String>,
     locale: &str,
     nonce: &str,
-    page_renderer: Option<&std::sync::Arc<dyn oxide_server::PageRenderer>>,
-    loader_runner: Option<&std::sync::Arc<dyn oxide_server::LoaderRunner>>,
+    page_renderer: Option<&std::sync::Arc<dyn oxide_fw_server::PageRenderer>>,
+    loader_runner: Option<&std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
     module_path: Option<&Path>,
     boot_script_url: Option<&str>,
     // §8.2: layout chain for this route, outermost first. Populated by the
@@ -3597,7 +3597,7 @@ async fn write_prerender(
     let mut parent_data: serde_json::Value = serde_json::Value::Null;
     if let Some(loader) = loader_runner {
         for (lid, lpath) in layout_module_paths {
-            let mut linput = oxide_server::LoaderRunInput::new(
+            let mut linput = oxide_fw_server::LoaderRunInput::new(
                 lpath.to_string_lossy().to_string(),
                 lid.clone(),
                 url_path,
@@ -3632,8 +3632,8 @@ async fn write_prerender(
                         "<!doctype html><html><body>\
                          <h1>layout loader error</h1><pre>{}: {}</pre>\
                          </body></html>",
-                        oxide_render::escape_text(&e.0.code),
-                        oxide_render::escape_text(&e.0.message)
+                        oxide_fw_render::escape_text(&e.0.code),
+                        oxide_fw_render::escape_text(&e.0.message)
                     );
                     let dest = dist.join(rel);
                     if let Some(parent) = dest.parent() {
@@ -3653,7 +3653,7 @@ async fn write_prerender(
             .strip_suffix("/page")
             .unwrap_or(route_id)
             .to_string();
-        let mut input = oxide_server::LoaderRunInput::new(
+        let mut input = oxide_fw_server::LoaderRunInput::new(
             mp.to_string_lossy().to_string(),
             route_for_loader,
             url_path,
@@ -3694,8 +3694,8 @@ async fn write_prerender(
                     "<!doctype html><html><body>\
                      <h1>loader error</h1><pre>{}: {}</pre>\
                      </body></html>",
-                    oxide_render::escape_text(&e.0.code),
-                    oxide_render::escape_text(&e.0.message)
+                    oxide_fw_render::escape_text(&e.0.code),
+                    oxide_fw_render::escape_text(&e.0.message)
                 );
                 let dest = dist.join(rel);
                 if let Some(parent) = dest.parent() {
@@ -3716,7 +3716,7 @@ async fn write_prerender(
             .strip_suffix("/page")
             .unwrap_or(route_id)
             .to_string();
-        let mut input = oxide_server::PageRenderInput::new(route_for_render, url_path);
+        let mut input = oxide_fw_server::PageRenderInput::new(route_for_render, url_path);
         for (k, v) in params {
             input.params.insert(k.clone(), v.clone());
         }
@@ -3805,8 +3805,8 @@ async fn write_prerender(
         shell = inject_island_boot_script(&shell, url, nonce);
     }
 
-    let mut injector = oxide_render::Injector::new(
-        oxide_render::HeadTags::default(),
+    let mut injector = oxide_fw_render::Injector::new(
+        oxide_fw_render::HeadTags::default(),
         nonce.to_string(),
         route_id.to_string(),
     );
@@ -3826,7 +3826,7 @@ async fn write_prerender(
             "layouts": layouts,
         });
         let odf =
-            oxide_odf::encode_to_bytes(&oxide_odf::Value::from_json(&payload)).unwrap_or_default();
+            oxide_fw_odf::encode_to_bytes(&oxide_fw_odf::Value::from_json(&payload)).unwrap_or_default();
         use base64::Engine as _;
         injector.odf_payload_b64 = Some(base64::engine::general_purpose::STANDARD.encode(&odf));
     }
@@ -3875,12 +3875,12 @@ async fn write_prerender(
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
 async fn route_data_response(
-    req: &oxide_server::OxideRequest,
-    loader_runner: Option<&std::sync::Arc<dyn oxide_server::LoaderRunner>>,
+    req: &oxide_fw_server::OxideRequest,
+    loader_runner: Option<&std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
     module_path: Option<&std::path::Path>,
     route_id: Option<&str>,
     params: &std::collections::BTreeMap<String, String>,
-    metrics: &std::sync::Arc<oxide_server::Metrics>,
+    metrics: &std::sync::Arc<oxide_fw_server::Metrics>,
     started: std::time::Instant,
     middleware_locals: &serde_json::Value,
     middleware_headers: &[(String, String)],
@@ -3888,12 +3888,12 @@ async fn route_data_response(
     locale: &str,
     // §16.6 / WP-D1: session codec for re-sealing a loader-mutated
     // session on the data path.
-    session_codec: Option<&oxide_server::SessionCodec>,
+    session_codec: Option<&oxide_fw_server::SessionCodec>,
     // B-17: the `/__data` branch also shows up in the inspector waterfall,
     // split into the middleware phase it shares with SSR and its own load.
     middleware_ms: f64,
-    waterfall: Option<&oxide_dev::WaterfallRecorder>,
-) -> oxide_server::OxideResponse {
+    waterfall: Option<&oxide_fw_dev::WaterfallRecorder>,
+) -> oxide_fw_server::OxideResponse {
     let request_id = req.request_id.clone();
     let resp = route_data_response_inner(
         req,
@@ -3929,12 +3929,12 @@ async fn route_data_response(
 
 #[allow(clippy::too_many_arguments)]
 async fn route_data_response_inner(
-    req: &oxide_server::OxideRequest,
-    loader_runner: Option<&std::sync::Arc<dyn oxide_server::LoaderRunner>>,
+    req: &oxide_fw_server::OxideRequest,
+    loader_runner: Option<&std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
     module_path: Option<&std::path::Path>,
     route_id: Option<&str>,
     params: &std::collections::BTreeMap<String, String>,
-    metrics: &std::sync::Arc<oxide_server::Metrics>,
+    metrics: &std::sync::Arc<oxide_fw_server::Metrics>,
     started: std::time::Instant,
     // §8.4 parity: the middleware phase ran before this branch; its locals
     // feed the loads and its headers ride the response.
@@ -3946,8 +3946,8 @@ async fn route_data_response_inner(
     // SPEC-10: the resolved request locale.
     locale: &str,
     // §16.6 / WP-D1: session codec (see the wrapper's doc).
-    session_codec: Option<&oxide_server::SessionCodec>,
-) -> oxide_server::OxideResponse {
+    session_codec: Option<&oxide_fw_server::SessionCodec>,
+) -> oxide_fw_server::OxideResponse {
     // `?route=<percent-encoded path>` (default `/`).
     let route_q = req
         .url
@@ -3955,7 +3955,7 @@ async fn route_data_response_inner(
         .map(|(_, q)| q)
         .and_then(|q| {
             q.split('&')
-                .find_map(|kv| kv.strip_prefix("route=").map(oxide_server::percent_decode))
+                .find_map(|kv| kv.strip_prefix("route=").map(oxide_fw_server::percent_decode))
         })
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "/".to_string());
@@ -3973,7 +3973,7 @@ async fn route_data_response_inner(
     let mut layout_session_cookie: Option<String> = None;
     if let Some(runner) = loader_runner {
         for (lid, lpath) in layout_module_paths {
-            let mut linput = oxide_server::LoaderRunInput::new(
+            let mut linput = oxide_fw_server::LoaderRunInput::new(
                 lpath.to_string_lossy().to_string(),
                 lid.clone(),
                 &route_q,
@@ -4009,7 +4009,7 @@ async fn route_data_response_inner(
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let mut resp = oxide_server::OxideResponse::new(out.status, body);
+                    let mut resp = oxide_fw_server::OxideResponse::new(out.status, body);
                     if let Some(loc) = out.location {
                         resp = resp.with_header("location", loc);
                     }
@@ -4049,11 +4049,11 @@ async fn route_data_response_inner(
                 }
                 Err(e) => {
                     metrics.observe("_data", started.elapsed(), 500);
-                    return oxide_server::OxideResponse::html(
+                    return oxide_fw_server::OxideResponse::html(
                         500,
                         format!(
                             "layout loader error: {}",
-                            oxide_render::escape_text(&e.0.message)
+                            oxide_fw_render::escape_text(&e.0.message)
                         ),
                     );
                 }
@@ -4072,7 +4072,7 @@ async fn route_data_response_inner(
         std::collections::BTreeMap::new();
     if let (Some(runner), Some(mp), Some(rid)) = (loader_runner, module_path, route_id) {
         let route_for_loader = rid.strip_suffix("/page").unwrap_or(rid).to_string();
-        let mut input = oxide_server::LoaderRunInput::new(
+        let mut input = oxide_fw_server::LoaderRunInput::new(
             mp.to_string_lossy().to_string(),
             route_for_loader,
             &route_q,
@@ -4097,7 +4097,7 @@ async fn route_data_response_inner(
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let mut resp = oxide_server::OxideResponse::new(out.status, body);
+                let mut resp = oxide_fw_server::OxideResponse::new(out.status, body);
                 if let Some(loc) = out.location {
                     resp = resp.with_header("location", loc);
                 }
@@ -4148,9 +4148,9 @@ async fn route_data_response_inner(
             }
             Err(e) => {
                 metrics.observe("_data", started.elapsed(), 500);
-                return oxide_server::OxideResponse::html(
+                return oxide_fw_server::OxideResponse::html(
                     500,
-                    format!("loader error: {}", oxide_render::escape_text(&e.0.message)),
+                    format!("loader error: {}", oxide_fw_render::escape_text(&e.0.message)),
                 );
             }
         }
@@ -4180,9 +4180,9 @@ async fn route_data_response_inner(
     });
     // §9.5 / D11: encode as ODF, the wire format the client decodes.
     let body =
-        oxide_odf::encode_to_bytes(&oxide_odf::Value::from_json(&payload)).unwrap_or_default();
+        oxide_fw_odf::encode_to_bytes(&oxide_fw_odf::Value::from_json(&payload)).unwrap_or_default();
     metrics.observe("_data", started.elapsed(), 200);
-    let mut resp = oxide_server::OxideResponse::new(200, body)
+    let mut resp = oxide_fw_server::OxideResponse::new(200, body)
         .with_header("content-type", "application/oxide+odf");
     // §8.5 / §16.6 / WP-r9-3: middleware headers FIRST, then the loader's
     // session cookie — the loader is the later mutation and wins on the
@@ -4278,7 +4278,7 @@ async fn bundle_edge_entry(
     root: &Path,
     dist: &Path,
     entry: &Path,
-    css_transform: oxide_bundler::CssTransformHook,
+    css_transform: oxide_fw_bundler::CssTransformHook,
     // §18 / D18: specifiers left external in the edge bundle. Empty by
     // default; a Worker declaring node-compat lists what it expects the
     // runtime to provide.
@@ -4290,7 +4290,7 @@ async fn bundle_edge_entry(
     precompiled: std::collections::BTreeMap<std::path::PathBuf, String>,
     w: Writer<'_>,
 ) -> anyhow::Result<Option<PathBuf>> {
-    use oxide_bundler::Bundler as _;
+    use oxide_fw_bundler::Bundler as _;
     let out_dir = dist.join("deploy");
     std::fs::create_dir_all(&out_dir)?;
 
@@ -4298,7 +4298,7 @@ async fn bundle_edge_entry(
     entries.insert("edge".to_string(), entry.to_path_buf());
 
     let opts = bundle_env_options(
-        oxide_bundler::BundleEnv::Edge,
+        oxide_fw_bundler::BundleEnv::Edge,
         entries,
         out_dir.clone(),
         precompiled,
@@ -4316,7 +4316,7 @@ async fn bundle_edge_entry(
     // than widening that function's signature for one caller.
     let mut opts = opts;
     opts.externals = edge_externals;
-    let bundler = oxide_bundler::RolldownBundler::new(root);
+    let bundler = oxide_fw_bundler::RolldownBundler::new(root);
     let out = bundler
         .bundle(&opts)
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
@@ -4324,7 +4324,7 @@ async fn bundle_edge_entry(
     let entry_chunks: Vec<_> = out
         .chunks
         .iter()
-        .filter(|c| c.kind == oxide_bundler::ChunkKind::Entry)
+        .filter(|c| c.kind == oxide_fw_bundler::ChunkKind::Entry)
         .collect();
     if entry_chunks.is_empty() {
         return Ok(None);
@@ -4392,9 +4392,9 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     if plugin_declares_any(&rootp, &cfg, &["config", "configResolved"]) {
         // `tooling_pool` is a method on the `JsHost` trait, not an inherent
         // method — the trait must be in scope.
-        use oxide_jshost::JsHost as _;
-        let host = oxide_jshost::NodeHost::new(oxide_jshost::NodeHost::worker_script_default());
-        if let Ok(pool) = host.tooling_pool(oxide_jshost::PoolConfig::default()) {
+        use oxide_fw_jshost::JsHost as _;
+        let host = oxide_fw_jshost::NodeHost::new(oxide_fw_jshost::NodeHost::worker_script_default());
+        if let Ok(pool) = host.tooling_pool(oxide_fw_jshost::PoolConfig::default()) {
             let patches = fire_lifecycle_hook(
                 &rootp,
                 &cfg,
@@ -4461,23 +4461,23 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     for e in &tree.entries {
         if matches!(
             e.kind,
-            oxide_router::RouteKind::Page
-                | oxide_router::RouteKind::Endpoint
-                | oxide_router::RouteKind::Loading
+            oxide_fw_router::RouteKind::Page
+                | oxide_fw_router::RouteKind::Endpoint
+                | oxide_fw_router::RouteKind::Loading
                 // §8.2: layouts are client entries too — the client hydrate
                 // rebuilds the server's `<RootLayout><Page/></RootLayout>`
                 // tree via `componentFor`, which needs the layout chunk in
                 // `client.manifest.json`. Without this the client can only
                 // hydrate a bare page and React reports #418.
-                | oxide_router::RouteKind::Layout
+                | oxide_fw_router::RouteKind::Layout
                 // §6.4 / WP-A1: the generated SSR entry is the component
                 // surface; it must include the error / not-found / template
                 // modules the renderer resolves on failures and navigation.
-                | oxide_router::RouteKind::Error
-                | oxide_router::RouteKind::NotFound
-                | oxide_router::RouteKind::Template
+                | oxide_fw_router::RouteKind::Error
+                | oxide_fw_router::RouteKind::NotFound
+                | oxide_fw_router::RouteKind::Template
         ) {
-            if matches!(e.kind, oxide_router::RouteKind::Loading) {
+            if matches!(e.kind, oxide_fw_router::RouteKind::Loading) {
                 loading_entries.insert(e.id.0.clone(), rootp.join(&cfg.routes.dir).join(&e.file));
             } else {
                 entries.insert(e.id.0.clone(), rootp.join(&cfg.routes.dir).join(&e.file));
@@ -4499,7 +4499,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // Rolldown's built-in Oxc pipeline, and its `PrecompiledPlugin` serves
     // the JS the tooling pool produced for any `.vue`/`.svelte` entries.
     // Real V3 sourcemaps come from `SourceMapType::File`.
-    use oxide_bundler::Bundler as _;
+    use oxide_fw_bundler::Bundler as _;
     outln!(w, "bundler: rolldown");
 
     // §10.3 islands + §8.4 client runtime: generate a synthetic boot entry
@@ -4520,7 +4520,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         let has_page_routes = tree
             .entries
             .iter()
-            .any(|e| matches!(e.kind, oxide_router::RouteKind::Page));
+            .any(|e| matches!(e.kind, oxide_fw_router::RouteKind::Page));
         if !has_page_routes {
             None
         } else {
@@ -4712,8 +4712,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // (kind: wasm). JS runs first (it sees original source), then WASM.
     let wasm_hook = build_transform_hook(&rootp, &cfg);
     let js_hook = build_js_plugin_hook(&rootp, &cfg, stack.tooling_pool.as_ref());
-    let transform_hook: Option<oxide_bundler::TransformHook> = match (js_hook, wasm_hook) {
-        (Some(js), Some(wasm)) => Some(oxide_bundler::TransformHook::new(move |id, src| {
+    let transform_hook: Option<oxide_fw_bundler::TransformHook> = match (js_hook, wasm_hook) {
+        (Some(js), Some(wasm)) => Some(oxide_fw_bundler::TransformHook::new(move |id, src| {
             let after_js = js.call(id, src)?;
             wasm.call(id, &after_js)
         })),
@@ -4725,7 +4725,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     let css_transform = build_css_transform_hook(&cfg);
 
     let client_opts = bundle_env_options(
-        oxide_bundler::BundleEnv::Client,
+        oxide_fw_bundler::BundleEnv::Client,
         client_entries,
         client_out.clone(),
         client_precompiled,
@@ -4738,7 +4738,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         true, // production build minifies
     );
     let server_opts = bundle_env_options(
-        oxide_bundler::BundleEnv::Ssr,
+        oxide_fw_bundler::BundleEnv::Ssr,
         server_entries.clone(),
         server_out.clone(),
         server_precompiled.clone(),
@@ -4763,7 +4763,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         )
         .await;
     }
-    let rb = oxide_bundler::RolldownBundler::new(&rootp);
+    let rb = oxide_fw_bundler::RolldownBundler::new(&rootp);
     // SPEC-16.6 / §16-A: scan every route entry for `.svg?react` imports
     // and register a generated React component for each unique file. The
     // import `./icon.svg?react` then resolves to a synthetic path whose
@@ -4819,7 +4819,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                         continue;
                     };
                     let display = svg_path.to_string_lossy().to_string();
-                    match oxide_bundler::svg_react::svg_to_react_component(&raw, &display) {
+                    match oxide_fw_bundler::svg_react::svg_to_react_component(&raw, &display) {
                         Ok(tsx) => {
                             // Synthetic path: same dir as the SVG, with
                             // `.react.tsx` appended so the resolver's `.tsx`
@@ -4871,7 +4871,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     // Strip leading `./` from the relative URL.
                     let rel_url = rel_url.strip_prefix("./").unwrap_or(rel_url);
                     let url_base = format!("/_oxide/image?src={rel_url}");
-                    let srcset = oxide_assets::srcset(&widths, &url_base);
+                    let srcset = oxide_fw_assets::srcset(&widths, &url_base);
                     let max_w = widths.iter().copied().max().unwrap_or(w0);
                     let src = format!("{url_base}&w={max_w}");
                     let module = format!(
@@ -4983,7 +4983,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             w,
             "bundle: client unchanged (env fingerprint match) — skipped"
         );
-        oxide_bundler::BundleOutput {
+        oxide_fw_bundler::BundleOutput {
             modules: Vec::new(),
             chunks: Vec::new(),
             client_manifest: None,
@@ -5000,7 +5000,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // addon or an unshimmed `node:` builtin) must fail loudly. The bundler
     // externalizes `node:` specifiers, so scanning the emitted JS misses them;
     // scan the source server modules instead.
-    if matches!(cfg.server.backend, oxide_config::JsBackend::V8) {
+    if matches!(cfg.server.backend, oxide_fw_config::JsBackend::V8) {
         let mut needs: Vec<String> = Vec::new();
         let mut stack = vec![rootp.clone()];
         while let Some(dir) = stack.pop() {
@@ -5033,7 +5033,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                             .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
                             .collect();
                         if let Some(reason) =
-                            oxide_jshost::v8_loader::requires_node_backend(&format!("node:{bname}"))
+                            oxide_fw_jshost::v8_loader::requires_node_backend(&format!("node:{bname}"))
                         {
                             needs.push(reason);
                         }
@@ -5055,7 +5055,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 needs.join(", ")
             );
             outln!(w, "error JSH-V8KIND: {msg}");
-            let d = oxide_diagnostics::Diagnostic::error("JSH-V8KIND", msg);
+            let d = oxide_fw_diagnostics::Diagnostic::error("JSH-V8KIND", msg);
             persist_diagnostics(&rootp, &[d]);
             anyhow::bail!("V8 backend incompatible with the server code (JSH-V8KIND)");
         }
@@ -5177,7 +5177,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 }
             }
         }
-        let mut hits: Vec<oxide_diagnostics::Diagnostic> = Vec::new();
+        let mut hits: Vec<oxide_fw_diagnostics::Diagnostic> = Vec::new();
         for (sp, ident) in &server_exports {
             for (chunk, code) in &client_code {
                 if code.contains(ident.as_str()) {
@@ -5186,7 +5186,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     // string literal the guard found (>= 8 chars), so a
                     // substring search for it in the quoted source is exact
                     // enough to name the line.
-                    let mut diag = oxide_diagnostics::Diagnostic::error(
+                    let mut diag = oxide_fw_diagnostics::Diagnostic::error(
                         "CMP-GUARD",
                         format!(
                             "server-only `{ident}` from `{}` shipped into client chunk `{chunk}`",
@@ -5199,13 +5199,13 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     );
                     if let Ok(src) = std::fs::read_to_string(sp) {
                         if let Some((line_no, col)) = find_literal_line(&src, ident) {
-                            diag = diag.at(oxide_diagnostics::Location::file(
+                            diag = diag.at(oxide_fw_diagnostics::Location::file(
                                 sp.to_string_lossy(),
                                 line_no as u32,
                                 col as u32,
                             ));
                             let frame =
-                                oxide_diagnostics::render_code_frame(&src, line_no, Some(col));
+                                oxide_fw_diagnostics::render_code_frame(&src, line_no, Some(col));
                             if !frame.is_empty() {
                                 diag = diag.with_code_frame(frame);
                             }
@@ -5230,7 +5230,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
 
     // SEC-08: fail the build if a secret-looking `process.env.*` read shipped
     // into the client bundle.
-    let secret_hits = oxide_bundler::scan_client_secrets(&client_outcome.chunks);
+    let secret_hits = oxide_fw_bundler::scan_client_secrets(&client_outcome.chunks);
     if !secret_hits.is_empty() {
         for d in &secret_hits {
             outln!(w, "error {}: {}", d.code, d.message);
@@ -5302,7 +5302,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     //      `generateParams` array → one HTML per param entry.
     // Runtime-valued `generateParams` cannot be evaluated at build time without
     // a JS worker (post-MLP) and is skipped with a printed notice.
-    let nonce = oxide_bundler::ChunkBundler::content_hash(&[build_id.as_bytes()]);
+    let nonce = oxide_fw_bundler::ChunkBundler::content_hash(&[build_id.as_bytes()]);
     let mut prerendered: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // PERF-04: (route_id, url_path, sentineled html) for the L0 seed manifest.
     // (route_id, url, sentineled_html, status, locale) — the locale is
@@ -5332,7 +5332,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // whether they also have a server module.
     let mut static_override: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for e in &tree.entries {
-        if !matches!(e.kind, oxide_router::RouteKind::Page) {
+        if !matches!(e.kind, oxide_fw_router::RouteKind::Page) {
             continue;
         }
 
@@ -5342,9 +5342,9 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             .join(e.file.with_file_name("page.server.ts"));
         let gen_params = if server_mod.is_file() {
             let src = std::fs::read_to_string(&server_mod).unwrap_or_default();
-            oxide_compiler::extract_generate_params(&src)
+            oxide_fw_compiler::extract_generate_params(&src)
         } else {
-            oxide_compiler::GenerateParamsResult::Absent
+            oxide_fw_compiler::GenerateParamsResult::Absent
         };
 
         let pattern = pattern_of(&e.segments);
@@ -5360,7 +5360,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         let layout_ids: Vec<String> = {
             let mut chain: Vec<(String, usize)> = Vec::new();
             for candidate in &tree.entries {
-                if !matches!(candidate.kind, oxide_router::RouteKind::Layout) {
+                if !matches!(candidate.kind, oxide_fw_router::RouteKind::Layout) {
                     continue;
                 }
                 // A layout `routes/<a>/<b>/layout` wraps any route whose id
@@ -5394,7 +5394,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 tree.entries
                     .iter()
                     .find(|le| {
-                        le.id.0 == *lid && matches!(le.kind, oxide_router::RouteKind::Layout)
+                        le.id.0 == *lid && matches!(le.kind, oxide_fw_router::RouteKind::Layout)
                     })
                     .map(|le| {
                         (
@@ -5412,7 +5412,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         let prerender_error_route_id: Option<String> = {
             let mut best: Option<(String, usize)> = None;
             for candidate in &tree.entries {
-                if !matches!(candidate.kind, oxide_router::RouteKind::Error) {
+                if !matches!(candidate.kind, oxide_fw_router::RouteKind::Error) {
                     continue;
                 }
                 let base = candidate
@@ -5465,7 +5465,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             prerender_error_route_id.as_deref(),
         );
         match gen_params {
-            oxide_compiler::GenerateParamsResult::Literal(params) => {
+            oxide_fw_compiler::GenerateParamsResult::Literal(params) => {
                 // Prerendered output exists → effective mode `static` for the
                 // manifest, even if the route also has a server module.
                 static_override.insert(route_id.clone());
@@ -5546,7 +5546,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     prerendered.insert(route_id.clone(), outs);
                 }
             }
-            oxide_compiler::GenerateParamsResult::Runtime { .. } => {
+            oxide_fw_compiler::GenerateParamsResult::Runtime { .. } => {
                 // Runtime evaluate `generateParams` via the worker (spec
                 // §10.5). The route's `page.server.ts` module is imported by
                 // the same worker pool that backs the loader and renderer;
@@ -5558,7 +5558,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 let params_via_worker: Option<Vec<std::collections::BTreeMap<String, String>>> =
                     match (stack.pool.as_ref(), module_path.as_deref()) {
                         (Some(pool), Some(mp)) => {
-                            let host = oxide_jshost::LoaderHost::new(std::sync::Arc::clone(pool));
+                            let host = oxide_fw_jshost::LoaderHost::new(std::sync::Arc::clone(pool));
                             match host.generate_params(&mp.to_string_lossy()).await {
                                 Ok(list) => Some(list),
                                 Err(e) => {
@@ -5675,7 +5675,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     }
                 }
             }
-            oxide_compiler::GenerateParamsResult::Absent => {
+            oxide_fw_compiler::GenerateParamsResult::Absent => {
                 // §10.1: three signals decide whether a route with no
                 // `generateParams` is prerendered.
                 //
@@ -5852,8 +5852,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // a `defineMeta` override all reach the index as the user sees them.
     if cfg.build.route_search && !prerendered.is_empty() {
         let search_index =
-            oxide_assets::route_search::build_route_search_index(&prerendered, &dist);
-        if let Ok(json) = oxide_assets::route_search::route_search_index_to_json(&search_index) {
+            oxide_fw_assets::route_search::build_route_search_index(&prerendered, &dist);
+        if let Ok(json) = oxide_fw_assets::route_search::route_search_index_to_json(&search_index) {
             let path = dist.join("client/search-index.json");
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -5945,10 +5945,10 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // routes.d.ts).
     {
         let locales_root = rootp.join("locales");
-        match oxide_assets::i18n::load_catalog_from_dir(&locales_root) {
+        match oxide_fw_assets::i18n::load_catalog_from_dir(&locales_root) {
             Ok(cat) if !cat.entries.is_empty() => {
                 let out_path = rootp.join(".oxide/types/messages.d.ts");
-                if let Err(e) = oxide_assets::i18n::write_messages_dts(&cat, &out_path) {
+                if let Err(e) = oxide_fw_assets::i18n::write_messages_dts(&cat, &out_path) {
                     outln!(
                         w,
                         "warn: messages.d.ts typegen failed ({} {}); stale",
@@ -5998,7 +5998,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 let per_route_dir = messages_dir.clone();
                 let mut routes_with_keys = 0usize;
                 for e in &tree.entries {
-                    if !matches!(e.kind, oxide_router::RouteKind::Page) {
+                    if !matches!(e.kind, oxide_fw_router::RouteKind::Page) {
                         continue;
                     }
                     let route_file = rootp.join(&cfg.routes.dir).join(&e.file);
@@ -6100,9 +6100,9 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 // routable pages.
                 if matches!(
                     e.kind,
-                    oxide_router::RouteKind::Error
-                        | oxide_router::RouteKind::NotFound
-                        | oxide_router::RouteKind::Template
+                    oxide_fw_router::RouteKind::Error
+                        | oxide_fw_router::RouteKind::NotFound
+                        | oxide_fw_router::RouteKind::Template
                 ) {
                     row["render_mode"] = serde_json::Value::Null;
                     continue;
@@ -6159,9 +6159,9 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     }
     let effective_adapter = plugin_adapter.as_deref().unwrap_or(&cfg.adapter);
     let target = if r#static {
-        oxide_adapters::Target::Static
+        oxide_fw_adapters::Target::Static
     } else {
-        oxide_adapters::Target::parse(effective_adapter).ok_or_else(|| {
+        oxide_fw_adapters::Target::parse(effective_adapter).ok_or_else(|| {
             anyhow::anyhow!(
                 "unknown adapter `{}`; expected one of binary|node|static|docker|cloudflare|lambda|vercel|netlify|deno|bun (§18)",
                 cfg.adapter
@@ -6169,7 +6169,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         })?
     };
     let static_fallback = cfg.static_export.fallback.clone();
-    let artifact = oxide_adapters::BuildArtifact {
+    let artifact = oxide_fw_adapters::BuildArtifact {
         out_dir: dist.clone(),
         build_id: build_id.clone(),
         client_manifest,
@@ -6181,7 +6181,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // §18 / §2 D18: for the Cloudflare target, best-effort compile the core
     // subset to wasm32 and hand it to the adapter. A missing wasm32 target is
     // not fatal — the Worker's JS fallback covers the same functions.
-    if target == oxide_adapters::Target::Cloudflare {
+    if target == oxide_fw_adapters::Target::Cloudflare {
         match compile_edge_wasm(&rootp, &dist) {
             Ok(Some(path)) => {
                 outln!(w, "edge wasm compiled: {}", path.display());
@@ -6211,7 +6211,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // path.
     if matches!(
         target,
-        oxide_adapters::Target::Cloudflare | oxide_adapters::Target::CloudflarePages
+        oxide_fw_adapters::Target::Cloudflare | oxide_fw_adapters::Target::CloudflarePages
     ) {
         if let Some(edge_entry) = find_edge_entry(&rootp) {
             match bundle_edge_entry(
@@ -6242,7 +6242,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         }
     }
 
-    let written = oxide_adapters::emit(target, &artifact, &dist.join("deploy"))
+    let written = oxide_fw_adapters::emit(target, &artifact, &dist.join("deploy"))
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
     // under `.oxide/types/`. A failure is a warning (the app still ships).
     if plugin_declares_any(&rootp, &cfg, &["typegen"]) {
@@ -6470,7 +6470,7 @@ pub struct DevFlags {
 impl DevFlags {
     /// Parse the `--proxy` strings into `ProxyRule`s. Format:
     /// `[!]PREFIX=TARGET`, where a leading `!` requests prefix stripping.
-    pub fn proxy_rules(&self) -> Vec<oxide_dev::ProxyRule> {
+    pub fn proxy_rules(&self) -> Vec<oxide_fw_dev::ProxyRule> {
         self.proxy
             .iter()
             .filter_map(|s| {
@@ -6479,7 +6479,7 @@ impl DevFlags {
                     None => (false, s.as_str()),
                 };
                 let (prefix, target) = rest.split_once('=')?;
-                let rule = oxide_dev::ProxyRule::new(prefix, target);
+                let rule = oxide_fw_dev::ProxyRule::new(prefix, target);
                 Some(if strip { rule.with_strip(true) } else { rule })
             })
             .collect()
@@ -6491,14 +6491,14 @@ pub struct StartedServer {
     pub shutdown: tokio::sync::watch::Sender<bool>,
     /// Metrics registry (§20) shared with the pipeline and the dispatch
     /// delegate; exposed so tests and observability tooling can read it.
-    pub metrics: std::sync::Arc<oxide_server::Metrics>,
+    pub metrics: std::sync::Arc<oxide_fw_server::Metrics>,
     /// SEC-09: the dev inspector token, when the inspector is attached (dev
     /// only). The dev banner prints it so the developer can open
     /// `/__oxide?token=…`; `None` in production.
     pub dev_token: Option<String>,
     /// SPEC-14: the dev HMR hub, when dev. The dev loop publishes file
     /// changes to it; `/_oxide/hmr` subscribers receive them.
-    pub hmr: Option<std::sync::Arc<oxide_dev::HmrHub>>,
+    pub hmr: Option<std::sync::Arc<oxide_fw_dev::HmrHub>>,
     /// §10.8: the PPR shell store, when `render.ppr` is on. The dev watcher
     /// clears it on every change so a shell captured before an edit cannot
     /// outlive the source it was rendered from.
@@ -6509,26 +6509,26 @@ pub struct StartedServer {
 }
 
 /// Boxed dispatch future. Structurally identical to `futures::future::BoxFuture<_,
-/// OxideResponse>` (which [`oxide_server::Server::serve`] takes) without needing a
+/// OxideResponse>` (which [`oxide_fw_server::Server::serve`] takes) without needing a
 /// `futures` dependency in this crate.
 type BoxedResponse =
-    std::pin::Pin<Box<dyn std::future::Future<Output = oxide_server::OxideResponse> + Send>>;
+    std::pin::Pin<Box<dyn std::future::Future<Output = oxide_fw_server::OxideResponse> + Send>>;
 
 /// Inspector adapter for the dev server: converts the CLI's
-/// `RouteTableInspector` into the `oxide_server::InspectorSnapshot` trait
+/// `RouteTableInspector` into the `oxide_fw_server::InspectorSnapshot` trait
 /// (§13.4). The trait lives in oxide-server so the pipeline can render it
 /// without depending on oxide-dev.
 #[derive(Debug)]
 struct CliInspector {
-    state: oxide_dev::InspectorState,
+    state: oxide_fw_dev::InspectorState,
 }
 
-impl oxide_server::InspectorSnapshot for CliInspector {
+impl oxide_fw_server::InspectorSnapshot for CliInspector {
     fn state_json(&self) -> serde_json::Value {
         serde_json::to_value(&self.state).unwrap_or(serde_json::Value::Null)
     }
     fn render_html(&self) -> String {
-        oxide_dev::render_inspector_html(&self.state)
+        oxide_fw_dev::render_inspector_html(&self.state)
     }
 }
 
@@ -6553,8 +6553,8 @@ pub async fn start_server(
 /// tests can drive it with a fake renderer, and so the framework-adapter
 /// wiring has one integration point instead of nesting inside the server
 /// startup function.
-/// Bridge an `oxide_server::RenderStream` (a `BoxStream` that promises
-/// only `Send`) into an `oxide_server::BodyStream` (which promises
+/// Bridge an `oxide_fw_server::RenderStream` (a `BoxStream` that promises
+/// only `Send`) into an `oxide_fw_server::BodyStream` (which promises
 /// `Send + Sync` because `BodyExt::boxed` demands it).
 ///
 /// The bridge is an mpsc channel: a spawned task pumps each source chunk
@@ -6567,7 +6567,7 @@ pub async fn start_server(
 /// are preserved in the io error's text so a hyper-layer log line names
 /// the framework error. The kind is `Other` — there is no precise
 /// `ErrorKind` for "the worker crashed mid-render".
-fn render_stream_to_body_stream(src: oxide_server::RenderStream) -> oxide_server::BodyStream {
+fn render_stream_to_body_stream(src: oxide_fw_server::RenderStream) -> oxide_fw_server::BodyStream {
     render_stream_with_recovery(src, None, None, String::new())
 }
 
@@ -6584,11 +6584,11 @@ fn render_stream_to_body_stream(src: oxide_server::RenderStream) -> oxide_server
 /// `render_stream_to_body_stream` shim) keeps the old abort behaviour for
 /// callers that have no boundary context.
 fn render_stream_with_recovery(
-    src: oxide_server::RenderStream,
+    src: oxide_fw_server::RenderStream,
     boundary_id: Option<String>,
     nonce: Option<String>,
     route_id: String,
-) -> oxide_server::BodyStream {
+) -> oxide_fw_server::BodyStream {
     let (tx, mut rx) =
         tokio::sync::mpsc::channel::<std::result::Result<bytes::Bytes, std::io::Error>>(8);
     tokio::spawn(async move {
@@ -6610,7 +6610,7 @@ fn render_stream_with_recovery(
                     {
                         // Shell committed: emit the recovery boundary, then
                         // close cleanly (no io::Error → no connection reset).
-                        let html = oxide_render::stream_error_recovery(id, &e.0, n);
+                        let html = oxide_fw_render::stream_error_recovery(id, &e.0, n);
                         let _ = tx.send(Ok(bytes::Bytes::from(html))).await;
                         return;
                     }
@@ -6650,8 +6650,8 @@ fn render_stream_with_recovery(
 /// TTFB cost: one first-chunk await — the shell chunk real adapters yield
 /// before awaiting the body stream, so the shell flush timing is unchanged.
 fn probe_render_error_status(
-    mut src: oxide_server::RenderStream,
-) -> impl std::future::Future<Output = (u16, oxide_server::RenderStream)> + Send {
+    mut src: oxide_fw_server::RenderStream,
+) -> impl std::future::Future<Output = (u16, oxide_fw_server::RenderStream)> + Send {
     use futures::StreamExt as _;
     async move {
         match src.next().await {
@@ -6707,8 +6707,8 @@ fn parse_form_urlencoded(body: &[u8]) -> Vec<(String, String)> {
         .map(|pair| {
             let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
             (
-                oxide_server::percent_decode(&k.replace('+', " ")),
-                oxide_server::percent_decode(&v.replace('+', " ")),
+                oxide_fw_server::percent_decode(&k.replace('+', " ")),
+                oxide_fw_server::percent_decode(&v.replace('+', " ")),
             )
         })
         .collect()
@@ -6723,7 +6723,7 @@ fn action_from_query(url: &str) -> Option<String> {
     if rest.is_empty() || rest.contains('/') {
         return None;
     }
-    Some(oxide_server::percent_decode(rest))
+    Some(oxide_fw_server::percent_decode(rest))
 }
 
 /// §5.6: wrap a dispatch so a mid-flight file change aborts instead of
@@ -6753,10 +6753,10 @@ fn action_from_query(url: &str) -> Option<String> {
 /// window is a few milliseconds — the abort almost never fires. Non-
 /// streaming (SSR, `/__data`, loaders) get the full guard.
 pub(crate) fn wrap_dispatch_with_stale_guard(
-    dispatch: std::sync::Arc<dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync>,
-    hub: std::sync::Arc<oxide_dev::HmrHub>,
-) -> std::sync::Arc<dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync> {
-    std::sync::Arc::new(move |req: oxide_server::OxideRequest| {
+    dispatch: std::sync::Arc<dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync>,
+    hub: std::sync::Arc<oxide_fw_dev::HmrHub>,
+) -> std::sync::Arc<dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync> {
+    std::sync::Arc::new(move |req: oxide_fw_server::OxideRequest| {
         let hub = std::sync::Arc::clone(&hub);
         let inner = std::sync::Arc::clone(&dispatch);
         Box::pin(async move {
@@ -6782,14 +6782,14 @@ pub(crate) fn wrap_dispatch_with_stale_guard(
 }
 
 /// §5.6: the retryable 503 a mid-flight file change produces.
-fn stale_503(start: u64, now: u64) -> oxide_server::OxideResponse {
+fn stale_503(start: u64, now: u64) -> oxide_fw_server::OxideResponse {
     let body = format!(
         "<!doctype html><html><head><title>stale</title></head><body>\
          <p>file changed during dispatch (generation {} to {}); retry</p>\
          </body></html>",
         start, now
     );
-    let mut resp = oxide_server::OxideResponse::html(503, body);
+    let mut resp = oxide_fw_server::OxideResponse::html(503, body);
     resp.headers
         .push(("retry-after".to_string(), "0".to_string()));
     resp.headers
@@ -6804,48 +6804,48 @@ fn stale_503(start: u64, now: u64) -> oxide_server::OxideResponse {
 /// passes the live one to `build_dispatch_swappable` directly.
 #[derive(Clone)]
 pub(crate) struct SwappableRouteTree {
-    inner: std::sync::Arc<std::sync::RwLock<std::sync::Arc<oxide_router::RouteTree>>>,
+    inner: std::sync::Arc<std::sync::RwLock<std::sync::Arc<oxide_fw_router::RouteTree>>>,
 }
 
 impl SwappableRouteTree {
-    pub fn new(tree: std::sync::Arc<oxide_router::RouteTree>) -> Self {
+    pub fn new(tree: std::sync::Arc<oxide_fw_router::RouteTree>) -> Self {
         Self {
             inner: std::sync::Arc::new(std::sync::RwLock::new(tree)),
         }
     }
 
-    pub fn load(&self) -> std::sync::Arc<oxide_router::RouteTree> {
+    pub fn load(&self) -> std::sync::Arc<oxide_fw_router::RouteTree> {
         std::sync::RwLock::read(&self.inner)
             .expect("route tree lock poisoned")
             .clone()
     }
 
-    pub fn store(&self, tree: std::sync::Arc<oxide_router::RouteTree>) {
+    pub fn store(&self, tree: std::sync::Arc<oxide_fw_router::RouteTree>) {
         *std::sync::RwLock::write(&self.inner).expect("route tree lock poisoned") = tree;
     }
 }
 
 fn build_dispatch(
-    tree: std::sync::Arc<oxide_router::RouteTree>,
-    metrics: std::sync::Arc<oxide_server::Metrics>,
-    proxy_rules: Vec<oxide_dev::ProxyRule>,
-    page_renderer: Option<std::sync::Arc<dyn oxide_server::PageRenderer>>,
-    loader_runner: Option<std::sync::Arc<dyn oxide_server::LoaderRunner>>,
+    tree: std::sync::Arc<oxide_fw_router::RouteTree>,
+    metrics: std::sync::Arc<oxide_fw_server::Metrics>,
+    proxy_rules: Vec<oxide_fw_dev::ProxyRule>,
+    page_renderer: Option<std::sync::Arc<dyn oxide_fw_server::PageRenderer>>,
+    loader_runner: Option<std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
     routes_root: std::path::PathBuf,
     boot_script_url: Option<String>,
     l0: Option<std::sync::Arc<l0_cache::L0Cache>>,
-    actions: Option<std::sync::Arc<dyn oxide_server::ActionDispatcher>>,
-    archived: Option<std::sync::Arc<oxide_router::ArchivedTree>>,
-    pool: Option<std::sync::Arc<dyn oxide_jshost::Pool>>,
-    i18n_cfg: Option<oxide_assets::i18n::I18nConfig>,
-    endpoint_dispatcher: Option<std::sync::Arc<dyn oxide_server::EndpointDispatcher>>,
-    middleware_dispatcher: Option<std::sync::Arc<dyn oxide_server::MiddlewareDispatcher>>,
+    actions: Option<std::sync::Arc<dyn oxide_fw_server::ActionDispatcher>>,
+    archived: Option<std::sync::Arc<oxide_fw_router::ArchivedTree>>,
+    pool: Option<std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
+    i18n_cfg: Option<oxide_fw_assets::i18n::I18nConfig>,
+    endpoint_dispatcher: Option<std::sync::Arc<dyn oxide_fw_server::EndpointDispatcher>>,
+    middleware_dispatcher: Option<std::sync::Arc<dyn oxide_fw_server::MiddlewareDispatcher>>,
     dev_hmr: bool,
     vary_headers: Vec<String>,
-    waterfall: Option<oxide_dev::WaterfallRecorder>,
-    session_codec: Option<std::sync::Arc<oxide_server::SessionCodec>>,
+    waterfall: Option<oxide_fw_dev::WaterfallRecorder>,
+    session_codec: Option<std::sync::Arc<oxide_fw_server::SessionCodec>>,
     ppr_shells: Option<PprShells>,
-) -> std::sync::Arc<dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync> {
+) -> std::sync::Arc<dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync> {
     build_dispatch_swappable(
         SwappableRouteTree::new(tree),
         metrics,
@@ -6892,30 +6892,30 @@ fn forward_action_set_cookies(
 
 fn build_dispatch_swappable(
     swappable: SwappableRouteTree,
-    metrics: std::sync::Arc<oxide_server::Metrics>,
-    proxy_rules: Vec<oxide_dev::ProxyRule>,
-    page_renderer: Option<std::sync::Arc<dyn oxide_server::PageRenderer>>,
-    loader_runner: Option<std::sync::Arc<dyn oxide_server::LoaderRunner>>,
+    metrics: std::sync::Arc<oxide_fw_server::Metrics>,
+    proxy_rules: Vec<oxide_fw_dev::ProxyRule>,
+    page_renderer: Option<std::sync::Arc<dyn oxide_fw_server::PageRenderer>>,
+    loader_runner: Option<std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
     routes_root: std::path::PathBuf,
     boot_script_url: Option<String>,
     l0: Option<std::sync::Arc<l0_cache::L0Cache>>,
-    actions: Option<std::sync::Arc<dyn oxide_server::ActionDispatcher>>,
+    actions: Option<std::sync::Arc<dyn oxide_fw_server::ActionDispatcher>>,
     // PERF-07: when `Some`, route matching reads the mmap'd rkyv archive
     // instead of the in-memory tree. Tests pass `None`.
-    archived: Option<std::sync::Arc<oxide_router::ArchivedTree>>,
+    archived: Option<std::sync::Arc<oxide_fw_router::ArchivedTree>>,
     // PERF-02: the render/loader pool, so the dispatch can surface its live
     // gauges into metrics. Tests pass `None`.
-    pool: Option<std::sync::Arc<dyn oxide_jshost::Pool>>,
+    pool: Option<std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
     // SPEC-10: the i18n config, when the project declares locales. `None`
     // disables locale resolution (every loader sees `locale = ""`).
-    i18n_cfg: Option<oxide_assets::i18n::I18nConfig>,
+    i18n_cfg: Option<oxide_fw_assets::i18n::I18nConfig>,
     // §8.1 route.ts / §10.2 step 7: dispatch a matched Endpoint route.
     // `None` means no `route.ts` execution is possible (a project without
     // a worker pool, or a build-time call site).
-    endpoint_dispatcher: Option<std::sync::Arc<dyn oxide_server::EndpointDispatcher>>,
+    endpoint_dispatcher: Option<std::sync::Arc<dyn oxide_fw_server::EndpointDispatcher>>,
     // §8.1 middleware.ts / §8.5: dispatch a route's middleware before the
     // loader/render phase. `None` means middleware is not executed.
-    middleware_dispatcher: Option<std::sync::Arc<dyn oxide_server::MiddlewareDispatcher>>,
+    middleware_dispatcher: Option<std::sync::Arc<dyn oxide_fw_server::MiddlewareDispatcher>>,
     // §13.3: dev-only. When true, inject a self-contained HMR client script
     // (connects to `/_oxide/hmr`, swaps CSS, reloads on server updates, shows
     // the error overlay). `false` in production.
@@ -6925,16 +6925,16 @@ fn build_dispatch_swappable(
     vary_headers: Vec<String>,
     // §20: the per-request waterfall recorder. `None` for a non-inspector
     // server; the dispatch then skips recording.
-    waterfall: Option<oxide_dev::WaterfallRecorder>,
+    waterfall: Option<oxide_fw_dev::WaterfallRecorder>,
     // §16.6: the session codec, built from `security.sessionKeys`. `None`
     // when the project configures no keys — session cookies then carry no
     // `locals.session` (the signed-only `sign_cookie` primitive remains for
     // a project that wants a tamper-evident, non-confidential cookie).
-    session_codec: Option<std::sync::Arc<oxide_server::SessionCodec>>,
+    session_codec: Option<std::sync::Arc<oxide_fw_server::SessionCodec>>,
     // §10.8 / B-27: the PPR shell cache. `Some` only when `render.ppr` is on;
     // the dispatch then serves a cached shell and streams holes into it.
     ppr_shells: Option<PprShells>,
-) -> std::sync::Arc<dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync> {
+) -> std::sync::Arc<dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync> {
     let boot_script_url_for_render = boot_script_url.clone();
     let ppr_for_render = ppr_shells.clone();
     let dev_hmr_for_render = dev_hmr;
@@ -6947,7 +6947,7 @@ fn build_dispatch_swappable(
     let flight_map: std::sync::Arc<
         dashmap::DashMap<
             String,
-            std::sync::Arc<tokio::sync::broadcast::Sender<std::sync::Arc<oxide_cache::Entry>>>,
+            std::sync::Arc<tokio::sync::broadcast::Sender<std::sync::Arc<oxide_fw_cache::Entry>>>,
         >,
     > = std::sync::Arc::new(dashmap::DashMap::new());
     // §8.5: a middleware `{ rewrite }` re-routes the request to another path.
@@ -6959,13 +6959,13 @@ fn build_dispatch_swappable(
     // middleware that always rewrites to itself would otherwise spin).
     let self_dispatch: std::sync::Arc<
         std::sync::OnceLock<
-            std::sync::Arc<dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync>,
+            std::sync::Arc<dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync>,
         >,
     > = std::sync::Arc::new(std::sync::OnceLock::new());
     let self_dispatch_for_closure = std::sync::Arc::clone(&self_dispatch);
     let dispatch_fn: std::sync::Arc<
-        dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync,
-    > = std::sync::Arc::new(move |req: oxide_server::OxideRequest| {
+        dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync,
+    > = std::sync::Arc::new(move |req: oxide_fw_server::OxideRequest| {
         let tree = swappable.load();
         let started = std::time::Instant::now();
         // Rewrite-hop guard (§8.5 / S-20): the hop count is tracked on the
@@ -6976,7 +6976,7 @@ fn build_dispatch_swappable(
         let _is_rewritten = rewrite_hop > 0;
         if rewrite_hop > 8 {
             return Box::pin(async move {
-                oxide_server::OxideResponse::html(
+                oxide_fw_server::OxideResponse::html(
                     508,
                     "middleware rewrite loop detected (too many hops)",
                 )
@@ -6993,20 +6993,20 @@ fn build_dispatch_swappable(
         // skip routing entirely. Response is passed through unchanged.
         if !proxy_rules.is_empty() {
             let query = req.url.split_once('?').map(|(_, q)| q.to_string());
-            if let Some(m) = oxide_dev::apply_proxy(&proxy_rules, &raw, query.as_deref()) {
+            if let Some(m) = oxide_fw_dev::apply_proxy(&proxy_rules, &raw, query.as_deref()) {
                 let url = m.url.clone();
                 let m_rule = m.rule.prefix.clone();
                 let metrics_proxy = std::sync::Arc::clone(&metrics);
                 let req_owned = req.clone();
                 return Box::pin(async move {
-                    match oxide_server::forward_proxy(&url, req_owned).await {
+                    match oxide_fw_server::forward_proxy(&url, req_owned).await {
                         Ok(r) => {
                             metrics_proxy.observe("_proxy", started.elapsed(), r.status);
                             r
                         }
                         Err(e) => {
                             tracing::warn!(rule = %m_rule, error = %e, "proxy forward failed");
-                            let r = oxide_server::OxideResponse::new(
+                            let r = oxide_fw_server::OxideResponse::new(
                                 502,
                                 format!("proxy upstream error: {}", e.0.message),
                             );
@@ -7037,12 +7037,12 @@ fn build_dispatch_swappable(
         // before any request); `req` supplies the header.
         let resolved_locale: String = match i18n_cfg.as_ref() {
             Some(a) => {
-                let stripped = oxide_assets::i18n::strip_locale_prefix(a, &req_path);
+                let stripped = oxide_fw_assets::i18n::strip_locale_prefix(a, &req_path);
                 let from_path = stripped.0 != a.default && stripped.1 != req_path.as_str();
                 if from_path {
                     stripped.0
                 } else {
-                    oxide_assets::i18n::negotiate(a, req.header("accept-language").unwrap_or(""))
+                    oxide_fw_assets::i18n::negotiate(a, req.header("accept-language").unwrap_or(""))
                 }
             }
             None => String::new(),
@@ -7060,7 +7060,7 @@ fn build_dispatch_swappable(
                 let raw_q = req.url.split_once('?').map(|(_, q)| q).unwrap_or("");
                 raw_q
                     .split('&')
-                    .find_map(|kv| kv.strip_prefix("route=").map(oxide_server::percent_decode))
+                    .find_map(|kv| kv.strip_prefix("route=").map(oxide_fw_server::percent_decode))
                     .filter(|s| !s.is_empty())
                     .unwrap_or_else(|| "/".to_string())
             } else {
@@ -7084,7 +7084,7 @@ fn build_dispatch_swappable(
         } else {
             vec![match_path]
         };
-        let matched: Option<oxide_router::MatchResult> = match &archived {
+        let matched: Option<oxide_fw_router::MatchResult> = match &archived {
             Some(a) => candidates.iter().find_map(|p| a.match_path(p)),
             None => candidates.iter().find_map(|p| tree.match_path(p)),
         };
@@ -7140,7 +7140,7 @@ fn build_dispatch_swappable(
         // Endpoints bypass the loader/render phases entirely: a `route.ts`
         // returns a Web `Response` directly.
         let endpoint_module_path: Option<std::path::PathBuf> = match &matched {
-            Some(m) if matches!(m.route.kind, oxide_router::RouteKind::Endpoint) => {
+            Some(m) if matches!(m.route.kind, oxide_fw_router::RouteKind::Endpoint) => {
                 Some(routes_root.join(&m.route.file))
             }
             _ => None,
@@ -7235,7 +7235,7 @@ fn build_dispatch_swappable(
             .filter_map(|lid| {
                 tree.entries
                     .iter()
-                    .find(|e| e.id.0 == *lid && matches!(e.kind, oxide_router::RouteKind::Layout))
+                    .find(|e| e.id.0 == *lid && matches!(e.kind, oxide_fw_router::RouteKind::Layout))
                     .map(|e| {
                         (
                             lid.clone(),
@@ -7366,9 +7366,9 @@ fn build_dispatch_swappable(
             if let Some(codec) = session_codec.as_deref() {
                 if let Some(token) = req_owned
                     .header("cookie")
-                    .and_then(|h| oxide_server::cookie_value(h, "oxide_session"))
+                    .and_then(|h| oxide_fw_server::cookie_value(h, "oxide_session"))
                 {
-                    if let Ok(sess) = oxide_server::Session::decode(codec, token) {
+                    if let Ok(sess) = oxide_fw_server::Session::decode(codec, token) {
                         middleware_locals["session"] = sess.to_value();
                     }
                 }
@@ -7428,7 +7428,7 @@ fn build_dispatch_swappable(
                         Ok(out) => {
                             if out.short {
                                 metrics.observe(&label, started.elapsed(), out.status);
-                                let mut resp = oxide_server::OxideResponse::new(
+                                let mut resp = oxide_fw_server::OxideResponse::new(
                                     out.status,
                                     bytes::Bytes::from(out.body),
                                 );
@@ -7459,7 +7459,7 @@ fn build_dispatch_swappable(
                                     let after =
                                         out.locals.as_ref().and_then(|l| l.get("session")).cloned();
                                     if after.is_some() && after != session_before {
-                                        let mut sess = oxide_server::Session::new();
+                                        let mut sess = oxide_fw_server::Session::new();
                                         if let Some(obj) =
                                             after.as_ref().and_then(|v| v.as_object())
                                         {
@@ -7534,7 +7534,7 @@ fn build_dispatch_swappable(
                         }
                         Err(e) => {
                             metrics.observe(&label, started.elapsed(), e.status);
-                            return oxide_server::OxideResponse::json(
+                            return oxide_fw_server::OxideResponse::json(
                                 e.status,
                                 serde_json::json!({"error": {
                                     "code": e.code,
@@ -7552,7 +7552,7 @@ fn build_dispatch_swappable(
             if let Some(codec) = session_codec.as_deref() {
                 let after = middleware_locals.get("session").cloned();
                 if after.is_some() && after != session_before {
-                    let mut sess = oxide_server::Session::new();
+                    let mut sess = oxide_fw_server::Session::new();
                     if let Some(obj) = after.as_ref().and_then(|v| v.as_object()) {
                         for (k, v) in obj {
                             sess.insert(k.clone(), v.clone());
@@ -7624,7 +7624,7 @@ fn build_dispatch_swappable(
                             |tp| serde_json::json!({"traceparent": tp, "tracestate": t.tracestate}),
                         )
                     });
-                    let resp = oxide_server::run_action(
+                    let resp = oxide_fw_server::run_action(
                         Some(dispatcher),
                         &module_path.to_string_lossy(),
                         &action_route,
@@ -7740,7 +7740,7 @@ fn build_dispatch_swappable(
                                 .map(str::trim)
                                 .any(|t| t == etag || t == hit.etag() || t == "*")
                         }) {
-                            let mut resp = oxide_server::OxideResponse::new(304, "");
+                            let mut resp = oxide_fw_server::OxideResponse::new(304, "");
                             resp = resp.with_header("etag", etag.clone());
                             resp = resp.with_header("x-oxide-cache", "L0-hit");
                             // P0-5: middleware runs per request and its
@@ -7784,9 +7784,9 @@ fn build_dispatch_swappable(
                                 let _ = bg.invalidate_path(&bg_path, false).await;
                             });
                         }
-                        let nonce = oxide_server::nonce_for(&req_owned.request_id);
+                        let nonce = oxide_fw_server::nonce_for(&req_owned.request_id);
                         let body = hit.materialize(&nonce);
-                        let mut resp = oxide_server::OxideResponse::new(hit.status(), body);
+                        let mut resp = oxide_fw_server::OxideResponse::new(hit.status(), body);
                         for (k, v) in &hit.headers() {
                             resp = resp.with_header(k, v.clone());
                         }
@@ -7833,10 +7833,10 @@ fn build_dispatch_swappable(
             // S-15: a guard (not a bare sender) so *every* owner exit path —
             // loader error/redirect, cookie short-circuit, render error —
             // clears the in-flight map; the guard's Drop does it.
-            let mut flight_owner: Option<oxide_cache::FlightOwnerGuard> = None;
+            let mut flight_owner: Option<oxide_fw_cache::FlightOwnerGuard> = None;
             if l0_eligible && l0.is_some() {
-                use oxide_cache::FlightSlot;
-                match oxide_cache::SingleFlight::new()
+                use oxide_fw_cache::FlightSlot;
+                match oxide_fw_cache::SingleFlight::new()
                     .acquire(&flight_map, &flight_key)
                     .await
                 {
@@ -7845,11 +7845,11 @@ fn build_dispatch_swappable(
                             tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
                                 .await
                         {
-                            let nonce = oxide_server::nonce_for(&req_owned.request_id);
+                            let nonce = oxide_fw_server::nonce_for(&req_owned.request_id);
                             let body = String::from_utf8_lossy(&entry.body)
                                 .replace(l0_cache::NONCE_SENTINEL, &nonce)
                                 .into_bytes();
-                            let mut resp = oxide_server::OxideResponse::new(entry.status, body);
+                            let mut resp = oxide_fw_server::OxideResponse::new(entry.status, body);
                             for (k, v) in &entry.headers {
                                 resp = resp.with_header(k, v.clone());
                             }
@@ -7864,7 +7864,7 @@ fn build_dispatch_swappable(
                         }
                     }
                     FlightSlot::Owner(tx) => {
-                        flight_owner = Some(oxide_cache::FlightOwnerGuard::new(
+                        flight_owner = Some(oxide_fw_cache::FlightOwnerGuard::new(
                             std::sync::Arc::clone(&flight_map),
                             flight_key.clone(),
                             tx,
@@ -7933,7 +7933,7 @@ fn build_dispatch_swappable(
             };
             if let (Some(runner), true) = (loader_runner.as_ref(), !layouts_to_run.is_empty()) {
                 for (lid, lpath) in layouts_to_run {
-                    let mut linput = oxide_server::LoaderRunInput::new(
+                    let mut linput = oxide_fw_server::LoaderRunInput::new(
                         lpath.to_string_lossy().to_string(),
                         lid.clone(),
                         req_owned.url.clone(),
@@ -7962,7 +7962,7 @@ fn build_dispatch_swappable(
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("")
                                 .to_string();
-                            let mut resp = oxide_server::OxideResponse::new(out.status, body);
+                            let mut resp = oxide_fw_server::OxideResponse::new(out.status, body);
                             if let Some(loc) = out.location {
                                 resp = resp.with_header("location", loc);
                             }
@@ -8009,11 +8009,11 @@ fn build_dispatch_swappable(
                         Err(e) => {
                             tracing::error!(code = %e.0.code, error = %e.0.message, "layout loader failed");
                             metrics.observe(&label, started.elapsed(), 500);
-                            return oxide_server::OxideResponse::html(
+                            return oxide_fw_server::OxideResponse::html(
                                 500,
                                 format!(
                                     "layout loader error: {}",
-                                    oxide_render::escape_text(&e.0.message)
+                                    oxide_fw_render::escape_text(&e.0.message)
                                 ),
                             );
                         }
@@ -8038,7 +8038,7 @@ fn build_dispatch_swappable(
                 // and are only applied on the eventual render response.
                 let runner = loader_runner.as_ref().unwrap();
                 let (lid, lpath) = &layout_module_paths[layout_module_paths.len() - 1];
-                let mut linput = oxide_server::LoaderRunInput::new(
+                let mut linput = oxide_fw_server::LoaderRunInput::new(
                     lpath.to_string_lossy().to_string(),
                     lid.clone(),
                     req_owned.url.clone(),
@@ -8063,7 +8063,7 @@ fn build_dispatch_swappable(
                 let mp = module_path.as_ref().unwrap();
                 let rid = route_id.as_ref().unwrap();
                 let route_for_loader_page = rid.strip_suffix("/page").unwrap_or(rid).to_string();
-                let mut pinput = oxide_server::LoaderRunInput::new(
+                let mut pinput = oxide_fw_server::LoaderRunInput::new(
                     mp.to_string_lossy().to_string(),
                     route_for_loader_page,
                     req_owned.url.clone(),
@@ -8128,7 +8128,7 @@ fn build_dispatch_swappable(
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string();
-                        let mut resp = oxide_server::OxideResponse::new(out.status, body);
+                        let mut resp = oxide_fw_server::OxideResponse::new(out.status, body);
                         if let Some(loc) = out.location {
                             resp = resp.with_header("location", loc);
                         }
@@ -8177,11 +8177,11 @@ fn build_dispatch_swappable(
                             "layout loader failed",
                         );
                         metrics.observe(&label, started.elapsed(), 500);
-                        return oxide_server::OxideResponse::html(
+                        return oxide_fw_server::OxideResponse::html(
                             500,
                             format!(
                                 "layout loader error: {}",
-                                oxide_render::escape_text(&e.0.message)
+                                oxide_fw_render::escape_text(&e.0.message)
                             ),
                         );
                     }
@@ -8195,7 +8195,7 @@ fn build_dispatch_swappable(
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string();
-                        let mut resp = oxide_server::OxideResponse::new(out.status, body);
+                        let mut resp = oxide_fw_server::OxideResponse::new(out.status, body);
                         if let Some(loc) = out.location {
                             resp = resp.with_header("location", loc);
                         }
@@ -8250,9 +8250,9 @@ fn build_dispatch_swappable(
                             "loader failed",
                         );
                         metrics.observe(&label, started.elapsed(), 500);
-                        return oxide_server::OxideResponse::html(
+                        return oxide_fw_server::OxideResponse::html(
                             500,
-                            format!("loader error: {}", oxide_render::escape_text(&e.0.message)),
+                            format!("loader error: {}", oxide_fw_render::escape_text(&e.0.message)),
                         );
                     }
                 }
@@ -8267,7 +8267,7 @@ fn build_dispatch_swappable(
                         .strip_suffix("/page")
                         .unwrap_or(&route_id)
                         .to_string();
-                    let mut input = oxide_server::LoaderRunInput::new(
+                    let mut input = oxide_fw_server::LoaderRunInput::new(
                         module_path.to_string_lossy().to_string(),
                         route_for_loader,
                         req_owned.url.clone(),
@@ -8306,7 +8306,7 @@ fn build_dispatch_swappable(
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("")
                                     .to_string();
-                                let mut resp = oxide_server::OxideResponse::new(out.status, body);
+                                let mut resp = oxide_fw_server::OxideResponse::new(out.status, body);
                                 if let Some(loc) = out.location {
                                     resp = resp.with_header("location", loc);
                                 }
@@ -8354,11 +8354,11 @@ fn build_dispatch_swappable(
                                 "loader failed",
                             );
                             metrics.observe(&label, started.elapsed(), 500);
-                            return oxide_server::OxideResponse::html(
+                            return oxide_fw_server::OxideResponse::html(
                                 500,
                                 format!(
                                     "loader error: {}",
-                                    oxide_render::escape_text(&e.0.message)
+                                    oxide_fw_render::escape_text(&e.0.message)
                                 ),
                             );
                         }
@@ -8401,8 +8401,8 @@ fn build_dispatch_swappable(
                         // drives the response body from `out.stream`;
                         // a buffered one uses `out.body`.
                         let mut resp = match out.stream {
-                            Some(stream) => oxide_server::OxideResponse::stream(out.status, stream),
-                            None => oxide_server::OxideResponse::new(
+                            Some(stream) => oxide_fw_server::OxideResponse::stream(out.status, stream),
+                            None => oxide_fw_server::OxideResponse::new(
                                 out.status,
                                 bytes::Bytes::from(out.body),
                             ),
@@ -8420,7 +8420,7 @@ fn build_dispatch_swappable(
                     }
                     Err(e) => {
                         metrics.observe(&label, started.elapsed(), e.status);
-                        return oxide_server::OxideResponse::json(
+                        return oxide_fw_server::OxideResponse::json(
                             e.status,
                             serde_json::json!({"error": {
                                 "code": e.code,
@@ -8457,7 +8457,7 @@ fn build_dispatch_swappable(
                 let route_for_odf = route_for_render.clone();
                 let odf_url = req_owned.url.clone();
                 let odf_bytes = {
-                    use oxide_odf::Value as OdfValue;
+                    use oxide_fw_odf::Value as OdfValue;
                     let mut obj = std::collections::BTreeMap::new();
                     obj.insert("route".to_string(), OdfValue::String(route_for_odf.clone()));
                     obj.insert("url".to_string(), OdfValue::String(odf_url.clone()));
@@ -8480,10 +8480,10 @@ fn build_dispatch_swappable(
                                 .collect(),
                         ),
                     );
-                    oxide_odf::encode_to_bytes(&OdfValue::Object(obj)).unwrap_or_default()
+                    oxide_fw_odf::encode_to_bytes(&OdfValue::Object(obj)).unwrap_or_default()
                 };
                 let mut input =
-                    oxide_server::PageRenderInput::new(route_for_render, req_owned.url.clone());
+                    oxide_fw_server::PageRenderInput::new(route_for_render, req_owned.url.clone());
                 input.params = params;
                 // §9.3: a form POST re-renders the page with the action's
                 // result in `data.form`. Injected here rather than seeded
@@ -8517,7 +8517,7 @@ fn build_dispatch_swappable(
                 // swapper, which is an inline IIFE and would be blocked under
                 // `strict-dynamic` without it. Same value the pipeline uses
                 // for its own injected tags.
-                input.nonce = Some(oxide_server::nonce_for(&req_owned.request_id));
+                input.nonce = Some(oxide_fw_server::nonce_for(&req_owned.request_id));
                 // 16-G: the route's own `meta` joins the neutral head model.
                 // The live path has no plugin `renderHead` contribution to
                 // merge with here (that is a build-time hook); the route's
@@ -8548,7 +8548,7 @@ fn build_dispatch_swappable(
                         // transport's Send + Sync body stream. If the
                         // project registered islands, splice the boot
                         // script tag right before `</body>` — the sliding
-                        // window in `oxide_server::inject_before_close` buffers
+                        // window in `oxide_fw_server::inject_before_close` buffers
                         // at most `len("</body>") - 1` bytes so a tag
                         // split across chunks still lands in the right
                         // place and every other chunk flushes untouched.
@@ -8558,7 +8558,7 @@ fn build_dispatch_swappable(
                         let bridged = render_stream_with_recovery(
                             render_stream,
                             Some(label.clone()),
-                            Some(oxide_server::nonce_for(&req_owned.request_id)),
+                            Some(oxide_fw_server::nonce_for(&req_owned.request_id)),
                             label.clone(),
                         );
 
@@ -8566,7 +8566,7 @@ fn build_dispatch_swappable(
                         // `defer()`, hold the document's closing tags and
                         // emit a resolution script per settle as it arrives,
                         // instead of one batched tag after the slowest.
-                        let nonce_for_settles = oxide_server::nonce_for(&req_owned.request_id);
+                        let nonce_for_settles = oxide_fw_server::nonce_for(&req_owned.request_id);
                         let bridged = match page_settles.take() {
                             Some(rx) => {
                                 // §20 / O3b: pass the recorder + request id
@@ -8590,7 +8590,7 @@ fn build_dispatch_swappable(
                         // `finish_response`; we compute the same value here
                         // from the request id. Both the deferred script and
                         // (when present) the boot module share it.
-                        let nonce = oxide_server::nonce_for(&req_owned.request_id);
+                        let nonce = oxide_fw_server::nonce_for(&req_owned.request_id);
                         // PERF-01 / §8.4: the SAME `window.__oxide` ODF
                         // payload prerendered pages embed, injected into
                         // the live streamed shell (the sliding-window
@@ -8602,7 +8602,7 @@ fn build_dispatch_swappable(
                             use base64::Engine as _;
                             let odf_b64 =
                                 base64::engine::general_purpose::STANDARD.encode(&odf_bytes);
-                            oxide_render::hydration_bootstrap(&odf_b64, &route_for_odf, &nonce)
+                            oxide_fw_render::hydration_bootstrap(&odf_b64, &route_for_odf, &nonce)
                         };
                         // §7.1 / §9.2: resolved defer() values ride a JSON
                         // script element so the boot module can dispatch
@@ -8663,7 +8663,7 @@ fn build_dispatch_swappable(
                                 let tag = format!(
                                     r#"{odf_tag}{deferred_tag}{hmr_tag}<script type="module" src="/{url}" nonce="{nonce}"></script>"#,
                                 );
-                                oxide_server::inject_before_close(
+                                oxide_fw_server::inject_before_close(
                                     bridged,
                                     b"</body>",
                                     tag.as_bytes(),
@@ -8674,7 +8674,7 @@ fn build_dispatch_swappable(
                                 if extra.is_empty() {
                                     bridged
                                 } else {
-                                    oxide_server::inject_before_close(
+                                    oxide_fw_server::inject_before_close(
                                         bridged,
                                         b"</body>",
                                         extra.as_bytes(),
@@ -8796,7 +8796,7 @@ fn build_dispatch_swappable(
                                 && !middleware_sets_cookie
                         {
                             if let Some(cache) = l0.as_ref() {
-                                let nonce = oxide_server::nonce_for(&req_owned.request_id);
+                                let nonce = oxide_fw_server::nonce_for(&req_owned.request_id);
                                 let cache = std::sync::Arc::clone(cache);
                                 let l0_route = l0_route.clone();
                                 let l0_path = l0_path.clone();
@@ -8854,9 +8854,9 @@ fn build_dispatch_swappable(
                                         guard.publish(std::sync::Arc::new(entry));
                                     }
                                 });
-                                let stream: oxide_server::BodyStream =
+                                let stream: oxide_fw_server::BodyStream =
                                     Box::pin(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)));
-                                let t = oxide_render::RequestTimings {
+                                let t = oxide_fw_render::RequestTimings {
                                     middleware_ms,
                                     cache_ms: 0.0,
                                     load_ms,
@@ -8892,7 +8892,7 @@ fn build_dispatch_swappable(
                                     rec.persist_to(&waterfall_path);
                                 }
                                 let mut resp =
-                                    oxide_server::OxideResponse::stream(final_status, stream)
+                                    oxide_fw_server::OxideResponse::stream(final_status, stream)
                                         .with_header("content-type", "text/html; charset=utf-8")
                                         .with_header("x-oxide-cache", "L0-miss")
                                         .with_header("Server-Timing", t.server_timing());
@@ -8917,12 +8917,12 @@ fn build_dispatch_swappable(
                         // `_unmatched` — overridden to 500 when the error
                         // document announced itself in the first chunk
                         // (§10.2 error-status contract).
-                        let mut resp = oxide_server::OxideResponse::stream(final_status, body)
+                        let mut resp = oxide_fw_server::OxideResponse::stream(final_status, body)
                             .with_header("content-type", "text/html; charset=utf-8")
                             .with_header("x-oxide-cache", "bypass");
                         // PERF-06: real per-stage Server-Timing.
                         let render_ms = stage_render_start.elapsed().as_secs_f64() * 1000.0;
-                        let t = oxide_render::RequestTimings {
+                        let t = oxide_fw_render::RequestTimings {
                             middleware_ms,
                             cache_ms: 0.0,
                             load_ms,
@@ -8955,15 +8955,15 @@ fn build_dispatch_swappable(
                             "framework render failed",
                         );
                         metrics.observe(&label, started.elapsed(), 500);
-                        oxide_server::OxideResponse::html(
+                        oxide_fw_server::OxideResponse::html(
                             500,
-                            format!("render error: {}", oxide_render::escape_text(&e.0.message)),
+                            format!("render error: {}", oxide_fw_render::escape_text(&e.0.message)),
                         )
                     }
                 }
             } else {
                 metrics.observe(&label, started.elapsed(), status);
-                let mut resp = oxide_server::OxideResponse::html(
+                let mut resp = oxide_fw_server::OxideResponse::html(
                     status,
                     format!(
                         "<!doctype html><html><head><title>Oxide</title></head>\
@@ -8999,9 +8999,9 @@ pub async fn start_dev_server_full(
     port: Option<u16>,
     bind_ip: std::net::IpAddr,
     tls: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>,
-    proxy_rules: Vec<oxide_dev::ProxyRule>,
+    proxy_rules: Vec<oxide_fw_dev::ProxyRule>,
     stack: crate::framework_shim::FrameworkStack,
-    hmr: Option<std::sync::Arc<oxide_dev::HmrHub>>,
+    hmr: Option<std::sync::Arc<oxide_fw_dev::HmrHub>>,
 ) -> anyhow::Result<StartedServer> {
     start_server_inner_full(
         root,
@@ -9047,7 +9047,7 @@ async fn start_server_inner(
 /// `/client/counter-abc.js` when the root itself is `dist/`. Since our
 /// directory is `dist/client` and the URL prefix is `/client`, we scan
 /// `dist/` — then the boot chunk's `/client/...` URL matches the file path.
-/// §16.1: adapt `oxide_assets::ImageBackend` to the `oxide-server` seam.
+/// §16.1: adapt `oxide_fw_assets::ImageBackend` to the `oxide-server` seam.
 ///
 /// The two crates do not know about each other — `oxide-server` names only
 /// the trait, `oxide-assets` names only its own request/result types — so
@@ -9055,12 +9055,12 @@ async fn start_server_inner(
 /// unchanged; only the field names differ.
 struct AssetsImageBackend;
 
-impl oxide_server::ImageEndpointBackend for AssetsImageBackend {
+impl oxide_fw_server::ImageEndpointBackend for AssetsImageBackend {
     fn process(
         &self,
-        req: oxide_server::ImageEndpointRequest,
-    ) -> std::result::Result<oxide_server::ImageEndpointResult, String> {
-        use oxide_assets::{ImageBackend as _, ImageFormat, ImageRequest, RustImageBackend};
+        req: oxide_fw_server::ImageEndpointRequest,
+    ) -> std::result::Result<oxide_fw_server::ImageEndpointResult, String> {
+        use oxide_fw_assets::{ImageBackend as _, ImageFormat, ImageRequest, RustImageBackend};
 
         // Detect the source format from the bytes. The `image` crate's
         // guess is what the backend already relies on for decode; this is
@@ -9093,15 +9093,15 @@ impl oxide_server::ImageEndpointBackend for AssetsImageBackend {
             format,
             quality: req.quality.unwrap_or(75),
             placeholder: req.placeholder.as_deref().and_then(|p| match p {
-                "blur" => Some(oxide_assets::PlaceholderKind::Blur),
-                "pixelate" => Some(oxide_assets::PlaceholderKind::Lqip),
+                "blur" => Some(oxide_fw_assets::PlaceholderKind::Blur),
+                "pixelate" => Some(oxide_fw_assets::PlaceholderKind::Lqip),
                 _ => None,
             }),
         };
 
         RustImageBackend
             .process(ireq)
-            .map(|r| oxide_server::ImageEndpointResult {
+            .map(|r| oxide_fw_server::ImageEndpointResult {
                 bytes: r.bytes,
                 content_type: r.format.mime(),
                 cache_key: r.cache_key,
@@ -9121,30 +9121,30 @@ impl oxide_server::ImageEndpointBackend for AssetsImageBackend {
 /// endpoint can turn it off with a config flag (post-v0.1).
 struct SvgOgBackendImpl;
 
-impl oxide_server::OgEndpointBackend for SvgOgBackendImpl {
+impl oxide_fw_server::OgEndpointBackend for SvgOgBackendImpl {
     fn render(
         &self,
         tree: &serde_json::Value,
         width: u32,
         height: u32,
     ) -> std::result::Result<Vec<u8>, String> {
-        use oxide_assets::OgBackend as _;
-        oxide_assets::SvgOgBackend
+        use oxide_fw_assets::OgBackend as _;
+        oxide_fw_assets::SvgOgBackend
             .render(tree, width, height)
             .map_err(|e| format!("{} {}", e.0.code, e.0.message))
     }
 }
 
-fn build_og_endpoint() -> Option<std::sync::Arc<oxide_server::OgEndpoint>> {
-    Some(std::sync::Arc::new(oxide_server::OgEndpoint {
+fn build_og_endpoint() -> Option<std::sync::Arc<oxide_fw_server::OgEndpoint>> {
+    Some(std::sync::Arc::new(oxide_fw_server::OgEndpoint {
         backend: std::sync::Arc::new(SvgOgBackendImpl),
     }))
 }
 
 fn build_image_endpoint(
     rootp: &Path,
-    cfg: &oxide_config::OxideConfig,
-) -> Option<std::sync::Arc<oxide_server::ImageEndpoint>> {
+    cfg: &oxide_fw_config::OxideConfig,
+) -> Option<std::sync::Arc<oxide_fw_server::ImageEndpoint>> {
     // Asset root: the same `dist/` the static-asset store scans, so an
     // image imported at build time is reachable at the URL the bundler
     // emitted it under.
@@ -9182,17 +9182,17 @@ fn build_image_endpoint(
     // §16.1: remote sources are gated by `config.images.remotePatterns`.
     // The config type carries `host` + optional `protocol`; the server's
     // `RemoteImagePattern` is the same shape, so a straight map.
-    let remote_patterns: Vec<oxide_server::RemoteImagePattern> = cfg
+    let remote_patterns: Vec<oxide_fw_server::RemoteImagePattern> = cfg
         .images
         .remote_patterns
         .iter()
-        .map(|p| oxide_server::RemoteImagePattern {
+        .map(|p| oxide_fw_server::RemoteImagePattern {
             host: p.host.clone(),
             protocol: p.protocol.clone(),
         })
         .collect();
 
-    Some(std::sync::Arc::new(oxide_server::ImageEndpoint {
+    Some(std::sync::Arc::new(oxide_fw_server::ImageEndpoint {
         backend: std::sync::Arc::new(AssetsImageBackend),
         asset_root,
         signing_secret,
@@ -9213,7 +9213,7 @@ fn build_image_endpoint(
 
 /// §9.4: the `ServerFnDispatcher` impl backed by the render worker.
 ///
-/// Wraps `oxide_jshost::ServerFnHost`, which forwards `(id, args)` to the
+/// Wraps `oxide_fw_jshost::ServerFnHost`, which forwards `(id, args)` to the
 /// worker's `server-fn:run` op. `entry_path` is the SSR adapter entry
 /// (`dist/server/ssr/index.js`) — the worker imports it once to populate
 /// the `__oxide_fn_registry` global that the compiler's `__oxide_register_fn`
@@ -9222,17 +9222,17 @@ fn build_image_endpoint(
 /// The pipeline's `NativePrefix::ServerFn` arm calls this; the JSON body
 /// the function returns becomes the `{ok, data}` envelope's `data`.
 struct ServerFnDispatcherImpl {
-    host: oxide_jshost::ServerFnHost,
+    host: oxide_fw_jshost::ServerFnHost,
     entry_path: String,
 }
 
 #[async_trait::async_trait]
-impl oxide_server::ServerFnDispatcher for ServerFnDispatcherImpl {
+impl oxide_fw_server::ServerFnDispatcher for ServerFnDispatcherImpl {
     async fn dispatch(
         &self,
         id: &str,
         args_json: &[u8],
-    ) -> std::result::Result<Vec<u8>, oxide_server::DispatchError> {
+    ) -> std::result::Result<Vec<u8>, oxide_fw_server::DispatchError> {
         match self.host.run_coded(id, args_json, &self.entry_path).await {
             Ok(v) => {
                 // The worker op returns `{value: <fn result>}` — a stable
@@ -9242,7 +9242,7 @@ impl oxide_server::ServerFnDispatcher for ServerFnDispatcherImpl {
                 // and not `{value: …}`.
                 let value = v.get("value").cloned().unwrap_or(v);
                 serde_json::to_vec(&value).map_err(|e| {
-                    oxide_server::DispatchError::internal(format!("serialize fn result: {e}"))
+                    oxide_fw_server::DispatchError::internal(format!("serialize fn result: {e}"))
                 })
             }
             Err(e) => {
@@ -9250,17 +9250,17 @@ impl oxide_server::ServerFnDispatcher for ServerFnDispatcherImpl {
                 // function that threw maps to a 400 with the message; any
                 // other failure is a 500.
                 let err = match e.code.as_str() {
-                    "JSH-FN-NOT-FOUND" => oxide_server::DispatchError {
+                    "JSH-FN-NOT-FOUND" => oxide_fw_server::DispatchError {
                         status: 404,
                         code: "FN-NOT-FOUND".into(),
                         message: e.message,
                     },
-                    "JSH-FN-THREW" => oxide_server::DispatchError {
+                    "JSH-FN-THREW" => oxide_fw_server::DispatchError {
                         status: 400,
                         code: "FN-THREW".into(),
                         message: e.message,
                     },
-                    _ => oxide_server::DispatchError::internal(e.message),
+                    _ => oxide_fw_server::DispatchError::internal(e.message),
                 };
                 Err(err)
             }
@@ -9273,8 +9273,8 @@ impl oxide_server::ServerFnDispatcher for ServerFnDispatcherImpl {
 /// with a clean `FN-NO-DISPATCHER` 404.
 fn build_server_fn_dispatcher(
     rootp: &Path,
-    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
-) -> Option<std::sync::Arc<dyn oxide_server::ServerFnDispatcher>> {
+    pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
+) -> Option<std::sync::Arc<dyn oxide_fw_server::ServerFnDispatcher>> {
     let pool = pool?;
     // The SSR entry is written by `oxide build`; in dev without a prior
     // build there is none, which is correct — the dev render path uses
@@ -9285,18 +9285,18 @@ fn build_server_fn_dispatcher(
     }
     let entry_path = entry.to_string_lossy().to_string();
     Some(std::sync::Arc::new(ServerFnDispatcherImpl {
-        host: oxide_jshost::ServerFnHost::new(std::sync::Arc::clone(pool)),
+        host: oxide_fw_jshost::ServerFnHost::new(std::sync::Arc::clone(pool)),
         entry_path,
     }))
 }
 
 /// §9.3: a `LoaderRunner`-shaped bridge to the worker's `action:run` op.
 struct ActionDispatcherImpl {
-    host: oxide_jshost::ActionHost,
+    host: oxide_fw_jshost::ActionHost,
 }
 
 #[async_trait::async_trait]
-impl oxide_server::ActionDispatcher for ActionDispatcherImpl {
+impl oxide_fw_server::ActionDispatcher for ActionDispatcherImpl {
     async fn dispatch(
         &self,
         module_path: &str,
@@ -9308,7 +9308,7 @@ impl oxide_server::ActionDispatcher for ActionDispatcherImpl {
         headers: &[(String, String)],
         locals: &serde_json::Value,
         trace: Option<&serde_json::Value>,
-    ) -> std::result::Result<oxide_server::ActionRunResult, oxide_server::DispatchError> {
+    ) -> std::result::Result<oxide_fw_server::ActionRunResult, oxide_fw_server::DispatchError> {
         match self
             .host
             .run(
@@ -9324,7 +9324,7 @@ impl oxide_server::ActionDispatcher for ActionDispatcherImpl {
             )
             .await
         {
-            Ok(out) => Ok(oxide_server::ActionRunResult {
+            Ok(out) => Ok(oxide_fw_server::ActionRunResult {
                 status: out.status,
                 location: out.location,
                 data: out.data,
@@ -9334,15 +9334,15 @@ impl oxide_server::ActionDispatcher for ActionDispatcherImpl {
                     .revalidate
                     .into_iter()
                     .map(|ev| match ev {
-                        oxide_jshost::RevalidateEvent::Tag { tag } => ("tag".to_string(), tag),
-                        oxide_jshost::RevalidateEvent::Path { path } => ("path".to_string(), path),
+                        oxide_fw_jshost::RevalidateEvent::Tag { tag } => ("tag".to_string(), tag),
+                        oxide_fw_jshost::RevalidateEvent::Path { path } => ("path".to_string(), path),
                     })
                     .collect(),
             }),
             Err(e) => {
                 let code = e.0.code.to_string();
                 let status = if code.contains("NOT-FOUND") { 404 } else { 500 };
-                Err(oxide_server::DispatchError {
+                Err(oxide_fw_server::DispatchError {
                     status,
                     code: code.replace("JSH-ACTION", "ACT"),
                     message: e.0.message.to_string(),
@@ -9354,21 +9354,21 @@ impl oxide_server::ActionDispatcher for ActionDispatcherImpl {
 
 /// §9.3: build the action dispatcher when a pool is present.
 fn build_action_dispatcher(
-    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
-) -> Option<std::sync::Arc<dyn oxide_server::ActionDispatcher>> {
+    pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
+) -> Option<std::sync::Arc<dyn oxide_fw_server::ActionDispatcher>> {
     let pool = pool?;
     Some(std::sync::Arc::new(ActionDispatcherImpl {
-        host: oxide_jshost::ActionHost::new(std::sync::Arc::clone(pool)),
+        host: oxide_fw_jshost::ActionHost::new(std::sync::Arc::clone(pool)),
     }))
 }
 
 /// §8.1 route.ts / §10.2 step 7: a bridge to the worker's `endpoint:run` op.
 struct EndpointDispatcherImpl {
-    host: oxide_jshost::EndpointHost,
+    host: oxide_fw_jshost::EndpointHost,
 }
 
 #[async_trait::async_trait]
-impl oxide_server::EndpointDispatcher for EndpointDispatcherImpl {
+impl oxide_fw_server::EndpointDispatcher for EndpointDispatcherImpl {
     async fn dispatch(
         &self,
         module_path: &str,
@@ -9379,7 +9379,7 @@ impl oxide_server::EndpointDispatcher for EndpointDispatcherImpl {
         body: &[u8],
         locals: &serde_json::Value,
         trace: Option<&serde_json::Value>,
-    ) -> std::result::Result<oxide_server::EndpointRunResult, oxide_server::EndpointRunError> {
+    ) -> std::result::Result<oxide_fw_server::EndpointRunResult, oxide_fw_server::EndpointRunError> {
         match self
             .host
             .run(
@@ -9396,7 +9396,7 @@ impl oxide_server::EndpointDispatcher for EndpointDispatcherImpl {
         {
             Ok(out) => {
                 // §9.6: a streaming outcome's receiver becomes a `BodyStream`.
-                let stream: Option<oxide_server::BodyStream> = out.stream.map(|mut rx| {
+                let stream: Option<oxide_fw_server::BodyStream> = out.stream.map(|mut rx| {
                     // The worker's chunk receiver carries `OxideError`; the
                     // transport body stream carries `std::io::Error`. Pump
                     // through a fresh channel that maps at the boundary,
@@ -9415,16 +9415,16 @@ impl oxide_server::EndpointDispatcher for EndpointDispatcherImpl {
                         }
                     });
                     Box::pin(futures::stream::poll_fn(move |cx| out_rx.poll_recv(cx)))
-                        as oxide_server::BodyStream
+                        as oxide_fw_server::BodyStream
                 });
-                Ok(oxide_server::EndpointRunResult {
+                Ok(oxide_fw_server::EndpointRunResult {
                     status: out.status,
                     headers: out.headers,
                     body: out.body,
                     stream,
                 })
             }
-            Err(e) => Err(oxide_server::EndpointRunError {
+            Err(e) => Err(oxide_fw_server::EndpointRunError {
                 status: 500,
                 code: e.0.code.to_string().replace("JSH-ENDPOINT", "ENDPOINT"),
                 message: e.0.message.to_string(),
@@ -9439,13 +9439,13 @@ impl oxide_server::EndpointDispatcher for EndpointDispatcherImpl {
 /// becomes `*`.
 fn cfg_socket_routes(
     rootp: &std::path::Path,
-    cfg: &oxide_config::OxideConfig,
-    tree: &oxide_router::RouteTree,
+    cfg: &oxide_fw_config::OxideConfig,
+    tree: &oxide_fw_router::RouteTree,
 ) -> std::collections::BTreeMap<String, std::path::PathBuf> {
     let routes_root = rootp.join(&cfg.routes.dir);
     let mut out = std::collections::BTreeMap::new();
     for e in &tree.entries {
-        if !matches!(e.kind, oxide_router::RouteKind::Socket) {
+        if !matches!(e.kind, oxide_fw_router::RouteKind::Socket) {
             continue;
         }
         // `routes/chat/[room]/socket` → segs `chat`, `[room]` → `/chat/:room`.
@@ -9486,21 +9486,21 @@ fn cfg_socket_routes(
 
 /// §8.1 route.ts / §10.2 step 7: build the endpoint dispatcher when a pool is present.
 fn build_endpoint_dispatcher(
-    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
-) -> Option<std::sync::Arc<dyn oxide_server::EndpointDispatcher>> {
+    pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
+) -> Option<std::sync::Arc<dyn oxide_fw_server::EndpointDispatcher>> {
     let pool = pool?;
     Some(std::sync::Arc::new(EndpointDispatcherImpl {
-        host: oxide_jshost::EndpointHost::new(std::sync::Arc::clone(pool)),
+        host: oxide_fw_jshost::EndpointHost::new(std::sync::Arc::clone(pool)),
     }))
 }
 
 /// §8.1 middleware.ts / §8.5: a bridge to the worker's `middleware:run` op.
 struct MiddlewareDispatcherImpl {
-    host: oxide_jshost::MiddlewareHost,
+    host: oxide_fw_jshost::MiddlewareHost,
 }
 
 #[async_trait::async_trait]
-impl oxide_server::MiddlewareDispatcher for MiddlewareDispatcherImpl {
+impl oxide_fw_server::MiddlewareDispatcher for MiddlewareDispatcherImpl {
     async fn dispatch(
         &self,
         module_path: &str,
@@ -9510,14 +9510,14 @@ impl oxide_server::MiddlewareDispatcher for MiddlewareDispatcherImpl {
         headers: &[(String, String)],
         body: &[u8],
         locals: Option<&serde_json::Value>,
-    ) -> std::result::Result<oxide_server::MiddlewareRunResult, oxide_server::MiddlewareRunError>
+    ) -> std::result::Result<oxide_fw_server::MiddlewareRunResult, oxide_fw_server::MiddlewareRunError>
     {
         match self
             .host
             .run(module_path, method, url, params, headers, body, locals)
             .await
         {
-            Ok(out) => Ok(oxide_server::MiddlewareRunResult {
+            Ok(out) => Ok(oxide_fw_server::MiddlewareRunResult {
                 short: out.short,
                 status: out.status,
                 headers: out.headers,
@@ -9526,7 +9526,7 @@ impl oxide_server::MiddlewareDispatcher for MiddlewareDispatcherImpl {
                 rewrite: out.rewrite,
                 locals: out.locals,
             }),
-            Err(e) => Err(oxide_server::MiddlewareRunError {
+            Err(e) => Err(oxide_fw_server::MiddlewareRunError {
                 status: 500,
                 code: e.0.code.to_string().replace("JSH-MIDDLEWARE", "MIDDLEWARE"),
                 message: e.0.message.to_string(),
@@ -9537,36 +9537,36 @@ impl oxide_server::MiddlewareDispatcher for MiddlewareDispatcherImpl {
 
 /// §8.1 middleware.ts / §8.5: build the middleware dispatcher when a pool is present.
 fn build_middleware_dispatcher(
-    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
-) -> Option<std::sync::Arc<dyn oxide_server::MiddlewareDispatcher>> {
+    pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
+) -> Option<std::sync::Arc<dyn oxide_fw_server::MiddlewareDispatcher>> {
     let pool = pool?;
     Some(std::sync::Arc::new(MiddlewareDispatcherImpl {
-        host: oxide_jshost::MiddlewareHost::new(std::sync::Arc::clone(pool)),
+        host: oxide_fw_jshost::MiddlewareHost::new(std::sync::Arc::clone(pool)),
     }))
 }
 
 /// §9.6: a bridge to the worker's `socket:run` op.
 struct SocketDispatcherImpl {
-    host: oxide_jshost::SocketHost,
+    host: oxide_fw_jshost::SocketHost,
 }
 
 #[async_trait::async_trait]
-impl oxide_server::SocketDispatcher for SocketDispatcherImpl {
+impl oxide_fw_server::SocketDispatcher for SocketDispatcherImpl {
     async fn run(
         &self,
         module_path: &str,
         phase: &str,
         payload: serde_json::Value,
         socket_id: &str,
-    ) -> std::result::Result<oxide_server::SocketRunResult, oxide_server::SocketRunError> {
+    ) -> std::result::Result<oxide_fw_server::SocketRunResult, oxide_fw_server::SocketRunError> {
         match self.host.run(module_path, phase, payload, socket_id).await {
-            Ok(out) => Ok(oxide_server::SocketRunResult {
+            Ok(out) => Ok(oxide_fw_server::SocketRunResult {
                 sends: out.sends,
                 broadcasts: out.broadcasts,
                 targets: out.targets,
                 close: out.close,
             }),
-            Err(e) => Err(oxide_server::SocketRunError {
+            Err(e) => Err(oxide_fw_server::SocketRunError {
                 status: 500,
                 code: e.0.code.to_string().replace("JSH-SOCKET", "SOCKET"),
                 message: e.0.message.to_string(),
@@ -9577,11 +9577,11 @@ impl oxide_server::SocketDispatcher for SocketDispatcherImpl {
 
 /// §9.6: build the socket dispatcher when a pool is present.
 fn build_socket_dispatcher(
-    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
-) -> Option<std::sync::Arc<dyn oxide_server::SocketDispatcher>> {
+    pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
+) -> Option<std::sync::Arc<dyn oxide_fw_server::SocketDispatcher>> {
     let pool = pool?;
     Some(std::sync::Arc::new(SocketDispatcherImpl {
-        host: oxide_jshost::SocketHost::new(std::sync::Arc::clone(pool)),
+        host: oxide_fw_jshost::SocketHost::new(std::sync::Arc::clone(pool)),
     }))
 }
 
@@ -9645,13 +9645,13 @@ fn plugins_allow_absolute(cfg: &OxideConfig) -> bool {
 /// §6.6: the CSS transform the bundler calls for every emitted stylesheet.
 /// Wraps `LightningCssBackend` (Lightning CSS with the project's browser
 /// target) so the bundler does not depend on `oxide-assets`.
-fn build_css_transform_hook(cfg: &OxideConfig) -> oxide_bundler::CssTransformHook {
-    use oxide_assets::{CssBackend as _, CssInput, CssKind, LightningCssBackend};
+fn build_css_transform_hook(cfg: &OxideConfig) -> oxide_fw_bundler::CssTransformHook {
+    use oxide_fw_assets::{CssBackend as _, CssInput, CssKind, LightningCssBackend};
 
     // `build.target` is the browserslist expression (`baseline-widely-available`
     // by default); lightningcss accepts the same shape.
     let targets = vec![cfg.build.target.clone()];
-    oxide_bundler::CssTransformHook::new(move |path, source, is_module, minify| {
+    oxide_fw_bundler::CssTransformHook::new(move |path, source, is_module, minify| {
         let input = CssInput {
             code: source.to_string(),
             file: Some(path.to_string()),
@@ -9667,7 +9667,7 @@ fn build_css_transform_hook(cfg: &OxideConfig) -> oxide_bundler::CssTransformHoo
             .transform(&input)
             .map(|out| (out.code, out.exports))
             .map_err(|e| {
-                oxide_bundler::err(
+                oxide_fw_bundler::err(
                     "BLD-CSS",
                     format!("lightningcss failed for {path}: {}", e.0.message),
                 )
@@ -9682,8 +9682,8 @@ fn build_css_transform_hook(cfg: &OxideConfig) -> oxide_bundler::CssTransformHoo
 fn build_js_plugin_hook(
     root: &Path,
     cfg: &OxideConfig,
-    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
-) -> Option<oxide_bundler::TransformHook> {
+    pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
+) -> Option<oxide_fw_bundler::TransformHook> {
     let pool = pool?;
     let mut plugins: Vec<String> = Vec::new();
     for p in &cfg.plugins {
@@ -9739,7 +9739,7 @@ fn build_js_plugin_hook(
     // runtime. Calling `Runtime::block_on` there deadlocks the worker (the
     // outer runtime never polls). Run the bridge on a scoped thread instead —
     // the same pattern `emit_snapshot_blob` uses.
-    Some(oxide_bundler::TransformHook::new(move |id, source| {
+    Some(oxide_fw_bundler::TransformHook::new(move |id, source| {
         let pool = std::sync::Arc::clone(&pool);
         let loaded = std::sync::Arc::clone(&loaded);
         let plugins = plugins.clone();
@@ -9747,12 +9747,12 @@ fn build_js_plugin_hook(
         let source = source.to_string();
         std::thread::scope(|scope| {
             scope
-                .spawn(|| -> oxide_diagnostics::Result<String> {
+                .spawn(|| -> oxide_fw_diagnostics::Result<String> {
                     let rt = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()
                         .map_err(|e| {
-                            oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
+                            oxide_fw_diagnostics::OxideError(oxide_fw_diagnostics::Diagnostic::error(
                                 "PLG-BRIDGE",
                                 format!("bridge runtime: {e}"),
                             ))
@@ -9770,21 +9770,21 @@ fn build_js_plugin_hook(
                         let mut code = source;
                         for path in &plugins {
                             if need_load {
-                                let load = oxide_jshost::CallInput {
+                                let load = oxide_fw_jshost::CallInput {
                                     payload: serde_json::json!({ "path": path }),
                                     headers: Default::default(),
                                     has_body: false,
                                     request_id: format!("plugin:load:{path}"),
                                     route: None,
                                 };
-                                let entry = oxide_jshost::EntryRef {
+                                let entry = oxide_fw_jshost::EntryRef {
                                     kind: "plugin:load".into(),
                                     module: path.clone(),
                                     export: "default".into(),
                                 };
                                 let _ = pool.call(entry, load).await;
                             }
-                            let call = oxide_jshost::CallInput {
+                            let call = oxide_fw_jshost::CallInput {
                                 payload: serde_json::json!({
                                     "path": path,
                                     "hook": "transform",
@@ -9795,19 +9795,19 @@ fn build_js_plugin_hook(
                                 request_id: format!("plugin:call:{path}:transform"),
                                 route: None,
                             };
-                            let entry = oxide_jshost::EntryRef {
+                            let entry = oxide_fw_jshost::EntryRef {
                                 kind: "plugin:call".into(),
                                 module: path.clone(),
                                 export: "transform".into(),
                             };
                             let mut stream = pool.call(entry, call).await.map_err(|e| {
-                                oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
+                                oxide_fw_diagnostics::OxideError(oxide_fw_diagnostics::Diagnostic::error(
                                     "PLG-CALL",
                                     format!("plugin transform failed: {}", e.0.message),
                                 ))
                             })?;
                             let bytes = stream.collect().await.map_err(|e| {
-                                oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
+                                oxide_fw_diagnostics::OxideError(oxide_fw_diagnostics::Diagnostic::error(
                                     "PLG-CALL",
                                     format!("plugin transform read failed: {}", e.0.message),
                                 ))
@@ -9823,8 +9823,8 @@ fn build_js_plugin_hook(
                 })
                 .join()
                 .unwrap_or_else(|_| {
-                    Err(oxide_diagnostics::OxideError(
-                        oxide_diagnostics::Diagnostic::error(
+                    Err(oxide_fw_diagnostics::OxideError(
+                        oxide_fw_diagnostics::Diagnostic::error(
                             "PLG-BRIDGE",
                             "plugin bridge thread panicked",
                         ),
@@ -9850,9 +9850,9 @@ fn build_js_plugin_hook(
 
 /// One loaded JS plugin: its pool (shared) + absolute path + declared hooks.
 struct JsPluginHandle {
-    pool: std::sync::Arc<dyn oxide_jshost::Pool>,
+    pool: std::sync::Arc<dyn oxide_fw_jshost::Pool>,
     path: std::path::PathBuf,
-    hooks: std::collections::BTreeSet<oxide_plugin::Hook>,
+    hooks: std::collections::BTreeSet<oxide_fw_plugin::Hook>,
 }
 
 /// An ordered list of loaded JS plugins. Empty when `config.plugins` has no
@@ -9866,7 +9866,7 @@ impl JsPluginChain {
     /// this to skip the `call` machinery entirely for a hook no plugin
     /// implements — the bundler/prerender wiring checks this before doing
     /// any per-module work.
-    fn has(&self, hook: oxide_plugin::Hook) -> bool {
+    fn has(&self, hook: oxide_fw_plugin::Hook) -> bool {
         self.plugins.iter().any(|p| p.hooks.contains(&hook))
     }
 
@@ -9881,7 +9881,7 @@ impl JsPluginChain {
     ///   * `Some(Err(_))` when a plugin call failed.
     async fn call(
         &self,
-        hook: oxide_plugin::Hook,
+        hook: oxide_fw_plugin::Hook,
         args: serde_json::Value,
     ) -> Option<anyhow::Result<Vec<serde_json::Value>>> {
         use futures::StreamExt as _;
@@ -9894,7 +9894,7 @@ impl JsPluginChain {
             if !p.hooks.contains(&hook) {
                 continue;
             }
-            let req = oxide_jshost::CallInput {
+            let req = oxide_fw_jshost::CallInput {
                 payload: serde_json::json!({
                     "path": p.path.to_string_lossy(),
                     "hook": hook_name,
@@ -9905,7 +9905,7 @@ impl JsPluginChain {
                 request_id: format!("plugin:call:{}:{}", p.path.display(), hook_name),
                 route: None,
             };
-            let entry = oxide_jshost::EntryRef {
+            let entry = oxide_fw_jshost::EntryRef {
                 kind: "plugin:call".into(),
                 module: String::new(),
                 export: String::new(),
@@ -9953,8 +9953,8 @@ impl JsPluginChain {
 /// Reverse of [`parse_hook_name`] — the JS-side property name for each
 /// hook. Matches Vite's camelCase convention so a plugin author writes
 /// `export function transform(...)` and the dispatch looks up `mod.transform`.
-fn js_hook_name(h: oxide_plugin::Hook) -> &'static str {
-    use oxide_plugin::Hook;
+fn js_hook_name(h: oxide_fw_plugin::Hook) -> &'static str {
+    use oxide_fw_plugin::Hook;
     match h {
         Hook::Config => "config",
         Hook::ConfigResolved => "configResolved",
@@ -9981,8 +9981,8 @@ fn js_hook_name(h: oxide_plugin::Hook) -> &'static str {
 /// Parse a camelCase hook name from the JS side into the `Hook` enum.
 /// Accepts both camelCase (Vite style) and snake_case (Oxide's internal
 /// spelling) so a plugin author can use either.
-fn parse_hook_name(s: &str) -> Option<oxide_plugin::Hook> {
-    use oxide_plugin::Hook;
+fn parse_hook_name(s: &str) -> Option<oxide_fw_plugin::Hook> {
+    use oxide_fw_plugin::Hook;
     Some(match s {
         "config" => Hook::Config,
         "configResolved" | "config_resolved" => Hook::ConfigResolved,
@@ -10016,7 +10016,7 @@ fn parse_hook_name(s: &str) -> Option<oxide_plugin::Hook> {
 async fn build_js_plugin_chain(
     root: &Path,
     cfg: &OxideConfig,
-    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
+    pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
 ) -> anyhow::Result<JsPluginChain> {
     use futures::StreamExt as _;
     let Some(pool) = pool else {
@@ -10042,14 +10042,14 @@ async fn build_js_plugin_chain(
         }
         // Call `plugin:load` — the worker imports the module and reports
         // which hook exports it has.
-        let req = oxide_jshost::CallInput {
+        let req = oxide_fw_jshost::CallInput {
             payload: serde_json::json!({ "path": abs.to_string_lossy() }),
             headers: Default::default(),
             has_body: false,
             request_id: format!("plugin:load:{idx}"),
             route: None,
         };
-        let entry = oxide_jshost::EntryRef {
+        let entry = oxide_fw_jshost::EntryRef {
             kind: "plugin:load".into(),
             module: String::new(),
             export: String::new(),
@@ -10106,7 +10106,7 @@ async fn build_js_plugin_chain(
     Ok(JsPluginChain { plugins })
 }
 
-fn build_transform_hook(root: &Path, cfg: &OxideConfig) -> Option<oxide_bundler::TransformHook> {
+fn build_transform_hook(root: &Path, cfg: &OxideConfig) -> Option<oxide_fw_bundler::TransformHook> {
     for p in &cfg.plugins {
         let kind = p.get("kind").and_then(|v| v.as_str());
         if kind != Some("wasm") {
@@ -10124,7 +10124,7 @@ fn build_transform_hook(root: &Path, cfg: &OxideConfig) -> Option<oxide_bundler:
             continue;
         };
 
-        let manifest = oxide_plugin::WasmPluginManifest {
+        let manifest = oxide_fw_plugin::WasmPluginManifest {
             name: p
                 .get("name")
                 .and_then(|v| v.as_str())
@@ -10151,9 +10151,9 @@ fn build_transform_hook(root: &Path, cfg: &OxideConfig) -> Option<oxide_bundler:
                     a.iter()
                         .filter_map(|v| v.as_str())
                         .filter_map(|s| match s {
-                            "transform" => Some(oxide_plugin::Hook::Transform),
-                            "load" => Some(oxide_plugin::Hook::Load),
-                            "resolveId" | "resolve_id" => Some(oxide_plugin::Hook::ResolveId),
+                            "transform" => Some(oxide_fw_plugin::Hook::Transform),
+                            "load" => Some(oxide_fw_plugin::Hook::Load),
+                            "resolveId" | "resolve_id" => Some(oxide_fw_plugin::Hook::ResolveId),
                             _ => None,
                         })
                         .collect()
@@ -10161,7 +10161,7 @@ fn build_transform_hook(root: &Path, cfg: &OxideConfig) -> Option<oxide_bundler:
                 .unwrap_or_default(),
         };
 
-        let plugin = match oxide_plugin::WasmPlugin::load(&bytes, manifest, Some(&abs)) {
+        let plugin = match oxide_fw_plugin::WasmPlugin::load(&bytes, manifest, Some(&abs)) {
             Ok(p) => p,
             Err(e) => {
                 eprintln!(
@@ -10176,17 +10176,17 @@ fn build_transform_hook(root: &Path, cfg: &OxideConfig) -> Option<oxide_bundler:
         // Only a plugin that declares *and* exports `transform` gets a hook.
         if !plugin
             .available_hooks()
-            .contains(&oxide_plugin::Hook::Transform)
+            .contains(&oxide_fw_plugin::Hook::Transform)
         {
             continue;
         }
         let plugin = std::sync::Mutex::new(plugin);
-        return Some(oxide_bundler::TransformHook::new(move |_id, source| {
+        return Some(oxide_fw_bundler::TransformHook::new(move |_id, source| {
             // `call_string_hook` takes `&mut self` (the store is stateful);
             // a `Mutex` makes the closure `Sync`. Plugin transforms are not
             // hot enough for the lock to matter.
             let mut guard = plugin.lock().unwrap_or_else(|p| p.into_inner());
-            guard.call_string_hook(&oxide_plugin::Hook::Transform, source)
+            guard.call_string_hook(&oxide_fw_plugin::Hook::Transform, source)
         }));
     }
     None
@@ -10203,7 +10203,7 @@ fn build_transform_hook(root: &Path, cfg: &OxideConfig) -> Option<oxide_bundler:
 /// agnostic), so the CLI — which owns the config — stamps the answer into the
 /// manifest it already post-processes. The client then skips the fetch when
 /// the list is empty.
-fn stamp_i18n_locales(root: &Path, cfg: &oxide_config::OxideConfig) {
+fn stamp_i18n_locales(root: &Path, cfg: &oxide_fw_config::OxideConfig) {
     let manifest_path = root.join("dist/client/client.manifest.json");
     let Ok(raw) = std::fs::read_to_string(&manifest_path) else {
         return;
@@ -10237,12 +10237,12 @@ fn stamp_i18n_locales(root: &Path, cfg: &oxide_config::OxideConfig) {
     }
 }
 
-fn load_client_assets(rootp: &Path) -> Option<oxide_server::StaticAssets> {
+fn load_client_assets(rootp: &Path) -> Option<oxide_fw_server::StaticAssets> {
     let dist = rootp.join("dist");
     if !dist.is_dir() {
         return None;
     }
-    oxide_server::StaticAssets::scan(dist).ok()
+    oxide_fw_server::StaticAssets::scan(dist).ok()
 }
 
 /// BUG-11: turn `server.host` into a bind IP. `localhost` (and `""`) → the
@@ -10331,9 +10331,9 @@ async fn start_server_inner_full(
     bind: Option<(std::net::IpAddr, u16)>,
     with_inspector: bool,
     tls: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>,
-    proxy_rules: Vec<oxide_dev::ProxyRule>,
+    proxy_rules: Vec<oxide_fw_dev::ProxyRule>,
     stack: crate::framework_shim::FrameworkStack,
-    hmr: Option<std::sync::Arc<oxide_dev::HmrHub>>,
+    hmr: Option<std::sync::Arc<oxide_fw_dev::HmrHub>>,
 ) -> anyhow::Result<StartedServer> {
     // Canonicalize so every path derived here (route modules, the SSR entry,
     // the client manifest) is absolute — the worker resolves a module path
@@ -10376,12 +10376,12 @@ async fn start_server_inner_full(
         None => (resolve_bind_host(&cfg.server.host), cfg.server.port),
     };
     let port = resolve_port(requested_port).await;
-    let rules = oxide_router::RulesEngine::compile(config_rules_to_router(&cfg.rules))
+    let rules = oxide_fw_router::RulesEngine::compile(config_rules_to_router(&cfg.rules))
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
     // §20 metrics: ONE registry shared by the pipeline (native branches) and
     // the dispatch delegate (per-route labels). Cardinality is bounded by the
     // route pattern (e.g. `/blog/[slug]`), never the resolved URL.
-    let metrics = std::sync::Arc::new(oxide_server::Metrics::new());
+    let metrics = std::sync::Arc::new(oxide_fw_server::Metrics::new());
 
     let assets = load_client_assets(&rootp);
     let image_endpoint = if cfg.images_endpoint.enabled {
@@ -10403,12 +10403,12 @@ async fn start_server_inner_full(
     // §9.6: the WebSocket route service. Built only when the project has
     // any `socket.ts` routes AND a dispatcher (a pool). URL segments →
     // `socket.ts` path, so the hot path is a map probe.
-    let socket_service: Option<std::sync::Arc<oxide_server::SocketService>> = match (
+    let socket_service: Option<std::sync::Arc<oxide_fw_server::SocketService>> = match (
         build_socket_dispatcher(stack.pool.as_ref()),
         cfg_socket_routes(&rootp, &cfg, &tree),
     ) {
         (Some(dispatcher), routes) if !routes.is_empty() => {
-            Some(std::sync::Arc::new(oxide_server::SocketService {
+            Some(std::sync::Arc::new(oxide_fw_server::SocketService {
                 dispatcher,
                 routes: std::sync::Arc::new(routes),
                 registry: std::sync::Arc::new(std::sync::Mutex::new(
@@ -10421,7 +10421,7 @@ async fn start_server_inner_full(
     // SEC-09: mint the dev inspector token when the inspector is attached
     // (dev only). `serve` (production) never sets an inspector, so this is
     // `None` there.
-    let dev_token: Option<String> = with_inspector.then(oxide_server::dev_token);
+    let dev_token: Option<String> = with_inspector.then(oxide_fw_server::dev_token);
     let client_manifest_json: Option<serde_json::Value> = {
         let client_manifest = rootp.join("dist/client/client.manifest.json");
         std::fs::read_to_string(&client_manifest)
@@ -10450,12 +10450,12 @@ async fn start_server_inner_full(
     // here so the dispatch closure (which records) and the inspector (which
     // reads) share one instance. `None` for a non-inspector server — the
     // dispatch then skips recording (a branch, not an allocation).
-    let waterfall_recorder: Option<oxide_dev::WaterfallRecorder> =
-        with_inspector.then(oxide_dev::WaterfallRecorder::new);
+    let waterfall_recorder: Option<oxide_fw_dev::WaterfallRecorder> =
+        with_inspector.then(oxide_fw_dev::WaterfallRecorder::new);
     // §16.6: the session codec from `security.sessionKeys`. A malformed key
     // (too short) is a hard config error — silently falling back to an
     // unsigned cookie would be a security downgrade.
-    let session_codec: Option<std::sync::Arc<oxide_server::SessionCodec>> = {
+    let session_codec: Option<std::sync::Arc<oxide_fw_server::SessionCodec>> = {
         let keys: Vec<Vec<u8>> = cfg
             .security
             .session_keys
@@ -10465,7 +10465,7 @@ async fn start_server_inner_full(
         if keys.is_empty() {
             None
         } else {
-            match oxide_server::SessionCodec::new(&keys) {
+            match oxide_fw_server::SessionCodec::new(&keys) {
                 Ok(c) => Some(std::sync::Arc::new(c)),
                 Err(e) => {
                     eprintln!(
@@ -10485,11 +10485,11 @@ async fn start_server_inner_full(
     let render_ready = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
         renderer_to_warm.is_none(),
     ));
-    let pipeline = std::sync::Arc::new(oxide_server::Pipeline {
+    let pipeline = std::sync::Arc::new(oxide_fw_server::Pipeline {
         // A3: OG endpoint rate limit. The rasterization is CPU-bound and the
         // endpoint is unauthenticated; 10 renders per peer per minute bounds
         // the worst case without blocking a legitimate OG card.
-        og_rate_limiter: oxide_server::RateLimiter::default(),
+        og_rate_limiter: oxide_fw_server::RateLimiter::default(),
         og_rate_max: cfg.og.rate_limit.max,
         og_rate_window_secs: cfg.og.rate_limit.window_secs,
 
@@ -10499,17 +10499,17 @@ async fn start_server_inner_full(
         og_endpoint,
         server_fns,
         actions: actions.clone(),
-        limits: oxide_server::Limits::default(),
+        limits: oxide_fw_server::Limits::default(),
         // SPEC-10: locale policy for the pipeline (None when unconfigured).
         i18n: {
             let c = &cfg.i18n;
-            (!c.locales.is_empty()).then(|| oxide_server::I18nPolicy {
+            (!c.locales.is_empty()).then(|| oxide_fw_server::I18nPolicy {
                 locales: c.locales.clone(),
                 default: c.default_locale.clone(),
                 strategy: c.strategy.clone(),
             })
         },
-        security: oxide_server::SecuritySettings {
+        security: oxide_fw_server::SecuritySettings {
             csp: cfg.security.csp.clone(),
             csrf: cfg.security.csrf.clone(),
             // SEC-05: populate the allow-lists from config — they were never
@@ -10555,7 +10555,7 @@ async fn start_server_inner_full(
             // S-21.3: whether the `x-oxide-cache` status header is emitted.
             expose_cache_header: cfg.security.expose_cache_header,
         },
-        rate_limiter: std::sync::Arc::new(oxide_server::RateLimiter::default()),
+        rate_limiter: std::sync::Arc::new(oxide_fw_server::RateLimiter::default()),
         health_path: "/_oxide/health".to_string(),
         ready_path: "/_oxide/ready".to_string(),
         render_ready: std::sync::Arc::clone(&render_ready),
@@ -10565,11 +10565,11 @@ async fn start_server_inner_full(
             // §20: with a recorder wired, the inspector's waterfall table
             // reflects the live per-request timings instead of staying empty.
             let rt = match waterfall_recorder.clone() {
-                Some(rec) => oxide_dev::RouteTableInspector::from_router_table_with_recorder(
+                Some(rec) => oxide_fw_dev::RouteTableInspector::from_router_table_with_recorder(
                     tree.table(),
                     rec,
                 ),
-                None => oxide_dev::RouteTableInspector::from_router_table(tree.table()),
+                None => oxide_fw_dev::RouteTableInspector::from_router_table(tree.table()),
             };
             Some(std::sync::Arc::new(CliInspector { state: rt.state() }))
         } else {
@@ -10602,7 +10602,7 @@ async fn start_server_inner_full(
             0
         },
     });
-    let proxy_rules: Vec<oxide_dev::ProxyRule> = proxy_rules.clone();
+    let proxy_rules: Vec<oxide_fw_dev::ProxyRule> = proxy_rules.clone();
     let routes_root = rootp.join(&cfg.routes.dir);
     // §10.3: the same boot URL that the build-time prerender injects also
     // has to be spliced into every live request's shell — otherwise dev /
@@ -10616,7 +10616,7 @@ async fn start_server_inner_full(
     // A malformed value falls back to 512 MiB with a warning rather than
     // refusing to start.
     // §14.1: `cache.l0.maxSize`.
-    let l0_bytes = oxide_config::parse_size(&cfg.cache.l0.max_size).unwrap_or_else(|_| {
+    let l0_bytes = oxide_fw_config::parse_size(&cfg.cache.l0.max_size).unwrap_or_else(|_| {
         tracing::warn!(
             value = %cfg.cache.l0.max_size,
             "cache.l0.maxSize is malformed; using 512mb"
@@ -10629,13 +10629,13 @@ async fn start_server_inner_full(
     // stack built WITHOUT a tier (tests, `FrameworkStack::empty()`) — it
     // keeps the same handler mapping so a test stack still exercises the
     // config path. Memory/disk are the local tiers every handler gets.
-    let l0_tier: std::sync::Arc<dyn oxide_cache::CacheHandler> = match stack.cache_tier.clone() {
+    let l0_tier: std::sync::Arc<dyn oxide_fw_cache::CacheHandler> = match stack.cache_tier.clone() {
         Some(tier) => tier,
         None => {
-            let mut tier = oxide_cache::TieredCache::new(l0_bytes);
+            let mut tier = oxide_fw_cache::TieredCache::new(l0_bytes);
             match &cfg.cache.handler {
-                oxide_config::CacheHandlerConfig::Memory => {}
-                oxide_config::CacheHandlerConfig::Disk => {
+                oxide_fw_config::CacheHandlerConfig::Memory => {}
+                oxide_fw_config::CacheHandlerConfig::Disk => {
                     // §11.2 L1: a durable local disk tier so a restart keeps
                     // its cache. Failure (permissions) degrades to memory-only
                     // with a warning rather than failing the boot.
@@ -10650,30 +10650,30 @@ async fn start_server_inner_full(
                                 "cache.handler=disk: opening the disk tier failed; \
                                  continuing memory-only",
                             );
-                            tier = oxide_cache::TieredCache::new(l0_bytes);
+                            tier = oxide_fw_cache::TieredCache::new(l0_bytes);
                         }
                     }
                 }
-                oxide_config::CacheHandlerConfig::Http { url } => {
+                oxide_fw_config::CacheHandlerConfig::Http { url } => {
                     tier = tier.with_remote(std::sync::Arc::new(
-                        oxide_cache::HttpCacheHandler::new(url.clone()),
+                        oxide_fw_cache::HttpCacheHandler::new(url.clone()),
                     ));
                 }
-                oxide_config::CacheHandlerConfig::Redis { url } => {
+                oxide_fw_config::CacheHandlerConfig::Redis { url } => {
                     // §11.2: a real Redis L2 tier (oxide-cache/redis). A
                     // connection failure logs and stays memory-only — the
                     // build must not fail because a cache is down.
-                    match oxide_cache::RedisCacheHandler::new(url.clone()).await {
+                    match oxide_fw_cache::RedisCacheHandler::new(url.clone()).await {
                         Ok(h) => {
                             tier = tier.with_remote(std::sync::Arc::new(h));
                             tracing::info!(
-                                url = %oxide_cache::redacted_url(&url),
+                                url = %oxide_fw_cache::redacted_url(&url),
                                 "cache.handler=redis: attached remote tier",
                             );
                         }
                         Err(e) => {
                             tracing::warn!(
-                                url = %oxide_cache::redacted_url(&url),
+                                url = %oxide_fw_cache::redacted_url(&url),
                                 error = %e.0.message,
                                 "cache.handler=redis: connection failed; \
                                  continuing with local tier only",
@@ -10681,11 +10681,11 @@ async fn start_server_inner_full(
                         }
                     }
                 }
-                oxide_config::CacheHandlerConfig::S3 { bucket } => {
+                oxide_fw_config::CacheHandlerConfig::S3 { bucket } => {
                     // §11.2: a real S3 L2 tier (oxide-cache/s3). Same
                     // failure-tolerance as Redis: a bad bucket logs and stays
                     // memory-only. Credentials/region come from AWS_* env vars.
-                    match oxide_cache::S3CacheHandler::new(bucket.clone()) {
+                    match oxide_fw_cache::S3CacheHandler::new(bucket.clone()) {
                         Ok(h) => {
                             tier = tier.with_remote(std::sync::Arc::new(h));
                             tracing::info!(
@@ -10765,7 +10765,7 @@ async fn start_server_inner_full(
             .join(".oxide/routes.manifest")
             .exists()
             .then(|| {
-                oxide_router::ArchivedTree::load_archived(&rootp.join(".oxide/routes.manifest"))
+                oxide_fw_router::ArchivedTree::load_archived(&rootp.join(".oxide/routes.manifest"))
                     .ok()
                     .map(std::sync::Arc::new)
             })
@@ -10792,7 +10792,7 @@ async fn start_server_inner_full(
         stack.pool.clone(),
         {
             let c = &cfg.i18n;
-            (!c.locales.is_empty()).then(|| oxide_assets::i18n::I18nConfig {
+            (!c.locales.is_empty()).then(|| oxide_fw_assets::i18n::I18nConfig {
                 locales: c.locales.clone(),
                 default: c.default_locale.clone(),
                 strategy: c.strategy.clone(),
@@ -10825,9 +10825,9 @@ async fn start_server_inner_full(
     // §12.1: HTTP/3 rides QUIC over UDP on the same port. Enabled by
     // `server.http3` + TLS (QUIC has no plaintext mode). A second listener
     // task drives it; the HTTP/1+2 server is untouched.
-    let http3_cfg: Option<oxide_server::H3ServerConfig> = if cfg.server.http3 {
+    let http3_cfg: Option<oxide_fw_server::H3ServerConfig> = if cfg.server.http3 {
         match tls.as_ref() {
-            Some(tls_cfg) => match oxide_server::h3_config_from_tls(tls_cfg.as_ref()) {
+            Some(tls_cfg) => match oxide_fw_server::h3_config_from_tls(tls_cfg.as_ref()) {
                 Ok(c) => Some(c),
                 Err(e) => {
                     tracing::warn!(
@@ -10873,7 +10873,7 @@ async fn start_server_inner_full(
         if let Some(h3_cfg) = http3_cfg {
             let h3_task = tokio::spawn(async move {
                 if let Err(e) =
-                    oxide_server::serve_http3(h3_bind, pipeline_h3, dispatch_h3, rx_h3, h3_cfg)
+                    oxide_fw_server::serve_http3(h3_bind, pipeline_h3, dispatch_h3, rx_h3, h3_cfg)
                         .await
                 {
                     tracing::warn!(code = %e.0.code, "http3 listener stopped: {}", e.0.message);
@@ -10882,7 +10882,7 @@ async fn start_server_inner_full(
             let _ = h3_task;
         }
         if let Err(e) =
-            oxide_server::Server::serve_with_tls(bind_addr, pipeline, dispatch, rx_main, tls).await
+            oxide_fw_server::Server::serve_with_tls(bind_addr, pipeline, dispatch, rx_main, tls).await
         {
             tracing::error!(code = %e.0.code, "server stopped with error");
         }
@@ -11032,7 +11032,7 @@ async fn cmd_analyze(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     let rows: Vec<(String, u64)> = if manifest_routes.is_empty() {
         tree.entries
             .iter()
-            .filter(|e| matches!(e.kind, oxide_router::RouteKind::Page))
+            .filter(|e| matches!(e.kind, oxide_fw_router::RouteKind::Page))
             .map(|e| (e.id.0.clone(), 0u64))
             .collect()
     } else {
@@ -11060,14 +11060,14 @@ async fn cmd_analyze(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
         .or(cfg.budgets.client_js.as_deref());
     let route_budget: Option<u64> = match route_src {
         Some(s) => Some(
-            oxide_config::parse_size(s)
+            oxide_fw_config::parse_size(s)
                 .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?,
         ),
         None => None,
     };
     let total_budget: Option<u64> = match cfg.budgets.client_js.as_deref() {
         Some(s) => Some(
-            oxide_config::parse_size(s)
+            oxide_fw_config::parse_size(s)
                 .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?,
         ),
         None => None,
@@ -11193,10 +11193,10 @@ async fn cmd_analyze(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
 async fn cmd_check(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = PathBuf::from(root);
     let mut ok = true;
-    let mut diags: Vec<oxide_diagnostics::Diagnostic> = Vec::new();
+    let mut diags: Vec<oxide_fw_diagnostics::Diagnostic> = Vec::new();
 
     // (1) config + routes — the two checks the tool can always run.
-    match oxide_config::load(&rootp, "development", BTreeMap::new()) {
+    match oxide_fw_config::load(&rootp, "development", BTreeMap::new()) {
         Ok(lc) => outln!(w, "config: OK ({} env vars)", lc.env.len()),
         Err(e) => {
             outln!(w, "config: {} {}", e.0.code, e.0.message);
@@ -11281,7 +11281,7 @@ async fn cmd_check(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
                             for line in stdout.lines().chain(stderr.lines()).take(50) {
                                 outln!(w, "  {line}");
                             }
-                            diags.push(oxide_diagnostics::Diagnostic::error(
+                            diags.push(oxide_fw_diagnostics::Diagnostic::error(
                                 if label == "typecheck" {
                                     "CHECK-TS"
                                 } else {
@@ -11306,9 +11306,9 @@ async fn cmd_check(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     // entry fails the check. A plugin that cannot be reached (no pool) is
     // skipped rather than failing `check`.
     if plugin_declares_any(&rootp, &cfg, &["diagnostics"]) {
-        use oxide_jshost::JsHost as _;
-        let host = oxide_jshost::NodeHost::new(oxide_jshost::NodeHost::worker_script_default());
-        if let Ok(pool) = host.tooling_pool(oxide_jshost::PoolConfig::default()) {
+        use oxide_fw_jshost::JsHost as _;
+        let host = oxide_fw_jshost::NodeHost::new(oxide_fw_jshost::NodeHost::worker_script_default());
+        if let Ok(pool) = host.tooling_pool(oxide_fw_jshost::PoolConfig::default()) {
             let results = call_js_plugin_hook(
                 &rootp,
                 &cfg,
@@ -11330,9 +11330,9 @@ async fn cmd_check(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
                         .unwrap_or("error");
                     outln!(w, "plugin diagnostic {code}: {message}");
                     let diag = if severity == "warning" {
-                        oxide_diagnostics::Diagnostic::warning(code, message)
+                        oxide_fw_diagnostics::Diagnostic::warning(code, message)
                     } else {
-                        oxide_diagnostics::Diagnostic::error(code, message)
+                        oxide_fw_diagnostics::Diagnostic::error(code, message)
                     };
                     diags.push(diag);
                     if severity != "warning" {
@@ -11447,7 +11447,7 @@ async fn cmd_doctor(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     check(w, cargo_ok, "cargo (cargo --version)")?;
     check(
         w,
-        oxide_config::load(&rootp, "development", BTreeMap::new()).is_ok(),
+        oxide_fw_config::load(&rootp, "development", BTreeMap::new()).is_ok(),
         "config loadable",
     )?;
     let cfg = load_config_or_default(&rootp, "development");
@@ -11612,11 +11612,11 @@ async fn cmd_add(root: &str, module: &str, w: Writer<'_>) -> anyhow::Result<i32>
             outln!(w, "  oxide module detected — contributes:");
             match &m.routes_dir {
                 Some(p) if p.is_dir() => {
-                    let pages = oxide_router::RouteTree::scan(p)
+                    let pages = oxide_fw_router::RouteTree::scan(p)
                         .map(|t| {
                             t.entries
                                 .iter()
-                                .filter(|e| matches!(e.kind, oxide_router::RouteKind::Page))
+                                .filter(|e| matches!(e.kind, oxide_fw_router::RouteKind::Page))
                                 .count()
                         })
                         .unwrap_or(0);
@@ -12064,7 +12064,7 @@ async fn cmd_migrate(root: &str, source: &str, write: bool, w: Writer<'_>) -> an
 /// Editors pick this up via a `$schema` field in the config or a
 /// `json.schemas` setting.
 fn cmd_schema(w: Writer<'_>) -> anyhow::Result<i32> {
-    let json = oxide_config::config_schema_pretty()
+    let json = oxide_fw_config::config_schema_pretty()
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
     outln!(w, "{json}");
     Ok(0)
@@ -12082,7 +12082,7 @@ async fn cmd_render(
     stream: bool,
     w: Writer<'_>,
 ) -> anyhow::Result<i32> {
-    use oxide_jshost::{FrameworkHost, JsHost, LoaderHost, NodeHost, PoolConfig};
+    use oxide_fw_jshost::{FrameworkHost, JsHost, LoaderHost, NodeHost, PoolConfig};
 
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
     // §16.5 / WP-r9-1: thread the project root to worker
@@ -12227,13 +12227,13 @@ async fn cmd_render(
             .await
             .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
         match &mut s {
-            oxide_jshost::CallStream::Complete(bytes) => {
+            oxide_fw_jshost::CallStream::Complete(bytes) => {
                 w.write_all(bytes)
                     .map_err(|e| anyhow::anyhow!("write stdout: {e}"))?;
                 w.flush()
                     .map_err(|e| anyhow::anyhow!("flush stdout: {e}"))?;
             }
-            oxide_jshost::CallStream::Chunked(rx) => {
+            oxide_fw_jshost::CallStream::Chunked(rx) => {
                 while let Some(item) = rx.recv().await {
                     let bytes =
                         item.map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
@@ -12265,7 +12265,7 @@ async fn cmd_render(
 /// exact load path the build/dev pipeline uses: a Node worker evaluates
 /// the config, extracts the `framework` adapter, and returns its shape.
 async fn cmd_config(root: &str, json: bool, w: Writer<'_>) -> anyhow::Result<i32> {
-    use oxide_jshost::{FrameworkHost, JsHost, NodeHost, PoolConfig};
+    use oxide_fw_jshost::{FrameworkHost, JsHost, NodeHost, PoolConfig};
 
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
     let config_path = find_config_file(&rootp)?;
@@ -12352,7 +12352,7 @@ mod tests;
 //
 // Additive: these use the same `plugin:load` / `plugin:call` worker ops that
 // `build_js_plugin_hook` already uses for `transform`, but build a
-// `ResolveHook` / `LoadHook` (types already in `oxide_bundler::BundleOptions`)
+// `ResolveHook` / `LoadHook` (types already in `oxide_fw_bundler::BundleOptions`)
 // so a `kind:js` plugin — or a `modules:[]` entry — can alias or virtualize
 // modules. The bundler wiring (setting `BundleOptions.resolve_hook` etc.) is
 // in `cmd_build`.
@@ -12412,8 +12412,8 @@ fn collect_plugin_paths_for_hook(root: &Path, cfg: &OxideConfig, hook_name: &str
 fn build_js_plugin_resolve_hook(
     root: &Path,
     cfg: &OxideConfig,
-    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
-) -> Option<oxide_bundler::ResolveHook> {
+    pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
+) -> Option<oxide_fw_bundler::ResolveHook> {
     let pool = pool?;
     let plugins = collect_plugin_paths_for_hook(root, cfg, "resolveId");
     if plugins.is_empty() {
@@ -12421,7 +12421,7 @@ fn build_js_plugin_resolve_hook(
     }
     let pool = std::sync::Arc::clone(pool);
     let loaded = std::sync::Arc::new(std::sync::Mutex::new(false));
-    Some(oxide_bundler::ResolveHook::new(move |specifier, from| {
+    Some(oxide_fw_bundler::ResolveHook::new(move |specifier, from| {
         let pool = std::sync::Arc::clone(&pool);
         let loaded = std::sync::Arc::clone(&loaded);
         let plugins = plugins.clone();
@@ -12429,12 +12429,12 @@ fn build_js_plugin_resolve_hook(
         let from = from.to_string();
         std::thread::scope(|scope| {
             scope
-                .spawn(|| -> oxide_diagnostics::Result<Option<PathBuf>> {
+                .spawn(|| -> oxide_fw_diagnostics::Result<Option<PathBuf>> {
                     let rt = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()
                         .map_err(|e| {
-                            oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
+                            oxide_fw_diagnostics::OxideError(oxide_fw_diagnostics::Diagnostic::error(
                                 "PLG-BRIDGE",
                                 format!("bridge runtime: {e}"),
                             ))
@@ -12451,21 +12451,21 @@ fn build_js_plugin_resolve_hook(
                         };
                         for path in &plugins {
                             if need_load {
-                                let load = oxide_jshost::CallInput {
+                                let load = oxide_fw_jshost::CallInput {
                                     payload: serde_json::json!({ "path": path }),
                                     headers: Default::default(),
                                     has_body: false,
                                     request_id: format!("plugin:load:{path}"),
                                     route: None,
                                 };
-                                let entry = oxide_jshost::EntryRef {
+                                let entry = oxide_fw_jshost::EntryRef {
                                     kind: "plugin:load".into(),
                                     module: path.clone(),
                                     export: "default".into(),
                                 };
                                 let _ = pool.call(entry, load).await;
                             }
-                            let call = oxide_jshost::CallInput {
+                            let call = oxide_fw_jshost::CallInput {
                                 payload: serde_json::json!({
                                     "path": path,
                                     "hook": "resolveId",
@@ -12476,7 +12476,7 @@ fn build_js_plugin_resolve_hook(
                                 request_id: format!("plugin:call:{path}:resolveId"),
                                 route: None,
                             };
-                            let entry = oxide_jshost::EntryRef {
+                            let entry = oxide_fw_jshost::EntryRef {
                                 kind: "plugin:call".into(),
                                 module: path.clone(),
                                 export: "resolveId".into(),
@@ -12501,8 +12501,8 @@ fn build_js_plugin_resolve_hook(
                 })
                 .join()
                 .unwrap_or_else(|_| {
-                    Err(oxide_diagnostics::OxideError(
-                        oxide_diagnostics::Diagnostic::error(
+                    Err(oxide_fw_diagnostics::OxideError(
+                        oxide_fw_diagnostics::Diagnostic::error(
                             "PLG-BRIDGE",
                             "plugin bridge thread panicked",
                         ),
@@ -12518,8 +12518,8 @@ fn build_js_plugin_resolve_hook(
 fn build_js_plugin_load_hook(
     root: &Path,
     cfg: &OxideConfig,
-    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
-) -> Option<oxide_bundler::LoadHook> {
+    pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
+) -> Option<oxide_fw_bundler::LoadHook> {
     let pool = pool?;
     let plugins = collect_plugin_paths_for_hook(root, cfg, "load");
     if plugins.is_empty() {
@@ -12527,19 +12527,19 @@ fn build_js_plugin_load_hook(
     }
     let pool = std::sync::Arc::clone(pool);
     let loaded = std::sync::Arc::new(std::sync::Mutex::new(false));
-    Some(oxide_bundler::LoadHook::new(move |id| {
+    Some(oxide_fw_bundler::LoadHook::new(move |id| {
         let pool = std::sync::Arc::clone(&pool);
         let loaded = std::sync::Arc::clone(&loaded);
         let plugins = plugins.clone();
         let id = id.to_string();
         std::thread::scope(|scope| {
             scope
-                .spawn(|| -> oxide_diagnostics::Result<Option<String>> {
+                .spawn(|| -> oxide_fw_diagnostics::Result<Option<String>> {
                     let rt = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()
                         .map_err(|e| {
-                            oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
+                            oxide_fw_diagnostics::OxideError(oxide_fw_diagnostics::Diagnostic::error(
                                 "PLG-BRIDGE",
                                 format!("bridge runtime: {e}"),
                             ))
@@ -12556,21 +12556,21 @@ fn build_js_plugin_load_hook(
                         };
                         for path in &plugins {
                             if need_load {
-                                let load = oxide_jshost::CallInput {
+                                let load = oxide_fw_jshost::CallInput {
                                     payload: serde_json::json!({ "path": path }),
                                     headers: Default::default(),
                                     has_body: false,
                                     request_id: format!("plugin:load:{path}"),
                                     route: None,
                                 };
-                                let entry = oxide_jshost::EntryRef {
+                                let entry = oxide_fw_jshost::EntryRef {
                                     kind: "plugin:load".into(),
                                     module: path.clone(),
                                     export: "default".into(),
                                 };
                                 let _ = pool.call(entry, load).await;
                             }
-                            let call = oxide_jshost::CallInput {
+                            let call = oxide_fw_jshost::CallInput {
                                 payload: serde_json::json!({
                                     "path": path,
                                     "hook": "load",
@@ -12581,7 +12581,7 @@ fn build_js_plugin_load_hook(
                                 request_id: format!("plugin:call:{path}:load"),
                                 route: None,
                             };
-                            let entry = oxide_jshost::EntryRef {
+                            let entry = oxide_fw_jshost::EntryRef {
                                 kind: "plugin:call".into(),
                                 module: path.clone(),
                                 export: "load".into(),
@@ -12604,8 +12604,8 @@ fn build_js_plugin_load_hook(
                 })
                 .join()
                 .unwrap_or_else(|_| {
-                    Err(oxide_diagnostics::OxideError(
-                        oxide_diagnostics::Diagnostic::error(
+                    Err(oxide_fw_diagnostics::OxideError(
+                        oxide_fw_diagnostics::Diagnostic::error(
                             "PLG-BRIDGE",
                             "plugin bridge thread panicked",
                         ),
@@ -12635,8 +12635,8 @@ fn build_js_plugin_load_hook(
 fn route_source_hash(
     rootp: &Path,
     cfg: &OxideConfig,
-    tree: &oxide_router::RouteTree,
-    entry: &oxide_router::RouteEntry,
+    tree: &oxide_fw_router::RouteTree,
+    entry: &oxide_fw_router::RouteEntry,
     layout_ids: &[String],
     layout_modules: &[(String, std::path::PathBuf)],
     error_route_id: Option<&str>,
@@ -12782,8 +12782,8 @@ fn collect_plugin_options(root: &Path, cfg: &OxideConfig) -> Vec<(String, blake3
 fn build_js_plugin_render_chunk_hook(
     root: &Path,
     cfg: &OxideConfig,
-    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
-) -> Option<oxide_bundler::RenderChunkHook> {
+    pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
+) -> Option<oxide_fw_bundler::RenderChunkHook> {
     let pool = pool?;
     let plugins = collect_plugin_paths_for_hook(root, cfg, "renderChunk");
     if plugins.is_empty() {
@@ -12791,7 +12791,7 @@ fn build_js_plugin_render_chunk_hook(
     }
     let pool = std::sync::Arc::clone(pool);
     let loaded = std::sync::Arc::new(std::sync::Mutex::new(false));
-    Some(oxide_bundler::RenderChunkHook::new(move |file, source| {
+    Some(oxide_fw_bundler::RenderChunkHook::new(move |file, source| {
         let pool = std::sync::Arc::clone(&pool);
         let loaded = std::sync::Arc::clone(&loaded);
         let plugins = plugins.clone();
@@ -12799,12 +12799,12 @@ fn build_js_plugin_render_chunk_hook(
         let source = source.to_string();
         std::thread::scope(|scope| {
             scope
-                .spawn(|| -> oxide_diagnostics::Result<Option<String>> {
+                .spawn(|| -> oxide_fw_diagnostics::Result<Option<String>> {
                     let rt = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()
                         .map_err(|e| {
-                            oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
+                            oxide_fw_diagnostics::OxideError(oxide_fw_diagnostics::Diagnostic::error(
                                 "PLG-BRIDGE",
                                 format!("bridge runtime: {e}"),
                             ))
@@ -12823,21 +12823,21 @@ fn build_js_plugin_render_chunk_hook(
                         let mut changed = false;
                         for path in &plugins {
                             if need_load {
-                                let req = oxide_jshost::CallInput {
+                                let req = oxide_fw_jshost::CallInput {
                                     payload: serde_json::json!({ "path": path }),
                                     headers: Default::default(),
                                     has_body: false,
                                     request_id: format!("plugin:load:{path}"),
                                     route: None,
                                 };
-                                let entry = oxide_jshost::EntryRef {
+                                let entry = oxide_fw_jshost::EntryRef {
                                     kind: "plugin:load".into(),
                                     module: path.clone(),
                                     export: "default".into(),
                                 };
                                 let _ = pool.call(entry, req).await;
                             }
-                            let req = oxide_jshost::CallInput {
+                            let req = oxide_fw_jshost::CallInput {
                                 payload: serde_json::json!({
                                     "path": path,
                                     "hook": "renderChunk",
@@ -12848,7 +12848,7 @@ fn build_js_plugin_render_chunk_hook(
                                 request_id: format!("plugin:call:{path}:renderChunk"),
                                 route: None,
                             };
-                            let entry = oxide_jshost::EntryRef {
+                            let entry = oxide_fw_jshost::EntryRef {
                                 kind: "plugin:call".into(),
                                 module: path.clone(),
                                 export: "renderChunk".into(),
@@ -12872,8 +12872,8 @@ fn build_js_plugin_render_chunk_hook(
                 })
                 .join()
                 .unwrap_or_else(|_| {
-                    Err(oxide_diagnostics::OxideError(
-                        oxide_diagnostics::Diagnostic::error(
+                    Err(oxide_fw_diagnostics::OxideError(
+                        oxide_fw_diagnostics::Diagnostic::error(
                             "PLG-BRIDGE",
                             "renderChunk bridge thread panicked",
                         ),
@@ -12888,8 +12888,8 @@ fn build_js_plugin_render_chunk_hook(
 fn build_js_plugin_generate_bundle_hook(
     root: &Path,
     cfg: &OxideConfig,
-    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
-) -> Option<oxide_bundler::GenerateBundleHook> {
+    pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
+) -> Option<oxide_fw_bundler::GenerateBundleHook> {
     let pool = pool?;
     let plugins = collect_plugin_paths_for_hook(root, cfg, "generateBundle");
     if plugins.is_empty() {
@@ -12897,19 +12897,19 @@ fn build_js_plugin_generate_bundle_hook(
     }
     let pool = std::sync::Arc::clone(pool);
     let loaded = std::sync::Arc::new(std::sync::Mutex::new(false));
-    Some(oxide_bundler::GenerateBundleHook::new(move |files| {
+    Some(oxide_fw_bundler::GenerateBundleHook::new(move |files| {
         let pool = std::sync::Arc::clone(&pool);
         let loaded = std::sync::Arc::clone(&loaded);
         let plugins = plugins.clone();
         let files: Vec<String> = files.to_vec();
         std::thread::scope(|scope| {
             scope
-                .spawn(|| -> oxide_diagnostics::Result<Option<Vec<String>>> {
+                .spawn(|| -> oxide_fw_diagnostics::Result<Option<Vec<String>>> {
                     let rt = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()
                         .map_err(|e| {
-                            oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
+                            oxide_fw_diagnostics::OxideError(oxide_fw_diagnostics::Diagnostic::error(
                                 "PLG-BRIDGE",
                                 format!("bridge runtime: {e}"),
                             ))
@@ -12927,14 +12927,14 @@ fn build_js_plugin_generate_bundle_hook(
                         let mut current: Option<Vec<String>> = None;
                         for path in &plugins {
                             if need_load {
-                                let req = oxide_jshost::CallInput {
+                                let req = oxide_fw_jshost::CallInput {
                                     payload: serde_json::json!({ "path": path }),
                                     headers: Default::default(),
                                     has_body: false,
                                     request_id: format!("plugin:load:{path}"),
                                     route: None,
                                 };
-                                let entry = oxide_jshost::EntryRef {
+                                let entry = oxide_fw_jshost::EntryRef {
                                     kind: "plugin:load".into(),
                                     module: path.clone(),
                                     export: "default".into(),
@@ -12942,7 +12942,7 @@ fn build_js_plugin_generate_bundle_hook(
                                 let _ = pool.call(entry, req).await;
                             }
                             let list = current.as_deref().unwrap_or(&files);
-                            let req = oxide_jshost::CallInput {
+                            let req = oxide_fw_jshost::CallInput {
                                 payload: serde_json::json!({
                                     "path": path,
                                     "hook": "generateBundle",
@@ -12953,7 +12953,7 @@ fn build_js_plugin_generate_bundle_hook(
                                 request_id: format!("plugin:call:{path}:generateBundle"),
                                 route: None,
                             };
-                            let entry = oxide_jshost::EntryRef {
+                            let entry = oxide_fw_jshost::EntryRef {
                                 kind: "plugin:call".into(),
                                 module: path.clone(),
                                 export: "generateBundle".into(),
@@ -12976,8 +12976,8 @@ fn build_js_plugin_generate_bundle_hook(
                 })
                 .join()
                 .unwrap_or_else(|_| {
-                    Err(oxide_diagnostics::OxideError(
-                        oxide_diagnostics::Diagnostic::error(
+                    Err(oxide_fw_diagnostics::OxideError(
+                        oxide_fw_diagnostics::Diagnostic::error(
                             "PLG-BRIDGE",
                             "generateBundle bridge thread panicked",
                         ),
@@ -12992,8 +12992,8 @@ fn build_js_plugin_generate_bundle_hook(
 fn build_js_plugin_transform_html_hook(
     root: &Path,
     cfg: &OxideConfig,
-    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
-) -> Option<oxide_bundler::TransformHtmlHook> {
+    pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
+) -> Option<oxide_fw_bundler::TransformHtmlHook> {
     let pool = pool?;
     let plugins = collect_plugin_paths_for_hook(root, cfg, "transformHtml");
     if plugins.is_empty() {
@@ -13001,7 +13001,7 @@ fn build_js_plugin_transform_html_hook(
     }
     let pool = std::sync::Arc::clone(pool);
     let loaded = std::sync::Arc::new(std::sync::Mutex::new(false));
-    Some(oxide_bundler::TransformHtmlHook::new(
+    Some(oxide_fw_bundler::TransformHtmlHook::new(
         move |route_id, html| {
             let pool = std::sync::Arc::clone(&pool);
             let loaded = std::sync::Arc::clone(&loaded);
@@ -13010,12 +13010,12 @@ fn build_js_plugin_transform_html_hook(
             let html = html.to_string();
             std::thread::scope(|scope| {
                 scope
-                    .spawn(|| -> oxide_diagnostics::Result<Option<String>> {
+                    .spawn(|| -> oxide_fw_diagnostics::Result<Option<String>> {
                         let rt = tokio::runtime::Builder::new_current_thread()
                             .enable_all()
                             .build()
                             .map_err(|e| {
-                                oxide_diagnostics::OxideError(oxide_diagnostics::Diagnostic::error(
+                                oxide_fw_diagnostics::OxideError(oxide_fw_diagnostics::Diagnostic::error(
                                     "PLG-BRIDGE",
                                     format!("bridge runtime: {e}"),
                                 ))
@@ -13034,21 +13034,21 @@ fn build_js_plugin_transform_html_hook(
                             let mut changed = false;
                             for path in &plugins {
                                 if need_load {
-                                    let req = oxide_jshost::CallInput {
+                                    let req = oxide_fw_jshost::CallInput {
                                         payload: serde_json::json!({ "path": path }),
                                         headers: Default::default(),
                                         has_body: false,
                                         request_id: format!("plugin:load:{path}"),
                                         route: None,
                                     };
-                                    let entry = oxide_jshost::EntryRef {
+                                    let entry = oxide_fw_jshost::EntryRef {
                                         kind: "plugin:load".into(),
                                         module: path.clone(),
                                         export: "default".into(),
                                     };
                                     let _ = pool.call(entry, req).await;
                                 }
-                                let req = oxide_jshost::CallInput {
+                                let req = oxide_fw_jshost::CallInput {
                                     payload: serde_json::json!({
                                         "path": path,
                                         "hook": "transformHtml",
@@ -13059,7 +13059,7 @@ fn build_js_plugin_transform_html_hook(
                                     request_id: format!("plugin:call:{path}:transformHtml"),
                                     route: None,
                                 };
-                                let entry = oxide_jshost::EntryRef {
+                                let entry = oxide_fw_jshost::EntryRef {
                                     kind: "plugin:call".into(),
                                     module: path.clone(),
                                     export: "transformHtml".into(),
@@ -13084,8 +13084,8 @@ fn build_js_plugin_transform_html_hook(
                     })
                     .join()
                     .unwrap_or_else(|_| {
-                        Err(oxide_diagnostics::OxideError(
-                            oxide_diagnostics::Diagnostic::error(
+                        Err(oxide_fw_diagnostics::OxideError(
+                            oxide_fw_diagnostics::Diagnostic::error(
                                 "PLG-BRIDGE",
                                 "transformHtml bridge thread panicked",
                             ),
@@ -13149,7 +13149,7 @@ fn hook_result_str_array(v: &serde_json::Value, field: &str) -> Option<Vec<Strin
 async fn call_js_plugin_hook(
     root: &Path,
     cfg: &OxideConfig,
-    pool: &std::sync::Arc<dyn oxide_jshost::Pool>,
+    pool: &std::sync::Arc<dyn oxide_fw_jshost::Pool>,
     hook_name: &str,
     args: serde_json::Value,
 ) -> Vec<serde_json::Value> {
@@ -13159,21 +13159,21 @@ async fn call_js_plugin_hook(
     }
     let mut results = Vec::new();
     for path in &plugins {
-        let load = oxide_jshost::CallInput {
+        let load = oxide_fw_jshost::CallInput {
             payload: serde_json::json!({ "path": path }),
             headers: Default::default(),
             has_body: false,
             request_id: format!("plugin:load:{path}"),
             route: None,
         };
-        let load_entry = oxide_jshost::EntryRef {
+        let load_entry = oxide_fw_jshost::EntryRef {
             kind: "plugin:load".into(),
             module: path.clone(),
             export: "default".into(),
         };
         let _ = pool.call(load_entry, load).await;
 
-        let req = oxide_jshost::CallInput {
+        let req = oxide_fw_jshost::CallInput {
             payload: serde_json::json!({
                 "path": path,
                 "hook": hook_name,
@@ -13184,7 +13184,7 @@ async fn call_js_plugin_hook(
             request_id: format!("plugin:call:{path}:{hook_name}"),
             route: None,
         };
-        let entry = oxide_jshost::EntryRef {
+        let entry = oxide_fw_jshost::EntryRef {
             kind: "plugin:call".into(),
             module: path.clone(),
             export: hook_name.to_string(),
@@ -13208,7 +13208,7 @@ async fn call_js_plugin_hook(
 async fn fire_lifecycle_hook(
     root: &Path,
     cfg: &OxideConfig,
-    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
+    pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
     hook_name: &str,
     args: serde_json::Value,
 ) -> Vec<serde_json::Value> {
@@ -13282,7 +13282,7 @@ fn apply_config_patch(
 async fn plugin_render_head(
     root: &Path,
     cfg: &OxideConfig,
-    pool: Option<&std::sync::Arc<dyn oxide_jshost::Pool>>,
+    pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
     route_id: &str,
 ) -> serde_json::Value {
     let mut merged = serde_json::json!({
@@ -13317,7 +13317,7 @@ async fn plugin_render_head(
 
 /// §15.2: `cacheHandler` — a plugin *selects* the cache backend.
 ///
-/// A plugin cannot implement `oxide_cache::CacheHandler` itself: the trait is
+/// A plugin cannot implement `oxide_fw_cache::CacheHandler` itself: the trait is
 /// async Rust over a Rust `Entry` (body bytes, policy, etag), and every
 /// operation would cross an RPC boundary. The hook's real value is choosing
 /// among the drivers the CLI already builds — a deploy plugin knows whether
@@ -13330,15 +13330,15 @@ async fn resolve_cache_handler_via_plugin(
     root: &Path,
     cfg: &OxideConfig,
     w: Writer<'_>,
-) -> anyhow::Result<Option<oxide_config::CacheHandlerConfig>> {
+) -> anyhow::Result<Option<oxide_fw_config::CacheHandlerConfig>> {
     if collect_plugin_paths_for_hook(root, cfg, "cacheHandler").is_empty() {
         return Ok(None);
     }
     // The hook runs on the tooling pool — which is built without a cache
     // handler, since choosing it is the whole point.
-    use oxide_jshost::JsHost as _;
-    let host = oxide_jshost::NodeHost::new(oxide_jshost::NodeHost::worker_script_default());
-    let Some(pool) = host.tooling_pool(oxide_jshost::PoolConfig::default()).ok() else {
+    use oxide_fw_jshost::JsHost as _;
+    let host = oxide_fw_jshost::NodeHost::new(oxide_fw_jshost::NodeHost::worker_script_default());
+    let Some(pool) = host.tooling_pool(oxide_fw_jshost::PoolConfig::default()).ok() else {
         return Ok(None);
     };
     let results = call_js_plugin_hook(
@@ -13349,26 +13349,26 @@ async fn resolve_cache_handler_via_plugin(
         serde_json::json!({ "current": format!("{:?}", cfg.cache.handler) }),
     )
     .await;
-    let mut chosen: Option<oxide_config::CacheHandlerConfig> = None;
+    let mut chosen: Option<oxide_fw_config::CacheHandlerConfig> = None;
     for r in results {
         let Some(kind) = r.get("kind").and_then(|k| k.as_str()) else {
             continue;
         };
         let candidate = match kind {
-            "memory" => Some(oxide_config::CacheHandlerConfig::Memory),
-            "disk" => Some(oxide_config::CacheHandlerConfig::Disk),
+            "memory" => Some(oxide_fw_config::CacheHandlerConfig::Memory),
+            "disk" => Some(oxide_fw_config::CacheHandlerConfig::Disk),
             "redis" => r.get("url").and_then(|u| u.as_str()).map(|url| {
-                oxide_config::CacheHandlerConfig::Redis {
+                oxide_fw_config::CacheHandlerConfig::Redis {
                     url: url.to_string(),
                 }
             }),
             "s3" => r.get("bucket").and_then(|b| b.as_str()).map(|bucket| {
-                oxide_config::CacheHandlerConfig::S3 {
+                oxide_fw_config::CacheHandlerConfig::S3 {
                     bucket: bucket.to_string(),
                 }
             }),
             "http" => r.get("url").and_then(|u| u.as_str()).map(|url| {
-                oxide_config::CacheHandlerConfig::Http {
+                oxide_fw_config::CacheHandlerConfig::Http {
                     url: url.to_string(),
                 }
             }),
@@ -13695,7 +13695,7 @@ fn push_chunk_hash(dir: &Path, file: &str, out: &mut Vec<(String, String)>) {
 /// one does. A no-defer route never enters this path (its receiver is empty
 /// and the caller uses the buffered `deferred_tag`).
 fn strip_close_and_append_settles(
-    src: oxide_server::BodyStream,
+    src: oxide_fw_server::BodyStream,
     mut settles: tokio::sync::mpsc::Receiver<serde_json::Value>,
     nonce: String,
     // §20 / O3b: waterfall context. When present, the spawned drain task
@@ -13704,10 +13704,10 @@ fn strip_close_and_append_settles(
     // the settle drain to the last delivered settle — i.e. the extra
     // time the settles added *after* the shell finished, not the total
     // request time. That is what the inspector bar means.
-    waterfall: Option<oxide_dev::WaterfallRecorder>,
+    waterfall: Option<oxide_fw_dev::WaterfallRecorder>,
     request_id: String,
     trace_id: Option<String>,
-) -> oxide_server::BodyStream {
+) -> oxide_fw_server::BodyStream {
     use bytes::Bytes;
     use futures::StreamExt as _;
 
@@ -13929,12 +13929,12 @@ impl PprShellStore {
 /// `data-ox-b` boundary) and stored with the nonce replaced by
 /// [`l0_cache::NONCE_SENTINEL`] so another request can reuse it.
 fn ppr_tap_stream(
-    src: oxide_server::BodyStream,
+    src: oxide_fw_server::BodyStream,
     shells: PprShells,
     key: String,
     nonce: String,
     tags: Vec<String>,
-) -> oxide_server::BodyStream {
+) -> oxide_fw_server::BodyStream {
     use futures::StreamExt as _;
     let (tx, mut rx) =
         tokio::sync::mpsc::channel::<std::result::Result<bytes::Bytes, std::io::Error>>(8);
@@ -13957,7 +13957,7 @@ fn ppr_tap_stream(
         }
         // The client already saw EOF; storing after this point adds no latency.
         if let Ok(html) = String::from_utf8(collected) {
-            if let Ok(shell) = oxide_render::ppr::split_shell(&html) {
+            if let Ok(shell) = oxide_fw_render::ppr::split_shell(&html) {
                 if !shell.hole_ids.is_empty() {
                     let stored = shell.html.replace(&nonce, l0_cache::NONCE_SENTINEL);
                     if let Ok(mut store) = shells.lock() {
@@ -13976,15 +13976,15 @@ fn ppr_tap_stream(
 /// each fragment into its hole as it arrives.
 fn ppr_filter_stream(
     shell: String,
-    src: oxide_server::BodyStream,
+    src: oxide_fw_server::BodyStream,
     nonce: String,
-) -> oxide_server::BodyStream {
+) -> oxide_fw_server::BodyStream {
     use futures::StreamExt as _;
     let (tx, mut rx) =
         tokio::sync::mpsc::channel::<std::result::Result<bytes::Bytes, std::io::Error>>(16);
     tokio::spawn(async move {
         let mut src = src;
-        let prelude = format!("{shell}{}", oxide_render::ppr::client_resolver(&nonce));
+        let prelude = format!("{shell}{}", oxide_fw_render::ppr::client_resolver(&nonce));
         if tx.send(Ok(bytes::Bytes::from(prelude))).await.is_err() {
             return;
         }

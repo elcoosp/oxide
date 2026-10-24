@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::Path;
 
-use oxide_router::{
+use oxide_fw_router::{
     ArchivedTree, MatchResult, RateLimit, RouteEntry, RouteId, RouteKind, RouteTree, RuleOutcome,
     RulesEngine,
 };
@@ -116,7 +116,7 @@ fn typegen_artifacts_from_a_scanned_tree() {
 fn rules_engine_pipeline_position_smoke() {
     // §12.1 step 4: native rules evaluated before route matching; the token-bucket
     // decision itself lives in the server crate (§17.1).
-    let mut redirect = RulesEngine::compile(vec![oxide_router::NativeRule {
+    let mut redirect = RulesEngine::compile(vec![oxide_fw_router::NativeRule {
         source: "/old/:slug".to_string(),
         destination: Some("/new/:slug".to_string()),
         status: Some(301),
@@ -126,7 +126,7 @@ fn rules_engine_pipeline_position_smoke() {
         rate_limit: None,
     }])
     .unwrap();
-    redirect.rules.push(oxide_router::NativeRule {
+    redirect.rules.push(oxide_fw_router::NativeRule {
         source: "/api/*".to_string(),
         destination: None,
         status: None,

@@ -14,7 +14,7 @@
 
 use crate::precompile_cache::{PrecompileCache, PrecompileKey};
 use anyhow::Context;
-use oxide_jshost::{CallInput, EntryRef, Pool};
+use oxide_fw_jshost::{CallInput, EntryRef, Pool};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -57,7 +57,7 @@ fn resolve_relative(from_file: &Path, spec: &str) -> Option<PathBuf> {
 /// leaving the import graph incomplete. The bundler re-scans with the same
 /// real scanner, so the CAS key is unchanged.
 fn scan_import_specs(src: &str) -> Vec<String> {
-    oxide_compiler::scan_import_spans(src)
+    oxide_fw_compiler::scan_import_spans(src)
         .into_iter()
         .map(|sp| sp.specifier)
         .collect()

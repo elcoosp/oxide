@@ -7,7 +7,7 @@
 //! Fonts: provider fetch → subset → WOFF2 → preload + size-adjust metric overrides.
 
 use blake3::Hasher;
-use oxide_diagnostics::{Diagnostic, OxideError};
+use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

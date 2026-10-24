@@ -3,7 +3,7 @@
 //! Ignored by default: boots a V8 isolate (same reason as v8_module_tdd).
 //! Run with `--ignored`. No Node needed — all modules are plain ESM.
 
-use oxide_jshost::{CallInput, EntryRef, JsHost, Pool, PoolConfig, V8Host};
+use oxide_fw_jshost::{CallInput, EntryRef, JsHost, Pool, PoolConfig, V8Host};
 
 fn input(payload: serde_json::Value) -> CallInput {
     CallInput {
@@ -398,7 +398,7 @@ export async function load(event) {
         )
         .await
         .expect("call");
-    let oxide_jshost::CallStream::Chunked(mut rx) = s else {
+    let oxide_fw_jshost::CallStream::Chunked(mut rx) = s else {
         panic!("streaming loader must return Chunked");
     };
     let first = rx.recv().await.expect("initial chunk").expect("ok");

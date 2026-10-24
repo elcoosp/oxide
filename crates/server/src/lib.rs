@@ -34,9 +34,9 @@ use std::pin::Pin;
 
 use hyper::body::Incoming;
 use hyper::{Request as HyperRequest, Response as HyperResponse};
-use oxide_diagnostics::{Diagnostic, OxideError};
-use oxide_render::RequestTimings;
-use oxide_router::RulesEngine;
+use oxide_fw_diagnostics::{Diagnostic, OxideError};
+use oxide_fw_render::RequestTimings;
+use oxide_fw_router::RulesEngine;
 use std::collections::BTreeMap;
 use std::io::Write as IoWrite;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1804,7 +1804,7 @@ impl DispatchError {
 /// resolution policy (a local path under the site root, or a URL matched
 /// against `ImagesConfig.remotePatterns`), and the signing secret.
 ///
-/// The transform itself is `oxide_assets::ImageBackend`, but the server
+/// The transform itself is `oxide_fw_assets::ImageBackend`, but the server
 /// crate must not depend on `oxide-assets` — that crate pulls ravif,
 /// resvg, skrifa and lightningcss, and `oxide-server` is meant to build
 /// lean. `oxide-server` names only the trait seams below; the CLI builds
@@ -1898,7 +1898,7 @@ fn clone_image_endpoint(e: &ImageEndpoint) -> ImageEndpoint {
     }
 }
 
-/// The backend seam. `oxide_assets::ImageBackend` is adapted to this in the
+/// The backend seam. `oxide_fw_assets::ImageBackend` is adapted to this in the
 /// CLI, so the server has no compile-time tie to the asset crate.
 pub trait ImageEndpointBackend: Send + Sync {
     /// Transform the source bytes per the request. The error string is
@@ -1909,7 +1909,7 @@ pub trait ImageEndpointBackend: Send + Sync {
     ) -> std::result::Result<ImageEndpointResult, String>;
 }
 
-/// The subset of `oxide_assets::ImageRequest` the endpoint passes through.
+/// The subset of `oxide_fw_assets::ImageRequest` the endpoint passes through.
 #[derive(Debug, Clone)]
 pub struct ImageEndpointRequest {
     pub source: Vec<u8>,
@@ -2475,7 +2475,7 @@ fn serve_image_endpoint(endpoint: Option<&ImageEndpoint>, raw_url: &str) -> Nati
 /// Split a request URL into `(path, params-before-s=)`. The signer signs
 /// `path?params` with `s=` appended last, so removing the `s=` pair (in any
 /// position) reconstructs the signed form.
-/// Parsed `/_oxide/image` query. Mirrors `oxide_assets`'s type but lives
+/// Parsed `/_oxide/image` query. Mirrors `oxide_fw_assets`'s type but lives
 /// here so the server has no dependency on the asset crate.
 struct ImageQuery {
     url: String,
@@ -2583,7 +2583,7 @@ fn hex_nib(b: u8) -> Option<u8> {
     }
 }
 
-/// Recompute the signature `oxide_assets::sign_image_url` would have
+/// Recompute the signature `oxide_fw_assets::sign_image_url` would have
 /// produced for `signed_form`, and compare it to `sig`.
 pub fn verify_image_sig(signed_form: &str, secret: &str, sig: &str) -> bool {
     let mut h = blake3::Hasher::new();
@@ -3655,22 +3655,22 @@ impl Pipeline {
                 .rules
                 .evaluate_with_auth(&path, &fn_client_key, fn_auth.as_deref())
             {
-                oxide_router::RuleOutcome::Headers(map) => {
+                oxide_fw_router::RuleOutcome::Headers(map) => {
                     rule_headers = map.into_iter().collect();
                 }
-                oxide_router::RuleOutcome::RateLimited { retry_after_secs } => {
+                oxide_fw_router::RuleOutcome::RateLimited { retry_after_secs } => {
                     return NativePrefix::Raw(
                         OxideResponse::new(429, "too many requests")
                             .with_header("retry-after", retry_after_secs.to_string()),
                     );
                 }
-                oxide_router::RuleOutcome::AuthRequired => {
+                oxide_fw_router::RuleOutcome::AuthRequired => {
                     return NativePrefix::Raw(OxideResponse::new(401, "unauthorized").with_header(
                         "WWW-Authenticate",
                         "Basic realm=\"oxide\", charset=\"UTF-8\"",
                     ));
                 }
-                oxide_router::RuleOutcome::Redirect {
+                oxide_fw_router::RuleOutcome::Redirect {
                     destination,
                     status,
                 } => {
@@ -3679,7 +3679,7 @@ impl Pipeline {
                             .with_header("Location", destination),
                     );
                 }
-                oxide_router::RuleOutcome::Rewrite(_) | oxide_router::RuleOutcome::None => {}
+                oxide_fw_router::RuleOutcome::Rewrite(_) | oxide_fw_router::RuleOutcome::None => {}
             }
             let args = req.body.clone();
             return NativePrefix::ServerFn {
@@ -3714,7 +3714,7 @@ impl Pipeline {
             .rules
             .evaluate_with_auth(&path, &client_key, req_auth.as_deref())
         {
-            oxide_router::RuleOutcome::Redirect {
+            oxide_fw_router::RuleOutcome::Redirect {
                 destination,
                 status,
             } => {
@@ -3722,27 +3722,27 @@ impl Pipeline {
                     OxideResponse::new(status, Bytes::new()).with_header("Location", destination),
                 );
             }
-            oxide_router::RuleOutcome::Rewrite(dest) => {
+            oxide_fw_router::RuleOutcome::Rewrite(dest) => {
                 req.url = url_with_path(&req.url, &dest);
                 path = dest;
             }
-            oxide_router::RuleOutcome::Headers(map) => {
+            oxide_fw_router::RuleOutcome::Headers(map) => {
                 rule_headers = map.into_iter().collect();
             }
-            oxide_router::RuleOutcome::AuthRequired => {
+            oxide_fw_router::RuleOutcome::AuthRequired => {
                 return NativePrefix::Raw(OxideResponse::new(401, "unauthorized").with_header(
                     "WWW-Authenticate",
                     "Basic realm=\"oxide\", charset=\"UTF-8\"",
                 ));
             }
-            oxide_router::RuleOutcome::RateLimited { retry_after_secs } => {
+            oxide_fw_router::RuleOutcome::RateLimited { retry_after_secs } => {
                 // SEC-01: a 429 with the seconds until a token refills.
                 return NativePrefix::Raw(
                     OxideResponse::new(429, "too many requests")
                         .with_header("retry-after", retry_after_secs.to_string()),
                 );
             }
-            oxide_router::RuleOutcome::None => {}
+            oxide_fw_router::RuleOutcome::None => {}
         }
 
         // (6) dispatch (§12.1 step 7) with CSRF verification (§17.1) first.
@@ -5230,7 +5230,7 @@ mod sha1_shim {
 /// now — single-frame messages only (documented limitation). The client mask key comes
 /// from a deterministic counter PRNG ([`ws::next_mask_key`]) so tests can predict it.
 pub mod ws {
-    use oxide_diagnostics::{Diagnostic, OxideError};
+    use oxide_fw_diagnostics::{Diagnostic, OxideError};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     pub type Result<T> = std::result::Result<T, OxideError>;

@@ -18,7 +18,7 @@
 use crate::{CacheHandler, Entry, Hit, Result, err};
 use dashmap::DashMap;
 use moka::sync::Cache as MokaCache;
-use oxide_diagnostics::{Diagnostic, OxideError};
+use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use redb::ReadableDatabase;
 use redb::{Database, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};

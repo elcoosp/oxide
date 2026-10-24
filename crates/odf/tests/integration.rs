@@ -4,8 +4,8 @@
 //! stability, decoder hardening rejection codes, `encode_with_shared`, ref resolution
 //! (cycles / depth guard) and a seeded fuzz loop that must never panic.
 
-use oxide_odf::fixtures;
-use oxide_odf::{
+use oxide_fw_odf::fixtures;
+use oxide_fw_odf::{
     MAX_BYTES, MAX_DEPTH, MAX_REFS, TypedArrayKind, Value, bitexact_eq, cyclic_fixture, decode,
     decode_with_shared, encode, encode_to_bytes, encode_with_shared, resolve_refs,
     resolve_refs_with,
@@ -61,7 +61,7 @@ fn le_u64(v: &[u64]) -> Vec<u8> {
 }
 
 /// Error code of a failed operation (test helper).
-fn code_of<T>(r: oxide_odf::Result<T>) -> String {
+fn code_of<T>(r: oxide_fw_odf::Result<T>) -> String {
     match r {
         Err(e) => e.0.code.clone(),
         Ok(_) => panic!("expected an error"),

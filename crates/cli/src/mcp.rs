@@ -209,7 +209,7 @@ impl OxideMcp {
         description = "Cache statistics: persistent cache directory, total disk bytes, \
                        and blob count."
     )]
-    pub async fn oxide_cache(
+    pub async fn oxide_fw_cache(
         &self,
         Parameters(NoArgs {}): Parameters<NoArgs>,
     ) -> Result<CallToolResult, ErrorData> {

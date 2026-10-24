@@ -22,7 +22,7 @@
 //! filename (not a unique subdir). Tests that only exercise missing-config
 //! paths never write anything.
 
-use oxide_jshost::{CallStream, FrameworkHost, JsHost, NodeHost, PoolConfig};
+use oxide_fw_jshost::{CallStream, FrameworkHost, JsHost, NodeHost, PoolConfig};
 use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};

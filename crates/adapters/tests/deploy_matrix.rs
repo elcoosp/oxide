@@ -8,7 +8,7 @@
 //! fresh tempdir per target. No bundler, no Node, no fixture project: just
 //! the adapter emission path in isolation.
 
-use oxide_adapters::{BuildArtifact, Target, emit};
+use oxide_fw_adapters::{BuildArtifact, Target, emit};
 use std::collections::BTreeMap;
 use std::fs;
 use tempfile::TempDir;

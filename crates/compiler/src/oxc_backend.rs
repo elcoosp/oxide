@@ -18,7 +18,7 @@ use oxc_allocator::Allocator;
 use oxc_ast::ast::{Program, Statement};
 use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType};
-use oxide_diagnostics::Diagnostic;
+use oxide_fw_diagnostics::Diagnostic;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
@@ -53,7 +53,7 @@ impl Transformer for OxcTransformer {
                     let line_start = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
                     let col = before[line_start..].chars().count() + 1;
                     d = d.at(oxidation_location(&input.path, line, col));
-                    let frame = oxide_diagnostics::render_code_frame(&input.code, line, Some(col));
+                    let frame = oxide_fw_diagnostics::render_code_frame(&input.code, line, Some(col));
                     if !frame.is_empty() {
                         d = d.with_code_frame(frame);
                     }
@@ -234,12 +234,12 @@ impl OxcTransformer {
                 let line = before.matches('\n').count() + 1;
                 let line_start = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
                 let col = before[line_start..].chars().count() + 1;
-                d = d.at(oxide_diagnostics::Location::file(
+                d = d.at(oxide_fw_diagnostics::Location::file(
                     &input.path,
                     line as u32,
                     col as u32,
                 ));
-                let frame = oxide_diagnostics::render_code_frame(&input.code, line, Some(col));
+                let frame = oxide_fw_diagnostics::render_code_frame(&input.code, line, Some(col));
                 if !frame.is_empty() {
                     d = d.with_code_frame(frame);
                 }
@@ -869,6 +869,6 @@ fn code_escape(s: &str) -> String {
 type _UnusedAstMap = AstBTreeMap<String, String>;
 
 /// Build a `Location` for a 1-based (line, column) in `path`.
-fn oxidation_location(path: &str, line: usize, col: usize) -> oxide_diagnostics::Location {
-    oxide_diagnostics::Location::file(path, line as u32, col as u32)
+fn oxidation_location(path: &str, line: usize, col: usize) -> oxide_fw_diagnostics::Location {
+    oxide_fw_diagnostics::Location::file(path, line as u32, col as u32)
 }

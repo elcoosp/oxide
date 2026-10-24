@@ -160,11 +160,11 @@ struct CountingRenderer {
 }
 
 #[async_trait::async_trait]
-impl oxide_server::PageRenderer for CountingRenderer {
+impl oxide_fw_server::PageRenderer for CountingRenderer {
     fn name(&self) -> &str {
         "counting"
     }
-    async fn render(&self, input: oxide_server::PageRenderInput) -> oxide_server::Result<String> {
+    async fn render(&self, input: oxide_fw_server::PageRenderInput) -> oxide_fw_server::Result<String> {
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(format!(
             "<!doctype html><html><body><h1>RENDERER:{}</h1></body></html>",
@@ -177,12 +177,12 @@ impl oxide_server::PageRenderer for CountingRenderer {
 struct FailingRenderer;
 
 #[async_trait::async_trait]
-impl oxide_server::PageRenderer for FailingRenderer {
+impl oxide_fw_server::PageRenderer for FailingRenderer {
     fn name(&self) -> &str {
         "failing"
     }
-    async fn render(&self, _input: oxide_server::PageRenderInput) -> oxide_server::Result<String> {
-        Err(oxide_server::err("FAKE-RENDER", "simulated render failure"))
+    async fn render(&self, _input: oxide_fw_server::PageRenderInput) -> oxide_fw_server::Result<String> {
+        Err(oxide_fw_server::err("FAKE-RENDER", "simulated render failure"))
     }
 }
 
@@ -190,15 +190,15 @@ fn test_request_with_trace(
     method: &str,
     url: &str,
     traceparent: &str,
-) -> oxide_server::OxideRequest {
+) -> oxide_fw_server::OxideRequest {
     let mut req = test_request(method, url);
-    req.trace = oxide_server::trace_context::TraceContext::parse_traceparent(traceparent);
+    req.trace = oxide_fw_server::trace_context::TraceContext::parse_traceparent(traceparent);
     req
 }
 
-fn test_request_with_cookie(method: &str, url: &str, cookie: &str) -> oxide_server::OxideRequest {
+fn test_request_with_cookie(method: &str, url: &str, cookie: &str) -> oxide_fw_server::OxideRequest {
     let headers = vec![("cookie".to_string(), cookie.to_string())];
-    oxide_server::OxideRequest {
+    oxide_fw_server::OxideRequest {
         method: method.into(),
         url: url.into(),
         headers: std::sync::Arc::new(headers),
@@ -212,8 +212,8 @@ fn test_request_with_cookie(method: &str, url: &str, cookie: &str) -> oxide_serv
     }
 }
 
-fn test_request(method: &str, url: &str) -> oxide_server::OxideRequest {
-    oxide_server::OxideRequest {
+fn test_request(method: &str, url: &str) -> oxide_fw_server::OxideRequest {
+    oxide_fw_server::OxideRequest {
         method: method.into(),
         url: url.into(),
         headers: std::sync::Arc::new(Vec::new()),
@@ -227,8 +227,8 @@ fn test_request(method: &str, url: &str) -> oxide_server::OxideRequest {
     }
 }
 
-fn empty_tree() -> std::sync::Arc<oxide_router::RouteTree> {
-    std::sync::Arc::new(oxide_router::RouteTree::new())
+fn empty_tree() -> std::sync::Arc<oxide_fw_router::RouteTree> {
+    std::sync::Arc::new(oxide_fw_router::RouteTree::new())
 }
 
 /// B-27: streams a static shell with one deferred boundary, then the
@@ -236,18 +236,18 @@ fn empty_tree() -> std::sync::Arc<oxide_router::RouteTree> {
 struct PprRenderer;
 
 #[async_trait::async_trait]
-impl oxide_server::PageRenderer for PprRenderer {
+impl oxide_fw_server::PageRenderer for PprRenderer {
     fn name(&self) -> &str {
         "ppr"
     }
-    async fn render(&self, _input: oxide_server::PageRenderInput) -> oxide_server::Result<String> {
+    async fn render(&self, _input: oxide_fw_server::PageRenderInput) -> oxide_fw_server::Result<String> {
         Ok("<!doctype html><html><body>PPR</body></html>".into())
     }
     async fn render_streaming(
         &self,
-        _input: oxide_server::PageRenderInput,
-    ) -> oxide_server::Result<oxide_server::RenderStream> {
-        let items: Vec<oxide_server::Result<bytes::Bytes>> = vec![
+        _input: oxide_fw_server::PageRenderInput,
+    ) -> oxide_fw_server::Result<oxide_fw_server::RenderStream> {
+        let items: Vec<oxide_fw_server::Result<bytes::Bytes>> = vec![
             Ok(bytes::Bytes::from_static(
                 b"<!doctype html><html><body><h1>STATIC-SHELL</h1><template data-ox-b='1'><p>fallback</p></template>",
             )),
@@ -265,8 +265,8 @@ async fn ppr_serves_cached_shell_and_streams_holes() {
     use std::sync::Arc;
 
     let tree = empty_tree();
-    let metrics = Arc::new(oxide_server::Metrics::new());
-    let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(PprRenderer));
+    let metrics = Arc::new(oxide_fw_server::Metrics::new());
+    let renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> = Some(Arc::new(PprRenderer));
     let shells: crate::PprShells = Arc::new(std::sync::Mutex::new(crate::PprShellStore::default()));
 
     let dispatch = build_dispatch(
@@ -328,10 +328,10 @@ fn swappable_route_tree_store_and_load_round_trip() {
     // built via `RouteTree::insert` (like `tree_with_server_route` above)
     // rather than `scan_with_config`, so the test exercises the slot in
     // isolation - the scanner is covered by oxide-router's own tests.
-    let mut tree_a_inner = oxide_router::RouteTree::new();
-    tree_a_inner.insert(oxide_router::RouteEntry {
-        id: oxide_router::RouteId("routes/index".into()),
-        kind: oxide_router::RouteKind::Page,
+    let mut tree_a_inner = oxide_fw_router::RouteTree::new();
+    tree_a_inner.insert(oxide_fw_router::RouteEntry {
+        id: oxide_fw_router::RouteId("routes/index".into()),
+        kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
         file: std::path::PathBuf::from("index/page.tsx"),
         render_mode: None,
@@ -342,10 +342,10 @@ fn swappable_route_tree_store_and_load_round_trip() {
     });
     let tree_a = std::sync::Arc::new(tree_a_inner);
 
-    let mut tree_b_inner = oxide_router::RouteTree::new();
-    tree_b_inner.insert(oxide_router::RouteEntry {
-        id: oxide_router::RouteId("routes/about".into()),
-        kind: oxide_router::RouteKind::Page,
+    let mut tree_b_inner = oxide_fw_router::RouteTree::new();
+    tree_b_inner.insert(oxide_fw_router::RouteEntry {
+        id: oxide_fw_router::RouteId("routes/about".into()),
+        kind: oxide_fw_router::RouteKind::Page,
         segments: vec!["about".into()],
         file: std::path::PathBuf::from("about/page.tsx"),
         render_mode: None,
@@ -406,8 +406,8 @@ async fn dispatch_routes_through_page_renderer_when_attached() {
 
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let tree = empty_tree();
-    let metrics = Arc::new(oxide_server::Metrics::new());
-    let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(CountingRenderer {
+    let metrics = Arc::new(oxide_fw_server::Metrics::new());
+    let renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> = Some(Arc::new(CountingRenderer {
         calls: calls.clone(),
     }));
 
@@ -459,7 +459,7 @@ async fn dispatch_uses_ir_placeholder_when_no_renderer() {
     use std::sync::Arc;
 
     let tree = empty_tree();
-    let metrics = Arc::new(oxide_server::Metrics::new());
+    let metrics = Arc::new(oxide_fw_server::Metrics::new());
     let dispatch = build_dispatch(
         tree,
         metrics,
@@ -505,8 +505,8 @@ async fn dispatch_propagates_renderer_error_as_500() {
     use std::sync::Arc;
 
     let tree = empty_tree();
-    let metrics = Arc::new(oxide_server::Metrics::new());
-    let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(FailingRenderer));
+    let metrics = Arc::new(oxide_fw_server::Metrics::new());
+    let renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> = Some(Arc::new(FailingRenderer));
 
     let dispatch = build_dispatch(
         tree,
@@ -559,11 +559,11 @@ impl DataCapturingRenderer {
 }
 
 #[async_trait::async_trait]
-impl oxide_server::PageRenderer for DataCapturingRenderer {
+impl oxide_fw_server::PageRenderer for DataCapturingRenderer {
     fn name(&self) -> &str {
         "data-capture"
     }
-    async fn render(&self, input: oxide_server::PageRenderInput) -> oxide_server::Result<String> {
+    async fn render(&self, input: oxide_fw_server::PageRenderInput) -> oxide_fw_server::Result<String> {
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         *self.last_data.lock().unwrap() = input.data.clone();
         Ok(format!(
@@ -577,20 +577,20 @@ impl oxide_server::PageRenderer for DataCapturingRenderer {
 /// how many times it was called.
 struct ScriptedLoader {
     calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-    output: std::sync::Mutex<Option<oxide_server::LoaderOutput>>,
+    output: std::sync::Mutex<Option<oxide_fw_server::LoaderOutput>>,
 }
 
 impl ScriptedLoader {
     fn ok(data: serde_json::Value) -> Self {
         Self {
             calls: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            output: std::sync::Mutex::new(Some(oxide_server::LoaderOutput::ok(data))),
+            output: std::sync::Mutex::new(Some(oxide_fw_server::LoaderOutput::ok(data))),
         }
     }
     fn http_error(status: u16, message: &str) -> Self {
         Self {
             calls: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            output: std::sync::Mutex::new(Some(oxide_server::LoaderOutput {
+            output: std::sync::Mutex::new(Some(oxide_fw_server::LoaderOutput {
                 status,
                 location: None,
                 data: serde_json::json!({ "message": message }),
@@ -601,7 +601,7 @@ impl ScriptedLoader {
     fn redirect(location: &str, status: u16) -> Self {
         Self {
             calls: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            output: std::sync::Mutex::new(Some(oxide_server::LoaderOutput {
+            output: std::sync::Mutex::new(Some(oxide_fw_server::LoaderOutput {
                 status,
                 location: Some(location.to_string()),
                 data: serde_json::json!({}),
@@ -612,14 +612,14 @@ impl ScriptedLoader {
 }
 
 #[async_trait::async_trait]
-impl oxide_server::LoaderRunner for ScriptedLoader {
+impl oxide_fw_server::LoaderRunner for ScriptedLoader {
     fn name(&self) -> &str {
         "scripted"
     }
     async fn run(
         &self,
-        _input: oxide_server::LoaderRunInput,
-    ) -> oxide_server::Result<oxide_server::LoaderOutput> {
+        _input: oxide_fw_server::LoaderRunInput,
+    ) -> oxide_fw_server::Result<oxide_fw_server::LoaderOutput> {
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let out = self
             .output
@@ -633,11 +633,11 @@ impl oxide_server::LoaderRunner for ScriptedLoader {
 
 /// Build a one-entry RouteTree whose only route is `/index` with
 /// `has_server_module = true`. Test-only helper.
-fn tree_with_server_route() -> std::sync::Arc<oxide_router::RouteTree> {
-    let mut tree = oxide_router::RouteTree::new();
-    tree.insert(oxide_router::RouteEntry {
-        id: oxide_router::RouteId("routes/index".into()),
-        kind: oxide_router::RouteKind::Page,
+fn tree_with_server_route() -> std::sync::Arc<oxide_fw_router::RouteTree> {
+    let mut tree = oxide_fw_router::RouteTree::new();
+    tree.insert(oxide_fw_router::RouteEntry {
+        id: oxide_fw_router::RouteId("routes/index".into()),
+        kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
         file: std::path::PathBuf::from("index/page.tsx"),
         render_mode: None,
@@ -659,16 +659,16 @@ async fn loader_feeds_data_to_renderer() {
     use std::sync::atomic::Ordering;
 
     let tree = tree_with_server_route();
-    let metrics = Arc::new(oxide_server::Metrics::new());
+    let metrics = Arc::new(oxide_fw_server::Metrics::new());
 
     let renderer = Arc::new(DataCapturingRenderer::new());
     let renderer_calls = Arc::clone(&renderer.calls);
     let renderer_data = Arc::clone(&renderer.last_data);
-    let page_renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(renderer);
+    let page_renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> = Some(renderer);
 
     let loader = Arc::new(ScriptedLoader::ok(serde_json::json!({ "title": "Hi" })));
     let loader_calls = Arc::clone(&loader.calls);
-    let loader_runner: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(loader);
+    let loader_runner: Option<Arc<dyn oxide_fw_server::LoaderRunner>> = Some(loader);
 
     let dispatch = build_dispatch(
         tree,
@@ -710,15 +710,15 @@ async fn loader_404_short_circuits_render() {
     use std::sync::atomic::Ordering;
 
     let tree = tree_with_server_route();
-    let metrics = Arc::new(oxide_server::Metrics::new());
+    let metrics = Arc::new(oxide_fw_server::Metrics::new());
 
     let renderer = Arc::new(DataCapturingRenderer::new());
     let renderer_calls = Arc::clone(&renderer.calls);
-    let page_renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(renderer);
+    let page_renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> = Some(renderer);
 
     let loader = Arc::new(ScriptedLoader::http_error(404, "not found"));
     let loader_calls = Arc::clone(&loader.calls);
-    let loader_runner: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(loader);
+    let loader_runner: Option<Arc<dyn oxide_fw_server::LoaderRunner>> = Some(loader);
 
     let dispatch = build_dispatch(
         tree,
@@ -760,15 +760,15 @@ async fn loader_redirect_short_circuits_with_location() {
     use std::sync::atomic::Ordering;
 
     let tree = tree_with_server_route();
-    let metrics = Arc::new(oxide_server::Metrics::new());
+    let metrics = Arc::new(oxide_fw_server::Metrics::new());
 
     let renderer = Arc::new(DataCapturingRenderer::new());
     let renderer_calls = Arc::clone(&renderer.calls);
-    let page_renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(renderer);
+    let page_renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> = Some(renderer);
 
     let loader = Arc::new(ScriptedLoader::redirect("/login", 303));
     let loader_calls = Arc::clone(&loader.calls);
-    let loader_runner: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(loader);
+    let loader_runner: Option<Arc<dyn oxide_fw_server::LoaderRunner>> = Some(loader);
 
     let dispatch = build_dispatch(
         tree,
@@ -809,10 +809,10 @@ async fn no_server_module_skips_loader() {
     use std::sync::atomic::Ordering;
 
     // Tree with `has_server_module: false`.
-    let mut tree = oxide_router::RouteTree::new();
-    tree.insert(oxide_router::RouteEntry {
-        id: oxide_router::RouteId("routes/index".into()),
-        kind: oxide_router::RouteKind::Page,
+    let mut tree = oxide_fw_router::RouteTree::new();
+    tree.insert(oxide_fw_router::RouteEntry {
+        id: oxide_fw_router::RouteId("routes/index".into()),
+        kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
         file: std::path::PathBuf::from("index/page.tsx"),
         render_mode: None,
@@ -822,16 +822,16 @@ async fn no_server_module_skips_loader() {
         needs_parent: false,
     });
     let tree = Arc::new(tree);
-    let metrics = Arc::new(oxide_server::Metrics::new());
+    let metrics = Arc::new(oxide_fw_server::Metrics::new());
 
     let renderer = Arc::new(DataCapturingRenderer::new());
     let renderer_calls = Arc::clone(&renderer.calls);
     let renderer_data = Arc::clone(&renderer.last_data);
-    let page_renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(renderer);
+    let page_renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> = Some(renderer);
 
     let loader = Arc::new(ScriptedLoader::ok(serde_json::json!({ "never": true })));
     let loader_calls = Arc::clone(&loader.calls);
-    let loader_runner: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(loader);
+    let loader_runner: Option<Arc<dyn oxide_fw_server::LoaderRunner>> = Some(loader);
 
     let dispatch = build_dispatch(
         tree,
@@ -886,12 +886,12 @@ async fn write_prerender_threads_loader_data_into_renderer() {
 
     let renderer = Arc::new(DataCapturingRenderer::new());
     let renderer_data = Arc::clone(&renderer.last_data);
-    let page_renderer: Arc<dyn oxide_server::PageRenderer> = renderer;
+    let page_renderer: Arc<dyn oxide_fw_server::PageRenderer> = renderer;
 
     let loader = Arc::new(ScriptedLoader::ok(
         serde_json::json!({ "title": "Prerender Hi" }),
     ));
-    let loader_runner: Arc<dyn oxide_server::LoaderRunner> = loader;
+    let loader_runner: Arc<dyn oxide_fw_server::LoaderRunner> = loader;
 
     let params: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
     write_prerender(
@@ -937,7 +937,7 @@ async fn write_prerender_without_loader_uses_empty_data() {
 
     let renderer = Arc::new(DataCapturingRenderer::new());
     let renderer_data = Arc::clone(&renderer.last_data);
-    let page_renderer: Arc<dyn oxide_server::PageRenderer> = renderer;
+    let page_renderer: Arc<dyn oxide_fw_server::PageRenderer> = renderer;
 
     let params: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
     write_prerender(
@@ -1148,7 +1148,7 @@ async fn dev_server_serves_smoke_app_over_http() {
     // — the fixture has no handler config and the test needs no remote).
     let stack = crate::framework_shim::build_framework_stack(
         Some(&config_path),
-        oxide_config::JsBackend::Node,
+        oxide_fw_config::JsBackend::Node,
         None,
         None,
     )
@@ -1413,7 +1413,7 @@ async fn smoke_app_builds_its_own_pages() {
 /// `.body` empty by design; the content is in `.stream`. Most tests want
 /// the logical body regardless of which transport shape the dispatch
 /// chose, so they call this instead of reading `.body` directly.
-async fn collect_response_body(mut resp: oxide_server::OxideResponse) -> Vec<u8> {
+async fn collect_response_body(mut resp: oxide_fw_server::OxideResponse) -> Vec<u8> {
     // Streaming responses leave `.body` empty; the content is in `.stream`.
     // Read the stream directly (no HTTP framing needed) so the helper
     // works without depending on hyper/http_body_util in the cli crate.
@@ -1465,7 +1465,7 @@ async fn start_serves_smoke_app_over_http() {
     // Build the same framework stack `cmd_serve` builds.
     let stack = crate::framework_shim::build_framework_stack(
         Some(&config_path),
-        oxide_config::JsBackend::Node,
+        oxide_fw_config::JsBackend::Node,
         None,
         None,
     )
@@ -2744,7 +2744,7 @@ async fn mcp_cache_tool_reports_empty_cache() {
     let dir = tempfile::tempdir().unwrap();
     let server = crate::mcp::OxideMcp::new(dir.path().to_path_buf());
     let result = server
-        .oxide_cache(Parameters(crate::mcp::NoArgs {}))
+        .oxide_fw_cache(Parameters(crate::mcp::NoArgs {}))
         .await
         .unwrap();
     let text = result
@@ -2835,7 +2835,7 @@ async fn schema_command_emits_valid_json_schema() {
     assert_eq!(v["type"], "object");
     assert_eq!(
         v["$id"],
-        oxide_config::CONFIG_SCHEMA_URI,
+        oxide_fw_config::CONFIG_SCHEMA_URI,
         "$id must match the published URI"
     );
     // Spot-check that the schema documents a few real keys.
@@ -2949,7 +2949,7 @@ async fn fetch_propagates_trace_context_header() {
     // stub until V8Host wires `fetch` (§4.5), so this test asserts the shape
     // the runtime will produce: a `traceparent` header built from the current
     // span's trace id.
-    let tc = oxide_server::trace_context::TraceContext::from_headers(&BTreeMap::new());
+    let tc = oxide_fw_server::trace_context::TraceContext::from_headers(&BTreeMap::new());
     assert!(tc.is_none(), "no incoming header → no context to inherit");
 
     let mut headers = BTreeMap::new();
@@ -2957,7 +2957,7 @@ async fn fetch_propagates_trace_context_header() {
         "traceparent".to_string(),
         "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01".to_string(),
     );
-    let tc = oxide_server::trace_context::TraceContext::from_headers(&headers)
+    let tc = oxide_fw_server::trace_context::TraceContext::from_headers(&headers)
         .expect("valid traceparent parsed");
     assert_eq!(tc.trace_id, "0af7651916cd43dd8448eb211c80319c");
     assert_eq!(tc.parent_id, "b7ad6b7169203331");
@@ -3216,20 +3216,20 @@ async fn stream_error_recovery_after_shell_emits_boundary() {
     use futures::channel::mpsc as fmpsc;
 
     // Build a RenderStream that yields one chunk then an error.
-    let (mut tx, rx) = fmpsc::channel::<oxide_diagnostics::Result<bytes::Bytes>>(8);
+    let (mut tx, rx) = fmpsc::channel::<oxide_fw_diagnostics::Result<bytes::Bytes>>(8);
     tokio::spawn(async move {
         use futures::SinkExt as _;
         let _ = tx
             .send(Ok(bytes::Bytes::from_static(b"<html>shell</html>")))
             .await;
         let _ = tx
-            .send(Err(oxide_diagnostics::OxideError(
-                oxide_diagnostics::Diagnostic::error("RND-TEST", "mid-stream boom"),
+            .send(Err(oxide_fw_diagnostics::OxideError(
+                oxide_fw_diagnostics::Diagnostic::error("RND-TEST", "mid-stream boom"),
             )))
             .await;
     });
-    // `oxide_server::RenderStream` is a boxed item stream.
-    let src: oxide_server::RenderStream = Box::pin(rx);
+    // `oxide_fw_server::RenderStream` is a boxed item stream.
+    let src: oxide_fw_server::RenderStream = Box::pin(rx);
 
     let body = crate::render_stream_with_recovery(
         src,
@@ -3264,18 +3264,18 @@ async fn stream_error_recovery_after_shell_emits_boundary() {
 struct ErrorMarkerRenderer;
 
 #[async_trait::async_trait]
-impl oxide_server::PageRenderer for ErrorMarkerRenderer {
+impl oxide_fw_server::PageRenderer for ErrorMarkerRenderer {
     fn name(&self) -> &str {
         "error-marker"
     }
-    async fn render(&self, _input: oxide_server::PageRenderInput) -> oxide_server::Result<String> {
+    async fn render(&self, _input: oxide_fw_server::PageRenderInput) -> oxide_fw_server::Result<String> {
         Ok("<!doctype html><html><body>ERR</body></html>".into())
     }
     async fn render_streaming(
         &self,
-        _input: oxide_server::PageRenderInput,
-    ) -> oxide_server::Result<oxide_server::RenderStream> {
-        let items: Vec<oxide_server::Result<bytes::Bytes>> = vec![
+        _input: oxide_fw_server::PageRenderInput,
+    ) -> oxide_fw_server::Result<oxide_fw_server::RenderStream> {
+        let items: Vec<oxide_fw_server::Result<bytes::Bytes>> = vec![
             Ok(bytes::Bytes::from_static(b"<!--oxide-status:500-->")),
             Ok(bytes::Bytes::from_static(
                 b"<!doctype html><html><body>ERR</body></html>",
@@ -3291,18 +3291,18 @@ impl oxide_server::PageRenderer for ErrorMarkerRenderer {
 struct Ox500FallbackRenderer;
 
 #[async_trait::async_trait]
-impl oxide_server::PageRenderer for Ox500FallbackRenderer {
+impl oxide_fw_server::PageRenderer for Ox500FallbackRenderer {
     fn name(&self) -> &str {
         "ox500-fallback"
     }
-    async fn render(&self, _input: oxide_server::PageRenderInput) -> oxide_server::Result<String> {
+    async fn render(&self, _input: oxide_fw_server::PageRenderInput) -> oxide_fw_server::Result<String> {
         Ok("<!doctype html><html><body>ERR</body></html>".into())
     }
     async fn render_streaming(
         &self,
-        _input: oxide_server::PageRenderInput,
-    ) -> oxide_server::Result<oxide_server::RenderStream> {
-        let items: Vec<oxide_server::Result<bytes::Bytes>> = vec![
+        _input: oxide_fw_server::PageRenderInput,
+    ) -> oxide_fw_server::Result<oxide_fw_server::RenderStream> {
+        let items: Vec<oxide_fw_server::Result<bytes::Bytes>> = vec![
             Ok(bytes::Bytes::from_static(
                 b"<div class='ox-error' data-ox-error='OX-500'>OX-500: boom</div>",
             )),
@@ -3317,10 +3317,10 @@ async fn live_render_injects_odf_payload_script() {
     use std::sync::Arc;
 
     let tree = tree_with_server_route();
-    let metrics = Arc::new(oxide_server::Metrics::new());
-    let page_renderer: Option<Arc<dyn oxide_server::PageRenderer>> =
+    let metrics = Arc::new(oxide_fw_server::Metrics::new());
+    let page_renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> =
         Some(Arc::new(DataCapturingRenderer::new()));
-    let loader_runner: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(Arc::new(
+    let loader_runner: Option<Arc<dyn oxide_fw_server::LoaderRunner>> = Some(Arc::new(
         ScriptedLoader::ok(serde_json::json!({ "title": "Hi" })),
     ));
 
@@ -3380,7 +3380,7 @@ async fn live_render_injects_odf_payload_script() {
     let raw = base64::engine::general_purpose::STANDARD
         .decode(&b64)
         .expect("payload is base64");
-    let value = oxide_odf::decode(&raw).expect("payload decodes as ODF");
+    let value = oxide_fw_odf::decode(&raw).expect("payload decodes as ODF");
     let json = value.to_json();
     assert_eq!(
         json["data"]["title"], "Hi",
@@ -3399,19 +3399,19 @@ async fn error_status_marker_yields_http_500() {
     // `<!--oxide-status:500-->` and the generic OX-500 fallback attribute
     // the adapter already emits today. A PRERENDERED error page's status
     // is now carried through the L0 seed manifest (Wave 3 item 2).
-    let renderers: Vec<(&str, Arc<dyn oxide_server::PageRenderer>)> = vec![
+    let renderers: Vec<(&str, Arc<dyn oxide_fw_server::PageRenderer>)> = vec![
         (
             "canonical marker",
-            Arc::new(ErrorMarkerRenderer) as Arc<dyn oxide_server::PageRenderer>,
+            Arc::new(ErrorMarkerRenderer) as Arc<dyn oxide_fw_server::PageRenderer>,
         ),
         (
             "generic fallback",
-            Arc::new(Ox500FallbackRenderer) as Arc<dyn oxide_server::PageRenderer>,
+            Arc::new(Ox500FallbackRenderer) as Arc<dyn oxide_fw_server::PageRenderer>,
         ),
     ];
     for (name, renderer) in renderers {
         let tree = tree_with_server_route();
-        let metrics = Arc::new(oxide_server::Metrics::new());
+        let metrics = Arc::new(oxide_fw_server::Metrics::new());
         let dispatch = build_dispatch(
             tree,
             metrics,
@@ -3489,7 +3489,7 @@ async fn remote_cache_handler_maps_handler_config() {
     // already built (None here). Redis and S3 drivers exist but construct
     // async / may reach the network — their own unit tests exercise the
     // protocol; asserting them here would make this test non-hermetic.
-    use oxide_config::CacheHandlerConfig;
+    use oxide_fw_config::CacheHandlerConfig;
     let f = crate::framework_shim::remote_cache_handler;
     assert!(
         f(Some(&CacheHandlerConfig::Http {
@@ -3519,7 +3519,7 @@ struct ScriptedMiddleware {
 }
 
 #[async_trait::async_trait]
-impl oxide_server::MiddlewareDispatcher for ScriptedMiddleware {
+impl oxide_fw_server::MiddlewareDispatcher for ScriptedMiddleware {
     async fn dispatch(
         &self,
         _module_path: &str,
@@ -3529,9 +3529,9 @@ impl oxide_server::MiddlewareDispatcher for ScriptedMiddleware {
         _headers: &[(String, String)],
         _body: &[u8],
         _locals: Option<&serde_json::Value>,
-    ) -> std::result::Result<oxide_server::MiddlewareRunResult, oxide_server::MiddlewareRunError>
+    ) -> std::result::Result<oxide_fw_server::MiddlewareRunResult, oxide_fw_server::MiddlewareRunError>
     {
-        Ok(oxide_server::MiddlewareRunResult {
+        Ok(oxide_fw_server::MiddlewareRunResult {
             short: self.short_status.is_some(),
             status: self.short_status.unwrap_or(200),
             headers: self.headers.clone(),
@@ -3559,21 +3559,21 @@ impl LocalsCapturingLoader {
 }
 
 #[async_trait::async_trait]
-impl oxide_server::LoaderRunner for LocalsCapturingLoader {
+impl oxide_fw_server::LoaderRunner for LocalsCapturingLoader {
     fn name(&self) -> &str {
         "locals-capture"
     }
     async fn run(
         &self,
-        input: oxide_server::LoaderRunInput,
-    ) -> oxide_server::Result<oxide_server::LoaderOutput> {
+        input: oxide_fw_server::LoaderRunInput,
+    ) -> oxide_fw_server::Result<oxide_fw_server::LoaderOutput> {
         *self.last_locals.lock().unwrap() = input.locals.clone();
         let mut deferred = std::collections::BTreeMap::new();
         deferred.insert(
             "0".to_string(),
             serde_json::json!({ "slow": "resolved-by-loader" }),
         );
-        Ok(oxide_server::LoaderOutput {
+        Ok(oxide_fw_server::LoaderOutput {
             status: 200,
             location: None,
             data: serde_json::json!({ "v": 1 }),
@@ -3589,11 +3589,11 @@ impl oxide_server::LoaderRunner for LocalsCapturingLoader {
 /// A page route + a root `middleware.ts`, so the dispatch resolves a
 /// nearest-ancestor middleware (no filesystem needed — the scripted
 /// dispatcher ignores the module path).
-fn tree_with_page_and_middleware() -> std::sync::Arc<oxide_router::RouteTree> {
-    let mut tree = oxide_router::RouteTree::new();
-    tree.insert(oxide_router::RouteEntry {
-        id: oxide_router::RouteId("routes/index".into()),
-        kind: oxide_router::RouteKind::Page,
+fn tree_with_page_and_middleware() -> std::sync::Arc<oxide_fw_router::RouteTree> {
+    let mut tree = oxide_fw_router::RouteTree::new();
+    tree.insert(oxide_fw_router::RouteEntry {
+        id: oxide_fw_router::RouteId("routes/index".into()),
+        kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
         file: std::path::PathBuf::from("index/page.tsx"),
         render_mode: None,
@@ -3602,9 +3602,9 @@ fn tree_with_page_and_middleware() -> std::sync::Arc<oxide_router::RouteTree> {
         slot: None,
         needs_parent: false,
     });
-    tree.insert(oxide_router::RouteEntry {
-        id: oxide_router::RouteId("routes/middleware".into()),
-        kind: oxide_router::RouteKind::Middleware,
+    tree.insert(oxide_fw_router::RouteEntry {
+        id: oxide_fw_router::RouteId("routes/middleware".into()),
+        kind: oxide_fw_router::RouteKind::Middleware,
         segments: vec![],
         file: std::path::PathBuf::from("middleware.ts"),
         render_mode: None,
@@ -3623,7 +3623,7 @@ struct RewriteOnceMiddleware {
 }
 
 #[async_trait::async_trait]
-impl oxide_server::MiddlewareDispatcher for RewriteOnceMiddleware {
+impl oxide_fw_server::MiddlewareDispatcher for RewriteOnceMiddleware {
     async fn dispatch(
         &self,
         module_path: &str,
@@ -3633,11 +3633,11 @@ impl oxide_server::MiddlewareDispatcher for RewriteOnceMiddleware {
         _headers: &[(String, String)],
         _body: &[u8],
         _locals: Option<&serde_json::Value>,
-    ) -> std::result::Result<oxide_server::MiddlewareRunResult, oxide_server::MiddlewareRunError>
+    ) -> std::result::Result<oxide_fw_server::MiddlewareRunResult, oxide_fw_server::MiddlewareRunError>
     {
         let inner = module_path.ends_with("shop/middleware.ts");
         self.calls.lock().unwrap().push(module_path.to_string());
-        Ok(oxide_server::MiddlewareRunResult {
+        Ok(oxide_fw_server::MiddlewareRunResult {
             short: false,
             status: 200,
             headers: if inner {
@@ -3655,13 +3655,13 @@ impl oxide_server::MiddlewareDispatcher for RewriteOnceMiddleware {
 async fn middleware_rewrite_does_not_rerun_outer_layers() {
     use std::sync::Arc;
     let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let mw: Option<Arc<dyn oxide_server::MiddlewareDispatcher>> =
+    let mw: Option<Arc<dyn oxide_fw_server::MiddlewareDispatcher>> =
         Some(Arc::new(RewriteOnceMiddleware {
             calls: Arc::clone(&calls),
         }));
     let dispatch = build_dispatch(
         tree_with_two_middleware_layers(),
-        Arc::new(oxide_server::Metrics::new()),
+        Arc::new(oxide_fw_server::Metrics::new()),
         Vec::new(),
         Some(Arc::new(DataCapturingRenderer::new())),
         None,
@@ -3705,7 +3705,7 @@ async fn middleware_rewrite_does_not_rerun_outer_layers() {
 struct LayerMiddleware;
 
 #[async_trait::async_trait]
-impl oxide_server::MiddlewareDispatcher for LayerMiddleware {
+impl oxide_fw_server::MiddlewareDispatcher for LayerMiddleware {
     async fn dispatch(
         &self,
         module_path: &str,
@@ -3715,7 +3715,7 @@ impl oxide_server::MiddlewareDispatcher for LayerMiddleware {
         _headers: &[(String, String)],
         _body: &[u8],
         _locals: Option<&serde_json::Value>,
-    ) -> std::result::Result<oxide_server::MiddlewareRunResult, oxide_server::MiddlewareRunError>
+    ) -> std::result::Result<oxide_fw_server::MiddlewareRunResult, oxide_fw_server::MiddlewareRunError>
     {
         let inner = module_path.ends_with("shop/middleware.ts");
         let headers = if inner {
@@ -3726,7 +3726,7 @@ impl oxide_server::MiddlewareDispatcher for LayerMiddleware {
                 ("x-only-outer".to_string(), "1".to_string()),
             ]
         };
-        Ok(oxide_server::MiddlewareRunResult {
+        Ok(oxide_fw_server::MiddlewareRunResult {
             short: false,
             status: 200,
             headers,
@@ -3735,11 +3735,11 @@ impl oxide_server::MiddlewareDispatcher for LayerMiddleware {
     }
 }
 
-fn tree_with_two_middleware_layers() -> std::sync::Arc<oxide_router::RouteTree> {
-    let mut tree = oxide_router::RouteTree::new();
-    let mut page = |id: &str, segments: Vec<&str>, file: &str| oxide_router::RouteEntry {
-        id: oxide_router::RouteId(id.into()),
-        kind: oxide_router::RouteKind::Page,
+fn tree_with_two_middleware_layers() -> std::sync::Arc<oxide_fw_router::RouteTree> {
+    let mut tree = oxide_fw_router::RouteTree::new();
+    let mut page = |id: &str, segments: Vec<&str>, file: &str| oxide_fw_router::RouteEntry {
+        id: oxide_fw_router::RouteId(id.into()),
+        kind: oxide_fw_router::RouteKind::Page,
         segments: segments.into_iter().map(str::to_string).collect(),
         file: std::path::PathBuf::from(file),
         render_mode: None,
@@ -3749,9 +3749,9 @@ fn tree_with_two_middleware_layers() -> std::sync::Arc<oxide_router::RouteTree> 
         needs_parent: false,
     };
     tree.insert(page("routes/shop/page", vec!["shop"], "shop/page.tsx"));
-    let mut mw = |id: &str, segments: Vec<&str>, file: &str| oxide_router::RouteEntry {
-        id: oxide_router::RouteId(id.into()),
-        kind: oxide_router::RouteKind::Middleware,
+    let mut mw = |id: &str, segments: Vec<&str>, file: &str| oxide_fw_router::RouteEntry {
+        id: oxide_fw_router::RouteId(id.into()),
+        kind: oxide_fw_router::RouteKind::Middleware,
         segments: segments.into_iter().map(str::to_string).collect(),
         file: std::path::PathBuf::from(file),
         render_mode: None,
@@ -3772,8 +3772,8 @@ fn tree_with_two_middleware_layers() -> std::sync::Arc<oxide_router::RouteTree> 
 #[tokio::test]
 async fn inner_middleware_header_overwrites_outer() {
     use std::sync::Arc;
-    let metrics = Arc::new(oxide_server::Metrics::new());
-    let mw: Option<Arc<dyn oxide_server::MiddlewareDispatcher>> = Some(Arc::new(LayerMiddleware));
+    let metrics = Arc::new(oxide_fw_server::Metrics::new());
+    let mw: Option<Arc<dyn oxide_fw_server::MiddlewareDispatcher>> = Some(Arc::new(LayerMiddleware));
     let dispatch = build_dispatch(
         tree_with_two_middleware_layers(),
         std::sync::Arc::clone(&metrics),
@@ -3816,8 +3816,8 @@ async fn inner_middleware_header_overwrites_outer() {
 async fn middleware_headers_ride_page_and_data_responses() {
     use std::sync::Arc;
 
-    let metrics = Arc::new(oxide_server::Metrics::new());
-    let mw: Option<Arc<dyn oxide_server::MiddlewareDispatcher>> =
+    let metrics = Arc::new(oxide_fw_server::Metrics::new());
+    let mw: Option<Arc<dyn oxide_fw_server::MiddlewareDispatcher>> =
         Some(Arc::new(ScriptedMiddleware {
             headers: vec![("x-oxide-mw".to_string(), "on".to_string())],
             locals: Some(serde_json::json!({ "tenant": "acme" })),
@@ -3827,7 +3827,7 @@ async fn middleware_headers_ride_page_and_data_responses() {
 
     // §8.5: the accumulated `middleware_headers` previously died in a dead
     // variable — the PAGE response must carry them.
-    let page_renderer: Option<Arc<dyn oxide_server::PageRenderer>> =
+    let page_renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> =
         Some(Arc::new(DataCapturingRenderer::new()));
     let dispatch = build_dispatch(
         tree_with_page_and_middleware(),
@@ -3868,7 +3868,7 @@ async fn middleware_headers_ride_page_and_data_responses() {
     // reach the loader.
     let loader = Arc::new(LocalsCapturingLoader::new());
     let last_locals = Arc::clone(&loader.last_locals);
-    let loader_runner: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(loader);
+    let loader_runner: Option<Arc<dyn oxide_fw_server::LoaderRunner>> = Some(loader);
     let dispatch = build_dispatch(
         tree_with_page_and_middleware(),
         metrics,
@@ -3909,7 +3909,7 @@ async fn middleware_headers_ride_page_and_data_responses() {
     );
     // The ODF envelope carries the loader's data, the resolved defers and
     // the locale (§8.4 parity with the SSR render's inputs).
-    let json = oxide_odf::decode(&resp.body).expect("data response is ODF");
+    let json = oxide_fw_odf::decode(&resp.body).expect("data response is ODF");
     let json = json.to_json();
     assert_eq!(json["data"]["v"], 1, "loader data in the envelope: {json}");
     assert_eq!(
@@ -3924,11 +3924,11 @@ async fn middleware_headers_ride_page_and_data_responses() {
 // ---------------------------------------------------------------------------
 
 /// A cacheable route (static mode, no server module) so `l0_eligible` is true.
-fn tree_with_layout_and_parentless_page() -> std::sync::Arc<oxide_router::RouteTree> {
-    let mut tree = oxide_router::RouteTree::new();
-    tree.insert(oxide_router::RouteEntry {
-        id: oxide_router::RouteId("routes/layout".into()),
-        kind: oxide_router::RouteKind::Layout,
+fn tree_with_layout_and_parentless_page() -> std::sync::Arc<oxide_fw_router::RouteTree> {
+    let mut tree = oxide_fw_router::RouteTree::new();
+    tree.insert(oxide_fw_router::RouteEntry {
+        id: oxide_fw_router::RouteId("routes/layout".into()),
+        kind: oxide_fw_router::RouteKind::Layout,
         segments: vec![],
         file: std::path::PathBuf::from("layout.tsx"),
         render_mode: None,
@@ -3937,9 +3937,9 @@ fn tree_with_layout_and_parentless_page() -> std::sync::Arc<oxide_router::RouteT
         slot: None,
         needs_parent: false,
     });
-    tree.insert(oxide_router::RouteEntry {
-        id: oxide_router::RouteId("routes/index/page".into()),
-        kind: oxide_router::RouteKind::Page,
+    tree.insert(oxide_fw_router::RouteEntry {
+        id: oxide_fw_router::RouteId("routes/index/page".into()),
+        kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
         file: std::path::PathBuf::from("index/page.tsx"),
         render_mode: Some("static".into()),
@@ -3951,11 +3951,11 @@ fn tree_with_layout_and_parentless_page() -> std::sync::Arc<oxide_router::RouteT
     std::sync::Arc::new(tree)
 }
 
-fn tree_with_page_and_server_module() -> std::sync::Arc<oxide_router::RouteTree> {
-    let mut tree = oxide_router::RouteTree::new();
-    tree.insert(oxide_router::RouteEntry {
-        id: oxide_router::RouteId("routes/index".into()),
-        kind: oxide_router::RouteKind::Page,
+fn tree_with_page_and_server_module() -> std::sync::Arc<oxide_fw_router::RouteTree> {
+    let mut tree = oxide_fw_router::RouteTree::new();
+    tree.insert(oxide_fw_router::RouteEntry {
+        id: oxide_fw_router::RouteId("routes/index".into()),
+        kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
         file: std::path::PathBuf::from("index/page.tsx"),
         render_mode: Some("static".into()),
@@ -3967,11 +3967,11 @@ fn tree_with_page_and_server_module() -> std::sync::Arc<oxide_router::RouteTree>
     std::sync::Arc::new(tree)
 }
 
-fn tree_with_static_page_and_middleware() -> std::sync::Arc<oxide_router::RouteTree> {
-    let mut tree = oxide_router::RouteTree::new();
-    tree.insert(oxide_router::RouteEntry {
-        id: oxide_router::RouteId("routes/index".into()),
-        kind: oxide_router::RouteKind::Page,
+fn tree_with_static_page_and_middleware() -> std::sync::Arc<oxide_fw_router::RouteTree> {
+    let mut tree = oxide_fw_router::RouteTree::new();
+    tree.insert(oxide_fw_router::RouteEntry {
+        id: oxide_fw_router::RouteId("routes/index".into()),
+        kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
         file: std::path::PathBuf::from("index/page.tsx"),
         render_mode: Some("static".into()),
@@ -3980,9 +3980,9 @@ fn tree_with_static_page_and_middleware() -> std::sync::Arc<oxide_router::RouteT
         slot: None,
         needs_parent: false,
     });
-    tree.insert(oxide_router::RouteEntry {
-        id: oxide_router::RouteId("routes/middleware".into()),
-        kind: oxide_router::RouteKind::Middleware,
+    tree.insert(oxide_fw_router::RouteEntry {
+        id: oxide_fw_router::RouteId("routes/middleware".into()),
+        kind: oxide_fw_router::RouteKind::Middleware,
         segments: vec![],
         file: std::path::PathBuf::from("middleware.ts"),
         render_mode: None,
@@ -3999,16 +3999,16 @@ async fn middleware_headers_ride_l0_hits() {
     use std::sync::Arc;
 
     // Memory tier the L0 cache stores into.
-    let tier: Arc<dyn oxide_cache::CacheHandler> =
-        Arc::new(oxide_cache::TieredCache::new(8 * 1024 * 1024));
+    let tier: Arc<dyn oxide_fw_cache::CacheHandler> =
+        Arc::new(oxide_fw_cache::TieredCache::new(8 * 1024 * 1024));
     let l0 = Arc::new(l0_cache::L0Cache::new(
         tier,
         "test-build",
         std::time::Duration::from_secs(300),
     ));
 
-    let metrics = Arc::new(oxide_server::Metrics::new());
-    let mw: Option<Arc<dyn oxide_server::MiddlewareDispatcher>> =
+    let metrics = Arc::new(oxide_fw_server::Metrics::new());
+    let mw: Option<Arc<dyn oxide_fw_server::MiddlewareDispatcher>> =
         Some(Arc::new(ScriptedMiddleware {
             headers: vec![("x-oxide-mw".to_string(), "on".to_string())],
             locals: None,
@@ -4019,7 +4019,7 @@ async fn middleware_headers_ride_l0_hits() {
     // A renderer is attached so the FIRST request takes the render path and
     // stores its output in L0 (a no-renderer request returns the IR
     // placeholder before the L0 store).
-    let page_renderer: Option<Arc<dyn oxide_server::PageRenderer>> =
+    let page_renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> =
         Some(Arc::new(DataCapturingRenderer::new()));
 
     let dispatch = build_dispatch(
@@ -4121,14 +4121,14 @@ impl ConcurrencyProbe {
 }
 
 #[async_trait::async_trait]
-impl oxide_server::LoaderRunner for ConcurrencyProbe {
+impl oxide_fw_server::LoaderRunner for ConcurrencyProbe {
     fn name(&self) -> &str {
         "concurrency-probe"
     }
     async fn run(
         &self,
-        input: oxide_server::LoaderRunInput,
-    ) -> oxide_server::Result<oxide_server::LoaderOutput> {
+        input: oxide_fw_server::LoaderRunInput,
+    ) -> oxide_fw_server::Result<oxide_fw_server::LoaderOutput> {
         use std::sync::atomic::Ordering;
         let n = self.active.fetch_add(1, Ordering::SeqCst) + 1;
         loop {
@@ -4148,7 +4148,7 @@ impl oxide_server::LoaderRunner for ConcurrencyProbe {
         // Wide enough that any scheduling jitter still shows overlap.
         tokio::time::sleep(std::time::Duration::from_millis(60)).await;
         self.active.fetch_sub(1, Ordering::SeqCst);
-        Ok(oxide_server::LoaderOutput::ok(serde_json::json!({
+        Ok(oxide_fw_server::LoaderOutput::ok(serde_json::json!({
             "route": input.route,
         })))
     }
@@ -4163,7 +4163,7 @@ fn scan_probe_project(
 ) -> (
     tempfile::TempDir,
     std::path::PathBuf,
-    std::sync::Arc<oxide_router::RouteTree>,
+    std::sync::Arc<oxide_fw_router::RouteTree>,
 ) {
     use std::sync::Arc;
     let dir = tempfile::tempdir().unwrap();
@@ -4180,7 +4180,7 @@ fn scan_probe_project(
     )
     .unwrap();
     std::fs::write(root.join("page.server.ts"), page_server_src).unwrap();
-    let tree = Arc::new(oxide_router::RouteTree::scan(&root).unwrap());
+    let tree = Arc::new(oxide_fw_router::RouteTree::scan(&root).unwrap());
     (dir, root, tree)
 }
 
@@ -4198,9 +4198,9 @@ async fn layout_and_page_overlap_when_page_does_not_call_parent() {
     let probe = Arc::new(ConcurrencyProbe::new());
     let calls = Arc::clone(&probe.calls);
     let max_active = Arc::clone(&probe.max_active);
-    let loader: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(probe);
+    let loader: Option<Arc<dyn oxide_fw_server::LoaderRunner>> = Some(probe);
 
-    let metrics = Arc::new(oxide_server::Metrics::new());
+    let metrics = Arc::new(oxide_fw_server::Metrics::new());
     let dispatch = build_dispatch(
         tree,
         metrics,
@@ -4246,9 +4246,9 @@ async fn layout_then_page_sequential_when_page_calls_parent() {
     let probe = Arc::new(ConcurrencyProbe::new());
     let calls = Arc::clone(&probe.calls);
     let max_active = Arc::clone(&probe.max_active);
-    let loader: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(probe);
+    let loader: Option<Arc<dyn oxide_fw_server::LoaderRunner>> = Some(probe);
 
-    let metrics = Arc::new(oxide_server::Metrics::new());
+    let metrics = Arc::new(oxide_fw_server::Metrics::new());
     let dispatch = build_dispatch(
         tree,
         metrics,
@@ -4295,11 +4295,11 @@ async fn layout_then_page_sequential_when_page_calls_parent() {
 struct BufferedErrorMarkerRenderer;
 
 #[async_trait::async_trait]
-impl oxide_server::PageRenderer for BufferedErrorMarkerRenderer {
+impl oxide_fw_server::PageRenderer for BufferedErrorMarkerRenderer {
     fn name(&self) -> &str {
         "buffered-error-marker"
     }
-    async fn render(&self, _input: oxide_server::PageRenderInput) -> oxide_server::Result<String> {
+    async fn render(&self, _input: oxide_fw_server::PageRenderInput) -> oxide_fw_server::Result<String> {
         Ok(
             "<!doctype html><html><head><!--oxide-status:500--></head><body>ERR</body></html>"
                 .into(),
@@ -4312,11 +4312,11 @@ impl oxide_server::PageRenderer for BufferedErrorMarkerRenderer {
 struct CleanBodyRenderer;
 
 #[async_trait::async_trait]
-impl oxide_server::PageRenderer for CleanBodyRenderer {
+impl oxide_fw_server::PageRenderer for CleanBodyRenderer {
     fn name(&self) -> &str {
         "clean-body"
     }
-    async fn render(&self, _input: oxide_server::PageRenderInput) -> oxide_server::Result<String> {
+    async fn render(&self, _input: oxide_fw_server::PageRenderInput) -> oxide_fw_server::Result<String> {
         Ok("<!doctype html><html><body>ok</body></html>".into())
     }
 }
@@ -4325,7 +4325,7 @@ impl oxide_server::PageRenderer for CleanBodyRenderer {
 async fn write_prerender_carries_500_status_for_marker_body() {
     let dir = tempfile::tempdir().unwrap();
     let dist = dir.path().to_path_buf();
-    let renderer: std::sync::Arc<dyn oxide_server::PageRenderer> =
+    let renderer: std::sync::Arc<dyn oxide_fw_server::PageRenderer> =
         std::sync::Arc::new(BufferedErrorMarkerRenderer);
     let params: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
     let (html, status) = crate::write_prerender(
@@ -4362,7 +4362,7 @@ async fn write_prerender_carries_500_status_for_marker_body() {
 async fn write_prerender_carries_200_status_for_clean_body() {
     let dir = tempfile::tempdir().unwrap();
     let dist = dir.path().to_path_buf();
-    let renderer: std::sync::Arc<dyn oxide_server::PageRenderer> =
+    let renderer: std::sync::Arc<dyn oxide_fw_server::PageRenderer> =
         std::sync::Arc::new(CleanBodyRenderer);
     let params: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
     let (_html, status) = crate::write_prerender(
@@ -4411,7 +4411,7 @@ impl ChainProbeMiddleware {
 }
 
 #[async_trait::async_trait]
-impl oxide_server::MiddlewareDispatcher for ChainProbeMiddleware {
+impl oxide_fw_server::MiddlewareDispatcher for ChainProbeMiddleware {
     async fn dispatch(
         &self,
         module_path: &str,
@@ -4421,13 +4421,13 @@ impl oxide_server::MiddlewareDispatcher for ChainProbeMiddleware {
         _headers: &[(String, String)],
         _body: &[u8],
         locals: Option<&serde_json::Value>,
-    ) -> std::result::Result<oxide_server::MiddlewareRunResult, oxide_server::MiddlewareRunError>
+    ) -> std::result::Result<oxide_fw_server::MiddlewareRunResult, oxide_fw_server::MiddlewareRunError>
     {
         self.seen
             .lock()
             .unwrap()
             .push((module_path.to_string(), locals.cloned()));
-        Ok(oxide_server::MiddlewareRunResult {
+        Ok(oxide_fw_server::MiddlewareRunResult {
             short: false,
             status: 200,
             headers: vec![(
@@ -4446,12 +4446,12 @@ impl oxide_server::MiddlewareDispatcher for ChainProbeMiddleware {
     }
 }
 
-fn tree_with_page_and_middleware_chain() -> std::sync::Arc<oxide_router::RouteTree> {
+fn tree_with_page_and_middleware_chain() -> std::sync::Arc<oxide_fw_router::RouteTree> {
     use std::sync::Arc;
-    let mut tree = oxide_router::RouteTree::new();
-    tree.insert(oxide_router::RouteEntry {
-        id: oxide_router::RouteId("routes/blog/post/page".into()),
-        kind: oxide_router::RouteKind::Page,
+    let mut tree = oxide_fw_router::RouteTree::new();
+    tree.insert(oxide_fw_router::RouteEntry {
+        id: oxide_fw_router::RouteId("routes/blog/post/page".into()),
+        kind: oxide_fw_router::RouteKind::Page,
         segments: vec!["blog".into(), "post".into()],
         file: std::path::PathBuf::from("blog/post/page.tsx"),
         render_mode: None,
@@ -4460,9 +4460,9 @@ fn tree_with_page_and_middleware_chain() -> std::sync::Arc<oxide_router::RouteTr
         slot: None,
         needs_parent: false,
     });
-    tree.insert(oxide_router::RouteEntry {
-        id: oxide_router::RouteId("routes/middleware".into()),
-        kind: oxide_router::RouteKind::Middleware,
+    tree.insert(oxide_fw_router::RouteEntry {
+        id: oxide_fw_router::RouteId("routes/middleware".into()),
+        kind: oxide_fw_router::RouteKind::Middleware,
         segments: vec![],
         file: std::path::PathBuf::from("middleware.ts"),
         render_mode: None,
@@ -4471,9 +4471,9 @@ fn tree_with_page_and_middleware_chain() -> std::sync::Arc<oxide_router::RouteTr
         slot: None,
         needs_parent: false,
     });
-    tree.insert(oxide_router::RouteEntry {
-        id: oxide_router::RouteId("routes/blog/middleware".into()),
-        kind: oxide_router::RouteKind::Middleware,
+    tree.insert(oxide_fw_router::RouteEntry {
+        id: oxide_fw_router::RouteId("routes/blog/middleware".into()),
+        kind: oxide_fw_router::RouteKind::Middleware,
         segments: vec![],
         file: std::path::PathBuf::from("blog/middleware.ts"),
         render_mode: None,
@@ -4491,11 +4491,11 @@ async fn middleware_chain_runs_outer_to_inner_and_threads_locals() {
 
     let probe = Arc::new(ChainProbeMiddleware::new());
     let seen = Arc::clone(&probe.seen);
-    let mw: Option<Arc<dyn oxide_server::MiddlewareDispatcher>> = Some(probe);
+    let mw: Option<Arc<dyn oxide_fw_server::MiddlewareDispatcher>> = Some(probe);
 
     let dispatch = build_dispatch(
         tree_with_page_and_middleware_chain(),
-        Arc::new(oxide_server::Metrics::new()),
+        Arc::new(oxide_fw_server::Metrics::new()),
         Vec::new(),
         Some(Arc::new(DataCapturingRenderer::new())),
         None,
@@ -4584,7 +4584,7 @@ fn build_transform_hook_returns_none_when_no_wasm_plugin_configured() {
 #[test]
 fn parse_hook_name_covers_all_nineteen() {
     use crate::parse_hook_name;
-    use oxide_plugin::Hook;
+    use oxide_fw_plugin::Hook;
     // Every variant of the Hook enum must round-trip through
     // parse_hook_name (using at least its canonical camelCase spelling).
     let pairs: &[(&str, Hook)] = &[
@@ -4620,7 +4620,7 @@ fn parse_hook_name_covers_all_nineteen() {
 #[test]
 fn parse_hook_name_accepts_snake_case() {
     use crate::parse_hook_name;
-    use oxide_plugin::Hook;
+    use oxide_fw_plugin::Hook;
     assert_eq!(parse_hook_name("resolve_id"), Some(Hook::ResolveId));
     assert_eq!(parse_hook_name("transform_html"), Some(Hook::TransformHtml));
     assert_eq!(
@@ -4641,7 +4641,7 @@ fn parse_hook_name_rejects_unknown() {
 #[test]
 fn js_hook_name_roundtrips_through_parse_hook_name() {
     use crate::{js_hook_name, parse_hook_name};
-    use oxide_plugin::Hook;
+    use oxide_fw_plugin::Hook;
     // Every hook the JS bridge emits must be a name parse_hook_name
     // accepts — otherwise a plugin declaring `transform` could not be
     // dispatched (the JS-side name would not resolve back to a Hook).
@@ -4691,21 +4691,21 @@ impl SessionCaptureLoader {
 }
 
 #[async_trait::async_trait]
-impl oxide_server::LoaderRunner for SessionCaptureLoader {
+impl oxide_fw_server::LoaderRunner for SessionCaptureLoader {
     fn name(&self) -> &str {
         "session-capture"
     }
     async fn run(
         &self,
-        input: oxide_server::LoaderRunInput,
-    ) -> oxide_server::Result<oxide_server::LoaderOutput> {
+        input: oxide_fw_server::LoaderRunInput,
+    ) -> oxide_fw_server::Result<oxide_fw_server::LoaderOutput> {
         let sess = input
             .locals
             .get("session")
             .cloned()
             .unwrap_or(serde_json::Value::Null);
         *self.last_session.lock().unwrap() = sess;
-        Ok(oxide_server::LoaderOutput::ok(serde_json::json!({})))
+        Ok(oxide_fw_server::LoaderOutput::ok(serde_json::json!({})))
     }
 }
 
@@ -4715,10 +4715,10 @@ async fn session_codec_decodes_into_locals_session() {
 
     // 32 bytes of deterministic key material (test-only).
     let key = vec![0x42u8; 32];
-    let codec = Arc::new(oxide_server::SessionCodec::new(&[key]).expect("codec"));
+    let codec = Arc::new(oxide_fw_server::SessionCodec::new(&[key]).expect("codec"));
 
     // Encode a session with a known `user` field.
-    let mut sess = oxide_server::Session::new();
+    let mut sess = oxide_fw_server::Session::new();
     sess.insert("user", serde_json::json!("ada"));
     let cookie = sess.encode(&codec).expect("encode");
 
@@ -4727,10 +4727,10 @@ async fn session_codec_decodes_into_locals_session() {
     let captured = Arc::clone(&loader.last_session);
     let dispatch = build_dispatch(
         tree_with_server_route(),
-        Arc::new(oxide_server::Metrics::new()),
+        Arc::new(oxide_fw_server::Metrics::new()),
         Vec::new(),
         Some(Arc::new(DataCapturingRenderer::new())),
-        Some(loader as Arc<dyn oxide_server::LoaderRunner>),
+        Some(loader as Arc<dyn oxide_fw_server::LoaderRunner>),
         routes_root(),
         None,
         None,
@@ -4771,8 +4771,8 @@ async fn session_change_from_middleware_sets_cookie() {
     // B-05 write-back: a middleware layer that refines `locals.session`
     // must produce a sealed `Set-Cookie` on the response.
     let key = vec![0x42u8; 32];
-    let codec = Arc::new(oxide_server::SessionCodec::new(&[key]).expect("codec"));
-    let mw: Option<Arc<dyn oxide_server::MiddlewareDispatcher>> =
+    let codec = Arc::new(oxide_fw_server::SessionCodec::new(&[key]).expect("codec"));
+    let mw: Option<Arc<dyn oxide_fw_server::MiddlewareDispatcher>> =
         Some(Arc::new(ScriptedMiddleware {
             headers: Vec::new(),
             locals: Some(serde_json::json!({ "session": { "user": "ada" } })),
@@ -4781,7 +4781,7 @@ async fn session_change_from_middleware_sets_cookie() {
         }));
     let dispatch = build_dispatch(
         tree_with_page_and_middleware(),
-        Arc::new(oxide_server::Metrics::new()),
+        Arc::new(oxide_fw_server::Metrics::new()),
         Vec::new(),
         Some(Arc::new(DataCapturingRenderer::new())),
         None,
@@ -4812,8 +4812,8 @@ async fn session_change_from_middleware_sets_cookie() {
         .strip_prefix("oxide_session=")
         .and_then(|r| r.split(';').next())
         .unwrap();
-    let sess: oxide_server::Session =
-        oxide_server::Session::decode(&codec, token).expect("sealed session decodes");
+    let sess: oxide_fw_server::Session =
+        oxide_fw_server::Session::decode(&codec, token).expect("sealed session decodes");
     assert_eq!(sess.to_value()["user"], "ada");
 }
 
@@ -4822,16 +4822,16 @@ async fn session_codec_tampered_cookie_yields_empty_session() {
     use std::sync::Arc;
 
     let key = vec![0x42u8; 32];
-    let codec = Arc::new(oxide_server::SessionCodec::new(&[key]).expect("codec"));
+    let codec = Arc::new(oxide_fw_server::SessionCodec::new(&[key]).expect("codec"));
 
     let loader = Arc::new(SessionCaptureLoader::new());
     let captured = Arc::clone(&loader.last_session);
     let dispatch = build_dispatch(
         tree_with_server_route(),
-        Arc::new(oxide_server::Metrics::new()),
+        Arc::new(oxide_fw_server::Metrics::new()),
         Vec::new(),
         Some(Arc::new(DataCapturingRenderer::new())),
-        Some(loader as Arc<dyn oxide_server::LoaderRunner>),
+        Some(loader as Arc<dyn oxide_fw_server::LoaderRunner>),
         routes_root(),
         None,
         None,
@@ -6152,7 +6152,7 @@ impl oxide_fw_graph::Compute for FileComputeForTest {
     fn compute(
         &self,
         ctx: &mut oxide_fw_graph::ComputeCtx,
-    ) -> oxide_diagnostics::Result<oxide_fw_graph::NodeOutput> {
+    ) -> oxide_fw_diagnostics::Result<oxide_fw_graph::NodeOutput> {
         let bytes = ctx
             .fs
             .read_file(std::path::Path::new(&self.0))
@@ -6294,8 +6294,8 @@ async fn settles_flush_per_settle_and_close_last() {
         Ok(bytes::Bytes::from_static(b"<html><body><main>shell</main>")),
         Ok(bytes::Bytes::from_static(b"</body></html>")),
     ];
-    let src: oxide_server::BodyStream =
-        Box::pin(futures::stream::iter(chunks)) as oxide_server::BodyStream;
+    let src: oxide_fw_server::BodyStream =
+        Box::pin(futures::stream::iter(chunks)) as oxide_fw_server::BodyStream;
 
     // Two settles, delivered with a real gap so ordering is observable.
     let (tx, rx) = tokio::sync::mpsc::channel(4);
@@ -6357,8 +6357,8 @@ async fn close_tag_split_across_chunks_is_still_withheld() {
         Ok(bytes::Bytes::from_static(b"<main>x</main></body>")),
         Ok(bytes::Bytes::from_static(b"</html>")),
     ];
-    let src: oxide_server::BodyStream =
-        Box::pin(futures::stream::iter(chunks)) as oxide_server::BodyStream;
+    let src: oxide_fw_server::BodyStream =
+        Box::pin(futures::stream::iter(chunks)) as oxide_fw_server::BodyStream;
     let (tx, rx) = tokio::sync::mpsc::channel::<serde_json::Value>(1);
     // Drop the sender immediately: with no settles coming, the receiver must
     // observe the channel closed, not wait for a message that never arrives.
@@ -6396,8 +6396,8 @@ async fn settle_bridge_bounds_the_withheld_tail_across_fragmented_chunks() {
         Ok(bytes::Bytes::from_static(b"dy></ht")),
         Ok(bytes::Bytes::from_static(b"ml>")),
     ];
-    let src: oxide_server::BodyStream =
-        Box::pin(futures::stream::iter(source_frames)) as oxide_server::BodyStream;
+    let src: oxide_fw_server::BodyStream =
+        Box::pin(futures::stream::iter(source_frames)) as oxide_fw_server::BodyStream;
 
     let (tx, rx) = tokio::sync::mpsc::channel(4);
     tx.send(serde_json::json!({"deferredSettle": {"id": "9", "value": {"ok": true}}}))
@@ -6454,8 +6454,8 @@ async fn no_settles_leaves_the_document_unchanged() {
     let body = b"<html><body><main>x</main></body></html>";
     let chunks: Vec<Result<bytes::Bytes, std::io::Error>> =
         vec![Ok(bytes::Bytes::from_static(body))];
-    let src: oxide_server::BodyStream =
-        Box::pin(futures::stream::iter(chunks)) as oxide_server::BodyStream;
+    let src: oxide_fw_server::BodyStream =
+        Box::pin(futures::stream::iter(chunks)) as oxide_fw_server::BodyStream;
     let (tx, rx) = tokio::sync::mpsc::channel::<serde_json::Value>(1);
     drop(tx);
 
@@ -6503,20 +6503,20 @@ fn loader_output_parses_session() {
 async fn l0_hit_rate_999_of_1000_dispatches() {
     use std::sync::Arc;
 
-    let tier: Arc<dyn oxide_cache::CacheHandler> =
-        Arc::new(oxide_cache::TieredCache::new(8 * 1024 * 1024));
+    let tier: Arc<dyn oxide_fw_cache::CacheHandler> =
+        Arc::new(oxide_fw_cache::TieredCache::new(8 * 1024 * 1024));
     let l0 = Arc::new(l0_cache::L0Cache::new(
         tier,
         "test-build",
         std::time::Duration::from_secs(300),
     ));
 
-    let page_renderer: Option<Arc<dyn oxide_server::PageRenderer>> =
+    let page_renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> =
         Some(Arc::new(DataCapturingRenderer::new()));
 
     let dispatch = build_dispatch(
         tree_with_static_page_and_middleware(),
-        Arc::new(oxide_server::Metrics::new()),
+        Arc::new(oxide_fw_server::Metrics::new()),
         Vec::new(),
         page_renderer,
         None,
@@ -6593,8 +6593,8 @@ async fn l0_hit_rate_999_of_1000_dispatches() {
 async fn prerendered_500_serves_500_on_hit() {
     use std::sync::Arc;
 
-    let tier: Arc<dyn oxide_cache::CacheHandler> =
-        Arc::new(oxide_cache::TieredCache::new(8 * 1024 * 1024));
+    let tier: Arc<dyn oxide_fw_cache::CacheHandler> =
+        Arc::new(oxide_fw_cache::TieredCache::new(8 * 1024 * 1024));
     let l0 = Arc::new(l0_cache::L0Cache::new(
         tier,
         "test-build",
@@ -6614,7 +6614,7 @@ async fn prerendered_500_serves_500_on_hit() {
 
     let dispatch = build_dispatch(
         tree_with_static_page_and_middleware(),
-        Arc::new(oxide_server::Metrics::new()),
+        Arc::new(oxide_fw_server::Metrics::new()),
         Vec::new(),
         None,
         None,
@@ -6668,7 +6668,7 @@ async fn rewrite_hop_guard_returns_508_after_8_hops() {
 
     let dispatch = build_dispatch(
         empty_tree(),
-        Arc::new(oxide_server::Metrics::new()),
+        Arc::new(oxide_fw_server::Metrics::new()),
         Vec::new(),
         None,
         None,
@@ -6730,7 +6730,7 @@ async fn static_asset_cache_serves_byte_identical_body_on_repeat() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("hello.css"), b"body { color: red; }").unwrap();
 
-    let assets = oxide_server::StaticAssets::scan(dir.path()).unwrap();
+    let assets = oxide_fw_server::StaticAssets::scan(dir.path()).unwrap();
     let req = test_request("GET", "/hello.css");
 
     let first = assets.serve(&req, "/hello.css");
@@ -6758,13 +6758,13 @@ async fn static_asset_cache_serves_byte_identical_body_on_repeat() {
 
 #[test]
 fn compute_layout_chain_finds_root_and_nested_layouts() {
-    use oxide_router::RouteEntry;
-    let mut tree = oxide_router::RouteTree::new();
+    use oxide_fw_router::RouteEntry;
+    let mut tree = oxide_fw_router::RouteTree::new();
 
     // Root layout
     tree.insert(RouteEntry {
-        id: oxide_router::RouteId("routes/layout".into()),
-        kind: oxide_router::RouteKind::Layout,
+        id: oxide_fw_router::RouteId("routes/layout".into()),
+        kind: oxide_fw_router::RouteKind::Layout,
         segments: vec![],
         file: std::path::PathBuf::from("layout.tsx"),
         render_mode: None,
@@ -6775,8 +6775,8 @@ fn compute_layout_chain_finds_root_and_nested_layouts() {
     });
     // Nested layout
     tree.insert(RouteEntry {
-        id: oxide_router::RouteId("routes/nested/layout".into()),
-        kind: oxide_router::RouteKind::Layout,
+        id: oxide_fw_router::RouteId("routes/nested/layout".into()),
+        kind: oxide_fw_router::RouteKind::Layout,
         segments: vec!["nested".into()],
         file: std::path::PathBuf::from("nested/layout.tsx"),
         render_mode: None,
@@ -6787,8 +6787,8 @@ fn compute_layout_chain_finds_root_and_nested_layouts() {
     });
     // Page at nested/
     tree.insert(RouteEntry {
-        id: oxide_router::RouteId("routes/nested/page".into()),
-        kind: oxide_router::RouteKind::Page,
+        id: oxide_fw_router::RouteId("routes/nested/page".into()),
+        kind: oxide_fw_router::RouteKind::Page,
         segments: vec!["nested".into()],
         file: std::path::PathBuf::from("nested/page.tsx"),
         render_mode: Some("static".into()),
@@ -6810,8 +6810,8 @@ fn compute_layout_chain_finds_root_and_nested_layouts() {
 
     // A top-level page sees only the root layout.
     tree.insert(RouteEntry {
-        id: oxide_router::RouteId("routes/page".into()),
-        kind: oxide_router::RouteKind::Page,
+        id: oxide_fw_router::RouteId("routes/page".into()),
+        kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
         file: std::path::PathBuf::from("page.tsx"),
         render_mode: Some("static".into()),
@@ -6836,7 +6836,7 @@ fn compute_layout_chain_finds_root_and_nested_layouts() {
 
     // The empty-chain case is a route id that has no `routes/layout` at any
     // prefix — a tree with no layouts at all.
-    let empty_tree = oxide_router::RouteTree::new();
+    let empty_tree = oxide_fw_router::RouteTree::new();
     assert_eq!(
         compute_layout_chain(&empty_tree, "routes/x"),
         Vec::<String>::new(),
@@ -6855,7 +6855,7 @@ fn compute_layout_chain_finds_root_and_nested_layouts() {
 
 #[test]
 fn waterfall_records_trace_id() {
-    let rec = oxide_dev::WaterfallRecorder::new();
+    let rec = oxide_fw_dev::WaterfallRecorder::new();
     let trace_id = "4bf92f3577b34da6a3ce929d0e0e4736";
     rec.record_with_trace(
         "req-abc",
@@ -6887,7 +6887,7 @@ fn waterfall_records_trace_id() {
 async fn strip_close_and_append_settles_records_settle_stage() {
     use futures::StreamExt as _;
 
-    let rec = oxide_dev::WaterfallRecorder::new();
+    let rec = oxide_fw_dev::WaterfallRecorder::new();
     // The dispatch records the initial stages before wiring the settle tail.
     rec.record_staged(
         "req-o3b",
@@ -6900,7 +6900,7 @@ async fn strip_close_and_append_settles_records_settle_stage() {
     );
 
     // A source stream with the document body ending in the close marker.
-    let src: oxide_server::BodyStream = Box::pin(futures::stream::iter(vec![Ok(
+    let src: oxide_fw_server::BodyStream = Box::pin(futures::stream::iter(vec![Ok(
         bytes::Bytes::from_static(b"<body>shell</body></html>"),
     )]));
 
@@ -7003,7 +7003,7 @@ async fn sw_emitter_emits_swr_and_fallback() {
     std::fs::write(dist.join("prerendered/offline.html"), "<h1>offline</h1>").unwrap();
 
     // Config with a manifest (triggers emission) and default sw config.
-    let cfg: oxide_config::OxideConfig = serde_json::from_value(serde_json::json!({
+    let cfg: oxide_fw_config::OxideConfig = serde_json::from_value(serde_json::json!({
         "manifest": {
             "name": "Test App",
             "short_name": "Test"
@@ -7092,7 +7092,7 @@ async fn sw_emitter_skips_when_manifest_absent() {
     std::fs::create_dir_all(dist).unwrap();
 
     // No manifest — the emitter is a no-op.
-    let cfg: oxide_config::OxideConfig =
+    let cfg: oxide_fw_config::OxideConfig =
         serde_json::from_value(serde_json::json!({})).expect("parse config");
 
     let client_manifest = serde_json::json!({ "build_id": "x", "routes": {}, "assets": {} });
@@ -7112,7 +7112,7 @@ async fn sw_emitter_respects_sw_disabled() {
     let dist = dir.path();
     std::fs::create_dir_all(dist).unwrap();
 
-    let mut cfg: oxide_config::OxideConfig = serde_json::from_value(serde_json::json!({
+    let mut cfg: oxide_fw_config::OxideConfig = serde_json::from_value(serde_json::json!({
         "manifest": {"name": "X", "short_name": "X"},
     }))
     .expect("parse config");
@@ -7134,7 +7134,7 @@ async fn sw_emitter_falls_back_to_shell_when_offline_route_missing() {
     // No prerendered/offline.html — the fallback stays `/`.
     std::fs::create_dir_all(dist.join("prerendered")).unwrap();
 
-    let cfg: oxide_config::OxideConfig = serde_json::from_value(serde_json::json!({
+    let cfg: oxide_fw_config::OxideConfig = serde_json::from_value(serde_json::json!({
         "manifest": {"name": "X", "short_name": "X"},
     }))
     .expect("parse config");
@@ -7170,7 +7170,7 @@ async fn dispatch_without_l0_never_emits_a_cache_header() {
 
     let dispatch = build_dispatch(
         tree_with_static_page_and_middleware(),
-        Arc::new(oxide_server::Metrics::new()),
+        Arc::new(oxide_fw_server::Metrics::new()),
         Vec::new(),
         None,
         None,
@@ -7228,7 +7228,7 @@ async fn parallel_arm_persists_session_mutation() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("layout.server.ts"), "// stub").unwrap();
 
-    let renderer: Option<Arc<dyn oxide_server::PageRenderer>> =
+    let renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> =
         Some(Arc::new(DataCapturingRenderer::new()));
     // The parallel arm calls the loader twice: once for the layout, once
     // for the page (run_parallel && layout_module_paths.len() == 1 → the
@@ -7239,15 +7239,15 @@ async fn parallel_arm_persists_session_mutation() {
         session: serde_json::Value,
     }
     #[async_trait::async_trait]
-    impl oxide_server::LoaderRunner for RepeatableSessionLoader {
+    impl oxide_fw_server::LoaderRunner for RepeatableSessionLoader {
         fn name(&self) -> &str {
             "repeatable-session"
         }
         async fn run(
             &self,
-            _input: oxide_server::LoaderRunInput,
-        ) -> oxide_server::Result<oxide_server::LoaderOutput> {
-            Ok(oxide_server::LoaderOutput {
+            _input: oxide_fw_server::LoaderRunInput,
+        ) -> oxide_fw_server::Result<oxide_fw_server::LoaderOutput> {
+            Ok(oxide_fw_server::LoaderOutput {
                 status: 200,
                 data: serde_json::json!({}),
                 session: Some(self.session.clone()),
@@ -7255,15 +7255,15 @@ async fn parallel_arm_persists_session_mutation() {
             })
         }
     }
-    let loader: Option<Arc<dyn oxide_server::LoaderRunner>> =
+    let loader: Option<Arc<dyn oxide_fw_server::LoaderRunner>> =
         Some(Arc::new(RepeatableSessionLoader {
             session: serde_json::json!({ "user": "alice", "visits": 1 }),
         }));
-    let codec = Arc::new(oxide_server::SessionCodec::new(&[vec![7u8; 32]]).unwrap());
+    let codec = Arc::new(oxide_fw_server::SessionCodec::new(&[vec![7u8; 32]]).unwrap());
 
     let dispatch = build_dispatch(
         tree_with_layout_and_parentless_page(),
-        Arc::new(oxide_server::Metrics::new()),
+        Arc::new(oxide_fw_server::Metrics::new()),
         Vec::new(),
         renderer,
         loader,
@@ -7307,16 +7307,16 @@ struct TraceCapturingLoader {
 }
 
 #[async_trait::async_trait]
-impl oxide_server::LoaderRunner for TraceCapturingLoader {
+impl oxide_fw_server::LoaderRunner for TraceCapturingLoader {
     fn name(&self) -> &str {
         "trace-capture"
     }
     async fn run(
         &self,
-        input: oxide_server::LoaderRunInput,
-    ) -> oxide_server::Result<oxide_server::LoaderOutput> {
+        input: oxide_fw_server::LoaderRunInput,
+    ) -> oxide_fw_server::Result<oxide_fw_server::LoaderOutput> {
         *self.captured_trace.lock().unwrap() = input.trace.clone();
-        Ok(oxide_server::LoaderOutput::ok(serde_json::json!({})))
+        Ok(oxide_fw_server::LoaderOutput::ok(serde_json::json!({})))
     }
 }
 
@@ -7339,10 +7339,10 @@ async fn request_trace_reaches_the_loader() {
 
     let dispatch = build_dispatch(
         tree_with_layout_and_parentless_page(),
-        Arc::new(oxide_server::Metrics::new()),
+        Arc::new(oxide_fw_server::Metrics::new()),
         Vec::new(),
         None,
-        Some(loader as Arc<dyn oxide_server::LoaderRunner>),
+        Some(loader as Arc<dyn oxide_fw_server::LoaderRunner>),
         dir.path().to_path_buf(),
         None,
         None,
@@ -7388,7 +7388,7 @@ async fn sw_emitter_precaches_the_offline_fallback() {
     std::fs::create_dir_all(dist.join("prerendered")).unwrap();
     std::fs::write(dist.join("prerendered/offline.html"), "<h1>offline</h1>").unwrap();
 
-    let cfg: oxide_config::OxideConfig = serde_json::from_value(serde_json::json!({
+    let cfg: oxide_fw_config::OxideConfig = serde_json::from_value(serde_json::json!({
         "manifest": { "name": "X", "short_name": "X" },
     }))
     .expect("parse config");
@@ -7415,15 +7415,15 @@ async fn sw_emitter_precaches_the_offline_fallback() {
 /// guard must refuse to shell.
 struct CookieLoader;
 #[async_trait::async_trait]
-impl oxide_server::LoaderRunner for CookieLoader {
+impl oxide_fw_server::LoaderRunner for CookieLoader {
     fn name(&self) -> &str {
         "cookie-loader"
     }
     async fn run(
         &self,
-        _input: oxide_server::LoaderRunInput,
-    ) -> oxide_server::Result<oxide_server::LoaderOutput> {
-        Ok(oxide_server::LoaderOutput {
+        _input: oxide_fw_server::LoaderRunInput,
+    ) -> oxide_fw_server::Result<oxide_fw_server::LoaderOutput> {
+        Ok(oxide_fw_server::LoaderOutput {
             status: 200,
             set_cookies: vec!["oxide_session=loader-mutated".to_string()],
             ..Default::default()
@@ -7436,12 +7436,12 @@ async fn ppr_never_shells_a_loader_cookie_response() {
     use std::sync::Arc;
 
     let shells: crate::PprShells = Arc::new(std::sync::Mutex::new(crate::PprShellStore::default()));
-    let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(PprRenderer));
-    let loader: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(Arc::new(CookieLoader));
+    let renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> = Some(Arc::new(PprRenderer));
+    let loader: Option<Arc<dyn oxide_fw_server::LoaderRunner>> = Some(Arc::new(CookieLoader));
 
     let dispatch = build_dispatch(
         tree_with_page_and_server_module(),
-        Arc::new(oxide_server::Metrics::new()),
+        Arc::new(oxide_fw_server::Metrics::new()),
         Vec::new(),
         renderer,
         loader,
@@ -7475,8 +7475,8 @@ async fn ppr_never_shells_a_middleware_cookie_response() {
     use std::sync::Arc;
 
     let shells: crate::PprShells = Arc::new(std::sync::Mutex::new(crate::PprShellStore::default()));
-    let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(PprRenderer));
-    let mw: Option<Arc<dyn oxide_server::MiddlewareDispatcher>> =
+    let renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> = Some(Arc::new(PprRenderer));
+    let mw: Option<Arc<dyn oxide_fw_server::MiddlewareDispatcher>> =
         Some(Arc::new(ScriptedMiddleware {
             headers: vec![(
                 "set-cookie".to_string(),
@@ -7489,7 +7489,7 @@ async fn ppr_never_shells_a_middleware_cookie_response() {
 
     let dispatch = build_dispatch(
         tree_with_static_page_and_middleware(),
-        Arc::new(oxide_server::Metrics::new()),
+        Arc::new(oxide_fw_server::Metrics::new()),
         Vec::new(),
         renderer,
         None,
@@ -7527,21 +7527,21 @@ async fn ppr_never_shells_a_middleware_cookie_response() {
 /// `None` (the site passed no `before`), not against the inbound state.
 struct UnchangedSessionLoader;
 #[async_trait::async_trait]
-impl oxide_server::LoaderRunner for UnchangedSessionLoader {
+impl oxide_fw_server::LoaderRunner for UnchangedSessionLoader {
     fn name(&self) -> &str {
         "unchanged-session"
     }
     async fn run(
         &self,
-        input: oxide_server::LoaderRunInput,
-    ) -> oxide_server::Result<oxide_server::LoaderOutput> {
+        input: oxide_fw_server::LoaderRunInput,
+    ) -> oxide_fw_server::Result<oxide_fw_server::LoaderOutput> {
         // Echo the inbound session — a real loader's untouched behavior.
         let inbound = input
             .locals
             .get("session")
             .cloned()
             .unwrap_or(serde_json::Value::Null);
-        Ok(oxide_server::LoaderOutput {
+        Ok(oxide_fw_server::LoaderOutput {
             status: 200,
             data: serde_json::json!({}),
             session: Some(inbound),
@@ -7554,18 +7554,18 @@ impl oxide_server::LoaderRunner for UnchangedSessionLoader {
 async fn __data_untouched_session_does_not_reissue_a_cookie() {
     use std::sync::Arc;
 
-    let codec = Arc::new(oxide_server::SessionCodec::new(&[vec![9u8; 32]]).unwrap());
+    let codec = Arc::new(oxide_fw_server::SessionCodec::new(&[vec![9u8; 32]]).unwrap());
     // Seal a session so the request carries a real token.
-    let mut sess = oxide_server::Session::new();
+    let mut sess = oxide_fw_server::Session::new();
     sess.insert("user", serde_json::json!("alice"));
     let token = sess.encode(&codec).expect("seal");
 
     let dispatch = build_dispatch(
         tree_with_page_and_server_module(),
-        Arc::new(oxide_server::Metrics::new()),
+        Arc::new(oxide_fw_server::Metrics::new()),
         Vec::new(),
         None,
-        Some(Arc::new(UnchangedSessionLoader) as Arc<dyn oxide_server::LoaderRunner>),
+        Some(Arc::new(UnchangedSessionLoader) as Arc<dyn oxide_fw_server::LoaderRunner>),
         std::path::PathBuf::new(),
         None,
         None,
@@ -7663,7 +7663,7 @@ async fn ppr_shell_key_ignores_query_string() {
     use std::sync::Arc;
 
     let shells: crate::PprShells = Arc::new(std::sync::Mutex::new(crate::PprShellStore::default()));
-    let renderer: Option<Arc<dyn oxide_server::PageRenderer>> = Some(Arc::new(PprRenderer));
+    let renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> = Some(Arc::new(PprRenderer));
 
     let dispatch = build_dispatch(
         // empty_tree() -- the same fixture the passing PPR test uses. A
@@ -7672,7 +7672,7 @@ async fn ppr_shell_key_ignores_query_string() {
         // skips render entirely. That is a separate gap, not what this
         // test verifies.
         empty_tree(),
-        Arc::new(oxide_server::Metrics::new()),
+        Arc::new(oxide_fw_server::Metrics::new()),
         Vec::new(),
         renderer,
         None,
@@ -7766,14 +7766,14 @@ fn ppr_shell_store_invalidates_by_tag_and_path() {
 fn content_source_changed_scopes_to_collection_dirs() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    let mut cfg = oxide_config::OxideConfig::default();
-    cfg.content.collections.push(oxide_config::CollectionDef {
+    let mut cfg = oxide_fw_config::OxideConfig::default();
+    cfg.content.collections.push(oxide_fw_config::CollectionDef {
         name: "blog".to_string(),
         dir: "content/blog".to_string(),
         indexed_fields: Vec::new(),
     });
-    let inside = oxide_dev::FileEvent::Modified(root.join("content/blog/post.md"));
-    let outside = oxide_dev::FileEvent::Modified(root.join("src/routes/index.tsx"));
+    let inside = oxide_fw_dev::FileEvent::Modified(root.join("content/blog/post.md"));
+    let outside = oxide_fw_dev::FileEvent::Modified(root.join("src/routes/index.tsx"));
     assert!(crate::content_source_changed(root, &cfg, &[inside]));
     assert!(!crate::content_source_changed(root, &cfg, &[outside]));
 }
@@ -7830,7 +7830,7 @@ async fn bundle_edge_entry_emits_edge_bundle_js() {
     let dist = root.join("dist");
     std::fs::create_dir_all(&dist).unwrap();
 
-    let css = oxide_bundler::CssTransformHook::new(|_, src, _, _| {
+    let css = oxide_fw_bundler::CssTransformHook::new(|_, src, _, _| {
         Ok((src.to_string(), std::collections::BTreeMap::new()))
     });
 
@@ -7914,7 +7914,7 @@ async fn bundle_edge_entry_uses_the_precompiled_map_for_mdx() {
     precompiled.insert(mdx_path.clone(), compiled_js.clone());
     precompiled.insert(root.join("./content.mdx"), compiled_js.clone());
 
-    let css = oxide_bundler::CssTransformHook::new(|_, src, _, _| {
+    let css = oxide_fw_bundler::CssTransformHook::new(|_, src, _, _| {
         Ok((src.to_string(), std::collections::BTreeMap::new()))
     });
 
@@ -7950,7 +7950,7 @@ async fn bundle_edge_entry_uses_the_precompiled_map_for_mdx() {
 #[tokio::test]
 #[ignore = "requires @mdx-js/mdx + a compile_mdx fix to emit JS (not JSX)"]
 async fn bundle_edge_entry_accepts_mdx_reachable_from_the_entry() {
-    use oxide_jshost::JsHost as _;
+    use oxide_fw_jshost::JsHost as _;
     use std::sync::Arc;
     let dir = tempfile::tempdir().unwrap();
     let root_buf = dir.path().canonicalize().expect("canonicalize tempdir");
@@ -7966,9 +7966,9 @@ async fn bundle_edge_entry_accepts_mdx_reachable_from_the_entry() {
     let entry = root.join("edge.ts");
     let dist = root.join("dist");
 
-    let host = oxide_jshost::NodeHost::new(oxide_jshost::NodeHost::worker_script_default());
-    let pool: Arc<dyn oxide_jshost::Pool> = host
-        .tooling_pool(oxide_jshost::PoolConfig::default())
+    let host = oxide_fw_jshost::NodeHost::new(oxide_fw_jshost::NodeHost::worker_script_default());
+    let pool: Arc<dyn oxide_fw_jshost::Pool> = host
+        .tooling_pool(oxide_fw_jshost::PoolConfig::default())
         .expect("spawn Node worker");
 
     let mut entries: std::collections::BTreeMap<String, std::path::PathBuf> =
@@ -7994,7 +7994,7 @@ async fn bundle_edge_entry_accepts_mdx_reachable_from_the_entry() {
         })
         .collect();
 
-    let css = oxide_bundler::CssTransformHook::new(|_, src, _, _| {
+    let css = oxide_fw_bundler::CssTransformHook::new(|_, src, _, _| {
         Ok((src.to_string(), std::collections::BTreeMap::new()))
     });
 
@@ -8045,7 +8045,7 @@ fn compile_edge_wasm_writes_embedded_artifact_for_any_root() {
 /// cookie. Complements the dispatch-level tests below.
 #[tokio::test]
 async fn session_encode_contract_mutation_vs_untouched() {
-    let codec = oxide_server::SessionCodec::new(&[vec![7u8; 32]]).expect("codec");
+    let codec = oxide_fw_server::SessionCodec::new(&[vec![7u8; 32]]).expect("codec");
     let after = serde_json::json!({"role": "admin"});
     let before = serde_json::Value::Null;
 
@@ -8077,15 +8077,15 @@ async fn session_encode_contract_mutation_vs_untouched() {
 /// sequential layout test below.
 struct MutateSessionLoader;
 #[async_trait::async_trait]
-impl oxide_server::LoaderRunner for MutateSessionLoader {
+impl oxide_fw_server::LoaderRunner for MutateSessionLoader {
     fn name(&self) -> &str {
         "mutate-session-loader"
     }
     async fn run(
         &self,
-        _input: oxide_server::LoaderRunInput,
-    ) -> oxide_server::Result<oxide_server::LoaderOutput> {
-        Ok(oxide_server::LoaderOutput {
+        _input: oxide_fw_server::LoaderRunInput,
+    ) -> oxide_fw_server::Result<oxide_fw_server::LoaderOutput> {
+        Ok(oxide_fw_server::LoaderOutput {
             status: 200,
             data: serde_json::json!({"ok": true}),
             session: Some(serde_json::json!({"user": "u1"})),
@@ -8100,11 +8100,11 @@ impl oxide_server::LoaderRunner for MutateSessionLoader {
 /// `f1a9397` covered the parallel arm's short-circuit path; the Ok arm
 /// was still dropping `out.session` and is now fixed. This test pins the
 /// Ok arm — the case the audit named "the common case".
-fn tree_with_layout_and_page_server_modules() -> std::sync::Arc<oxide_router::RouteTree> {
-    let mut tree = oxide_router::RouteTree::new();
-    tree.insert(oxide_router::RouteEntry {
-        id: oxide_router::RouteId("routes/layout".into()),
-        kind: oxide_router::RouteKind::Layout,
+fn tree_with_layout_and_page_server_modules() -> std::sync::Arc<oxide_fw_router::RouteTree> {
+    let mut tree = oxide_fw_router::RouteTree::new();
+    tree.insert(oxide_fw_router::RouteEntry {
+        id: oxide_fw_router::RouteId("routes/layout".into()),
+        kind: oxide_fw_router::RouteKind::Layout,
         segments: vec![],
         file: std::path::PathBuf::from("routes/layout.tsx"),
         render_mode: None,
@@ -8113,9 +8113,9 @@ fn tree_with_layout_and_page_server_modules() -> std::sync::Arc<oxide_router::Ro
         needs_parent: false,
         slot: None,
     });
-    tree.insert(oxide_router::RouteEntry {
-        id: oxide_router::RouteId("routes/index".into()),
-        kind: oxide_router::RouteKind::Page,
+    tree.insert(oxide_fw_router::RouteEntry {
+        id: oxide_fw_router::RouteId("routes/index".into()),
+        kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
         file: std::path::PathBuf::from("routes/page.tsx"),
         render_mode: Some("dynamic".into()),
@@ -8131,12 +8131,12 @@ fn tree_with_layout_and_page_server_modules() -> std::sync::Arc<oxide_router::Ro
 async fn layout_ok_arm_persists_session_mutation() {
     use std::sync::Arc;
 
-    let loader: Option<Arc<dyn oxide_server::LoaderRunner>> = Some(Arc::new(MutateSessionLoader));
-    let codec = Arc::new(oxide_server::SessionCodec::new(&[vec![9u8; 32]]).unwrap());
+    let loader: Option<Arc<dyn oxide_fw_server::LoaderRunner>> = Some(Arc::new(MutateSessionLoader));
+    let codec = Arc::new(oxide_fw_server::SessionCodec::new(&[vec![9u8; 32]]).unwrap());
 
     let dispatch = build_dispatch(
         tree_with_layout_and_page_server_modules(),
-        Arc::new(oxide_server::Metrics::new()),
+        Arc::new(oxide_fw_server::Metrics::new()),
         Vec::new(),
         None, // no renderer — session persistence happens on the loader arm
         loader,
@@ -8230,14 +8230,14 @@ async fn build_reports_no_side_effect_for_a_function_scoped_timer() {
 async fn dev_dispatch_aborts_on_mid_flight_file_change() {
     use std::sync::Arc;
 
-    let hub = Arc::new(oxide_dev::HmrHub::new());
+    let hub = Arc::new(oxide_fw_dev::HmrHub::new());
 
     // A slow dispatch — 200 ms — so the bump lands squarely mid-flight.
-    let slow: Arc<dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync> =
-        Arc::new(|_req: oxide_server::OxideRequest| {
+    let slow: Arc<dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync> =
+        Arc::new(|_req: oxide_fw_server::OxideRequest| {
             Box::pin(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                oxide_server::OxideResponse::html(200, "rendered with pre-change source")
+                oxide_fw_server::OxideResponse::html(200, "rendered with pre-change source")
             })
         });
 
@@ -8291,10 +8291,10 @@ async fn dev_dispatch_aborts_on_mid_flight_file_change() {
 async fn dev_dispatch_serves_normally_when_no_file_change() {
     use std::sync::Arc;
 
-    let hub = Arc::new(oxide_dev::HmrHub::new());
-    let fast: Arc<dyn Fn(oxide_server::OxideRequest) -> BoxedResponse + Send + Sync> =
-        Arc::new(|_req: oxide_server::OxideRequest| {
-            Box::pin(async move { oxide_server::OxideResponse::html(200, "fresh render") })
+    let hub = Arc::new(oxide_fw_dev::HmrHub::new());
+    let fast: Arc<dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync> =
+        Arc::new(|_req: oxide_fw_server::OxideRequest| {
+            Box::pin(async move { oxide_fw_server::OxideResponse::html(200, "fresh render") })
         });
     let wrapped = crate::wrap_dispatch_with_stale_guard(fast, Arc::clone(&hub));
 
@@ -8406,15 +8406,15 @@ export const routes = { 'routes/probe': probe }
 async fn l0_never_caches_a_middleware_cookie_response() {
     use std::sync::Arc;
 
-    let tier: Arc<dyn oxide_cache::CacheHandler> =
-        Arc::new(oxide_cache::TieredCache::new(8 * 1024 * 1024));
+    let tier: Arc<dyn oxide_fw_cache::CacheHandler> =
+        Arc::new(oxide_fw_cache::TieredCache::new(8 * 1024 * 1024));
     let l0 = Arc::new(l0_cache::L0Cache::new(
         tier,
         "test-build",
         std::time::Duration::from_secs(300),
     ));
 
-    let mw: Option<Arc<dyn oxide_server::MiddlewareDispatcher>> =
+    let mw: Option<Arc<dyn oxide_fw_server::MiddlewareDispatcher>> =
         Some(Arc::new(ScriptedMiddleware {
             headers: vec![(
                 "set-cookie".to_string(),
@@ -8424,12 +8424,12 @@ async fn l0_never_caches_a_middleware_cookie_response() {
             short_status: None,
             location: None,
         }));
-    let renderer: Option<Arc<dyn oxide_server::PageRenderer>> =
+    let renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> =
         Some(Arc::new(DataCapturingRenderer::new()));
 
     let dispatch = build_dispatch(
         tree_with_static_page_and_middleware(),
-        Arc::new(oxide_server::Metrics::new()),
+        Arc::new(oxide_fw_server::Metrics::new()),
         Vec::new(),
         renderer,
         None,
@@ -8484,8 +8484,8 @@ async fn l0_never_caches_a_middleware_cookie_response() {
 async fn middleware_short_circuit_persists_session_mutation() {
     use std::sync::Arc;
 
-    let codec = Arc::new(oxide_server::SessionCodec::new(&[vec![0x55u8; 32]]).unwrap());
-    let mw: Option<Arc<dyn oxide_server::MiddlewareDispatcher>> =
+    let codec = Arc::new(oxide_fw_server::SessionCodec::new(&[vec![0x55u8; 32]]).unwrap());
+    let mw: Option<Arc<dyn oxide_fw_server::MiddlewareDispatcher>> =
         Some(Arc::new(ScriptedMiddleware {
             headers: Vec::new(),
             // `locals.session` is the shape the B-05 write-back diffs.
@@ -8496,7 +8496,7 @@ async fn middleware_short_circuit_persists_session_mutation() {
 
     let dispatch = build_dispatch(
         tree_with_page_and_middleware(),
-        Arc::new(oxide_server::Metrics::new()),
+        Arc::new(oxide_fw_server::Metrics::new()),
         Vec::new(),
         Some(Arc::new(DataCapturingRenderer::new())),
         None,
@@ -8542,7 +8542,7 @@ async fn middleware_short_circuit_persists_session_mutation() {
         .strip_prefix("oxide_session=")
         .and_then(|r| r.split(';').next())
         .unwrap();
-    let sess = oxide_server::Session::decode(&codec, token).expect("sealed session decodes");
+    let sess = oxide_fw_server::Session::decode(&codec, token).expect("sealed session decodes");
     assert_eq!(
         sess.to_value()["user"],
         "ada",
@@ -8611,7 +8611,7 @@ fn forward_action_set_cookies_copies_only_set_cookie() {
 async fn action_set_cookie_survives_200_rerender() {
     struct CookieDispatcher;
     #[async_trait::async_trait]
-    impl oxide_server::ActionDispatcher for CookieDispatcher {
+    impl oxide_fw_server::ActionDispatcher for CookieDispatcher {
         async fn dispatch(
             &self,
             _module_path: &str,
@@ -8623,8 +8623,8 @@ async fn action_set_cookie_survives_200_rerender() {
             _headers: &[(String, String)],
             _locals: &serde_json::Value,
             _trace: Option<&serde_json::Value>,
-        ) -> Result<oxide_server::ActionRunResult, oxide_server::DispatchError> {
-            Ok(oxide_server::ActionRunResult {
+        ) -> Result<oxide_fw_server::ActionRunResult, oxide_fw_server::DispatchError> {
+            Ok(oxide_fw_server::ActionRunResult {
                 status: 200,
                 location: None,
                 data: serde_json::json!({"ok": true}),
@@ -8644,10 +8644,10 @@ async fn action_set_cookie_survives_200_rerender() {
         "export const actions = {}\n",
     )
     .unwrap();
-    let mut tree_inner = oxide_router::RouteTree::new();
-    tree_inner.insert(oxide_router::RouteEntry {
-        id: oxide_router::RouteId("routes/comment".into()),
-        kind: oxide_router::RouteKind::Page,
+    let mut tree_inner = oxide_fw_router::RouteTree::new();
+    tree_inner.insert(oxide_fw_router::RouteEntry {
+        id: oxide_fw_router::RouteId("routes/comment".into()),
+        kind: oxide_fw_router::RouteKind::Page,
         segments: vec!["comment".into()],
         file: std::path::PathBuf::from("comment/page.tsx"),
         render_mode: None,
@@ -8658,7 +8658,7 @@ async fn action_set_cookie_survives_200_rerender() {
     });
     let tree = std::sync::Arc::new(tree_inner);
 
-    let metrics = std::sync::Arc::new(oxide_server::Metrics::new());
+    let metrics = std::sync::Arc::new(oxide_fw_server::Metrics::new());
     let dispatch = build_dispatch(
         tree,
         metrics,

@@ -4,8 +4,8 @@
 
 use bytes::Bytes;
 use futures::channel::mpsc;
-use oxide_diagnostics::Diagnostic;
-use oxide_render::*;
+use oxide_fw_diagnostics::Diagnostic;
+use oxide_fw_render::*;
 
 fn head(title: Option<&str>, meta: Vec<(&str, &str)>) -> HeadTags {
     HeadTags {

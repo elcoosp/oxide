@@ -12,7 +12,7 @@
 //! Run explicitly:
 //!     cargo test -p oxide-jshost --test config_cache_e2e -- --ignored
 
-use oxide_jshost::{FrameworkHost, JsHost, NodeHost, Pool, PoolConfig};
+use oxide_fw_jshost::{FrameworkHost, JsHost, NodeHost, Pool, PoolConfig};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;

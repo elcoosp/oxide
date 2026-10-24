@@ -8,7 +8,7 @@
 
 use bytes::Bytes;
 use futures::stream;
-use oxide_server::{BodyStream, inject_before_close};
+use oxide_fw_server::{BodyStream, inject_before_close};
 
 fn stream_of(chunks: Vec<&'static [u8]>) -> BodyStream {
     let owned: Vec<Result<Bytes, std::io::Error>> = chunks
@@ -143,7 +143,7 @@ async fn passes_errors_through() {
 // every branch, including the ones a hostile input would try.
 // ---------------------------------------------------------------------------
 
-use oxide_server::{RemoteImagePattern, remote_pattern_allows};
+use oxide_fw_server::{RemoteImagePattern, remote_pattern_allows};
 
 fn pat(host: &str) -> RemoteImagePattern {
     RemoteImagePattern {
@@ -218,7 +218,7 @@ fn an_empty_pattern_list_allows_nothing() {
 // against a hand-written dispatcher — no runtime, no V8, no worker.
 // ---------------------------------------------------------------------------
 
-use oxide_server::{DispatchError, OxideRequest, Pipeline, ServerFnDispatcher};
+use oxide_fw_server::{DispatchError, OxideRequest, Pipeline, ServerFnDispatcher};
 use std::sync::Arc;
 
 struct EchoDispatcher;
@@ -271,7 +271,7 @@ async fn server_fn_post_dispatches_and_wraps_in_envelope() {
     let req = fn_request("POST", "add", r#"{"args":[1,2]}"#, "application/oxide-fn");
     let resp = p
         .serve_request(req, &|_r| {
-            Box::pin(async { oxide_server::OxideResponse::new(500, "dispatch should not run") })
+            Box::pin(async { oxide_fw_server::OxideResponse::new(500, "dispatch should not run") })
         })
         .await;
     assert_eq!(resp.status, 200);
@@ -287,7 +287,7 @@ async fn server_fn_get_is_rejected_with_405() {
     let req = fn_request("GET", "add", "", "application/oxide-fn");
     let resp = p
         .serve_request(req, &|_r| {
-            Box::pin(async { oxide_server::OxideResponse::new(500, "dispatch should not run") })
+            Box::pin(async { oxide_fw_server::OxideResponse::new(500, "dispatch should not run") })
         })
         .await;
     assert_eq!(resp.status, 405);
@@ -300,7 +300,7 @@ async fn server_fn_wrong_content_type_is_rejected_with_415() {
     let req = fn_request("POST", "add", "{}", "application/json");
     let resp = p
         .serve_request(req, &|_r| {
-            Box::pin(async { oxide_server::OxideResponse::new(500, "dispatch should not run") })
+            Box::pin(async { oxide_fw_server::OxideResponse::new(500, "dispatch should not run") })
         })
         .await;
     assert_eq!(resp.status, 415);
@@ -312,7 +312,7 @@ async fn server_fn_unknown_id_is_404_with_error_envelope() {
     let req = fn_request("POST", "missing", "{}", "application/oxide-fn");
     let resp = p
         .serve_request(req, &|_r| {
-            Box::pin(async { oxide_server::OxideResponse::new(500, "dispatch should not run") })
+            Box::pin(async { oxide_fw_server::OxideResponse::new(500, "dispatch should not run") })
         })
         .await;
     assert_eq!(resp.status, 404);
@@ -328,7 +328,7 @@ async fn server_fn_without_dispatcher_is_404() {
     let req = fn_request("POST", "add", "{}", "application/oxide-fn");
     let resp = p
         .serve_request(req, &|_r| {
-            Box::pin(async { oxide_server::OxideResponse::new(500, "dispatch should not run") })
+            Box::pin(async { oxide_fw_server::OxideResponse::new(500, "dispatch should not run") })
         })
         .await;
     assert_eq!(resp.status, 404);
@@ -344,7 +344,7 @@ async fn server_fn_without_dispatcher_is_404() {
 // here (it would need a live server); these pin the rejections.
 // ---------------------------------------------------------------------------
 
-use oxide_server::{
+use oxide_fw_server::{
     ImageEndpoint, ImageEndpointBackend, ImageEndpointRequest, ImageEndpointResult,
     ImageQueryForTest, plan_remote_image_for_test,
 };

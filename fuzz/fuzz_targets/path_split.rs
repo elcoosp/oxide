@@ -10,7 +10,7 @@ fuzz_target!(|data: &[u8]| {
     let s = String::from_utf8_lossy(data);
     // `split_path` is `pub(crate)`; exercise it through the public matcher on
     // an empty tree — this still drives the splitter on every input.
-    use oxide_router::RouteTree;
+    use oxide_fw_router::RouteTree;
     let tree = RouteTree::new();
     let _ = tree.match_path(&s);
 });

@@ -6,7 +6,7 @@
 //     non-optional segment (the matcher must not capture nothing)
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use oxide_router::RouteTree;
+use oxide_fw_router::RouteTree;
 use std::sync::OnceLock;
 
 static TREE: OnceLock<RouteTree> = OnceLock::new();

@@ -1,4 +1,4 @@
-//! Bridge from `oxide_jshost::LoaderHost` to `oxide_server::LoaderRunner`.
+//! Bridge from `oxide_fw_jshost::LoaderHost` to `oxide_fw_server::LoaderRunner`.
 //!
 //! Same layering as `framework_shim::AdapterPageRenderer`: the server trait
 //! is framework-agnostic and testable with a fake; this shim owns the JSON
@@ -9,8 +9,8 @@
 //! (`build_loader_runner`) creates the host and wraps it.
 
 use async_trait::async_trait;
-use oxide_jshost::LoaderHost;
-use oxide_server::{LoaderOutput, LoaderRunInput, LoaderRunner};
+use oxide_fw_jshost::LoaderHost;
+use oxide_fw_server::{LoaderOutput, LoaderRunInput, LoaderRunner};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -41,13 +41,13 @@ pub fn input_to_payload(input: &LoaderRunInput) -> Value {
 /// Parse the worker's `{ ok, status, location, data }` response into a
 /// typed `LoaderOutput`. Missing fields fall back to safe defaults.
 /// A response missing `status` is treated as a runner error.
-pub fn output_from_raw(raw: &Value) -> oxide_server::Result<LoaderOutput> {
+pub fn output_from_raw(raw: &Value) -> oxide_fw_server::Result<LoaderOutput> {
     let status = raw
         .get("status")
         .and_then(|v| v.as_u64())
         .map(|n| n as u16)
         .ok_or_else(|| {
-            oxide_server::err("JSH-LOADER", "loader:run response missing numeric `status`")
+            oxide_fw_server::err("JSH-LOADER", "loader:run response missing numeric `status`")
         })?;
     let location = raw
         .get("location")
@@ -130,7 +130,7 @@ impl LoaderRunner for AdapterLoader {
     fn name(&self) -> &str {
         "node"
     }
-    async fn run(&self, input: LoaderRunInput) -> oxide_server::Result<LoaderOutput> {
+    async fn run(&self, input: LoaderRunInput) -> oxide_fw_server::Result<LoaderOutput> {
         let payload = input_to_payload(&input);
         let raw = self
             .inner
@@ -143,8 +143,8 @@ impl LoaderRunner for AdapterLoader {
     async fn run_streaming(
         &self,
         input: LoaderRunInput,
-    ) -> oxide_server::Result<(
-        oxide_server::LoaderOutput,
+    ) -> oxide_fw_server::Result<(
+        oxide_fw_server::LoaderOutput,
         tokio::sync::mpsc::Receiver<serde_json::Value>,
     )> {
         let payload = input_to_payload(&input);
@@ -160,7 +160,7 @@ impl LoaderRunner for AdapterLoader {
 
 /// Convenience constructor for the `cmd_*` paths: given a shared pool,
 /// wrap it in a `LoaderRunner`.
-pub fn build_loader_runner(pool: Arc<dyn oxide_jshost::Pool>) -> Arc<dyn LoaderRunner> {
+pub fn build_loader_runner(pool: Arc<dyn oxide_fw_jshost::Pool>) -> Arc<dyn LoaderRunner> {
     Arc::new(AdapterLoader::new(Arc::new(LoaderHost::new(pool))))
 }
 

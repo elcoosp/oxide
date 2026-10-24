@@ -133,7 +133,7 @@ impl FrameworkCompiler for SolidInline {
 }
 
 /// A `FrameworkCompiler` that dispatches to the tooling pool. The actual call
-/// happens at the pipeline layer via `oxide_jshost::ToolingModules`; this type
+/// happens at the pipeline layer via `oxide_fw_jshost::ToolingModules`; this type
 /// only carries the identifiers the pipeline needs and marks "no in-Rust
 /// compile occurred".
 #[derive(Debug)]
@@ -169,7 +169,7 @@ impl FrameworkCompiler for ToolingDispatcher {
         Err(err(
             "CMP-FRAMEWORK",
             "this framework compiles in the tooling pool, not in-process; the pipeline must call \
-             `oxide_jshost::ToolingModules` (§4.7). This is expected behavior, not a stub.",
+             `oxide_fw_jshost::ToolingModules` (§4.7). This is expected behavior, not a stub.",
         ))
     }
 }

@@ -1,9 +1,9 @@
-//! Bridge from `oxide_jshost`'s framework renderer to the server's
-//! framework-agnostic `oxide_server::PageRenderer` trait (spec §7).
+//! Bridge from `oxide_fw_jshost`'s framework renderer to the server's
+//! framework-agnostic `oxide_fw_server::PageRenderer` trait (spec §7).
 //!
 //! Layering:
-//!   - `oxide_server::PageRenderer` — what `Pipeline`/dispatch consumes
-//!   - `oxide_jshost::FrameworkRenderer` — what talks to the Node worker
+//!   - `oxide_fw_server::PageRenderer` — what `Pipeline`/dispatch consumes
+//!   - `oxide_fw_jshost::FrameworkRenderer` — what talks to the Node worker
 //!   - `AdapterPageRenderer` (this module) — impls the former around the
 //!     latter, converting input shapes and the error type
 //!
@@ -13,9 +13,9 @@
 //! returns an `Arc<dyn PageRenderer>` ready to hand to the pipeline.
 
 use async_trait::async_trait;
-use oxide_config::JsBackend;
-use oxide_jshost::{FrameworkHostRenderer, FrameworkRenderInput, FrameworkRenderer};
-use oxide_server::{LoaderRunner, PageRenderInput, PageRenderer};
+use oxide_fw_config::JsBackend;
+use oxide_fw_jshost::{FrameworkHostRenderer, FrameworkRenderInput, FrameworkRenderer};
+use oxide_fw_server::{LoaderRunner, PageRenderInput, PageRenderer};
 use std::sync::Arc;
 
 /// §6.2 / §15: a `TransformHandler` built from the bundler's transform hook.
@@ -24,12 +24,12 @@ use std::sync::Arc;
 /// (which loads components through the worker's module loader, not the
 /// bundler).
 pub struct HookTransformHandler {
-    hook: oxide_bundler::TransformHook,
+    hook: oxide_fw_bundler::TransformHook,
 }
 
 #[async_trait::async_trait]
-impl oxide_jshost::TransformHandler for HookTransformHandler {
-    async fn transform(&self, id: &str, source: &str) -> oxide_diagnostics::Result<String> {
+impl oxide_fw_jshost::TransformHandler for HookTransformHandler {
+    async fn transform(&self, id: &str, source: &str) -> oxide_fw_diagnostics::Result<String> {
         self.hook.call(id, source)
     }
 }
@@ -37,8 +37,8 @@ impl oxide_jshost::TransformHandler for HookTransformHandler {
 /// Build a `TransformHandler` from the project's plugin transform hook.
 pub fn build_transform_handler(
     root: &std::path::Path,
-    cfg: &oxide_config::OxideConfig,
-) -> Option<Arc<dyn oxide_jshost::TransformHandler>> {
+    cfg: &oxide_fw_config::OxideConfig,
+) -> Option<Arc<dyn oxide_fw_jshost::TransformHandler>> {
     let hook = crate::build_transform_hook(root, cfg)?;
     Some(Arc::new(HookTransformHandler { hook }))
 }
@@ -51,23 +51,23 @@ struct CliFetchHandler {
 }
 
 #[async_trait::async_trait]
-impl oxide_jshost::FetchHandler for CliFetchHandler {
+impl oxide_fw_jshost::FetchHandler for CliFetchHandler {
     async fn fetch(
         &self,
         method: &str,
         url: &str,
         headers: &[(String, String)],
         body: &[u8],
-    ) -> oxide_diagnostics::Result<oxide_jshost::FetchResponse> {
-        match oxide_server::ssrf_safe_fetch(method, url, headers, body, &self.ssrf_allow_list).await
+    ) -> oxide_fw_diagnostics::Result<oxide_fw_jshost::FetchResponse> {
+        match oxide_fw_server::ssrf_safe_fetch(method, url, headers, body, &self.ssrf_allow_list).await
         {
-            Ok((status, headers, body)) => Ok(oxide_jshost::FetchResponse {
+            Ok((status, headers, body)) => Ok(oxide_fw_jshost::FetchResponse {
                 status,
                 headers,
                 body,
             }),
-            Err(e) => Err(oxide_diagnostics::OxideError(
-                oxide_diagnostics::Diagnostic::error("JSH-FETCH", e),
+            Err(e) => Err(oxide_fw_diagnostics::OxideError(
+                oxide_fw_diagnostics::Diagnostic::error("JSH-FETCH", e),
             )),
         }
     }
@@ -89,7 +89,7 @@ fn tooling_pool_size() -> usize {
     (render_pool_size() / 2).max(1)
 }
 
-/// Wraps any `FrameworkRenderer` as an `oxide_server::PageRenderer`.
+/// Wraps any `FrameworkRenderer` as an `oxide_fw_server::PageRenderer`.
 ///
 /// The only translation is input-shape: `PageRenderInput.params` is a typed
 /// `BTreeMap<String, String>`, while `FrameworkRenderInput.params` is a
@@ -145,8 +145,8 @@ impl PageRenderer for AdapterPageRenderer {
     /// not exist. The warm-up goal is orthogonal: worker pool spawned,
     /// config imported (once, cached), SSR entry loaded. After this, a
     /// real request pays render cost only.
-    async fn warm(&self) -> oxide_server::Result<()> {
-        use oxide_server::PageRenderInput;
+    async fn warm(&self) -> oxide_fw_server::Result<()> {
+        use oxide_fw_server::PageRenderInput;
         let synthetic = PageRenderInput {
             route: "__oxide_warmup__".to_string(),
             url: "/__oxide_warmup__".to_string(),
@@ -169,7 +169,7 @@ impl PageRenderer for AdapterPageRenderer {
         self.inner.name()
     }
 
-    async fn render(&self, input: PageRenderInput) -> oxide_server::Result<String> {
+    async fn render(&self, input: PageRenderInput) -> oxide_fw_server::Result<String> {
         self.inner.render(to_fw_input(input)).await
     }
 
@@ -180,7 +180,7 @@ impl PageRenderer for AdapterPageRenderer {
     async fn render_streaming(
         &self,
         input: PageRenderInput,
-    ) -> oxide_server::Result<oxide_server::RenderStream> {
+    ) -> oxide_fw_server::Result<oxide_fw_server::RenderStream> {
         self.inner.render_streaming(to_fw_input(input)).await
     }
 }
@@ -201,24 +201,24 @@ pub struct FrameworkStack {
     /// reference) so callers that need out-of-band ops — `cmd_dev`'s watcher
     /// calling `FrameworkHost::invalidate()` (§13.3) — still have a handle
     /// after the renderer/loader move into the pipeline.
-    pub pool: Option<Arc<dyn oxide_jshost::Pool>>,
+    pub pool: Option<Arc<dyn oxide_fw_jshost::Pool>>,
     /// §4.7: the tooling pool for the JS compilers (Vue/Svelte/Solid). **Always
     /// Node**, regardless of `server.backend` — those compilers are npm
     /// packages that need Node built-ins, which the V8 sandbox does not have.
     /// Used by the §6.3 precompile pass at build time. `None` only when no
     /// pool could be built.
-    pub tooling_pool: Option<Arc<dyn oxide_jshost::Pool>>,
+    pub tooling_pool: Option<Arc<dyn oxide_fw_jshost::Pool>>,
     /// §11 / BUG-02: the **one** cache tier the framework stack built. The
     /// server's L0 response cache wraps this same handler, so an
     /// invalidation (BUG-01's tag/path path) reaches both L0 (the response
     /// cache) and L1 (the worker's `'use cache'` entries). Before this field
     /// the server built its own `TieredCache` and the worker had a second
     /// one, so they could not see each other's invalidations.
-    pub cache_tier: Option<Arc<dyn oxide_cache::CacheHandler>>,
+    pub cache_tier: Option<Arc<dyn oxide_fw_cache::CacheHandler>>,
     /// §6.4: the component source handed to the worker's resolver. Dev fills
     /// `sources`; prod leaves it empty and the renderer derives the generated
     /// SSR entry from the project root.
-    pub component_source: Arc<std::sync::RwLock<oxide_jshost::ComponentSource>>,
+    pub component_source: Arc<std::sync::RwLock<oxide_fw_jshost::ComponentSource>>,
 }
 
 impl FrameworkStack {
@@ -231,7 +231,7 @@ impl FrameworkStack {
             tooling_pool: None,
             cache_tier: None,
             component_source: Arc::new(std::sync::RwLock::new(
-                oxide_jshost::ComponentSource::default(),
+                oxide_fw_jshost::ComponentSource::default(),
             )),
         }
     }
@@ -314,19 +314,19 @@ fn backend_str(b: JsBackend) -> &'static str {
 /// arm in `start_server` only ran when `stack.cache_tier` was `None`,
 /// which never happens for a stack this function builds.
 pub async fn remote_cache_handler(
-    handler: Option<&oxide_config::CacheHandlerConfig>,
-) -> Option<Arc<dyn oxide_cache::CacheHandler>> {
+    handler: Option<&oxide_fw_config::CacheHandlerConfig>,
+) -> Option<Arc<dyn oxide_fw_cache::CacheHandler>> {
     match handler {
-        Some(oxide_config::CacheHandlerConfig::Http { url }) => {
-            Some(Arc::new(oxide_cache::HttpCacheHandler::new(url.clone()))
-                as Arc<dyn oxide_cache::CacheHandler>)
+        Some(oxide_fw_config::CacheHandlerConfig::Http { url }) => {
+            Some(Arc::new(oxide_fw_cache::HttpCacheHandler::new(url.clone()))
+                as Arc<dyn oxide_fw_cache::CacheHandler>)
         }
-        Some(oxide_config::CacheHandlerConfig::Redis { url }) => {
-            match oxide_cache::RedisCacheHandler::new(url.clone()).await {
-                Ok(h) => Some(Arc::new(h) as Arc<dyn oxide_cache::CacheHandler>),
+        Some(oxide_fw_config::CacheHandlerConfig::Redis { url }) => {
+            match oxide_fw_cache::RedisCacheHandler::new(url.clone()).await {
+                Ok(h) => Some(Arc::new(h) as Arc<dyn oxide_fw_cache::CacheHandler>),
                 Err(e) => {
                     tracing::warn!(
-                        url = %oxide_cache::redacted_url(&url),
+                        url = %oxide_fw_cache::redacted_url(&url),
                         error = %e.0.message,
                         "cache.handler=redis: connection failed; \
                          continuing with local tier only",
@@ -335,9 +335,9 @@ pub async fn remote_cache_handler(
                 }
             }
         }
-        Some(oxide_config::CacheHandlerConfig::S3 { bucket }) => {
-            match oxide_cache::S3CacheHandler::new(bucket.clone()) {
-                Ok(h) => Some(Arc::new(h) as Arc<dyn oxide_cache::CacheHandler>),
+        Some(oxide_fw_config::CacheHandlerConfig::S3 { bucket }) => {
+            match oxide_fw_cache::S3CacheHandler::new(bucket.clone()) {
+                Ok(h) => Some(Arc::new(h) as Arc<dyn oxide_fw_cache::CacheHandler>),
                 Err(e) => {
                     tracing::warn!(
                         bucket = %bucket,
@@ -361,13 +361,13 @@ pub async fn build_framework_stack(
     // to the render pool's host, so the worker's `compile_module` op applies
     // it — reaching the prerender path (which renders through the worker,
     // not the bundler).
-    transform_handler: Option<Arc<dyn oxide_jshost::TransformHandler>>,
+    transform_handler: Option<Arc<dyn oxide_fw_jshost::TransformHandler>>,
     // §11.2 / SPEC-12: the project's `cache.handler` selection, threaded in
     // by every `cmd_*` call site so the tier the WORKER sees honors the
     // config. `None` keeps the memory/disk-only tier (tests, defaults).
-    cache_handler: Option<&oxide_config::CacheHandlerConfig>,
+    cache_handler: Option<&oxide_fw_config::CacheHandlerConfig>,
 ) -> FrameworkStack {
-    use oxide_jshost::{JsHost, NodeHost, PoolConfig, V8Host};
+    use oxide_fw_jshost::{JsHost, NodeHost, PoolConfig, V8Host};
 
     // §6.3: which framework's JSX the worker's `tsx-loader.mjs` should
     // lower `.tsx`/`.jsx` against. Read here (not at the CLI call sites) so
@@ -395,7 +395,7 @@ pub async fn build_framework_stack(
     // configures a disk root gets the L1 tier too; §11.2: a configured
     // `cache.handler=http` attaches an `HttpCacheHandler` REMOTE tier via
     // `with_remote` so `'use cache'` reads/writes through it.
-    let cache_tier: Arc<dyn oxide_cache::CacheHandler> = {
+    let cache_tier: Arc<dyn oxide_fw_cache::CacheHandler> = {
         // B-19: only materialize the disk L1 when the configured handler is
         // disk-backed (disk/redis/s3/http). With the default `memory` handler
         // there is no persistent tier to warm, so attaching a disk cache just
@@ -403,7 +403,7 @@ pub async fn build_framework_stack(
         // and returns the cache on success; on failure we rebuild memory-only.
         let attach_disk = !matches!(
             cache_handler,
-            None | Some(oxide_config::CacheHandlerConfig::Memory)
+            None | Some(oxide_fw_config::CacheHandlerConfig::Memory)
         );
         let disk = attach_disk
             .then(|| {
@@ -414,12 +414,12 @@ pub async fn build_framework_stack(
             })
             .flatten();
         let tier = match disk.and_then(|d| {
-            oxide_cache::TieredCache::new(512 * 1024 * 1024)
+            oxide_fw_cache::TieredCache::new(512 * 1024 * 1024)
                 .with_disk(d)
                 .ok()
         }) {
             Some(c) => c,
-            None => oxide_cache::TieredCache::new(512 * 1024 * 1024),
+            None => oxide_fw_cache::TieredCache::new(512 * 1024 * 1024),
         };
         // §11.2: the remote tier. `remote_cache_handler` builds the real
         // driver for http/redis/s3; memory/disk fall through to the local
@@ -431,7 +431,7 @@ pub async fn build_framework_stack(
     };
 
     // PERF-05: the `fetch` op handler (SSRF-hardened, backed by oxide-server).
-    let fetch_handler: Arc<dyn oxide_jshost::FetchHandler> = Arc::new(CliFetchHandler {
+    let fetch_handler: Arc<dyn oxide_fw_jshost::FetchHandler> = Arc::new(CliFetchHandler {
         ssrf_allow_list: Vec::new(),
     });
 
@@ -503,7 +503,7 @@ pub async fn build_framework_stack(
     // render backend is V8. Building this unconditionally is cheap next to a
     // compile failure: a Vue fixture with `backend: "v8"` otherwise sends
     // `tooling:vue-compile` to the V8 pool, which has no such op.
-    let tooling_pool: Arc<dyn oxide_jshost::Pool> = if matches!(backend, JsBackend::V8) {
+    let tooling_pool: Arc<dyn oxide_fw_jshost::Pool> = if matches!(backend, JsBackend::V8) {
         match {
             let mut h = NodeHost::new(NodeHost::worker_script_default())
                 .with_cache_handler(Arc::clone(&cache_tier))
@@ -558,10 +558,10 @@ pub async fn build_framework_stack(
     // Keep a second Arc reference to the pool so callers (notably cmd_dev's
     // watcher) can send out-of-band ops after the renderer/loader have been
     // moved into the pipeline.
-    let pool_for_stack: Arc<dyn oxide_jshost::Pool> = Arc::clone(&pool);
+    let pool_for_stack: Arc<dyn oxide_fw_jshost::Pool> = Arc::clone(&pool);
 
-    let component_source: Arc<std::sync::RwLock<oxide_jshost::ComponentSource>> = Arc::new(
-        std::sync::RwLock::new(oxide_jshost::ComponentSource::default()),
+    let component_source: Arc<std::sync::RwLock<oxide_fw_jshost::ComponentSource>> = Arc::new(
+        std::sync::RwLock::new(oxide_fw_jshost::ComponentSource::default()),
     );
     // The page renderer needs a config file. Its absence is normal.
     let page_renderer: Option<Arc<dyn PageRenderer>> = match config_path {
@@ -623,7 +623,7 @@ pub async fn build_framework_stack(
 /// touches the renderer. The first dynamic render pays the load it would pay
 /// anyway, because `FrameworkHost::render` re-imports the config per call.
 pub struct LazyFrameworkRenderer {
-    pool: Arc<dyn oxide_jshost::Pool>,
+    pool: Arc<dyn oxide_fw_jshost::Pool>,
     /// The raw config (`.ts`/`.mjs`) — what the Node backend imports.
     config_path: String,
     /// The pre-bundled config (`.oxide/config.server.js`) — what the V8
@@ -635,7 +635,7 @@ pub struct LazyFrameworkRenderer {
     /// name is only known after the load this type defers.
     name: String,
     /// §6.4: the component surface for this render (prod entry or dev map).
-    components: Arc<std::sync::RwLock<oxide_jshost::ComponentSource>>,
+    components: Arc<std::sync::RwLock<oxide_fw_jshost::ComponentSource>>,
     inner: tokio::sync::OnceCell<Arc<dyn FrameworkRenderer>>,
 }
 
@@ -720,7 +720,7 @@ impl LazyFrameworkRenderer {
         input
     }
 
-    async fn resolve(&self) -> oxide_jshost::Result<Arc<dyn FrameworkRenderer>> {
+    async fn resolve(&self) -> oxide_fw_jshost::Result<Arc<dyn FrameworkRenderer>> {
         let v = self
             .inner
             .get_or_try_init(|| async {
@@ -732,7 +732,7 @@ impl LazyFrameworkRenderer {
                     _ => self.config_path.clone(),
                 };
                 let hr = FrameworkHostRenderer::new(Arc::clone(&self.pool), path).await?;
-                Ok::<Arc<dyn FrameworkRenderer>, oxide_diagnostics::OxideError>(Arc::new(hr))
+                Ok::<Arc<dyn FrameworkRenderer>, oxide_fw_diagnostics::OxideError>(Arc::new(hr))
             })
             .await?;
         Ok(Arc::clone(v))
@@ -744,14 +744,14 @@ impl FrameworkRenderer for LazyFrameworkRenderer {
     fn name(&self) -> &str {
         &self.name
     }
-    async fn render(&self, input: FrameworkRenderInput) -> oxide_jshost::Result<String> {
+    async fn render(&self, input: FrameworkRenderInput) -> oxide_fw_jshost::Result<String> {
         let input = self.with_components(input);
         self.resolve().await?.render(input).await
     }
     async fn render_streaming(
         &self,
         input: FrameworkRenderInput,
-    ) -> oxide_jshost::Result<oxide_jshost::RenderStream> {
+    ) -> oxide_fw_jshost::Result<oxide_fw_jshost::RenderStream> {
         let input = self.with_components(input);
         self.resolve().await?.render_streaming(input).await
     }
@@ -766,7 +766,7 @@ pub async fn dev_component_sources(
     project_root: &std::path::Path,
     framework: Option<&str>,
     entries: std::collections::BTreeMap<String, std::path::PathBuf>,
-    pool: Option<&Arc<dyn oxide_jshost::Pool>>,
+    pool: Option<&Arc<dyn oxide_fw_jshost::Pool>>,
 ) -> std::collections::BTreeMap<String, String> {
     let precompiled = crate::precompile::precompile_entries(
         pool,
@@ -809,7 +809,7 @@ pub async fn dev_component_sources(
 pub async fn build_adapter_renderer(
     config_path: &std::path::Path,
 ) -> anyhow::Result<Arc<dyn PageRenderer>> {
-    use oxide_jshost::{FrameworkHostRenderer, JsHost, NodeHost, PoolConfig};
+    use oxide_fw_jshost::{FrameworkHostRenderer, JsHost, NodeHost, PoolConfig};
 
     let host = NodeHost::new(NodeHost::worker_script_default());
     let pool = host
@@ -827,7 +827,7 @@ pub async fn build_adapter_renderer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oxide_jshost::FrameworkRenderInput;
+    use oxide_fw_jshost::FrameworkRenderInput;
 
     /// A framework renderer that echoes what it received — lets tests assert
     /// the input conversion (typed `params` → JSON) without Node.
@@ -838,7 +838,7 @@ mod tests {
         fn name(&self) -> &str {
             "echo-fw"
         }
-        async fn render(&self, input: FrameworkRenderInput) -> oxide_jshost::Result<String> {
+        async fn render(&self, input: FrameworkRenderInput) -> oxide_fw_jshost::Result<String> {
             let params_json = serde_json::to_string(&input.params).unwrap_or_default();
             Ok(format!(
                 "<!doctype html><html><body><h1>route={}</h1><pre>{}</pre></body></html>",
@@ -855,8 +855,8 @@ mod tests {
         fn name(&self) -> &str {
             "boom-fw"
         }
-        async fn render(&self, _input: FrameworkRenderInput) -> oxide_jshost::Result<String> {
-            Err(oxide_jshost::err(
+        async fn render(&self, _input: FrameworkRenderInput) -> oxide_fw_jshost::Result<String> {
+            Err(oxide_fw_jshost::err(
                 "JSH-FRAMEWORK",
                 "simulated render failure",
             ))
@@ -924,22 +924,22 @@ mod tests {
     struct ChunkedRenderer;
 
     #[async_trait]
-    impl oxide_jshost::FrameworkRenderer for ChunkedRenderer {
+    impl oxide_fw_jshost::FrameworkRenderer for ChunkedRenderer {
         fn name(&self) -> &str {
             "chunked"
         }
         async fn render(
             &self,
-            _input: oxide_jshost::FrameworkRenderInput,
-        ) -> oxide_jshost::Result<String> {
+            _input: oxide_fw_jshost::FrameworkRenderInput,
+        ) -> oxide_fw_jshost::Result<String> {
             Ok("<h1>collected</h1>".to_string())
         }
         async fn render_streaming(
             &self,
-            _input: oxide_jshost::FrameworkRenderInput,
-        ) -> oxide_jshost::Result<oxide_jshost::RenderStream> {
+            _input: oxide_fw_jshost::FrameworkRenderInput,
+        ) -> oxide_fw_jshost::Result<oxide_fw_jshost::RenderStream> {
             use bytes::Bytes;
-            let items: Vec<oxide_jshost::Result<Bytes>> = vec![
+            let items: Vec<oxide_fw_jshost::Result<Bytes>> = vec![
                 Ok(Bytes::from_static(b"<h1>")),
                 Ok(Bytes::from_static(b"chunked")),
                 Ok(Bytes::from_static(b"</h1>")),
@@ -978,19 +978,19 @@ mod backend_tests {
     /// the pool exists and reports the V8 backend name through the trait.
     #[tokio::test]
     async fn v8_backend_builds_a_pool() {
-        use oxide_jshost::JsHost;
-        let v8 = oxide_jshost::V8Host::new();
+        use oxide_fw_jshost::JsHost;
+        let v8 = oxide_fw_jshost::V8Host::new();
         assert_eq!(v8.backend_name(), "v8");
         // Pool construction must succeed (first V8 init can be slow; ignore
         // the outcome on hosts without a prebuilt deno_core snapshot).
-        let _ = v8.render_pool(oxide_jshost::PoolConfig::default());
+        let _ = v8.render_pool(oxide_fw_jshost::PoolConfig::default());
     }
 
     /// Node backend remains the default and still works.
     #[tokio::test]
     async fn node_backend_builds_a_pool() {
-        use oxide_jshost::JsHost;
-        let node = oxide_jshost::NodeHost::new(oxide_jshost::NodeHost::worker_script_default());
+        use oxide_fw_jshost::JsHost;
+        let node = oxide_fw_jshost::NodeHost::new(oxide_fw_jshost::NodeHost::worker_script_default());
         assert_eq!(node.backend_name(), "node");
     }
 }

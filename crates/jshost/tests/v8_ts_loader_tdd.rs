@@ -4,7 +4,7 @@
 //!
 //! Ignored by default (boots V8); run with `--ignored`.
 
-use oxide_jshost::{CallInput, EntryRef, JsHost, Pool, PoolConfig, V8Host};
+use oxide_fw_jshost::{CallInput, EntryRef, JsHost, Pool, PoolConfig, V8Host};
 
 fn call_input(payload: serde_json::Value) -> CallInput {
     CallInput {

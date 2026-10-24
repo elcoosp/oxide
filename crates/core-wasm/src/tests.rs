@@ -1,7 +1,7 @@
 //! TDD suite for oxide-core-wasm (spec §2 D18, §18 cloudflare target).
 
 use super::*;
-use oxide_odf::Value;
+use oxide_fw_odf::Value;
 use std::collections::BTreeMap;
 
 // ------------------------------------------------------------------ merge_head
@@ -104,7 +104,7 @@ fn encode_odf_roundtrips_an_object() {
     );
     let bytes = encode_odf(&Value::Object(obj.clone())).unwrap();
     assert_eq!(&bytes[..4], b"ODF1", "wire magic (§9.5)");
-    assert_eq!(oxide_odf::decode(&bytes).unwrap(), Value::Object(obj));
+    assert_eq!(oxide_fw_odf::decode(&bytes).unwrap(), Value::Object(obj));
 }
 
 #[test]

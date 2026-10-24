@@ -3,7 +3,7 @@
 //!
 //! `FsModuleLoader` (deno_core's) reads files verbatim, which fails on any
 //! `.ts`/`.tsx`: V8 cannot parse type annotations or JSX. This loader reads the
-//! file, runs `oxide_compiler::lower_to_js` (Oxc type-strip + JSX lowering),
+//! file, runs `oxide_fw_compiler::lower_to_js` (Oxc type-strip + JSX lowering),
 //! and returns the plain JS. It resolves a relative specifier against the
 //! importer and a bare specifier against `node_modules` via `oxc_resolver` —
 //! the same resolver the bundler uses, so a project that bundles also serves.

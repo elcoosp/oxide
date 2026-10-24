@@ -1,7 +1,7 @@
 //! Integration tests for §16.5 content collections + MDX bridging, exercising
 //! the public API as a caller would.
 
-use oxide_assets::{
+use oxide_fw_assets::{
     CollectionConfig, FieldType, NativeSchema, SchemaKind, build_search_index, check_references,
     parse_mdx_source, scan_collection, search_index_to_json, validate_collection,
 };
@@ -133,7 +133,7 @@ fn search_index_is_stable_and_byte_identical() {
     let j2 = search_index_to_json(&i2).unwrap();
     assert_eq!(j1, j2);
     // The JSON parses back into the same SearchIndex.
-    let back: oxide_assets::SearchIndex = serde_json::from_str(&j1).unwrap();
+    let back: oxide_fw_assets::SearchIndex = serde_json::from_str(&j1).unwrap();
     assert_eq!(back, i1);
 }
 

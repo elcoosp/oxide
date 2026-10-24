@@ -9,7 +9,7 @@
 //! Run explicitly:
 //!     cargo test -p oxide-jshost --test hmr_e2e -- --ignored
 
-use oxide_jshost::{FrameworkHost, JsHost, LoaderHost, NodeHost, Pool, PoolConfig};
+use oxide_fw_jshost::{FrameworkHost, JsHost, LoaderHost, NodeHost, Pool, PoolConfig};
 use serde_json::json;
 use std::fs;
 use std::path::PathBuf;

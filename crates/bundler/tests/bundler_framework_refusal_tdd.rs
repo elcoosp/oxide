@@ -7,7 +7,7 @@
 //! "loud refusal" behavior so a caller that forgets to precompile gets a
 //! `BLD-FRAMEWORK` diagnostic instead of garbage output.
 
-use oxide_bundler::{BundleEnv, BundleOptions, Bundler, ChunkBundler};
+use oxide_fw_bundler::{BundleEnv, BundleOptions, Bundler, ChunkBundler};
 use std::collections::BTreeMap;
 use std::path::Path;
 

@@ -3,7 +3,7 @@
 //! Ignored by default (boots V8 snapshot machinery) and needs a prior
 //! `oxide build examples/smoke-app-react`. Run with `--ignored`.
 
-use oxide_jshost::{SNAPSHOT_FORMAT, snapshot_build_bundle};
+use oxide_fw_jshost::{SNAPSHOT_FORMAT, snapshot_build_bundle};
 
 fn collect(root: &std::path::Path, out: &mut Vec<(std::path::PathBuf, String)>) {
     if let Ok(rd) = std::fs::read_dir(root) {

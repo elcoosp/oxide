@@ -9,12 +9,12 @@ use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     // Any input must decode-or-error, never panic.
-    let _ = oxide_odf::decode(data);
+    let _ = oxide_fw_odf::decode(data);
 
     // A successful decode must survive a re-encode round-trip.
-    if let Ok(v) = oxide_odf::decode(data) {
-        if let Ok(bytes) = oxide_odf::encode(&v) {
-            let back = oxide_odf::decode(&bytes).expect("re-encoded payload must decode");
+    if let Ok(v) = oxide_fw_odf::decode(data) {
+        if let Ok(bytes) = oxide_fw_odf::encode(&v) {
+            let back = oxide_fw_odf::decode(&bytes).expect("re-encoded payload must decode");
             assert_eq!(v, back, "ODF round-trip must be lossless");
         }
     }

@@ -12,8 +12,8 @@
 //! native plugin is a discoverable alias. `enables(cfg, plugin)` is the
 //! one-liner callers use once that flip is in place.
 
-use oxide_config::OxideConfig;
-use oxide_diagnostics::OxideError;
+use oxide_fw_config::OxideConfig;
+use oxide_fw_diagnostics::OxideError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativePlugin {

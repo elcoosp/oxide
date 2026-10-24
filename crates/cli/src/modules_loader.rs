@@ -45,8 +45,8 @@
 //! reported at `add` time and once at build time so a module declaring it
 //! is not a silent dead end.
 
-use oxide_config::OxideConfig;
-use oxide_router::RouteTree;
+use oxide_fw_config::OxideConfig;
+use oxide_fw_router::RouteTree;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 

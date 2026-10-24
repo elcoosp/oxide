@@ -302,7 +302,7 @@ pub fn env_fingerprint(
     for f in &files {
         if client_env {
             let s = f.to_string_lossy();
-            if oxide_compiler::is_server_module_path(&s) {
+            if oxide_fw_compiler::is_server_module_path(&s) {
                 continue;
             }
         }

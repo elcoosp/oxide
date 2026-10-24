@@ -27,17 +27,17 @@ thread_local! {
     /// `V8Host`'s handler. A `JsRuntime` is `!Send` and pinned to one thread,
     /// so a thread-local is exactly the right scope — no `OpState`, no
     /// snapshot op-order churn.
-    static CACHE_HANDLER: RefCell<Option<Arc<dyn oxide_cache::CacheHandler>>> =
+    static CACHE_HANDLER: RefCell<Option<Arc<dyn oxide_fw_cache::CacheHandler>>> =
         const { RefCell::new(None) };
 }
 
 /// Install the cache handler for the current V8 worker thread. Called once by
 /// `spawn_v8_worker` before the runtime evaluates any user module.
-pub fn set_cache_handler(handler: Option<Arc<dyn oxide_cache::CacheHandler>>) {
+pub fn set_cache_handler(handler: Option<Arc<dyn oxide_fw_cache::CacheHandler>>) {
     CACHE_HANDLER.with(|c| *c.borrow_mut() = handler);
 }
 
-fn cache_handler() -> Option<Arc<dyn oxide_cache::CacheHandler>> {
+fn cache_handler() -> Option<Arc<dyn oxide_fw_cache::CacheHandler>> {
     CACHE_HANDLER.with(|c| c.borrow().clone())
 }
 
@@ -112,7 +112,7 @@ thread_local! {
     /// the call id. Set by the worker thread before driving a streaming
     /// render; the `stream_write` op reads it. One thread = one V8 runtime, so
     /// a thread-local (not a map) is the right scope.
-    static STREAM_SINK: RefCell<Option<tokio::sync::mpsc::Sender<Result<bytes::Bytes, oxide_diagnostics::OxideError>>>> =
+    static STREAM_SINK: RefCell<Option<tokio::sync::mpsc::Sender<Result<bytes::Bytes, oxide_fw_diagnostics::OxideError>>>> =
         const { RefCell::new(None) };
 }
 
@@ -122,7 +122,7 @@ thread_local! {
     /// the promise so timers/rejections fire after the caller already has the
     /// chunk stream.
     static LOADER_EMIT: RefCell<
-        Option<tokio::sync::mpsc::Sender<Result<bytes::Bytes, oxide_diagnostics::OxideError>>>,
+        Option<tokio::sync::mpsc::Sender<Result<bytes::Bytes, oxide_fw_diagnostics::OxideError>>>,
     > = const { RefCell::new(None) };
 
     /// Whether the streaming loader emitted its initial payload. Used to fall
@@ -132,7 +132,7 @@ thread_local! {
 }
 
 pub(crate) fn set_loader_emit_sink(
-    sink: Option<tokio::sync::mpsc::Sender<Result<bytes::Bytes, oxide_diagnostics::OxideError>>>,
+    sink: Option<tokio::sync::mpsc::Sender<Result<bytes::Bytes, oxide_fw_diagnostics::OxideError>>>,
 ) {
     LOADER_EMIT.with(|s| *s.borrow_mut() = sink);
     LOADER_EMITTED.with(|e| e.set(false));
@@ -172,7 +172,7 @@ pub(crate) fn finish_loader_stream(resolved: String) {
 /// Install the stream sink for the current V8 worker thread's in-flight
 /// streaming render.
 pub fn set_stream_sink(
-    sink: Option<tokio::sync::mpsc::Sender<Result<bytes::Bytes, oxide_diagnostics::OxideError>>>,
+    sink: Option<tokio::sync::mpsc::Sender<Result<bytes::Bytes, oxide_fw_diagnostics::OxideError>>>,
 ) {
     STREAM_SINK.with(|s| *s.borrow_mut() = sink);
 }
@@ -274,8 +274,8 @@ pub fn op_oxide_serialize(#[string] json: String) -> Vec<u8> {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) else {
         return Vec::new();
     };
-    let odf_value = oxide_odf::Value::from_json(&v);
-    oxide_odf::encode(&odf_value).unwrap_or_default()
+    let odf_value = oxide_fw_odf::Value::from_json(&v);
+    oxide_fw_odf::encode(&odf_value).unwrap_or_default()
 }
 
 /// `oxide.sleep(ms)` — resolve after `ms` milliseconds. The backing timer for
@@ -358,12 +358,12 @@ pub async fn op_oxide_cache_set(
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .collect();
-    let entry = oxide_cache::Entry {
+    let entry = oxide_fw_cache::Entry {
         body,
         status: status as u16,
         headers: Vec::new(),
         tags,
-        policy: oxide_cache::Policy::default(),
+        policy: oxide_fw_cache::Policy::default(),
         stored_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
@@ -476,16 +476,16 @@ pub async fn compile_module_impl(path: String, code: String, lang: String) -> St
         "js" | "mjs" => "mjs",
         _ => "ts",
     };
-    let input = oxide_compiler::TransformInput {
+    let input = oxide_fw_compiler::TransformInput {
         path: path.clone(),
         code: source,
-        env: oxide_compiler::Env::Ssr,
+        env: oxide_fw_compiler::Env::Ssr,
         lang: lang_str,
         build_secret: String::new(),
         dev: true,
         jsx_import_source: None,
     };
-    let result = match oxide_compiler::OxcTransformer.transform_passes_only(&input) {
+    let result = match oxide_fw_compiler::OxcTransformer.transform_passes_only(&input) {
         Ok(out) => serde_json::json!({ "code": out }).to_string(),
         Err(e) => serde_json::json!({
             "code": e.0.code,

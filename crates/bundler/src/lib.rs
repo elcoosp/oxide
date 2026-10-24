@@ -22,11 +22,11 @@ mod rolldown_backend;
 pub mod svg_react;
 
 use blake3::Hasher;
-use oxide_compiler::{
+use oxide_fw_compiler::{
     Env as CompilerEnv, OxcTransformer, TransformInput, Transformer as _, is_server_module_path,
     scan_import_spans,
 };
-use oxide_diagnostics::{Diagnostic, OxideError};
+use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -722,7 +722,7 @@ impl ChunkBundler {
                                     ),
                                 )
                                 .with_fix(
-                                    "call oxide_bundler's precompile step or route the \
+                                    "call oxide_fw_bundler's precompile step or route the \
                                      build through `oxide build`, which does so automatically",
                                 ),
                             );
@@ -1100,7 +1100,7 @@ impl ChunkBundler {
                     match hook.call(&path, src, is_module, options.minify) {
                         Ok((code, _exports)) => code,
                         Err(e) => {
-                            diagnostics.push(oxide_diagnostics::Diagnostic::error(
+                            diagnostics.push(oxide_fw_diagnostics::Diagnostic::error(
                                 e.0.code,
                                 format!("CSS transform failed for {path}: {}", e.0.message),
                             ));
@@ -1468,10 +1468,10 @@ fn rewrite_imports(
 /// `export const|let|var|function|class NAME`, `export async function NAME`,
 /// `export { a, b as c }`. `export default` is skipped (documented limitation).
 fn export_names(code: &str) -> Vec<String> {
-    use oxide_compiler::lexer::{Tok, lex};
+    use oxide_fw_compiler::lexer::{Tok, lex};
     let toks = lex(code);
     let mut names: Vec<String> = Vec::new();
-    let word = |t: &oxide_compiler::lexer::Token, w: &str| {
+    let word = |t: &oxide_fw_compiler::lexer::Token, w: &str| {
         t.kind == Tok::Ident && &code[t.start..t.end] == w
     };
     let mut i = 0usize;

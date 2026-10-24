@@ -1,13 +1,13 @@
 //! Regression guard for the open bug in the 2026-10-13 handoff: `bundle_impl`
 //! used to emit raw TypeScript + JSX into SSR chunks. Now every non-asset
-//! module runs through `oxide_compiler::OxcTransformer` (Oxc parse + transform
+//! module runs through `oxide_fw_compiler::OxcTransformer` (Oxc parse + transform
 //! + codegen) before it lands in a chunk file.
 //!
 //! These tests shell out to `node --check` on every emitted `.js` chunk in
 //! both `BundleEnv::Ssr` and `BundleEnv::Client` — the same check that failed
 //! on the smoke-app's server chunks at handoff time.
 
-use oxide_bundler::{BundleEnv, BundleOptions, Bundler, ChunkBundler};
+use oxide_fw_bundler::{BundleEnv, BundleOptions, Bundler, ChunkBundler};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;

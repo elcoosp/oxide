@@ -6,7 +6,7 @@
 
 use super::BundleEnv;
 use oxc_resolver::{Alias, AliasValue, ResolveOptions, Resolver};
-use oxide_diagnostics::{Diagnostic, OxideError};
+use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 

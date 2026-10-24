@@ -5,7 +5,7 @@
 //! trait lives here — in the server crate — so that the pipeline never
 //! depends on `oxide-jshost` (which would couple the HTTP layer to Node).
 //! The concrete `LoaderRunner` is provided by the CLI shim, which wraps
-//! `oxide_jshost::LoaderHost`.
+//! `oxide_fw_jshost::LoaderHost`.
 //!
 //! Layering mirrors `PageRenderer`:
 //!

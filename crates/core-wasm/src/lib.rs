@@ -4,9 +4,9 @@
 //! keys, head merge, ODF encode/decode. WinterCG-compatible JS is emitted for the
 //! remaining glue. This crate must stay dependency-light so it builds for wasm32.
 
-use oxide_odf::Value;
+use oxide_fw_odf::Value;
 
-pub type Result<T> = oxide_odf::Result<T>;
+pub type Result<T> = oxide_fw_odf::Result<T>;
 
 /// Compute a cache key for the edge (same canonicalization as oxide-cache L0 keys,
 /// minus build-id parts not available at the edge).
@@ -123,14 +123,14 @@ pub fn merge_head(
 
 /// Encode an ODF value for edge embedding (re-export with edge defaults).
 pub fn encode_odf(value: &Value) -> Result<Vec<u8>> {
-    oxide_odf::encode(value)
+    oxide_fw_odf::encode(value)
 }
 
 /// §9.5 / D18: decode ODF bytes back to a neutral value. The mirror of
 /// [`encode_odf`], exposed for the edge build. Errors surface as the
 /// decoder's own `ODF-*` codes.
 pub fn decode_odf(bytes: &[u8]) -> Result<Value> {
-    oxide_odf::decode(bytes)
+    oxide_fw_odf::decode(bytes)
 }
 
 /// Extract the URL-addressable route patterns from a router typegen `routes.json`
@@ -145,7 +145,7 @@ pub fn edge_manifest_routes(tree_json: &serde_json::Value) -> Result<Vec<String>
         v => match v.get("routes").and_then(|r| r.as_array()) {
             Some(rows) => rows,
             None => {
-                return Err(oxide_odf::err(
+                return Err(oxide_fw_odf::err(
                     "EDGE-101",
                     "routes manifest must be an array of route rows or {\"routes\": [...]} \
                      (router typegen §8.3)",
@@ -294,7 +294,7 @@ pub mod bindings {
     /// JSON value in, ODF bytes out (JS `Uint8Array`).
     #[wasm_bindgen]
     pub fn encode_odf(json: &[u8]) -> Vec<u8> {
-        // `oxide_odf::Value` is the ODF model; `serde_json::Value` is the wire
+        // `oxide_fw_odf::Value` is the ODF model; `serde_json::Value` is the wire
         // form the caller passes. `Value::from_json` is the bridge (the same
         // one the native encoder uses at the boundary).
         let json_value: serde_json::Value =

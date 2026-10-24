@@ -11,6 +11,6 @@
 
 fn main() {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
-    oxide_odf::fixtures::write_all(dir).expect("writing golden fixtures");
+    oxide_fw_odf::fixtures::write_all(dir).expect("writing golden fixtures");
     println!("wrote golden fixtures to {dir}");
 }

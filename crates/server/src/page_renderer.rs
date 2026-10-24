@@ -123,7 +123,7 @@ pub type RenderStream = BoxStream<'static, Result<Bytes>>;
 /// Object-safe trait the pipeline holds behind `Arc<dyn PageRenderer>`.
 ///
 /// Implementations live where the framework dependency is available
-/// (`crates/cli` shims `oxide_jshost::FrameworkHostRenderer`; tests use a
+/// (`crates/cli` shims `oxide_fw_jshost::FrameworkHostRenderer`; tests use a
 /// pure-Rust fake). The pipeline only sees the trait, so it stays
 /// framework- and Node-agnostic.
 #[async_trait]

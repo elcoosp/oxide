@@ -2,7 +2,7 @@
 
 #[test]
 fn config_schema_has_the_known_top_level_sections() {
-    let schema = oxide_config::config_schema();
+    let schema = oxide_fw_config::config_schema();
     let obj = schema
         .as_object()
         .expect("config_schema() must return a JSON object");
@@ -39,7 +39,7 @@ fn config_schema_has_the_known_top_level_sections() {
 
 #[test]
 fn config_schema_serializes_to_valid_json() {
-    let pretty = oxide_config::config_schema_pretty()
+    let pretty = oxide_fw_config::config_schema_pretty()
         .expect("config_schema_pretty() must not fail on a valid schema");
     // `config_schema_pretty` is pretty-printed with a trailing newline so
     // the output is paste-friendly; trim before asserting on the shape.
@@ -59,11 +59,11 @@ fn config_schema_serializes_to_valid_json() {
 #[test]
 fn session_ttl_secs_round_trips() {
     // §16.6 / WP-r9: the field exists, defaults to 1800, and parses.
-    let default: oxide_config::OxideConfig =
+    let default: oxide_fw_config::OxideConfig =
         serde_json::from_value(serde_json::json!({})).expect("default");
     assert_eq!(default.security.session_ttl_secs, 1800);
 
-    let custom: oxide_config::OxideConfig = serde_json::from_value(serde_json::json!({
+    let custom: oxide_fw_config::OxideConfig = serde_json::from_value(serde_json::json!({
         "security": { "sessionTtlSecs": 3600 }
     }))
     .expect("custom");
@@ -96,7 +96,7 @@ fn checked_in_schema_matches_the_function() {
             checked_in.display()
         )
     });
-    let generated = oxide_config::config_schema_pretty().expect("schema renders");
+    let generated = oxide_fw_config::config_schema_pretty().expect("schema renders");
 
     // Byte-for-byte. A reformatted file is drift too — regenerate, do not
     // hand-edit the checked-in artifact.

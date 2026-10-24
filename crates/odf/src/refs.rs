@@ -282,7 +282,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    fn too_deep() -> oxide_diagnostics::OxideError {
+    fn too_deep() -> oxide_fw_diagnostics::OxideError {
         err(
             "ODF-CYCLE",
             format!("reference expansion exceeds the {MAX_DEPTH}-level limit"),

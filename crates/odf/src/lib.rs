@@ -10,7 +10,7 @@
 //! consumes the same bytes — golden fixtures keep both sides in lockstep.
 
 use bytes::Bytes;
-use oxide_diagnostics::{Diagnostic, OxideError};
+use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use serde_json::{Map as JsonMap, Number, Value as Json};
 use std::collections::BTreeMap;
 

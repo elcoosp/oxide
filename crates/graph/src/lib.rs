@@ -21,7 +21,7 @@ pub use demand::DemandGraph;
 pub use trackers::{ConfigTrackerImpl, EnvTrackerImpl, FsTrackerImpl};
 
 use dashmap::DashMap;
-use oxide_diagnostics::{Diagnostic, OxideError};
+use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

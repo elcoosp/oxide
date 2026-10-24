@@ -11,7 +11,7 @@
 //!   cargo run -p oxide-config --bin oxide-schema -- > schemas/oxide-config.schema.json
 
 fn main() -> std::process::ExitCode {
-    match oxide_config::config_schema_pretty() {
+    match oxide_fw_config::config_schema_pretty() {
         Ok(s) => {
             print!("{s}");
             std::process::ExitCode::SUCCESS

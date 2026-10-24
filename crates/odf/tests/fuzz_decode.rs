@@ -23,7 +23,7 @@ proptest! {
         // The function's job is to return Err on garbage, never panic. If
         // this test panics, the bytes are hex-encoded by proptest's default
         // failure formatter and can be re-fed as a regression input.
-        let _ = oxide_odf::decode(&bytes);
+        let _ = oxide_fw_odf::decode(&bytes);
     }
 
     #[test]
@@ -36,6 +36,6 @@ proptest! {
         let mut input = Vec::with_capacity(4 + suffix.len());
         input.extend_from_slice(b"ODF1");
         input.extend_from_slice(&suffix);
-        let _ = oxide_odf::decode(&input);
+        let _ = oxide_fw_odf::decode(&input);
     }
 }

@@ -7,7 +7,7 @@
 //! the bootstrap shim — these tests exercise the live path, including the
 //! exact chunked-decode shape `__oxideFrameworkRender` uses.
 
-use oxide_jshost::{CallInput, EntryRef, JsHost, Pool, PoolConfig, V8Host};
+use oxide_fw_jshost::{CallInput, EntryRef, JsHost, Pool, PoolConfig, V8Host};
 
 fn input(payload: serde_json::Value) -> CallInput {
     CallInput {

@@ -4,10 +4,10 @@
 //! core `(i32) -> i32` function into a component `(s32) -> s32` export exercises
 //! the full `load → instantiate → probe → call → return` path end to end.
 
-use oxide_plugin::{Hook, WasmPlugin, WasmPluginManifest, hook_export_name};
+use oxide_fw_plugin::{Hook, WasmPlugin, WasmPluginManifest, hook_export_name};
 
 /// `unwrap_err` needs the Ok type to be `Debug`; wasmtime handles are not.
-fn err_of<T>(r: oxide_plugin::Result<T>) -> oxide_diagnostics::OxideError {
+fn err_of<T>(r: oxide_fw_plugin::Result<T>) -> oxide_fw_diagnostics::OxideError {
     match r {
         Ok(_) => panic!("expected an error"),
         Err(e) => e,

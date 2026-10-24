@@ -3,9 +3,9 @@
 //! Exercises `LightningCssBackend`: parse, minify, module scoping, nesting,
 //! `@media` handling, prefixing driven by browser targets.
 
-use oxide_assets::{CssBackend, CssInput, CssKind, LightningCssBackend};
+use oxide_fw_assets::{CssBackend, CssInput, CssKind, LightningCssBackend};
 
-fn css(code: &str, kind: CssKind, minify: bool, targets: Vec<String>) -> oxide_assets::CssOutput {
+fn css(code: &str, kind: CssKind, minify: bool, targets: Vec<String>) -> oxide_fw_assets::CssOutput {
     LightningCssBackend
         .transform(&CssInput {
             code: code.into(),
@@ -135,8 +135,8 @@ fn lightningcss_browser_targets_are_accepted() {
 
 // ---------------- SvgOgBackend (§16.3, D19) ----------------
 
-use oxide_assets::OgBackend;
-use oxide_assets::SvgOgBackend;
+use oxide_fw_assets::OgBackend;
+use oxide_fw_assets::SvgOgBackend;
 use serde_json::json;
 
 #[test]

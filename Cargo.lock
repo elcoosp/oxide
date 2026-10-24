@@ -4702,12 +4702,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxide-adapters"
+name = "oxide-fw-adapters"
 version = "0.1.0"
 dependencies = [
  "blake3",
  "insta",
- "oxide-diagnostics",
+ "oxide-fw-diagnostics",
  "serde",
  "serde_json",
  "tempfile",
@@ -4715,7 +4715,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxide-assets"
+name = "oxide-fw-assets"
 version = "0.1.0"
 dependencies = [
  "blake3",
@@ -4724,7 +4724,7 @@ dependencies = [
  "icu_locale_core",
  "image",
  "lightningcss",
- "oxide-diagnostics",
+ "oxide-fw-diagnostics",
  "ravif",
  "read-fonts 0.45.0",
  "resvg",
@@ -4740,15 +4740,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxide-bundler"
+name = "oxide-fw-bundler"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "arcstr",
  "blake3",
  "oxc_resolver",
- "oxide-compiler",
- "oxide-diagnostics",
+ "oxide-fw-compiler",
+ "oxide-fw-diagnostics",
  "oxide-fw-graph",
  "rolldown",
  "rolldown_common",
@@ -4761,7 +4761,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxide-cache"
+name = "oxide-fw-cache"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -4772,8 +4772,8 @@ dependencies = [
  "futures",
  "moka",
  "object_store",
- "oxide-diagnostics",
- "oxide-odf",
+ "oxide-fw-diagnostics",
+ "oxide-fw-odf",
  "redb",
  "redis",
  "ring",
@@ -4784,80 +4784,6 @@ dependencies = [
  "tokio",
  "tracing",
  "zstd 0.14.2",
-]
-
-[[package]]
-name = "oxide-compiler"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "oxc",
- "oxc_allocator",
- "oxc_ast",
- "oxc_codegen",
- "oxc_parser",
- "oxc_semantic",
- "oxc_sourcemap",
- "oxc_span",
- "oxc_transformer",
- "oxide-diagnostics",
- "regex",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "oxide-config"
-version = "0.1.0"
-dependencies = [
- "oxide-diagnostics",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "oxide-core-wasm"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "oxide-odf",
- "oxide-router",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "wasm-bindgen",
-]
-
-[[package]]
-name = "oxide-dev"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "local-ip-address",
- "notify",
- "oxide-diagnostics",
- "oxide-fw-graph",
- "qrcode",
- "rcgen",
- "rustls",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
-]
-
-[[package]]
-name = "oxide-diagnostics"
-version = "0.1.0"
-dependencies = [
- "miette",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -4878,21 +4804,21 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
- "oxide-adapters",
- "oxide-assets",
- "oxide-bundler",
- "oxide-cache",
- "oxide-compiler",
- "oxide-config",
- "oxide-dev",
- "oxide-diagnostics",
+ "oxide-fw-adapters",
+ "oxide-fw-assets",
+ "oxide-fw-bundler",
+ "oxide-fw-cache",
+ "oxide-fw-compiler",
+ "oxide-fw-config",
+ "oxide-fw-dev",
+ "oxide-fw-diagnostics",
  "oxide-fw-graph",
- "oxide-jshost",
- "oxide-odf",
- "oxide-plugin",
- "oxide-render",
- "oxide-router",
- "oxide-server",
+ "oxide-fw-jshost",
+ "oxide-fw-odf",
+ "oxide-fw-plugin",
+ "oxide-fw-render",
+ "oxide-fw-router",
+ "oxide-fw-server",
  "rayon",
  "reqwest",
  "rmcp",
@@ -4908,6 +4834,80 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxide-fw-compiler"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "oxc",
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_codegen",
+ "oxc_parser",
+ "oxc_semantic",
+ "oxc_sourcemap",
+ "oxc_span",
+ "oxc_transformer",
+ "oxide-fw-diagnostics",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "oxide-fw-config"
+version = "0.1.0"
+dependencies = [
+ "oxide-fw-diagnostics",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "oxide-fw-core-wasm"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "oxide-fw-odf",
+ "oxide-fw-router",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "oxide-fw-dev"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "local-ip-address",
+ "notify",
+ "oxide-fw-diagnostics",
+ "oxide-fw-graph",
+ "qrcode",
+ "rcgen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "oxide-fw-diagnostics"
+version = "0.1.0"
+dependencies = [
+ "miette",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "oxide-fw-graph"
 version = "0.1.0"
 dependencies = [
@@ -4916,7 +4916,7 @@ dependencies = [
  "bytes",
  "dashmap 6.2.1",
  "object_store",
- "oxide-diagnostics",
+ "oxide-fw-diagnostics",
  "proptest",
  "rayon",
  "redb",
@@ -4930,7 +4930,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxide-jshost"
+name = "oxide-fw-jshost"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -4941,10 +4941,10 @@ dependencies = [
  "deno_error",
  "futures",
  "oxc_resolver",
- "oxide-cache",
- "oxide-compiler",
- "oxide-diagnostics",
- "oxide-odf",
+ "oxide-fw-cache",
+ "oxide-fw-compiler",
+ "oxide-fw-diagnostics",
+ "oxide-fw-odf",
  "ring",
  "serde",
  "serde_json",
@@ -4955,21 +4955,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxide-odf"
+name = "oxide-fw-odf"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "oxide-diagnostics",
+ "oxide-fw-diagnostics",
  "proptest",
  "serde_json",
  "thiserror 2.0.21",
 ]
 
 [[package]]
-name = "oxide-plugin"
+name = "oxide-fw-plugin"
 version = "0.1.0"
 dependencies = [
- "oxide-diagnostics",
+ "oxide-fw-diagnostics",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -4980,7 +4980,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxide-render"
+name = "oxide-fw-render"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
@@ -4989,8 +4989,8 @@ dependencies = [
  "futures",
  "insta",
  "lol_html",
- "oxide-diagnostics",
- "oxide-odf",
+ "oxide-fw-diagnostics",
+ "oxide-fw-odf",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -4998,12 +4998,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxide-router"
+name = "oxide-fw-router"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
  "memmap2",
- "oxide-diagnostics",
+ "oxide-fw-diagnostics",
  "proptest",
  "regex",
  "rkyv 0.8.18",
@@ -5015,7 +5015,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxide-server"
+name = "oxide-fw-server"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -5031,12 +5031,12 @@ dependencies = [
  "hyper",
  "hyper-util",
  "moka",
- "oxide-cache",
- "oxide-config",
- "oxide-diagnostics",
- "oxide-odf",
- "oxide-render",
- "oxide-router",
+ "oxide-fw-cache",
+ "oxide-fw-config",
+ "oxide-fw-diagnostics",
+ "oxide-fw-odf",
+ "oxide-fw-render",
+ "oxide-fw-router",
  "quinn",
  "ring",
  "rustls-pemfile",

@@ -5,13 +5,13 @@
 //! workers, the V8Host stub and the ops table (§4.5).
 
 use bytes::Bytes;
-use oxide_jshost::*;
+use oxide_fw_jshost::*;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 
 /// `unwrap_err` needs the Ok type to be `Debug`; `CallStream`/`Arc<dyn Pool>` are not.
-fn err_of<T>(r: Result<T>) -> oxide_diagnostics::OxideError {
+fn err_of<T>(r: Result<T>) -> oxide_fw_diagnostics::OxideError {
     match r {
         Ok(_) => panic!("expected an error"),
         Err(e) => e,
@@ -93,7 +93,7 @@ fn frame_unframe_roundtrip_over_all_message_kinds() {
         WorkerMsg::CallEnd { id: 4 },
         WorkerMsg::CallErr {
             id: 5,
-            diagnostic: oxide_diagnostics::Diagnostic::error("JSH-TEST", "boom").with_fix("fix it"),
+            diagnostic: oxide_fw_diagnostics::Diagnostic::error("JSH-TEST", "boom").with_fix("fix it"),
         },
         WorkerMsg::OpRequest {
             id: 6,
@@ -779,7 +779,7 @@ fn op_decls_returns_the_documented_ops() {
     // `random` and `sleep` back `crypto.getRandomValues` and the timer shims
     // the §4.6 tier-1 prelude installs, so they live in the ops table rather
     // than in the JS bootstrap.
-    let decls = oxide_jshost::v8_ops::op_decls();
+    let decls = oxide_fw_jshost::v8_ops::op_decls();
     assert_eq!(
         decls.len(),
         12,
