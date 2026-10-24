@@ -1,4 +1,4 @@
-//! oxide-core-wasm — edge subset (spec §2 D18, §18 cloudflare target).
+//! oxide-fw-core-wasm — edge subset (spec §2 D18, §18 cloudflare target).
 //!
 //! Compiles the core features that must run where Rust cannot run V8: router, cache
 //! keys, head merge, ODF encode/decode. WinterCG-compatible JS is emitted for the
@@ -8,7 +8,7 @@ use oxide_fw_odf::Value;
 
 pub type Result<T> = oxide_fw_odf::Result<T>;
 
-/// Compute a cache key for the edge (same canonicalization as oxide-cache L0 keys,
+/// Compute a cache key for the edge (same canonicalization as oxide-fw-cache L0 keys,
 /// minus build-id parts not available at the edge).
 pub fn edge_cache_key(route: &str, params: &str, vary: &str, build_id: &str) -> String {
     // blake3 is available for wasm32; mirror cache::CacheKey::canonical layout.

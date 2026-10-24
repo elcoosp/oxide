@@ -1,4 +1,4 @@
-//! §22: `insta` snapshot suite for oxide-render's public output surface.
+//! §22: `insta` snapshot suite for oxide-fw-render's public output surface.
 //!
 //! The spec calls for "insta snapshots for HTML and manifests". These lock the
 //! exact byte shape of every emitted fragment so a refactor that changes
@@ -6,7 +6,7 @@
 //! of silently breaking the client protocol.
 //!
 //! Each snapshot is a `.snap` file beside this test. Update with
-//! `INSTA_UPDATE=always cargo test -p oxide-render --test snapshots_render`.
+//! `INSTA_UPDATE=always cargo test -p oxide-fw-render --test snapshots_render`.
 
 use oxide_fw_diagnostics::Diagnostic;
 use oxide_fw_render::*;

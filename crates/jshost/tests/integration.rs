@@ -1,4 +1,4 @@
-//! TDD suite for oxide-jshost (spec §4, §4.2–§4.3, §4.5).
+//! TDD suite for oxide-fw-jshost (spec §4, §4.2–§4.3, §4.5).
 //!
 //! Covers: framing (§4.2 "same op protocol"), least-loaded dispatch with
 //! route-affinity (§4.3), the scripted test backend, the real NodeHost child

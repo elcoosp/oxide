@@ -162,7 +162,7 @@ impl Compute for FileCompute {
         // §5-B: a Resolver edge per bare specifier this file imports. The
         // "resolved hash" for v0.1 is the specifier's own hash — the richer
         // identity (path + package version + matched conditions) lives in
-        // oxide-bundler's resolver, which is not a Compute. Recording the
+        // oxide-fw-bundler's resolver, which is not a Compute. Recording the
         // specifier is what makes `invalidate(&[Input::Resolver{...}])`
         // possible; a later build can bump the resolved hash when the
         // resolver observes a lockfile change.

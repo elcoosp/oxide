@@ -1,4 +1,4 @@
-//! TDD suite for oxide-bundler (spec §6.4): resolution reuse, route-based code
+//! TDD suite for oxide-fw-bundler (spec §6.4): resolution reuse, route-based code
 //! splitting, shared-chunk heuristic, content-hashed output, client/server
 //! manifests, the §6.4 server-only guard, cycles, externals, minify/sourcemap.
 

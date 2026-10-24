@@ -1,4 +1,4 @@
-//! TDD suite for oxide-adapters (spec §18, §10.5).
+//! TDD suite for oxide-fw-adapters (spec §18, §10.5).
 //!
 //! Written BEFORE the implementation; every pub fn of the crate is exercised.
 

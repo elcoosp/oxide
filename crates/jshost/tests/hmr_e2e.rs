@@ -7,7 +7,7 @@
 //!
 //! Requires Node on PATH; `#[ignore]` by default because it spawns a worker.
 //! Run explicitly:
-//!     cargo test -p oxide-jshost --test hmr_e2e -- --ignored
+//!     cargo test -p oxide-fw-jshost --test hmr_e2e -- --ignored
 
 use oxide_fw_jshost::{FrameworkHost, JsHost, LoaderHost, NodeHost, Pool, PoolConfig};
 use serde_json::json;

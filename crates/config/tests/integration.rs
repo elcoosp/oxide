@@ -1,4 +1,4 @@
-//! Integration suite for oxide-config (spec §14, D14) — drives the crate only
+//! Integration suite for oxide-fw-config (spec §14, D14) — drives the crate only
 //! through its public API: env-file parsing, size parsing, static extraction
 //! (including the exact §14.1 example), layering, validation and public env.
 

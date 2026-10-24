@@ -119,8 +119,8 @@ impl MemoryTier {
 
 // --------------------------------------------------------------------------- DiskTier
 
-const ENTRY_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("oxide-cache-entries");
-const TAG_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("oxide-cache-tags");
+const ENTRY_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("oxide-fw-cache-entries");
+const TAG_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("oxide-fw-cache-tags");
 
 /// Index row: blob path (relative to root), compressed size, tags, stored_at and the
 /// blake3 of the *uncompressed* serialized entry (verified on load, §17.2).

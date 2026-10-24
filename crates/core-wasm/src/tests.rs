@@ -1,4 +1,4 @@
-//! TDD suite for oxide-core-wasm (spec §2 D18, §18 cloudflare target).
+//! TDD suite for oxide-fw-core-wasm (spec §2 D18, §18 cloudflare target).
 
 use super::*;
 use oxide_fw_odf::Value;
@@ -167,7 +167,7 @@ fn edge_cache_key_matches_blake3_hex_layout() {
 
 #[test]
 fn edge_manifest_routes_reads_router_typegen_output() {
-    // Shape produced by oxide-router typegen (.oxide/types/routes.json, §8.3).
+    // Shape produced by oxide-fw-router typegen (.oxide/types/routes.json, §8.3).
     let routes_json = serde_json::json!([
         { "id": "routes/layout", "pattern": "/", "kind": "layout" },
         { "id": "routes/index/page", "pattern": "/", "kind": "page", "renderMode": "static" },

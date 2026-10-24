@@ -14,9 +14,9 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-oxide-odf = { path = "../crates/odf" }
-oxide-router = { path = "../crates/router" }
-oxide-config = { path = "../crates/config" }
+oxide-fw-odf = { path = "../crates/odf" }
+oxide-fw-router = { path = "../crates/router" }
+oxide-fw-config = { path = "../crates/config" }
 
 [[bin]]
 name = "odf_decode"

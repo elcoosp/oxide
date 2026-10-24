@@ -6,7 +6,7 @@
 //! updated files:
 //!
 //! ```text
-//! cargo run -p oxide-odf --example odf_fixture
+//! cargo run -p oxide-fw-odf --example odf_fixture
 //! ```
 
 fn main() {

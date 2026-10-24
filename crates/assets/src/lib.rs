@@ -1,4 +1,4 @@
-//! oxide-assets — CSS pipeline, images, fonts, OG, content (spec §6.6–6.7, §16, D5, D19).
+//! oxide-fw-assets — CSS pipeline, images, fonts, OG, content (spec §6.6–6.7, §16, D5, D19).
 //!
 //! CSS: Lightning-CSS-shaped pipeline behind `CssBackend` (parse, nesting, modules,
 //! prefixing, minify, source maps, browserslist targets). Images: pure-Rust default

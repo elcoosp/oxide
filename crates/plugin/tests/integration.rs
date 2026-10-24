@@ -1,4 +1,4 @@
-//! TDD suite for oxide-plugin (spec §15).
+//! TDD suite for oxide-fw-plugin (spec §15).
 //!
 //! Covers: registration with bridge-capability enforcement (§15.2 "hooks the
 //! bridge does not support fail at load"), same-name replacement, hook chain

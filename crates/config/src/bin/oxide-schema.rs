@@ -2,13 +2,13 @@
 //! stdout (spec §19.3: "JSON Schema for config").
 //!
 //! Editors and IDEs point `$schema` at the checked-in artifact
-//! (`schemas/oxide-config.schema.json`); this binary is the regenerator.
+//! (`schemas/oxide-fw-config.schema.json`); this binary is the regenerator.
 //! A drift gate in `crates/config/tests/schema_stability.rs` fails CI if
 //! the checked-in file and the function's output diverge — so adding a
 //! config key without regenerating is a build error, not a silent staleness.
 //!
 //! Usage:
-//!   cargo run -p oxide-config --bin oxide-schema -- > schemas/oxide-config.schema.json
+//!   cargo run -p oxide-fw-config --bin oxide-schema -- > schemas/oxide-fw-config.schema.json
 
 fn main() -> std::process::ExitCode {
     match oxide_fw_config::config_schema_pretty() {

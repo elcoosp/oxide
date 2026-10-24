@@ -1,4 +1,4 @@
-//! TDD test suite for oxide-dev (spec §13, §5.5).
+//! TDD test suite for oxide-fw-dev (spec §13, §5.5).
 
 use super::*;
 use oxide_fw_diagnostics::Location;

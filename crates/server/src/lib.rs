@@ -1,4 +1,4 @@
-//! oxide-server — hyper pipeline, static assets, compression, TLS, rules (spec §12, §17, D7, D13).
+//! oxide-fw-server — hyper pipeline, static assets, compression, TLS, rules (spec §12, §17, D7, D13).
 //!
 //! Request pipeline (§12.1): accept → limits + request id → static asset match
 //! (immutable hashed, precompressed zstd/br/gzip, range + If-None-Match) → native rules →
@@ -131,7 +131,7 @@ pub fn is_secret_key(k: &str) -> bool {
     let k = k.to_ascii_lowercase();
     matches!(
         k.as_str(),
-        "cookie" | "authorization" | "set-cookie" | "x-oxide-dev-token"
+        "cookie" | "authorization" | "set-cookie" | "x-oxide-fw-dev-token"
     ) || k.contains("secret")
         || k.contains("token")
         || k.contains("password")
@@ -1106,10 +1106,10 @@ pub fn dev_token() -> String {
 }
 
 /// SEC-09: does the request carry the dev session token? Accepts it as a
-/// `token=` query parameter or the `x-oxide-dev-token` header. Constant-time
+/// `token=` query parameter or the `x-oxide-fw-dev-token` header. Constant-time
 /// compare (the token is a secret).
 fn dev_token_ok(req: &OxideRequest, want: &str) -> bool {
-    let from_header = req.header("x-oxide-dev-token");
+    let from_header = req.header("x-oxide-fw-dev-token");
     let from_query = req.url.split_once('?').map(|(_, q)| q).and_then(|q| {
         q.split('&')
             .find_map(|kv| kv.strip_prefix("token=").map(|v| v.to_string()))
@@ -1510,8 +1510,8 @@ pub struct Pipeline {
     /// `/__oxide/state` return the inspector snapshot. Never set in production.
     pub inspector: Option<Arc<dyn InspectorSnapshot>>,
     /// SPEC-14 / §13.3: the dev HMR message source. `Some` only in dev; the
-    /// `/_oxide/hmr` WebSocket subscribes to it. `oxide-server` does not
-    /// depend on `oxide-dev`, so this is a broadcast of pre-serialized JSON
+    /// `/_oxide/hmr` WebSocket subscribes to it. `oxide-fw-server` does not
+    /// depend on `oxide-fw-dev`, so this is a broadcast of pre-serialized JSON
     /// strings the CLI wires from its `HmrHub`.
     pub hmr: Option<Arc<tokio::sync::broadcast::Sender<String>>>,
     /// §13.3: the client manifest's `build_id` (`"dev"` when no build).
@@ -1528,7 +1528,7 @@ pub struct Pipeline {
     /// 404), which is what a project with images turned off wants.
     pub image_endpoint: Option<Arc<crate::ImageEndpoint>>,
     /// §16.3: the OG-image endpoint. `Some` enables `GET /_oxide/og`.
-    /// The rasterization lives in `oxide-assets` behind `OgEndpointBackend`.
+    /// The rasterization lives in `oxide-fw-assets` behind `OgEndpointBackend`.
     pub og_endpoint: Option<Arc<OgEndpoint>>,
     /// Optional server-function dispatcher (§9.4). When `Some`,
     /// `POST /_oxide/fn/<id>` routes through it. The dispatcher owns the
@@ -1547,7 +1547,7 @@ pub struct Pipeline {
     pub tls: bool,
     /// SEC-09: a dev-only session token. When `Some`, the `/__oxide`
     /// inspector endpoints require it (via `?token=` or the
-    /// `x-oxide-dev-token` header). A dev server on a shared LAN must not
+    /// `x-oxide-fw-dev-token` header). A dev server on a shared LAN must not
     /// expose its inspector to anyone who can reach the port. `None`
     /// disables the guard (production never sets an inspector at all).
     pub dev_token: Option<String>,
@@ -1753,7 +1753,7 @@ pub struct ActionRunResult {
 
 /// §9.4: the seam between the HTTP pipeline and whichever runtime executes
 /// a user's server function. The CLI wires a dispatcher backed by the
-/// render pool (`oxide-jshost`); tests can wire a table of closures.
+/// render pool (`oxide-fw-jshost`); tests can wire a table of closures.
 #[async_trait::async_trait]
 pub trait ServerFnDispatcher: Send + Sync {
     /// Look up the function registered under `id` and run it with `args`.
@@ -1805,9 +1805,9 @@ impl DispatchError {
 /// against `ImagesConfig.remotePatterns`), and the signing secret.
 ///
 /// The transform itself is `oxide_fw_assets::ImageBackend`, but the server
-/// crate must not depend on `oxide-assets` — that crate pulls ravif,
-/// resvg, skrifa and lightningcss, and `oxide-server` is meant to build
-/// lean. `oxide-server` names only the trait seams below; the CLI builds
+/// crate must not depend on `oxide-fw-assets` — that crate pulls ravif,
+/// resvg, skrifa and lightningcss, and `oxide-fw-server` is meant to build
+/// lean. `oxide-fw-server` names only the trait seams below; the CLI builds
 /// the concrete endpoint from config and hands it in through
 /// `Pipeline::image_endpoint`.
 pub struct ImageEndpoint {
@@ -1937,9 +1937,9 @@ pub struct ImageEndpointResult {
 
 /// §16.3: the `/_oxide/og` endpoint. Renders an Open Graph image from a
 /// neutral element tree through a pluggable backend (the pure-Rust
-/// `resvg`/`taffy`/`parley` pipeline in `oxide-assets`). Like the image
-/// endpoint, this is a trait seam so `oxide-server` does not depend on
-/// `oxide-assets`.
+/// `resvg`/`taffy`/`parley` pipeline in `oxide-fw-assets`). Like the image
+/// endpoint, this is a trait seam so `oxide-fw-server` does not depend on
+/// `oxide-fw-assets`.
 pub struct OgEndpoint {
     pub backend: Arc<dyn OgEndpointBackend>,
 }
@@ -2141,7 +2141,7 @@ pub struct SecuritySettings {
     /// SEC-05 / S-10: CIDRs whose `X-Forwarded-For` is trusted. Empty = trust
     /// no proxy (the rate-limit key uses the socket peer directly).
     pub trusted_proxies: Vec<String>,
-    /// S-21.3: emit the `x-oxide-cache` status header. Default `true`.
+    /// S-21.3: emit the `x-oxide-fw-cache` status header. Default `true`.
     pub expose_cache_header: bool,
 }
 
@@ -3578,7 +3578,7 @@ impl Pipeline {
         // in Rust, never entering JS; a missing endpoint or an invalid
         // request yields a coded 4xx that names the reason.
         // §16.3: the OG-image endpoint. Rendered synchronously through the
-        // backend (resvg/taffy/parley in oxide-assets); a PNG response.
+        // backend (resvg/taffy/parley in oxide-fw-assets); a PNG response.
         if req.method.eq_ignore_ascii_case("GET") && path == "/_oxide/og" {
             if let Some(ep) = self.og_endpoint.as_deref() {
                 // A3: resvg rasterization is CPU-bound and the endpoint is
@@ -3933,7 +3933,7 @@ impl Pipeline {
         // cache. Drop the header (set by the L0 layer) when disabled.
         if !self.security.expose_cache_header {
             r.headers
-                .retain(|(k, _)| !k.eq_ignore_ascii_case("x-oxide-cache"));
+                .retain(|(k, _)| !k.eq_ignore_ascii_case("x-oxide-fw-cache"));
         }
         if !r
             .headers

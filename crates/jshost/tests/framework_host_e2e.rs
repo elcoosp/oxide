@@ -8,7 +8,7 @@
 //!
 //! `#[ignore]` by default because it spawns a Node process and touches the
 //! filesystem. Run explicitly:
-//!     cargo test -p oxide-jshost --test framework_host_e2e -- --ignored
+//!     cargo test -p oxide-fw-jshost --test framework_host_e2e -- --ignored
 //!
 //! ## Test isolation
 //!

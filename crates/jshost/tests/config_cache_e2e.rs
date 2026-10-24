@@ -10,7 +10,7 @@
 //!
 //! Requires Node on PATH; `#[ignore]` by default because it spawns a worker.
 //! Run explicitly:
-//!     cargo test -p oxide-jshost --test config_cache_e2e -- --ignored
+//!     cargo test -p oxide-fw-jshost --test config_cache_e2e -- --ignored
 
 use oxide_fw_jshost::{FrameworkHost, JsHost, NodeHost, Pool, PoolConfig};
 use std::fs;

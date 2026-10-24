@@ -1,4 +1,4 @@
-//! TDD suite for oxide-server (spec §12, §17, §9.6).
+//! TDD suite for oxide-fw-server (spec §12, §17, §9.6).
 //!
 //! Written BEFORE the implementation; every pub fn of the crate is exercised.
 
@@ -2072,7 +2072,7 @@ async fn sec09_inspector_requires_the_dev_token() {
             req(
                 "GET",
                 "/__oxide/state",
-                &[("x-oxide-dev-token", "secret-token")],
+                &[("x-oxide-fw-dev-token", "secret-token")],
             ),
             d,
         )

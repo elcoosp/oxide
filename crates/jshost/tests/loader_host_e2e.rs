@@ -4,7 +4,7 @@
 //!
 //! Requires Node on PATH. `#[ignore]` by default because it spawns a Node
 //! process. Run explicitly:
-//!     cargo test -p oxide-jshost --test loader_host_e2e -- --ignored
+//!     cargo test -p oxide-fw-jshost --test loader_host_e2e -- --ignored
 //!
 //! ## Test isolation
 //!

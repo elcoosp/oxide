@@ -1,4 +1,4 @@
-//! oxide-jshost — JsHost trait, NodeHost backend, ops, pools (spec §4, D2).
+//! oxide-fw-jshost — JsHost trait, NodeHost backend, ops, pools (spec §4, D2).
 //!
 //! Rust owns everything except user code and JS-only compilers (D1). The `JsHost`
 //! trait exposes render + tooling pools. Backends: `V8Host` (default, via deno_core)
@@ -210,9 +210,9 @@ pub trait JsHost: Send + Sync {
     fn backend_name(&self) -> &'static str;
 }
 
-/// PERF-05: the HTTP fetch the `fetch` op delegates to. `oxide-jshost` has no
+/// PERF-05: the HTTP fetch the `fetch` op delegates to. `oxide-fw-jshost` has no
 /// HTTP client of its own; the CLI wires an implementation backed by
-/// `oxide-server`'s SSRF-hardened fetch (SEC-03), so a server-side `fetch()`
+/// `oxide-fw-server`'s SSRF-hardened fetch (SEC-03), so a server-side `fetch()`
 /// in user code goes through the same validated path as the image endpoint —
 /// no separate, unguarded client.
 #[async_trait::async_trait]

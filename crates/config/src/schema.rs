@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 /// The `$schema` URI written into the config schema file. Editors recognise
 /// the `$schema` field and use this URI to fetch the schema.
-pub const CONFIG_SCHEMA_URI: &str = "https://oxide.dev/schema/oxide-config-v1.json";
+pub const CONFIG_SCHEMA_URI: &str = "https://oxide.dev/schema/oxide-fw-config-v1.json";
 
 /// Produce the JSON Schema document. Deterministic; identical bytes for a
 /// given crate version, so it can be committed to a repo and diffed.
@@ -196,7 +196,7 @@ pub fn config_schema() -> Value {
                     },
                     "exposeCacheHeader": {
                         "type": "boolean",
-                        "description": "S-21.3: emit the `x-oxide-cache` status header. Default true."
+                        "description": "S-21.3: emit the `x-oxide-fw-cache` status header. Default true."
                     }
                 }
             },

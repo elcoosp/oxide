@@ -73,12 +73,12 @@ fn session_ttl_secs_round_trips() {
 #[test]
 fn checked_in_schema_matches_the_function() {
     // §19.3: "JSON Schema for config". The schema is consumable by editors
-    // only when it exists at a stable path — `schemas/oxide-config.schema.json`
+    // only when it exists at a stable path — `schemas/oxide-fw-config.schema.json`
     // at the repo root. This gate fails when a config key is added to
     // `config_schema()` without regenerating the file:
     //
-    //   cargo run -p oxide-config --bin oxide-schema -- \
-    //     > schemas/oxide-config.schema.json
+    //   cargo run -p oxide-fw-config --bin oxide-schema -- \
+    //     > schemas/oxide-fw-config.schema.json
     //
     // The same pattern `docs-check` uses for generated docs (§v0.2 draft):
     // regeneration is a one-liner, and forgetting is a red build.
@@ -87,12 +87,12 @@ fn checked_in_schema_matches_the_function() {
         .parent()
         .and_then(|p| p.parent())
         .expect("workspace root is crates/config/../..");
-    let checked_in = repo_root.join("schemas/oxide-config.schema.json");
+    let checked_in = repo_root.join("schemas/oxide-fw-config.schema.json");
     let on_disk = std::fs::read_to_string(&checked_in).unwrap_or_else(|e| {
         panic!(
             "cannot read {}: {e}. Regenerate with:\n  \
-             cargo run -p oxide-config --bin oxide-schema -- \
-             > schemas/oxide-config.schema.json",
+             cargo run -p oxide-fw-config --bin oxide-schema -- \
+             > schemas/oxide-fw-config.schema.json",
             checked_in.display()
         )
     });
@@ -110,12 +110,12 @@ fn checked_in_schema_matches_the_function() {
             .position(|(x, y)| x != y)
             .unwrap_or(a.len().min(b.len()));
         panic!(
-            "schemas/oxide-config.schema.json is stale (first diff at line {}).\n\
+            "schemas/oxide-fw-config.schema.json is stale (first diff at line {}).\n\
              checked-in: {:?}\n\
              generated:  {:?}\n\
              Regenerate with:\n  \
-             cargo run -p oxide-config --bin oxide-schema -- \
-             > schemas/oxide-config.schema.json",
+             cargo run -p oxide-fw-config --bin oxide-schema -- \
+             > schemas/oxide-fw-config.schema.json",
             first_diff + 1,
             a.get(first_diff),
             b.get(first_diff),

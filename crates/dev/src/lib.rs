@@ -1,4 +1,4 @@
-//! oxide-dev — watcher, HMR, overlay, inspector (spec §13).
+//! oxide-fw-dev — watcher, HMR, overlay, inspector (spec §13).
 //!
 //! Startup (§13.1): load config (static extract), open persistent cache, start the
 //! file watcher, restore route manifest + prebundled deps, start listening — no

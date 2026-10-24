@@ -1,4 +1,4 @@
-//! oxide-plugin — plugin host, JS bridge, WASM host, modules (spec §15).
+//! oxide-fw-plugin — plugin host, JS bridge, WASM host, modules (spec §15).
 //!
 //! Three kinds share one hook model and ordering (§15.1): native (built in),
 //! WASM component plugins (stable WIT interface), JS plugins (Rollup/Vite-shaped,

@@ -43,7 +43,7 @@ pub fn build_transform_handler(
     Some(Arc::new(HookTransformHandler { hook }))
 }
 
-/// PERF-05: the `fetch` op handler. Delegates to `oxide-server`'s
+/// PERF-05: the `fetch` op handler. Delegates to `oxide-fw-server`'s
 /// SSRF-hardened fetch, so a server-side `fetch()` in user code goes through
 /// the same validated path as the image endpoint.
 struct CliFetchHandler {
@@ -430,7 +430,7 @@ pub async fn build_framework_stack(
         }
     };
 
-    // PERF-05: the `fetch` op handler (SSRF-hardened, backed by oxide-server).
+    // PERF-05: the `fetch` op handler (SSRF-hardened, backed by oxide-fw-server).
     let fetch_handler: Arc<dyn oxide_fw_jshost::FetchHandler> = Arc::new(CliFetchHandler {
         ssrf_allow_list: Vec::new(),
     });

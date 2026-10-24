@@ -1,4 +1,4 @@
-//! oxide-diagnostics — one diagnostic format shared by Rust, tooling workers and isolates (spec §19.4).
+//! oxide-fw-diagnostics — one diagnostic format shared by Rust, tooling workers and isolates (spec §19.4).
 //!
 //! Every error has: a stable code, a severity, a source-mapped code frame, the cause chain,
 //! and a fix hint when one is known. Serialized as JSON over the JS boundary.

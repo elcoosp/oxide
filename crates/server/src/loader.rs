@@ -3,7 +3,7 @@
 //! The HTTP pipeline uses a `LoaderRunner` to evaluate a route's
 //! `page.server.ts` `load(event)` function before dispatching a render. The
 //! trait lives here — in the server crate — so that the pipeline never
-//! depends on `oxide-jshost` (which would couple the HTTP layer to Node).
+//! depends on `oxide-fw-jshost` (which would couple the HTTP layer to Node).
 //! The concrete `LoaderRunner` is provided by the CLI shim, which wraps
 //! `oxide_fw_jshost::LoaderHost`.
 //!

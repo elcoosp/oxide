@@ -1,4 +1,4 @@
-//! oxide-config — typed, validated, layered configuration (spec §14, D14).
+//! oxide-fw-config — typed, validated, layered configuration (spec §14, D14).
 //!
 //! Layering (§14.2): defaults → preset → `oxide.config.ts` → mode file
 //! (`oxide.config.production.ts`) → env (`OXIDE_*`) → CLI flags.
@@ -546,7 +546,7 @@ pub struct SecurityConfig {
     /// tighten or extend it without a rebuild of the CLI.
     #[serde(default = "default_session_ttl_secs")]
     pub session_ttl_secs: u64,
-    /// S-21.3: emit the `x-oxide-cache` status header (`L0-hit`/`miss`/…).
+    /// S-21.3: emit the `x-oxide-fw-cache` status header (`L0-hit`/`miss`/…).
     /// Default `true`; a strict deployment can set it `false` to avoid
     /// telling clients whether a response came from cache.
     pub expose_cache_header: bool,

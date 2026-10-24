@@ -1,4 +1,4 @@
-//! TDD suite for oxide-render (spec §7.1, §10, §17.1).
+//! TDD suite for oxide-fw-render (spec §7.1, §10, §17.1).
 //!
 //! Written BEFORE the implementation; every pub fn of the crate is exercised.
 

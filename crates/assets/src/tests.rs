@@ -1,4 +1,4 @@
-//! TDD suite for oxide-assets (spec §16, D5, D19). CSS is tested in
+//! TDD suite for oxide-fw-assets (spec §16, D5, D19). CSS is tested in
 //! `tests/lightningcss_tdd.rs`; this module covers asset queries, images,
 //! fonts, metadata, sitemap/robots, content, and highlighting.
 

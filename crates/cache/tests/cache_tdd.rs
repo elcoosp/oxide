@@ -1,4 +1,4 @@
-//! TDD suite for oxide-cache (spec §11). Written first; implementation brought to green.
+//! TDD suite for oxide-fw-cache (spec §11). Written first; implementation brought to green.
 //! Exercises only the public crate API. Deterministic: no sleeps > 50 ms (freshness is
 //! driven by manipulating `Entry::stored_at` against the wall clock, never by waiting).
 

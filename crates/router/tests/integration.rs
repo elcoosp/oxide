@@ -1,4 +1,4 @@
-//! Cross-cutting integration tests for oxide-router (spec §8, D8): full fixture route
+//! Cross-cutting integration tests for oxide-fw-router (spec §8, D8): full fixture route
 //! trees, archive roundtrips through a live mmap, typegen artifacts, and proptests.
 
 use std::fs;

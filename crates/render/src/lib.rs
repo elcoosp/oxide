@@ -1,4 +1,4 @@
-//! oxide-render — streaming pipeline, html injection, boundary protocol (spec §7.1, §10, D12).
+//! oxide-fw-render — streaming pipeline, html injection, boundary protocol (spec §7.1, §10, D12).
 //!
 //! The render sequence (§10.2): route matched + L0 checked → loads in isolate →
 //! adapter.render() streams the shell → Rust injects head/CSS/modulepreload/CSP nonces/

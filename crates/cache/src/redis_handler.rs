@@ -260,7 +260,7 @@ mod tests {
     /// with a clear stderr line when unset (no Redis required for CI). Run
     /// locally with:
     ///     OXIDE_TEST_REDIS_URL=redis://127.0.0.1:6379 \
-    ///       cargo test -p oxide-cache --features redis -- --ignored
+    ///       cargo test -p oxide-fw-cache --features redis -- --ignored
     #[tokio::test]
     #[ignore = "requires OXIDE_TEST_REDIS_URL"]
     async fn redis_roundtrip_and_tag_invalidation() {

@@ -1,4 +1,4 @@
-//! oxide-compiler — Oxc passes (spec §6.2–6.4, §9.3–9.4, D4).
+//! oxide-fw-compiler — Oxc passes (spec §6.2–6.4, §9.3–9.4, D4).
 //!
 //! This crate implements the compiler passes behind a `Transformer` trait so the
 //! Oxc native backend (D4) can slot in; the default engine is a tolerant scanner

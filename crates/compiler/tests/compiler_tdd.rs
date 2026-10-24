@@ -1,4 +1,4 @@
-//! TDD suite for oxide-compiler (spec §6.2–6.4, §9.3–9.4, §19.4).
+//! TDD suite for oxide-fw-compiler (spec §6.2–6.4, §9.3–9.4, §19.4).
 
 use oxide_fw_compiler::{
     DirectiveKind, Env, ScannerTransformer, TransformInput, Transformer, guard_server_only,

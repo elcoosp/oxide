@@ -5,9 +5,9 @@
 
 use clap::{Parser, Subcommand};
 
-/// The wasm-bindgen-processed `oxide-core-wasm` artifact, embedded at
+/// The wasm-bindgen-processed `oxide-fw-core-wasm` artifact, embedded at
 /// CLI build time so a user project without a cargo workspace containing
-/// `oxide-core-wasm` still gets the accelerated edge path.
+/// `oxide-fw-core-wasm` still gets the accelerated edge path.
 /// Regenerated via `scripts/regen-edge-wasm.sh` (WP-C2, deviation 6).
 static EDGE_WASM_BYTES: &[u8] = include_bytes!("../resources/edge.wasm");
 use oxide_fw_config::OxideConfig;
@@ -327,7 +327,7 @@ fn is_secret_key(k: &str) -> bool {
     let k = k.to_ascii_lowercase();
     matches!(
         k.as_str(),
-        "cookie" | "authorization" | "set-cookie" | "x-oxide-dev-token"
+        "cookie" | "authorization" | "set-cookie" | "x-oxide-fw-dev-token"
     ) || k.contains("secret")
         || k.contains("token")
         || k.contains("password")
@@ -536,7 +536,7 @@ fn load_config_strict(root: &Path, mode: &str) -> anyhow::Result<OxideConfig> {
 ///
 /// The scanner sets `render_mode` from a line-oriented regex (fast, and
 /// good enough for `oxide routes` without parsing every loader). The CLI
-/// has `oxide-compiler`, so before the build consumes the mode it re-runs
+/// has `oxide-fw-compiler`, so before the build consumes the mode it re-runs
 /// the inference over each route's `page.server.ts` with the real AST —
 /// which does not misfire on a comment mentioning `cookies` or on a local
 /// variable named `locals`.
@@ -548,7 +548,7 @@ fn load_config_strict(root: &Path, mode: &str) -> anyhow::Result<OxideConfig> {
 /// `dynamic` — which the scanner's answer already is in that case.
 /// `true` when `page.server.ts` declares an explicit `config.render`
 /// (same literal-shape regex the route scanner uses in
-/// `oxide-router`'s `read_page_config`). Keeps the AST refinement from
+/// `oxide-fw-router`'s `read_page_config`). Keeps the AST refinement from
 /// clobbering an explicit `render: 'dynamic'` with an inferred `static`.
 fn has_explicit_render_config(source: &str) -> bool {
     let mut start = 0;
@@ -2450,19 +2450,19 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
 /// deploy artifact for the configured adapter (§18). `--static` forces a static
 /// export target, which refuses dynamic routes without prerendered output (§10.5).
 
-/// Compile the `oxide-core-wasm` crate to wasm32-unknown-unknown (§2 D18).
+/// Compile the `oxide-fw-core-wasm` crate to wasm32-unknown-unknown (§2 D18).
 ///
 /// Best-effort: returns `Ok(None)` when the target isn't installed (the
 /// Worker's JS fallback handles it), `Err` on a genuine compile failure.
 /// Output goes to `<dist>/edge.wasm`, which is where the Cloudflare emit
 /// branch looks for it.
 fn compile_edge_wasm(_root: &Path, dist: &Path) -> anyhow::Result<Option<PathBuf>> {
-    // WP-C2: the wasm-bindgen-processed `oxide-core-wasm` artifact is embedded
+    // WP-C2: the wasm-bindgen-processed `oxide-fw-core-wasm` artifact is embedded
     // into the CLI binary at compile time (see `EDGE_WASM_BYTES` above and
     // `scripts/regen-edge-wasm.sh`). The previous implementation ran
-    // `cargo build -p oxide-core-wasm` inside `root`, which only worked when
+    // `cargo build -p oxide-fw-core-wasm` inside `root`, which only worked when
     // `root` was the oxide workspace itself. A real user project is a JS/TS
-    // tree with no cargo workspace containing `oxide-core-wasm`, so that path
+    // tree with no cargo workspace containing `oxide-fw-core-wasm`, so that path
     // failed with a non-zero exit for every real project, silently shipping
     // the JS fallback (deviation 6, docs/deviations.md). Embedding the
     // artifact at CLI build time is exactly what the deviation named as the
@@ -6516,8 +6516,8 @@ type BoxedResponse =
 
 /// Inspector adapter for the dev server: converts the CLI's
 /// `RouteTableInspector` into the `oxide_fw_server::InspectorSnapshot` trait
-/// (§13.4). The trait lives in oxide-server so the pipeline can render it
-/// without depending on oxide-dev.
+/// (§13.4). The trait lives in oxide-fw-server so the pipeline can render it
+/// without depending on oxide-fw-dev.
 #[derive(Debug)]
 struct CliInspector {
     state: oxide_fw_dev::InspectorState,
@@ -6534,7 +6534,7 @@ impl oxide_fw_server::InspectorSnapshot for CliInspector {
 
 /// Construct the production pipeline (§12.1) from config and start serving.
 /// The dispatch returns a placeholder page from the router match — the JS host wiring
-/// (NodeHost/isolate render) lives in oxide-jshost and plugs into this dispatch later.
+/// (NodeHost/isolate render) lives in oxide-fw-jshost and plugs into this dispatch later.
 /// Production server entry (§12.1): no inspector is attached.
 pub async fn start_server(
     root: &str,
@@ -7304,7 +7304,7 @@ fn build_dispatch_swappable(
         // page.server.ts AND no explicit config.render) reaches dispatch
         // with `None`; `mode_is_cacheable(None)` returns false → the L0
         // branch is skipped entirely and every request answers
-        // `x-oxide-cache: bypass` (the manifest, meanwhile, shows `static`).
+        // `x-oxide-fw-cache: bypass` (the manifest, meanwhile, shows `static`).
         // Making dispatch agree with the manifest is the fix.
         let effective_mode: &str = match render_mode.as_deref() {
             Some(m) => m,
@@ -7742,7 +7742,7 @@ fn build_dispatch_swappable(
                         }) {
                             let mut resp = oxide_fw_server::OxideResponse::new(304, "");
                             resp = resp.with_header("etag", etag.clone());
-                            resp = resp.with_header("x-oxide-cache", "L0-hit");
+                            resp = resp.with_header("x-oxide-fw-cache", "L0-hit");
                             // P0-5: middleware runs per request and its
                             // headers must reflect THIS request, not the
                             // request that stored the entry. Apply before
@@ -7796,7 +7796,7 @@ fn build_dispatch_swappable(
                         // (within the SWR window) is labelled so the caller
                         // can see it; background regeneration is scoped.
                         resp = resp.with_header(
-                            "x-oxide-cache",
+                            "x-oxide-fw-cache",
                             if hit.stale { "L0-stale" } else { "L0-hit" },
                         );
                         // P0-5: middleware headers reflect this request; a
@@ -7853,7 +7853,7 @@ fn build_dispatch_swappable(
                             for (k, v) in &entry.headers {
                                 resp = resp.with_header(k, v.clone());
                             }
-                            resp = resp.with_header("x-oxide-cache", "L0-coalesced");
+                            resp = resp.with_header("x-oxide-fw-cache", "L0-coalesced");
                             // P0-5: a coalesced follower gets the same
                             // per-request middleware headers as a direct hit.
                             for (k, v) in &middleware_headers {
@@ -8894,7 +8894,7 @@ fn build_dispatch_swappable(
                                 let mut resp =
                                     oxide_fw_server::OxideResponse::stream(final_status, stream)
                                         .with_header("content-type", "text/html; charset=utf-8")
-                                        .with_header("x-oxide-cache", "L0-miss")
+                                        .with_header("x-oxide-fw-cache", "L0-miss")
                                         .with_header("Server-Timing", t.server_timing());
                                 for (k, v) in &loader_headers {
                                     resp = resp.with_header(k, v.clone());
@@ -8919,7 +8919,7 @@ fn build_dispatch_swappable(
                         // (§10.2 error-status contract).
                         let mut resp = oxide_fw_server::OxideResponse::stream(final_status, body)
                             .with_header("content-type", "text/html; charset=utf-8")
-                            .with_header("x-oxide-cache", "bypass");
+                            .with_header("x-oxide-fw-cache", "bypass");
                         // PERF-06: real per-stage Server-Timing.
                         let render_ms = stage_render_start.elapsed().as_secs_f64() * 1000.0;
                         let t = oxide_fw_render::RequestTimings {
@@ -9047,10 +9047,10 @@ async fn start_server_inner(
 /// `/client/counter-abc.js` when the root itself is `dist/`. Since our
 /// directory is `dist/client` and the URL prefix is `/client`, we scan
 /// `dist/` — then the boot chunk's `/client/...` URL matches the file path.
-/// §16.1: adapt `oxide_fw_assets::ImageBackend` to the `oxide-server` seam.
+/// §16.1: adapt `oxide_fw_assets::ImageBackend` to the `oxide-fw-server` seam.
 ///
-/// The two crates do not know about each other — `oxide-server` names only
-/// the trait, `oxide-assets` names only its own request/result types — so
+/// The two crates do not know about each other — `oxide-fw-server` names only
+/// the trait, `oxide-fw-assets` names only its own request/result types — so
 /// the CLI is where the two shapes are joined. The transform itself is
 /// unchanged; only the field names differ.
 struct AssetsImageBackend;
@@ -9115,7 +9115,7 @@ impl oxide_fw_server::ImageEndpointBackend for AssetsImageBackend {
 /// project declares no remote image patterns AND has no `public/` or
 /// `dist/client/` directory to serve from — a project with images off
 /// wants a 404, not an endpoint that always errors.
-/// §16.3: the OG-image endpoint. Enabled by default — the `oxide-assets`
+/// §16.3: the OG-image endpoint. Enabled by default — the `oxide-fw-assets`
 /// backend is pure-Rust (resvg + taffy + parley), so there is no external
 /// process and no reason to gate it. A project that does not want the
 /// endpoint can turn it off with a config flag (post-v0.1).
@@ -9644,7 +9644,7 @@ fn plugins_allow_absolute(cfg: &OxideConfig) -> bool {
 /// for a follow-up.
 /// §6.6: the CSS transform the bundler calls for every emitted stylesheet.
 /// Wraps `LightningCssBackend` (Lightning CSS with the project's browser
-/// target) so the bundler does not depend on `oxide-assets`.
+/// target) so the bundler does not depend on `oxide-fw-assets`.
 fn build_css_transform_hook(cfg: &OxideConfig) -> oxide_fw_bundler::CssTransformHook {
     use oxide_fw_assets::{CssBackend as _, CssInput, CssKind, LightningCssBackend};
 
@@ -10552,7 +10552,7 @@ async fn start_server_inner_full(
                 .collect(),
             // S-10: trust X-Forwarded-For only behind these proxies.
             trusted_proxies: cfg.security.trusted_proxies.clone(),
-            // S-21.3: whether the `x-oxide-cache` status header is emitted.
+            // S-21.3: whether the `x-oxide-fw-cache` status header is emitted.
             expose_cache_header: cfg.security.expose_cache_header,
         },
         rate_limiter: std::sync::Arc::new(oxide_fw_server::RateLimiter::default()),
@@ -10660,7 +10660,7 @@ async fn start_server_inner_full(
                     ));
                 }
                 oxide_fw_config::CacheHandlerConfig::Redis { url } => {
-                    // §11.2: a real Redis L2 tier (oxide-cache/redis). A
+                    // §11.2: a real Redis L2 tier (oxide-fw-cache/redis). A
                     // connection failure logs and stays memory-only — the
                     // build must not fail because a cache is down.
                     match oxide_fw_cache::RedisCacheHandler::new(url.clone()).await {
@@ -10682,7 +10682,7 @@ async fn start_server_inner_full(
                     }
                 }
                 oxide_fw_config::CacheHandlerConfig::S3 { bucket } => {
-                    // §11.2: a real S3 L2 tier (oxide-cache/s3). Same
+                    // §11.2: a real S3 L2 tier (oxide-fw-cache/s3). Same
                     // failure-tolerance as Redis: a bad bucket logs and stays
                     // memory-only. Credentials/region come from AWS_* env vars.
                     match oxide_fw_cache::S3CacheHandler::new(bucket.clone()) {

@@ -357,8 +357,8 @@ fn structural_sharing_encodes_smaller_and_resolves_equal() {
 /// Regenerates the committed golden fixtures. Ignored by default so ordinary
 /// test runs never mutate the working tree; run explicitly after a deliberate
 /// wire-format change:
-/// `cargo test -p oxide-odf generate_fixtures -- --ignored --nocapture`
-/// (or `cargo run -p oxide-odf --example odf_fixture`).
+/// `cargo test -p oxide-fw-odf generate_fixtures -- --ignored --nocapture`
+/// (or `cargo run -p oxide-fw-odf --example odf_fixture`).
 #[test]
 #[ignore = "writes fixture files; run explicitly with --ignored"]
 fn generate_fixtures() {
@@ -374,7 +374,7 @@ fn golden_fixtures_are_stable_and_decodable() {
         let bin_path = format!("{dir}/{name}.odf.bin");
         let json_path = format!("{dir}/{name}.expected.json");
         let committed = std::fs::read(&bin_path)
-            .unwrap_or_else(|e| panic!("missing golden fixture {bin_path} ({e}); run `cargo run -p oxide-odf --example odf_fixture`"));
+            .unwrap_or_else(|e| panic!("missing golden fixture {bin_path} ({e}); run `cargo run -p oxide-fw-odf --example odf_fixture`"));
         let fresh = encode(&value).unwrap_or_else(|e| panic!("{name}: encode failed: {e}"));
         assert_eq!(
             fresh, committed,

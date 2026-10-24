@@ -327,7 +327,7 @@ fn swappable_route_tree_store_and_load_round_trip() {
     // routes to the new tree's paths, not the old one's). The trees are
     // built via `RouteTree::insert` (like `tree_with_server_route` above)
     // rather than `scan_with_config`, so the test exercises the slot in
-    // isolation - the scanner is covered by oxide-router's own tests.
+    // isolation - the scanner is covered by oxide-fw-router's own tests.
     let mut tree_a_inner = oxide_fw_router::RouteTree::new();
     tree_a_inner.insert(oxide_fw_router::RouteEntry {
         id: oxide_fw_router::RouteId("routes/index".into()),
@@ -4051,7 +4051,7 @@ async fn middleware_headers_ride_l0_hits() {
     let first_cache = first
         .headers
         .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-cache"))
+        .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-fw-cache"))
         .map(|(_, v)| v.as_str());
     assert_ne!(
         first_cache,
@@ -4067,7 +4067,7 @@ async fn middleware_headers_ride_l0_hits() {
     let second_cache = second
         .headers
         .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-cache"))
+        .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-fw-cache"))
         .map(|(_, v)| v.as_str());
     // The second request may be served from L0 directly (`L0-hit`) or via
     // single-flight coalescing (`L0-coalesced`) if the first request's store
@@ -6048,7 +6048,7 @@ async fn build_records_resolver_edges_for_bare_imports() {
 // thread, which is the only thread that could poll the caller's runtime.
 // That would be a hard deadlock — EXCEPT the worker's child process and its
 // stdout reader are bound to a dedicated runtime (`reader_runtime_handle`
-// in `oxide-jshost`) that has its own thread and is never blocked. Every
+// in `oxide-fw-jshost`) that has its own thread and is never blocked. Every
 // stdin write and stdout read waits on that reactor, not on the caller's.
 // Before that binding, this test hung forever under a current-thread
 // runtime; with it, the build completes normally.
@@ -6561,7 +6561,7 @@ async fn l0_hit_rate_999_of_1000_dispatches() {
         let cache = resp
             .headers
             .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-cache"))
+            .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-fw-cache"))
             .map(|(_, v)| v.as_str())
             .unwrap_or("");
         match cache {
@@ -6579,7 +6579,7 @@ async fn l0_hit_rate_999_of_1000_dispatches() {
     assert_eq!(bypass, 0, "no request should be a bypass");
     assert_eq!(
         other, 0,
-        "every request should carry an x-oxide-cache header (got {other} without)"
+        "every request should carry an x-oxide-fw-cache header (got {other} without)"
     );
 }
 
@@ -6642,12 +6642,12 @@ async fn prerendered_500_serves_500_on_hit() {
     let cache = resp
         .headers
         .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-cache"))
+        .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-fw-cache"))
         .map(|(_, v)| v.as_str())
         .unwrap_or("");
     assert_eq!(
         cache, "L0-hit",
-        "the request must have been served from L0 (got x-oxide-cache={cache})"
+        "the request must have been served from L0 (got x-oxide-fw-cache={cache})"
     );
     let body = collect_response_body(resp).await;
     let s = std::str::from_utf8(&body).unwrap_or("");
@@ -7155,7 +7155,7 @@ async fn sw_emitter_falls_back_to_shell_when_offline_route_missing() {
 /// edit would otherwise be shadowed by the seeded response). The dispatch
 /// is agnostic — it checks `if let Some(cache) = l0.as_ref()`. This test
 /// pins the *invariant the dev branch relies on*: a dispatch built
-/// without an L0 cache never sets `x-oxide-cache: L0-hit` on any request.
+/// without an L0 cache never sets `x-oxide-fw-cache: L0-hit` on any request.
 /// If that ever stops being true (e.g. an L0 singleton sneaks in), a
 /// dev server would silently cache its own edits again.
 ///
@@ -7196,7 +7196,7 @@ async fn dispatch_without_l0_never_emits_a_cache_header() {
         let header = resp
             .headers
             .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-cache"))
+            .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-fw-cache"))
             .map(|(_, v)| v.as_str());
         assert_ne!(
             header,
@@ -8013,11 +8013,11 @@ async fn bundle_edge_entry_accepts_mdx_reachable_from_the_entry() {
 
 #[test]
 fn compile_edge_wasm_writes_embedded_artifact_for_any_root() {
-    // The embedded wasm-bindgen-processed `oxide-core-wasm` artifact
+    // The embedded wasm-bindgen-processed `oxide-fw-core-wasm` artifact
     // (`EDGE_WASM_BYTES`) is written verbatim to `<dist>/edge.wasm`. `root`
     // is ignored — the write is unconditional, so a real user project (a
     // JS/TS tree with no cargo workspace) gets the accelerated path without
-    // a `cargo build -p oxide-core-wasm` step (WP-C2; see docs/deviations.md
+    // a `cargo build -p oxide-fw-core-wasm` step (WP-C2; see docs/deviations.md
     // "Edge wasm build requires self-hosting layout").
     let dir = tempfile::tempdir().unwrap();
     // A `root` that is emphatically not a cargo workspace: an empty tempdir.
@@ -8466,7 +8466,7 @@ async fn l0_never_caches_a_middleware_cookie_response() {
     let cache = second
         .headers
         .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-cache"))
+        .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-fw-cache"))
         .map(|(_, v)| v.as_str());
     assert!(
         !matches!(cache, Some("L0-hit") | Some("L0-coalesced")),

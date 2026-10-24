@@ -7,7 +7,7 @@
 //! changes indentation or a status code breaks a deploy silently; a snapshot
 //! makes it fail here instead.
 //!
-//! Update with `INSTA_UPDATE=always cargo test -p oxide-adapters --test snapshots_adapters`.
+//! Update with `INSTA_UPDATE=always cargo test -p oxide-fw-adapters --test snapshots_adapters`.
 
 use std::collections::BTreeMap;
 
@@ -86,7 +86,7 @@ fn snapshot_node_server_entry() {
 ///
 /// `serde_json::Value`'s key order depends on the `preserve_order` feature,
 /// which is **workspace-wide** (any crate that enables it flips it for all):
-/// `syntect`'s `yaml-load` feature turns it on, so a `-p oxide-adapters` test
+/// `syntect`'s `yaml-load` feature turns it on, so a `-p oxide-fw-adapters` test
 /// sees sorted keys while `--workspace` sees insertion order. A snapshot must
 /// not depend on that — it would pass in isolation and fail in CI. Sorting
 /// here makes the assertion feature-independent.

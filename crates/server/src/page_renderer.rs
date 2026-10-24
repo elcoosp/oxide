@@ -2,9 +2,9 @@
 //!
 //! The HTTP pipeline (`Pipeline::serve_request`) dispatches page renders to
 //! whatever `PageRenderer` is attached to it. The trait lives here — in the
-//! server crate — so that the pipeline never depends on `oxide-jshost`
+//! server crate — so that the pipeline never depends on `oxide-fw-jshost`
 //! (which would couple the HTTP layer to V8/Node). The framework-specific
-//! adapter (`FrameworkHostRenderer` in `oxide-jshost`) implements this trait
+//! adapter (`FrameworkHostRenderer` in `oxide-fw-jshost`) implements this trait
 //! via a small shim in the CLI crate that also owns the config-loading
 //! decision.
 //!
@@ -277,7 +277,7 @@ mod tests {
 
 /// The seam between the HTTP pipeline and whichever runtime executes a
 /// route's `route.ts` handler. Mirrors `ActionDispatcher`; the CLI wires a
-/// dispatcher backed by the render pool (`oxide-jshost::EndpointHost`); tests
+/// dispatcher backed by the render pool (`oxide-fw-jshost::EndpointHost`); tests
 /// can wire a table of closures.
 #[async_trait::async_trait]
 pub trait EndpointDispatcher: Send + Sync {

@@ -1,7 +1,7 @@
 //! Dev server extras (spec §13.5): built-in HTTPS with a locally-trusted
 //! certificate, network URL display, QR code, proxy rules, and browser open.
 //!
-//! The dev server itself lives in `oxide-server`; this module provides the
+//! The dev server itself lives in `oxide-fw-server`; this module provides the
 //! pieces that only apply in development:
 //!
 //! - `generate_dev_cert` — a self-signed certificate covering `localhost`,

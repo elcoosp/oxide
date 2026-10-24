@@ -1,4 +1,4 @@
-//! oxide-odf — the Oxide Data Format (spec §9.5, D11).
+//! oxide-fw-odf — the Oxide Data Format (spec §9.5, D11).
 //!
 //! A devalue-compatible superset: JSON primitives plus `Date`, `Map`, `Set`, `BigInt`,
 //! `URL`, `RegExp`, typed arrays, `undefined`, cyclic and shared references, `Error`,
