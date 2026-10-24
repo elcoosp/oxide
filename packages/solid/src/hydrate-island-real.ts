@@ -16,6 +16,20 @@
 import type { Disposer } from '../../core/src/types.ts'
 import type { OxElement, ClientOptions } from './hydrate.ts'
 
+/** Runtime type guard for solid-js core factory (Solid 2's createElement or
+ *  Solid 1's createComponent). */
+interface SolidFactoryForIsland {
+  createElement?: (type: unknown, props: unknown) => unknown
+  createComponent?: (type: unknown, props: unknown) => unknown
+}
+
+function isSolidFactoryForIsland(v: unknown): v is SolidFactoryForIsland {
+  if (v === null || typeof v !== 'object') return false
+  return typeof Reflect.get(v, 'createElement') === 'function'
+    || typeof Reflect.get(v, 'createComponent') === 'function'
+}
+
+
 /** Narrow an `OxElement` to a real DOM `Element` (runtime assertion — see
  * hydrate.ts for the rationale). Framework hydrateRoot/app.mount requires a
  * live DOM. */
@@ -49,13 +63,14 @@ async function loadSolid(): Promise<{
   } catch {
     web = await import('@solidjs/web')
   }
-  // `createElement` is exported from solid-js (the core runtime).
-  const solid = (await import('solid-js')) as unknown as {
-    createElement?: (type: unknown, props: unknown) => unknown
+  // `createElement`/`createComponent` come from solid-js (the core runtime).
+  const solidMod: unknown = await import('solid-js')
+  if (!isSolidFactoryForIsland(solidMod)) {
+    throw new Error('hydrateIsland(solid): solid-js has no createElement/createComponent export')
   }
-  const createElement = solid.createElement
+  const createElement = solidMod.createElement ?? solidMod.createComponent
   if (typeof createElement !== 'function') {
-    throw new Error('hydrateIsland(solid): solid-js has no createElement export')
+    throw new Error('hydrateIsland(solid): solid-js factory is not a function')
   }
   cachedWeb = web
   cachedCreateElement = createElement
