@@ -115,7 +115,9 @@ export function nestLayouts(
 ): unknown {
   let node: unknown = react.createElement(Component, props)
   for (let i = layouts.length - 1; i >= 0; i--) {
-    node = react.createElement(layouts[i].Component, { children: node })
+    const layout = layouts[i]
+    if (layout === undefined) continue
+    node = react.createElement(layout.Component, { children: node })
   }
   return node
 }
