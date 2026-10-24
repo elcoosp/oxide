@@ -72,10 +72,16 @@ interface VitalsGlobal {
 }
 
 function g(): VitalsGlobal | undefined {
-  const w = globalThis as unknown as VitalsGlobal
-  // A browser has a PerformanceObserver and a location. The Node worker does
-  // not; every caller checks this first.
-  return typeof (globalThis as { window?: unknown }).window === 'undefined' ? undefined : w
+  // No cast: VitalsGlobal is entirely a subset of lib.dom's globalThis. We
+  // return the globalThis reference itself and let the caller's optional
+  // `w.PerformanceObserver` / `w.performance` accesses handle absence at
+  // runtime. The `typeof PerformanceObserver === 'function'` guard the
+  // caller uses still works (Node returns undefined, browsers return the
+  // constructor). Under lib.dom types the property is non-optional, so
+  // `typeof w.PerformanceObserver === 'function'` narrows correctly — the
+  // runtime check catches the Node case where lib.dom's typing is wrong.
+  if (typeof (globalThis as { window?: unknown }).window === 'undefined') return undefined
+  return globalThis
 }
 
 /**
