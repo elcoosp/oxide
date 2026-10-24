@@ -25,7 +25,7 @@ function fakeDoc(): RouterDoc & { dispatch(t: string, e: unknown): void } {
     dispatch(t: string, e: unknown) {
       for (const f of listeners.get(t) ?? []) f(e)
     },
-  } as never
+  }
 }
 
 const fakeHistory = () => {
@@ -56,7 +56,7 @@ test('P1-9: normalizeInput keeps deferred + locale from /__data', async () => {
   })
   const updates: any[] = []
   const router = createRouter({
-    adapter: { update: (i: unknown) => updates.push(i) } as never,
+    adapter: { update: (i: unknown): void => { updates.push(i) } },
     doc,
     history,
     location,
