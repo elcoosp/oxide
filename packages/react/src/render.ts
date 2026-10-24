@@ -607,7 +607,8 @@ function buildTree(input: RenderInput): Node {
 /** Convert head elements extracted from the page tree into the neutral model.
  * A layout title containing `%s` IS the title template (§16.3 convention). */
 function headNodesToTags(nodes: Node[]): Partial<HeadTags> {
-  const tags: Partial<HeadTags> = { meta: [], link: [], style: [], script: [] }
+  type LocalTags = Partial<HeadTags> & Required<Pick<HeadTags, 'meta' | 'link' | 'style' | 'script'>>
+  const tags: LocalTags = { meta: [], link: [], style: [], script: [] }
   for (const node of nodes) {
     if (node.kind !== 'element' || typeof node.tag !== 'string') continue
     if (node.tag === 'title') {
@@ -615,9 +616,9 @@ function headNodesToTags(nodes: Node[]): Partial<HeadTags> {
       if (title.includes('%s')) tags.titleTemplate = title
       else tags.title = title
     }
-    else if (node.tag === 'meta') tags.meta!.push({ ...node.props } as Record<string, string>)
-    else if (node.tag === 'link') tags.link!.push({ ...node.props } as Record<string, string>)
-    else if (node.tag === 'style') tags.style!.push({ content: node.children.map((c) => (c.kind === 'text' ? c.value : '')).join('') })
+    else if (node.tag === 'meta') tags.meta.push({ ...node.props } as Record<string, string>)
+    else if (node.tag === 'link') tags.link.push({ ...node.props } as Record<string, string>)
+    else if (node.tag === 'style') tags.style.push({ content: node.children.map((c) => (c.kind === 'text' ? c.value : '')).join('') })
     else if (node.tag === 'base') tags.base = { href: String(node.props.href ?? '/') }
   }
   return tags
