@@ -7,8 +7,9 @@
 // disposer is called.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { bootWithRouter } from '../src/client/boot.ts'
+import { bootWithRouter, type BootAdapter } from '../src/client/boot.ts'
 import { encodeLite } from './helpers/odf-lite.ts'
+import type { ClientInput, Disposer } from '../src/types.ts'
 
 interface Saved {
   window?: unknown
@@ -168,10 +169,10 @@ test('loading boundary: renderLoading paints an overlay on nav start', async () 
     const slowMarker = { name: 'SlowLoading' }
     const aboutMarker = { name: 'AboutLoading' }
 
-    const adapter: any = {
-      hydrate() {},
-      update() {},
-      hydrateIsland() { return () => {} },
+    const adapter: BootAdapter = {
+      hydrate(): Disposer { return () => {} },
+      update(): void {},
+      hydrateIsland(): Disposer { return () => {} },
       renderLoading(overlay: any, input: any, Component: any) {
         renderLoadingCalls++
         loadingComponents.push(Component)
@@ -185,7 +186,7 @@ test('loading boundary: renderLoading paints an overlay on nav start', async () 
         '/': aboutMarker,
         '/slow/': slowMarker,
       },
-    } as never)
+    })
 
     // Fire the click; goto() is async so we wait a microtask + the fetch.
     doc._fireClick(link)
@@ -196,7 +197,7 @@ test('loading boundary: renderLoading paints an overlay on nav start', async () 
     assert.equal(disposeCalls, 1, 'disposer called on nav end')
 
     // The overlay was created by createElement and removed by nav end.
-    const overlays = doc._overlays as any[]
+    const overlays = doc._overlays
     assert.equal(overlays.length, 1, 'one overlay created')
     assert.equal(overlays[0].removed, true, 'overlay removed on nav end')
 
@@ -226,12 +227,12 @@ test('loading boundary: no loading component → renderLoading not called', asyn
     })
 
     let renderLoadingCalls = 0
-    const adapter: any = {
-      hydrate() {}, update() {}, hydrateIsland() { return () => {} },
-      renderLoading() { renderLoadingCalls++; return () => {} },
+    const adapter: BootAdapter = {
+      hydrate(): Disposer { return () => {} }, update(): void {}, hydrateIsland(): Disposer { return () => {} },
+      renderLoading(): Disposer { renderLoadingCalls++; return () => {} },
     }
 
-    const dispose = bootWithRouter(adapter, { loading: { '/slow/': {} } } as never)
+    const dispose = bootWithRouter(adapter, { loading: { '/slow/': {} } })
     doc._fireClick(link)
     await new Promise((r) => setTimeout(r, 20))
     assert.equal(renderLoadingCalls, 0, 'no matching prefix → no overlay')
@@ -263,14 +264,14 @@ test('loading boundary: no adapter.renderLoading → hooks are no-ops', async ()
     // No renderLoading on the adapter — the router still navigates, the
     // overlay is just not rendered.
     let updates = 0
-    const adapter: any = {
-      hydrate() {}, update() { updates++ }, hydrateIsland() { return () => {} },
+    const adapter: BootAdapter = {
+      hydrate(): Disposer { return () => {} }, update(): void { updates++ }, hydrateIsland(): Disposer { return () => {} },
     }
-    const dispose = bootWithRouter(adapter, { loading: { '/slow/': {} } } as never)
+    const dispose = bootWithRouter(adapter, { loading: { '/slow/': {} } })
     doc._fireClick(link)
     await new Promise((r) => setTimeout(r, 20))
     assert.equal(updates, 1, 'navigation still completes')
-    assert.equal((doc._overlays as any[]).length, 0, 'no overlay created without renderLoading')
+    assert.equal((doc._overlays).length, 0, 'no overlay created without renderLoading')
     dispose()
   } finally {
     restoreGlobals(saved)
@@ -310,14 +311,14 @@ async function clickAndCollect(loading: Record<string, unknown>, path: string): 
       fetchResult: odf,
     })
     const seen: unknown[] = []
-    const adapter: any = {
-      hydrate() {}, update() {}, hydrateIsland() { return () => {} },
+    const adapter: BootAdapter = {
+      hydrate(): Disposer { return () => {} }, update(): void {}, hydrateIsland(): Disposer { return () => {} },
       renderLoading(_o: unknown, _i: unknown, Component: unknown) {
         seen.push(Component)
         return () => {}
       },
     }
-    const dispose = bootWithRouter(adapter, { loading } as never)
+    const dispose = bootWithRouter(adapter, { loading })
     doc._fireClick(link)
     await new Promise((r) => setTimeout(r, 20))
     dispose()
