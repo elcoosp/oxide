@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "L0/L1/L2 tiers, tags, handlers (spec 11)"
 
 [dependencies]

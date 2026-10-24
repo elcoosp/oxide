@@ -36,28 +36,38 @@ consecutive runs across 48 hours before the tag.
 
 ## 3. Crate publish order
 
-Crates publish after their deps are on crates.io:
+**The order is derived, not hand-maintained.** Run:
 
-Layer 1 (leaf): oxide-diagnostics, oxide-odf, oxide-router, oxide-config
-Layer 2:        oxide-graph, oxide-cache, oxide-compiler, oxide-assets
-Layer 3:        oxide-bundler, oxide-jshost, oxide-plugin, oxide-render,
-                oxide-server, oxide-dev, oxide-adapters, oxide-core-wasm
-Layer 4 (top):  oxide-cli
+    ./scripts/publish-order.sh
 
-Dry-run then publish:
+to print the topological sort (leaf first). The script reads
+`cargo metadata` — every crate appears after every crate it depends
+on. Current output has 17 crates; `oxide-diagnostics` is the only
+true leaf.
 
-    ORDER="oxide-diagnostics oxide-odf oxide-router oxide-config \
-           oxide-graph oxide-cache oxide-compiler oxide-assets \
-           oxide-bundler oxide-jshost oxide-plugin oxide-render \
-           oxide-server oxide-dev oxide-adapters oxide-core-wasm \
-           oxide-cli"
-    for c in $ORDER; do
-      cargo publish --dry-run -p "$c" || break
+### 3a. Local packaging check — works for all crates
+
+`cargo publish --dry-run` validates against the live crates.io index,
+which fails for every non-leaf crate on the FIRST publish (its deps
+aren't there yet). Use `cargo package` for local tarball validation —
+it builds the `.crate` and verifies structure without hitting the
+registry:
+
+    ./scripts/publish-order.sh | while read -r c; do
+      cargo package -p "$c" --allow-dirty --no-verify || break
     done
-    for c in $ORDER; do
-      cargo publish -p "$c" || break
-      sleep 30   # crates.io index propagation
+
+If `cargo package` succeeds for a crate, its manifest is publishable.
+
+### 3b. Real publish — in dependency order
+
+    ./scripts/publish-order.sh --publish | while read -r cmd; do
+      $cmd || break
+      sleep 30   # crates.io index propagation between publishes
     done
+
+The `sleep 30` matters: after publishing `oxide-diagnostics`, the
+index needs a moment before `oxide-odf`'s publish can resolve it.
 
 ## 4. npm package publish
 
@@ -67,8 +77,8 @@ Dry-run then publish:
     done
 
 The tarball should show only src/ plus auto-included package.json,
-README.md, LICENSE. If test/ or tsconfig.json appears, the files field
-is wrong.
+README.md, LICENSE. If test/ or tsconfig.json appears, the files
+field is wrong.
 
 Publish:
 
@@ -89,7 +99,8 @@ those stay manual so a failure can be inspected.
 
 - Crate publishing: requires a crates.io token in ~/.cargo/credentials.toml
 - npm publishing: requires the @oxide scope registered and a token in ~/.npmrc
-- The dry-run loops above have not run in CI
+- The publish-order script has been verified locally; the publish loop
+  itself has not been run against crates.io
 - Rollback: published versions cannot be unpublished
 
 ## Deprecation policy

@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Edge subset: router, odf, head, cache keys (spec 2 D18, 18)"
 
 # B-01: `cdylib` is what makes `cargo build --target wasm32-unknown-unknown`
