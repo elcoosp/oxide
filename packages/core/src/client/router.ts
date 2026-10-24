@@ -93,7 +93,7 @@ export interface RouterOptions {
   adapter: Pick<FrameworkAdapter, 'update'>
   /** Unused today (SPA nav fetches `/__data`). Reserved for manifest-driven
    *  chunk preloading (§6.4); see WORKLOG. */
-  manifest?: ClientManifest
+  manifest?: ClientManifestLike
   doc?: RouterDoc
   history?: HistoryLike
   location?: LocationLike
@@ -306,7 +306,7 @@ export function createRouter(opts: RouterOptions): Router {
     const layoutChunks = matchedRouteId
       ? layoutChunksFor(
           matchedRouteId,
-          routeManifest as unknown as ClientManifestLike,
+          routeManifest,
         )
       : []
     const result = [...(best ?? []), ...layoutChunks]
