@@ -276,7 +276,7 @@ export function bootWithRouter(
   let bootGlue: DeferGlue | undefined
   if (routerOnly) {
     try {
-      bootGlue = attachDeferGlue({ doc: doc as unknown as Document })
+      bootGlue = attachDeferGlue({ doc })
       if (payloadData !== undefined) bootGlue.wire(payloadData)
     } catch (e) {
       console.warn?.('oxide: boot defer glue failed', e)
