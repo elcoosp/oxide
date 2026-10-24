@@ -113,6 +113,18 @@ interface WalkResult {
  * Walk the IR into HTML. `<head>` wrappers are extracted, never rendered into
  * the body. Component nodes are called recursively (depth-capped).
  */
+/** Invoke a component with the node's props. `ComponentFn` uses `never`
+ * for its parameter to be contravariant-compatible with every concrete
+ * component (`(props: PageProps) => Node`, `(props: PageProps & { x?: T }) =>
+ * Node`, ...). At the callsite the parameter domain widens to the actual
+ * props bag — the runtime always passes one. This is the single documented
+ * existential-to-universal boundary the component registry cannot encode
+ * directly in TypeScript. */
+function callComponent(fn: ComponentFn, props: Record<string, unknown>): Node {
+  const callable: (p: Record<string, unknown>) => Node = fn
+  return callable(props)
+}
+
 function walk(node: Node, state: RenderState, depth: number, flavorAttrs: boolean): WalkResult {
   if (depth > 64) throw new Error('render: component tree deeper than 64 (infinite recursion?)')
   switch (node.kind) {
@@ -152,8 +164,7 @@ function walk(node: Node, state: RenderState, depth: number, flavorAttrs: boolea
     case 'element': {
       // Component node: call it with props + children and render the result.
       if (typeof node.tag === 'function') {
-        const component = node.tag as ComponentFn
-        const result = component({ ...node.props, children: node.children })
+        const result = callComponent(node.tag, { ...node.props, children: node.children })
         return walk(result, state, depth + 1, flavorAttrs)
       }
       const tag = node.tag
@@ -414,7 +425,7 @@ export function pageComponent(route: string): ComponentFn {
 
 /** Test/build helper: the island chunk map (§10.3 "each island is its own chunk"). */
 export const islandModules: Record<string, { default: ComponentFn }> = {
-  '/islands/counter.ts': { default: CounterIsland as ComponentFn },
+  '/islands/counter.ts': { default: CounterIsland },
 }
 
 /** Test/build helper: pages that throw at render (error-boundary conformance). */
@@ -452,8 +463,8 @@ function NestedLayout(props: PageProps & { children?: Node[]; page?: Node }): No
 }
 
 const LAYOUTS: Record<string, AtlasPage> = {
-  'routes/layout': { component: AtlasLayout as unknown as ComponentFn },
-  'routes/nested/layout': { component: NestedLayout as unknown as ComponentFn },
+  'routes/layout': { component: AtlasLayout },
+  'routes/nested/layout': { component: NestedLayout },
 }
 
 // ---------------------------------------------------------------------------
