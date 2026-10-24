@@ -45,19 +45,42 @@ to print the topological sort (leaf first). The script reads
 on. Current output has 17 crates; `oxide-diagnostics` is the only
 true leaf.
 
-### 3a. Local packaging check — works for all crates
+### 3a. Local packaging check — only the true leaf works pre-publish
 
-`cargo publish --dry-run` validates against the live crates.io index,
-which fails for every non-leaf crate on the FIRST publish (its deps
-aren't there yet). Use `cargo package` for local tarball validation —
-it builds the `.crate` and verifies structure without hitting the
-registry:
+**Hard fact about crates.io first-publish mechanics:** you cannot
+dry-run a non-leaf crate until its dependencies are actually on
+crates.io. `cargo package` needs to resolve every dependency to write
+the publishable Cargo.toml (path → version); `cargo publish --dry-run`
+additionally queries the registry for name availability.
 
-    ./scripts/publish-order.sh | while read -r c; do
-      cargo package -p "$c" --allow-dirty --no-verify || break
-    done
+What this means in practice:
 
-If `cargo package` succeeds for a crate, its manifest is publishable.
+- **`oxide-diagnostics`** (the only true leaf) can be validated before
+  any publish:
+
+      cargo package -p oxide-diagnostics --allow-dirty
+
+- **Every other crate** (16 of 17) cannot be validated before its deps
+  are published. `cargo package -p oxide-odf --no-verify --offline`
+  still fails at dep resolution with "no matching package named
+  oxide-diagnostics found". The `--offline` flag doesn't help because
+  oxide-diagnostics genuinely isn't on the registry.
+
+This is the **irreducible risk of the first publish**. The mitigation
+is:
+
+1. Validate the leaf crate thoroughly (it's the foundation).
+2. Publish leaf crates one at a time, checking crates.io after each
+   (cargo info <name>; ensure the version resolves).
+3. If a mid-graph crate fails on its own manifest (missing field,
+   invalid file pattern, forbidden dependency), that failure surfaces
+   only after the earlier crates are already published — and
+   crates.io does not allow unpublishing. The published crates at
+   v0.1.0 will be superseded by v0.1.1, not retracted.
+
+Run this against a **clean tree** — cargo refuses to package with
+uncommitted changes unless `--allow-dirty` is passed. For a real
+release, commit everything first.
 
 ### 3b. Real publish — in dependency order
 
@@ -101,6 +124,9 @@ those stay manual so a failure can be inspected.
 - npm publishing: requires the @oxide scope registered and a token in ~/.npmrc
 - The publish-order script has been verified locally; the publish loop
   itself has not been run against crates.io
+- Only the true leaf crate (oxide-diagnostics) is fully validatable
+  pre-publish; every other crate's manifest is validated only the
+  moment it publishes (see 3a for why)
 - Rollback: published versions cannot be unpublished
 
 ## Deprecation policy
