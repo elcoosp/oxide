@@ -17,7 +17,7 @@ import vueDefault, { adapter as vue, createAdapter as vueCreate } from '../../pa
 import svelteDefault, { adapter as svelte, createAdapter as svelteCreate } from '../../packages/svelte/src/index.ts'
 import solidDefault, { adapter as solid, createAdapter as solidCreate } from '../../packages/solid/src/index.ts'
 import { atlasRoutes as atlas, asRenderInput, expect as E } from '../atlas/atlas.ts'
-import type { FrameworkAdapter } from '../../packages/oxide/src/types.ts'
+import type { FrameworkAdapter } from '../../packages/core/src/types.ts'
 
 interface Bundle {
   name: string

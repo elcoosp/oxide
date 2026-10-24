@@ -17,7 +17,7 @@
 // Imports are dynamic and cached so the package keeps working (falling back
 // to the IR renderer) when react/react-dom are absent.
 
-import type { RenderInput, HeadTags } from '../../oxide/src/types.ts'
+import type { RenderInput, HeadTags } from '../../core/src/types.ts'
 
 /** Minimal structural type of the React module we depend on. */
 export interface ReactLike {

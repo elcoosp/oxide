@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto'
 import { createRealAdapter } from '../src/real-adapter.ts'
 import { isSvelteAvailable } from '../src/real-ssr.ts'
 import { adapter as irAdapter } from '../src/index.ts'
-import type { RenderInput } from '../../oxide/src/types.ts'
+import type { RenderInput } from '../../core/src/types.ts'
 
 const available = await isSvelteAvailable()
 const realSkip = !available

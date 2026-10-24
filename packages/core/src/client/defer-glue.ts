@@ -195,7 +195,7 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
   // A streamed settle appends its script after the document has loaded, so
   // `resolveFromScripts` has already run. Watch for the insertions and
   // resolve each new one. The observer disconnects in `dispose`.
-  let observer: { disconnect(): void } | null = null
+  let observer: { disconnect(): void; observe(target: unknown, options?: { childList?: boolean; subtree?: boolean }): void } | null = null
   const MO = (globalThis as { MutationObserver?: new (cb: (m: unknown[]) => void) => {
     observe(t: unknown, o: unknown): void
     disconnect(): void

@@ -60,7 +60,15 @@ function install(over: Record<string, unknown>): { doc: any } {
   }
   const doc = makeDoc()
   const location = { href: 'http://x.test/', pathname: '/', search: '' }
-  const history = { state: null, pushState(s: unknown) { this.state = s }, replaceState(s: unknown) { this.state = s } }
+  const history: {
+    state: unknown
+    pushState(s: unknown): void
+    replaceState(s: unknown): void
+  } = {
+    state: null as unknown,
+    pushState(s) { this.state = s },
+    replaceState(s) { this.state = s },
+  }
   const w = {
     __oxide: { route: '/page', params: { slug: 'abc' }, data: '' },
     __oxideBoot: { loadChunk: async () => ({}) },

@@ -11,7 +11,7 @@
 // see that a boundary was requested.
 
 import { defineComponent, h, type PropType } from 'vue'
-import { registerBoundary, deferredIdOf } from '../../oxide/src/server/boundary.ts'
+import { registerBoundary, deferredIdOf } from '../../core/src/server/boundary.ts'
 
 type Slots = Record<string, ((args: { value: unknown }) => unknown) | undefined>
 

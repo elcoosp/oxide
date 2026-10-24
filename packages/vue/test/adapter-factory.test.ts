@@ -6,7 +6,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import defaultFactory, { adapter, createAdapter } from '../src/index.ts'
-import type { RenderInput } from '../../oxide/src/types.ts'
+import type { RenderInput } from '../../core/src/types.ts'
 
 const input = (overrides: Partial<RenderInput> = {}): RenderInput => ({
   route: 'routes/index',

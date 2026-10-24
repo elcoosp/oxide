@@ -518,7 +518,7 @@ async function dispatchToolingModule(id, input) {
 //
 // Load a user's oxide.config.ts (or .mjs) and route render() calls through
 // the FrameworkAdapter it exports. This is the JS side of the contract
-// documented in packages/oxide/src/server/README.md — the CLI consumes it
+// documented in packages/core/src/server/README.md — the CLI consumes it
 // via `FrameworkHost` (crates/jshost/src/framework_host.rs).
 //
 // Ops:

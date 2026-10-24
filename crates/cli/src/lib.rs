@@ -1046,7 +1046,7 @@ fn generate_island_boot_entry(
 /// it from the framework name.
 fn jsx_import_source_for(framework: &str) -> Option<String> {
     // BUG-13: honour the adapter's `jsxImportSource` (contract §7,
-    // `packages/oxide/src/types.ts`). React uses the Oxc default runtime
+    // `packages/core/src/types.ts`). React uses the Oxc default runtime
     // (`react/jsx-runtime`), which is what `None` means. Solid's renderer
     // lives in `@solidjs/web`, not the React factory.
     match framework {

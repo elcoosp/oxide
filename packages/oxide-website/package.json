@@ -12,7 +12,8 @@
     "routes": "oxide routes",
     "check": "oxide check",
     "analyze": "oxide analyze",
-    "why": "oxide why"
+    "why": "oxide why",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "react": "^19.0.0",

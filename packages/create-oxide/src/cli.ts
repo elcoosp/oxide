@@ -4,11 +4,32 @@
 import { mkdir, writeFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-export const FRAMEWORKS = ['react', 'vue', 'svelte', 'solid'];
-export const SHAPES = ['minimal', 'blog', 'dashboard', 'storefront'];
+export type Framework = 'react' | 'vue' | 'svelte' | 'solid';
+export type Shape = 'minimal' | 'blog' | 'dashboard' | 'storefront';
+type PageVariant = Shape | 'blog-post' | 'dashboard-home' | 'product';
 
-/** @returns {string} oxide.config.ts content per spec §14.1 */
-export function configTs(framework, shape) {
+export const FRAMEWORKS: readonly Framework[] = ['react', 'vue', 'svelte', 'solid'];
+export const SHAPES: readonly Shape[] = ['minimal', 'blog', 'dashboard', 'storefront'];
+
+/** Error thrown when the target directory already has content. */
+class NonEmptyDirError extends Error {
+  readonly code = 'ENOEMPTY';
+  constructor(dir: string) {
+    super(`refusing to scaffold into non-empty directory: ${dir}`);
+    this.name = 'NonEmptyDirError';
+  }
+}
+
+function isFramework(s: string): s is Framework {
+  return (FRAMEWORKS as readonly string[]).includes(s);
+}
+
+function isShape(s: string): s is Shape {
+  return (SHAPES as readonly string[]).includes(s);
+}
+
+/** oxide.config.ts content per spec §14.1. */
+export function configTs(framework: Framework, shape: Shape): string {
   const adapterImport =
     framework === 'react' ? `import react from '@oxide-fw/react'` :
     framework === 'vue' ? `import vue from '@oxide-fw/vue'` :
@@ -34,11 +55,8 @@ export default defineConfig({
 }
 
 /** Page component per framework flavor (spec §8.1 page.*). */
-export function pageComponent(framework, shape) {
-  // Shape-specific titles keep the scaffolded pages meaningful without
-  // changing the template body; shape-specific pages (blog/dashboard/
-  // storefront) surface the loader data their page.server.ts provides.
-  const titles = {
+export function pageComponent(framework: Framework, shape: PageVariant): string {
+  const titles: Record<PageVariant, string> = {
     minimal: 'Home',
     blog: 'Blog',
     dashboard: 'Dashboard',
@@ -47,7 +65,7 @@ export function pageComponent(framework, shape) {
     'dashboard-home': 'Dashboard',
     product: 'Product',
   };
-  const title = titles[shape] || shape[0].toUpperCase() + shape.slice(1);
+  const title = titles[shape];
   if (framework === 'vue') {
     return `<script setup>
 import { computed } from 'vue'
@@ -74,7 +92,6 @@ const props = defineProps<{ data: { message: string } }>()
 </main>
 `;
   }
-  // react + solid (jsx)
   const isSolid = framework === 'solid';
   return `${isSolid ? `import { For } from 'solid-js';\n` : ''}import type { PageProps } from '@oxide-fw/core'
 
@@ -90,7 +107,7 @@ export default function Page({ data }: PageProps) {
 }
 
 /** Framework-neutral server module (spec §9.1). */
-export function pageServerTs(shape) {
+export function pageServerTs(shape: Shape): string {
   const extra =
     shape === 'blog'
       ? `export const config = { render: 'isr', revalidate: 60, tags: ['posts'] }
@@ -117,7 +134,6 @@ export const load = defineLoad(async ({ params }) => {
   return {
     message: 'Hello from Oxide (${shape})',
     params,
-    // streamed later via the core boundary protocol (spec §7.1)
     details: defer(Promise.resolve({ at: Date.now() })),
   }
 })
@@ -126,9 +142,7 @@ export const meta = defineMeta(({ data }) => ({ title: data.message }))
 `;
 }
 
-export function layoutComponent(framework) {
-  // BUG-10: the adapter shell owns the document — layouts render only the
-  // page subtree (no <html>/<body>).
+export function layoutComponent(framework: Framework): string {
   if (framework === 'vue') {
     return `<script setup></script>
 
@@ -147,11 +161,17 @@ export function layoutComponent(framework) {
 `;
 }
 
-export function packageJson(framework) {
+export function packageJson(framework: Framework): string {
   const scripts = {
     dev: 'oxide dev',
     build: 'oxide build',
     start: 'oxide start',
+  };
+  const inWorkspace = (process.env['PWD'] ?? '').includes('packages/');
+  const v = inWorkspace ? 'workspace:*' : '0.2.0';
+  const deps: Record<string, string> = {
+    '@oxide-fw/core': v,
+    [`@oxide-fw/${framework}`]: v,
   };
   return JSON.stringify(
     {
@@ -159,20 +179,14 @@ export function packageJson(framework) {
       private: true,
       type: 'module',
       scripts,
-      // BUG-10: workspace protocol inside the monorepo, a published
-      // literal outside it (detected by PWD containing `packages/`).
-      dependencies: (() => {
-        const inWorkspace = (process.env.PWD ?? '').includes('packages/')
-        const v = inWorkspace ? 'workspace:*' : '0.2.0'
-        return { "@oxide-fw/core": v, [`@oxide-fw/${framework}`]: v }
-      })(),
+      dependencies: deps,
     },
     null,
     2,
   ) + '\n';
 }
 
-export function readmeMd(framework, shape) {
+export function readmeMd(framework: Framework, shape: Shape): string {
   return `# Oxide ${shape} starter (${framework})
 
 Scaffolded by \`create-oxide\` (spec §19.2).
@@ -188,16 +202,9 @@ Conventions live in \`src/routes\` — see the Oxide spec §8.
 `;
 }
 
-/** Scaffold one project. Throws on non-empty target dir. */
-/**
- * SPEC-19.2: each non-minimal shape gets a REAL extra route (beyond `/`)
- * that exercises its defining feature — the starter tree is where a user
- * looks first when they want to see what "dashboard" or "storefront" means.
- * Only the framework-specific page component is templated per framework;
- * the accompanying `page.server.ts` is framework-agnostic (loaders run in
- * the worker, not in the framework runtime).
- */
-function blogExtras(framework, ext) {
+type Write = readonly [string, string];
+
+function blogExtras(framework: Framework, ext: string): readonly Write[] {
   return [
     [
       join('src', 'routes', 'blog', '[slug]', 'page.' + ext),
@@ -219,10 +226,10 @@ export async function generateParams() {
 }
 `,
     ],
-  ]
+  ];
 }
 
-function dashboardExtras(framework, ext) {
+function dashboardExtras(framework: Framework, ext: string): readonly Write[] {
   return [
     [
       join('src', 'routes', 'dashboard', 'page.' + ext),
@@ -233,9 +240,6 @@ function dashboardExtras(framework, ext) {
       `import { defineLoad, defineAction } from '@oxide-fw/core/server'
 
 export const load = defineLoad(async ({ locals }) => {
-  // §16.6: the runtime decodes the session cookie into \`locals.session\`
-  // before the loader runs; a project that configures \`security.sessionKeys\`
-  // sees real values here. This starter falls back to a demo id.
   const user = (locals && locals.session && locals.session.user) || 'guest'
   return { greeting: 'Hello, ' + user, stats: { visits: 3 } }
 })
@@ -250,10 +254,10 @@ export const actions = {
 }
 `,
     ],
-  ]
+  ];
 }
 
-function storefrontExtras(framework, ext) {
+function storefrontExtras(framework: Framework, ext: string): readonly Write[] {
   return [
     [
       join('src', 'routes', 'products', '[id]', 'page.' + ext),
@@ -275,38 +279,36 @@ export async function generateParams() {
 }
 `,
     ],
-  ]
+  ];
 }
 
-function shapeExtras(framework, shape, ext) {
-  if (shape === 'blog') return blogExtras(framework, ext)
-  if (shape === 'dashboard') return dashboardExtras(framework, ext)
-  if (shape === 'storefront') return storefrontExtras(framework, ext)
-  return []
+function shapeExtras(framework: Framework, shape: Shape, ext: string): readonly Write[] {
+  if (shape === 'blog') return blogExtras(framework, ext);
+  if (shape === 'dashboard') return dashboardExtras(framework, ext);
+  if (shape === 'storefront') return storefrontExtras(framework, ext);
+  return [];
 }
 
-export async function scaffold(template, framework, dir) {
-  if (!FRAMEWORKS.includes(framework)) {
+export async function scaffold(template: string, framework: string, dir: string): Promise<string[]> {
+  if (!isFramework(framework)) {
     throw new Error(`unknown framework "${framework}" (expected one of ${FRAMEWORKS.join(', ')})`);
   }
-  if (!SHAPES.includes(template)) {
+  if (!isShape(template)) {
     throw new Error(`unknown template "${template}" (expected one of ${SHAPES.join(', ')})`);
   }
-  let existing = [];
+  let existing: string[] = [];
   try {
     existing = await readdir(dir);
   } catch {
     /* dir may not exist yet */
   }
   if (existing.length > 0) {
-    const err = new Error(`refusing to scaffold into non-empty directory: ${dir}`);
-    err.code = 'ENOEMPTY';
-    throw err;
+    throw new NonEmptyDirError(dir);
   }
   const routes = join(dir, 'src', 'routes');
   await mkdir(routes, { recursive: true });
   const ext = framework === 'vue' ? 'vue' : framework === 'svelte' ? 'svelte' : 'tsx';
-  const writes = [
+  const writes: Write[] = [
     [join(dir, 'package.json'), packageJson(framework)],
     [join(dir, 'oxide.config.ts'), configTs(framework, template)],
     [join(dir, 'README.md'), readmeMd(framework, template)],
@@ -314,11 +316,8 @@ export async function scaffold(template, framework, dir) {
     [join(dir, 'src', 'routes', 'page.' + ext), pageComponent(framework, template)],
     [join(dir, 'src', 'routes', 'page.server.ts'), pageServerTs(template)],
   ];
-  // SPEC-19.2: each non-minimal shape ships an EXTRA route (blog/[slug],
-  // dashboard/, products/[id]) with its own page + page.server.ts, so the
-  // scaffolded tree actually demonstrates the shape's feature rather than
-  // just differing in the config body.
-  for (const [rel, content] of shapeExtras(framework, template, ext)) {
+  const extras = shapeExtras(framework, template, ext);
+  for (const [rel, content] of extras) {
     writes.push([join(dir, rel), content]);
   }
   for (const [path, content] of writes) {
@@ -328,9 +327,12 @@ export async function scaffold(template, framework, dir) {
   return writes.map(([p]) => p);
 }
 
-/** CLI entry (runs under Node 24 type stripping). */
-export async function main(argv = process.argv.slice(2)) {
+export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<number> {
   const [template = 'minimal', framework = 'react', dir = '.'] = argv;
+  if (!isShape(template) || !isFramework(framework)) {
+    console.error(`✖ unknown template "${template}" or framework "${framework}"`);
+    return 2;
+  }
   try {
     const files = await scaffold(template, framework, dir);
     console.log(`✔ scaffolded oxide ${template} (${framework}) into ${dir}`);
@@ -338,8 +340,10 @@ export async function main(argv = process.argv.slice(2)) {
     console.log(`\nnext: npm install && npm run dev`);
     return 0;
   } catch (err) {
-    console.error(`✖ ${err.message}`);
-    return err.code === 'ENOEMPTY' ? 3 : 2;
+    const message = err instanceof Error ? err.message : String(err);
+    const code = err instanceof NonEmptyDirError ? 3 : 2;
+    console.error(`✖ ${message}`);
+    return code;
   }
 }
 

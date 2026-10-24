@@ -48,7 +48,7 @@ export interface RenderInput {
    * `routes/blog/layout`. The adapter resolves each via `input.resolve`
    * and nests the page inside them (outermost wraps everything). Absent on
    * the client — layouts are a server-render concept here. See
-   * `packages/oxide/src/server/real-ssr.ts`.
+   * `packages/core/src/server/real-ssr.ts`.
    */
   layouts?: string[]
   /**
@@ -58,6 +58,21 @@ export interface RenderInput {
    * registered for this route.
    */
   errorRoute?: string
+  /**
+   * §10.2.4: the per-request CSP nonce. Adapters stamp it on any inline
+   * `<script>`/`<style>` they emit, or `strict-dynamic` blocks them.
+   */
+  nonce?: string
+  /**
+   * §16.4: the resolved request locale. `<html lang="...">` uses this;
+   * empty string means "no i18n configured".
+   */
+  locale?: string
+  /**
+   * §7.1 / §9.2: resolved deferred-boundary payloads for this render.
+   * Keys are the numeric boundary ids as strings.
+   */
+  deferred?: Record<string, unknown>
 }
 
 /** Context for adapter.head() — framework head model → neutral model. */
@@ -189,5 +204,11 @@ export interface ClientRouteEntry {
   entry_chunk?: string
   /** Client entry chunks in preload order. */
   chunks?: string[]
+  /**
+   * Alternate preload-ordered chunk list emitted by the build's manifest
+   * writer. Either field may be present; the router falls back to `chunks`
+   * if `preload` is absent.
+   */
+  preload?: string[]
   css?: string[]
 }

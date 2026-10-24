@@ -13,7 +13,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { adapter } from '../src/index.ts'
-import type { RenderInput } from '../../oxide/src/types.ts'
+import type { RenderInput } from '../../core/src/types.ts'
 
 const COMMENTS = [
   { author: 'Grace', body: 'first' },

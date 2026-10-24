@@ -1,6 +1,6 @@
 //! Writes the golden ODF fixtures (spec §9.5) consumed by the Rust stability
 //! test (`tests/integration.rs`) and the TS decoder suite
-//! (`packages/oxide/test/odf.test.ts`).
+//! (`packages/core/test/odf.test.ts`).
 //!
 //! Run once whenever the wire format changes deliberately, then commit the
 //! updated files:

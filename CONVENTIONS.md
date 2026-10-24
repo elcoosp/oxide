@@ -39,7 +39,7 @@ Repo: `/home/z/my-project/oxide/` (git). Toolchain: Rust 1.99 stable (already in
 
 Crate `oxide-odf` writes golden fixtures to `crates/odf/tests/fixtures/*.odf.bin` + `*.expected.json`
 (a small binary `examples/odf_fixture.rs` or test writes them). The TS decoder test suite
-(`packages/oxide/test/odf.test.ts`) consumes the same files — keep them committed.
+(`packages/core/test/odf.test.ts`) consumes the same files — keep them committed.
 
 ## Worklog protocol
 

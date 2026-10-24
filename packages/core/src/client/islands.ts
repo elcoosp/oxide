@@ -35,7 +35,7 @@ export interface IslandsOptions {
   /** Load a chunk reference (dynamic import in the browser). */
   loadChunk?: (chunk: string) => Promise<unknown>
   requestIdleCallback?: (cb: () => void) => unknown
-  matchMedia?: (query: string) => { matches: boolean; addEventListener?(type: string, cb: () => void): void }
+  matchMedia?: (query: string) => { matches: boolean; addEventListener?(type: string, cb: () => void): void; removeEventListener?(type: string, cb: () => void): void }
   IntersectionObserver?: new (cb: (entries: Array<{ target: unknown; isIntersecting: boolean }>) => void) => {
     observe(el: unknown): void
     unobserve(el: unknown): void

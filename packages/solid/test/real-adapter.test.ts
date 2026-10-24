@@ -7,7 +7,7 @@ import assert from 'node:assert/strict'
 import { createRealAdapter } from '../src/real-adapter.ts'
 import { isSolidAvailable } from '../src/real-ssr.ts'
 import { adapter as irAdapter } from '../src/index.ts'
-import type { RenderInput } from '../../oxide/src/types.ts'
+import type { RenderInput } from '../../core/src/types.ts'
 
 const available = await isSolidAvailable()
 const realSkip = !available

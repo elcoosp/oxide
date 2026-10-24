@@ -15,13 +15,13 @@
 // fake DOM (no jsdom, no deps).
 
 import nodeAssert from 'node:assert/strict'
-import type { FrameworkAdapter } from '../packages/oxide/src/types.ts'
-import { createRouter } from '../packages/oxide/src/client/router.ts'
-import { decodeIslandProps } from '../packages/oxide/src/client/islands.ts'
-import { enhance } from '../packages/oxide/src/client/enhance.ts'
-import { hydrateIslands } from '../packages/oxide/src/client/islands.ts'
-import { serverFn, getServerFn, revalidate, _revalidateLog } from '../packages/oxide/src/server/index.ts'
-import { encodeLite } from '../packages/oxide/test/helpers/odf-lite.ts'
+import type { FrameworkAdapter } from '../packages/core/src/types.ts'
+import { createRouter } from '../packages/core/src/client/router.ts'
+import { decodeIslandProps } from '../packages/core/src/client/islands.ts'
+import { enhance } from '../packages/core/src/client/enhance.ts'
+import { hydrateIslands } from '../packages/core/src/client/islands.ts'
+import { serverFn, getServerFn, revalidate, _revalidateLog } from '../packages/core/src/server/index.ts'
+import { encodeLite } from '../packages/core/test/helpers/odf-lite.ts'
 import { createFakeDom, simulateSwap } from '../packages/react/test/helpers/fake-dom.ts'
 import { atlasRoutes as atlas, expect, asRenderInput, type AtlasRoute } from './atlas/atlas.ts'
 

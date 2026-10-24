@@ -3,7 +3,7 @@
 // flight. Uses `react-dom/client`'s `createRoot` (real React, so hooks and
 // Suspense work). The disposer unmounts the root; the router calls it right
 // before `adapter.update` swaps the tree.
-import type { Disposer } from '../../oxide/src/types.ts'
+import type { Disposer } from '../../core/src/types.ts'
 
 export interface ReactDomClientRootLike {
   createRoot(container: Element): { render(node: unknown): void; unmount(): void }

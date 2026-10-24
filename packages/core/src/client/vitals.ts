@@ -51,6 +51,8 @@ interface MinimalPerformanceObserverEntry {
   duration?: number
   entryType?: string
   hadRecentInput?: boolean
+  /** Navigation timing (`PerformanceNavigationTiming`); used for TTFB. */
+  responseStart?: number
 }
 
 interface MinimalPerformanceObserver {

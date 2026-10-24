@@ -13,6 +13,20 @@ import { layoutChunksFor, type ClientManifestLike } from './route-manifest.ts'
 import type { ClientInput, ClientManifest, FrameworkAdapter } from '../types.ts'
 
 /** Minimal DOM surface the router needs (hand-rolled fakes in tests). */
+/**
+ * Narrow a DOM global that may be absent (Node, jsdom-less tests). Callers
+ * pass the resolved value; a `TypeError` means the caller must pass one
+ * explicitly. Using a helper (not a cast) keeps the type honest: after this
+ * returns, TS knows the value is defined, and runtime errors surface at the
+ * call site, not the first use of the value.
+ */
+function mustDom<T>(v: T | undefined, name: string): T {
+  if (v === undefined) {
+    throw new TypeError(`createRouter: no DOM environment (pass ${name} in non-browser tests)`)
+  }
+  return v
+}
+
 export interface RouterDoc {
   addEventListener(type: string, fn: (e: unknown) => void, opts?: AddEventListenerOptions): void
   removeEventListener(type: string, fn: (e: unknown) => void, opts?: AddEventListenerOptions): void
@@ -50,6 +64,22 @@ interface NavEvent {
 
 interface PopEvent {
   state?: unknown
+}
+
+/** Duck-type guard for a click/hover/focus event. The EventTarget contract
+ *  hands the handler an `unknown`; this proves the fields the router reads
+ *  exist before the handler narrows. */
+function isNavEvent(e: unknown): e is NavEvent {
+  // The EventTarget contract hands the listener an `unknown`; the router
+  // only reads `target` (and the modifier fields, which are optional on
+  // NavEvent). `preventDefault` is optional-chained at the click site —
+  // a real browser event always has it; a synthetic test event may not.
+  return e !== null && typeof e === 'object' && 'target' in e
+}
+
+/** Duck-type guard for popstate (`history.state` is the only field read). */
+function isPopEvent(e: unknown): e is PopEvent {
+  return e !== null && typeof e === 'object' && 'state' in e
 }
 
 /** Serialized history state marking oxide-managed entries. */
@@ -120,9 +150,9 @@ export function createRouter(opts: RouterOptions): Router {
     scrollY?: number
     IntersectionObserver?: NonNullable<RouterOptions['IntersectionObserver']>
   }
-  const doc = opts.doc ?? g.document
-  const history = opts.history ?? g.history
-  const location = opts.location ?? g.location
+  const doc = mustDom(opts.doc ?? g.document, 'doc')
+  const history = mustDom(opts.history ?? g.history, 'history')
+  const location = mustDom(opts.location ?? g.location, 'location')
   const doFetch = opts.fetch ?? ((...a: Parameters<typeof fetch>) => globalThis.fetch(...a))
   const scrollTo = opts.scrollTo ?? ((x: number, y: number) => g.scrollTo?.(x, y))
   const getScroll = opts.getScroll ?? (() => ({ x: g.scrollX ?? 0, y: g.scrollY ?? 0 }))
@@ -402,19 +432,22 @@ export function createRouter(opts: RouterOptions): Router {
     else commit()
   }
 
-  function onClick(e: NavEvent): void {
+  function onClick(e: unknown): void {
+    if (!isNavEvent(e)) return
     const a = e.target?.closest?.('a')
     if (!a || !shouldIntercept(a, e)) return
-    e.preventDefault()
+    e.preventDefault?.()
     void goto(a.getAttribute('href') as string)
   }
 
-  function onHover(e: NavEvent): void {
+  function onHover(e: unknown): void {
+    if (!isNavEvent(e)) return
     const a = e.target?.closest?.('a')
     if (a && shouldIntercept(a, e)) prefetch(a.getAttribute('href') as string)
   }
 
-  function onPopstate(e: PopEvent): void {
+  function onPopstate(e: unknown): void {
+    if (!isPopEvent(e)) return
     const state = e.state as Partial<OxideHistoryState> | null
     if (state && state.__oxide && state.input) {
       opts.adapter.update(state.input)

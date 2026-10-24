@@ -1,7 +1,7 @@
 //! Golden fixture definitions shared by the fixture generator
 //! (`examples/odf_fixture.rs`), the Rust stability test
 //! (`tests/integration.rs`) and — via the committed bytes — the TS decoder
-//! suite (`packages/oxide/test/odf.test.ts`, spec §9.5).
+//! suite (`packages/core/test/odf.test.ts`, spec §9.5).
 //!
 //! `tests/fixtures/<name>.odf.bin` holds the encoded bytes and
 //! `tests/fixtures/<name>.expected.json` the `Value::to_json()` output.

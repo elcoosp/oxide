@@ -4,7 +4,7 @@
 //! `FrameworkAdapter` the config exports (the value passed to
 //! `defineConfig({ framework: ... })`), and dispatches `render()` calls
 //! through the same worker. This is the Rust side of the JS↔Rust contract
-//! documented in `packages/oxide/src/server/README.md`.
+//! documented in `packages/core/src/server/README.md`.
 //!
 //! Two ops, both routed through a `Pool` (spec §4.2):
 //!

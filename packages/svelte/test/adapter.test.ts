@@ -6,8 +6,8 @@ import assert from 'node:assert/strict'
 import { adapter, render, renderToString, renderShellToString, head, mergeHead, applyTitleTemplate, islandModules } from '../src/index.ts'
 import { hydrate, hydrateIsland, mount, update } from '../src/hydrate.ts'
 import { createFakeDom, simulateSwap } from './helpers/fake-dom.ts'
-import type { RenderInput, HeadTags } from '../../oxide/src/types.ts'
-import { decodeIslandProps } from '../../oxide/src/client/islands.ts'
+import type { RenderInput, HeadTags } from '../../core/src/types.ts'
+import { decodeIslandProps } from '../../core/src/client/islands.ts'
 
 const input = (overrides: Partial<RenderInput> = {}): RenderInput => ({
   route: 'routes/index',

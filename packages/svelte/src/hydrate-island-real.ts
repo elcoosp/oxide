@@ -8,10 +8,10 @@
 // strategy fires (typically `load`, or on idle / intersection for the other
 // strategies). A page with no islands never fetches it.
 //
-// The returned value is a `Promise<Disposer>`; `packages/oxide/src/client/
+// The returned value is a `Promise<Disposer>`; `packages/core/src/client/
 // islands.ts` awaits it before marking the host hydrated.
 
-import type { Disposer } from '../../oxide/src/types.ts'
+import type { Disposer } from '../../core/src/types.ts'
 import type { OxElement, ClientOptions } from './hydrate.ts'
 
 /** Structural shape of the Svelte 5 client `mount` / `unmount` surface. */

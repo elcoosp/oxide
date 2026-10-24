@@ -30,7 +30,7 @@
 
   const loading = $derived(lazy ?? !priority ? 'lazy' : 'eager')
 
-  /** Mirror of packages/oxide/src/image-sizes.ts, inlined for the same
+  /** Mirror of packages/core/src/image-sizes.ts, inlined for the same
    *  reason Defer.svelte inlines its shape check: this .svelte file is
    *  compiled by the consumer's compiler, and its emitted module sits
    *  wherever the consumer's build puts it — a relative import to the

@@ -364,7 +364,7 @@ pub fn island_element(directive: &IslandDirective, ssr_html: &str) -> String {
 ///
 /// The server renders an inert `<script data-ox-script …>` tag that carries
 /// the loading intent. The client scheduler in
-/// `packages/oxide/src/client/scripts.ts` scans `script[data-ox-script]` and
+/// `packages/core/src/client/scripts.ts` scans `script[data-ox-script]` and
 /// injects the *real* `<script>` element per strategy:
 ///
 /// - `defer` (default), `idle`, `worker`, `afterInteractive`, `lazy`.

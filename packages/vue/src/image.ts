@@ -8,7 +8,7 @@
 // Vue has no JSX intrinsic restriction, so `h('img', …)` renders directly.
 
 import { h, type VNode } from 'vue'
-import { deriveSizesFromSrcset } from '../../oxide/src/image-sizes.ts'
+import { deriveSizesFromSrcset } from '../../core/src/image-sizes.ts'
 
 export interface ImageVariantModule {
   src?: string

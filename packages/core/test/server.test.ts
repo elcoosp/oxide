@@ -84,18 +84,35 @@ test('redirect() throws an OxideRedirect sentinel (303 default)', () => {
 
 test('defineAction/defineMeta/defineSocket shapes', async () => {
   const action = defineAction({
-    input: { parse: (v: unknown) => v },
+    input: {
+      '~standard': {
+        validate: (v: unknown) => ({ value: v }),
+      },
+    },
     async run({ input }) {
       return { echoed: input }
     },
   })
   assert.equal(action.$$oxide, 'action')
   assert.equal(typeof action.run, 'function')
-  assert.deepEqual(await action.run({ input: { body: 'hi' } }), { echoed: { body: 'hi' } })
+  const actionEvent = {
+    params: {},
+    request: new Request('http://x.test/'),
+    locals: {},
+    cookies: { get: () => undefined, set: () => {}, delete: () => {}, getAll: () => [] },
+    form: new FormData(),
+    revalidate: { tag: () => {}, path: () => {} },
+    input: { body: 'hi' },
+  }
+  assert.deepEqual(await action.run(actionEvent), { echoed: { body: 'hi' } })
 
-  const meta = defineMeta(({ data }: { data: { title: string } }) => ({ title: data.title }))
+  const meta = defineMeta(
+    ({ data }: { data: unknown; params: Record<string, string | string[]> }) => ({
+      title: (data as { title: string }).title,
+    }),
+  )
   assert.equal((meta as { $$oxide?: string }).$$oxide, 'meta')
-  assert.deepEqual(meta({ data: { title: 'T' } }), { title: 'T' })
+  assert.deepEqual(meta({ data: { title: 'T' }, params: {} }), { title: 'T' })
 
   const socket = defineSocket({ open() {}, message() {}, close() {} })
   assert.equal(socket.$$oxide, 'socket')

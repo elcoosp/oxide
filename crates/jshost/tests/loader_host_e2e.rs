@@ -112,7 +112,7 @@ export const load = async ({ route, params, url }) => ({
 #[ignore]
 async fn loader_error_sentinel_becomes_ok_payload_not_worker_error() {
     // A load fn that throws an Error with `.status` (matching OxideHttpError
-    // shape from packages/oxide/src/server/index.ts) is detected by the
+    // shape from packages/core/src/server/index.ts) is detected by the
     // worker and returned as `{ status: N, location: null }`, NOT as a
     // worker error. The pipeline maps `status` to the response code.
     let m = TempModule::write(

@@ -9,7 +9,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createRealAdapter } from '../src/real-adapter.ts'
-import type { RenderInput } from '../../oxide/src/types.ts'
+import type { RenderInput } from '../../core/src/types.ts'
 
 const Component = (props: { data?: Record<string, unknown> }) =>
   `RENDERED:${JSON.stringify(props.data ?? null)}`

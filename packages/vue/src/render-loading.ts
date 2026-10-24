@@ -2,7 +2,7 @@
 // into an overlay element while a client-side navigation's `/__data` fetch
 // is in flight. Uses Vue's `createApp` (client-side render, not SSR) so
 // reactivity and lifecycle hooks work. Disposer unmounts the app.
-import type { Disposer } from '../../oxide/src/types.ts'
+import type { Disposer } from '../../core/src/types.ts'
 
 interface VueLike {
   createApp(component: unknown, props?: Record<string, unknown>): {

@@ -6,7 +6,7 @@
 // through each adapter via FrameworkAdapter.render and checks these
 // expectations; framework-specific markers live in the suite's MARKERS map.
 
-import type { HeadTags, RenderInput } from '../../packages/oxide/src/types.ts'
+import type { HeadTags, RenderInput } from '../../packages/core/src/types.ts'
 
 export interface AtlasRoute {
   route: string

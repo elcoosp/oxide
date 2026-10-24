@@ -9,7 +9,7 @@ import { encodeLite } from './helpers/odf-lite.ts'
 
 // ---- fakes ----
 
-function linkEl(href: string, attrs: Record<string, string> = {}): RouterLink & { attrs: Record<string, string> } {
+function linkEl(href: string, attrs: Record<string, string> = {}): RouterLink & { attrs: Record<string, string>; matches(sel: string): boolean } {
   return {
     attrs: { href, ...attrs },
     getAttribute(n: string) {

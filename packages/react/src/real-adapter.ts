@@ -19,8 +19,8 @@
 // where `head(ctx)` is derived from the input data as in the IR adapter.
 // The final merged model is emitted by the shared helper.
 
-import { makeRealAdapter, type RealAdapterOptions } from '../../oxide/src/server/real-ssr.ts'
-import type { RenderInput, HeadTags, RenderCtx } from '../../oxide/src/types.ts'
+import { makeRealAdapter, type RealAdapterOptions } from '../../core/src/server/real-ssr.ts'
+import type { RenderInput, HeadTags, RenderCtx } from '../../core/src/types.ts'
 import { render as irRender, head as irHead, mergeHead } from './render.ts'
 import { hydrate, mount, update } from './hydrate.ts'
 import { reactHydrateIsland } from './hydrate-island-real.ts'

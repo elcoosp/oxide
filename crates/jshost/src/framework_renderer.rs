@@ -47,7 +47,7 @@ impl ComponentSource {
 
 /// The per-request shape the pipeline hands to a renderer (spec §7 RenderInput).
 ///
-/// Fields map 1:1 to the JS-side `RenderInput` in packages/oxide/src/types.ts,
+/// Fields map 1:1 to the JS-side `RenderInput` in packages/core/src/types.ts,
 /// minus the optional `odf` (a serialized byte blob the JS side accepts but
 /// does not require for a first render). `head` and `data` stay as `Value`
 /// because the pipeline doesn't own the head-model shape and loader output

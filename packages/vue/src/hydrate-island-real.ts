@@ -12,7 +12,7 @@
 // The returned value is a `Promise<Disposer>`; `packages/oxide/src/client/
 // islands.ts` awaits it before marking the host hydrated.
 
-import type { Disposer } from '../../oxide/src/types.ts'
+import type { Disposer } from '../../core/src/types.ts'
 import type { OxElement, ClientOptions } from './hydrate.ts'
 
 /** Structural shape of the `vue` module's SSR-app surface. */

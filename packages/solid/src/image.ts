@@ -12,7 +12,7 @@
 // it via the adapter's `head()`; documented in the compat notes.
 
 import * as web from '@solidjs/web'
-import { deriveSizesFromSrcset } from '../../oxide/src/image-sizes.ts'
+import { deriveSizesFromSrcset } from '../../core/src/image-sizes.ts'
 
 export interface ImageVariantModule {
   src?: string

@@ -4,7 +4,7 @@
 // the runtime tests need: null/undefined/bool/number/bigint/string/Date/
 // Array/plain object (keys byte-sorted like the Rust BTreeMap)/Map/Set.
 
-export function encodeLite(value: unknown): Uint8Array {
+export function encodeLite(value: unknown): Uint8Array<ArrayBuffer> {
   const out: number[] = [0x4f, 0x44, 0x46, 0x31, 0x00] // "ODF1" + empty preamble
   write(value)
   return Uint8Array.from(out)

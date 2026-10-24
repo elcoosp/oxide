@@ -10,7 +10,7 @@
     "test:conformance": "node --test conformance/test/*.test.ts",
     "test:create-oxide": "node --test packages/create-oxide/test/*.test.ts",
     "test:framework-adapter": "cargo test -p oxide-jshost --test framework_host_e2e -- --ignored && cargo test -p oxide-jshost --test loader_host_e2e -- --ignored && cargo test -p oxide-jshost --test hmr_e2e -- --ignored && pnpm run test:smoke && pnpm run test:fixtures",
-    "test:oxide": "node --test packages/oxide/test/*.test.ts",
+    "test:oxide": "node --test packages/core/test/*.test.ts",
     "test:packages": "node --test packages/*/test/*.test.ts conformance/test/*.test.ts",
     "test:react": "node --test packages/react/test/*.test.ts",
     "test:rust": "cargo test --workspace",
@@ -20,7 +20,8 @@
     "test:vue": "node --test packages/vue/test/*.test.ts",
     "test:playwright": "pnpm --filter @oxide/playwright test",
     "test:playwright:install": "pnpm --filter @oxide/playwright install-browsers",
-    "test:fixtures": "./tests/fixtures/check.sh"
+    "test:fixtures": "./tests/fixtures/check.sh",
+    "typecheck": "pnpm -r --workspace-concurrency=1 run typecheck"
   },
   "engines": {
     "node": ">=24"
@@ -29,5 +30,9 @@
     "@mdx-js/mdx": "^3.1.1",
     "@mdx-js/react": "^3.1.1",
     "solid-jsx-oxc": "0.1.0-alpha.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "7.0.2"
   }
 }

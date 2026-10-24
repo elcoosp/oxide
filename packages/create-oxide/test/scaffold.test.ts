@@ -160,7 +160,7 @@ test('emitted config uses the nested l0 shape (CacheConfig is deny_unknown_field
 })
 
 test('emitted framework call opts into real SSR', () => {
-  for (const fw of ['react', 'vue', 'svelte', 'solid']) {
+  for (const fw of ['react', 'vue', 'svelte', 'solid'] as const) {
     const cfg = configTs(fw, 'minimal')
     assert.ok(cfg.includes(`${fw}({ ssr: 'real' })`), `${fw} opts into real SSR`)
   }

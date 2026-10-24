@@ -9,12 +9,12 @@
 // ../src/island.ts), so no JSX is required anywhere in this file.
 
 import { test } from 'node:test'
-import { encodePropsB64 } from '../../oxide/src/odf-encode.ts'
+import { encodePropsB64 } from '../../core/src/odf-encode.ts'
 import assert from 'node:assert/strict'
 import { createElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { Island } from '../src/island.ts'
-import { toBase64 } from '../../oxide/src/bytes.ts'
+import { toBase64 } from '../../core/src/bytes.ts'
 
 function render(node: ReactNode): string {
   return renderToStaticMarkup(node as Parameters<typeof renderToStaticMarkup>[0])

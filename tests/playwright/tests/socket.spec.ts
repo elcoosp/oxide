@@ -78,9 +78,13 @@ test('WebSocket at /chat greets on open and echoes on message', async ({ page })
   })
 
   expect(received).toHaveLength(2)
-  const welcome = JSON.parse(received[0]) as { type: string }
+  const [firstMsg, secondMsg] = received
+  if (firstMsg === undefined || secondMsg === undefined) {
+    throw new Error(`expected 2 messages, got ${received.length}`)
+  }
+  const welcome = JSON.parse(firstMsg) as { type: string }
   expect(welcome.type).toBe('welcome')
-  const echo = JSON.parse(received[1]) as { type: string; payload: unknown }
+  const echo = JSON.parse(secondMsg) as { type: string; payload: unknown }
   expect(echo.type).toBe('echo')
   // The server echoes the inbound text. The exact payload is whatever the
   // client sent (a JSON string), so just assert it survives the round-trip.
@@ -121,9 +125,13 @@ test('two clients — independent welcome + echo, no cross-talk', async ({ page 
             clearTimeout(timeout)
             ws.close()
             try {
+              const [first, second] = out
+              if (first === undefined || second === undefined) {
+                throw new Error(`expected 2 messages, got ${out.length}`)
+              }
               resolve({
-                welcome: JSON.parse(out[0]),
-                echo: JSON.parse(out[1]),
+                welcome: JSON.parse(first),
+                echo: JSON.parse(second),
                 raw: out,
               })
             } catch (err) {

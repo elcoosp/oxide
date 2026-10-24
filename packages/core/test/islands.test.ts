@@ -8,7 +8,7 @@ import { encodeLite } from './helpers/odf-lite.ts'
 
 function islandEl(attrs: Record<string, string>) {
   return {
-    attrs: { 'data-ox-strategy': 'load', ...attrs },
+    attrs: { 'data-ox-strategy': 'load', ...attrs } as Record<string, string>,
     hydrated: false,
     getAttribute(n: string) {
       return n in this.attrs ? this.attrs[n] : null

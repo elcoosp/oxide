@@ -86,7 +86,7 @@ jobs:
         with: { version: 9 }
       - name: Install workspace deps
         # Required before the package tests: several suites import from
-        # sibling packages (e.g. `../../oxide/src/...`) which resolve via
+        # sibling packages (e.g. `../../core/src/...`) which resolve via
         # the pnpm workspace's symlinks under node_modules. Without the
         # install, Node reports ERR_MODULE_NOT_FOUND.
         run: pnpm install --frozen-lockfile

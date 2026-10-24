@@ -7,7 +7,7 @@ import { enhance, type EnhanceForm } from '../src/client/enhance.ts'
 function fakeForm(attrs: Record<string, string> = {}) {
   const listeners = new Map<string, Array<(e: unknown) => void>>()
   const form = {
-    attrs: { method: 'post', ...attrs },
+    attrs: { method: 'post', ...attrs } as Record<string, string>,
     listeners,
     dispatchLog: [] as Array<unknown>,
     addEventListener(type: string, fn: (e: unknown) => void) {

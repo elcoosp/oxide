@@ -32,7 +32,7 @@ use std::collections::BTreeMap;
 
 /// Neutral page-render input (spec §7 RenderInput, stripped of the
 /// framework-specific parts). Fields map to the JS-side `RenderInput` in
-/// `packages/oxide/src/types.ts`; the CLI shim converts this to whatever
+/// `packages/core/src/types.ts`; the CLI shim converts this to whatever
 /// shape the underlying host expects.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PageRenderInput {

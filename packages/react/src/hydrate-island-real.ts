@@ -9,11 +9,11 @@
 // never fetches it. This turns the island runtime into a code-split the
 // browser only pays for when it will actually hydrate something.
 //
-// The returned value is a `Promise<Disposer>`; `packages/oxide/src/client/
+// The returned value is a `Promise<Disposer>`; `packages/core/src/client/
 // islands.ts` awaits it before marking the host hydrated.
 
 import type { FunctionComponent } from 'react'
-import type { Disposer } from '../../oxide/src/types.ts'
+import type { Disposer } from '../../core/src/types.ts'
 import type { OxElement, ClientOptions } from './hydrate.ts'
 
 /** Structural shape of `react-dom/client` — matches the real module. */

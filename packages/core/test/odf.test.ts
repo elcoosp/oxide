@@ -49,9 +49,14 @@ function deepEq(a: unknown, b: unknown, seen = new Map<object, unknown>()): bool
     return a.name === b.name && a.message === b.message && a.stack === b.stack
   }
   if (ArrayBuffer.isView(a) && ArrayBuffer.isView(b)) {
-    if ((a as object).constructor !== (b as object).constructor) return false
-    if (a.length !== b.length) return false
-    for (let i = 0; i < a.length; i++) if (!Object.is(a[i], b[i])) return false
+    // DataView has no .length or index signature; cast the view to its
+    // underlying TypedArray shape (ArrayBuffer.isView is true for both, but
+    // the test only constructs Uint8Array values).
+    const ta = a as Uint8Array
+    const tb = b as Uint8Array
+    if (ta.constructor !== tb.constructor) return false
+    if (ta.length !== tb.length) return false
+    for (let i = 0; i < ta.length; i++) if (!Object.is(ta[i], tb[i])) return false
     return true
   }
   if (Array.isArray(a) && Array.isArray(b)) {

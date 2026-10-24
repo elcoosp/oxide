@@ -538,17 +538,23 @@ if (typeof globalThis.__oxide_cache !== 'function') {
 // server functions (§9.4)
 // ---------------------------------------------------------------------------
 
-const globalRegistry = globalThis as typeof globalThis & {
-  __oxide_fn_registry?: Record<string, (...args: unknown[]) => unknown>
-}
-globalRegistry.__oxide_fn_registry ??= Object.create(null)
+type FnRegistry = Record<string, (...args: never[]) => unknown>
 
-/** Live id → fn registry (ids are computed by the Rust build, §9.4). */
-export const __oxide_fn_registry: Record<string, (...args: unknown[]) => unknown> =
-  globalRegistry.__oxide_fn_registry
+const globalRegistry = globalThis as typeof globalThis & {
+  __oxide_fn_registry?: FnRegistry
+}
+const initialRegistry: FnRegistry = Object.create(null)
+globalRegistry.__oxide_fn_registry = globalRegistry.__oxide_fn_registry ?? initialRegistry
+
+/** Live id → fn registry (ids are computed by the Rust build, §9.4).
+ *  Parameters are typed `never[]` (contravariant bottom) so any concrete
+ *  function signature is assignable to it, matching how a heterogeneous
+ *  registry actually behaves at runtime — the caller resolves the exact
+ *  parameter shape per-id. */
+export const __oxide_fn_registry: FnRegistry = globalRegistry.__oxide_fn_registry
 
 /** Look up a registered server fn by its build id. */
-export function getServerFn(id: string): ((...args: unknown[]) => unknown) | undefined {
+export function getServerFn(id: string): ((...args: never[]) => unknown) | undefined {
   return __oxide_fn_registry[id]
 }
 
@@ -571,7 +577,7 @@ export function getServerFn(id: string): ((...args: unknown[]) => unknown) | und
 declare global {
   // eslint-disable-next-line no-var
   var __oxide_register_fn:
-    | ((id: string, fn: (...args: unknown[]) => unknown) => void)
+    | ((id: string, fn: (...args: never[]) => unknown) => void)
     | undefined
 }
 if (typeof globalThis.__oxide_register_fn !== 'function') {
@@ -603,7 +609,7 @@ export function serverFn<A extends unknown[], R>(
   const tagged = fn as ((...args: A) => Promise<R> | R) & { $$oxideServerFn: true; id: string }
   tagged.$$oxideServerFn = true
   tagged.id = id
-  __oxide_fn_registry[id] = tagged as (...args: unknown[]) => unknown
+  __oxide_fn_registry[id] = tagged
   return tagged
 }
 

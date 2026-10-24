@@ -9,8 +9,8 @@
 // §22 conformance suite is identical across adapters), islands true
 // (§10.3 hydrateIsland), HMR 'refresh' (react-refresh, §13.2).
 
-import type { FrameworkAdapter, RenderInput, RenderCtx, HeadTags, ClientInput, Disposer } from '../../oxide/src/types.ts'
-import type { Plugin } from '../../oxide/src/types.ts'
+import type { FrameworkAdapter, RenderInput, RenderCtx, HeadTags, ClientInput, Disposer } from '../../core/src/types.ts'
+import type { Plugin } from '../../core/src/types.ts'
 import { render, renderToString, renderShellToString, head, mergeHead, applyTitleTemplate, islandModules, pageComponent } from './render.ts'
 import { hydrate, hydrateIsland as irHydrateIsland, mount, update, type ClientOptions } from './hydrate.ts'
 import { reactHydrateIsland } from './hydrate-island-real.ts'

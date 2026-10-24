@@ -140,7 +140,7 @@ function fakeDocWithDispatch() {
   return { doc, dispatched }
 }
 
-function installHmrGlobals(opts: { doc: unknown; location?: unknown; fetch?: unknown } = {}): () => void {
+function installHmrGlobals(opts: { doc?: unknown; location?: unknown; fetch?: unknown } = {}): () => void {
   const g = globalThis as Record<string, unknown>
   const saved = { document: g.document, location: g.location, fetch: g.fetch }
   g.document = opts.doc

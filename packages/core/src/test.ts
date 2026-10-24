@@ -6,7 +6,7 @@ export interface TestAppRequest {
   method?: string
   url: string
   headers?: Record<string, string> | Headers
-  body?: string | Uint8Array | ArrayBuffer | URLSearchParams | FormData | ReadableStream<Uint8Array>
+  body?: string | ArrayBuffer | FormData | ReadableStream<Uint8Array> | URLSearchParams | Uint8Array<ArrayBuffer>
 }
 
 export interface TestApp {

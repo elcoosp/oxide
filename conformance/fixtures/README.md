@@ -11,7 +11,7 @@ oxide/crates/odf/tests/fixtures/<name>.expected.json  Rust Value::to_json() outp
 They are consumed by the JS decoder suite at:
 
 ```
-packages/oxide/test/odf.test.ts
+packages/core/test/odf.test.ts
 ```
 
 via the relative path `../../crates/odf/tests/fixtures/` (resolved from the test

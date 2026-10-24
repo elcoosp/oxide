@@ -4,6 +4,27 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { attachDeferGlue, wireDeferreds, DeferredClient } from '../src/client/defer-glue.ts'
 
+
+/**
+ * Return the value as a promise-like slot. The test's input has the
+ * placeholder shape (`{ __deferred: id }`) but `wireDeferreds` mutates it
+ * in place to a promise-like; TS can't see the mutation, so this asserts
+ * the runtime shape and returns the properly-typed view. The assertion
+ * is what makes the cast honest — if `wireDeferreds` ever stops wiring
+ * the slot, this throws with a clear message instead of silently yielding
+ * a value with no `.then` method.
+ */
+function asDeferredSlot(value: unknown): Promise<unknown> {
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    typeof (value as { then?: unknown }).then !== 'function'
+  ) {
+    throw new TypeError(`expected a promise-like slot; got ${typeof value}`)
+  }
+  return value as Promise<unknown>
+}
+
 function fakeDoc() {
   const listeners = new Map<string, Array<(e: unknown) => void>>()
   return {
@@ -26,15 +47,15 @@ test('wireDeferreds replaces {__deferred} placeholders with promise-likes', asyn
   const glue = attachDeferGlue({ doc: doc as unknown as Document })
   const data = { a: { __deferred: 1 }, list: [{ __deferred: 2 }], plain: 'x' }
   wireDeferreds(data, glue)
-  assert.equal(typeof (data.a as Promise<unknown>).then, 'function', 'placeholder became promise-like')
+  assert.equal(typeof asDeferredSlot(data.a).then, 'function', 'placeholder became promise-like')
   assert.equal(data.plain, 'x')
   assert.deepEqual(data.list, data.list)
 
   glue.resolve(1, 42)
-  assert.equal(await (data.a as Promise<unknown>), 42)
+  assert.equal(await asDeferredSlot(data.a), 42)
 
   doc.dispatch('ox:swap', { detail: { id: 2, value: 'streamed' } })
-  assert.equal(await (data.list[0] as Promise<unknown>), 'streamed', 'ox:swap event resolves the slot')
+  assert.equal(await asDeferredSlot(data.list[0]), 'streamed', 'ox:swap event resolves the slot')
   glue.dispose()
 })
 
@@ -45,10 +66,10 @@ test('defer glue: ox:swap without a value resolves undefined; explicit reject re
   wireDeferreds(data, glue)
 
   doc.dispatch('ox:swap', { detail: { id: 7 } }) // core swapper sends {id} only
-  assert.equal(await (data.later as Promise<unknown>), undefined)
+  assert.equal(await asDeferredSlot(data.later), undefined)
 
   glue.reject(8, new Error('boom'))
-  await assert.rejects(() => (data.bad as Promise<unknown>), /boom/)
+  await assert.rejects(() => asDeferredSlot(data.bad), /boom/)
   glue.dispose()
 })
 
@@ -63,7 +84,7 @@ test('defer glue: swap event with error detail rejects; onSwap hook fires; dispo
   wireDeferreds(data, glue)
 
   doc.dispatch('ox:swap', { detail: { id: 3, error: 'kaboom' } })
-  await assert.rejects(() => (data.x as Promise<unknown>), /kaboom/)
+  await assert.rejects(() => asDeferredSlot(data.x), /kaboom/)
   assert.deepEqual(swapped, [{ id: 3, error: 'kaboom' }])
 
   // after dispose, events no longer touch the registry
@@ -71,7 +92,7 @@ test('defer glue: swap event with error detail rejects; onSwap hook fires; dispo
   const data2 = { y: { __deferred: 3 } }
   wireDeferreds(data2, glue)
   doc.dispatch('ox:swap', { detail: { id: 3, value: 'late' } })
-  const settled = await (data2.y as Promise<unknown>).then(
+  const settled = await asDeferredSlot(data2.y).then(
     () => 'resolved',
     () => 'rejected',
   )
@@ -87,11 +108,11 @@ test('wireDeferreds: keeps non-deferred structure, handles cycles and nested map
   data.set = new Set([{ __deferred: 6 }])
   wireDeferreds(data, glue)
   assert.equal(data.name, 'a')
-  assert.equal(typeof ((data.map as Map<string, unknown>).get('k') as Promise<unknown>).then, 'function')
+  assert.equal(typeof asDeferredSlot((data.map as Map<string, unknown>).get('k')).then, 'function')
   glue.resolve(5, 'v5')
   glue.resolve(6, 'v6')
-  assert.equal(await ((data.map as Map<string, unknown>).get('k') as Promise<unknown>), 'v5')
-  assert.equal(await ([...data.set][0] as Promise<unknown>), 'v6')
+  assert.equal(await asDeferredSlot((data.map as Map<string, unknown>).get('k')), 'v5')
+  assert.equal(await asDeferredSlot([...(data.set as Iterable<unknown>)][0]), 'v6')
   glue.dispose()
 })
 
@@ -104,7 +125,7 @@ test('defer glue: ox:swap now carries the streamed HTML as detail.value', async 
   const data = { html: { __deferred: 42 } }
   wireDeferreds(data, glue)
   doc.dispatch('ox:swap', { detail: { id: 42, value: '<p class="done">ok</p>' } })
-  assert.equal(await (data.html as Promise<unknown>), '<p class="done">ok</p>', 'value flows through')
+  assert.equal(await asDeferredSlot(data.html), '<p class="done">ok</p>', 'value flows through')
   glue.dispose()
 })
 

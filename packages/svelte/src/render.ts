@@ -14,9 +14,9 @@
 // The Atlas page tree (spec §22 reference app) is built in below: the
 // conformance suite renders these routes through every adapter.
 
-import type { RenderInput, RenderCtx, HeadTags } from '../../oxide/src/types.ts'
-import { encodePropsB64 } from '../../oxide/src/odf-encode.ts'
-import { resolveDeferredPlaceholders } from '../../oxide/src/server/deferred.ts'
+import type { RenderInput, RenderCtx, HeadTags } from '../../core/src/types.ts'
+import { encodePropsB64 } from '../../core/src/odf-encode.ts'
+import { resolveDeferredPlaceholders } from '../../core/src/server/deferred.ts'
 import {
   el, t, raw, frag, deferred, island, deferPromise, escapeText, escapeAttr, hash6, toBase64,
   type Node, type ComponentFn, type DeferSource,
