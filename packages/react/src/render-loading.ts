@@ -5,25 +5,39 @@
 // before `adapter.update` swaps the tree.
 import type { Disposer } from '../../core/src/types.ts'
 
+/** Narrow an unknown loading component to a React function component. Same
+ * pattern as hydrate-island-real's helper — runtime guard in the body,
+ * narrowing without a cast at the callsite. */
+function assertFunctionComponent(
+  v: unknown,
+): asserts v is import('react').FunctionComponent<Record<string, unknown>> {
+  if (typeof v !== 'function') {
+    throw new TypeError('reactRenderLoading: Component must be a React function component')
+  }
+}
+
+
 export interface ReactDomClientRootLike {
   createRoot(container: Element): { render(node: unknown): void; unmount(): void }
 }
 
-let cachedRoot: ReactDomClientRootLike | undefined
-let cachedReact: { createElement: (...args: unknown[]) => unknown } | undefined
+// Real module types — this lets us keep `createElement` strict so the
+// narrowed FunctionComponent argument type-checks without casts.
+let cachedRoot: typeof import('react-dom/client') | undefined
+let cachedReact: typeof import('react') | undefined
 
 async function loadReactRuntime(): Promise<{
-  root: ReactDomClientRootLike
-  react: { createElement: (...args: unknown[]) => unknown }
+  root: typeof import('react-dom/client')
+  react: typeof import('react')
 }> {
   if (cachedRoot && cachedReact) return { root: cachedRoot, react: cachedReact }
   const [reactMod, clientMod] = await Promise.all([
     import('react'),
     import('react-dom/client'),
   ])
-  cachedReact = reactMod as unknown as typeof cachedReact
+  cachedReact = reactMod
   cachedRoot = clientMod
-  return { root: cachedRoot!, react: cachedReact! }
+  return { root: cachedRoot, react: cachedReact }
 }
 
 /**
@@ -52,6 +66,7 @@ export function reactRenderLoading(
     .then(({ root: rdc, react }) => {
       if (cancelled) return
       root = rdc.createRoot(overlay)
+      assertFunctionComponent(Component)
       root.render(react.createElement(Component, {}))
     })
     .catch((e) => {
