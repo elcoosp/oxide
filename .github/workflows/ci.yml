@@ -14,6 +14,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]  # §22 platform matrix
     runs-on: ${{ matrix.os }}
     steps:
+      - uses: actions/checkout@v4
       - name: Install nasm (Linux/macOS only)
         if: matrix.os != 'windows-latest'
         run: |
@@ -22,7 +23,6 @@ jobs:
           elif [ "$RUNNER_OS" = "macOS" ]; then
             brew install nasm
           fi
-      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: rustup target add wasm32-unknown-unknown
       - run: cargo fmt --all --check
@@ -117,8 +117,8 @@ jobs:
     runs-on: macos-latest   # V8 host is built/tested on macOS here; ubuntu if
                             # the toolchain supports it — see WORKLOG.
     steps:
-      - run: brew install nasm
       - uses: actions/checkout@v4
+      - run: brew install nasm
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
@@ -134,8 +134,8 @@ jobs:
     name: bench regression gate (>5% fails, §21)
     runs-on: macos-latest
     steps:
-      - run: brew install nasm
       - uses: actions/checkout@v4
+      - run: brew install nasm
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
@@ -209,8 +209,8 @@ jobs:
     name: HMR latency harness (§13.3 / §21)
     runs-on: ubuntu-latest
     steps:
-      - run: sudo apt-get update && sudo apt-get install -y nasm
       - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y nasm
       - uses: dtolnay/rust-toolchain@stable
       - name: Build CLI
         run: cargo build -p oxide-cli
@@ -223,8 +223,8 @@ jobs:
     name: loader/framework worker e2e (§9.3 / §10)
     runs-on: ubuntu-latest
     steps:
-      - run: sudo apt-get update && sudo apt-get install -y nasm
       - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y nasm
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
@@ -265,8 +265,8 @@ jobs:
       matrix:
         browser: [chromium, firefox, webkit]
     steps:
-      - run: sudo apt-get update && sudo apt-get install -y nasm
       - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y nasm
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
