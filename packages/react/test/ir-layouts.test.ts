@@ -34,7 +34,7 @@ test('IR: input.errorRoute renders the registry error component on a throw', asy
       data: {},
       head: { meta: [], link: [], style: [], script: [] },
       errorRoute: 'routes/not-found',
-    } as never),
+    }),
   )
   assert.ok(
     html.includes('data-ox-not-found'),
@@ -54,7 +54,7 @@ test('IR: with no errorRoute the generic OX-500 boundary renders', async () => {
       params: {},
       data: {},
       head: { meta: [], link: [], style: [], script: [] },
-    } as never),
+    }),
   )
   assert.ok(
     html.includes("data-ox-error='OX-500'"),
@@ -72,7 +72,7 @@ test('IR: an errorRoute that itself throws falls back to OX-500', async () => {
       data: {},
       head: { meta: [], link: [], style: [], script: [] },
       errorRoute: 'routes/error', // also throws
-    } as never),
+    }),
   )
   assert.ok(
     html.includes("data-ox-error='OX-500'"),
@@ -88,7 +88,7 @@ test('IR: the default Atlas shell always wraps a page', async () => {
       params: {},
       data: {},
       head: { meta: [], link: [], style: [], script: [] },
-    } as never),
+    }),
   )
   assert.ok(html.includes('Hello Atlas'), 'the page rendered')
   assert.ok(html.includes('<body>') && html.includes('</body></html>'), 'well-formed shell')
