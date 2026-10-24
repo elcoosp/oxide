@@ -76,7 +76,8 @@ test('routeIdFor: non-page rows and __boot__ are never matched', () => {
 
 test('routeIdFor: garbage input resolves to undefined', () => {
   assert.equal(routeIdFor('', MANIFEST), undefined)
-  // @ts-expect-error — runtime hardening against a malformed input
+  // Runtime hardening: signature accepts `unknown` and returns undefined
+  // for non-string input. No @ts-expect-error needed.
   assert.equal(routeIdFor(undefined, MANIFEST), undefined)
 })
 
