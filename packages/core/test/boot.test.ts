@@ -9,9 +9,20 @@
 // end-to-end by the smoke-app fixtures.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { bootWithRouter } from '../src/client/boot.ts'
+import { bootWithRouter, type BootAdapter } from '../src/client/boot.ts'
 import { componentFor, getRouteComponentSource, setRouteComponentSource } from '../src/client/route-manifest.ts'
 import { encodeLite } from './helpers/odf-lite.ts'
+import type { ClientInput, Disposer } from '../src/types.ts'
+
+function mustEl<T>(arr: readonly T[], i: number): T {
+  const v = arr[i]
+  if (v === undefined) throw new Error(`mustEl: index ${i} out of bounds (len=${arr.length})`)
+  return v
+}
+function mustDef<T>(v: T | undefined, label: string): T {
+  if (v === undefined) throw new Error(`mustDef: ${label} is undefined`)
+  return v
+}
 
 interface Saved {
   window?: unknown
@@ -148,18 +159,18 @@ test('bootWithRouter: hydrates SSR root before attaching the router (§8.4)', ()
       oxideBoot: { loadChunk: async () => ({}) },
     })
     let hydrateCalls = 0
-    let hydrateInput: any
-    const adapter = {
-      hydrate(_r: unknown, i: unknown) { hydrateCalls++; hydrateInput = i },
-      update() {},
-      hydrateIsland() { return () => {} },
+    let hydrateInput: ClientInput | undefined
+    const adapter: BootAdapter = {
+      hydrate(_r: Element, i: ClientInput): Disposer { hydrateCalls++; hydrateInput = i; return () => {} },
+      update(): void {},
+      hydrateIsland(): Disposer { return () => {} },
     }
     const clicksBefore = doc._clickCount()
-    const dispose = bootWithRouter(adapter as any)
+    const dispose = bootWithRouter(adapter)
     assert.equal(hydrateCalls, 1, 'adapter.hydrate must be called exactly once')
     assert.ok(doc._clickCount() > clicksBefore, 'router click listener must be attached')
-    assert.equal(hydrateInput.route, '/home')
-    assert.deepEqual(hydrateInput.data, {})
+    assert.equal(mustDef(hydrateInput, 'hydrateInput').route, '/home')
+    assert.deepEqual(mustDef(hydrateInput, 'hydrateInput').data, {})
     assert.equal(typeof dispose, 'function')
     dispose()
   } finally {
@@ -176,13 +187,13 @@ test('bootWithRouter: does NOT attach the router when hydrate throws', () => {
       oxide: { route: '/home', data: '' },
       oxideBoot: { loadChunk: async () => ({}) },
     })
-    const adapter = {
+    const adapter: BootAdapter = {
       hydrate() { throw new Error('hydrate boom') },
-      update() {},
-      hydrateIsland() { return () => {} },
+      update(): void {},
+      hydrateIsland(): Disposer { return () => {} },
     }
     const clicksBefore = doc._clickCount()
-    const dispose = bootWithRouter(adapter as any)
+    const dispose = bootWithRouter(adapter)
     assert.equal(doc._clickCount(), clicksBefore, 'no router click listener when hydrate throws')
     dispose()
   } finally {
@@ -197,13 +208,13 @@ test('bootWithRouter: router-only attach when #root is missing but payload exist
       oxide: { route: '/home', data: '' },
       oxideBoot: { loadChunk: async () => ({}) },
     })
-    const adapter = {
-      hydrate() {},
-      update() {},
-      hydrateIsland() { return () => {} },
+    const adapter: BootAdapter = {
+      hydrate(): Disposer { return () => {} },
+      update(): void {},
+      hydrateIsland(): Disposer { return () => {} },
     }
     const clicksBefore = doc._clickCount()
-    const dispose = bootWithRouter(adapter as any)
+    const dispose = bootWithRouter(adapter)
     assert.ok(doc._clickCount() > clicksBefore, 'payload without #root attaches in router-only mode')
     dispose()
   } finally {
@@ -219,13 +230,13 @@ test('bootWithRouter: does NOT attach the router when window.__oxide is missing'
       root,
       oxideBoot: { loadChunk: async () => ({}) },
     })
-    const adapter = {
-      hydrate() {},
-      update() {},
-      hydrateIsland() { return () => {} },
+    const adapter: BootAdapter = {
+      hydrate(): Disposer { return () => {} },
+      update(): void {},
+      hydrateIsland(): Disposer { return () => {} },
     }
     const clicksBefore = doc._clickCount()
-    const dispose = bootWithRouter(adapter as any)
+    const dispose = bootWithRouter(adapter)
     assert.equal(doc._clickCount(), clicksBefore, 'no router click listener without window.__oxide')
     dispose()
   } finally {
@@ -240,13 +251,13 @@ test('bootWithRouter: router-only mode — attaches when payload exists without 
       oxide: { route: '/home', data: '' },
       oxideBoot: { loadChunk: async () => ({}) },
     })
-    const adapter = {
-      hydrate() {},
-      update() {},
-      hydrateIsland() { return () => {} },
+    const adapter: BootAdapter = {
+      hydrate(): Disposer { return () => {} },
+      update(): void {},
+      hydrateIsland(): Disposer { return () => {} },
     }
     const clicksBefore = doc._clickCount()
-    const dispose = bootWithRouter(adapter as any)
+    const dispose = bootWithRouter(adapter)
     assert.ok(doc._clickCount() > clicksBefore, 'router attaches without a root when payload exists')
     assert.ok(doc._listenerCount('ox:data') > 0, 'the ox:data HMR consumer is wired too')
     dispose()
@@ -268,12 +279,12 @@ test('bootWithRouter: router-only mode navigates and dispatches adapter.update (
       fetchResult: odf,
     })
     const updates: any[] = []
-    const adapter = {
-      hydrate() {},
+    const adapter: BootAdapter = {
+      hydrate(): Disposer { return () => {} },
       update(input: unknown) { updates.push(input) },
-      hydrateIsland() { return () => {} },
+      hydrateIsland(): Disposer { return () => {} },
     }
-    const dispose = bootWithRouter(adapter as any)
+    const dispose = bootWithRouter(adapter)
     doc._fireClick(link)
     await new Promise((r) => setTimeout(r, 30))
     assert.equal(updates.length, 1, 'router-only nav still reaches adapter.update')
@@ -294,12 +305,12 @@ test('bootWithRouter: ox:data (HMR route-data refresh) feeds adapter.update (§1
       oxideBoot: { loadChunk: async () => ({}) },
     })
     const updates: any[] = []
-    const adapter = {
-      hydrate() {},
+    const adapter: BootAdapter = {
+      hydrate(): Disposer { return () => {} },
       update(input: unknown) { updates.push(input) },
-      hydrateIsland() { return () => {} },
+      hydrateIsland(): Disposer { return () => {} },
     }
-    const dispose = bootWithRouter(adapter as any)
+    const dispose = bootWithRouter(adapter)
     const input = { route: '/home', url: '/home', params: {}, data: { fresh: true } }
     doc._fireEvent('ox:data', { type: 'ox:data', detail: { route: '/home', input } })
     assert.equal(updates.length, 1, 'the HMR data event reaches the adapter')
@@ -322,13 +333,13 @@ test('bootWithRouter: boot-path defer glue wires the payload in router-only mode
       oxide: { route: '/slow', data: '' },
       oxideBoot: { loadChunk: async () => ({}) },
     })
-    const adapter = {
-      hydrate() {},
-      update() {},
-      hydrateIsland() { return () => {} },
+    const adapter: BootAdapter = {
+      hydrate(): Disposer { return () => {} },
+      update(): void {},
+      hydrateIsland(): Disposer { return () => {} },
     }
     // No #root → router-only: the boot glue must attach and listen for swaps.
-    const dispose = bootWithRouter(adapter as any)
+    const dispose = bootWithRouter(adapter)
     assert.ok(doc._listenerCount('ox:swap') > 0, 'boot glue listens for ox:swap without islands')
     dispose()
     assert.equal(doc._listenerCount('ox:swap'), 0, 'dispose tears the boot glue down')
@@ -346,13 +357,13 @@ test('bootWithRouter: registers the manifest as the adapters component source (�
       oxide: { route: '/home', data: '' },
       oxideBoot: { loadChunk: async (c: string) => ({ default: () => c }) },
     })
-    const adapter = {
-      hydrate() {},
-      update() {},
-      hydrateIsland() { return () => {} },
+    const adapter: BootAdapter = {
+      hydrate(): Disposer { return () => {} },
+      update(): void {},
+      hydrateIsland(): Disposer { return () => {} },
     }
     const manifest = { buildId: 'b1', routes: { 'routes/home/page': { entry_chunk: 'home.js' } } }
-    const dispose = bootWithRouter(adapter as any, { manifest } as never)
+    const dispose = bootWithRouter(adapter, { manifest })
     const src = getRouteComponentSource()
     assert.ok(src, 'manifest registered')
     assert.equal(src!.manifest, manifest)
@@ -379,12 +390,12 @@ test('bootWithRouter: same-origin link click dispatches adapter.update (§8.4)',
       fetchResult: odf,
     })
     const updates: any[] = []
-    const adapter = {
-      hydrate() {},
+    const adapter: BootAdapter = {
+      hydrate(): Disposer { return () => {} },
       update(input: unknown) { updates.push(input) },
-      hydrateIsland() { return () => {} },
+      hydrateIsland(): Disposer { return () => {} },
     }
-    const dispose = bootWithRouter(adapter as any)
+    const dispose = bootWithRouter(adapter)
     doc._fireClick(link)
     // goto() is async — let the microtask queue + fake fetch resolve.
     await new Promise((r) => setTimeout(r, 30))
