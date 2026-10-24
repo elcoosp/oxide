@@ -36,7 +36,7 @@ async function load(): Promise<SvelteClientLike | undefined> {
     // Dynamic so the runtime is code-split: a page only pays for Svelte's
     // client runtime when a manifest-driven page render actually happens.
     // Svelte 5 exports `mount`/`unmount` from the package root.
-    const mod = (await import('svelte')) as unknown as { default?: SvelteClientLike } & SvelteClientLike
+    const mod = await import('svelte')
     const svelte = (mod.default ?? mod) as SvelteClientLike
     if (typeof svelte.mount !== 'function' || typeof svelte.unmount !== 'function') return undefined
     cached = svelte
