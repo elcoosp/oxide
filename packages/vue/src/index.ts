@@ -59,7 +59,7 @@ export const clientAdapter: FrameworkAdapter = {
 // ---------------------------------------------------------------------------
 
 /** Options accepted by the adapter factory from oxide.config.ts. */
-export interface AdapterOptions extends Partial<RealAdapterOptions> {
+export interface AdapterOptions extends Omit<Partial<RealAdapterOptions>, 'ssr'> {
   /**
    * §14.1: the default is real SSR. \`ssr: 'real'\` requires it; \`'auto'\`
    * (the internal strategy value) prefers it and falls back to the IR
