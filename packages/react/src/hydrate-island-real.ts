@@ -25,12 +25,15 @@ export interface ReactDomClientLike {
   ): { unmount(): void }
 }
 
-let cachedClient: ReactDomClientLike | undefined
-let cachedReact: { createElement: (...args: unknown[]) => unknown } | undefined
+// Keep the module types the dynamic import actually produces — no local
+// minimal type. Callers narrow at the callsite; the alternative (minimal
+// interface + `as unknown as` conversion) defeats the point.
+let cachedClient: typeof import('react-dom/client') | undefined
+let cachedReact: typeof import('react') | undefined
 
 async function loadReact(): Promise<{
-  client: ReactDomClientLike
-  react: { createElement: (...args: unknown[]) => unknown }
+  client: typeof import('react-dom/client')
+  react: typeof import('react')
 }> {
   if (cachedClient && cachedReact) {
     return { client: cachedClient, react: cachedReact }
