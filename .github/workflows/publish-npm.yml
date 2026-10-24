@@ -1,0 +1,116 @@
+name: publish-npm
+
+# Publishes the six @oxide/* packages to the npm registry via OIDC
+# Trusted Publishing. Triggered manually (workflow_dispatch) with the
+# version that tag names. NO NPM_TOKEN secret — authentication uses
+# the GitHub OIDC token and the trusted-publisher configuration on
+# npmjs.com (per package).
+#
+# Requires (one-time, per package, on npmjs.com):
+#   - The package already exists on the registry (first publish is
+#     manual with an NPM_TOKEN).
+#   - Settings -> Trusted Publisher -> GitHub Actions:
+#       Organization: elcoosp
+#       Repository:   oxide
+#       Workflow:     publish-npm.yml
+#   - npm >= 11.5.1 in CI (setup-node's bundled npm satisfies this on
+#     node 24), pnpm >= 10.12 for the OIDC exchange.
+#
+# Not wired to fire on tag automatically: a version-mismatch or a
+# registry rejection cannot be undone, so the trigger is a deliberate
+# human action after the tag exists and the crates are published.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (must equal every package.json version)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run: verify tarballs, do not publish'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write    # OIDC token for npm trusted publishing
+
+jobs:
+  publish:
+    name: Publish npm packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+
+      # pnpm >= 10.12 required for OIDC trusted publishing.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Verify every package.json version matches the input
+        run: |
+          set -eu
+          TARGET="${{ inputs.version }}"
+          echo "target: $TARGET"
+          ok=0
+          for pkg in create-oxide oxide react vue svelte solid; do
+            V=$(python3 -c "import json;print(json.load(open('packages/$pkg/package.json')).get('version',''))")
+            if [ "$V" != "$TARGET" ]; then
+              echo "MISMATCH: packages/$pkg is at $V, expected $TARGET"
+              ok=1
+            else
+              echo "  ok: packages/$pkg @ $V"
+            fi
+          done
+          if [ "$ok" = 1 ]; then
+            echo "Failing: bump first with ./scripts/bump-version.sh $TARGET"
+            exit 1
+          fi
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify tarball contents (only src/ + auto-includes)
+        run: |
+          set -eu
+          for pkg in create-oxide oxide react vue svelte solid; do
+            echo "=== packages/$pkg ==="
+            ( cd "packages/$pkg" && pnpm pack --dry-run 2>&1 | tail -20 )
+          done
+
+      - name: Confirm login via OIDC (no NPM_TOKEN)
+        run: |
+          set -eu
+          # npm >= 11.5.1: `npm whoami` uses OIDC when ACTIONS_ID_TOKEN_*
+          # is present and NODE_AUTH_TOKEN is empty.
+          unset NODE_AUTH_TOKEN
+          npm whoami || {
+            echo "npm whoami failed — the trusted publisher config for"
+            echo "the current package on npmjs.com is missing or wrong."
+            exit 1
+          }
+
+      - name: Publish (dry-run) or publish (real)
+        env:
+          # Explicitly empty so npm picks up the OIDC flow, not a token.
+          NODE_AUTH_TOKEN: ""
+          DRY: ${{ inputs.dry_run }}
+        run: |
+          set -eu
+          FLAGS="--access public --no-git-checks --provenance"
+          if [ "$DRY" = "true" ]; then
+            FLAGS="$FLAGS --dry-run"
+            echo "DRY RUN — no packages will be published"
+          fi
+          # pnpm -r publish walks every non-private workspace package.
+          # oxide-website and oxide-og are private:true and skipped.
+          pnpm -r publish $FLAGS

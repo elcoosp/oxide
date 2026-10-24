@@ -1,5 +1,15 @@
 name: release
 
+# On a v*.*.* tag push:
+#   1. Regenerate the full CHANGELOG.md (for the commit-back)
+#   2. Extract just this tag's section (for the GitHub Release body)
+#   3. Commit the regenerated CHANGELOG to main
+#   4. Create the GitHub Release
+#
+# Does NOT publish crates or npm packages — those are separate (see
+# publish-npm.yml and PUBLISHING.md step 3b). A CI publish of an
+# immutable registry is not safely retryable, so a human drives it.
+
 on:
   push:
     tags:
@@ -17,14 +27,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Generate changelog
+      - name: Regenerate full CHANGELOG.md
         uses: orhun/git-cliff-action@v4
-        id: cliff
         with:
           config: cliff.toml
           args: --verbose --tag ${{ github.ref_name }} --output CHANGELOG.md
         env:
           OUTPUT: CHANGELOG.md
+
+      - name: Extract this tag's section for the release body
+        uses: orhun/git-cliff-action@v4
+        id: cliff_latest
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: RELEASE_NOTES.md
 
       - name: Commit changelog back to main
         run: |
@@ -43,6 +61,6 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
-          body: ${{ steps.cliff.outputs.content }}
+          body: ${{ steps.cliff_latest.outputs.content }}
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
