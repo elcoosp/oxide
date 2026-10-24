@@ -268,11 +268,69 @@ export interface ClientHooks {
   navigate(href: string): void
 }
 
+
+// ---------------------------------------------------------------------------
+// Runtime-validated prop narrowing (mirrors react/vue).
+// ---------------------------------------------------------------------------
+
+function isString(v: unknown): v is string { return typeof v === 'string' }
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+function isNode(v: unknown): v is Node {
+  if (!isObject(v)) return false
+  const kind = v.kind
+  return kind === 'fragment' || kind === 'element' || kind === 'text' ||
+         kind === 'raw' || kind === 'defer' || kind === 'island'
+}
+function isNodeArray(v: unknown): v is Node[] {
+  return Array.isArray(v) && v.every(isNode)
+}
+function isParamsRecord(v: unknown): v is Record<string, string | string[]> {
+  if (!isObject(v)) return false
+  for (const k of Object.keys(v)) {
+    const val = v[k]
+    if (typeof val === 'string') continue
+    if (Array.isArray(val) && val.every((x) => typeof x === 'string')) continue
+    return false
+  }
+  return true
+}
+function parseClientHooks(v: unknown): ClientHooks {
+  if (!isObject(v)) throw new TypeError('oxide: page props.client must be an object')
+  const update = v.update
+  const navigate = v.navigate
+  if (typeof update !== 'function') throw new TypeError('oxide: page props.client.update must be a function')
+  if (typeof navigate !== 'function') throw new TypeError('oxide: page props.client.navigate must be a function')
+  return {
+    update: (patch: Record<string, unknown>): void => {
+      (update as (p: Record<string, unknown>) => void)(patch)
+    },
+    navigate: (href: string): void => {
+      (navigate as (h: string) => void)(href)
+    },
+  }
+}
+function parsePageProps(input: Record<string, unknown>): PageProps {
+  const route = input.route
+  const url = input.url
+  const params = input.params
+  const data = input.data
+  if (!isString(route)) throw new TypeError('oxide: page props.route must be a string')
+  if (!isString(url)) throw new TypeError('oxide: page props.url must be a string')
+  if (!isParamsRecord(params)) throw new TypeError('oxide: page props.params must be a Record<string, string | string[]>')
+  if (!isObject(data)) throw new TypeError('oxide: page props.data must be a Record<string, unknown>')
+  const client = input.client
+  return { route, url, params, data, client: client === undefined ? undefined : parseClientHooks(client) }
+}
+
+
 interface AtlasPage {
   component: ComponentFn
 }
 
-function HomePage(props: PageProps): Node {
+function HomePage(input: Record<string, unknown>): Node {
+  const props = parsePageProps(input)
   return el('section', { class: 'home' },
     el('h1', {}, t('Hello Atlas')),
     el('p', { class: 'intro' }, t(`Serving ${String(props.data.framework ?? 'every framework')} from one core.`)),
@@ -291,7 +349,8 @@ interface PageProps {
   client?: { update(patch: Record<string, unknown>): void; navigate(href: string): void }
 }
 
-function BlogPage(props: PageProps): Node {
+function BlogPage(input: Record<string, unknown>): Node {
+  const props = parsePageProps(input)
   const comments = props.data.comments as Array<{ author: string; body: string }> | undefined
   return el('article', { class: 'post' },
     el('h1', {}, t(String(props.data.title ?? 'Untitled'))),
@@ -305,7 +364,8 @@ function BlogPage(props: PageProps): Node {
   )
 }
 
-function StreamingPage(props: PageProps): Node {
+function StreamingPage(input: Record<string, unknown>): Node {
+  const props = parsePageProps(input)
   return el('section', { class: 'stream' },
     el('h1', {}, t('Streaming Atlas')),
     deferred(
@@ -340,17 +400,20 @@ function NotFoundPage(): Node {
   )
 }
 
-function CounterIsland(props: PageProps & { initialCount?: number }): Node {
+function CounterIsland(input: Record<string, unknown>): Node {
+  const props = parsePageProps(input)
+  const initialCount = typeof input.initialCount === 'number' ? input.initialCount : 0
   return el('div', { class: 'counter' },
-    el('span', { class: 'count' }, t(String(props.initialCount ?? 0))),
+    el('span', { class: 'count' }, t(String(initialCount ?? 0))),
     el('button', {
       class: 'inc',
-      onClick: () => props.client?.update({ initialCount: Number(props.initialCount ?? 0) + 1 }),
+      onClick: () => props.client?.update({ initialCount: Number(initialCount ?? 0) + 1 }),
     }, t('Increment')),
   )
 }
 
-function IslandsPage(props: PageProps): Node {
+function IslandsPage(input: Record<string, unknown>): Node {
+  const props = parsePageProps(input)
   return el('section', { class: 'islands' },
     el('h1', {}, t('Islands Atlas')),
     island(
@@ -365,7 +428,8 @@ function IslandsPage(props: PageProps): Node {
   )
 }
 
-function ActionsPage(props: PageProps): Node {
+function ActionsPage(input: Record<string, unknown>): Node {
+  const props = parsePageProps(input)
   const form = props.data.form as { name?: string } | undefined
   return el('section', { class: 'actions' },
     el('h1', {}, t('Actions Atlas')),
@@ -379,7 +443,8 @@ function ActionsPage(props: PageProps): Node {
   )
 }
 
-function CachedPage(props: PageProps): Node {
+function CachedPage(input: Record<string, unknown>): Node {
+  const props = parsePageProps(input)
   const posts = (props.data.posts ?? []) as string[]
   return el('section', { class: 'cached' },
     el('h1', {}, t('Cache Atlas')),
@@ -414,7 +479,7 @@ export function pageComponent(route: string): ComponentFn {
 
 /** Test/build helper: the island chunk map (§10.3 "each island is its own chunk"). */
 export const islandModules: Record<string, { default: ComponentFn }> = {
-  '/islands/counter.ts': { default: CounterIsland as ComponentFn },
+  '/islands/counter.ts': { default: CounterIsland },
 }
 
 /** Test/build helper: pages that throw at render (error-boundary conformance). */
@@ -425,7 +490,11 @@ export const throwsAtRender = new Set(['routes/error'])
  * — the SHELL owns the document skeleton (`<!doctype html><html><head>` +
  * `<body>`) and the framework root container below.
  */
-function AtlasLayout(props: PageProps & { page: Node }): Node {
+function AtlasLayout(input: Record<string, unknown>): Node {
+  const props = parsePageProps(input)
+  const rawPage = input.page
+  if (!isNode(rawPage)) throw new TypeError('oxide: AtlasLayout requires page to be a Node')
+  const page: Node = rawPage
   return frag(
     el('head', {},
       // Layout title doubles as the title template (§16.3 merge): "%s · Atlas".
@@ -433,7 +502,7 @@ function AtlasLayout(props: PageProps & { page: Node }): Node {
       el('meta', { charset: 'utf-8' }),
       el('meta', { name: 'viewport', content: 'width=device-width, initial-scale=1' }),
     ),
-    props.page,
+    page,
   )
 }
 
@@ -442,18 +511,23 @@ function AtlasLayout(props: PageProps & { page: Node }): Node {
 // rendered outermost-first around the page. `AtlasLayout` is registered as
 // the root so a route that declares `routes/layout` behaves like the
 // default shell.
-function NestedLayout(props: PageProps & { children?: Node[]; page?: Node }): Node {
-  const inner = props.children && props.children.length > 0
-    ? props.children
-    : props.page
-      ? [props.page]
+function NestedLayout(input: Record<string, unknown>): Node {
+  const props = parsePageProps(input)
+  const rawChildren = input.children
+  const rawPage = input.page
+  const children: Node[] = isNodeArray(rawChildren) ? rawChildren : []
+  const page: Node | undefined = isNode(rawPage) ? rawPage : undefined
+  const inner = children && children.length > 0
+    ? children
+    : page
+      ? [page]
       : []
   return el('div', { 'data-oxide-layout': 'nested' }, ...inner)
 }
 
 const LAYOUTS: Record<string, AtlasPage> = {
-  'routes/layout': { component: AtlasLayout as unknown as ComponentFn },
-  'routes/nested/layout': { component: NestedLayout as unknown as ComponentFn },
+  'routes/layout': { component: AtlasLayout },
+  'routes/nested/layout': { component: NestedLayout },
 }
 
 // ---------------------------------------------------------------------------
