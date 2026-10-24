@@ -19,6 +19,34 @@
 
 import type { RenderInput, HeadTags } from '../../core/src/types.ts'
 
+/** Return the module's `default` export when an interop wrapper provides
+ * one; otherwise the module itself. React is CJS-origin, so bundlers may
+ * wrap it as `{ default: React }`; some configs expose it flat. Both shapes
+ * reach us at runtime — this helper narrows them to one candidate without
+ * a cast. */
+function pickInteropDefault(mod: unknown): unknown {
+  if (mod !== null && typeof mod === 'object' && 'default' in mod) {
+    const d = (mod as { default: unknown }).default
+    if (d !== undefined) return d
+  }
+  return mod
+}
+
+/** Runtime type guard: `v` has `createElement` (React's functional runtime
+ * marker). */
+function isReactLike(v: unknown): v is ReactLike {
+  if (v === null || typeof v !== 'object') return false
+  return typeof Reflect.get(v, 'createElement') === 'function'
+}
+
+/** Runtime type guard: `v` has `renderToString` (react-dom/server's server
+ * runtime marker). */
+function isReactDomServerLike(v: unknown): v is ReactDomServerLike {
+  if (v === null || typeof v !== 'object') return false
+  return typeof Reflect.get(v, 'renderToString') === 'function'
+}
+
+
 /** Minimal structural type of the React module we depend on. */
 export interface ReactLike {
   createElement(type: unknown, props: Record<string, unknown> | null, ...children: unknown[]): unknown
@@ -57,22 +85,19 @@ async function load(): Promise<{ react: ReactLike; server: ReactDomServerLike } 
   if (attempted) return undefined
   attempted = true
   try {
-    const reactMod = await import('react')
-    const serverMod = await import('react-dom/server')
-    const react = (reactMod.default ?? reactMod) as ReactLike
-    if (typeof react.createElement !== 'function') {
-      lastLoadError =
-        'react imported but createElement is ' + typeof (react as { createElement?: unknown }).createElement +
-        '; keys=' + Object.keys(reactMod as object).join(',') +
-        '; defaultKeys=' + (reactMod.default ? Object.keys(reactMod.default as object).join(',') : 'none')
+    const reactMod: unknown = await import('react')
+    const serverMod: unknown = await import('react-dom/server')
+    const reactCandidate = pickInteropDefault(reactMod)
+    const serverCandidate = pickInteropDefault(serverMod)
+    if (!isReactLike(reactCandidate)) {
+      lastLoadError = 'react imported but createElement is not a function'
       return undefined
     }
-    if (typeof serverMod.renderToString !== 'function') {
-      lastLoadError =
-        'react-dom/server imported but renderToString is ' + typeof (serverMod as { renderToString?: unknown }).renderToString
+    if (!isReactDomServerLike(serverCandidate)) {
+      lastLoadError = 'react-dom/server imported but renderToString is not a function'
       return undefined
     }
-    cached = { react, server: serverMod }
+    cached = { react: reactCandidate, server: serverCandidate }
     return cached
   } catch (e) {
     lastLoadError =
