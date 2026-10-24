@@ -40,11 +40,11 @@ lives **inside the Oxide monorepo** at `packages/oxide-website/`:
 cd oxide/packages/oxide-website
 pnpm install
 
-cargo build --release -p oxide-cli
-target/release/oxide-cli routes --root website     # scan + typegen
-target/release/oxide-cli dev    --root website     # dev server + HMR
-target/release/oxide-cli build  --root website     # bundle, prerender, artifacts
-target/release/oxide-cli start  --root website     # serve :3000
+cargo build --release -p oxide-fw-cli
+target/release/oxide routes --root website     # scan + typegen
+target/release/oxide dev    --root website     # dev server + HMR
+target/release/oxide build  --root website     # bundle, prerender, artifacts
+target/release/oxide start  --root website     # serve :3000
 ```
 
 Check the wire: `curl -s localhost:3000/_oxide/health`,

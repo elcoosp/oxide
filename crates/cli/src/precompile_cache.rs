@@ -8,7 +8,7 @@
 //!
 //! The precompile of one file is a pure function of
 //! `(source, framework, generate-mode, compiler-version)`. This module caches
-//! its output in the §5.4 Tier-B CAS (`oxide-graph::ContentStore`):
+//! its output in the §5.4 Tier-B CAS (`oxide_fw_graph::ContentStore`):
 //!
 //! - **Key:** blake3 of the cache-input descriptor (source hash + framework +
 //!   mode + tool version). Any input change misses; an unrelated file does not.
@@ -22,7 +22,7 @@
 //! A cache miss, a corrupt blob, or a CAS I/O error all degrade to "compile it
 //! again" — the cache is never load-bearing for correctness.
 
-use oxide_graph::{CasKey, CasWriteMeta, ContentStore};
+use oxide_fw_graph::{CasKey, CasWriteMeta, ContentStore};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -62,17 +62,17 @@ pub struct PrecompileCache {
     store: ContentStore,
     ptr_dir: PathBuf,
     /// §5.4: an optional remote read-through cache. `None` for a local build.
-    remote: Option<Arc<dyn oxide_graph::RemoteCache>>,
+    remote: Option<Arc<dyn oxide_fw_graph::RemoteCache>>,
 }
 
 impl PrecompileCache {
     /// Open (creating dirs as needed) under `<root>/.oxide/cache`.
-    pub fn open(root: &Path) -> oxide_graph::Result<Self> {
+    pub fn open(root: &Path) -> oxide_fw_graph::Result<Self> {
         let cache_root = root.join(".oxide/cache");
         let store = ContentStore::open(cache_root.join("cas"))?;
         let ptr_dir = cache_root.join("precompile");
         std::fs::create_dir_all(&ptr_dir).map_err(|e| {
-            oxide_graph::err("CAS-IO", format!("create {}: {e}", ptr_dir.display()))
+            oxide_fw_graph::err("CAS-IO", format!("create {}: {e}", ptr_dir.display()))
         })?;
         Ok(Self {
             store,
@@ -85,8 +85,8 @@ impl PrecompileCache {
     /// remote; a successful compile writes back through it.
     pub fn open_with_remote(
         root: &Path,
-        remote: Arc<dyn oxide_graph::RemoteCache>,
-    ) -> oxide_graph::Result<Self> {
+        remote: Arc<dyn oxide_fw_graph::RemoteCache>,
+    ) -> oxide_fw_graph::Result<Self> {
         let mut cache = Self::open(root)?;
         cache.remote = Some(remote);
         Ok(cache)
@@ -132,7 +132,7 @@ impl PrecompileCache {
 
     /// Store compiled JS for `key`. Errors are returned so the caller can log,
     /// but a failure never fails the build.
-    pub fn put(&self, key: &PrecompileKey, js: &str) -> oxide_graph::Result<()> {
+    pub fn put(&self, key: &PrecompileKey, js: &str) -> oxide_fw_graph::Result<()> {
         let meta = CasWriteMeta {
             namespace: vec![
                 "precompile".to_string(),
@@ -145,7 +145,7 @@ impl PrecompileCache {
         // corrupt or tampered blob is caught by `archived_hash` on read, in
         // addition to the CAS's own key check.
         let cas_key = self.store.put_sealed(
-            oxide_graph::artifacts::ArtifactKind::CompiledJs,
+            oxide_fw_graph::artifacts::ArtifactKind::CompiledJs,
             js.as_bytes(),
             &meta,
         )?;
@@ -154,9 +154,9 @@ impl PrecompileCache {
         // corruption, but a rename keeps a concurrent reader from seeing it.
         let tmp = ptr.with_extension("ptr.tmp");
         std::fs::write(&tmp, cas_key.hex())
-            .map_err(|e| oxide_graph::err("CAS-IO", format!("write {}: {e}", tmp.display())))?;
+            .map_err(|e| oxide_fw_graph::err("CAS-IO", format!("write {}: {e}", tmp.display())))?;
         std::fs::rename(&tmp, &ptr)
-            .map_err(|e| oxide_graph::err("CAS-IO", format!("rename {}: {e}", ptr.display())))?;
+            .map_err(|e| oxide_fw_graph::err("CAS-IO", format!("rename {}: {e}", ptr.display())))?;
         Ok(())
     }
 

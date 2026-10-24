@@ -76,7 +76,7 @@ The numbers, because they're checkable:
 ```sh
 git clone https://github.com/elcoosp/oxide
 cd oxide
-cargo build --release -p oxide-cli
+cargo build --release -p oxide-fw-cli
 
 node packages/create-oxide/src/cli.ts blog react my-app   # 16 templates: 4 frameworks × 4 shapes
 ```

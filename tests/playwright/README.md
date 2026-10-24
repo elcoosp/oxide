@@ -9,7 +9,7 @@ and Playwright's Chromium alone needs ~500 MB. Run it on a machine with
 more headroom.
 
 ```sh
-cargo build -p oxide-cli                  # one-time, produces target/debug/oxide-cli
+cargo build -p oxide-fw-cli                # one-time, produces target/debug/oxide
 pnpm test:playwright:install              # downloads Chromium
 pnpm test:playwright                      # boots oxide start + drives the browser
 ```

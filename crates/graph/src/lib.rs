@@ -1,4 +1,4 @@
-//! oxide-graph — demand-driven incremental engine + content-addressed store (spec §5, D6).
+//! oxide-fw-graph — demand-driven incremental engine + content-addressed store (spec §5, D6).
 //!
 //! Tier A: in-memory demand graph with fine-grained dependency tracking and early cutoff.
 //! Tier B: persistent CAS (`blake3`, `redb` index, `zstd` blobs, rkyv-ready artifacts).

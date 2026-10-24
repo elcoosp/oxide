@@ -4749,7 +4749,7 @@ dependencies = [
  "oxc_resolver",
  "oxide-compiler",
  "oxide-diagnostics",
- "oxide-graph",
+ "oxide-fw-graph",
  "rolldown",
  "rolldown_common",
  "rolldown_plugin",
@@ -4784,53 +4784,6 @@ dependencies = [
  "tokio",
  "tracing",
  "zstd 0.14.2",
-]
-
-[[package]]
-name = "oxide-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.23.1",
- "blake3",
- "bytes",
- "chrono",
- "clap",
- "dashmap 6.2.1",
- "futures",
- "image",
- "mimalloc",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
- "oxide-adapters",
- "oxide-assets",
- "oxide-bundler",
- "oxide-cache",
- "oxide-compiler",
- "oxide-config",
- "oxide-dev",
- "oxide-diagnostics",
- "oxide-graph",
- "oxide-jshost",
- "oxide-odf",
- "oxide-plugin",
- "oxide-render",
- "oxide-router",
- "oxide-server",
- "rayon",
- "reqwest",
- "rmcp",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-rustls",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -4886,7 +4839,7 @@ dependencies = [
  "local-ip-address",
  "notify",
  "oxide-diagnostics",
- "oxide-graph",
+ "oxide-fw-graph",
  "qrcode",
  "rcgen",
  "rustls",
@@ -4908,7 +4861,54 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxide-graph"
+name = "oxide-fw-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "blake3",
+ "bytes",
+ "chrono",
+ "clap",
+ "dashmap 6.2.1",
+ "futures",
+ "image",
+ "mimalloc",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "oxide-adapters",
+ "oxide-assets",
+ "oxide-bundler",
+ "oxide-cache",
+ "oxide-compiler",
+ "oxide-config",
+ "oxide-dev",
+ "oxide-diagnostics",
+ "oxide-fw-graph",
+ "oxide-jshost",
+ "oxide-odf",
+ "oxide-plugin",
+ "oxide-render",
+ "oxide-router",
+ "oxide-server",
+ "rayon",
+ "reqwest",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "oxide-fw-graph"
 version = "0.1.0"
 dependencies = [
  "async-trait",

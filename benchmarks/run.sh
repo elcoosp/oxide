@@ -13,7 +13,7 @@
 #   * server bundle bytes  — sum of `dist/server/**/*.js`
 #   * page count           — from the client manifest
 #   * cold start           — `oxide start` to first 200 on `/_oxide/ready`
-#   * idle RSS             — the oxide-cli server process, after start
+#   * idle RSS             — the oxide-fw-cli server process, after start
 #   * TTFB                 — first byte of `GET /` from the running server
 #
 # What is NOT measured here (and why):
@@ -29,10 +29,10 @@ set -uo pipefail
 set +m   # silence 'Killed' job-control noise from kill -9
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-CLI="$ROOT/target/debug/oxide-cli"
+CLI="$ROOT/target/debug/oxide"
 
 if [ ! -x "$CLI" ]; then
-    echo "error: build the CLI first: cargo build -p oxide-cli" >&2
+    echo "error: build the CLI first: cargo build -p oxide-fw-cli" >&2
     exit 1
 fi
 
@@ -90,9 +90,9 @@ wait_for_server() {
     return 1
 }
 
-# RSS in MB of the newest `oxide-cli` process (the server we just started).
+# RSS in MB of the newest `oxide-fw-cli` process (the server we just started).
 server_rss_mb() {
-    ps -axo rss,comm | awk '/oxide-cli/ { rss = $1 } END { print int(rss / 1024) }'
+    ps -axo rss,comm | awk '/oxide$/ { rss = $1 } END { print int(rss / 1024) }'
 }
 
 # TTFB in ms of `GET /`.
@@ -140,7 +140,7 @@ print(len(json.loads(p.read_text())['routes']) if p.is_file() else 0)
         rss=$(server_rss_mb)
     fi
     kill -9 "$sp" 2>/dev/null
-    pkill -9 -f "target/debug/oxide-cli" 2>/dev/null
+    pkill -9 -f "target/debug/oxide" 2>/dev/null
     sleep 0.3
 
     printf '%-22s %10s %10s %12s %12s %6s %12s %10s %8s\n' \

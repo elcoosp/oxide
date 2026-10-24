@@ -21,8 +21,8 @@ and deployment. This page takes you from zero to a running app.
 ```sh
 git clone https://github.com/elcoosp/oxide
 cd oxide
-cargo build --release -p oxide-cli
-target/release/oxide-cli doctor   # 7 environment checks: node, cargo, config, routes dir, cache dir, secrets, cookie keys
+cargo build --release -p oxide-fw-cli
+target/release/oxide doctor   # 7 environment checks: node, cargo, config, routes dir, cache dir, secrets, cookie keys
 ```
 
 One binary. Everything else in this guide is a subcommand of it.

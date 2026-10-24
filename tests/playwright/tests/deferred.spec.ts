@@ -12,7 +12,7 @@ import { existsSync } from 'node:fs'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(__dirname, '..', '..', '..')
 const smokeRoot = join(repoRoot, 'examples', 'smoke-app-react')
-const oxideBin = join(repoRoot, 'target', 'debug', 'oxide-cli')
+const oxideBin = join(repoRoot, 'target', 'debug', 'oxide')
 const base = 'http://127.0.0.1:3109'
 
 let server: ChildProcess | undefined
@@ -21,7 +21,7 @@ test.beforeAll(async () => {
   test.setTimeout(60_000)
   if (!existsSync(oxideBin)) {
     throw new Error(
-      `oxide-cli binary missing at ${oxideBin}; run \`cargo build -p oxide-cli\` first`,
+      `oxide binary missing at ${oxideBin}; run \`cargo build -p oxide-fw-cli\` first`,
     )
   }
   server = spawn(oxideBin, ['start', '--root', smokeRoot, '--port', '3109'], {

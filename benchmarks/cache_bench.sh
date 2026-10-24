@@ -14,12 +14,12 @@ set -uo pipefail
 set +m   # silence 'Killed' job-control noise
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-CLI="${OXIDE_CLI:-$ROOT/target/debug/oxide-cli}"
+CLI="${OXIDE_CLI:-$ROOT/target/debug/oxide}"
 N="${N:-1000}"
 PORT_BASE="${PORT_BASE:-3500}"
 
 if [ ! -x "$CLI" ]; then
-    echo "error: build the CLI first: cargo build -p oxide-cli" >&2
+    echo "error: build the CLI first: cargo build -p oxide-fw-cli" >&2
     exit 1
 fi
 
@@ -45,7 +45,7 @@ for fx in smoke-app-react smoke-app-vue smoke-app-svelte smoke-app-solid; do
     [ -f "$dir/oxide.config.ts" ] || { echo "$fx: missing"; continue; }
     [ -d "$dir/dist" ] || "$CLI" build --root "$dir" >/dev/null 2>&1
 
-    ( pkill -9 -f "target/debug/oxide-cli" ) 2>/dev/null
+    ( pkill -9 -f "target/debug/oxide" ) 2>/dev/null
     sleep 0.4
     port=$((PORT_BASE + RANDOM % 200))
     "$CLI" start --root "$dir" --port "$port" >/dev/null 2>&1 &
@@ -107,7 +107,7 @@ for fx in smoke-app-react smoke-app-vue smoke-app-svelte smoke-app-solid; do
         "$fx" "$hits" "$misses" "$bypass" "$mean" "$p50" "$p99"
 
     { kill -9 "$sp"; } 2>/dev/null
-    ( pkill -9 -f "target/debug/oxide-cli" ) 2>/dev/null
+    ( pkill -9 -f "target/debug/oxide" ) 2>/dev/null
     sleep 0.3
 done
 

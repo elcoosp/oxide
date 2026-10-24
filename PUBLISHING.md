@@ -189,7 +189,7 @@ machine, and the trusted publisher config is dormant.
 
 After a tag push and the `release.yml` job runs:
 
-1. Verify the crates are on crates.io (`cargo info oxide-cli`)
+1. Verify the crates are on crates.io (`cargo info oxide-fw-cli`)
 2. Trigger the workflow manually:
    - GitHub → Actions → publish-npm → Run workflow
    - **version**: `0.1.0` (must equal every package.json)

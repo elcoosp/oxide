@@ -1,5 +1,5 @@
 [package]
-name = "oxide-graph"
+name = "oxide-fw-graph"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

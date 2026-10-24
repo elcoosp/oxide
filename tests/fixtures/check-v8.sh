@@ -13,7 +13,7 @@
 # fixture is never mutated — an interrupted run can never leave the repo
 # dirty.
 #
-# Runs the already-built `target/debug/oxide-cli`. Exits non-zero on any
+# Runs the already-built `target/debug/oxide`. Exits non-zero on any
 # failure. Prints a table.
 set -uo pipefail
 
@@ -45,7 +45,7 @@ if [ "$_gate_locked" -ne 1 ]; then
 fi
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-CLI="$ROOT/target/debug/oxide-cli"
+CLI="$ROOT/target/debug/oxide"
 SRC="$ROOT/examples/smoke-app-react"
 PAGE_MARKER="<h1>Home</h1>"
 # PID-derived default: two concurrent invocations (the harness may run a
@@ -53,7 +53,7 @@ PAGE_MARKER="<h1>Home</h1>"
 PORT="${PORT:-$(( 3311 + ($$ % 900) ))}"
 
 if [ ! -x "$CLI" ]; then
-    echo "error: $CLI not built. Run: cargo build -p oxide-cli" >&2
+    echo "error: $CLI not built. Run: cargo build -p oxide-fw-cli" >&2
     exit 1
 fi
 
@@ -71,7 +71,7 @@ WORK="$ROOT/examples/.v8-gate-$$"
 DIR="$WORK/smoke-app-react"
 cleanup() {
     # Kill only the server this run started — a blanket pkill of
-    # `target/debug/oxide-cli` also matches `oxide-cli build`/`start` from a
+    # `target/debug/oxide` also matches `oxide build`/`start` from a
     # concurrent run and cross-kills it (the gate is invoked by a harness that
     # may run it more than once).
     [ -n "${SRV:-}" ] && kill -9 "$SRV" 2>/dev/null

@@ -33,7 +33,7 @@ description = "Oxide: framework-agnostic, full-stack meta-framework with a Rust 
 oxide-diagnostics = { path = "crates/diagnostics", version = "0.1.0" }
 oxide-odf = { path = "crates/odf", version = "0.1.0" }
 oxide-router = { path = "crates/router", version = "0.1.0" }
-oxide-graph = { path = "crates/graph", version = "0.1.0" }
+oxide-fw-graph = { path = "crates/graph", version = "0.1.0" }
 oxide-config = { path = "crates/config", version = "0.1.0" }
 oxide-cache = { path = "crates/cache", version = "0.1.0" }
 oxide-compiler = { path = "crates/compiler", version = "0.1.0" }

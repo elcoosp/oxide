@@ -102,8 +102,8 @@ Build the single binary and sanity-check the environment:
 git clone https://github.com/elcoosp/oxide
 cd oxide
 
-cargo build --release -p oxide-cli
-target/release/oxide-cli doctor
+cargo build --release -p oxide-fw-cli
+target/release/oxide doctor
 ```
 
 Run the smoke app end to end:
@@ -111,9 +111,9 @@ Run the smoke app end to end:
 ```sh
 cd examples/smoke-app-react
 
-../../target/release/oxide-cli routes   # scan routes, emit typegen
-../../target/release/oxide-cli build    # bundle, prerender, emit deploy artifacts
-../../target/release/oxide-cli start    # serve /, /blog/:slug, /_oxide/health
+../../target/release/oxide routes   # scan routes, emit typegen
+../../target/release/oxide build    # bundle, prerender, emit deploy artifacts
+../../target/release/oxide start    # serve /, /blog/:slug, /_oxide/health
 ```
 
 Or scaffold a fresh app — 4 frameworks × minimal / blog / dashboard / storefront

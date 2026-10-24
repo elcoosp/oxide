@@ -273,7 +273,7 @@ pub async fn query_osv(
     // Chunk at 1000 — OSV's documented batch limit is 1000 queries.
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
-        .user_agent(format!("oxide-cli/{}", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("oxide-fw-cli/{}", env!("CARGO_PKG_VERSION")))
         .build()
         .context("build reqwest client")?;
     let mut advisories = Vec::new();

@@ -69,7 +69,7 @@ export default function Page(props: Props) {
               <span className="p">$</span> git clone https://github.com/elcoosp/oxide && cd oxide
             </div>
             <div>
-              <span className="p">$</span> cargo build --release -p oxide-cli
+              <span className="p">$</span> cargo build --release -p oxide-fw-cli
             </div>
             <div>
               <span className="p">$</span> node packages/create-oxide/src/cli.ts blog react my-app

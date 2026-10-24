@@ -22,7 +22,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync, unlinkSync } from 'node:f
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(__dirname, '..', '..', '..')
 const smokeRoot = join(repoRoot, 'examples', 'smoke-app-react')
-const oxideBin = join(repoRoot, 'target', 'debug', 'oxide-cli')
+const oxideBin = join(repoRoot, 'target', 'debug', 'oxide')
 const routeDir = join(smokeRoot, 'src', 'routes', 'rescan-me')
 const routeFile = join(routeDir, 'page.tsx')
 const PORT = 3105
@@ -34,7 +34,7 @@ test.beforeAll(async () => {
   test.setTimeout(90_000)
   if (!existsSync(oxideBin)) {
     throw new Error(
-      `oxide-cli binary missing at ${oxideBin}; run \`cargo build -p oxide-cli\` first`,
+      `oxide binary missing at ${oxideBin}; run \`cargo build -p oxide-fw-cli\` first`,
     )
   }
   // Clear any stale route file from a crashed prior run.

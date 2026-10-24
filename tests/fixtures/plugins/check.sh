@@ -5,15 +5,15 @@
 # visible in the emitted output. Each case copies the app fixture to a temp
 # root so a failed run never leaves the repo dirty.
 #
-# Runs the already-built `target/debug/oxide-cli`.
+# Runs the already-built `target/debug/oxide`.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
-CLI="$REPO/target/debug/oxide-cli"
+CLI="$REPO/target/debug/oxide"
 
 if [ ! -x "$CLI" ]; then
-    echo "FAIL: $CLI not built — run 'cargo build -p oxide-cli' first"
+    echo "FAIL: $CLI not built — run 'cargo build -p oxide-fw-cli' first"
     exit 1
 fi
 

@@ -9,7 +9,7 @@ are checked against them by two CI steps in the `bench-gate` job:
 regression), and `check-prose.sh` asserts every range and per-fixture
 byte count quoted in the prose equals the table's.
 Every number is a **wall-clock measurement of this machine** (Apple Silicon
-macOS, debug `oxide-cli`, warm OS caches), not a spec target. §21's targets
+macOS, debug `oxide-fw-cli`, warm OS caches), not a spec target. §21's targets
 compare against an incumbent (Next / Nuxt / SvelteKit / SolidStart) on
 identical hardware; no incumbent is installed here, so the table records the
 raw numbers and marks the incumbents as a TODO.

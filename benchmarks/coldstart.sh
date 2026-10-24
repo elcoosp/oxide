@@ -11,12 +11,12 @@ set -uo pipefail
 set +m   # silence 'Killed' job-control noise
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-CLI="${OXIDE_CLI:-$ROOT/target/debug/oxide-cli}"
+CLI="${OXIDE_CLI:-$ROOT/target/debug/oxide}"
 RUNS="${RUNS:-5}"
 PORT_BASE="${PORT_BASE:-3300}"
 
 if [ ! -x "$CLI" ]; then
-    echo "error: build the CLI first: cargo build -p oxide-cli" >&2
+    echo "error: build the CLI first: cargo build -p oxide-fw-cli" >&2
     exit 1
 fi
 
@@ -73,7 +73,7 @@ for fx in smoke-app-react smoke-app-vue smoke-app-svelte smoke-app-solid; do
     first200_vals=()
     for i in $(seq 1 "$RUNS"); do
         # Session-18 lesson: kill + settle, one long-lived server per run.
-        ( pkill -9 -f "target/debug/oxide-cli" ) 2>/dev/null
+        ( pkill -9 -f "target/debug/oxide" ) 2>/dev/null
         sleep 0.5
         port=$((PORT_BASE + i))
         "$CLI" start --root "$dir" --port "$port" >/dev/null 2>&1 &
@@ -83,7 +83,7 @@ for fx in smoke-app-react smoke-app-vue smoke-app-svelte smoke-app-solid; do
         f=$(wait_first_200 "$port")
         [ "$f" != "timeout" ] && first200_vals+=("$f")
         { kill -9 "$sp"; } 2>/dev/null
-        ( pkill -9 -f "target/debug/oxide-cli" ) 2>/dev/null
+        ( pkill -9 -f "target/debug/oxide" ) 2>/dev/null
         sleep 0.3
     done
 

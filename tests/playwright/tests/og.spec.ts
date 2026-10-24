@@ -18,12 +18,12 @@ import { existsSync } from 'node:fs'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(__dirname, '..', '..', '..')
 const smokeRoot = join(repoRoot, 'examples', 'smoke-app-react')
-const oxideBin = join(repoRoot, 'target', 'debug', 'oxide-cli')
+const oxideBin = join(repoRoot, 'target', 'debug', 'oxide')
 
 let server: ChildProcess | undefined
 
 test.beforeAll(async () => {
-  if (!existsSync(oxideBin)) throw new Error('oxide-cli missing')
+  if (!existsSync(oxideBin)) throw new Error('oxide missing')
   server = spawn(oxideBin, ['start', '--root', smokeRoot, '--port', '3106'], {
     stdio: ['ignore', 'pipe', 'pipe'],
   })

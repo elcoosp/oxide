@@ -9,7 +9,7 @@ description = "Rolldown integration point, environments, manifests (spec 6.4, D3
 
 [dependencies]
 oxide-diagnostics = { workspace = true }
-oxide-graph = { workspace = true }
+oxide-fw-graph = { workspace = true }
 oxide-compiler = { workspace = true }
 oxc_resolver = { workspace = true }
 rolldown = { workspace = true }

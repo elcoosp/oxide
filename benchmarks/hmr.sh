@@ -16,7 +16,7 @@ set -uo pipefail
 set +m   # silence 'Killed' job-control noise
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-CLI="${OXIDE_CLI:-$ROOT/target/debug/oxide-cli}"
+CLI="${OXIDE_CLI:-$ROOT/target/debug/oxide}"
 APP="${APP:-$ROOT/examples/smoke-app-react}"
 N="${N:-15}"
 PORT="${PORT:-3199}"
@@ -28,7 +28,7 @@ if [ ! -f "$PAGE" ]; then
     exit 1
 fi
 if [ ! -x "$CLI" ]; then
-    echo "error: build the CLI first: cargo build -p oxide-cli" >&2
+    echo "error: build the CLI first: cargo build -p oxide-fw-cli" >&2
     exit 1
 fi
 
@@ -43,12 +43,12 @@ cleanup() {
     cp "$BAK" "$PAGE" 2>/dev/null
     rm -f "$BAK"
     kill -9 "$srv" 2>/dev/null
-    ( pkill -9 -f "target/debug/oxide-cli" ) 2>/dev/null
+    ( pkill -9 -f "target/debug/oxide" ) 2>/dev/null
 }
 trap cleanup EXIT INT TERM
 
 echo "=== start dev server on port $PORT ==="
-( pkill -9 -f "target/debug/oxide-cli" ) 2>/dev/null
+( pkill -9 -f "target/debug/oxide" ) 2>/dev/null
 sleep 0.5
 "$CLI" dev --root "$APP" --port "$PORT" >/dev/null 2>&1 &
 srv=$!

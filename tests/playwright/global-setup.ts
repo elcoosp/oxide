@@ -12,12 +12,12 @@ import { fileURLToPath } from 'node:url'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(__dirname, '..', '..')
 const smokeRoot = join(repoRoot, 'examples', 'smoke-app-react')
-const oxideBin = join(repoRoot, 'target', 'debug', 'oxide-cli')
+const oxideBin = join(repoRoot, 'target', 'debug', 'oxide')
 
 export default async function globalSetup(): Promise<void> {
   if (!existsSync(oxideBin)) {
     throw new Error(
-      `oxide-cli binary missing at ${oxideBin}; run \`cargo build -p oxide-cli\` first`,
+      `oxide binary missing at ${oxideBin}; run \`cargo build -p oxide-fw-cli\` first`,
     )
   }
   const clientManifest = join(smokeRoot, 'dist', 'client', 'client.manifest.json')

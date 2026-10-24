@@ -33,14 +33,14 @@ From the workspace root:
 pnpm install
 
 # CLI subcommands (in-process, no HTTP server)
-cargo run -p oxide-cli --bin oxide-cli -- config  examples/smoke-app --json
-cargo run -p oxide-cli --bin oxide-cli -- render  routes/index --root examples/smoke-app
-cargo run -p oxide-cli --bin oxide-cli -- render 'routes/blog/[slug]' \
+cargo run -p oxide-fw-cli --bin oxide -- config  examples/smoke-app --json
+cargo run -p oxide-fw-cli --bin oxide -- render  routes/index --root examples/smoke-app
+cargo run -p oxide-fw-cli --bin oxide -- render 'routes/blog/[slug]' \
   --root examples/smoke-app --url /blog/hello --param slug=hello
 
 # build (writes dist/)
-cargo run -p oxide-cli --bin oxide-cli -- build --root examples/smoke-app
+cargo run -p oxide-fw-cli --bin oxide -- build --root examples/smoke-app
 
 # dev / start servers (Ctrl-C to stop)
-cargo run -p oxide-cli --bin oxide-cli -- dev   --root examples/smoke-app
-cargo run -p oxide-cli --bin oxide-cli -- start --root examples/smoke-app
+cargo run -p oxide-fw-cli --bin oxide -- dev   --root examples/smoke-app
+cargo run -p oxide-fw-cli --bin oxide -- start --root examples/smoke-app

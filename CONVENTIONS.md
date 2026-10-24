@@ -84,10 +84,10 @@ a new command takes a root, canonicalize before it does anything else.
 
 ## 8. Test location — do not pay the V8 link cost for a test that does not need it
 
-`oxide-cli`'s test target statically links V8 through `oxide-jshost`
+`oxide-fw-cli`'s test target statically links V8 through `oxide-jshost`
 (~140 MB of binary), and relinks on every source change: roughly five
 minutes per iteration on the reference dev host. A test that only shells
-out to the already-built `target/debug/oxide-cli` does not need to live
+out to the already-built `target/debug/oxide` does not need to live
 inside that target.
 
 - The four-framework fixture gate is `tests/fixtures/check.sh`, not a
@@ -96,5 +96,5 @@ inside that target.
   not depend on `oxide-jshost`, so its tests compile in seconds.
 
 Rule: **if a test only needs the built binary, put it in a script or in
-a crate that does not link V8.** Reserve the `oxide-cli` test target for
+a crate that does not link V8.** Reserve the `oxide-fw-cli` test target for
 tests that genuinely need the CLI in-process.

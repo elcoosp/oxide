@@ -17,16 +17,16 @@ import { existsSync } from 'node:fs'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(__dirname, '..', '..', '..')
 const smokeRoot = join(repoRoot, 'examples', 'smoke-app-react')
-const oxideBin = join(repoRoot, 'target', 'debug', 'oxide-cli')
+const oxideBin = join(repoRoot, 'target', 'debug', 'oxide')
 
 let server: ChildProcess | undefined
 
 test.beforeAll(async () => {
-  // The test assumes `cargo build -p oxide-cli` has been run at least once
+  // The test assumes `cargo build -p oxide-fw-cli` has been run at least once
   // (dev convenience) and refuses with a clear message otherwise.
   if (!existsSync(oxideBin)) {
     throw new Error(
-      `oxide-cli binary missing at ${oxideBin}; run \`cargo build -p oxide-cli\` first`,
+      `oxide binary missing at ${oxideBin}; run \`cargo build -p oxide-fw-cli\` first`,
     )
   }
 

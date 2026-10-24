@@ -5,7 +5,7 @@
 //! whether or not any source changed — the §21 benchmark records warm == cold
 //! (a warm React build measured ~3.3 s against a cold ~3.1 s, all of it
 //! precompile + bundle client + bundle server). The long-term answer is the
-//! graph engine plus CAS in `oxide-graph` driving the bundler node by node
+//! graph engine plus CAS in `oxide-fw-graph` driving the bundler node by node
 //! (§5.1 Tier A, §5.4 Tier B). This module is the bounded first step: **skip
 //! the build entirely when no tracked input changed and the previous output is
 //! still on disk.**

@@ -106,7 +106,7 @@ jobs:
         with: { node-version: 24 }
       - uses: dtolnay/rust-toolchain@stable
       - name: Build the CLI
-        run: cargo build -p oxide-cli
+        run: cargo build -p oxide-fw-cli
       - name: Plugin fixture gate
         run: ./tests/fixtures/plugins/check.sh
 
@@ -149,7 +149,7 @@ jobs:
         with: { version: 9 }
       - run: pnpm install --frozen-lockfile
       - name: Build the CLI
-        run: cargo build -p oxide-cli
+        run: cargo build -p oxide-fw-cli
       - name: V8 backend fixture gate
         run: ./tests/fixtures/check-v8.sh
 
@@ -166,7 +166,7 @@ jobs:
         with: { version: 9 }
       - run: pnpm install --frozen-lockfile
       - name: Build the CLI
-        run: cargo build -p oxide-cli
+        run: cargo build -p oxide-fw-cli
       - name: Run the benchmark table
         run: ./benchmarks/run.sh | tee /tmp/bench.txt
       - name: Compare to report.md (>5% regression fails)
@@ -236,9 +236,9 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y nasm
       - uses: dtolnay/rust-toolchain@stable
       - name: Build CLI
-        run: cargo build -p oxide-cli
+        run: cargo build -p oxide-fw-cli
       - name: Build smoke-app-react
-        run: ./target/debug/oxide-cli build --root examples/smoke-app-react
+        run: ./target/debug/oxide build --root examples/smoke-app-react
       - name: Run HMR harness (fails if no edit reaches 200-with-marker)
         run: ./benchmarks/hmr.sh
 
@@ -273,8 +273,8 @@ jobs:
         # in-process (no binary build) but spawns a Node worker and reads
         # packages/react, so it belongs here with the other Node e2e.
         run: |
-          cargo test -p oxide-cli --lib cli_render_dispatches_real_react_ssr -- --ignored --test-threads=1
-          cargo test -p oxide-cli --lib cli_render_resolves_components_from_the_built_entry -- --ignored --test-threads=1
+          cargo test -p oxide-fw-cli --lib cli_render_dispatches_real_react_ssr -- --ignored --test-threads=1
+          cargo test -p oxide-fw-cli --lib cli_render_resolves_components_from_the_built_entry -- --ignored --test-threads=1
 
   playwright:
     name: Playwright e2e (§22) — ${{ matrix.browser }}
@@ -296,7 +296,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         with: { version: 9 }
       - name: Build CLI
-        run: cargo build -p oxide-cli
+        run: cargo build -p oxide-fw-cli
       - name: Install workspace deps
         run: pnpm install --frozen-lockfile || pnpm install
       - name: Install Playwright browser

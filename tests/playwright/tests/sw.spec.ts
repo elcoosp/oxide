@@ -17,13 +17,13 @@ import { existsSync } from 'node:fs'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(__dirname, '..', '..', '..')
 const smokeRoot = join(repoRoot, 'examples', 'smoke-app-react')
-const oxideBin = join(repoRoot, 'target', 'debug', 'oxide-cli')
+const oxideBin = join(repoRoot, 'target', 'debug', 'oxide')
 
 let server: ChildProcess | undefined
 
 test.beforeAll(async () => {
   if (!existsSync(oxideBin)) {
-    throw new Error(`oxide-cli binary missing at ${oxideBin}; run \`cargo build -p oxide-cli\` first`)
+    throw new Error(`oxide binary missing at ${oxideBin}; run \`cargo build -p oxide-fw-cli\` first`)
   }
   // A SW is origin-scoped and persistent; give this spec its own port so a
   // registration cannot collide with another spec's server.

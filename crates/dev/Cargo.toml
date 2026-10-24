@@ -9,7 +9,7 @@ description = "Watcher, HMR, overlay, inspector (spec 13)"
 
 [dependencies]
 oxide-diagnostics = { workspace = true }
-oxide-graph = { workspace = true }
+oxide-fw-graph = { workspace = true }
 notify = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

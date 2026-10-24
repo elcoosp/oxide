@@ -1,14 +1,14 @@
-//! Integration suite for oxide-graph (spec §5, D6) — drives the crate only through its
+//! Integration suite for oxide-fw-graph (spec §5, D6) — drives the crate only through its
 //! public API. Covers: demand graph memoization, single-flight dedupe, early cutoff,
 //! invalidation cascades (file/dir/env/config/tool/node inputs), cancellation, Tier B
 //! CAS (zstd blobs, redb index, corruption detection, GC, namespaces) and trackers.
 
 use blake3::Hash as B3;
-use oxide_graph::{
+use oxide_fw_graph::{
     CancelToken, CasKey, CasWriteMeta, Compute, ComputeCtx, ConfigTrackerImpl, ContentStore,
     ContentStoreExt, DemandGraph, EnvTrackerImpl, FsTrackerImpl, Input, NodeKey, NodeOutput,
 };
-use oxide_graph::{Result, err};
+use oxide_fw_graph::{Result, err};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

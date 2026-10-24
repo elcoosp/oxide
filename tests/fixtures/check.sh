@@ -7,9 +7,9 @@
 # must produce a prerendered page whose body came from the user's own page
 # module through that framework's upstream SSR renderer.
 #
-# Runs the already-built `target/debug/oxide-cli` binary directly. No V8
+# Runs the already-built `target/debug/oxide` binary directly. No V8
 # linking, no test-binary compile — takes seconds. This is intentionally
-# NOT a `#[test]` in oxide-cli: that test target links V8 (140 MB), and a
+# NOT a `#[test]` in oxide-fw-cli: that test target links V8 (140 MB), and a
 # relink per iteration is not a cost this check should impose.
 #
 #   ./tests/fixtures/check.sh
@@ -45,10 +45,10 @@ if [ "$_gate_locked" -ne 1 ]; then
 fi
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-CLI="$ROOT/target/debug/oxide-cli"
+CLI="$ROOT/target/debug/oxide"
 
 if [ ! -x "$CLI" ]; then
-    echo "error: $CLI not built. Run: cargo build -p oxide-cli" >&2
+    echo "error: $CLI not built. Run: cargo build -p oxide-fw-cli" >&2
     exit 1
 fi
 

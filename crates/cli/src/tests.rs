@@ -1,4 +1,4 @@
-//! TDD suite for oxide-cli (spec §19.1).
+//! TDD suite for oxide-fw-cli (spec §19.1).
 //!
 //! Written BEFORE the implementation; every command is exercised through
 //! [`run_with_writer`] with a buffered writer (no process stdout capture needed).
@@ -975,7 +975,7 @@ async fn write_prerender_without_loader_uses_empty_data() {
 ///
 /// `#[ignore]` because it spawns a Node worker and requires the workspace's
 /// `node_modules` (from `pnpm install`). Run with:
-///     cargo test -p oxide-cli -- --ignored smoke_app
+///     cargo test -p oxide-fw-cli -- --ignored smoke_app
 #[tokio::test]
 #[ignore]
 async fn smoke_app_renders_through_real_config() {
@@ -1126,7 +1126,7 @@ async fn http_get(addr: std::net::SocketAddr, path: &str) -> String {
 ///
 /// `#[ignore]` because it spawns Node, binds a port, and requires the
 /// workspace `node_modules` (from `pnpm install`). Run with:
-///     cargo test -p oxide-cli -- --ignored dev_server_serves_smoke
+///     cargo test -p oxide-fw-cli -- --ignored dev_server_serves_smoke
 #[tokio::test]
 #[ignore]
 async fn dev_server_serves_smoke_app_over_http() {
@@ -1443,7 +1443,7 @@ async fn collect_response_body(mut resp: oxide_server::OxideResponse) -> Vec<u8>
 ///
 /// `#[ignore]` — spawns a Node worker, binds a port, requires workspace
 /// node_modules. Run with:
-///     cargo test -p oxide-cli -- --ignored start_serves_smoke
+///     cargo test -p oxide-fw-cli -- --ignored start_serves_smoke
 #[tokio::test]
 #[ignore]
 async fn start_serves_smoke_app_over_http() {
@@ -6129,8 +6129,8 @@ fn lockfile_change_invalidates_the_resolver_graph() {
     // then feed a lockfile path and assert the graph reports it was dirtied.
     // The fn itself is not `pub`, so this test drives the same public API
     // (`DemandGraph::invalidate(&[])`) that the fn calls.
-    let g = oxide_graph::DemandGraph::new();
-    let node = oxide_graph::NodeKey::new("src/routes/page.tsx");
+    let g = oxide_fw_graph::DemandGraph::new();
+    let node = oxide_fw_graph::NodeKey::new("src/routes/page.tsx");
     let comp = FileComputeForTest(node.0.to_string());
     g.register(node.clone(), std::sync::Arc::new(comp));
     let _ = g.get(node.clone(), &FileComputeForTest(node.0.to_string()));
@@ -6148,16 +6148,16 @@ fn lockfile_change_invalidates_the_resolver_graph() {
 }
 
 struct FileComputeForTest(String);
-impl oxide_graph::Compute for FileComputeForTest {
+impl oxide_fw_graph::Compute for FileComputeForTest {
     fn compute(
         &self,
-        ctx: &mut oxide_graph::ComputeCtx,
-    ) -> oxide_diagnostics::Result<oxide_graph::NodeOutput> {
+        ctx: &mut oxide_fw_graph::ComputeCtx,
+    ) -> oxide_diagnostics::Result<oxide_fw_graph::NodeOutput> {
         let bytes = ctx
             .fs
             .read_file(std::path::Path::new(&self.0))
             .unwrap_or_default();
-        Ok(oxide_graph::NodeOutput {
+        Ok(oxide_fw_graph::NodeOutput {
             hash: blake3::hash(&bytes),
             artifact: None,
             deps: Default::default(),
@@ -7937,7 +7937,7 @@ async fn bundle_edge_entry_uses_the_precompiled_map_for_mdx() {
 /// `@mdx-js/mdx` installed in the workspace's node_modules and a working
 /// Node toolchain — hence `#[ignore]`. Run with:
 ///
-///     cargo test -p oxide-cli --lib bundle_edge_entry_accepts_mdx -- --ignored
+///     cargo test -p oxide-fw-cli --lib bundle_edge_entry_accepts_mdx -- --ignored
 ///
 /// This is currently expected to FAIL when run: `compile_mdx` in
 /// `precompile.rs` requests `{ jsx: true }` from `@mdx-js/mdx`, which
