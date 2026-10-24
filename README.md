@@ -243,7 +243,7 @@ typed arrays, `undefined`, cyclic and shared references, `Error` and deferred pr
 The repository is built test-first: each crate's `*_tdd.rs` suites were written against its
 contract before the implementation.
 
-- **1,214 Rust test functions** across 17 crates (29 gated behind bare `#[ignore]`, 27
+- **1,214 Rust test functions** across 17 crates (27 gated behind bare `#[ignore]`, 29
   more annotated with reasons, plus env-gated suites with stated reasons — the Node-loader e2e suite runs in CI's `jshost-e2e`
   job), including `proptest` property suites on the router and graph engines,
   `cargo-fuzz` harnesses for the ODF decoder, router matcher, config extractor and path
@@ -255,7 +255,7 @@ contract before the implementation.
   (cookie-refusal for both loader and middleware cookies on the shell **and** L0 paths,
   build-scoped shell keys, oldest-entry eviction, `/__data` no-reissue for untouched
   sessions, worker session-on-throw) and the §5.6 stale-dispatch cancellation tests.
-- **443 TypeScript test cases** across 72 files in the publishable packages — 475 total
+- **443 TypeScript test cases** across 74 files in the publishable packages — 475 total
   with the 32-assertion conformance suite, all green at this commit — on Node's built-in
   test runner, including
   the ODF decoder against the same golden fixtures as the Rust encoder (typed values:
