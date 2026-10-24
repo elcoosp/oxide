@@ -168,7 +168,7 @@ test('hydrate: preserves server markup, binds handlers, glue resolves ox:swap', 
   const navigated: string[] = []
   const swaps: number[] = []
   const dispose = hydrate(root, { route: 'routes/index', url: '/', params: {}, data: { framework: 'react' } }, {
-    doc: dom.doc as unknown as OxDoc,
+    doc: dom.doc,
     navigate: (href) => navigated.push(href),
     onSwap: (d) => swaps.push(d.id),
   })
@@ -201,7 +201,7 @@ test('hydrateIsland: hydration + interactive update against the fake DOM (§10.3
 test('mount/update: SPA mount then adapter.update swaps the route tree (§7)', () => {
   const dom = createFakeDom('<div id="root"></div>')
   const root = dom.root!
-  const dispose = mount(root, { route: 'routes/index', url: '/', params: {}, data: { framework: 'react' } }, { doc: dom.doc as unknown as OxDoc })
+  const dispose = mount(root, { route: 'routes/index', url: '/', params: {}, data: { framework: 'react' } }, { doc: dom.doc })
   assert.ok(root.innerHTML.includes('Hello Atlas'), 'SPA mount rendered the shell')
   update({ route: 'routes/blog/[slug]', url: '/blog/x', params: { slug: 'x' }, data: { title: 'Nav Post', author: 'Ada', body: 'B' } })
   assert.ok(root.innerHTML.includes('Nav Post'), 'adapter.update swapped the tree')
