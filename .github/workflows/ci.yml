@@ -44,28 +44,38 @@ jobs:
         # wasm-bindgen output. If it imports __wbindgen_* it needs a .js
         # glue sibling. If that sibling is absent, the module cannot
         # instantiate — the loader's useWasm catches the error and falls
-        # back to JS, making the payload inert. This step fails when the
-        # wasm imports glue functions but no glue is committed, ensuring
-        # that either both are shipped or the inert state is documented
-        # (and this step deliberately relaxed) in the same change.
+        # back to JS, making the payload inert.
+        #
+        # This step fails only when the wasm imports glue functions,
+        # no glue is committed, AND docs/deviations.md does NOT mark
+        # deviation 6 as partially closed. The point is reconciliation:
+        # either ship both, or have the deviation record the inert state.
         run: |
           set -e
           WASM=crates/cli/resources/edge.wasm
           GLUE=crates/cli/resources/edge.js
+          DEVIATIONS=docs/deviations.md
           if [ ! -f "$WASM" ]; then
             echo "edge.wasm absent — skip"
             exit 0
           fi
-          if strings "$WASM" | grep -q '__wbindgen_'; then
-            if [ ! -f "$GLUE" ]; then
-              echo "B3 gap: edge.wasm imports __wbindgen_* but no edge.js glue is committed."
-              echo "   The payload is inert (loader falls back to JS). To close B3:"
-              echo "   either commit the .js glue alongside edge.wasm, or record the"
-              echo "   inert state in docs/deviations.md (deviation 6 status)."
-              exit 1
-            fi
+          if ! strings "$WASM" | grep -q '__wbindgen_'; then
+            echo "B3: artifact is self-contained (no __wbindgen_* imports)"
+            exit 0
           fi
-          echo "B3: artifact is either functional or its inert state is documented"
+          if [ -f "$GLUE" ]; then
+            echo "B3: wasm glue committed alongside edge.wasm — payload functional"
+            exit 0
+          fi
+          if grep -qi 'Edge wasm build requires self-hosting layout.*partially closed' "$DEVIATIONS"; then
+            echo "B3: payload is inert AND deviation 6 documents it as partially closed"
+            exit 0
+          fi
+          echo "B3 gap: edge.wasm imports __wbindgen_* with no glue committed,"
+          echo "        and docs/deviations.md does not mark deviation 6 as"
+          echo "        partially closed. Either ship edge.js glue or record"
+          echo "        the inert state in the deviation status."
+          exit 1
   node:
     runs-on: ubuntu-latest
     steps:
@@ -74,6 +84,12 @@ jobs:
         with: { node-version: 24 }
       - uses: pnpm/action-setup@v4
         with: { version: 9 }
+      - name: Install workspace deps
+        # Required before the package tests: several suites import from
+        # sibling packages (e.g. `../../oxide/src/...`) which resolve via
+        # the pnpm workspace's symlinks under node_modules. Without the
+        # install, Node reports ERR_MODULE_NOT_FOUND.
+        run: pnpm install --frozen-lockfile
       - name: TS package tests (zero-dep, Node type stripping)
         run: |
           set -e
@@ -110,6 +126,13 @@ jobs:
         with: { node-version: 24 }
       - uses: pnpm/action-setup@v4
         with: { version: 9 }
+      - name: Install workspace deps
+        # The conformance suite imports from every adapter package via
+        # the pnpm workspace (e.g. `import { adapter } from '../packages/
+        # react/src/index.ts'`). The adapter packages' own imports then
+        # resolve through node_modules. Without this install step, Node
+        # reports ERR_MODULE_NOT_FOUND on the first transitive import.
+        run: pnpm install --frozen-lockfile
       - name: Conformance suite (all four adapters)
         run: pnpm -C conformance test
   fixtures-v8:
