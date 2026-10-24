@@ -70,11 +70,15 @@ test('enhance: intercepts submit, POSTs to the action, applies the JSON result',
 
   assert.ok(prevented, 'default submit prevented')
   assert.deepEqual(order, ['optimistic', 'apply'], 'optimistic hook runs before the fetch')
-  assert.equal(optimistic[0].get('body'), 'nice post')
+  const opt0 = optimistic[0]
+  if (opt0 === undefined) throw new Error('test invariant: optimistic[0] should be defined')
+  assert.equal(opt0.get('body'), 'nice post')
   assert.equal(calls.length, 1)
-  assert.equal(calls[0].url, '/?/comment')
-  assert.equal((calls[0].init?.method as string).toUpperCase(), 'POST')
-  assert.ok(calls[0].init?.body, 'request carries a body')
+  const call0 = calls[0]
+  if (call0 === undefined) throw new Error('test invariant: calls[0] should be defined')
+  assert.equal(call0.url, '/?/comment')
+  assert.equal((call0.init?.method as string).toUpperCase(), 'POST')
+  assert.ok(call0.init?.body, 'request carries a body')
   assert.deepEqual(applied[0], { ok: true, id: 9 })
 })
 
