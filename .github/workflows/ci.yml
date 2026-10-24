@@ -31,6 +31,33 @@ jobs:
         run: cargo build -p oxide-core-wasm --target wasm32-unknown-unknown --release
       - name: Assert edge.wasm was produced
         run: test -s target/wasm32-unknown-unknown/release/oxide_core_wasm.wasm
+      - name: Assert committed wasm is either functional or documented inert (B3)
+        # The committed artifact at crates/cli/resources/edge.wasm is raw
+        # wasm-bindgen output. If it imports __wbindgen_* it needs a .js
+        # glue sibling. If that sibling is absent, the module cannot
+        # instantiate — the loader's useWasm catches the error and falls
+        # back to JS, making the payload inert. This step fails when the
+        # wasm imports glue functions but no glue is committed, ensuring
+        # that either both are shipped or the inert state is documented
+        # (and this step deliberately relaxed) in the same change.
+        run: |
+          set -e
+          WASM=crates/cli/resources/edge.wasm
+          GLUE=crates/cli/resources/edge.js
+          if [ ! -f "$WASM" ]; then
+            echo "edge.wasm absent — skip"
+            exit 0
+          fi
+          if strings "$WASM" | grep -q '__wbindgen_'; then
+            if [ ! -f "$GLUE" ]; then
+              echo "B3 gap: edge.wasm imports __wbindgen_* but no edge.js glue is committed."
+              echo "   The payload is inert (loader falls back to JS). To close B3:"
+              echo "   either commit the .js glue alongside edge.wasm, or record the"
+              echo "   inert state in docs/deviations.md (deviation 6 status)."
+              exit 1
+            fi
+          fi
+          echo "B3: artifact is either functional or its inert state is documented"
   node:
     runs-on: ubuntu-latest
     steps:
