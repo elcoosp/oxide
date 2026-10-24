@@ -4,8 +4,16 @@
 // changes nothing on the page.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { bootWithRouter } from '../src/client/boot.ts'
+import { bootWithRouter, type BootAdapter } from '../src/client/boot.ts'
 import { encodeLite } from './helpers/odf-lite.ts'
+import type { ClientInput, Disposer } from '../src/types.ts'
+
+/** Typed indexed access with a runtime bounds check. */
+function mustEl<T>(arr: readonly T[], i: number): T {
+  const v = arr[i]
+  if (v === undefined) throw new Error(`mustEl: index ${i} out of bounds (len=${arr.length})`)
+  return v
+}
 
 function b64(bytes: Uint8Array): string {
   let s = ''
@@ -13,7 +21,18 @@ function b64(bytes: Uint8Array): string {
   return btoa(s)
 }
 
-function makeRoot(): any {
+interface FakeRoot {
+  innerHTML: string
+  addEventListener(type: string, fn: (e: unknown) => void): void
+  removeEventListener(type: string, fn: (e: unknown) => void): void
+  getAttribute(name: string): string | null
+  setAttribute(name: string, value: string): void
+  hasAttribute(name: string): boolean
+  querySelector(sel: string): unknown
+  querySelectorAll(sel: string): unknown[]
+}
+
+function makeRoot(): FakeRoot {
   return {
     innerHTML: '<p>ssr</p>',
     addEventListener() {},
@@ -26,7 +45,21 @@ function makeRoot(): any {
   }
 }
 
-function makeDoc(): any {
+interface FakeDoc {
+  addEventListener(type: string, fn: (e: unknown) => void): void
+  removeEventListener(type: string, fn: (e: unknown) => void): void
+  getElementById(id: string): FakeRoot | null
+  querySelector(sel: string): unknown
+  querySelectorAll(sel: string): unknown[]
+  dispatchEvent(ev: unknown): boolean
+  createElement(tag: string): { setAttribute(n: string, v: string): void; remove(): void; appendChild(c: unknown): void }
+  documentElement: { appendChild(c: unknown): void }
+  body: { appendChild(c: unknown): void }
+  _fire(type: string, ev: unknown): void
+  _count(type: string): number
+}
+
+function makeDoc(): FakeDoc {
   const listeners = new Map<string, Array<(e: unknown) => void>>()
   return {
     addEventListener(t: string, f: (e: unknown) => void) {
@@ -53,7 +86,7 @@ function makeDoc(): any {
 
 const saved: Record<string, unknown> = {}
 
-function install(over: Record<string, unknown>): { doc: any } {
+function install(over: Record<string, unknown>): { doc: FakeDoc } {
   const g = globalThis as Record<string, unknown>
   for (const k of ['window', 'document', 'location', 'history', '__oxide', '__oxideBoot']) {
     saved[k] = g[k]
@@ -91,13 +124,13 @@ test('boot: ox:data with {route, odf} decodes and calls adapter.update', async (
   const { doc } = install({})
   try {
     const odfBytes = encodeLite({ route: '/page', url: '/page', params: {}, data: { title: 'Hot' } })
-    const updates: Array<Record<string, unknown>> = []
-    const adapter: any = {
-      hydrate() {},
-      update(i: any) { updates.push(i) },
-      hydrateIsland() { return () => {} },
+    const updates: ClientInput[] = []
+    const adapter: BootAdapter = {
+      hydrate(): Disposer { return () => {} },
+      update(input: ClientInput): void { updates.push(input) },
+      hydrateIsland(): Disposer { return () => {} },
     }
-    const dispose = bootWithRouter(adapter, {} as never)
+    const dispose = bootWithRouter(adapter, {})
 
     doc._fire('ox:data', {
       type: 'ox:data',
@@ -122,18 +155,20 @@ test('boot: ox:data with {route, odf} decodes and calls adapter.update', async (
 test('boot: ox:data with a full {input} still works (unchanged shape)', async () => {
   const { doc } = install({})
   try {
-    const updates: any[] = []
-    const adapter: any = {
-      hydrate() {}, update(i: any) { updates.push(i) }, hydrateIsland() { return () => {} },
+    const updates: ClientInput[] = []
+    const adapter: BootAdapter = {
+      hydrate(): Disposer { return () => {} },
+      update(input: ClientInput): void { updates.push(input) },
+      hydrateIsland(): Disposer { return () => {} },
     }
-    const dispose = bootWithRouter(adapter, {} as never)
+    const dispose = bootWithRouter(adapter, {})
     doc._fire('ox:data', {
       type: 'ox:data',
       detail: { input: { route: '/x', url: '/x', params: {}, data: { n: 1 } } },
     })
     await new Promise((r) => setTimeout(r, 10))
     assert.equal(updates.length, 1)
-    assert.equal(updates[0].route, '/x')
+    assert.equal(mustEl(updates, 0).route, '/x')
     dispose()
   } finally {
     restore()
@@ -143,11 +178,13 @@ test('boot: ox:data with a full {input} still works (unchanged shape)', async ()
 test('boot: ox:data with no route and no input is ignored', async () => {
   const { doc } = install({})
   try {
-    const updates: any[] = []
-    const adapter: any = {
-      hydrate() {}, update(i: any) { updates.push(i) }, hydrateIsland() { return () => {} },
+    const updates: ClientInput[] = []
+    const adapter: BootAdapter = {
+      hydrate(): Disposer { return () => {} },
+      update(input: ClientInput): void { updates.push(input) },
+      hydrateIsland(): Disposer { return () => {} },
     }
-    const dispose = bootWithRouter(adapter, {} as never)
+    const dispose = bootWithRouter(adapter, {})
     doc._fire('ox:data', { type: 'ox:data', detail: {} })
     await new Promise((r) => setTimeout(r, 10))
     assert.equal(updates.length, 0)
