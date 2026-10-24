@@ -122,8 +122,19 @@ export function boot(): void {
  * Returns a disposer (the router's `dispose` + boot glue teardown), or a
  * no-op.
  */
+
+/** The minimum adapter surface `bootWithRouter` needs. A superset of what
+ *  `IslandsAdapter` and `RouterOptions.adapter` require: `hydrate` for the
+ *  root, `update` for the router, optional `hydrateIsland`/`renderLoading`
+ *  for the island and loading paths. The full `FrameworkAdapter` satisfies
+ *  this structurally — adapter authors keep using `FrameworkAdapter`, and
+ *  test fixtures only need the fields they actually exercise. */
+export type BootAdapter =
+  & Pick<FrameworkAdapter, 'hydrate' | 'update'>
+  & Partial<Pick<FrameworkAdapter, 'hydrateIsland' | 'renderLoading'>>
+
 export function bootWithRouter(
-  adapter: FrameworkAdapter,
+  adapter: BootAdapter,
   opts: {
     doc?: Document
     /**
