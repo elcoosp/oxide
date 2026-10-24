@@ -15,6 +15,15 @@
 import type { Disposer } from '../../core/src/types.ts'
 import type { OxElement, ClientOptions } from './hydrate.ts'
 
+/** Narrow an `OxElement` to a real DOM `Element` (runtime assertion — see
+ * hydrate.ts for the rationale). Framework hydrateRoot/app.mount requires a
+ * live DOM. */
+function asDomElement(v: { dispatchEvent?(ev: unknown): boolean; innerHTML: string }, where: string): Element {
+  if (typeof Element !== 'undefined' && v instanceof Element) return v
+  throw new TypeError(`oxide: ${where} requires a live DOM Element`)
+}
+
+
 /** Structural shape of the `vue` module's SSR-app surface. */
 export interface VueLike {
   createSSRApp(component: unknown, props: Record<string, unknown>): {
@@ -58,7 +67,7 @@ export async function vueHydrateIsland(
     throw new TypeError('hydrateIsland(vue): island module must export a default component')
   }
   const app = vue.createSSRApp(component, (props as Record<string, unknown>) ?? {})
-  app.mount(host as unknown as Element)
+  app.mount(asDomElement(host, 'island hydration'))
   return () => {
     try {
       app.unmount()
