@@ -69,7 +69,11 @@ test('sizes is derived from srcset when absent', () => {
     width: 1200,
     height: 630,
   }
-  const out = Image({ ...variant, alt: 'Hero' }) as unknown as { props: Record<string, unknown> }
+  const raw = Image({ ...variant, alt: 'Hero' })
+  if (raw === null || typeof raw !== 'object' || !('props' in raw)) {
+    throw new Error('Image() must return a VNode with .props')
+  }
+  const out: { props: Record<string, unknown> } = raw as { props: Record<string, unknown> }
   assert.equal(
     out.props.sizes,
     '(min-width: 1200px) 1200px, (min-width: 800px) 800px, (min-width: 400px) 400px, 100vw',
