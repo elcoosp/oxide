@@ -74,7 +74,7 @@ test('P1-9: normalizeInput keeps deferred + locale from /__data', async () => {
 
 test('P1-9: glue.resolveAll settles the matching slots', async () => {
   const doc = fakeDoc()
-  const glue = attachDeferGlue({ doc: doc as unknown as Document })
+  const glue = attachDeferGlue({ doc: doc })
   const data: any = { later: { __deferred: 7 } }
   wireDeferreds(data, glue)
 
@@ -86,7 +86,7 @@ test('P1-9: glue.resolveAll settles the matching slots', async () => {
 
 test('P1-9: resolveAll ignores unknown and non-numeric ids', async () => {
   const doc = fakeDoc()
-  const glue = attachDeferGlue({ doc: doc as unknown as Document })
+  const glue = attachDeferGlue({ doc: doc })
   const data: any = { v: { __deferred: 3 } }
   wireDeferreds(data, glue)
   // Must not throw on a garbage map.
