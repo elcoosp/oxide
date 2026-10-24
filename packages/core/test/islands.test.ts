@@ -10,8 +10,9 @@ function islandEl(attrs: Record<string, string>) {
   return {
     attrs: { 'data-ox-strategy': 'load', ...attrs } as Record<string, string>,
     hydrated: false,
-    getAttribute(n: string) {
-      return n in this.attrs ? this.attrs[n] : null
+    getAttribute(n: string): string | null {
+      const v = this.attrs[n]
+      return v === undefined ? null : v
     },
     hasAttribute(n: string) {
       return n in this.attrs
@@ -52,6 +53,25 @@ function fakeAdapter() {
 
 const b64 = (v: unknown) => Buffer.from(encodeLite(v)).toString('base64')
 
+/** Typed indexed access with a runtime bounds check. Throws a clear error
+ * (failing the test) instead of returning `T | undefined` — the honest way
+ * to satisfy `noUncheckedIndexedAccess` in tests whose fixtures are known
+ * non-empty. No casts, no `any`, no `!`, no `?? default`. */
+function mustEl<T>(arr: readonly T[], i: number): T {
+  const v = arr[i]
+  if (v === undefined) throw new Error(`mustEl: index ${i} out of bounds (len=${arr.length})`)
+  return v
+}
+
+/** Typed callback invocation with a runtime bounds + presence check. Used
+ * at call sites of captured callbacks (e.g. `mustCall(idleCbs, 0)()`) under
+ * noUncheckedIndexedAccess. */
+function mustCall<A extends unknown[]>(arr: readonly ((...args: A) => unknown)[], i: number): (...args: A) => unknown {
+  const v = arr[i]
+  if (v === undefined) throw new Error(`mustCall: index ${i} out of bounds (len=${arr.length})`)
+  return v
+}
+
 test('islands: parseStrategy reads all four directive forms (§10.3)', () => {
   assert.deepEqual(parseStrategy('load'), { kind: 'load' })
   assert.deepEqual(parseStrategy('idle'), { kind: 'idle' })
@@ -75,8 +95,8 @@ test("islands: 'load' hydrates immediately, others wait", async () => {
   })
   await new Promise((r) => setTimeout(r, 0))
   assert.equal(adapter.calls.length, 1, 'only the load island hydrated')
-  assert.equal(adapter.calls[0].props, undefined, 'no props attribute → undefined props')
-  assert.equal(loads[0], '/chunks/a.js')
+  assert.equal(mustEl(adapter.calls, 0).props, undefined, 'no props attribute → undefined props')
+  assert.equal(mustEl(loads, 0), '/chunks/a.js')
 })
 
 test("islands: 'idle' hydrates via requestIdleCallback", async () => {
@@ -90,7 +110,7 @@ test("islands: 'idle' hydrates via requestIdleCallback", async () => {
   hydrateIslands({ adapter, doc: fakeDoc(els), loadChunk: async () => ({}), requestIdleCallback: ric })
   assert.equal(adapter.calls.length, 0)
   assert.equal(idleCbs.length, 1, 'scheduled on requestIdleCallback')
-  idleCbs[0]()
+  mustCall(idleCbs, 0)()
   await new Promise((r) => setTimeout(r, 0))
   assert.equal(adapter.calls.length, 1)
 })
@@ -119,10 +139,10 @@ test("islands: 'visible' hydrates through IntersectionObserver, guarded against 
     IntersectionObserver: FakeIO as unknown as new (cb: ConstructorParameters<typeof FakeIO>[0]) => IntersectionObserver,
   })
   assert.deepEqual(observed, [el], 'island observed for visibility')
-  cbs[0]([{ target: el, isIntersecting: true }])
+  mustCall(cbs, 0)([{ target: el, isIntersecting: true }])
   await new Promise((r) => setTimeout(r, 0))
   assert.equal(adapter.calls.length, 1)
-  cbs[0]([{ target: el, isIntersecting: true }])
+  mustCall(cbs, 0)([{ target: el, isIntersecting: true }])
   await new Promise((r) => setTimeout(r, 0))
   assert.equal(adapter.calls.length, 1, 'double hydration guarded')
 })
@@ -146,11 +166,11 @@ test("islands: 'media(...)' hydrates on match now or on change", async () => {
   await new Promise((r) => setTimeout(r, 0))
   assert.equal(adapter.calls.length, 1, 'matching media hydrates immediately')
   assert.equal(changes.length, 1, 'non-matching media registered a change listener')
-  changes[0]()
+  mustCall(changes, 0)()
   await new Promise((r) => setTimeout(r, 0))
   assert.equal(adapter.calls.length, 1, 'change without a match is ignored')
   wide = true // the query starts matching
-  changes[0]()
+  mustCall(changes, 0)()
   await new Promise((r) => setTimeout(r, 0))
   assert.equal(adapter.calls.length, 2, 'hydrates when the query starts matching')
 })
@@ -161,9 +181,9 @@ test('islands: props decoded from base64 ODF (and JSON fallback)', async () => {
   const adapter = fakeAdapter()
   hydrateIslands({ adapter, doc: fakeDoc([odfEl, jsonEl]), loadChunk: async () => ({ name: 'chunk' }) })
   await new Promise((r) => setTimeout(r, 0))
-  assert.deepEqual(adapter.calls[0].props, { count: 3 })
-  assert.deepEqual(adapter.calls[1].props, { id: 1 }, 'JSON-encoded props fall back to JSON.parse')
-  assert.deepEqual((adapter.calls[0].mod as { name: string }).name, 'chunk')
+  assert.deepEqual(mustEl(adapter.calls, 0).props, { count: 3 })
+  assert.deepEqual(mustEl(adapter.calls, 1).props, { id: 1 }, 'JSON-encoded props fall back to JSON.parse')
+  assert.deepEqual((mustEl(adapter.calls, 0).mod as { name: string }).name, 'chunk')
 })
 
 test('islands: hydrateIsland dispatches directly and is idempotent', async () => {
@@ -174,5 +194,5 @@ test('islands: hydrateIsland dispatches directly and is idempotent', async () =>
   assert.equal(el.attrs['data-ox-hydrated'], 'done')
   await hydrateIsland(el, { adapter, loadChunk: async () => ({}) })
   assert.equal(adapter.calls.length, 1, 'second call is a no-op')
-  assert.deepEqual(adapter.calls[0].props, { n: 1 })
+  assert.deepEqual(mustEl(adapter.calls, 0).props, { n: 1 })
 })
