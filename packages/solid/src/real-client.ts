@@ -1,4 +1,12 @@
 // @oxide/solid real client page root (spec §8.4 + §10.3).
+
+/** Runtime type guard for @solidjs/web's client render surface. */
+function isSolidWebClientLike(v: unknown): v is SolidWebClientLike {
+  if (v === null || typeof v !== 'object') return false
+  return typeof Reflect.get(v, 'render') === 'function'
+    || typeof Reflect.get(v, 'hydrate') === 'function'
+}
+
 //
 // The manifest-driven `update()` / `hydrate()` / `mount()` path in
 // ./hydrate.ts needs Solid's own client runtime to render (or hydrate) the
@@ -54,15 +62,12 @@ async function load(): Promise<{
   // runtime first, Solid 1's `solid-js/web` as the fallback.
   let web: SolidWebClientLike | undefined
   try {
-    web = (await import('@solidjs/web')) as unknown as SolidWebClientLike
+    const webMod: unknown = await import('@solidjs/web')
+    if (isSolidWebClientLike(webMod)) web = webMod
   } catch {
-    try {
-      web = (await import('@solidjs/web')) as unknown as SolidWebClientLike
-    } catch {
-      return undefined
-    }
+    return undefined
   }
-  if (typeof web?.hydrate !== 'function' || typeof web.render !== 'function') return undefined
+  if (!web || typeof web.hydrate !== 'function' || typeof web.render !== 'function') return undefined
   // `createElement`/`createComponent` come from the solid-js core runtime
   // (the island path uses `createElement`; Solid keeps `createComponent` as
   // the canonical name).
