@@ -35,7 +35,7 @@ async function loadSolid(): Promise<{
 
 export function solidRenderLoading(
   overlay: Element,
-  _input: { url: string; route: string; params: Record<string, string | string[]>; data: unknown },
+  _input: unknown,
   Component: unknown,
 ): Disposer {
   let dispose: (() => void) | undefined
