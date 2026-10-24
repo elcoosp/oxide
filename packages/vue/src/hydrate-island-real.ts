@@ -15,6 +15,35 @@
 import type { Disposer } from '../../core/src/types.ts'
 import type { OxElement, ClientOptions } from './hydrate.ts'
 
+/** Return the module's `default` export when an interop wrapper provides
+ * one; otherwise the module itself. Bundlers targeting older CJS produce
+ * `{ default: ... }` wrappers; native ESM does not. This helper extracts
+ * the right value without a cast — the runtime check is what determines
+ * which shape is present. */
+function pickInteropDefault(mod: unknown): unknown {
+  if (mod !== null && typeof mod === 'object' && 'default' in mod) {
+    const d = (mod as { default: unknown }).default
+    if (d !== undefined) return d
+  }
+  return mod
+}
+
+/** Assert that `v` has `createSSRApp` (what a `VueLike` needs at runtime). */
+function assertVueLike(v: unknown): VueLike {
+  if (v === null || typeof v !== 'object') {
+    throw new TypeError('vue: module is not an object')
+  }
+  const candidate = v as { createSSRApp?: unknown }
+  if (typeof candidate.createSSRApp !== 'function') {
+    throw new TypeError('vue: module has no createSSRApp export')
+  }
+  // The runtime check above is what VueLike requires. The remaining fields
+  // are typed by the interface but not verified here — Vue's own type
+  // guarantees them once createSSRApp exists.
+  return v as VueLike
+}
+
+
 /** Narrow an `OxElement` to a real DOM `Element` (runtime assertion — see
  * hydrate.ts for the rationale). Framework hydrateRoot/app.mount requires a
  * live DOM. */
@@ -38,8 +67,8 @@ async function loadVue(): Promise<VueLike> {
   if (cachedVue) return cachedVue
   // A dynamic import so the runtime is code-split into a chunk the browser
   // only fetches when the first island's strategy fires.
-  const mod = (await import('vue')) as unknown as VueLike & { default?: VueLike }
-  cachedVue = (mod.default ?? mod) as VueLike
+  const mod: unknown = await import('vue')
+  cachedVue = assertVueLike(pickInteropDefault(mod))
   return cachedVue
 }
 
