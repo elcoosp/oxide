@@ -10,6 +10,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { makeRealAdapter } from '../src/server/real-ssr.ts'
+import type { Disposer } from '../src/types.ts'
 
 async function collect(stream: ReadableStream<Uint8Array>): Promise<string> {
   const reader = stream.getReader()
@@ -43,9 +44,9 @@ function adapterWith(components: Record<string, unknown>) {
       return `<${tag}${errMsg ? ` error="${errMsg}"` : ''}></${tag}>`
     },
     rootAttrs: ' id="root"',
-    hydrate: (() => () => {}) as never,
-    mount: (() => () => {}) as never,
-    update: (() => {}) as never,
+    hydrate: (): Disposer => () => {},
+    mount: (): Disposer => () => {},
+    update: (): void => {},
     opts: {
       ssr: 'real',
       componentFor: (route: string) => components[route],
@@ -66,7 +67,7 @@ test('error boundary: errorRoute is rendered with the thrown message', async () 
       data: {},
       head: { meta: [], link: [], style: [], script: [] },
       errorRoute: 'routes/error',
-    } as never),
+    }),
   )
   assert.match(html, /<ErrorPage error="page exploded"><\/ErrorPage>/, 'error.tsx rendered with message')
 })
@@ -82,7 +83,7 @@ test('error boundary: without errorRoute the generic OX-500 is emitted', async (
       params: {},
       data: {},
       head: { meta: [], link: [], style: [], script: [] },
-    } as never),
+    }),
   )
   assert.match(html, /data-ox-error='OX-500'/)
   assert.match(html, /page exploded/)
@@ -101,7 +102,7 @@ test('error boundary: a throwing error.tsx falls back to OX-500', async () => {
       data: {},
       head: { meta: [], link: [], style: [], script: [] },
       errorRoute: 'routes/error',
-    } as never),
+    }),
   )
   assert.match(html, /data-ox-error='OX-500'/, 'generic page emitted when error.tsx also throws')
 })
@@ -122,7 +123,7 @@ test('error boundary: props stays in scope in catch (regression)', async () => {
       data: { hello: 'world' },
       head: { meta: [], link: [], style: [], script: [] },
       errorRoute: 'routes/error',
-    } as never),
+    }),
   )
   assert.ok(html.includes('<ErrorPage'), 'catch rendered without a ReferenceError')
 })
