@@ -72,7 +72,7 @@ export async function mountVuePageRoot(
 ): Promise<RealPageRoot | undefined> {
   const vue = await load()
   if (!vue) return undefined
-  const el = container as unknown as Element
+  const el = container
   const mountFresh = (p: Record<string, unknown>): { unmount(): void; mount(el: unknown): void } => {
     el.innerHTML = ''
     const app = vue.createSSRApp(Component, p)
