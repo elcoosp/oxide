@@ -33,7 +33,7 @@ interface SvelteCompilerLike {
 const TMP_DIR = join(fileURLToPath(new URL('.', import.meta.url)), '.tmp')
 
 async function compileInline(source: string, filename = 'Test.svelte'): Promise<unknown> {
-  const compiler = (await import('svelte/compiler')) as unknown as SvelteCompilerLike
+  const compiler = await import('svelte/compiler')
   const out = compiler.compile(source, { generate: 'server', filename })
   await mkdir(TMP_DIR, { recursive: true })
   const tmpPath = join(TMP_DIR, `${randomUUID()}.mjs`)
