@@ -118,7 +118,7 @@ function install(opts: {
   link?: any
   oxide?: { route?: string; data?: string }
   oxideBoot?: { loadChunk: (c: string) => Promise<unknown> }
-  fetchResult?: Uint8Array
+  fetchResult?: Uint8Array<ArrayBuffer>
 }): { doc: any } {
   const doc = makeDoc({ root: opts.root, link: opts.link })
   const location = { href: 'http://x.test/', pathname: '/', search: '' }
