@@ -66,7 +66,9 @@ class FakeHistory {
     this.stack[this.idx] = { state, url }
   }
   get state() {
-    return this.stack[this.idx].state
+    const s = this.stack[this.idx]
+    if (s === undefined) throw new RangeError('fakeHistory: idx out of range')
+    return s.state
   }
 }
 
@@ -121,17 +123,36 @@ const settle = () => new Promise<void>((r) => setTimeout(r, 0))
 
 // ---- tests ----
 
+/** Typed indexed access with a runtime bounds check. Throws a clear error
+ * (failing the test) instead of returning `T | undefined` — the honest way
+ * to satisfy `noUncheckedIndexedAccess` in tests whose fixtures are known
+ * non-empty. No casts, no `any`, no `!`, no `?? default`. */
+function mustEl<T>(arr: readonly T[], i: number): T {
+  const v = arr[i]
+  if (v === undefined) throw new Error(`mustEl: index ${i} out of bounds (len=${arr.length})`)
+  return v
+}
+
+/** Typed array element call with a runtime bounds + presence check. Used at
+ * call sites of captured callbacks (e.g. `idleCbs[0]()`) under
+ * noUncheckedIndexedAccess. */
+function mustCall<A extends unknown[]>(arr: readonly ((...args: A) => unknown)[], i: number): (...args: A) => unknown {
+  const v = arr[i]
+  if (v === undefined) throw new Error(`mustCall: index ${i} out of bounds (len=${arr.length})`)
+  return v
+}
+
 test('router: goto() fetches /__data, decodes ODF, updates adapter, pushes history', async () => {
   const { router, calls, updates, history } = setup()
   await router.goto('/about')
   assert.equal(calls.length, 1)
-  assert.equal(calls[0].url, '/__data?route=%2Fabout')
+  assert.equal(mustEl(calls, 0).url, '/__data?route=%2Fabout')
   assert.equal(updates.length, 1)
-  assert.deepEqual(updates[0].data, { title: 'About' })
-  assert.equal(updates[0].route, '/about')
-  assert.equal(history.stack[history.idx].url, '/about')
+  assert.deepEqual(mustEl(updates, 0).data, { title: 'About' })
+  assert.equal(mustEl(updates, 0).route, '/about')
+  assert.equal(mustEl(history.stack, history.idx).url, '/about')
   // departure scroll saved on the entry we left; the new entry starts at top
-  assert.deepEqual((history.stack[0].state as { scroll: { x: number; y: number } }).scroll, { x: 0, y: 42 })
+  assert.deepEqual((mustEl(history.stack, 0).state as { scroll: { x: number; y: number } }).scroll, { x: 0, y: 42 })
   assert.deepEqual((history.state as { scroll: { x: number; y: number } }).scroll, { x: 0, y: 0 })
   // cached: a second goto makes no new request
   await router.goto('/about')
@@ -143,7 +164,7 @@ test('router: goto() with replace:true uses replaceState', () => {
   const { router, history } = setup()
   return router.goto('/about', { replace: true }).then(() => {
     assert.equal(history.stack.length, 1, 'no new entry pushed')
-    assert.equal(history.stack[0].url, '/about')
+    assert.equal(mustEl(history.stack, 0).url, '/about')
   })
 })
 
@@ -174,9 +195,9 @@ test('router: popstate restores adapter state + scroll; unknown state falls back
   router.attach()
   await router.goto('/about')
   updates.length = 0
-  dispatch('popstate', { state: history.stack[0].state }) // back to '/'
+  dispatch('popstate', { state: mustEl(history.stack, 0).state }) // back to '/'
   assert.equal(updates.length, 1)
-  assert.deepEqual(updates[0].data, { title: 'Home' })
+  assert.deepEqual(mustEl(updates, 0).data, { title: 'Home' })
   assert.deepEqual(scrolls.at(-1), [0, 42], 'scroll restored from the entry state')
   // popstate without oxide state: fetch the current location instead
   dispatch('popstate', { state: null })
@@ -213,7 +234,7 @@ test('router: hanging prefetch aborted on dispose', async () => {
   dispatch('mouseover', { target: linkEl('/hang') })
   assert.equal(calls.length, 1)
   router.dispose()
-  assert.equal(calls[0].signal?.aborted, true)
+  assert.equal(mustEl(calls, 0).signal?.aborted, true)
 })
 
 test('router: viewport prefetch via IntersectionObserver', async () => {
@@ -233,10 +254,10 @@ test('router: viewport prefetch via IntersectionObserver', async () => {
   router.attach()
   assert.equal(cbs.length, 1, 'IO created on attach')
   assert.deepEqual(observed, [el], 'internal link observed')
-  cbs[0]([{ target: el, isIntersecting: true }])
+  mustCall(cbs, 0)([{ target: el, isIntersecting: true }])
   await settle()
   assert.equal(calls.length, 1, 'intersection triggered a prefetch')
-  cbs[0]([{ target: el, isIntersecting: false }])
+  mustCall(cbs, 0)([{ target: el, isIntersecting: false }])
   assert.equal(calls.length, 1, 'non-intersecting entries ignored')
 })
 
