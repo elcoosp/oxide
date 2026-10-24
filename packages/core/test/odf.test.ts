@@ -66,7 +66,11 @@ function deepEq(a: unknown, b: unknown, seen = new Map<object, unknown>()): bool
   if (a instanceof Map && b instanceof Map) {
     if (a.size !== b.size) return false
     const be = [...b.entries()]
-    return [...a.entries()].every(([k, v], i) => deepEq(k, be[i][0], seen) && deepEq(v, be[i][1], seen))
+    return [...a.entries()].every(([k, v], i) => {
+      const beI = be[i]
+      if (beI === undefined) return false
+      return deepEq(k, beI[0], seen) && deepEq(v, beI[1], seen)
+    })
   }
   if (a instanceof Set && b instanceof Set) {
     if (a.size !== b.size) return false
