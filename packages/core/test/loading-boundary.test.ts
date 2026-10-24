@@ -136,7 +136,7 @@ function install(opts: {
   g.__oxideBoot = opts.oxideBoot
   if (opts.fetchResult) {
     g.fetch = async () =>
-      new Response(opts.fetchResult as unknown as BodyInit, { status: 200 })
+      new Response(opts.fetchResult, { status: 200 })
   }
   return { doc }
 }
