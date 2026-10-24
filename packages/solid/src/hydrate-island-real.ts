@@ -16,6 +16,15 @@
 import type { Disposer } from '../../core/src/types.ts'
 import type { OxElement, ClientOptions } from './hydrate.ts'
 
+/** Narrow an `OxElement` to a real DOM `Element` (runtime assertion — see
+ * hydrate.ts for the rationale). Framework hydrateRoot/app.mount requires a
+ * live DOM. */
+function asDomElement(v: { dispatchEvent?(ev: unknown): boolean; innerHTML: string }, where: string): Element {
+  if (typeof Element !== 'undefined' && v instanceof Element) return v
+  throw new TypeError(`oxide: ${where} requires a live DOM Element`)
+}
+
+
 /** Structural shape of the Solid web runtime's hydration surface. */
 export interface SolidWebLike {
   hydrate(fn: () => unknown, element: Element): unknown
@@ -77,7 +86,7 @@ export async function solidHydrateIsland(
   }
   web.hydrate(
     () => createElement(component, (props as Record<string, unknown>) ?? {}),
-    host as unknown as Element,
+    asDomElement(host, 'island hydration'),
   )
   return () => {
     // Solid's `hydrate` does not return an unmount handle. A best-effort
