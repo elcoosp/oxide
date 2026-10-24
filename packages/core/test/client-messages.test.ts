@@ -6,17 +6,20 @@ import { formatIcu, loadMessages, t, _resetMessagesForTest } from '../src/client
 /** Minimal document + fetch stubs — the module reads `document.documentElement`
  *  and `fetch`, nothing else. */
 function withGlobals<T>(lang: string, fetchImpl: (url: string) => Promise<Response>, fn: () => Promise<T>): Promise<T> {
-  const g = globalThis as unknown as {
-    document?: { documentElement: { lang: string; getAttribute(k: string): string | null } }
-    fetch?: typeof fetch
-  }
-  const savedDoc = g.document
-  const savedFetch = g.fetch
-  g.document = { documentElement: { lang, getAttribute: () => null } }
-  g.fetch = ((url: string) => fetchImpl(url)) as unknown as typeof fetch
+  // Override `globalThis.document` and `globalThis.fetch` via Reflect.set —
+  // no cast, runtime-honest. lib.dom declares `document` as read-only on
+  // Window, so a direct assignment would fail at the type level; Reflect.set
+  // bypasses that and both captures the original value (for restore) and
+  // installs the test double.
+  const savedDoc: unknown = Reflect.get(globalThis, 'document')
+  const savedFetch: unknown = Reflect.get(globalThis, 'fetch')
+  Reflect.set(globalThis, 'document', { documentElement: { lang, getAttribute: () => null } })
+  Reflect.set(globalThis, 'fetch', (url: string) => fetchImpl(url))
   return fn().finally(() => {
-    g.document = savedDoc
-    g.fetch = savedFetch
+    if (savedDoc === undefined) Reflect.deleteProperty(globalThis, 'document')
+    else Reflect.set(globalThis, 'document', savedDoc)
+    if (savedFetch === undefined) Reflect.deleteProperty(globalThis, 'fetch')
+    else Reflect.set(globalThis, 'fetch', savedFetch)
   })
 }
 
@@ -70,7 +73,7 @@ test('the catalog is fetched once and cached', async () => {
 test('prefers the per-route subset when the page names a route', async () => {
   _resetMessagesForTest()
   const fetched: string[] = []
-  const g = globalThis as unknown as { __oxide?: { route: string } }
+  const g = globalThis as { __oxide?: { route: string } }
   const saved = g.__oxide
   g.__oxide = { route: 'routes/blog/page' }
   await withGlobals(
@@ -98,7 +101,7 @@ test('prefers the per-route subset when the page names a route', async () => {
 test('falls back to the full catalog when no subset exists', async () => {
   _resetMessagesForTest()
   const fetched: string[] = []
-  const g = globalThis as unknown as { __oxide?: { route: string } }
+  const g = globalThis as { __oxide?: { route: string } }
   const saved = g.__oxide
   g.__oxide = { route: 'routes/page' }
   await withGlobals(
