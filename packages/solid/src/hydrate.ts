@@ -29,7 +29,7 @@ export interface OxElement {
   hasAttribute(name: string): boolean
   addEventListener(type: string, fn: (ev: unknown) => void): void
   removeEventListener(type: string, fn: (ev: unknown) => void): void
-  dispatchEvent?(ev: { type: string; detail?: unknown }): boolean
+  dispatchEvent?(ev: unknown): boolean
   innerHTML: string
   /** The DOM specification types this as `Document | null` (null when the
    *  element is detached from its document), not `Document | undefined`. */
@@ -41,7 +41,7 @@ export interface OxElement {
 export interface OxDoc {
   addEventListener(type: string, fn: (ev: unknown) => void): void
   removeEventListener(type: string, fn: (ev: unknown) => void): void
-  dispatchEvent?(ev: { type: string; detail?: unknown }): boolean
+  dispatchEvent?(ev: unknown): boolean
   querySelector?(sel: string): OxElement | null
   querySelectorAll?(sel: string): ArrayLike<OxElement>
 }
