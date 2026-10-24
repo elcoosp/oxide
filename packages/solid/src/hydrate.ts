@@ -31,7 +31,9 @@ export interface OxElement {
   removeEventListener(type: string, fn: (ev: unknown) => void): void
   dispatchEvent?(ev: { type: string; detail?: unknown }): boolean
   innerHTML: string
-  ownerDocument?: OxDoc
+  /** The DOM specification types this as `Document | null` (null when the
+   *  element is detached from its document), not `Document | undefined`. */
+  ownerDocument?: OxDoc | null
   querySelector?(sel: string): OxElement | null
   querySelectorAll?(sel: string): ArrayLike<OxElement>
 }
