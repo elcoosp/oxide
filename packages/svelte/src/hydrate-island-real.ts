@@ -31,7 +31,7 @@ async function loadSvelte(): Promise<SvelteLike> {
   // only fetches when the first island's strategy fires. Svelte 5 exports
   // `mount`/`unmount` from the package root; Svelte 4's `hydrate` lives on
   // the client-component constructor and is not used here.
-  const mod = (await import('svelte')) as unknown as SvelteLike
+  const mod = await import('svelte')
   cachedSvelte = mod
   return mod
 }
