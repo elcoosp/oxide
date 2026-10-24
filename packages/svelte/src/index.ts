@@ -55,9 +55,9 @@ import { svelteRenderLoading } from './render-loading.ts'
 export const clientAdapter: FrameworkAdapter = {
   ...adapter,
   // §10.3: real `mount(..., { hydrate: true })` hydration so Svelte 5 runes work.
-  hydrateIsland: svelteHydrateIsland as never,
+  hydrateIsland: svelteHydrateIsland,
   // §8.4: real `mount(...)` for per-route loading boundaries.
-  renderLoading: svelteRenderLoading as never,
+  renderLoading: svelteRenderLoading,
 }
 
 // ---------------------------------------------------------------------------
