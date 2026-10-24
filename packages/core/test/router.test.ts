@@ -142,6 +142,11 @@ function mustCall<A extends unknown[]>(arr: readonly ((...args: A) => unknown)[]
   return v
 }
 
+
+/** Track which fake links/buttons have had `.preventDefault()` called on
+ *  them during a click dispatch. A WeakSet avoids attaching shadow properties
+ *  to the fake link objects (which would need a cast). */
+const _preventedTargets = new WeakSet<object>()
 test('router: goto() fetches /__data, decodes ODF, updates adapter, pushes history', async () => {
   const { router, calls, updates, history } = setup()
   await router.goto('/about')
@@ -172,22 +177,22 @@ test('router: intercepts clicks on internal <a>, ignores external + modifier key
   const { router, dispatch, updates } = setup()
   router.attach()
   const internal = linkEl('/about')
-  dispatch('click', { target: internal, button: 0, preventDefault() { (internal as unknown as { prevented: boolean }).prevented = true } })
+  dispatch('click', { target: internal, button: 0, preventDefault() { if (typeof internal === "object" && internal !== null) _preventedTargets.add(internal) } })
   await settle()
-  assert.ok((internal as unknown as { prevented?: boolean }).prevented, 'default prevented')
+  assert.ok((typeof internal === "object" && internal !== null && _preventedTargets.has(internal)), 'default prevented')
   assert.equal(updates.at(-1)?.route, '/about')
 
   // external link: not intercepted
   const external = linkEl('https://other.test/x')
   const before = updates.length
-  dispatch('click', { target: external, button: 0, preventDefault() { (external as unknown as { prevented: boolean }).prevented = true } })
-  assert.ok(!(external as unknown as { prevented?: boolean }).prevented)
+  dispatch('click', { target: external, button: 0, preventDefault() { if (typeof external === "object" && external !== null) _preventedTargets.add(external) } })
+  assert.ok(!(typeof external === "object" && external !== null && _preventedTargets.has(external)))
   assert.equal(updates.length, before)
 
   // modifier-click (open in new tab): not intercepted
   const plain = linkEl('/blog/a')
-  dispatch('click', { target: plain, button: 0, metaKey: true, preventDefault() { (plain as unknown as { prevented: boolean }).prevented = true } })
-  assert.ok(!(plain as unknown as { prevented?: boolean }).prevented)
+  dispatch('click', { target: plain, button: 0, metaKey: true, preventDefault() { if (typeof plain === "object" && plain !== null) _preventedTargets.add(plain) } })
+  assert.ok(!(typeof plain === "object" && plain !== null && _preventedTargets.has(plain)))
 })
 
 test('router: popstate restores adapter state + scroll; unknown state falls back to fetch', async () => {
