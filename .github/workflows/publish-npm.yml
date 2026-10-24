@@ -62,7 +62,7 @@ jobs:
           TARGET="${{ inputs.version }}"
           echo "target: $TARGET"
           ok=0
-          for pkg in create-oxide oxide react vue svelte solid; do
+          for pkg in create-oxide core react vue svelte solid; do
             V=$(python3 -c "import json;print(json.load(open('packages/$pkg/package.json')).get('version',''))")
             if [ "$V" != "$TARGET" ]; then
               echo "MISMATCH: packages/$pkg is at $V, expected $TARGET"
@@ -82,7 +82,7 @@ jobs:
       - name: Verify tarball contents (only src/ + auto-includes)
         run: |
           set -eu
-          for pkg in create-oxide oxide react vue svelte solid; do
+          for pkg in create-oxide core react vue svelte solid; do
             echo "=== packages/$pkg ==="
             ( cd "packages/$pkg" && pnpm pack --dry-run 2>&1 | tail -20 )
           done
