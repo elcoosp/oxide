@@ -295,11 +295,26 @@ class Decoder {
         }
         this.need(len, 'typed-array payload')
         const count = len / size
-        const out = new ctor(count)
-        const get = TYPED_GETTERS[kind] as keyof DataView
+        // Split by kind: kinds 9 and 10 are BigInt arrays (elements are
+        // `bigint`); kinds 0..8 are numeric arrays (elements are `number`).
+        // The DataView getters return the same primitives. Writing in one
+        // loop over the union of array types cannot be typed without help;
+        // two loops over the two distinct element types type cleanly.
+        if (kind >= 9) {
+          const bigCtor = ctor as BigInt64ArrayConstructor | BigUint64ArrayConstructor
+          const out = new bigCtor(count)
+          const get = TYPED_GETTERS[kind] as 'getBigInt64' | 'getBigUint64'
+          for (let i = 0; i < count; i++) {
+            out[i] = this.dv[get](this.pos + i * size, true)
+          }
+          this.pos += len
+          return out
+        }
+        const out = new (ctor as Exclude<typeof ctor, typeof BigInt64Array | typeof BigUint64Array>)(count)
+        const get = TYPED_GETTERS[kind] as Exclude<keyof DataView, 'getBigInt64' | 'getBigUint64' | 'buffer' | 'byteLength' | 'byteOffset'>
         for (let i = 0; i < count; i++) {
           // Element-wise reads via DataView: alignment-safe, little-endian.
-          ;(out as unknown as unknown[])[i] = (this.dv[get] as (o: number, le?: boolean) => number)(this.pos + i * size, true)
+          out[i] = (this.dv[get] as (o: number, le?: boolean) => number)(this.pos + i * size, true)
         }
         this.pos += len
         return out
