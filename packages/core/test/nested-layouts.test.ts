@@ -9,6 +9,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { makeRealAdapter } from '../src/server/real-ssr.ts'
+import type { Disposer } from '../src/types.ts'
 
 interface Marker { __tag: string }
 
@@ -50,9 +51,9 @@ function adapterWith(components: Record<string, unknown>, layoutFor?: (r: string
     isAvailable: async () => true,
     renderBody: scriptedRenderBody as never,
     rootAttrs: ' id="root"',
-    hydrate: (() => () => {}) as never,
-    mount: (() => () => {}) as never,
-    update: (() => {}) as never,
+    hydrate: (): Disposer => () => {},
+    mount: (): Disposer => () => {},
+    update: (): void => {},
     opts: {
       ssr: 'real',
       componentFor: (route: string) => components[route],
@@ -77,7 +78,7 @@ test('layouts: single-layer chain wraps the page (outermost → innermost)', asy
     'routes/blog/[slug]': tag('Page'),
     'routes/blog/layout': tag('BlogLayout'),
   })
-  const html = await collect(adapter.render(inputFor('routes/blog/[slug]', ['routes/blog/layout']) as never))
+  const html = await collect(adapter.render(inputFor('routes/blog/[slug]', ['routes/blog/layout'])))
   assert.match(html, /<BlogLayout><Page><\/Page><\/BlogLayout>/, 'page nested inside one layout')
 })
 
@@ -88,7 +89,7 @@ test('layouts: three-layer chain nests outermost-first', async () => {
     'routes/layout': tag('RootLayout'),
   })
   const html = await collect(
-    adapter.render(inputFor('routes/blog/[slug]', ['routes/layout', 'routes/blog/layout']) as never),
+    adapter.render(inputFor('routes/blog/[slug]', ['routes/layout', 'routes/blog/layout'])),
   )
   // Outermost (root) wraps the blog layout, which wraps the page.
   assert.match(html, /<RootLayout><BlogLayout><Page><\/Page><\/BlogLayout><\/RootLayout>/)
@@ -105,9 +106,9 @@ test('layouts: an unresolved layout id is skipped in `auto`, the rest still nest
     isAvailable: async () => true,
     renderBody: scriptedRenderBody as never,
     rootAttrs: ' id="root"',
-    hydrate: (() => () => {}) as never,
-    mount: (() => () => {}) as never,
-    update: (() => {}) as never,
+    hydrate: (): Disposer => () => {},
+    mount: (): Disposer => () => {},
+    update: (): void => {},
     opts: {
       ssr: 'auto',
       componentFor: (route: string) =>
@@ -116,7 +117,7 @@ test('layouts: an unresolved layout id is skipped in `auto`, the rest still nest
   })
   const html = await collect(
     adapter.render(
-      inputFor('routes/blog/[slug]', ['routes/layout', 'routes/blog/layout']) as never,
+      inputFor('routes/blog/[slug]', ['routes/layout', 'routes/blog/layout']),
     ),
   )
   assert.match(html, /<RootLayout><Page><\/Page><\/RootLayout>/, 'root layout still wraps the page')
@@ -127,12 +128,12 @@ test('layouts: layoutFor(route) fallback still wraps when input.layouts is absen
     { 'routes/blog/[slug]': tag('Page') },
     () => tag('LegacyLayout'),
   )
-  const html = await collect(adapter.render(inputFor('routes/blog/[slug]', undefined) as never))
+  const html = await collect(adapter.render(inputFor('routes/blog/[slug]', undefined)))
   assert.match(html, /<LegacyLayout><Page><\/Page><\/LegacyLayout>/, 'single-layer layoutFor still works')
 })
 
 test('layouts: no layouts in the chain renders the page directly', async () => {
   const adapter = adapterWith({ 'routes/index': tag('Page') })
-  const html = await collect(adapter.render(inputFor('routes/index', []) as never))
+  const html = await collect(adapter.render(inputFor('routes/index', [])))
   assert.match(html, /<div id="root"><Page><\/Page><\/div>/)
 })
