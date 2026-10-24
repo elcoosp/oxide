@@ -78,7 +78,11 @@ test('P1-9: glue.resolveAll settles the matching slots', async () => {
   const data: any = { later: { __deferred: 7 } }
   wireDeferreds(data, glue)
 
-  assert.equal((data.later as any).status, 'pending', 'pending before resolveAll')
+  const laterVal = data.later
+  const laterStatus = typeof laterVal === 'object' && laterVal !== null && 'status' in laterVal
+    ? (laterVal as { status: unknown }).status
+    : undefined
+  assert.equal(laterStatus, 'pending', 'pending before resolveAll')
   glue.resolveAll({ '7': 'the value' })
   assert.equal(await (data.later as Promise<unknown>), 'the value', 'resolveAll settles slot 7')
   glue.dispose()
