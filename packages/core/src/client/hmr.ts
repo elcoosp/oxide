@@ -86,6 +86,7 @@ export function showOverlay(diag: { code?: string; message?: string; fix?: strin
       'box-shadow:0 8px 24px rgba(0,0,0,.5)'
     root.appendChild(el)
   }
+  const capturedEl = el
   const code = diag.code ?? 'ERROR'
   const msg = diag.message ?? ''
   el.innerHTML = ''
@@ -96,7 +97,7 @@ export function showOverlay(diag: { code?: string; message?: string; fix?: strin
   const close = doc.createElement('button')
   close.textContent = '×'
   close.style.cssText = 'background:none;border:0;color:inherit;font-size:18px;cursor:pointer'
-  close.addEventListener('click', () => el!.remove())
+  close.addEventListener('click', () => capturedEl.remove())
   head.appendChild(title)
   head.appendChild(close)
   const body = doc.createElement('pre')
