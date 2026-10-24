@@ -8,6 +8,16 @@ import { Image } from '../src/image.ts'
  *  is needed to inspect them. */
 interface El { type: unknown; props: Record<string, unknown> & { children?: unknown } }
 
+/** Typed indexed access with a runtime bounds check. Throws a clear error
+ * (failing the test) instead of returning `T | undefined` — the honest way
+ * to satisfy `noUncheckedIndexedAccess` in tests whose fixtures are known
+ * non-empty. No casts, no `any`, no `!`, no `?? default`. */
+function mustEl<T>(arr: readonly T[], i: number): T {
+  const v = arr[i]
+  if (v === undefined) throw new Error(`mustEl: index ${i} out of bounds (len=${arr.length})`)
+  return v
+}
+
 test('plain src + dims emits an img with width/height/alt', () => {
   const el = Image({ src: '/a.png', width: 400, height: 300, alt: 'A' }) as El
   assert.equal(el.type, 'img')
@@ -43,14 +53,14 @@ test('priority emits a preload link + eager img in a fragment', () => {
   assert.equal(el.type, 'Fragment')
   const kids = el.props.children as El[]
   assert.equal(kids.length, 2)
-  assert.equal(kids[0].type, 'link')
-  assert.equal(kids[0].props.rel, 'preload')
-  assert.equal(kids[0].props.as, 'image')
-  assert.equal(kids[0].props.imagesrcset, '/hero.png?w=800 800w')
-  assert.equal(kids[0].props.imagesizes, '100vw')
-  assert.equal(kids[1].type, 'img')
-  assert.equal(kids[1].props.loading, 'eager')
-  assert.equal(kids[1].props.fetchpriority, 'high')
+  assert.equal(mustEl(kids, 0).type, 'link')
+  assert.equal(mustEl(kids, 0).props.rel, 'preload')
+  assert.equal(mustEl(kids, 0).props.as, 'image')
+  assert.equal(mustEl(kids, 0).props.imagesrcset, '/hero.png?w=800 800w')
+  assert.equal(mustEl(kids, 0).props.imagesizes, '100vw')
+  assert.equal(mustEl(kids, 1).type, 'img')
+  assert.equal(mustEl(kids, 1).props.loading, 'eager')
+  assert.equal(mustEl(kids, 1).props.fetchpriority, 'high')
 })
 
 test('pass-through props (id, className, data-*) survive', () => {
