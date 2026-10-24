@@ -180,7 +180,7 @@ test('a per-settle script appended after load resolves its slot', async () => {
   try {
     const glue = attachDeferGlue({ doc: doc })
     const slot = new DeferredClient<{ late: string }>()
-    glue.registry.set(7, slot as unknown as DeferredClient)
+    glue.registry.set(7, slot)
     appendSettle('7', { late: 'arrived' })
     const v = await slot.promise
     assert.deepEqual(v, { late: 'arrived' })
@@ -198,7 +198,7 @@ test('a late per-settle rejection rejects the slot', async () => {
   try {
     const glue = attachDeferGlue({ doc: doc })
     const slot = new DeferredClient<unknown>()
-    glue.registry.set(3, slot as unknown as DeferredClient)
+    glue.registry.set(3, slot)
     appendSettle('3', { __oxide_deferred_error: 'boom' })
     await assert.rejects(slot.promise, /boom/)
     glue.dispose()
