@@ -59,7 +59,7 @@ function ensureInstalled(w: BootWindow): void {
     const doc = (globalThis as { document?: Document }).document
     if (!doc) return
     const opts: IslandsOptions = {
-      doc: doc as unknown as IslandsOptions['doc'],
+      doc,
       adapter: state.adapter,
       loadChunk: state.loadChunk,
     }
@@ -250,7 +250,7 @@ export function bootWithRouter(
   //     `window.__oxide` (pure SPA, or non-SSR HTML) still gets island
   //     hydration here.
   try {
-    hydrateIslands({ doc: doc as unknown as IslandsOptions['doc'], adapter, loadChunk })
+    hydrateIslands({ doc, adapter, loadChunk })
     loadScripts({ doc })
   } catch (e) {
     console.error?.('oxide: island hydration failed', e)
@@ -425,7 +425,7 @@ export function bootWithRouter(
     }
 
     try {
-      ;(adapter as unknown as { update(i: unknown): void }).update(input)
+      adapter.update(input)
     } catch (err) {
       console.warn?.('oxide: ox:data update threw', err)
     }
