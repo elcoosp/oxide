@@ -43,7 +43,7 @@ async function loadReactRuntime(): Promise<{
  */
 export function reactRenderLoading(
   overlay: Element,
-  _input: { url: string; route: string; params: Record<string, string | string[]>; data: unknown },
+  _input: unknown,
   Component: unknown,
 ): Disposer {
   let root: { unmount(): void; render(node: unknown): void } | undefined
