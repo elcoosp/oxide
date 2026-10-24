@@ -304,12 +304,12 @@ function parseOptions(source: string): IcuOptions {
   let offset = 0
   let i = 0
   while (i < source.length) {
-    while (i < source.length && /\s/.test(source[i]!)) i += 1
+    while (i < source.length && /\s/.test(source.charAt(i))) i += 1
     if (i >= source.length) break
     const keyStart = i
     while (i < source.length && !/\s/.test(source[i]!) && source[i] !== '{') i += 1
     const key = source.slice(keyStart, i)
-    while (i < source.length && /\s/.test(source[i]!)) i += 1
+    while (i < source.length && /\s/.test(source.charAt(i))) i += 1
     if (key.startsWith('offset:')) {
       const n = Number(key.slice('offset:'.length))
       if (Number.isFinite(n)) offset = n
