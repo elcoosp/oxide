@@ -52,10 +52,10 @@ export function createRealAdapter(opts: RealAdapterOptions) {
     lastError: getLastLoadError,
     renderBody: renderSvelteToString,
     rootAttrs: ' id="root" class="oxide-root"',
-    hydrate: hydrate as never,
+    hydrate: hydrate,
     // §10.3: real `mount(..., { hydrate: true })` so Svelte 5 runes work.
-    hydrateIsland: svelteHydrateIsland as never,
-    mount: mount as never,
+    hydrateIsland: svelteHydrateIsland,
+    mount: mount,
     update,
     opts,
   })
