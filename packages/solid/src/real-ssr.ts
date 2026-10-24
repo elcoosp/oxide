@@ -26,6 +26,12 @@ export interface SolidWebLike {
    * loader works against either major version.
    */
   renderToStringAsync?(fn: () => unknown): Promise<string>
+  /**
+   * Streaming renderer. Returns a Node `Readable` on Node and a web
+   * `ReadableStream` on edge runtimes — the caller normalizes. Solid 2.0
+   * introduced this alongside `renderToString`; older builds omit it.
+   */
+  renderToStream?(fn: () => unknown): Promise<NodeJS.ReadableStream | ReadableStream<Uint8Array>>
   ssrElement?(tag: string, attrs: Record<string, unknown>, children: unknown, dynamic: boolean): unknown
   escape?(s: string, attr?: boolean): string
   version?: string
@@ -220,10 +226,7 @@ export async function renderSolidToStream(
   if (!loaded) {
     throw new Error('@oxide/solid: real SSR requires `@solidjs/web` (Solid 2) or `solid-js/web` (Solid 1) to be installed')
   }
-  const web = loaded.web as unknown as {
-    renderToStream?: (fn: () => unknown) => Promise<NodeJS.ReadableStream | ReadableStream<Uint8Array>>
-    renderToString?: (fn: () => unknown) => string | Promise<string>
-  }
+  const web = loaded.web
   if (typeof web.renderToStream === 'function') {
     const solidStream = await web.renderToStream(fn)
     // Web `ReadableStream` (edge runtimes): return as-is.
