@@ -8,6 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { compile } from 'svelte/compiler'
+import type { Component } from 'svelte'
 import { render } from 'svelte/server'
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -28,29 +29,30 @@ const SOURCE = readFileSync(join(here, '../src/Image.svelte'), 'utf8')
 
 /** Compile the component once. The output lives beside the package so
  *  `svelte/internal/server` resolves (a `/tmp` path cannot see it). */
-let cached: { default: unknown } | null = null
-async function load(): Promise<{ default: unknown }> {
+type SvelteComp = Component<Record<string, unknown>, Record<string, unknown>, string>
+let cached: { default: SvelteComp } | null = null
+async function load(): Promise<{ default: SvelteComp }> {
   if (cached) return cached
   const out = compile(SOURCE, { generate: 'server', name: 'Image', filename: 'Image.svelte' })
   const dir = mkdtempSync(join(here, 'img-'))
   createdDirs.push(dir)
   const path = join(dir, 'Image.mjs')
   writeFileSync(path, out.js.code)
-  cached = (await import(pathToFileURL(path).href)) as { default: unknown }
+  cached = (await import(pathToFileURL(path).href)) as { default: SvelteComp }
   return cached
 }
 
 /** Render and return both halves. `<svelte:head>` content (a `priority`
  *  image's `<link rel="preload">`) lands in `head`, not `body`. */
 function renderBoth(
-  mod: { default: unknown },
+  mod: { default: SvelteComp },
   props: Record<string, unknown>,
 ): { body: string; head: string } {
   const res = render(mod.default, { props })
   return { body: res.body, head: res.head }
 }
 
-function renderToString(mod: { default: unknown }, props: Record<string, unknown>): string {
+function renderToString(mod: { default: SvelteComp }, props: Record<string, unknown>): string {
   return renderBoth(mod, props).body
 }
 
