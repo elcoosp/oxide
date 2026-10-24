@@ -60,9 +60,7 @@ test('factory: ssr=real + no component → OX-500 page (§10.2 step 5)', async (
 })
 
 test('factory: real strategy renders through @vue/server-renderer', { skip: realSkip }, async () => {
-  const vue = (await import('vue')) as unknown as {
-    h(type: unknown, props: Record<string, unknown> | null, ...children: unknown[]): unknown
-  }
+  const vue = await import('vue')
   // Vue components read props.data (the framework-neutral adapter contract).
   const Greeting = {
     props: { data: { type: Object, default: () => ({}) } },
@@ -79,9 +77,7 @@ test('factory: real strategy renders through @vue/server-renderer', { skip: real
 })
 
 test('factory: real strategy escapes text through the real renderer', { skip: realSkip }, async () => {
-  const vue = (await import('vue')) as unknown as {
-    h(type: unknown, props: Record<string, unknown> | null, ...children: unknown[]): unknown
-  }
+  const vue = await import('vue')
   const Dangerous = { render: () => vue.h('p', null, '<script>alert(1)</script>') }
   const a = createRealAdapter({ ssr: 'real', componentFor: () => Dangerous })
   const html = await drain(a.render(input()))
