@@ -87,8 +87,40 @@ export interface DeferGlue {
   dispose(): void
 }
 
+/** Structural interface for a "script-like" element the glue reads. The
+ *  glue only ever uses `.getAttribute` and `.textContent`, so a real
+ *  `HTMLScriptElement` structurally satisfies this — no cast needed. */
+export interface DeferGlueElement {
+  getAttribute?(name: string): string | null
+  textContent?: string | null
+}
+
+/** Structural interface for the "document-like" object the glue attaches to.
+ *  Real `Document` satisfies this. A test fake document also satisfies it
+ *  (the previously-required `Document` type forced every caller to cast). */
+export interface DeferGlueDoc {
+  addEventListener(type: string, fn: (ev: unknown) => void): void
+  removeEventListener(type: string, fn: (ev: unknown) => void): void
+  querySelectorAll?(sel: string): ArrayLike<DeferGlueElement>
+  documentElement?: unknown
+  readyState?: string
+}
+
+/** The `ox:swap` custom-event detail. Narrow with `isSwapEvent`. */
+interface SwapEventDetail extends SwapDetail {
+  error?: unknown
+}
+
+function isSwapEvent(e: unknown): e is { detail: SwapEventDetail } {
+  if (typeof e !== 'object' || e === null) return false
+  if (!('detail' in e)) return false
+  const d = (e as { detail: unknown }).detail
+  if (typeof d !== 'object' || d === null) return false
+  return 'id' in d && typeof (d as { id: unknown }).id === 'number'
+}
+
 export interface DeferGlueOptions {
-  doc?: Document
+  doc?: DeferGlueDoc
   /** Called on every ox:swap (adapter hydration of swapped content, §7.1). */
   onSwap?(detail: SwapDetail): void
   /** Custom event name (default 'ox:swap'). */
@@ -123,25 +155,25 @@ function resolveSlot(
 }
 
 export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
-  const doc = options.doc ?? (globalThis as { document?: Document }).document
+  const doc: DeferGlueDoc | undefined = options.doc ?? (globalThis as { document?: DeferGlueDoc }).document
   const eventName = options.eventName ?? 'ox:swap'
   const registry = new Map<number, DeferredClient>()
   let dead = false
   if (!doc) throw new TypeError('attachDeferGlue: no document (pass one in non-browser tests)')
 
-  const onSwap = (e: Event): void => {
-    const detail = (e as CustomEvent<SwapDetail>).detail
-    if (!detail || typeof detail.id !== 'number') return
+  const onSwap = (e: unknown): void => {
+    if (!isSwapEvent(e)) return
+    const detail = e.detail
     options.onSwap?.(detail)
     const slot = registry.get(detail.id)
     if (!slot) return
-    if ('error' in detail && detail.error !== undefined && detail.error !== null) {
+    if (detail.error !== undefined && detail.error !== null) {
       slot.reject(detail.error)
     } else {
       slot.resolve(detail.value)
     }
   }
-  doc.addEventListener(eventName, onSwap as EventListener)
+  doc.addEventListener(eventName, onSwap)
 
   // §7.1 / §9.2: the server injects a `<script type="application/oxide-deferred">`
   // with the resolved `defer()` values as JSON `{ "<id>": value, ... }`. Parse
@@ -150,17 +182,12 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
   // as `{ "__oxide_deferred_error": "..." }` — recognized here and rejects
   // the slot instead of resolving it to a shape the page did not expect.
   const resolveFromScripts = (): void => {
-    // Call querySelectorAll ON `doc` — extracting it as a bare value loses
-    // its `this`, and Chrome throws `TypeError: Illegal invocation` on the
-    // next call. The other call sites in the tree already call it on the
-    // receiver directly; only this one detached it.
-    const qsa = (doc as unknown as {
-      querySelectorAll?: (sel: string) => ArrayLike<Element>
-    }).querySelectorAll
-    if (typeof qsa !== "function") return
-    const scripts = qsa.call(doc as unknown as Node, 'script[type="application/oxide-deferred"]')
+    if (typeof doc.querySelectorAll !== 'function') return
+    // Method call — `this` is `doc`. No detach dance.
+    const scripts = doc.querySelectorAll('script[type="application/oxide-deferred"]')
     for (let i = 0; i < scripts.length; i++) {
-      const script = scripts[i] as unknown as { textContent?: string | null }
+      const script = scripts[i]
+      if (script === undefined) continue
       const raw = script.textContent ?? ''
       if (raw.length === 0) continue
       let parsed: Record<string, unknown>
@@ -175,8 +202,7 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
       //   * per-settle (B2): `data-id="<id>"` and the body is the value.
       // A per-settle script arrives as its own element, possibly *after*
       // DOMContentLoaded — the observer below picks those up.
-      const dataId = (script as unknown as { getAttribute?: (n: string) => string | null })
-        .getAttribute?.('data-id')
+      const dataId = script.getAttribute?.('data-id')
       if (dataId) {
         const id = Number(dataId)
         if (Number.isFinite(id)) {
@@ -200,7 +226,7 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
     observe(t: unknown, o: unknown): void
     disconnect(): void
   } }).MutationObserver
-  if (typeof MO === 'function' && typeof (doc as unknown as { documentElement?: unknown }).documentElement !== 'undefined') {
+  if (typeof MO === 'function' && doc.documentElement !== undefined) {
     observer = new MO((mutations: unknown[]) => {
       for (const m of mutations) {
         const added = (m as { addedNodes?: ArrayLike<unknown> }).addedNodes
@@ -217,7 +243,7 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
         }
       }
     })
-    observer.observe((doc as unknown as { documentElement: unknown }).documentElement, {
+    observer.observe(doc.documentElement, {
       childList: true,
       subtree: true,
     })
@@ -228,7 +254,7 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
   // but a `<script>` below the boot script loads later).
   resolveFromScripts()
   const onReady = (): void => resolveFromScripts()
-  if ((doc as unknown as { readyState?: string }).readyState === 'loading') {
+  if (doc.readyState === 'loading') {
     doc.addEventListener('DOMContentLoaded', onReady)
   }
 
@@ -260,8 +286,8 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
       observer?.disconnect()
       observer = null
       dead = true
-      doc.removeEventListener(eventName, onSwap as EventListener)
-      doc.removeEventListener('DOMContentLoaded', onReady as EventListener)
+      doc.removeEventListener(eventName, onSwap)
+      doc.removeEventListener('DOMContentLoaded', onReady)
       // orphan any still-pending slots so their promises settle
       for (const [id, slot] of registry) {
         if (slot.status === 'pending') {
