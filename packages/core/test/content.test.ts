@@ -34,6 +34,16 @@ function unsetRoot() {
   delete process.env.OXIDE_ROOT
 }
 
+/** Typed indexed access with a runtime bounds check. Throws a clear error
+ * (failing the test) instead of returning `T | undefined` — the honest way
+ * to satisfy `noUncheckedIndexedAccess` in tests whose fixtures are known
+ * non-empty. No casts, no `any`, no `!`, no `?? default`. */
+function mustEl<T>(arr: readonly T[], i: number): T {
+  const v = arr[i]
+  if (v === undefined) throw new Error(`mustEl: index ${i} out of bounds (len=${arr.length})`)
+  return v
+}
+
 test('getCollection returns every entry with slug, frontmatter, body', async () => {
   await fixture('blog', [
     { slug: 'hello', frontmatter: { title: 'Hello' }, body: '# Hello\n\nworld', is_mdx: false },
@@ -41,10 +51,10 @@ test('getCollection returns every entry with slug, frontmatter, body', async () 
   ])
   const posts = await getCollection('blog')
   assert.equal(posts.length, 2)
-  assert.equal(posts[0].slug, 'hello')
-  assert.equal(posts[0].frontmatter.title, 'Hello')
-  assert.equal(posts[0].body, '# Hello\n\nworld')
-  assert.equal(posts[0].is_mdx, false)
+  assert.equal(mustEl(posts, 0).slug, 'hello')
+  assert.equal(mustEl(posts, 0).frontmatter.title, 'Hello')
+  assert.equal(mustEl(posts, 0).body, '# Hello\n\nworld')
+  assert.equal(mustEl(posts, 0).is_mdx, false)
   unsetRoot()
 })
 
@@ -92,7 +102,7 @@ test('the cache is invalidated on a same-size rewrite', async () => {
   const root = await fixture('blog', [{ slug: 'a', frontmatter: {}, body: 'a' }])
   const first = await getCollection('blog')
   assert.equal(first.length, 1)
-  assert.equal(first[0].slug, 'a')
+  assert.equal(mustEl(first, 0).slug, 'a')
 
   const aBytes = JSON.stringify({
     name: 'blog',
@@ -110,7 +120,7 @@ test('the cache is invalidated on a same-size rewrite', async () => {
 
   await writeFile(join(root, 'dist', 'content', 'blog.entries.json'), bBytes)
   const second = await getCollection('blog')
-  assert.equal(second[0].slug, 'b', 'same-size rewrite is not served stale')
+  assert.equal(mustEl(second, 0).slug, 'b', 'same-size rewrite is not served stale')
   unsetRoot()
 })
 
