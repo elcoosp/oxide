@@ -32,7 +32,11 @@ const fakeHistory = () => {
   const stack: Array<{ state: unknown; url: string }> = [{ state: null, url: '/' }]
   let idx = 0
   return {
-    get state() { return stack[idx].state },
+    get state() {
+      const cur = stack[idx]
+      if (cur === undefined) throw new RangeError('fakeHistory: idx out of range')
+      return cur.state
+    },
     pushState(state: unknown, _t: string, url: string) { stack.splice(idx + 1); stack.push({ state, url }); idx++ },
     replaceState(state: unknown, _t: string, url: string) { stack[idx] = { state, url } },
   }
