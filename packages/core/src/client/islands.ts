@@ -196,7 +196,11 @@ export function hydrateIslands(opts: IslandsOptions): () => void {
     }
   }
   const islands = doc.querySelectorAll('ox-island[data-ox-chunk]')
-  for (let i = 0; i < islands.length; i++) schedule(islands[i])
+  for (let i = 0; i < islands.length; i++) {
+    const island = islands[i]
+    if (island === undefined) continue
+    schedule(island)
+  }
   return () => {
     cancelled.value = true
     for (const d of disposers) d()
