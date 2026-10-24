@@ -20,10 +20,20 @@ export interface BoundaryRegistration {
 
 type Slot = BoundaryRegistration[]
 
+// Register the slot on `globalThis` so it survives module duplication: a
+// compiled Svelte component's output lives at a build path, so a relative
+// import to this module would fail. The global slot has no path dependency.
+// `declare global` gives `globalThis.__oxide_boundary_registry` full type
+// safety — the module-level type imports are erased at compile time, so
+// there is no runtime cost, and no cast is needed.
+declare global {
+  // eslint-disable-next-line no-var
+  var __oxide_boundary_registry: BoundaryRegistration[] | undefined
+}
 const SLOT = '__oxide_boundary_registry'
 
 function slot(): Slot | undefined {
-  return (globalThis as unknown as Record<string, Slot | undefined>)[SLOT]
+  return globalThis.__oxide_boundary_registry
 }
 
 /**
@@ -36,16 +46,16 @@ function slot(): Slot | undefined {
  */
 export function beginBoundaryCapture(): Slot | undefined {
   const prev = slot()
-  ;(globalThis as unknown as Record<string, Slot>)[SLOT] = []
+  globalThis.__oxide_boundary_registry = []
   return prev
 }
 
 /** Restore the slot captured by `beginBoundaryCapture`. */
 export function endBoundaryCapture(prev: Slot | undefined): void {
   if (prev === undefined) {
-    delete (globalThis as unknown as Record<string, Slot | undefined>)[SLOT]
+    delete globalThis.__oxide_boundary_registry
   } else {
-    ;(globalThis as unknown as Record<string, Slot>)[SLOT] = prev
+    globalThis.__oxide_boundary_registry = prev
   }
 }
 
