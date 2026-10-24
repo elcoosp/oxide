@@ -40,7 +40,11 @@ export interface IslandProps {
   /** Props forwarded to the client island. Serialized as base64-encoded
    *  JSON into `data-ox-props`; the client boot script decodes it. */
   props?: Record<string, unknown>
-  children: ReactNode
+  /** Optional island placeholder markup. Omitted when the island has no
+   *  fallback content — `createElement(Island, props, child)` fills it via
+   *  React's trailing-children mechanism, which requires the prop to be
+   *  optional for TS overload resolution (TS2769 otherwise). */
+  children?: ReactNode
 }
 
 function strategyAttr(s: IslandStrategy): string {
