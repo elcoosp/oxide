@@ -56,7 +56,7 @@ async function load(): Promise<SvelteServerLike | undefined> {
   if (attempted) return undefined
   attempted = true
   try {
-    const mod = (await import('svelte/server')) as unknown as { default?: SvelteServerLike } & SvelteServerLike
+    const mod = await import('svelte/server')
     const server = (mod.default ?? mod) as SvelteServerLike
     if (typeof server.render !== 'function') {
       lastLoadError = 'svelte/server imported but render is ' + typeof server.render
