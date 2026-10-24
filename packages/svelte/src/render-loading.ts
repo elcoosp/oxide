@@ -15,7 +15,7 @@ interface SvelteLike {
 let cachedSvelte: SvelteLike | undefined
 async function loadSvelte(): Promise<SvelteLike> {
   if (cachedSvelte) return cachedSvelte
-  const mod = (await import('svelte')) as unknown as SvelteLike
+  const mod = await import('svelte')
   cachedSvelte = mod
   return mod
 }
