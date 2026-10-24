@@ -424,10 +424,10 @@ function CounterIsland(raw: Record<string, unknown>): Node {
   const props = parsePageProps(raw)
   const initialCount = typeof raw.initialCount === 'number' ? raw.initialCount : 0
   return el('div', { class: 'counter' },
-    el('span', { class: 'count' }, t(String(props.initialCount ?? 0))),
+    el('span', { class: 'count' }, t(String(initialCount ?? 0))),
     el('button', {
       class: 'inc',
-      onClick: () => props.client?.update({ initialCount: Number(props.initialCount ?? 0) + 1 }),
+      onClick: () => props.client?.update({ initialCount: Number(initialCount ?? 0) + 1 }),
     }, t('Increment')),
   )
 }
@@ -513,7 +513,7 @@ export const throwsAtRender = new Set(['routes/error'])
 function AtlasLayout(raw: Record<string, unknown>): Node {
   const props = parsePageProps(raw)
   const rawPage = raw.page
-  if (!isNode(rawPage)) throw new TypeError('oxide: AtlasLayout requires props.page to be a Node')
+  if (!isNode(rawPage)) throw new TypeError('oxide: AtlasLayout requires page to be a Node')
   const page: Node = rawPage
   return frag(
     el('head', {},
@@ -522,7 +522,7 @@ function AtlasLayout(raw: Record<string, unknown>): Node {
       el('meta', { charset: 'utf-8' }),
       el('meta', { name: 'viewport', content: 'width=device-width, initial-scale=1' }),
     ),
-    props.page,
+    page,
   )
 }
 
@@ -537,10 +537,10 @@ function NestedLayout(raw: Record<string, unknown>): Node {
   const rawPage = raw.page
   const children: Node[] = isNodeArray(rawChildren) ? rawChildren : []
   const page: Node | undefined = isNode(rawPage) ? rawPage : undefined
-  const inner = props.children && props.children.length > 0
-    ? props.children
-    : props.page
-      ? [props.page]
+  const inner = children && children.length > 0
+    ? children
+    : page
+      ? [page]
       : []
   return el('div', { 'data-oxide-layout': 'nested' }, ...inner)
 }
