@@ -140,7 +140,7 @@ function matchKeySegments(keySegs: string[], urlSegs: string[]): number | undefi
  * and a literal segment at the same depth resolve to the literal (higher
  * static-segment count), mirroring the router's own matcher.
  */
-export function routeIdFor(routeRef: string, manifest: ClientManifestLike): string | undefined {
+export function routeIdFor(routeRef: unknown, manifest: ClientManifestLike): string | undefined {
   if (!routeRef || typeof routeRef !== 'string') return undefined
   // Strip query/hash for URL-shaped references.
   const ref = routeRef.split(/[?#]/, 1)[0] ?? routeRef
