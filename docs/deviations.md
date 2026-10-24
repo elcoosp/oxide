@@ -71,26 +71,13 @@ wasm call silently returned `[]`, so every edge response had an empty head.
 exposed as its own export. That is `merge_head_structured`; the flat export
 remains a different, intentionally-unrouted API.
 
-## Edge wasm build requires self-hosting layout (P0-1c) — closed by embedded `edge.wasm`
+## Edge wasm build requires self-hosting layout (P0-1c) — partially closed (payload inert)
 
-**Status.** Closed in `e616831`. `oxide-core-wasm` is built to
-`wasm32-unknown-unknown`, processed with `wasm-bindgen-cli` 0.2.129, embedded
-in the `oxide-cli` binary via `include_bytes!`, and written to
-`<dist>/edge.wasm` for every project. A user project no longer needs to be a
-cargo workspace. `scripts/regen-edge-wasm.sh` regenerates the checked-in
-artifact when the `#[wasm_bindgen]` surface changes; the CI job `wasm32-edge`
-keeps the compile path honest.
+**Status.** Partially closed — Rust implementation and payload ship, but the payload is inert. `crates/cli/resources/edge.wasm` is the wasm-bindgen-processed artifact with `__wbindgen_*` imports; the corresponding `edge.js` glue that would satisfy those imports is deleted by `scripts/regen-edge-wasm.sh` (`rm -f .../edge.js`) and not committed. The loader (`crates/adapters/src/lib.rs:905`) does `await import("./edge.wasm")` and expects `mod.default` to be the callable interface — which only the missing glue provides. `useWasm` catches the instantiation error and silently falls back to the semantically-identical JS path.
 
-**Why embedding rather than `build.rs`.** A `build.rs` would make every
-`cargo build -p oxide-cli` pay the wasm32 + wasm-bindgen cost even when the
-user never targets Cloudflare. The checked-in artifact is a build-time
-invariant; refreshing it is an explicit operation.
+Effect: an `oxide build` for Cloudflare deploys a payload nobody runs. The JS fallback is correct (BLAKE3 key parity verified earlier); the acceleration is what's missing.
 
-**What the gate caught.** The wasm target had two real type errors hidden by
-`#[cfg(target_arch = "wasm32")]` (an ODF/serde type mismatch in
-`encode_odf`/`decode_odf`) and a host-only rustflag that `rust-lld` rejected.
-Both are fixed, and a non-ignored test asserts the embedded bytes are written
-for a root that is not a cargo workspace.
+**To unclose:** ship the `.js` glue alongside `edge.wasm` and change the loader to `await import("./edge.js")`. The wasm32-edge CI step `Assert committed wasm is either functional or documented inert` fails until the two cases are reconciled.
 
 ## `<Defer>` for `suspense: 'core'` adapters — closed (§7.1)
 
