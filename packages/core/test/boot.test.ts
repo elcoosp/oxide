@@ -126,7 +126,7 @@ function installFakes(opts: {
   links?: any[]
   oxide?: { route?: string; data?: string }
   oxideBoot?: { loadChunk: (c: string) => Promise<unknown> }
-  fetchResult?: Uint8Array
+  fetchResult?: Uint8Array<ArrayBuffer>
 }): { doc: any } {
   const doc = makeDoc({ root: opts.root, links: opts.links })
   const location = { href: 'http://x.test/', pathname: '/', search: '' }
