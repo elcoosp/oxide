@@ -1,4 +1,15 @@
 // @oxide/svelte real Svelte SSR path (spec §7).
+
+/** Runtime type guard for `svelte`'s snippet factory export. */
+function isSvelteSnippetFactory(v: unknown): v is SvelteSnippetFactoryLike {
+  if (v === null || typeof v !== 'object') return false
+  // The relevant method is `createRawSnippet` (the internals the adapter
+  // relies on for slot expansion). If the runtime moves, this check fails
+  // loudly instead of crashing downstream.
+  return typeof Reflect.get(v, 'createRawSnippet') === 'function'
+    || typeof Reflect.get(v, 'createRoot') === 'function'
+}
+
 //
 // The IR-based renderer in ./render.ts is the NEUTRAL fallback. This module
 // is the REAL path: it dynamically imports `svelte/server` (Svelte 5's
@@ -37,9 +48,9 @@ let cachedCore: SvelteSnippetFactoryLike | undefined
 async function loadCore(): Promise<SvelteSnippetFactoryLike | undefined> {
   if (cachedCore) return cachedCore
   try {
-    const mod = (await import('svelte')) as unknown as
-      { default?: SvelteSnippetFactoryLike } & SvelteSnippetFactoryLike
-    cachedCore = (mod.default ?? mod) as SvelteSnippetFactoryLike
+    const mod: unknown = await import('svelte')
+    if (!isSvelteSnippetFactory(mod)) return undefined
+    cachedCore = mod
     return cachedCore
   } catch {
     // Core runtime absent → descriptor children stay descriptors.
