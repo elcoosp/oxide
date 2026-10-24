@@ -26,7 +26,7 @@ function input(layouts: string[]) {
     data: {},
     head: { meta: [], link: [], style: [], script: [] },
     layouts,
-  } as never
+  }
 }
 
 test('IR: a nested layout wraps the page', async () => {
