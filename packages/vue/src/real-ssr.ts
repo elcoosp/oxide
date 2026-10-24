@@ -1,4 +1,17 @@
 // @oxide/vue real Vue SSR path (spec §7).
+
+/** Runtime type guard for the Vue app module. */
+function isVueAppLike(v: unknown): v is VueAppLike {
+  if (v === null || typeof v !== 'object') return false
+  return typeof Reflect.get(v, 'createSSRApp') === 'function'
+}
+
+/** Runtime type guard for `@vue/server-renderer`. */
+function isVueServerRendererLike(v: unknown): v is VueServerRendererLike {
+  if (v === null || typeof v !== 'object') return false
+  return typeof Reflect.get(v, 'renderToString') === 'function'
+}
+
 //
 // The IR-based renderer in ./render.ts is the NEUTRAL fallback: it runs with
 // no framework deps installed and drives the §22 conformance suite. This
@@ -35,19 +48,17 @@ async function load(): Promise<{ vue: VueAppLike; server: VueServerRendererLike 
   if (attempted) return undefined
   attempted = true
   try {
-    const vueMod = (await import('vue')) as unknown as { default?: VueAppLike } & VueAppLike
-    const serverMod = (await import('@vue/server-renderer')) as unknown as { default?: VueServerRendererLike } & VueServerRendererLike
-    const vue = (vueMod.default ?? vueMod) as VueAppLike
-    const server = (serverMod.default ?? serverMod) as VueServerRendererLike
-    if (typeof vue.createSSRApp !== 'function') {
-      lastLoadError = 'vue imported but createSSRApp is ' + typeof vue.createSSRApp
+    const vueMod: unknown = await import('vue')
+    const serverMod: unknown = await import('@vue/server-renderer')
+    if (!isVueAppLike(vueMod)) {
+      lastLoadError = 'vue imported but createSSRApp is not a function'
       return undefined
     }
-    if (typeof server.renderToString !== 'function') {
-      lastLoadError = '@vue/server-renderer imported but renderToString is ' + typeof server.renderToString
+    if (!isVueServerRendererLike(serverMod)) {
+      lastLoadError = '@vue/server-renderer imported but renderToString is not a function'
       return undefined
     }
-    cached = { vue, server }
+    cached = { vue: vueMod, server: serverMod }
     return cached
   } catch (e) {
     lastLoadError = 'import threw: ' + ((e as { message?: string })?.message ?? String(e))
