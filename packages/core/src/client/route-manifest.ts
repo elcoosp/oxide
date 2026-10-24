@@ -115,11 +115,13 @@ function matchKeySegments(keySegs: string[], urlSegs: string[]): number | undefi
   let staticCount = 0
   for (let i = 0; i < keySegs.length; i++) {
     const k = keySegs[i]
+    const u = urlSegs[i]
+    if (k === undefined || u === undefined) return undefined
     if (isParamSegment(k)) {
-      if (urlSegs[i].length === 0) return undefined
+      if (u.length === 0) return undefined
       continue
     }
-    if (k !== urlSegs[i]) return undefined
+    if (k !== u) return undefined
     staticCount++
   }
   return staticCount
