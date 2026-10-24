@@ -191,6 +191,7 @@ export function loadScripts(opts: ScriptOptions = {}): void {
   const tags = doc.querySelectorAll('script[data-ox-script]')
   for (let i = 0; i < tags.length; i++) {
     const el = tags[i]
+    if (el === undefined) continue
     const strategy = (el.getAttribute('data-ox-strategy') ?? 'defer') as ScriptStrategy
     const src = el.getAttribute('data-ox-src') ?? undefined
     const inlineB64 = el.getAttribute('data-ox-inline')
