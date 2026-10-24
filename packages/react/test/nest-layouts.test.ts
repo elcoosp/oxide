@@ -37,6 +37,29 @@ function mustEl<T>(arr: readonly T[], i: number): T {
   return v
 }
 
+/** Runtime narrowing: `v` is an object (component in a call) — access its
+ *  `.name` for test assertions, undefined if not present. */
+function nameOf(v: unknown): string | undefined {
+  if (v === null || typeof v !== 'object' || !('name' in v)) return undefined
+  const n = (v as { name: unknown }).name
+  return typeof n === 'string' ? n : undefined
+}
+
+/** Extract `.p.children` from a call record (the layout tree the stub
+ *  React.createElement receives). Returns undefined when absent. */
+function childrenOf(node: unknown): unknown {
+  if (node === null || typeof node !== 'object' || !('p' in node)) return undefined
+  const p = (node as { p: unknown }).p
+  if (p === null || typeof p !== 'object' || !('children' in p)) return undefined
+  return (p as { children: unknown }).children
+}
+
+/** Extract `.C` from a call record. */
+function componentOf(node: unknown): unknown {
+  if (node === null || typeof node !== 'object' || !('C' in node)) return undefined
+  return (node as { C: unknown }).C
+}
+
 test('no layouts — bare page element', () => {
   const r = stubReact()
   const Page = { name: 'Page' }
@@ -56,7 +79,7 @@ test('single layout — page wrapped in the layout', () => {
   assert.equal(mustEl(r.calls, 0).C, Page)
   // Outer call is the layout, with the page as `children`.
   assert.equal(mustEl(r.calls, 1).C, Layout)
-  assert.equal((mustEl(r.calls, 1).p.children as any).C, Page)
+  assert.equal(componentOf(childrenOf(mustEl(r.calls, 1))), Page)
 })
 
 test('two layouts — outermost FIRST in the chain ends up outermost in the tree', () => {
@@ -75,8 +98,8 @@ test('two layouts — outermost FIRST in the chain ends up outermost in the tree
   assert.equal(mustEl(r.calls, 1).C, Inner, 'inner layout wraps the page next')
   assert.equal(mustEl(r.calls, 2).C, Outer, 'outer layout wraps everything last (outermost)')
   // Verify the tree shape: Outer.children = Inner, Inner.children = Page.
-  assert.equal((mustEl(r.calls, 2).p.children as any).C, Inner)
-  assert.equal(((mustEl(r.calls, 2).p.children as any).p.children as any).C, Page)
+  assert.equal(componentOf(childrenOf(mustEl(r.calls, 2))), Inner)
+  assert.equal(componentOf(childrenOf(childrenOf(mustEl(r.calls, 2)))), Page)
 })
 
 test('three layouts — order is preserved on every level', () => {
@@ -91,7 +114,7 @@ test('three layouts — order is preserved on every level', () => {
     { id: 'c', Component: C },
   ])
   // Creation order (innermost to outermost): Page, C, B, A.
-  assert.deepEqual(r.calls.map((x) => (x.C as any).name), ['Page', 'C', 'B', 'A'])
+  assert.deepEqual(r.calls.map((x) => nameOf(x.C)), ['Page', 'C', 'B', 'A'])
 })
 
 test('page props reach the innermost element unchanged', () => {
