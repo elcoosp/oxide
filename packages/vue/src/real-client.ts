@@ -79,7 +79,7 @@ export async function mountVuePageRoot(
     app.mount(el)
     return app
   }
-  let app: { unmount(): void }
+  let app: { unmount(): void; mount(el: unknown): void }
   if (opts.hydrate) {
     app = vue.createSSRApp(Component, props)
     app.mount(el)
