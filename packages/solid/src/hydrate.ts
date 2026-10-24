@@ -273,7 +273,7 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
   // root (defensive) falls back to a client render. When a manifest route
   // exists the real render owns the root instead (the IR paint is skipped;
   // the chain's IR fallback repaints if it fails).
-  glue = attachDeferGlue({ doc: doc as unknown as Document, onSwap: (d) => opts.onSwap?.(d) })
+  glue = attachDeferGlue({ doc, onSwap: (d) => opts.onSwap?.(d) })
   // §7.1 / §9.2: rewrite `{__deferred: id}` markers in the loader data into
   // `DeferredClient` slots so the adapter's components can await them.
   const seq = ++renderSeq
