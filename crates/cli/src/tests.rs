@@ -7844,8 +7844,8 @@ async fn bundle_edge_entry_emits_edge_bundle_js() {
         std::collections::BTreeMap::new(),
         &mut buf,
     )
-        .await
-        .expect("bundle_edge_entry");
+    .await
+    .expect("bundle_edge_entry");
     assert!(out.is_some(), "an entry chunk was emitted");
     let target = dist.join("deploy/edge_bundle.js");
     assert!(target.is_file(), "edge_bundle.js emitted at {target:?}");
@@ -7919,18 +7919,10 @@ async fn bundle_edge_entry_uses_the_precompiled_map_for_mdx() {
     });
 
     let mut buf: Vec<u8> = Vec::new();
-    let out = crate::bundle_edge_entry(
-        root,
-        &dist,
-        &entry,
-        css,
-        Vec::new(),
-        precompiled,
-        &mut buf,
-    )
-    .await
-    .expect("bundle_edge_entry")
-    .expect("entry chunk emitted");
+    let out = crate::bundle_edge_entry(root, &dist, &entry, css, Vec::new(), precompiled, &mut buf)
+        .await
+        .expect("bundle_edge_entry")
+        .expect("entry chunk emitted");
 
     assert!(out.is_file(), "edge bundle emitted at {out:?}");
     let bundle = std::fs::read_to_string(&out).unwrap();
@@ -8007,18 +7999,10 @@ async fn bundle_edge_entry_accepts_mdx_reachable_from_the_entry() {
     });
 
     let mut buf: Vec<u8> = Vec::new();
-    let out = crate::bundle_edge_entry(
-        root,
-        &dist,
-        &entry,
-        css,
-        Vec::new(),
-        precompiled,
-        &mut buf,
-    )
-    .await
-    .expect("bundle_edge_entry")
-    .expect("precompiled .mdx produced an entry chunk");
+    let out = crate::bundle_edge_entry(root, &dist, &entry, css, Vec::new(), precompiled, &mut buf)
+        .await
+        .expect("bundle_edge_entry")
+        .expect("precompiled .mdx produced an entry chunk");
 
     assert!(out.is_file(), "edge bundle emitted at {out:?}");
     let bundle = std::fs::read_to_string(&out).unwrap();
@@ -8591,18 +8575,28 @@ fn forward_action_set_cookies_copies_only_set_cookie() {
     let resp_headers = vec![
         ("content-type".to_string(), "application/json".to_string()),
         ("set-cookie".to_string(), "a=1; Path=/".to_string()),
-        ("Set-Cookie".to_string(), "b=2; Path=/; HttpOnly".to_string()),
+        (
+            "Set-Cookie".to_string(),
+            "b=2; Path=/; HttpOnly".to_string(),
+        ),
         ("x-other".to_string(), "ignored".to_string()),
     ];
-    let mut target: Vec<(String, String)> = vec![
-        ("existing".to_string(), "kept".to_string()),
-    ];
+    let mut target: Vec<(String, String)> = vec![("existing".to_string(), "kept".to_string())];
     crate::forward_action_set_cookies(&resp_headers, &mut target);
     // Existing entries preserved; both Set-Cookie entries (case-insensitive) copied.
     assert_eq!(target.len(), 3);
     assert_eq!(target[0], ("existing".to_string(), "kept".to_string()));
-    assert_eq!(target[1], ("set-cookie".to_string(), "a=1; Path=/".to_string()));
-    assert_eq!(target[2], ("Set-Cookie".to_string(), "b=2; Path=/; HttpOnly".to_string()));
+    assert_eq!(
+        target[1],
+        ("set-cookie".to_string(), "a=1; Path=/".to_string())
+    );
+    assert_eq!(
+        target[2],
+        (
+            "Set-Cookie".to_string(),
+            "b=2; Path=/; HttpOnly".to_string()
+        )
+    );
 }
 
 /// §9.3 / B6 end-to-end: a dispatch POST with `?/setcookie` on a route that
@@ -8709,4 +8703,3 @@ async fn action_set_cookie_survives_200_rerender() {
         resp.headers,
     );
 }
-
