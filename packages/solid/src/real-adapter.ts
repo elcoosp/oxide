@@ -96,10 +96,10 @@ export function createRealAdapter(opts: RealAdapterOptions) {
       return renderSolidToStream(() => tree)
     },
     rootAttrs: ' id="root" data-solid=""',
-    hydrate: hydrate as never,
+    hydrate: hydrate,
     // §10.3: real `hydrate()` so Solid signals work.
-    hydrateIsland: solidHydrateIsland as never,
-    mount: mount as never,
+    hydrateIsland: solidHydrateIsland,
+    mount: mount,
     update,
     opts,
   })
