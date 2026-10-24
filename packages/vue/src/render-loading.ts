@@ -24,7 +24,7 @@ export function vueRenderLoading(
   _input: { url: string; route: string; params: Record<string, string | string[]>; data: unknown },
   Component: unknown,
 ): Disposer {
-  let app: { unmount(): void } | undefined
+  let app: { unmount(): void; mount(el: unknown): void } | undefined
   let cancelled = false
   void loadVue()
     .then((vue) => {
