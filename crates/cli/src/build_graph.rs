@@ -5,7 +5,7 @@
 //!
 //!   * `oxide analyze` can report how many nodes were recomputed in the
 //!     last build;
-//!   * the MCP `oxide_graph` tool can attach a `graph` section to its
+//!   * the MCP `oxide_fw_graph` tool can attach a `graph` section to its
 //!     manifest summary;
 //!   * a future incremental build has a node table to diff against.
 //!

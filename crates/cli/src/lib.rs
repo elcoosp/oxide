@@ -6325,7 +6325,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         target.as_str()
     );
     // §5-A: record a DemandGraph over this build's inputs and persist it so
-    // `oxide analyze` and the MCP `oxide_graph` tool can report real
+    // `oxide analyze` and the MCP `oxide_fw_graph` tool can report real
     // recompute counts (node granularity: module / chunk / manifest /
     // typegen). The current shape: the pipeline still runs to
     // completion — the graph is what a future incremental build diffs

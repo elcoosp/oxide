@@ -5482,7 +5482,7 @@ async fn mcp_graph_tool_reports_demand_graph_snapshot() {
     {
         let server = crate::mcp::OxideMcp::new(root.clone());
         let result = server
-            .oxide_graph(Parameters(crate::mcp::NoArgs {}))
+            .oxide_fw_graph(Parameters(crate::mcp::NoArgs {}))
             .await
             .expect("tool call");
         let text = result
@@ -5504,7 +5504,7 @@ async fn mcp_graph_tool_reports_demand_graph_snapshot() {
 
     let server = crate::mcp::OxideMcp::new(root.clone());
     let result = server
-        .oxide_graph(Parameters(crate::mcp::NoArgs {}))
+        .oxide_fw_graph(Parameters(crate::mcp::NoArgs {}))
         .await
         .expect("tool call");
     let text = result

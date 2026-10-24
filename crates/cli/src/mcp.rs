@@ -249,7 +249,7 @@ impl OxideMcp {
         description = "Module graph summary: every route's entry chunk plus per-chunk \
                        module counts. Requires a prior `oxide build`."
     )]
-    pub async fn oxide_graph(
+    pub async fn oxide_fw_graph(
         &self,
         Parameters(NoArgs {}): Parameters<NoArgs>,
     ) -> Result<CallToolResult, ErrorData> {
