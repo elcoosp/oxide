@@ -38,7 +38,7 @@ export const adapter: FrameworkAdapter = {
   render,
   head,
   hydrate: hydrate as (root: Element, input: ClientInput) => Disposer,
-  hydrateIsland: hydrateIsland as unknown as FrameworkAdapter['hydrateIsland'],
+  hydrateIsland: hydrateIsland,
   mount: mount as (root: Element, input: ClientInput) => Disposer,
   update,
 }
