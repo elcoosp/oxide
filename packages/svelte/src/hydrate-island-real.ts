@@ -14,6 +14,15 @@
 import type { Disposer } from '../../core/src/types.ts'
 import type { OxElement, ClientOptions } from './hydrate.ts'
 
+/** Narrow an `OxElement` to a real DOM `Element` (runtime assertion — see
+ * hydrate.ts for the rationale). Framework hydrateRoot/app.mount requires a
+ * live DOM. */
+function asDomElement(v: { dispatchEvent?(ev: unknown): boolean; innerHTML: string }, where: string): Element {
+  if (typeof Element !== 'undefined' && v instanceof Element) return v
+  throw new TypeError(`oxide: ${where} requires a live DOM Element`)
+}
+
+
 /** Structural shape of the Svelte 5 client `mount` / `unmount` surface. */
 export interface SvelteLike {
   mount(
@@ -58,7 +67,7 @@ export async function svelteHydrateIsland(
     throw new TypeError('hydrateIsland(svelte): island module must export a default component')
   }
   const mounted = svelte.mount(component, {
-    target: host as unknown as Element,
+    target: asDomElement(host, 'island hydration'),
     props: (props as Record<string, unknown>) ?? {},
     hydrate: true,
   })
