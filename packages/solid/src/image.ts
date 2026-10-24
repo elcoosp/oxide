@@ -66,7 +66,7 @@ export function Image(props: ImageProps): unknown {
   if (cls) attrs.class = cls
   if (priority) attrs.fetchpriority = 'high'
 
-  const ssrElement = (web as unknown as { ssrElement?: SsrElementFn }).ssrElement
+  const ssrElement = web.ssrElement
   if (typeof ssrElement !== 'function') {
     // No web renderer available — return a descriptor a caller can render
     // itself; the SSR pass treats an unknown return as "nothing to render".
