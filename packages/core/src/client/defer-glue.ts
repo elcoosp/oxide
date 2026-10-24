@@ -34,14 +34,24 @@ export class DeferredClient<T = unknown> {
   value?: T
   error?: unknown
   readonly promise: Promise<T>
-  #resolve!: (v: T) => void
-  #reject!: (e: unknown) => void
+  // Internally we resolve/reject with `unknown` so this class is COVARIANT
+  // in T -- a `DeferredClient<X>` is assignable to `DeferredClient<unknown>`
+  // without a cast (enables the heterogeneous registry Map<number,
+  // DeferredClient>). The public `resolve(value: T)` still gives callers the
+  // type-safe view; `promise: Promise<T>` is the typed consumer surface.
+  #resolveUnknown!: (v: unknown) => void
+  #rejectUnknown!: (e: unknown) => void
 
   constructor() {
-    this.promise = new Promise<T>((resolve, reject) => {
-      this.#resolve = resolve
-      this.#reject = reject
+    let resolveUnknown!: (v: unknown) => void
+    let rejectUnknown!: (e: unknown) => void
+    const p = new Promise<unknown>((res, rej) => {
+      resolveUnknown = res
+      rejectUnknown = rej
     })
+    this.promise = p as Promise<T>
+    this.#resolveUnknown = resolveUnknown
+    this.#rejectUnknown = rejectUnknown
     // avoid unhandled-rejection noise for slots nobody awaits
     this.promise.catch(() => {})
   }
@@ -50,14 +60,14 @@ export class DeferredClient<T = unknown> {
     if (this.status !== 'pending') return
     this.status = 'resolved'
     this.value = value
-    this.#resolve(value)
+    this.#resolveUnknown(value)
   }
 
   reject(error: unknown): void {
     if (this.status !== 'pending') return
     this.status = 'rejected'
     this.error = error
-    this.#reject(error instanceof Error ? error : new Error(`deferred slot rejected: ${String(error)}`))
+    this.#rejectUnknown(error instanceof Error ? error : new Error(`deferred slot rejected: ${String(error)}`))
   }
 
   then = <R1 = T, R2 = never>(
