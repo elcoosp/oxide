@@ -4,7 +4,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { adapter, render, renderToString, renderShellToString, head, mergeHead, applyTitleTemplate, islandModules } from '../src/index.ts'
-import { hydrate, hydrateIsland, mount, update } from '../src/hydrate.ts'
+import { hydrate, hydrateIsland, mount, update, type OxDoc } from '../src/hydrate.ts'
 import { createFakeDom, simulateSwap } from './helpers/fake-dom.ts'
 import type { RenderInput, HeadTags } from '../../core/src/types.ts'
 import { decodeIslandProps } from '../../core/src/client/islands.ts'
@@ -17,6 +17,16 @@ const input = (overrides: Partial<RenderInput> = {}): RenderInput => ({
   head: { title: 'Home', meta: [{ name: 'description', content: 'Atlas home route' }], link: [], style: [], script: [] },
   ...overrides,
 })
+
+/** Typed indexed access with a runtime bounds check. Throws a clear error
+ * (failing the test) instead of returning `T | undefined` — the honest way
+ * to satisfy `noUncheckedIndexedAccess` in tests whose fixtures are known
+ * non-empty. */
+function mustEl<T>(arr: readonly T[], i: number): T {
+  const v = arr[i]
+  if (v === undefined) throw new Error(`mustEl: index ${i} out of bounds (len=${arr.length})`)
+  return v
+}
 
 test('contract: manifest shape satisfies §7 (contract 1, capabilities, plugins)', () => {
   assert.equal(adapter.contract, 1)
@@ -113,8 +123,8 @@ test('head: mergeHead + title template + head(ctx) neutral model', () => {
   assert.equal(merged.title, 'Head Test', 'inner title wins')
   assert.equal(applyTitleTemplate(merged), 'Head Test · Atlas', '%s template applied')
   assert.equal(merged.meta.length, 2, 'meta deduped by key, inner appended')
-  assert.equal(merged.meta[0].charset, 'utf-8')
-  assert.equal(merged.meta[1].name, 'description')
+  assert.equal(mustEl(merged.meta, 0).charset, 'utf-8')
+  assert.equal(mustEl(merged.meta, 1).name, 'description')
   const ctx = head({ route: 'routes/head', url: '/head', params: {}, data: { title: 'Ctx', description: 'ctx-desc' } })
   assert.equal(ctx.title, 'Ctx')
   assert.ok(ctx.meta.some((m) => m.content === 'ctx-desc'))
@@ -130,10 +140,12 @@ test('islands: ox-island markup matches the render-crate shape (§10.3)', async 
   assert.ok(html.includes("data-ox-chunk='/islands/counter.ts'"), 'chunk reference')
   assert.ok(html.includes("data-ox-strategy='load'"), 'strategy')
   const m = /data-ox-props='([^']+)'/.exec(html)
-  assert.ok(m, 'props attribute present')
+  if (!m) throw new Error('test invariant: data-ox-props attribute missing')
+  const propsB64 = m[1]
+  if (propsB64 === undefined) throw new Error('test invariant: data-ox-props capture empty')
   // PERF-01: props now ride ODF (falling back to JSON for the non-subset);
   // decodeIslandProps handles both.
-  const props = decodeIslandProps(m![1])
+  const props = decodeIslandProps(propsB64)
   assert.deepEqual(props, { initialCount: 3 })
   assert.ok(html.includes('>3</span>'), 'SSR island content rendered')
   assert.ok(islandModules['/islands/counter.ts'], 'island chunk map exposes the module')
@@ -156,7 +168,7 @@ test('hydrate: preserves server markup, binds handlers, glue resolves ox:swap', 
   const navigated: string[] = []
   const swaps: number[] = []
   const dispose = hydrate(root, { route: 'routes/index', url: '/', params: {}, data: { framework: 'react' } }, {
-    doc: dom.doc as unknown as Parameters<typeof hydrate>[2]['doc'],
+    doc: dom.doc as unknown as OxDoc,
     navigate: (href) => navigated.push(href),
     onSwap: (d) => swaps.push(d.id),
   })
@@ -189,7 +201,7 @@ test('hydrateIsland: hydration + interactive update against the fake DOM (§10.3
 test('mount/update: SPA mount then adapter.update swaps the route tree (§7)', () => {
   const dom = createFakeDom('<div id="root"></div>')
   const root = dom.root!
-  const dispose = mount(root, { route: 'routes/index', url: '/', params: {}, data: { framework: 'react' } }, { doc: dom.doc as unknown as Parameters<typeof mount>[2]['doc'] })
+  const dispose = mount(root, { route: 'routes/index', url: '/', params: {}, data: { framework: 'react' } }, { doc: dom.doc as unknown as OxDoc })
   assert.ok(root.innerHTML.includes('Hello Atlas'), 'SPA mount rendered the shell')
   update({ route: 'routes/blog/[slug]', url: '/blog/x', params: { slug: 'x' }, data: { title: 'Nav Post', author: 'Ada', body: 'B' } })
   assert.ok(root.innerHTML.includes('Nav Post'), 'adapter.update swapped the tree')
