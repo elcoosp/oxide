@@ -4,6 +4,14 @@
 // reactivity and lifecycle hooks work. Disposer unmounts the app.
 import type { Disposer } from '../../core/src/types.ts'
 
+/** Runtime type guard for the Vue client module (see real-client.ts's
+ * isVueClientLike — same shape check, same rationale). */
+function isVueLikeForLoading(v: unknown): v is VueLike {
+  if (v === null || typeof v !== 'object') return false
+  return typeof Reflect.get(v, 'createSSRApp') === 'function'
+}
+
+
 interface VueLike {
   createApp(component: unknown, props?: Record<string, unknown>): {
     mount(container: Element): unknown
@@ -14,8 +22,9 @@ interface VueLike {
 let cachedVue: VueLike | undefined
 async function loadVue(): Promise<VueLike> {
   if (cachedVue) return cachedVue
-  const mod = (await import('vue')) as unknown as VueLike & { default?: VueLike }
-  cachedVue = (mod.default ?? mod) as VueLike
+  const mod: unknown = await import('vue')
+  if (!isVueLikeForLoading(mod)) throw new TypeError('vue: module has no createSSRApp')
+  cachedVue = mod
   return cachedVue
 }
 
