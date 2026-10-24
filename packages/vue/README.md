@@ -34,8 +34,8 @@ on Node 24 type stripping.
 
 ```ts
 // oxide.config.ts
-import vue from '@oxide/vue'
-import { defineConfig } from 'oxide'
+import vue from '@oxide-fw/vue'
+import { defineConfig } from '@oxide-fw/core'
 
 export default defineConfig({
   framework: vue({ ssr: 'real' }),

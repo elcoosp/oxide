@@ -6,8 +6,8 @@
 // surface (the SSR adapter entry). No config-side imports, no
 // `componentFor` closure — that was the pre-§6.4 shape, migrated when
 // the build learned to own the route → component mapping.
-import react from '@oxide/react'
-import { defineConfig } from 'oxide'
+import react from '@oxide-fw/react'
+import { defineConfig } from '@oxide-fw/core'
 
 export default defineConfig({
   // §16.3: origin used by the emitted sitemap.xml and robots.txt.

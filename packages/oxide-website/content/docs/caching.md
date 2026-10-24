@@ -21,7 +21,7 @@ content-addressed build store underneath.
 ## The API surface
 
 ```ts
-import { cacheTag, cacheLife } from 'oxide/server'
+import { cacheTag, cacheLife } from '@oxide-fw/oxide/server'
 
 export const getPost = async (slug: string) => {
   'use cache'

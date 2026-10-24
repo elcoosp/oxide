@@ -5,7 +5,7 @@
 // `generateParams` returns a runtime-built array (`.map`), which forces
 // the compiler's static extractor into the Runtime case. `oxide build`
 // then evaluates it through the worker to enumerate the prerender paths.
-import { defineLoad, error } from 'oxide/server'
+import { defineLoad, error } from '@oxide-fw/oxide/server'
 
 export const load = defineLoad(async ({ params }) => {
   const slug = params.slug

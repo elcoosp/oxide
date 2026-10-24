@@ -39,8 +39,8 @@ on Node 24 type stripping.
 
 ```ts
 // oxide.config.ts
-import solid from '@oxide/solid'
-import { defineConfig } from 'oxide'
+import solid from '@oxide-fw/solid'
+import { defineConfig } from '@oxide-fw/core'
 
 export default defineConfig({
   framework: solid({ ssr: 'real' }),

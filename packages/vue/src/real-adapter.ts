@@ -6,7 +6,7 @@
 //
 // Usage:
 //
-//   import { createRealAdapter } from '@oxide/vue/real-adapter'
+//   import { createRealAdapter } from '@oxide-fw/vue/real-adapter'
 //   const adapter = createRealAdapter({
 //     ssr: 'auto',
 //     componentFor: (route) => routes[route]?.component,

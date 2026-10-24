@@ -39,7 +39,7 @@ snapshot tests additionally lock emitted HTML and deploy artifacts byte-for-byte
 Islands are the one interactivity primitive the core owns, so they behave identically everywhere:
 
 ```tsx
-import { Island } from '@oxide/react'
+import { Island } from '@oxide-fw/react'
 import Counter from '../islands/counter.tsx'
 
 <Island component="Counter" chunk="Counter" strategy="visible" props={{ initial: 3 }}>

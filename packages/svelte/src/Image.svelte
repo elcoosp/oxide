@@ -3,7 +3,7 @@
 
   A Svelte consumer imports this directly:
 
-    import Image from '@oxide/svelte/image'
+    import Image from '@oxide-fw/svelte/image'
     <Image {...hero} alt="Hero" sizes="100vw" priority />
 
   where `hero` is a `?w=` variant module (`{ src, srcset, width, height }`).

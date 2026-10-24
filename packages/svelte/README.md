@@ -32,8 +32,8 @@ runtime dependencies and runs on Node 24 type stripping.
 
 ```ts
 // oxide.config.ts
-import svelte from '@oxide/svelte'
-import { defineConfig } from 'oxide'
+import svelte from '@oxide-fw/svelte'
+import { defineConfig } from '@oxide-fw/core'
 
 export default defineConfig({
   framework: svelte({ ssr: 'real' }),

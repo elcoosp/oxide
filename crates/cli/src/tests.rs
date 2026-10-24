@@ -83,7 +83,7 @@ static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[ignore]
 async fn cli_render_dispatches_real_react_ssr() {
     // CLI-level E2E: run `oxide render` against a real oxide.config.mjs that
-    // imports the real @oxide/react adapter. Assert the stdout HTML is the
+    // imports the real @oxide-fw/react adapter. Assert the stdout HTML is the
     // output of react-dom/server, proving the full stack — clap parse →
     // FrameworkHost → Node worker → adapter.render → react-dom/server →
     // back through the worker → CLI stdout.
@@ -968,7 +968,7 @@ async fn write_prerender_without_loader_uses_empty_data() {
 // --------------------------------------- smoke-app E2E (real user path)
 
 /// The `examples/smoke-app-react` fixture is a working project that exercises the
-/// whole stack: a real `.ts` config importing `@oxide/react` via the
+/// whole stack: a real `.ts` config importing `@oxide-fw/react` via the
 /// workspace, a `page.tsx` + `page.server.ts` per route, and the CLI's
 /// config-loading path. This test runs the three CLI commands against it
 /// and asserts on the actual output.
@@ -8314,7 +8314,7 @@ async fn dev_dispatch_serves_normally_when_no_file_change() {
 /// a `componentFor` closure — it proves the worker/render pipeline, but not
 /// the resolver path the §14.1 literal config depends on. This test writes
 /// the `routes` entry module by hand (the exact shape a build emits), points
-/// a bare `@oxide/react` config at the project, and asserts the component
+/// a bare `@oxide-fw/react` config at the project, and asserts the component
 /// came from that module.
 #[tokio::test]
 #[ignore = "spawns a Node worker; needs workspace node_modules"]
@@ -8328,9 +8328,9 @@ async fn cli_render_resolves_components_from_the_built_entry() {
     let _ = fs::remove_dir_all(&e2e_dir);
     fs::create_dir_all(e2e_dir.join("dist/server/ssr")).expect("mkdir dist");
 
-    // The config: a bare `@oxide/react` import. No `componentFor`, no
+    // The config: a bare `@oxide-fw/react` import. No `componentFor`, no
     // component imports — the literal §14.1 shape.
-    let config_src = r#"import react from '@oxide/react'
+    let config_src = r#"import react from '@oxide-fw/react'
 export default { framework: react({ compiler: true }) }
 "#;
     fs::write(e2e_dir.join("oxide.config.mjs"), config_src).expect("write config");

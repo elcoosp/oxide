@@ -1,6 +1,6 @@
 // §9.3 'use cache' fixture. The compiler rewrites this module's export to
 // `__oxide_cache(fn, "<module>", "getPost", { tags: [...], life: {...} })`.
-import { cacheTag, cacheLife } from 'oxide/server'
+import { cacheTag, cacheLife } from '@oxide-fw/oxide/server'
 
 export const getPost = async (slug: string) => {
   'use cache'

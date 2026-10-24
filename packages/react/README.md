@@ -32,8 +32,8 @@ itself has zero runtime dependencies and runs on Node 24 type stripping.
 
 ```ts
 // oxide.config.ts
-import react from '@oxide/react'
-import { defineConfig } from 'oxide'
+import react from '@oxide-fw/react'
+import { defineConfig } from '@oxide-fw/core'
 
 export default defineConfig({
   framework: react({ ssr: 'real' }),

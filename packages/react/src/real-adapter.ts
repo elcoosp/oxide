@@ -6,7 +6,7 @@
 //
 // Usage:
 //
-//   import { createRealAdapter } from '@oxide/react/real-adapter'
+//   import { createRealAdapter } from '@oxide-fw/react/real-adapter'
 //   const adapter = createRealAdapter({ ssr: 'real' })
 //
 // Components are supplied by the runtime resolver (§6.4): the worker builds

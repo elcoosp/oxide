@@ -1,5 +1,5 @@
-import svelte from '@oxide/svelte'
-import { defineConfig } from 'oxide'
+import svelte from '@oxide-fw/svelte'
+import { defineConfig } from '@oxide-fw/oxide'
 
 // §14.1: this config declares *where* routes live and which adapter to use.
 // Route components are discovered from `src/routes` at build time and

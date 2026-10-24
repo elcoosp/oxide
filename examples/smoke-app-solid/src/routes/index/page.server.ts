@@ -1,4 +1,4 @@
-import { defineLoad } from 'oxide/server'
+import { defineLoad } from '@oxide-fw/oxide/server'
 
 export const load = defineLoad(async () => {
   return { message: 'Hello from Oxide (solid)' }

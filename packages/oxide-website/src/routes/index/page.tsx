@@ -1,5 +1,5 @@
 // src/routes/index/page.tsx — the landing page.
-import { Island } from '@oxide/react'
+import { Island } from '@oxide-fw/react'
 import Stats from '../../islands/stats.tsx'
 import { site, stats } from '../../lib/site.ts'
 

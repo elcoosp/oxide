@@ -10,7 +10,7 @@ Rust: crates inherit from `[workspace.package]` in root `Cargo.toml`:
 
 npm: each package declares its own version:
 
-    for p in create-oxide oxide @oxide/react @oxide/vue @oxide/svelte @oxide/solid; do
+    for p in create-oxide @oxide-fw/core @oxide-fw/react @oxide-fw/vue @oxide-fw/svelte @oxide-fw/solid; do
       pnpm --filter "$p" version 0.2.0 --no-git-tag-version
     done
 

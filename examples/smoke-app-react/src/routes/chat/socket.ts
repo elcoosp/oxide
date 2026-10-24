@@ -1,7 +1,7 @@
 // §9.6: a WebSocket route. `open` greets, `message` echoes back, `close`
 // records the disconnect. The Rust layer owns the upgrade/framing; this is
 // the per-phase JS handler.
-import { defineSocket } from 'oxide/server'
+import { defineSocket } from '@oxide-fw/oxide/server'
 
 export const socket = defineSocket({
   open({ send, id }: { send: (d: string) => void; id: string }) {

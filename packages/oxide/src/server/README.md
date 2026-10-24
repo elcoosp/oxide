@@ -21,7 +21,7 @@ Every `@oxide/react`, `@oxide/vue`, `@oxide/svelte`, `@oxide/solid` exports:
 `oxide.config.ts` reads:
 
 ```ts
-import react from '@oxide/react'
+import react from '@oxide-fw/react'
 export default defineConfig({
   framework: react({ ssr: 'real' }),
   routes: { dir: 'src/routes' },

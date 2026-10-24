@@ -22,12 +22,12 @@ importers:
 
   examples/smoke-app-react:
     dependencies:
-      '@oxide/react':
-        specifier: workspace:*
-        version: link:../../packages/react
-      oxide:
+      '@oxide-fw/core':
         specifier: workspace:*
         version: link:../../packages/oxide
+      '@oxide-fw/react':
+        specifier: workspace:*
+        version: link:../../packages/react
       react:
         specifier: ^19.3.0
         version: 19.3.0
@@ -43,7 +43,10 @@ importers:
       '@babel/core':
         specifier: ^8.0.7
         version: 8.0.7
-      '@oxide/solid':
+      '@oxide-fw/core':
+        specifier: workspace:*
+        version: link:../../packages/oxide
+      '@oxide-fw/solid':
         specifier: workspace:*
         version: link:../../packages/solid
       '@solidjs/web':
@@ -52,36 +55,33 @@ importers:
       babel-preset-solid:
         specifier: ^1.9.16
         version: 1.9.16(@babel/core@8.0.7)(solid-js@2.0.0-rc.14)
-      oxide:
-        specifier: workspace:*
-        version: link:../../packages/oxide
       solid-js:
         specifier: ^2.0.0-rc.14
         version: 2.0.0-rc.14
 
   examples/smoke-app-svelte:
     dependencies:
-      '@oxide/svelte':
-        specifier: workspace:*
-        version: link:../../packages/svelte
-      oxide:
+      '@oxide-fw/core':
         specifier: workspace:*
         version: link:../../packages/oxide
+      '@oxide-fw/svelte':
+        specifier: workspace:*
+        version: link:../../packages/svelte
       svelte:
         specifier: ^5.57.0
         version: 5.57.2
 
   examples/smoke-app-vue:
     dependencies:
-      '@oxide/vue':
+      '@oxide-fw/core':
+        specifier: workspace:*
+        version: link:../../packages/oxide
+      '@oxide-fw/vue':
         specifier: workspace:*
         version: link:../../packages/vue
       '@vue/server-renderer':
         specifier: ^3.6.0-rc.11
         version: 3.6.0-rc.11
-      oxide:
-        specifier: workspace:*
-        version: link:../../packages/oxide
       vue:
         specifier: ^3.6.0-rc.11
         version: 3.6.0-rc.11(typescript@5.9.3)
@@ -114,12 +114,12 @@ importers:
 
   packages/oxide-website:
     dependencies:
-      '@oxide/react':
-        specifier: workspace:*
-        version: link:../react
-      oxide:
+      '@oxide-fw/core':
         specifier: workspace:*
         version: link:../oxide
+      '@oxide-fw/react':
+        specifier: workspace:*
+        version: link:../react
       react:
         specifier: ^19.0.0
         version: 19.3.0

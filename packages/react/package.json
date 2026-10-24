@@ -1,5 +1,5 @@
 {
-  "name": "@oxide/react",
+  "name": "@oxide-fw/react",
   "version": "0.1.0",
   "description": "React adapter for Oxide: manifest + render/hydrate per spec \u00a77. Zero runtime dependencies; runs on Node 24 type stripping. Without framework deps installed the adapter renders the neutral element-tree IR itself (the real react-dom/server replaces the renderer when deps exist).",
   "type": "module",

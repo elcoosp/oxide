@@ -1,6 +1,6 @@
 name: publish-npm
 
-# Publishes the six @oxide/* packages to the npm registry via OIDC
+# Publishes the six @oxide-fw/* packages to the npm registry via OIDC
 # Trusted Publishing. Triggered manually (workflow_dispatch) with the
 # version that tag names. NO NPM_TOKEN secret — authentication uses
 # the GitHub OIDC token and the trusted-publisher configuration on

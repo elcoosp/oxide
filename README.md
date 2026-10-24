@@ -188,8 +188,9 @@ request → hyper 1.x → limits + request id → static assets (precompressed, 
 crates/         cli · config · graph · compiler · bundler · jshost · router · server ·
                 render · cache · odf · assets · dev · plugin · adapters · core-wasm ·
                 diagnostics                                   (17 crates, ~88k lines)
-packages/       oxide (runtime) · @oxide/react · @oxide/vue · @oxide/svelte ·
-                @oxide/solid · create-oxide · oxide-website   (runtime pkgs: zero deps)
+packages/       @oxide-fw/core (runtime) · @oxide-fw/react · @oxide-fw/vue
+                · @oxide-fw/svelte · @oxide-fw/solid · create-oxide ·
+                oxide-website   (runtime pkgs: zero deps)
 conformance/    Atlas reference app — one assertion set × four adapters
 examples/       smoke-app-{react,vue,svelte,solid} — end-to-end fixtures
 benchmarks/     method, harness and the >5% CI regression gate
@@ -209,10 +210,10 @@ routes through a tooling pool driving the real upstream compilers.
 
 | Adapter | Package | Extensions | Suspense | HMR strategy |
 | --- | --- | --- | --- | --- |
-| React | `@oxide/react` | `.tsx` | native | refresh |
-| Vue | `@oxide/vue` | `.vue` | core | component |
-| Svelte | `@oxide/svelte` | `.svelte` | core | component |
-| Solid | `@oxide/solid` | `.tsx` | native | component |
+| React | `@oxide-fw/react` | `.tsx` | native | refresh |
+| Vue | `@oxide-fw/vue` | `.vue` | core | component |
+| Svelte | `@oxide-fw/svelte` | `.svelte` | core | component |
+| Solid | `@oxide-fw/solid` | `.tsx` | native | component |
 
 Rendering, hydration and HMR strategy are the only things an adapter owns. The rest of the
 client runtime is core-owned (`packages/oxide`) and shipped identically to every framework:

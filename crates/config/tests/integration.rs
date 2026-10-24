@@ -46,9 +46,9 @@ fn envmap(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
 
 /// The exact §14.1 example from the spec (byte-for-byte).
 const SPEC_EXAMPLE: &str = r#"// oxide.config.ts
-import { defineConfig } from 'oxide'
-import react from '@oxide/react'          // or @oxide/vue | @oxide/svelte | @oxide/solid
-import tailwind from '@oxide/tailwind'
+import { defineConfig } from '@oxide-fw/oxide'
+import react from '@oxide-fw/react'       // or @oxide-fw/vue | @oxide-fw/svelte | @oxide-fw/solid
+import tailwind from '@oxide-fw/tailwind'
 
 export default defineConfig({
   framework: react({ compiler: true }),
@@ -741,7 +741,7 @@ fn typed_config_serializes_camel_case_and_roundtrips() {
 #[test]
 fn islands_extractor_reads_a_simple_map() {
     let src = r#"
-import react from '@oxide/react'
+import react from '@oxide-fw/react'
 export default {
   framework: react({
     islands: {

@@ -3,7 +3,7 @@
 // The compiler rewrites `export const add = serverFn(async (…) => {…})` in
 // a `*.server.ts` module to a stub that calls this module:
 //
-//     import { __oxide_call_fn } from 'oxide/fn';
+//     import { __oxide_call_fn } from '@oxide-fw/oxide/fn';
 //     export const add = (async (...args) => __oxide_call_fn('<id>', args));
 //
 // `__oxide_call_fn` POSTs the encoded args to `/_oxide/fn/<id>` and decodes

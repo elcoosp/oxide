@@ -57,7 +57,7 @@ per-phase handler.
 
 ```ts
 // src/routes/blog/[slug]/page.server.ts
-import { defineLoad } from 'oxide/server'
+import { defineLoad } from '@oxide-fw/core/server'
 
 export const load = defineLoad(async ({ params, defer }) => ({
   title: `Post ${params.slug}`,

@@ -10,16 +10,16 @@ export const SHAPES = ['minimal', 'blog', 'dashboard', 'storefront'];
 /** @returns {string} oxide.config.ts content per spec §14.1 */
 export function configTs(framework, shape) {
   const adapterImport =
-    framework === 'react' ? `import react from '@oxide/react'` :
-    framework === 'vue' ? `import vue from '@oxide/vue'` :
-    framework === 'svelte' ? `import svelte from '@oxide/svelte'` :
-    `import solid from '@oxide/solid'`;
+    framework === 'react' ? `import react from '@oxide-fw/react'` :
+    framework === 'vue' ? `import vue from '@oxide-fw/vue'` :
+    framework === 'svelte' ? `import svelte from '@oxide-fw/svelte'` :
+    `import solid from '@oxide-fw/solid'`;
   const shapeOpts =
     shape === 'blog' ? `\n  cache: { handler: { type: 'disk' }, l0: { maxSize: '512mb' } },` :
     shape === 'dashboard' ? `\n  security: { csp: 'strict', csrf: 'origin' },\n  cache: { handler: { type: 'memory' }, l0: { maxSize: '128mb' } },` :
     shape === 'storefront' ? `\n  images: { formats: ['avif', 'webp'], remotePatterns: [{ host: 'cdn.example.com' }] },\n  cache: { handler: { type: 'disk' }, l0: { maxSize: '512mb' } },` : '';
   return `${adapterImport}
-import { defineConfig } from 'oxide'
+import { defineConfig } from '@oxide-fw/core'
 
 export default defineConfig({
   framework: ${framework}({ ssr: 'real' }),
@@ -76,7 +76,7 @@ const props = defineProps<{ data: { message: string } }>()
   }
   // react + solid (jsx)
   const isSolid = framework === 'solid';
-  return `${isSolid ? `import { For } from 'solid-js';\n` : ''}import type { PageProps } from 'oxide'
+  return `${isSolid ? `import { For } from 'solid-js';\n` : ''}import type { PageProps } from '@oxide-fw/core'
 
 export default function Page({ data }: PageProps) {
   return (
@@ -111,7 +111,7 @@ export function pageServerTs(shape) {
           ? `export const config = { render: 'isr', revalidate: 30, tags: ['products'] }
 
 ` : '';
-  return `${extra}import { defineLoad, defineAction, defineMeta, defer } from 'oxide/server'
+  return `${extra}import { defineLoad, defineAction, defineMeta, defer } from '@oxide-fw/core/server'
 
 export const load = defineLoad(async ({ params }) => {
   return {
@@ -164,7 +164,7 @@ export function packageJson(framework) {
       dependencies: (() => {
         const inWorkspace = (process.env.PWD ?? '').includes('packages/')
         const v = inWorkspace ? 'workspace:*' : '0.2.0'
-        return { oxide: v, [`@oxide/${framework}`]: v }
+        return { "@oxide-fw/core": v, [`@oxide-fw/${framework}`]: v }
       })(),
     },
     null,
@@ -205,7 +205,7 @@ function blogExtras(framework, ext) {
     ],
     [
       join('src', 'routes', 'blog', '[slug]', 'page.server.ts'),
-      `import { defineLoad } from 'oxide/server'
+      `import { defineLoad } from '@oxide-fw/core/server'
 
 export const config = { render: 'isr', revalidate: 60, tags: ['posts'] }
 
@@ -230,7 +230,7 @@ function dashboardExtras(framework, ext) {
     ],
     [
       join('src', 'routes', 'dashboard', 'page.server.ts'),
-      `import { defineLoad, defineAction } from 'oxide/server'
+      `import { defineLoad, defineAction } from '@oxide-fw/core/server'
 
 export const load = defineLoad(async ({ locals }) => {
   // §16.6: the runtime decodes the session cookie into \`locals.session\`
@@ -261,7 +261,7 @@ function storefrontExtras(framework, ext) {
     ],
     [
       join('src', 'routes', 'products', '[id]', 'page.server.ts'),
-      `import { defineLoad } from 'oxide/server'
+      `import { defineLoad } from '@oxide-fw/core/server'
 
 export const config = { render: 'isr', revalidate: 30, tags: ['products'] }
 

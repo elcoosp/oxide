@@ -34,7 +34,7 @@ test('scaffolds every framework × shape combo with required files', async () =>
         assert.equal(pkg.scripts.dev, 'oxide dev');
         assert.equal(pkg.scripts.build, 'oxide build');
         assert.equal(pkg.scripts.start, 'oxide start');
-        assert.ok(pkg.dependencies[`@oxide/${fw}`]);
+        assert.ok(pkg.dependencies[`@oxide-fw/${fw}`]);
         const cfg = await readFile(join(dir, 'oxide.config.ts'), 'utf8');
         for (const key of ['framework:', 'routes:', 'server:', 'render:', 'adapter:', 'build:']) {
           assert.ok(cfg.includes(key), `${fw}/${shape} config has ${key}`);
@@ -127,8 +127,8 @@ test('unknown framework/template fail fast with helpful message', async () => {
 test('config helpers are deterministic and per-framework', () => {
   const react = configTs('react', 'minimal');
   const vue = configTs('vue', 'minimal');
-  assert.ok(react.includes("@oxide/react") && react.includes("react({ ssr: 'real' })"));
-  assert.ok(vue.includes("@oxide/vue") && vue.includes("vue({ ssr: 'real' })"));
+  assert.ok(react.includes("@oxide-fw/react") && react.includes("react({ ssr: 'real' })"));
+  assert.ok(vue.includes("@oxide-fw/vue") && vue.includes("vue({ ssr: 'real' })"));
   assert.equal(react, configTs('react', 'minimal'));
   assert.ok(configTs('react', 'storefront').includes("images: { formats: ['avif', 'webp']"));
   assert.ok(configTs('react', 'dashboard').includes("security: { csp: 'strict'"));
