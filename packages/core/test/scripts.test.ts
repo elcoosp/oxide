@@ -51,7 +51,7 @@ function mustEl<T>(arr: readonly T[], i: number): T {
 test('scheduleScript("defer") injects a src script into head', () => {
   const { doc, head } = fakeDoc()
   let loaded = false
-  scheduleScript('defer', { doc: doc as never, src: '/a.js', onLoad: () => { loaded = true } })
+  scheduleScript('defer', { doc: doc as unknown as Document, src: '/a.js', onLoad: () => { loaded = true } })
   assert.equal(head.length, 1)
   assert.equal(mustEl(head, 0).src, '/a.js')
   // `onLoad` is bound to the element's `load` event for a src script.
@@ -61,20 +61,20 @@ test('scheduleScript("defer") injects a src script into head', () => {
 
 test('a module script carries type="module"', () => {
   const { doc, head } = fakeDoc()
-  scheduleScript('defer', { doc: doc as never, src: '/m.js', module: true })
+  scheduleScript('defer', { doc: doc as unknown as Document, src: '/m.js', module: true })
   assert.equal(mustEl(head, 0).type, 'module')
 })
 
 test('inline content becomes textContent, not a src', () => {
   const { doc, head } = fakeDoc()
-  scheduleScript('defer', { doc: doc as never, content: 'console.log(1)' })
+  scheduleScript('defer', { doc: doc as unknown as Document, content: 'console.log(1)' })
   assert.equal(mustEl(head, 0).textContent, 'console.log(1)')
   assert.equal(mustEl(head, 0).src, undefined)
 })
 
 test('attrs are copied onto the injected element', () => {
   const { doc, head } = fakeDoc()
-  scheduleScript('defer', { doc: doc as never, src: '/a.js', attrs: { 'data-x': 'y', crossorigin: 'anonymous' } })
+  scheduleScript('defer', { doc: doc as unknown as Document, src: '/a.js', attrs: { 'data-x': 'y', crossorigin: 'anonymous' } })
   assert.equal(mustEl(head, 0).attrs['data-x'], 'y')
   assert.equal(mustEl(head, 0).attrs['crossorigin'], 'anonymous')
 })
@@ -113,7 +113,7 @@ test('scheduleScript("worker") runs the body in a Worker, not the main thread', 
   })
   Reflect.set(globalThis, 'Worker', FakeWorker)
   try {
-    scheduleScript('worker', { doc: doc as never, content: 'postMessage(1)' })
+    scheduleScript('worker', { doc: doc as unknown as Document, content: 'postMessage(1)' })
     // `idle` falls back to setTimeout(1); wait for it, THEN assert — the
     // globals must stay installed until the deferred callback runs.
     await new Promise<void>((resolve) => setTimeout(resolve, 15))
@@ -138,9 +138,9 @@ test('scheduleScript("lazy") waits for intersection', () => {
     disconnect() {}
   }
   const dispose = scheduleScript('lazy', {
-    doc: doc as never,
+    doc: doc as unknown as Document,
     src: '/lazy.js',
-    IntersectionObserver: FakeIO as never,
+    IntersectionObserver: FakeIO as unknown as typeof IntersectionObserver,
   })
   assert.equal(head.length, 0, 'not injected before intersection')
   cb?.([{ isIntersecting: true }])
@@ -155,7 +155,7 @@ test('loadScripts scans data-ox-script placeholders and schedules them', () => {
   tag.attrs['data-ox-strategy'] = 'defer'
   tag.attrs['data-ox-src'] = '/from-tag.js'
   doc.querySelectorAll = () => [tag]
-  loadScripts({ doc: doc as never })
+  loadScripts({ doc: doc as unknown as Document })
   assert.equal(head.length, 1)
   assert.equal(mustEl(head, 0).src, '/from-tag.js')
 })
@@ -168,6 +168,6 @@ test('loadScripts decodes an inline base64 body', () => {
   tag.attrs['data-ox-script'] = ''
   tag.attrs['data-ox-inline'] = b64
   doc.querySelectorAll = () => [tag]
-  loadScripts({ doc: doc as never })
+  loadScripts({ doc: doc as unknown as Document })
   assert.equal(mustEl(head, 0).textContent, code)
 })
