@@ -67,11 +67,11 @@ export function createRealAdapter(opts: RealAdapterOptions) {
     // §7.1: Vue's real streaming SSR via `@vue/server-renderer`'s renderToStream.
     renderStream: renderVueToStream,
     rootAttrs: ' id="root" data-v-app=""',
-    hydrate: hydrate as never,
+    hydrate: hydrate,
     // §10.3: real `createSSRApp().mount()` so Vue reactivity works, not the
     // IR replay that only handles static markup.
-    hydrateIsland: vueHydrateIsland as never,
-    mount: mount as never,
+    hydrateIsland: vueHydrateIsland,
+    mount: mount,
     update,
     opts,
   })
