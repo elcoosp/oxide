@@ -76,7 +76,8 @@ export function enhance(form: EnhanceForm, opts: EnhanceOptions = {}): () => voi
 }
 
 async function parseResult(res: Response): Promise<unknown> {
-  const type = (res.headers.get('content-type') ?? '').split(';')[0].trim()
+  const header = res.headers.get('content-type') ?? ''
+  const type = (header.split(';').at(0) ?? '').trim()
   if (type === 'application/oxide+odf' || type === 'application/octet-stream') {
     return decodeOdf(new Uint8Array(await res.arrayBuffer()))
   }
