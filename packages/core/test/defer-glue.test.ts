@@ -175,8 +175,8 @@ function fakeDocWithObserver() {
 
 test('a per-settle script appended after load resolves its slot', async () => {
   const { doc, MO, appendSettle } = fakeDocWithObserver()
-  const g = (globalThis as unknown as { MutationObserver?: unknown }).MutationObserver
-  ;(globalThis as unknown as { MutationObserver?: unknown }).MutationObserver = MO
+  const g = Reflect.get(globalThis, 'MutationObserver') as unknown
+  Reflect.set(globalThis, 'MutationObserver', MO)
   try {
     const glue = attachDeferGlue({ doc: doc })
     const slot = new DeferredClient<{ late: string }>()
@@ -186,14 +186,15 @@ test('a per-settle script appended after load resolves its slot', async () => {
     assert.deepEqual(v, { late: 'arrived' })
     glue.dispose()
   } finally {
-    ;(globalThis as unknown as { MutationObserver?: unknown }).MutationObserver = g
+    if (g === undefined) Reflect.deleteProperty(globalThis, 'MutationObserver')
+    else Reflect.set(globalThis, 'MutationObserver', g)
   }
 })
 
 test('a late per-settle rejection rejects the slot', async () => {
   const { doc, MO, appendSettle } = fakeDocWithObserver()
-  const g = (globalThis as unknown as { MutationObserver?: unknown }).MutationObserver
-  ;(globalThis as unknown as { MutationObserver?: unknown }).MutationObserver = MO
+  const g = Reflect.get(globalThis, 'MutationObserver') as unknown
+  Reflect.set(globalThis, 'MutationObserver', MO)
   try {
     const glue = attachDeferGlue({ doc: doc })
     const slot = new DeferredClient<unknown>()
@@ -202,14 +203,15 @@ test('a late per-settle rejection rejects the slot', async () => {
     await assert.rejects(slot.promise, /boom/)
     glue.dispose()
   } finally {
-    ;(globalThis as unknown as { MutationObserver?: unknown }).MutationObserver = g
+    if (g === undefined) Reflect.deleteProperty(globalThis, 'MutationObserver')
+    else Reflect.set(globalThis, 'MutationObserver', g)
   }
 })
 
 test('dispose disconnects the observer', () => {
   const { doc, MO } = fakeDocWithObserver()
-  const g = (globalThis as unknown as { MutationObserver?: unknown }).MutationObserver
-  ;(globalThis as unknown as { MutationObserver?: unknown }).MutationObserver = MO
+  const g = Reflect.get(globalThis, 'MutationObserver') as unknown
+  Reflect.set(globalThis, 'MutationObserver', MO)
   try {
     const glue = attachDeferGlue({ doc: doc })
     glue.dispose()
@@ -217,6 +219,7 @@ test('dispose disconnects the observer', () => {
     // reach the glue. Reaching here without throwing is the assertion.
     assert.ok(true)
   } finally {
-    ;(globalThis as unknown as { MutationObserver?: unknown }).MutationObserver = g
+    if (g === undefined) Reflect.deleteProperty(globalThis, 'MutationObserver')
+    else Reflect.set(globalThis, 'MutationObserver', g)
   }
 })
