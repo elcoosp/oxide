@@ -21,7 +21,7 @@ async function loadVue(): Promise<VueLike> {
 
 export function vueRenderLoading(
   overlay: Element,
-  _input: { url: string; route: string; params: Record<string, string | string[]>; data: unknown },
+  _input: unknown,
   Component: unknown,
 ): Disposer {
   let app: { unmount(): void; mount(el: unknown): void } | undefined
