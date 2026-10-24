@@ -316,8 +316,10 @@ export function bootWithRouter(
       let staticCount = 0
       for (let i = 0; i < keySegs.length; i++) {
         const k = keySegs[i]
+        const u = urlSegs[i]
+        if (k === undefined || u === undefined) { ok = false; break }
         if (isParamSegment(k)) {
-          if (urlSegs[i].length === 0) { ok = false; break }
+          if (u.length === 0) { ok = false; break }
           continue
         }
         if (k !== urlSegs[i]) { ok = false; break }
