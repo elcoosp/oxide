@@ -44,7 +44,7 @@ export const adapter: FrameworkAdapter = {
   // fake DOM (see packages/react/test/helpers), which the §22 conformance
   // suite drives. Real React hydration lives on `clientAdapter` below —
   // `hydrateRoot` needs a live DOM and would crash on the fake one.
-  hydrateIsland: irHydrateIsland as unknown as FrameworkAdapter['hydrateIsland'],
+  hydrateIsland: irHydrateIsland,
   mount: mount as (root: Element, input: ClientInput) => Disposer,
   update,
 }
@@ -65,8 +65,8 @@ export const adapter: FrameworkAdapter = {
  */
 export const clientAdapter: FrameworkAdapter = {
   ...adapter,
-  hydrateIsland: reactHydrateIsland as unknown as FrameworkAdapter['hydrateIsland'],
-  renderLoading: reactRenderLoading as unknown as FrameworkAdapter['renderLoading'],
+  hydrateIsland: reactHydrateIsland,
+  renderLoading: reactRenderLoading,
 }
 
 // ---------------------------------------------------------------------------
