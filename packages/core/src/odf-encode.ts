@@ -90,7 +90,10 @@ function byUtf8(a: string, b: string): number {
   const bb = UTF8_ENCODER.encode(b)
   const n = Math.min(ab.length, bb.length)
   for (let i = 0; i < n; i++) {
-    if (ab[i] !== bb[i]) return ab[i] - bb[i]
+    const a = ab[i]
+    const b = bb[i]
+    if (a === undefined || b === undefined) continue
+    if (a !== b) return a - b
   }
   return ab.length - bb.length
 }
