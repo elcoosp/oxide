@@ -111,7 +111,7 @@ function setup(overrides: Record<string, unknown> = {}, docEls: Parameters<typeo
     doc,
     history,
     location,
-    fetch: fetchImpl as unknown as typeof fetch,
+    fetch: fetchImpl as typeof fetch,
     scrollTo: (x: number, y: number) => scrolls.push([x, y]),
     getScroll: () => ({ x: 0, y: 42 }),
     ...overrides,
@@ -270,7 +270,7 @@ test('router: goto() routes the update through view transitions when available',
 
 test('router: goto() rejects on non-2xx /__data responses', async () => {
   const { router } = setup({
-    fetch: (() => Promise.resolve(new Response('nope', { status: 500 }))) as unknown as typeof fetch,
+    fetch: (() => Promise.resolve(new Response('nope', { status: 500 }))) as typeof fetch,
   })
   await assert.rejects(() => router.goto('/about'))
 })
