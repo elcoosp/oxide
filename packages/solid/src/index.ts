@@ -58,9 +58,9 @@ import { solidRenderLoading } from './render-loading.ts'
 export const clientAdapter: FrameworkAdapter = {
   ...adapter,
   // §10.3: real `hydrate()` so Solid signals work.
-  hydrateIsland: solidHydrateIsland as never,
+  hydrateIsland: solidHydrateIsland,
   // §8.4: real `render()` for per-route loading boundaries.
-  renderLoading: solidRenderLoading as never,
+  renderLoading: solidRenderLoading,
 }
 
 // ---------------------------------------------------------------------------
