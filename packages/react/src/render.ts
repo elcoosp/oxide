@@ -349,8 +349,8 @@ interface AtlasPage {
   component: ComponentFn
 }
 
-function HomePage(raw: Record<string, unknown>): Node {
-  const props = parsePageProps(raw)
+function HomePage(input: Record<string, unknown>): Node {
+  const props = parsePageProps(input)
   return el('section', { class: 'home' },
     el('h1', {}, t('Hello Atlas')),
     el('p', { class: 'intro' }, t(`Serving ${String(props.data.framework ?? 'every framework')} from one core.`)),
@@ -369,8 +369,8 @@ interface PageProps {
   client?: { update(patch: Record<string, unknown>): void; navigate(href: string): void }
 }
 
-function BlogPage(raw: Record<string, unknown>): Node {
-  const props = parsePageProps(raw)
+function BlogPage(input: Record<string, unknown>): Node {
+  const props = parsePageProps(input)
   const comments = props.data.comments as Array<{ author: string; body: string }> | undefined
   return el('article', { class: 'post' },
     el('h1', {}, t(String(props.data.title ?? 'Untitled'))),
@@ -384,8 +384,8 @@ function BlogPage(raw: Record<string, unknown>): Node {
   )
 }
 
-function StreamingPage(raw: Record<string, unknown>): Node {
-  const props = parsePageProps(raw)
+function StreamingPage(input: Record<string, unknown>): Node {
+  const props = parsePageProps(input)
   return el('section', { class: 'stream' },
     el('h1', {}, t('Streaming Atlas')),
     deferred(
@@ -420,9 +420,9 @@ function NotFoundPage(): Node {
   )
 }
 
-function CounterIsland(raw: Record<string, unknown>): Node {
-  const props = parsePageProps(raw)
-  const initialCount = typeof raw.initialCount === 'number' ? raw.initialCount : 0
+function CounterIsland(input: Record<string, unknown>): Node {
+  const props = parsePageProps(input)
+  const initialCount = typeof input.initialCount === 'number' ? input.initialCount : 0
   return el('div', { class: 'counter' },
     el('span', { class: 'count' }, t(String(initialCount ?? 0))),
     el('button', {
@@ -432,8 +432,8 @@ function CounterIsland(raw: Record<string, unknown>): Node {
   )
 }
 
-function IslandsPage(raw: Record<string, unknown>): Node {
-  const props = parsePageProps(raw)
+function IslandsPage(input: Record<string, unknown>): Node {
+  const props = parsePageProps(input)
   return el('section', { class: 'islands' },
     el('h1', {}, t('Islands Atlas')),
     island(
@@ -448,8 +448,8 @@ function IslandsPage(raw: Record<string, unknown>): Node {
   )
 }
 
-function ActionsPage(raw: Record<string, unknown>): Node {
-  const props = parsePageProps(raw)
+function ActionsPage(input: Record<string, unknown>): Node {
+  const props = parsePageProps(input)
   const form = props.data.form as { name?: string } | undefined
   return el('section', { class: 'actions' },
     el('h1', {}, t('Actions Atlas')),
@@ -463,8 +463,8 @@ function ActionsPage(raw: Record<string, unknown>): Node {
   )
 }
 
-function CachedPage(raw: Record<string, unknown>): Node {
-  const props = parsePageProps(raw)
+function CachedPage(input: Record<string, unknown>): Node {
+  const props = parsePageProps(input)
   const posts = (props.data.posts ?? []) as string[]
   return el('section', { class: 'cached' },
     el('h1', {}, t('Cache Atlas')),
@@ -510,9 +510,9 @@ export const throwsAtRender = new Set(['routes/error'])
  * — the SHELL owns the document skeleton (`<!doctype html><html><head>` +
  * `<body>`) and the framework root container below.
  */
-function AtlasLayout(raw: Record<string, unknown>): Node {
-  const props = parsePageProps(raw)
-  const rawPage = raw.page
+function AtlasLayout(input: Record<string, unknown>): Node {
+  const props = parsePageProps(input)
+  const rawPage = input.page
   if (!isNode(rawPage)) throw new TypeError('oxide: AtlasLayout requires page to be a Node')
   const page: Node = rawPage
   return frag(
@@ -531,10 +531,10 @@ function AtlasLayout(raw: Record<string, unknown>): Node {
 // rendered outermost-first around the page. `AtlasLayout` is registered as
 // the root so a route that declares `routes/layout` behaves like the
 // default shell.
-function NestedLayout(raw: Record<string, unknown>): Node {
-  const props = parsePageProps(raw)
-  const rawChildren = raw.children
-  const rawPage = raw.page
+function NestedLayout(input: Record<string, unknown>): Node {
+  const props = parsePageProps(input)
+  const rawChildren = input.children
+  const rawPage = input.page
   const children: Node[] = isNodeArray(rawChildren) ? rawChildren : []
   const page: Node | undefined = isNode(rawPage) ? rawPage : undefined
   const inner = children && children.length > 0
