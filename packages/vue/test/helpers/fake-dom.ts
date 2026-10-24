@@ -140,12 +140,20 @@ function parseHtml(src: string, doc: FakeDocument | null, parent: FakeElement | 
     const tagMatch = /^<([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[^<>]*?)?)(\/?)>/.exec(src.slice(i))
     if (!tagMatch) { i++; continue } // stray '<' is text
     flushText(i)
-    const [, tag, attrsSrc] = tagMatch
+    const tag = tagMatch[1]
+    const attrsSrc = tagMatch[2]
+    if (tag === undefined || attrsSrc === undefined) {
+      // The parser regex guarantees groups 1 and 2 participate (group 2
+      // matches empty string when no attrs); hitting this is a regex bug.
+      throw new Error('fake-dom: unexpected tag/attrs match groups')
+    }
     const element = makeElement(tag.toLowerCase(), doc, parent)
     const attrRe = /([^\s=/]+)(?:\s*=\s*("([^"]*)"|'([^']*)'|([^\s"'>]*)))?/g
     let m: RegExpExecArray | null
     while ((m = attrRe.exec(attrsSrc.replace(/^\s+/, ''))) !== null) {
-      const name = m[1].toLowerCase()
+      const nameRaw = m[1]
+      if (nameRaw === undefined) continue
+      const name = nameRaw.toLowerCase()
       const value = m[2] !== undefined ? decodeEntities(m[3] ?? m[4] ?? m[5] ?? '') : ''
       element.attrs[name] = value
     }
@@ -246,7 +254,10 @@ function matchesCompound(el: FakeElement, sel: string): boolean {
   if (attrPart) {
     const am = /^\[\s*([^\s=~^|$]+)\s*(?:([~^$|*]?=)\s*(?:"([^"]*)"|'([^']*)'|([^\]]*?))\s*)?\]$/.exec(attrPart)
     if (!am) return false
-    const [, name, op, ...values] = am
+    const name = am[1]
+    if (name === undefined) return false
+    const op = am[2]
+    const values = am.slice(3)
     const value = values.find((v) => v !== undefined) ?? ''
     if (!op) { if (!(name in el.attrs)) return false }
     else {
@@ -292,6 +303,13 @@ function makeElement(tag: string, doc: FakeDocument | null, parent: FakeElement 
     parent,
     ownerDocument: doc,
     listeners: new Map(),
+    // Placeholder values; replaced by Object.defineProperty below with
+    // serializeChildren / textContent getters+setters. They must be in the
+    // literal so TS's object-literal exhaustiveness check passes — the
+    // subsequent defineProperty reconfigures configurable:true data props
+    // into accessors.
+    innerHTML: '',
+    textContent: '',
     getAttribute(name) {
       const v = el.attrs[name.toLowerCase()]
       return v === undefined ? null : v
@@ -454,7 +472,9 @@ export function createFakeDom(html: string): FakeDom {
 export function simulateSwap(doc: FakeDocument, resolutionChunkHtml: string): boolean {
   const m = /<template data-ox-c='([^']+)'>([\s\S]*?)<\/template>/.exec(resolutionChunkHtml)
   if (!m) return false
-  const [, id, contentHtml] = m
+  const id = m[1]
+  const contentHtml = m[2]
+  if (id === undefined || contentHtml === undefined) return false
   const placeholder = doc.querySelector(`[data-ox-b='${id}']`)
   if (!placeholder) return false
   const holder = doc.createElement('div')
