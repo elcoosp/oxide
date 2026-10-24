@@ -30,11 +30,16 @@ function fakeForm(attrs: Record<string, string> = {}) {
       for (const fn of listeners.get(type) ?? []) fn(event)
     },
   }
-  return form as unknown as EnhanceForm & {
+  const enriched: EnhanceForm & {
+    listeners: Map<string, Array<(e: unknown) => void>>
+    dispatchLog: unknown[]
+    dispatch(type: string, event: unknown): void
+  } = form as EnhanceForm & {
     listeners: Map<string, Array<(e: unknown) => void>>
     dispatchLog: unknown[]
     dispatch(type: string, event: unknown): void
   }
+  return enriched
 }
 
 test('enhance: intercepts submit, POSTs to the action, applies the JSON result', async () => {
