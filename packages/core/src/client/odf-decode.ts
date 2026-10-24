@@ -121,7 +121,13 @@ export function decodeOdf(bytes: Uint8Array): unknown {
 }
 
 function readU32BE(b: Uint8Array, at: number): number {
-  return ((b[at] << 24) | (b[at + 1] << 16) | (b[at + 2] << 8) | b[at + 3]) >>> 0
+  // DataView is the correct API for reading integers from a byte buffer:
+  // alignment-safe, big-endian reads with no per-element narrowing.
+  // Callers pass `at` from a bounds-checked source (the ODF header is
+  // four bytes at offset zero; the length was verified by the decoder
+  // before this ran), so this function is total over its intended use.
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength)
+  return dv.getUint32(at, false)
 }
 
 class Decoder {
@@ -144,7 +150,12 @@ class Decoder {
 
   u8(what: string): number {
     this.need(1, what)
-    return this.bytes[this.pos++]
+    // `need` above guarantees at least one byte is available at `pos`;
+    // DataView.getUint8 is the same read without the `number | undefined`
+    // that `Uint8Array[i]` produces under noUncheckedIndexedAccess.
+    const byte = this.dv.getUint8(this.pos)
+    this.pos++
+    return byte
   }
 
   /** LEB128 varuint, at most 5 bytes; overlong/overflow → ODF-TAG (as in Rust). */
@@ -269,14 +280,22 @@ class Decoder {
         if (kind >= TYPED_CTORS.length) {
           throw new OdfError('ODF-TAG', `unknown typed-array kind byte 0x${kind.toString(16).padStart(2, '0')}`)
         }
+        // The three tables are kept length-equal by construction; this
+        // check is the type-level assertion TS can't infer from the
+        // index-equality alone, and a genuine error if the invariant is
+        // ever broken by a future edit.
         const size = TYPED_SIZES[kind]
+        const ctor = TYPED_CTORS[kind]
+        if (size === undefined || ctor === undefined) {
+          throw new OdfError('ODF-TAG', `typed-array kind ${kind} has no size/ctor mapping`)
+        }
         const len = this.varu('typed-array length')
         if (len % size !== 0) {
           throw new OdfError('ODF-TAG', `typed array payload length ${len} is not a multiple of the ${size}-byte element size`)
         }
         this.need(len, 'typed-array payload')
         const count = len / size
-        const out = new TYPED_CTORS[kind](count)
+        const out = new ctor(count)
         const get = TYPED_GETTERS[kind] as keyof DataView
         for (let i = 0; i < count; i++) {
           // Element-wise reads via DataView: alignment-safe, little-endian.
