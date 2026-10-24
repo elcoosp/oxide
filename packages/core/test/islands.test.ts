@@ -2,7 +2,7 @@
 // media), hydrateIsland dispatch into the adapter, props decoding.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { hydrateIslands, hydrateIsland, parseStrategy } from '../src/client/islands.ts'
+import { hydrateIslands, hydrateIsland, parseStrategy, type IslandHost } from '../src/client/islands.ts'
 import type { RouterDoc } from '../src/client/router.ts'
 import { encodeLite } from './helpers/odf-lite.ts'
 
@@ -26,18 +26,20 @@ function islandEl(attrs: Record<string, string>) {
   }
 }
 
-function fakeDoc(els: unknown[] = []) {
+type FakeIslandHost = IslandHost & { matches(sel: string): boolean }
+
+function fakeDoc(els: FakeIslandHost[] = []) {
   const listeners = new Map<string, Array<(e: unknown) => void>>()
   return {
     listeners,
     addEventListener(type: string, fn: (e: unknown) => void) {
       listeners.set(type, [...(listeners.get(type) ?? []), fn])
     },
-    removeEventListener() {},
-    querySelectorAll(sel: string) {
-      return els.filter((e) => (e as { matches(sel: string): boolean }).matches(sel))
+    removeEventListener(_type: string, _fn: (e: unknown) => void) {},
+    querySelectorAll(sel: string): FakeIslandHost[] {
+      return els.filter((e) => e.matches(sel))
     },
-  } as unknown as RouterDoc
+  }
 }
 
 function fakeAdapter() {
@@ -136,7 +138,7 @@ test("islands: 'visible' hydrates through IntersectionObserver, guarded against 
     adapter,
     doc: fakeDoc([el]),
     loadChunk: async () => ({}),
-    IntersectionObserver: FakeIO as unknown as new (cb: ConstructorParameters<typeof FakeIO>[0]) => IntersectionObserver,
+    IntersectionObserver: FakeIO,
   })
   assert.deepEqual(observed, [el], 'island observed for visibility')
   mustCall(cbs, 0)([{ target: el, isIntersecting: true }])
@@ -162,7 +164,7 @@ test("islands: 'media(...)' hydrates on match now or on change", async () => {
   const nowEl = islandEl({ 'data-ox-chunk': '/chunks/m1.js', 'data-ox-strategy': 'media(max-width: 600px)' })
   const laterEl = islandEl({ 'data-ox-chunk': '/chunks/m2.js', 'data-ox-strategy': 'media(min-width: 900px)' })
   const adapter = fakeAdapter()
-  hydrateIslands({ adapter, doc: fakeDoc([nowEl, laterEl]), loadChunk: async () => ({}), matchMedia: mq as unknown as typeof matchMedia })
+  hydrateIslands({ adapter, doc: fakeDoc([nowEl, laterEl]), loadChunk: async () => ({}), matchMedia: mq })
   await new Promise((r) => setTimeout(r, 0))
   assert.equal(adapter.calls.length, 1, 'matching media hydrates immediately')
   assert.equal(changes.length, 1, 'non-matching media registered a change listener')
