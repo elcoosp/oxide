@@ -1,4 +1,17 @@
 // @oxide/solid real Solid SSR path (spec §7).
+
+/** Runtime type guard for solid-js core factory. */
+interface SolidCoreFactory {
+  createElement?(type: unknown, props: unknown): unknown
+  createComponent?(type: unknown, props: unknown): unknown
+}
+
+function isSolidCoreFactory(v: unknown): v is SolidCoreFactory {
+  if (v === null || typeof v !== 'object') return false
+  return typeof Reflect.get(v, 'createElement') === 'function'
+    || typeof Reflect.get(v, 'createComponent') === 'function'
+}
+
 //
 // The IR-based renderer in ./render.ts is the NEUTRAL fallback. This module
 // is the REAL path: it dynamically imports `@solidjs/web` and calls the
@@ -113,13 +126,9 @@ let cachedCore: SolidCoreLike | undefined
 export async function getSolidCore(): Promise<SolidCoreLike | undefined> {
   if (cachedCore) return cachedCore
   try {
-    const mod = (await import('solid-js')) as unknown as
-      { default?: SolidCoreLike } & SolidCoreLike
-    const core = (mod.default ?? mod) as SolidCoreLike
-    if (typeof core?.createElement !== 'function' && typeof core?.createComponent !== 'function') {
-      return undefined
-    }
-    cachedCore = core
+    const mod: unknown = await import('solid-js')
+    if (!isSolidCoreFactory(mod)) return undefined
+    cachedCore = mod
     return cachedCore
   } catch {
     return undefined
