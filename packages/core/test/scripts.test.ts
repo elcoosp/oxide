@@ -103,15 +103,15 @@ test('scheduleScript("worker") runs the body in a Worker, not the main thread', 
   const savedURL = globalThis.URL
   const savedWorker = (globalThis as Record<string, unknown>).Worker
   // Capture the Blob body.
-  ;(globalThis as unknown as { Blob: unknown }).Blob = class {
+  Reflect.set(globalThis, 'Blob', class {
     body: string
     constructor(parts: string[]) { this.body = parts.join('') }
-  }
-  ;(globalThis as unknown as { URL: { createObjectURL(b: { body: string }): string; revokeObjectURL(u: string): void } }).URL = {
-    createObjectURL(b) { workerBody = b.body; return 'blob:x' },
+  })
+  Reflect.set(globalThis, 'URL', {
+    createObjectURL(b: { body: string }) { workerBody = b.body; return 'blob:x' },
     revokeObjectURL() {},
-  }
-  ;(globalThis as unknown as { Worker: unknown }).Worker = FakeWorker
+  })
+  Reflect.set(globalThis, 'Worker', FakeWorker)
   try {
     scheduleScript('worker', { doc: doc as never, content: 'postMessage(1)' })
     // `idle` falls back to setTimeout(1); wait for it, THEN assert — the
@@ -120,10 +120,10 @@ test('scheduleScript("worker") runs the body in a Worker, not the main thread', 
     assert.equal(head.length, 0, 'a worker script must not touch the DOM')
     assert.equal(workerBody, 'postMessage(1)')
   } finally {
-    ;(globalThis as unknown as { Blob: unknown }).Blob = savedBlob
-    ;(globalThis as unknown as { URL: unknown }).URL = savedURL
+    Reflect.set(globalThis, 'Blob', savedBlob)
+    Reflect.set(globalThis, 'URL', savedURL)
     if (savedWorker === undefined) delete (globalThis as Record<string, unknown>).Worker
-    else (globalThis as unknown as { Worker: unknown }).Worker = savedWorker
+    else Reflect.set(globalThis, 'Worker', savedWorker)
   }
 })
 
