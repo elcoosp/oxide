@@ -65,12 +65,18 @@ export async function reactHydrateIsland(
   props: unknown,
   _opts: ClientOptions = {},
 ): Promise<Disposer> {
-  const component =
-    (mod as { default?: FunctionComponent }).default ??
-    (mod as unknown as FunctionComponent)
-  if (typeof component !== 'function') {
+  // `mod` is the dynamic-import result of the island chunk; its `default`
+  // export is the React component the server rendered. Some bundlers wrap
+  // the module without a `default` (an interop shape); in that case the
+  // module itself is the component function. Narrow through runtime checks
+  // (`typeof === 'function'`) instead of casting — if neither shape is a
+  // function, the throw is the honest failure.
+  const maybeDefault = (mod as { default?: unknown }).default
+  const candidate: unknown = maybeDefault ?? mod
+  if (typeof candidate !== 'function') {
     throw new TypeError('reactHydrateIsland: island module must export a default component')
   }
+  const component = candidate as FunctionComponent
   const { client, react } = await loadReact()
   const element = react.createElement(
     component,
