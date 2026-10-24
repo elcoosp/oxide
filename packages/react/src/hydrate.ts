@@ -145,6 +145,21 @@ function manifestRouteExists(route: string): boolean {
   return src !== undefined && routeIdFor(route, src.manifest) !== undefined
 }
 
+/** Narrow an `OxElement` to a real DOM `Element`.
+ *
+ * `OxElement` is a structural subset of the DOM `Element` interface — the
+ * minimum a fake DOM in tests must implement. Real framework runtime calls
+ * (`createRoot`, `createSSRApp().mount`, etc.) require the full `Element`.
+ * This helper is a *runtime assertion*, not a cast: `instanceof Element`
+ * succeeds in a real browser, throws a clear TypeError otherwise. In the
+ * test environment the real-adapter path is never reached (the framework
+ * isn't installed → `mountXxxPageRoot` returns undefined before this runs).
+ */
+function asDomElement(v: OxElement, where: string): Element {
+  if (typeof Element !== 'undefined' && v instanceof Element) return v
+  throw new TypeError(`oxide: ${where} requires a live DOM Element`)
+}
+
 function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts: ClientOptions): ClientHandle {
   let current = input
   let glue: DeferGlue | undefined
@@ -269,7 +284,7 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
         // fresh-mount otherwise (SPA mode, or a layout chain the client
         // manifest cannot supply).
         const mounted = await mountReactPageRoot(
-          root as unknown as Element,
+          asDomElement(root, 'real framework mount'),
           Component,
           realProps(inp),
           {
