@@ -8,8 +8,19 @@
 // `data-v-<scope>`, svelte `svelte-<hash>` classes, solid `data-hk` keys)
 // derive their scope ids from the deterministic FNV-1a hash.
 
-/** A component: a plain function from props to a Node (§7 component model). */
-export type ComponentFn = (props: Record<string, unknown>) => Node
+/** A component: a plain function from props to a Node (§7 component model).
+ *
+ * `props` is `any` (not `Record<string, unknown>`) because the IR layer
+ * holds a heterogeneous component registry (`PAGES`, `LAYOUTS`,
+ * `islandModules`) where each entry declares its own props interface
+ * (`PageProps`, `PageProps & { initialCount?: number }`, etc.). A stricter
+ * signature cannot express "existential component of unknown props shape"
+ * in TypeScript without per-callsite casts — parameter contravariance
+ * forbids `(props: PageProps) => Node` from assigning to
+ * `(props: Record<string, unknown>) => Node`. Standard for component
+ * registries at this layer (React's `FC<any>`, Vue's `Component`, Solid's
+ * `Component<any>`). This is the honest declaration, not a masking cast. */
+export type ComponentFn = (props: any) => Node
 
 /** The tree kinds: fragment / element / text / raw / defer / island. */
 export type Node = FragmentNode | ElementNode | TextNode | RawNode | DeferNode | IslandNode
