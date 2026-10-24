@@ -21,5 +21,6 @@ ComponentSource, `adapter_entry` is unread, the `ssr:'real'` default is
 undecided).
 
 The full r8 audit was not committed as a separate file; this summary is
-the citation anchor. The r9 audit (in `docs/scorecard-r9.md`) is the
+the citation anchor. The r9 audit (in
+`packages/oxide-website/content/docs/scorecard-r9.md`) is the
 current live document.

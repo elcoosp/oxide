@@ -113,6 +113,6 @@ P0-10's residues (`oxide render` attaches no ComponentSource, the
 undecided). None of these were "fixed in the same push"; they are the
 honest open list.
 
-The live document is now `docs/scorecard-r9.md`. This post is a
+The live document is now the [scorecard](/docs/scorecard-r9) page. This post is a
 point-in-time record; the number above is the r7 score the r8 round
 re-anchored from.

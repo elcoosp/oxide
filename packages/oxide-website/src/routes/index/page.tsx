@@ -116,7 +116,7 @@ export default function Page(props: Props) {
         <div className="container">
           <h2>Features</h2>
           <p className="lede">
-            Everything below ships today behind tests — 1,190 Rust test functions, 387 TypeScript
+            Everything below ships today behind tests — 1,215 Rust test functions, 445 TypeScript
             cases, and a 96-check conformance gate run on every release.
           </p>
           <div className="features">
