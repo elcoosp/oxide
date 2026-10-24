@@ -18,6 +18,7 @@ export interface VueAppLike {
 
 export interface VueServerRendererLike {
   renderToString(app: unknown): Promise<string>
+  renderToStream?(app: unknown): Promise<NodeJS.ReadableStream | ReadableStream<Uint8Array>>
   version?: string
 }
 
@@ -164,10 +165,7 @@ export async function renderVueToStream(
   // Same descriptor expansion as `renderVueToString`: a layout receives
   // `props.children` as `{ Component, props }`; Vue needs slot content.
   const app = vueAppFor(deps.vue, Component, props)
-  const server = deps.server as unknown as {
-    renderToStream?: (app: unknown) => Promise<NodeJS.ReadableStream | ReadableStream<Uint8Array>>
-    renderToString: (app: unknown) => Promise<string>
-  }
+  const server = deps.server
   if (typeof server.renderToStream === 'function') {
     const vueStream = await server.renderToStream(app)
     // `renderToStream` returns a Node Readable on Node and a web
