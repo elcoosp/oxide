@@ -30,27 +30,27 @@ description = "Oxide: framework-agnostic, full-stack meta-framework with a Rust 
 
 [workspace.dependencies]
 # Internal crates (spec §23)
-oxide-diagnostics = { path = "crates/diagnostics", version = "0.1.0" }
-oxide-odf = { path = "crates/odf", version = "0.1.0" }
-oxide-router = { path = "crates/router", version = "0.1.0" }
+oxide-fw-diagnostics = { path = "crates/diagnostics", version = "0.1.0" }
+oxide-fw-odf = { path = "crates/odf", version = "0.1.0" }
+oxide-fw-router = { path = "crates/router", version = "0.1.0" }
 oxide-fw-graph = { path = "crates/graph", version = "0.1.0" }
-oxide-config = { path = "crates/config", version = "0.1.0" }
-oxide-cache = { path = "crates/cache", version = "0.1.0" }
-oxide-compiler = { path = "crates/compiler", version = "0.1.0" }
-oxide-bundler = { path = "crates/bundler", version = "0.1.0" }
-oxide-jshost = { path = "crates/jshost", version = "0.1.0" }
-oxide-plugin = { path = "crates/plugin", version = "0.1.0" }
-oxide-render = { path = "crates/render", version = "0.1.0" }
-oxide-server = { path = "crates/server", version = "0.1.0" }
-oxide-assets = { path = "crates/assets", version = "0.1.0" }
-oxide-dev = { path = "crates/dev", version = "0.1.0" }
-oxide-adapters = { path = "crates/adapters", version = "0.1.0" }
-oxide-core-wasm = { path = "crates/core-wasm", version = "0.1.0" }
+oxide-fw-config = { path = "crates/config", version = "0.1.0" }
+oxide-fw-cache = { path = "crates/cache", version = "0.1.0" }
+oxide-fw-compiler = { path = "crates/compiler", version = "0.1.0" }
+oxide-fw-bundler = { path = "crates/bundler", version = "0.1.0" }
+oxide-fw-jshost = { path = "crates/jshost", version = "0.1.0" }
+oxide-fw-plugin = { path = "crates/plugin", version = "0.1.0" }
+oxide-fw-render = { path = "crates/render", version = "0.1.0" }
+oxide-fw-server = { path = "crates/server", version = "0.1.0" }
+oxide-fw-assets = { path = "crates/assets", version = "0.1.0" }
+oxide-fw-dev = { path = "crates/dev", version = "0.1.0" }
+oxide-fw-adapters = { path = "crates/adapters", version = "0.1.0" }
+oxide-fw-core-wasm = { path = "crates/core-wasm", version = "0.1.0" }
 
 # Async / HTTP / TLS (spec Appendix A: stable, direct use)
 tokio = { version = "1.52.3", features = ["full"] }
 # §11.2 cache.handler=redis / cache.handler=s3 (optional drivers;
-# feature-gated in oxide-cache so the default build stays lean)
+# feature-gated in oxide-fw-cache so the default build stays lean)
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager", "tokio-rustls-comp"] }
 object_store = { version = "0.11", features = ["aws"] }
 hyper = { version = "1.12.0", features = ["http1", "http2", "server", "client"] }
@@ -181,7 +181,7 @@ debug = 1
 # opt-level matches [profile.dev] (0) so `cargo test -p <crate>` reuses the
 # dev-profile rlibs of its dependencies. With `opt-level = 1` the test
 # profile builds its own rlib set, and the first `cargo test` after a
-# `cargo check` recompiles the whole dependency tree — for oxide-assets
+# `cargo check` recompiles the whole dependency tree — for oxide-fw-assets
 # that is ravif, resvg, tiny-skia, skrifa, read-fonts, lightningcss,
 # comrak and syntect, minutes of `rustc` with no visible progress on a
 # non-TTY. The test binaries are marginally slower at opt-level 0; none
