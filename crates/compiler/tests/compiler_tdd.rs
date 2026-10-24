@@ -427,7 +427,7 @@ fn transformer_page_server_ssr_end_to_end() {
     let out = ScannerTransformer.transform(&input).unwrap();
     // scan
     assert!(out.scan.imports.iter().any(|s| s == "./db.server"));
-    assert!(out.scan.imports.iter().any(|s| s == "oxide/server"));
+    assert!(out.scan.imports.iter().any(|s| s == "@oxide-fw/core/server"));
     // cache directive rewritten (ssr keeps bodies)
     assert_eq!(out.directives.len(), 1);
     assert_eq!(out.directives[0].name.as_deref(), Some("cachedCount"));
