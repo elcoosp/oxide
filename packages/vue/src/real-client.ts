@@ -1,4 +1,15 @@
 // @oxide/vue real client page root (spec §8.4 + §10.3).
+
+/** Runtime type guard for the Vue client module. `await import('vue')` in
+ * ESM returns the namespace with `createSSRApp` at the top level; there is
+ * no CJS-interop `.default` wrapper for a true-ESM package. The `default ??
+ * mod` fallback that used to be here was dead code — this guard replaces
+ * it with a real runtime check that TS accepts as narrowing. */
+function isVueClientLike(v: unknown): v is VueClientLike {
+  if (v === null || typeof v !== 'object') return false
+  return typeof Reflect.get(v, 'createSSRApp') === 'function'
+}
+
 //
 // The manifest-driven `update()` / `hydrate()` / `mount()` path in
 // ./hydrate.ts needs Vue's own client runtime to mount (or hydrate) the
@@ -35,10 +46,9 @@ async function load(): Promise<VueClientLike | undefined> {
   try {
     // Dynamic so the runtime is code-split: a page only pays for Vue's
     // client runtime when a manifest-driven page render actually happens.
-    const mod = (await import('vue')) as unknown as { default?: VueClientLike } & VueClientLike
-    const vue = (mod.default ?? mod) as VueClientLike
-    if (typeof vue.createSSRApp !== 'function') return undefined
-    cached = vue
+    const mod: unknown = await import('vue')
+    if (!isVueClientLike(mod)) return undefined
+    cached = mod
     return cached
   } catch {
     // Optional peer not installed → the IR fallback owns the page.
