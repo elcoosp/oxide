@@ -44,7 +44,7 @@ async function loadReact(): Promise<{
     import('react-dom/client'),
   ])
   cachedReact = reactMod as unknown as typeof cachedReact
-  cachedClient = clientMod as unknown as ReactDomClientLike
+  cachedClient = clientMod
   return { client: cachedClient, react: cachedReact! }
 }
 
