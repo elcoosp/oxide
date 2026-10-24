@@ -27,3 +27,12 @@ test-results/
 tests/playwright/test-results/
 oxide-launch-content
 .DS_Store
+=== HEAD ===
+
+=== STEP 1: fix old hyphen names in .snap files ===
+
+=== STEP 2: clean test artifacts ===
+  removed .snap.new and crates/cli/.oxide/
+
+=== STEP 3: add crates/cli/.oxide to .gitignore if not present ===
+crates/cli/.oxide/
