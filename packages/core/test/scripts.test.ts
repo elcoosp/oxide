@@ -38,35 +38,45 @@ function fakeDoc() {
   return { doc, head }
 }
 
+/** Typed indexed access with a runtime bounds check. Throws a clear error
+ * (failing the test) instead of returning `T | undefined` — the honest way
+ * to satisfy `noUncheckedIndexedAccess` in tests whose fixtures are known
+ * non-empty. No casts, no `any`, no `!`, no `?? default`. */
+function mustEl<T>(arr: readonly T[], i: number): T {
+  const v = arr[i]
+  if (v === undefined) throw new Error(`mustEl: index ${i} out of bounds (len=${arr.length})`)
+  return v
+}
+
 test('scheduleScript("defer") injects a src script into head', () => {
   const { doc, head } = fakeDoc()
   let loaded = false
   scheduleScript('defer', { doc: doc as never, src: '/a.js', onLoad: () => { loaded = true } })
   assert.equal(head.length, 1)
-  assert.equal(head[0].src, '/a.js')
+  assert.equal(mustEl(head, 0).src, '/a.js')
   // `onLoad` is bound to the element's `load` event for a src script.
-  for (const fn of head[0].listeners['load'] ?? []) fn()
+  for (const fn of mustEl(head, 0).listeners['load'] ?? []) fn()
   assert.equal(loaded, true)
 })
 
 test('a module script carries type="module"', () => {
   const { doc, head } = fakeDoc()
   scheduleScript('defer', { doc: doc as never, src: '/m.js', module: true })
-  assert.equal(head[0].type, 'module')
+  assert.equal(mustEl(head, 0).type, 'module')
 })
 
 test('inline content becomes textContent, not a src', () => {
   const { doc, head } = fakeDoc()
   scheduleScript('defer', { doc: doc as never, content: 'console.log(1)' })
-  assert.equal(head[0].textContent, 'console.log(1)')
-  assert.equal(head[0].src, undefined)
+  assert.equal(mustEl(head, 0).textContent, 'console.log(1)')
+  assert.equal(mustEl(head, 0).src, undefined)
 })
 
 test('attrs are copied onto the injected element', () => {
   const { doc, head } = fakeDoc()
   scheduleScript('defer', { doc: doc as never, src: '/a.js', attrs: { 'data-x': 'y', crossorigin: 'anonymous' } })
-  assert.equal(head[0].attrs['data-x'], 'y')
-  assert.equal(head[0].attrs['crossorigin'], 'anonymous')
+  assert.equal(mustEl(head, 0).attrs['data-x'], 'y')
+  assert.equal(mustEl(head, 0).attrs['crossorigin'], 'anonymous')
 })
 
 test('scheduleScript is a no-op with no document (SSR)', () => {
@@ -147,7 +157,7 @@ test('loadScripts scans data-ox-script placeholders and schedules them', () => {
   ;(doc as unknown as { querySelectorAll: () => FakeEl[] }).querySelectorAll = () => [tag]
   loadScripts({ doc: doc as never })
   assert.equal(head.length, 1)
-  assert.equal(head[0].src, '/from-tag.js')
+  assert.equal(mustEl(head, 0).src, '/from-tag.js')
 })
 
 test('loadScripts decodes an inline base64 body', () => {
@@ -159,5 +169,5 @@ test('loadScripts decodes an inline base64 body', () => {
   tag.attrs['data-ox-inline'] = b64
   ;(doc as unknown as { querySelectorAll: () => FakeEl[] }).querySelectorAll = () => [tag]
   loadScripts({ doc: doc as never })
-  assert.equal(head[0].textContent, code)
+  assert.equal(mustEl(head, 0).textContent, code)
 })
