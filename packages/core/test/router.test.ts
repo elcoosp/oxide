@@ -51,7 +51,7 @@ function fakeDoc(els: Array<RouterLink & { matches(sel: string): boolean }> = []
       for (const fn of listeners.get(type) ?? []) fn(event)
     },
   }
-  return { doc: doc as unknown as RouterDoc, listeners, vtCalls, dispatch: doc.dispatch }
+  return { doc, listeners, vtCalls, dispatch: doc.dispatch }
 }
 
 class FakeHistory {
