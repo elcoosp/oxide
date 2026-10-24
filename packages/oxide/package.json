@@ -28,5 +28,8 @@
     "islands"
   ],
   "license": "MIT",
-  "sideEffects": false
+  "sideEffects": false,
+  "files": [
+    "src"
+  ]
 }

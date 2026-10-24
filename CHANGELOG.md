@@ -1,0 +1,1875 @@
+# Changelog
+
+All notable changes to Oxide are documented here. Generated from git
+history by [git-cliff](https://git-cliff.org); the format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
+adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+Oxide is pre-1.0: the API is not yet frozen, and releases before v1.0 may
+include breaking changes announced in the relevant section below.
+
+## [0.1.0] — 2026-10-24
+
+### Added
+
+- **adapters**: Implement the deploy targets, capability matrix and refusal rule (spec 18)
+- **adapters**: Add the tests module
+- **assets**: Implement the CSS pipeline, images, fonts, OG and content (spec 16, D5, D19)
+- **assets**: Add the content module
+- **assets**: Add the css module
+- **assets**: Add the images module
+- **assets**: Add the tests module
+- **bundler**: Implement the Rolldown integration, environments and manifests (spec 6.4, D3)
+- **bundler**: Add the minify module
+- **bundler**: Add the resolve module
+- **bundler**: Add the rolldown_backend module
+- **cache**: Implement the L0/L1/L2 tiers, tags and handlers (spec 11)
+- **cache**: Add the http module
+- **cache**: Add the single_flight module
+- **cache**: Add the tiers module
+- **cli**: Implement the clap entry and all spec 19 commands
+- **cli**: Add the main module
+- **cli**: Add the tests module
+- **compiler**: Implement the Oxc passes for directives, server-fn stubs, refresh and guards (spec 6.2-6.4, 9.3-9.4, D4)
+- **compiler**: Add the lexer module
+- **compiler**: Add the oxc_backend module
+- **config**: Implement the typed config, static extractor, layering and env loader (spec 14, D14)
+- **config**: Add the env_file module
+- **config**: Add the extract module
+- **config**: Add the layer module
+- **config**: Add the size module
+- **core-wasm**: Implement the edge subset: router, odf, head and cache keys (spec 2 D18, 18)
+- **core-wasm**: Add the tests module
+- **dev**: Implement the watcher, HMR, overlay and inspector (spec 13)
+- **dev**: Add the tests module
+- **diagnostics**: Implement the shared diagnostic format (spec 19.4)
+- **graph**: Implement the demand graph, CAS and remote cache trait (spec 5, D6)
+- **graph**: Add the cas module
+- **graph**: Add the demand module
+- **graph**: Add the trackers module
+- **jshost**: Implement the JsHost trait, NodeHost, V8Host, ops and pools (spec 4, D2)
+- **jshost**: Add the oxide-worker worker script
+- **odf**: Implement the ODF wire format encoder/decoder (spec 9.5, D11)
+- **odf**: Add the decode module
+- **odf**: Add the encode module
+- **odf**: Add the fixtures module
+- **odf**: Add the refs module
+- **odf**: Add the wire module
+- **plugin**: Implement the plugin host, JS bridge and WASM host (spec 15)
+- **render**: Implement the streaming pipeline, html injection and boundary protocol (spec 7.1, 10, D12)
+- **router**: Implement the route tree, matcher, typegen and rules engine (spec 8, D8, D13)
+- **router**: Add the archive module
+- **router**: Add the matcher module
+- **router**: Add the rules module
+- **router**: Add the scan module
+- **router**: Add the segment module
+- **router**: Add the typegen module
+- **server**: Implement the hyper pipeline, static assets, compression, TLS and rules (spec 12, 17, D7, D13)
+- **create-oxide**: Add the cli module
+- **oxide**: Add the package entry (server APIs, ODF JS decoder, client router, islands loader, test helper)
+- **oxide**: Add the client/defer-glue module
+- **oxide**: Add the client/enhance module
+- **oxide**: Add the client/index module
+- **oxide**: Add the client/islands module
+- **oxide**: Add the client/odf-decode module
+- **oxide**: Add the client/router module
+- **oxide**: Add the server/index module
+- **oxide**: Add the server/json module
+- **oxide**: Add the test module
+- **oxide**: Add the types module
+- **react**: Add the package entry (React adapter (spec 7))
+- **react**: Add the hydrate module
+- **react**: Add the ir module
+- **react**: Add the protocol module
+- **react**: Add the render module
+- **solid**: Add the package entry (Solid adapter (spec 7))
+- **solid**: Add the hydrate module
+- **solid**: Add the ir module
+- **solid**: Add the protocol module
+- **solid**: Add the render module
+- **svelte**: Add the package entry (Svelte adapter (spec 7))
+- **svelte**: Add the hydrate module
+- **svelte**: Add the ir module
+- **svelte**: Add the protocol module
+- **svelte**: Add the render module
+- **vue**: Add the package entry (Vue adapter (spec 7))
+- **vue**: Add the hydrate module
+- **vue**: Add the ir module
+- **vue**: Add the protocol module
+- **vue**: Add the render module
+- (assets) update the CSS pipeline, images, fonts, OG and content (spec 16, D5, D19)
+- (assets) add the font_metrics module
+- (assets) update the images module
+- (assets) add the lightningcss_backend module
+- (assets) add the og_backend module
+- (assets) update the tests module
+- (bundler) update the rolldown_backend module
+- (compiler) update the oxc_backend module
+- (graph) update the demand module
+- (plugin) update the plugin host, JS bridge and WASM host (spec 15)
+- (plugin) add the wasm module
+- (server) update the hyper pipeline, static assets, compression, TLS and rules (spec 12, 17, D7, D13)
+- **adapters**: Expand deploy target emission
+- **assets**: Content layer updates (spec 16.5)
+- **assets**: Css pipeline updates (spec 6.6)
+- **assets**: Register content and i18n modules
+- **bundler**: Wire prebundle step (spec 6.5)
+- **bundler**: Resolver updates
+- **cli**: Add mcp and schema subcommands (spec 19.3)
+- **compiler**: Register framework and generate_params modules
+- **config**: Layer updates
+- **config**: Register schema module
+- **dev**: Register dev_server module
+- **jshost**: Register snapshot, tooling, v8_ops modules
+- **jshost**: Extend worker with tooling module dispatch
+- **render**: Register ppr module
+- **router**: Register slot module
+- **server**: Register metrics and trace_context modules
+- **assets**: Add content collections (spec 16.5)
+- **assets**: Add ICU MessageFormat i18n (spec 16.4)
+- **bundler**: Add dependency prebundling (spec 6.5)
+- **cli**: Add MCP server (spec 19.3)
+- **compiler**: Add framework dispatch (spec 6.3)
+- **compiler**: Add generateParams extraction (spec 10.5)
+- **config**: Add JSON schema emission (spec 19.3)
+- **dev**: Add dev server with HTTPS, QR, proxy (spec 13.5)
+- **jshost**: Add app snapshot (spec 4.4)
+- **jshost**: Add tooling batch pool (spec 4.7)
+- **jshost**: Add tooling module dispatch (spec 4.7)
+- **jshost**: Add V8 ops infrastructure (spec 4.5)
+- **render**: Add partial prerendering shell split (spec 10.4)
+- **router**: Add slot routes (spec 8.5)
+- **server**: Add metrics and OTLP export (spec 20)
+- **server**: Add W3C trace context parsing (spec 20)
+- **react**: Declare optional peer + dev deps for real SSR
+- **react**: Add real react-dom/server SSR path (spec 7)
+- **solid**: Declare optional peer + dev deps for real SSR
+- **svelte**: Declare optional peer + dev deps for real SSR
+- **vue**: Declare optional peer + dev deps for real SSR
+- **solid**: Add real solid-js/web SSR path (spec 7)
+- **svelte**: Add real svelte/server SSR path (spec 7)
+- **vue**: Add real @vue/server-renderer SSR path (spec 7)
+- **react**: Expose ./real-adapter subpath export
+- **react**: Merge LAYOUT_HEAD with input.head and head(ctx) for real adapter (spec 16.3)
+- **solid**: Expose ./real-adapter subpath export
+- **svelte**: Expose ./real-adapter subpath export
+- **vue**: Expose ./real-adapter subpath export
+- **svelte**: Add createRealAdapter factory dispatching to svelte/server (spec 7)
+- **vue**: Add createRealAdapter factory dispatching to @vue/server-renderer (spec 7)
+- **react**: Add createAdapter factory + callable default (spec 14 config surface)
+- **solid**: Add createAdapter factory + callable default (spec 14 config surface)
+- **svelte**: Add createAdapter factory + callable default (spec 14 config surface)
+- **vue**: Add createAdapter factory + callable default (spec 14 config surface)
+- **jshost**: Register framework_host module
+- **jshost**: Add framework:load + framework:render ops (spec 7)
+- **jshost**: Add FrameworkHost loader + render dispatch (spec 7, 6.3)
+- **cli**: Add 'oxide config' subcommand loading the framework adapter (spec 7, 14)
+- **server**: Register page_renderer module
+- **server**: Add PageRenderer trait + neutral PageRenderInput (spec 7)
+- **server**: Impl Default for Pipeline + page_renderer field (spec 7)
+- **cli**: Extract build_dispatch + wire optional page_renderer (§7 dispatch hook)
+- **cli**: Wire framework renderer into cmd_dev (spec 7 dev SSR)
+- **cli**: Add AdapterPageRenderer shim bridging jshost → server PageRenderer (spec 7)
+- **cli**: Wire framework renderer into cmd_serve (production 'oxide start'/'preview' SSR, spec 7)
+- **cli**: Wire framework renderer into cmd_build (spec 7 build-time SSR)
+- **cli**: Register loader_shim module
+- **jshost**: Register loader_host module
+- **jshost**: Add loader:run op to worker (spec 9.1)
+- **server**: Register loader module
+- **cli**: Add AdapterLoader shim bridging jshost → server LoaderRunner (spec 9.1)
+- **jshost**: Add LoaderHost dispatching loader:run (spec 9.1)
+- **server**: Add LoaderRunner trait + LoaderRunInput/LoaderOutput (spec 9.1)
+- **cli**: Add FrameworkStack bundling renderer + loader (spec 7, 9.1)
+- **cli**: Run loader before renderer in build_dispatch (spec 9.1, 7)
+- **jshost**: Emit framework:render as chunked frames (spec 4.2 protocol)
+- **jshost**: FrameworkHost::invalidate() (spec 13.3)
+- **jshost**: Versioned imports + framework:invalidate op (spec 13.3)
+- **cli**: Keep shared worker pool in FrameworkStack for HMR invalidate
+- **cli**: Cmd_dev invalidates framework modules on file change (spec 13.3)
+- **cli**: Cmd_build runs page.server.ts loaders during prerender (spec 9.1)
+- **jshost**: FrameworkHost::render_streaming — raw CallStream passthrough (spec 4.2)
+- **oxide**: Export defineConfig from the runtime entry
+- **oxide**: Add defineConfig helper + OxideUserConfig type (spec 14.1)
+- **jshost**: TSX loader via --import register() + smoke-app renders its own pages
+- Streaming render trait across the framework adapter stack
+- **cli**: 'oxide render' runs the loader + smoke-app uses loader data
+- **jshost**: Worker preserves adapter chunk boundaries on the wire
+- **server**: OxideResponse streaming body + to_hyper_response
+- **cli**: Build_dispatch streams renderer output to hyper
+- **cli**: Build_dispatch streams renderer output to hyper
+- **jshost**: Generate-params:run worker op + LoaderHost::generate_params
+- **cli**: Cmd_build evaluates runtime generateParams via worker
+- **adapters**: Copy server bundle to deploy + target-relative imports
+- **bundler**: Lower TS/JSX via OxcTransformer before emitting chunks
+- **bundler,cli**: Thread per-build server-fn secret through BundleOptions
+- **adapters**: Deno Deploy config + Cloudflare Pages target
+- **bundler**: Refuse .vue / .svelte loudly instead of emitting garbage
+- **cli,bundler,jshost**: Real Vue/Svelte precompile pass via the tooling pool
+- **jshost**: Tsx-loader handles .vue and .svelte in dev/serve/render
+- **adapters**: Vercel `functions` layout via Target::VercelFunctions
+- **cli,bundler**: RolldownBundler emits real sourcemaps; use it for TS/JSX
+- **config,jshost,cli**: Selectable JS backend via server.backend
+- **bundler,cli**: Rolldown plugin serves precompiled SFCs; cmd_build always uses Rolldown
+- **islands**: End-to-end island pipeline — <Island>, boot chunk, injection
+- **islands**: Real client hydration via react-dom/client + serve dist/client
+- **islands**: Real React hydration works end-to-end in a browser
+- Rust-native Solid JSX compilation, four framework fixtures, §10.1 mode inference
+- **server,cli,assets**: Native /_oxide/image endpoint (§16.1)
+- **server**: Gate remote image sources against remotePatterns + SSRF list
+- **cli,config,assets**: Emit sitemap.xml + robots.txt at build (§16.3)
+- **compiler,server,oxide**: Server-function route + client caller (§9.4)
+- **jshost,cli,oxide**: Server-fn dispatcher end-to-end (worker op + host + CLI wiring)
+- **bundler,compiler,cli**: Server functions work end-to-end
+- **oxide**: Install the `__oxide_cache` global for 'use cache' (§9.3)
+- **compiler**: Emit a tag thunk for a non-literal `cacheTag(…)` (§9.3)
+- **oxide**: Resolve a `cacheTag` thunk per call (§9.3)
+- **compiler**: `infer_render_mode`, an AST pass for §10.1
+- **cli**: Refine render modes with the AST inference in `cmd_build`
+- **cli**: `oxide routes` shows the AST-inferred mode
+- **bundler**: `TransformHook` + `BundleOptions.transform_hook` (§15.1)
+- **bundler**: Run the plugin transform hook; harden `should_transform`
+- **cli**: Load a WASM plugin from config and wire its transform (§15.1)
+- **server**: Remote image fetch (§16.1) — validation was done, the fetch was not
+- **jshost**: Worker→host `op_request` protocol + cache dispatch (§9.3)
+- **jshost-worker**: Send `op_request` frames and await `op_response` (§9.3)
+- **oxide**: `cache()` consults the Rust tier through the host bridge (§9.3)
+- **jshost**: NodeHost carries a cache handler to its pool (§9.3)
+- **cli**: Attach a `TieredCache` to the worker pool (§9.3 / §11)
+- **cache**: `impl CacheHandler for TieredCache` (§11.2)
+- **jshost**: `compile_module` op + `NodeHost` cache threading (§9.3 / §6.2)
+- **jshost-worker**: Compile the loader's module graph before import (§9.3)
+- **config**: `manifest` block for a web app manifest (§16.3)
+- **cli**: Emit `manifest.webmanifest` at build (§16.3)
+- **benchmarks**: Run.sh — the §21 harness
+- **bundler**: A CssTransformHook the bundler calls per stylesheet (§6.6)
+- **bundler**: A CssPlugin so RolldownBundler can emit stylesheets (§6.6)
+- **cli**: Wire Lightning CSS into the build via build_css_transform_hook (§6.6)
+- **cli**: §5.1 project fingerprint for build early cutoff
+- **cli**: Skip an unchanged oxide build (§5.1 early cutoff)
+- **server**: Export the session codec (§16.6)
+- **server**: Encrypted, rotatable session cookies (§16.6)
+- **server**: LoaderOutput carries set-cookies + headers (§9.2/§16.6)
+- **cli**: Parse loader setCookies + headers from the worker (§9.2)
+- **jshost-worker**: Build the full LoadEvent — cookies, setHeaders, parent (§9.2/§16.6)
+- **cli**: Apply loader set-cookies + headers to the response (§16.6)
+- **config**: FontsConfig carries families for §16.2 bundling
+- **cli**: Bundle font families at build — dist/fonts + fonts.css (§16.2)
+- **cli**: §11 L0 response cache with nonce substitution
+- **cli**: Serve static routes from the L0 cache (§11.1)
+- **jshost-worker**: An action:run op for form actions (§9.3)
+- **jshost**: ActionHost runs a route action over the pool (§9.3)
+- **server**: ActionDispatcher seam + run_action, honour its status (§9.3)
+- **cli**: Run form actions through the render pool (§9.3)
+- **cli**: Lint snapshot-hostile top-level side effects at build (§4.4)
+- **config**: Build.ssrExternals for a slim Node server bundle (§21)
+- **cli**: Apply build.ssrExternals to the SSR bundle (§21)
+- **jshost**: A fully-fledged V8 host — FsModuleLoader + real async dispatch (§4.2)
+- **jshost**: §4.6 tier-2 Node-compat prelude so V8 runs a real bundle
+- **jshost**: Snapshot_build_bundle — a V8 blob from a multi-file SSR bundle (§4.4)
+- **jshost**: V8Host restores a startup snapshot in every worker (§4.4)
+- **cli**: Build writes a V8 snapshot; start loads it for backend=v8 (§4.4)
+- **jshost**: A transpiling V8 module loader — TS/JSX + node_modules resolution (§4.2)
+- **jshost**: V8 loader shims node:* builtins + a snapshot loader (§4.6)
+- **jshost**: §4.6 tier-1 Web globals + framework:* routing in V8 dispatch
+- **cli**: Point the V8 renderer at the bundled config (§4.2)
+- **cli**: Bundle the config graph for the V8 backend (§4.2)
+- **bundler**: Inline_dynamic_imports option for a self-contained bundle (§4.2)
+- **bundler**: Honour inline_dynamic_imports via code_splitting (§4.2)
+- **cli**: Always bundle the config graph for V8 (§4.2)
+- **cli**: V8 loads the bundled config; Node loads the raw .ts (§4.2)
+- **cli**: Precompile before the config bundle; bundle it for V8 (§4.2)
+- **cli**: Node tooling pool for SFC compilers; lazy config path (§4.7)
+- **jshost**: Op_oxide_random (real OS CSPRNG) + op_oxide_sleep (§4.6)
+- **jshost**: Shared runtime extension + real Web globals, no weak crypto (§4.6)
+- **server**: Web-vital aggregation in the metrics registry (§16.6/§20)
+- **server**: POST /_oxide/vitals beacon endpoint (§16.6/§20)
+- **oxide**: ReportWebVitals client hook — PerformanceObserver + sendBeacon (§16.6)
+- **cli**: The boot entry installs reportWebVitals (§16.6)
+- **oxide**: <Script> loading strategies — defer/idle/worker/afterInteractive/lazy (§16.6)
+- **oxide**: The boot runtime schedules server <Script> placeholders (§16.6)
+- **render**: <Script> placeholder emitter — defer/idle/worker/afterInteractive/lazy (§16.6)
+- **bench**: Cold-start ladder — 5 runs/fixture, min/median (PH0-02)
+- **bench**: L0 hit-ratio + p50/p99 latency harness (PH0-02)
+- **bench**: HMR invalidate->200 latency harness (PH0-02)
+- **bench**: Run.sh sub-command dispatcher for bench:hmr/cache/cold (PH0-02)
+- **bench**: CI regression gate — >5% regression fails (§21, PH0-03)
+- **cli**: FrameworkStack exposes its shared cache tier (BUG-02)
+- **jshost**: V8 cache ops (get/set/tag) backed by a thread-local handler (BUG-02)
+- **jshost**: V8Host::with_cache_handler + bootstrap oxide.cache* (§9.3/BUG-02)
+- **cli**: The V8 backend gets the shared cache tier (BUG-02)
+- **cli**: Per-project deterministic build secret in .oxide/secret (BUG-05)
+- **cli**: Oxide secrets rotate + doctor secret check (BUG-05)
+- **cli,bundler**: Propagate pass errors + rolldown warnings, persist build diagnostics (BUG-06)
+- **jshost,cli**: Versioned AppSnapshot envelope + validation, drop dead bundle walk (BUG-12)
+- **bundler**: BundleOptions.resolve_conditions → rolldown resolve (BUG-SOLID)
+- **bundler**: Map resolve_conditions to ResolveOptions.condition_names + tests (BUG-SOLID)
+- **jshost**: V8 dispatch parity for actions/server-fns/generate-params/invalidate (BUG-04)
+- **router**: RulesEngine owns token buckets; RuleOutcome::RateLimited carries retry_after (SEC-01)
+- **router**: Consult the token bucket in evaluate; bounded bucket map (SEC-01)
+- **server**: Rate-limit rules emit 429 + Retry-After keyed by client (SEC-01)
+- **config**: SecurityConfig host/ssrf/proxy/cookie-key lists (SEC-05)
+- **server**: Trusted-proxy + X-Forwarded-* resolution helpers (SEC-05)
+- **server**: Trusted-proxy + X-Forwarded-* resolution helpers (SEC-05)
+- **cli**: Default image-signing secret from .oxide/secret; run the secrets guard (SEC-08)
+- **bundler**: Client-secrets guard — CMP-SECRET on process.env.* in client bundle (SEC-08)
+- **server**: Dev inspector token guard + dev host check (SEC-09)
+- **cli**: Mint + print the dev inspector token, expose it on StartedServer (SEC-09)
+- **cli**: /__data ODF endpoint + embed ODF loader payload in prerender (PERF-01)
+- **jshost**: Implement Op::Serialize — JSON value to ODF bytes (PERF-01)
+- **oxide**: Sync JSON-subset ODF encoder, byte-identical to Rust (PERF-01)
+- **adapters**: Island props ride ODF via encodePropsB64 (PERF-01)
+- **server**: Dynamic compression on the response path (PERF-06)
+- **server**: Real Server-Timing total on the dispatch path (PERF-06)
+- **server**: Real Server-Timing total on the dispatch path (PERF-06)
+- **jshost**: Route affinity — CallInput.route + route_affinity + choose_worker (PERF-02)
+- **jshost**: Thread the route into the loader/render calls (PERF-02)
+- **cli**: L0 SWR stale-serve + ETag/304 on hits (PERF-04)
+- **cli**: Single-flight coalescing on cacheable L0 misses (PERF-04)
+- **cli**: L0Cache::key_for static key helper (PERF-04)
+- **cli**: Build seeding — write L0 seed manifest, seed at boot (PERF-04)
+- **cli**: Build seeding — write L0 seed manifest, seed at boot (PERF-04)
+- PERF-05 fetch op (FetchHandler + ssrf_safe_fetch + memo + CLI wiring)
+- **bundler**: Record per-chunk module ids in Chunk.modules (PERF-09)
+- **bundler**: Route-true js_bytes — sum the reachable chunk graph (PERF-09)
+- **bundler,cli**: RouteBundle.modules + oxide why uses them (PERF-09)
+- **dev**: Notify-backed watcher — hash only touched paths (PERF-11)
+- **cli**: The dev loop uses the notify watcher (PERF-11)
+- **jshost**: Fetch() shim in the worker + V8 fetch op (PERF-05)
+- **cli**: Real per-stage Server-Timing on render; harden the start test (PERF-06)
+- **jshost**: Binary frame kind — raw chunk bytes without base64 (PERF-12)
+- **jshost**: Stream_write/response_head/request_body_read ops + V8 streamWrite (PERF-03)
+- **cli**: DemandGraph-driven dev invalidation (PERF-08)
+- **jshost**: V8 render streams via stream_write with backpressure (PERF-03)
+- **cli**: Idle pre-warm of page routes in dev (PERF-11)
+- **server,cli**: Pool gauges in metrics (PERF-02)
+- **cli**: Streaming-preserving L0 fill — tee body, store on end (PERF-04)
+- **cli,bundler**: §6.4 forbidden-import guard on the build path (SPEC-05)
+- **cli**: §10.2.5 mid-stream error recovery boundary on live streams (SPEC-11)
+- **core-wasm**: Real blake3 edge cache keys, not an FNV stub (SPEC-22)
+- **cli**: Enforce routeJs AND clientJs budgets independently (SPEC-25)
+- **server,cli**: I18n locale routing — prefix redirect, Content-Language, loader locale (SPEC-10)
+- **cli**: Mimalloc as the global allocator (SPEC-13)
+- **server,cli**: JSON logs, redacted request lines, stage spans (SPEC-24)
+- **config**: Monorepo workspace detection + workspace-relative extends (SPEC-16)
+- **cli**: Dev watcher watches linked workspace packages; harden inspector test (SPEC-16)
+- **graph**: HTTP remote cache driver (SPEC-04)
+- **oxide**: HMR client runtime — ws reconnect, css/data/module dispatch, overlay (SPEC-14)
+- **dev,server,cli**: HMR end-to-end — ws endpoint, classify, publish from the dev loop (SPEC-14)
+- **jshost,cli**: Loud node: shims + JSH-V8KIND when a V8 build needs Node (SPEC-02)
+- **cli**: PWA service worker + registration from the client manifest (SPEC-21)
+- **cache**: HTTP CacheHandler with tag invalidation pub/sub (SPEC-12)
+- **router,cli**: Typegen RouteData/PageProps + build hook (SPEC-09)
+- **cli,jshost**: JS plugin bridge — plugin:load/plugin:call, transform hook (SPEC-17)
+- **types**: RenderInput.layouts — the layout chain the adapter nests the page inside (§8.2)
+- **server**: Nest RenderInput.layouts so nested layouts render (§8.2)
+- **server,jshost**: Carry the layout chain on PageRenderInput / FrameworkRenderInput (§8.2)
+- **cli**: Populate PageRenderInput.layouts from MatchInfo.layout_chain at the live render site (§8.2)
+- **cli**: Prerender path threads the layout chain to all 3 write_prerender call sites (§8.2)
+- **cli**: Unmatched URLs render the project's not-found.tsx with a 404 status (§10.2 step 5)
+- **server,jshost**: Carry error.tsx route id on the render wire (§10.2 step 5)
+- **server**: Adapter renders error.tsx on SSR throw when errorRoute is set (§10.2 step 5)
+- **cli**: Resolve nearest error.tsx ancestor and pass it as error_route_id (§10.2 step 5)
+- **cli**: Prerender path also resolves error.tsx so a build-time throw renders the error page (§10.2 step 5)
+- **jshost-worker**: Endpoint:run op — dispatch route.ts by HTTP method (§8.1, §10.2 step 7)
+- **jshost**: EndpointHost — worker bridge for route.ts dispatch (§8.1, §10.2 step 7)
+- **server**: EndpointDispatcher trait — the pipeline seam for route.ts (§8.1, §10.2 step 7)
+- **jshost-worker**: Middleware:run op — per-directory JS middleware (§8.1, §8.5)
+- **jshost**: MiddlewareHost — worker bridge for middleware.ts (§8.1, §8.5)
+- **server,jshost**: Thread locals through LoaderRunInput → worker loader payload (§8.1, §9.1)
+- **jshost-worker**: Loader:run event.locals carries middleware-injected state (§8.1, §9.1)
+- **server**: MiddlewareDispatcher trait — the pipeline seam for middleware.ts (§8.1, §8.5)
+- **cli**: Run middleware before the loader/render phase, thread locals (§8.1, §8.5)
+- **server**: Re-export MiddlewareDispatcher + MiddlewareRunResult (§8.1, §8.5)
+- **server**: Thread middleware locals into ActionDispatcher + EndpointDispatcher + run_action (§8.1, §9.1)
+- **cli,jshost**: Middleware locals reach action + route.ts handlers; middleware runs before actions (§8.1, §9.1)
+- **vue,svelte,solid**: Real island hydration via createSSRApp / mount(hydrate) / hydrate (§10.3)
+- **vue,svelte,solid**: ClientAdapter overrides hydrateIsland with the real runtime (§10.3)
+- **client-router**: OnNavigateStart/onNavigateEnd hooks + FrameworkAdapter.renderLoading (§8.4 loading boundaries)
+- **client**: BootWithRouter wires loading boundaries through onNavigateStart/End (§8.4)
+- **cli**: Bundle loading.tsx and emit a URL-prefix loading map for bootWithRouter (§8.4)
+- **react,vue,svelte,solid**: RenderLoading — per-route loading components into a client overlay (§8.4)
+- **react,vue,svelte,solid**: ClientAdapter.renderLoading wired to the real runtime (§8.4)
+- **jshost,server,cli**: Loader awaits deferred promises and returns resolved values (§7.1, §9.2)
+- **cli**: Inject resolved defer() values as a nonce'd script, even without a boot module (§7.1, §9.2)
+- **client-router**: Manifest-driven chunk preloading on prefetch + goto (§6.4)
+- **client-router,cli**: Thread the manifest from build → boot → router for chunk preloading (§6.4)
+- **react**: RenderReactToStream — real React 19 renderToReadableStream with a renderToString fallback (§7.1)
+- **server**: RealAdapterConfig.renderStream — streaming SSR body with a renderBody fallback (§7.1)
+- **react**: Wire renderReactToStream into renderStream — real streaming SSR (§7.1)
+- **vue,solid**: RenderToStream — real streaming SSR with a single-chunk fallback (§7.1)
+- **client**: Defer-glue resolves slots from the server's deferred script (§7.1, §9.2)
+- **vue**: Wire renderVueToStream into renderStream — real streaming SSR (§7.1)
+- **solid**: Wire renderSolidToStream into renderStream — real streaming SSR (§7.1)
+- **cache,cli,config**: Wire cache.handler — HTTP remote tier from config (§11.2, SPEC-12)
+- **cache**: Encode 'use cache' values as ODF so rich types survive (§9.3, §9.5)
+- **jshost**: Cache ops carry raw ODF bytes (body_b64) so rich types round-trip (§9.5)
+- **cli**: Inject a self-contained HMR client into dev responses (§13.3)
+- **cli,server**: Layout loads run before the page load and thread parent_data via parent() (§9.2)
+- **cli**: Auto-register the service worker from the boot entry when a PWA manifest is configured (§16.6)
+- **jshost-worker**: Socket:run op — per-phase WebSocket handlers (§9.6)
+- **router**: Scan socket.ts as a RouteKind::Socket (§9.6)
+- **cli**: Build the SocketService from socket.ts routes + wire it into the Pipeline (§9.6)
+- **server**: Ws_socket_upgrade — pump user socket phases over RFC6455 (§9.6)
+- **server**: Upgrade WebSocket requests matching a socket.ts route to ws_socket_upgrade (§9.6)
+- **jshost**: TransformHandler plumbing — transform_handler on V8Host/NodeHost/Worker (§6.2)
+- **jshost**: Apply the plugin transform hook in compile_module so prerender transforms run (§6.2, §15)
+- **cli,jshost**: NodeHost transform handler + full test-fixture sync for the prerender transform (§6.2)
+- **jshost-worker**: Endpoint:run streams a ReadableStream body (SSE/downloads) (§9.6)
+- **jshost**: EndpointOutcome.stream — streaming endpoint bodies reach the pipeline (§9.6)
+- **config,server**: Build.remoteCache config + EndpointRunResult.stream for SSE (§5.4, §9.6)
+- **cli**: Attach build.remoteCache to the precompile cache at the build site (§5.4)
+- **cli**: Precompile cache consults + writes back through the remote on every miss/hit (§5.4)
+- **server**: HTTP/3 listener (quinn + h3) — h3_config_from_pem + serve_http3 (§12.1)
+- **cli,server**: Spawn the HTTP/3 listener when server.http3 + TLS are configured (§12.1)
+- **dev**: WaterfallRecorder + RouteTableInspector.waterfalls — per-request flamegraph data (§20)
+- **client**: Route-manifest — manifest-driven route→component resolution (§6.4, §8.4)
+- **react**: Real-client — react-dom/client page root for manifest-driven update (§8.4, §10.3)
+- **vue**: Real-client — createSSRApp page root for manifest-driven update (§8.4, §10.3)
+- **svelte**: Real-client — mount(hydrate) page root for manifest-driven update (§8.4, §10.3)
+- **solid**: Real-client — hydrate() page root for manifest-driven update (§8.4, §10.3)
+- **react**: Hydrate() resolves the real page component via the route manifest (§8.4)
+- **vue**: Hydrate() resolves the real page component via the route manifest (§8.4)
+- **svelte**: Hydrate() resolves the real page component via the route manifest (§8.4)
+- **solid**: Hydrate() resolves the real page component via the route manifest (§8.4)
+- **client**: BootWithRouter registers the route manifest + un-gates boot (§8.4, §6.4)
+- **client**: Re-export route-manifest from the client entry
+- **types**: ClientManifest carries the per-route entry chunk + preload (§6.4)
+- **client**: Hmr client connects to /_oxide/hmr and applies module + css updates (§13.3)
+- **server**: Real-ssr renders non-React layout descriptors (renderStream path) (§8.2)
+- **vue**: RenderToStream + layout descriptor support in real-ssr (§7.1, §8.2)
+- **svelte**: Real-ssr layout descriptor support + streaming fallback (§7.1, §8.2)
+- **solid**: RenderToStream + layout descriptor support in real-ssr (§7.1, §8.2)
+- **server**: LoaderRunInput carries parent_data + locale (§9.1, §9.2)
+- **server**: PageRenderInput.errorRoute + stream surface for the 500 contract (§10.2 step 5)
+- **server**: Metrics pre-registration + per-route timing (§20)
+- **server**: Session codec refresh (§16.6)
+- **server**: W3C trace-context propagation into user code (§20)
+- **cli**: Live window.__oxide on dynamic pages, /__data parity, middleware headers + real timings, cache.handler un-shadowed (§8.4, §11.2, §12.1)
+- **cli**: L0 cache key + nonce sentinel path refresh (§11.1)
+- **cli**: Framework stack wires the merged V8 loader + transform handler (§4.2, §6.2)
+- **cli**: Build cache remote read/write-through (§5.4)
+- **cli**: Precompile pass consults the remote cache + parallel-safe path (§5.4, §6.3)
+- **cli**: Precompile cache remote plumbing (§5.4)
+- **cli**: Mcp server route/state refresh (§19.3)
+- **router**: Typegen emits [param] loading keys + per-route LoaderData (§8.3, §8.4)
+- **router**: RouteTree surface refresh for the P0/P1 pipeline (§8.2)
+- **router**: Matcher parity refresh (§8.2)
+- **router**: Archive roundtrip parity (§8.2)
+- **router**: Rules engine parity (§8.5)
+- **router**: Scan parity (§8.1)
+- **router**: Slot identity reserved for @slot routes (§8.5)
+- **jshost**: Merged V8 loader fork + cache/socket/transform op surface (§4.2, §6.2)
+- **jshost**: V8 module loader parity (§4.2)
+- **jshost**: Framework host parity (§7)
+- **jshost**: Framework renderer parity (§7)
+- **jshost**: Snapshot surface refresh (§4.4)
+- **jshost**: Tooling op surface refresh (§4.7)
+- **jshost**: Tooling pool parity (§4.7)
+- **jshost-worker**: Worker op surface parity for the P0/P1 pipeline (§4.2)
+- **compiler**: Oxc backend surface refresh (§6.2)
+- **compiler**: Oxc backend parity (§6.2)
+- **compiler**: Framework transform routing (§6.3)
+- **compiler**: GenerateParams extraction parity (§10.5)
+- **compiler**: Lexer parity (§6.2)
+- **bundler**: Manifest + chunk surface refresh (§6.4)
+- **bundler**: Rolldown backend parity (§6.4)
+- **bundler**: Prebundle parity (§6.5)
+- **bundler**: Resolver parity (§6.2)
+- **assets**: Asset pipeline surface refresh (§16)
+- **assets**: Content collection parity (§16.5)
+- **assets**: Typed content collections (§16.5)
+- **assets**: I18n negotiation parity (§16.4)
+- **assets**: Font metrics parity (§16.2)
+- **assets**: Image backend parity (§16.1)
+- **assets**: OG backend parity (§16.3)
+- **assets**: Lightningcss backend parity (§6.6)
+- **adapters**: Deploy targets — node/cloudflare/lambda/vercel/netlify/deno/bun emit + capability matrix (§18)
+- **cache**: CacheHandler surface refresh for the remote + tiered path (§11.2)
+- **cache**: Tiered cache write-through + tag index refresh (§11.2, §11.3)
+- **cache**: HTTP remote handler parity (§11.2, SPEC-12)
+- **config**: Schema surface — build.remoteCache, cache.handler, http3 (§14)
+- **config**: JSON schema parity (§14.2)
+- **config**: Static extractor parity (§14.2)
+- **config**: Config layering parity (§14.2)
+- **config**: Size parsing parity (§14.2)
+- **core-wasm**: Edge subset parity — router/odf/head/cache keys (§2 D18)
+- **dev**: Inspector state + waterfall recorder refresh (§13.4, §20)
+- **dev**: Dev server surface parity (§13.1)
+- **graph**: CAS + remote cache surface refresh (§5.4)
+- **graph**: CAS key surface parity (§5.4)
+- **odf**: Encoder parity (§9.5)
+- **odf**: Decoder parity (§9.5)
+- **odf**: Reference table parity (§9.5)
+- **odf**: Wire tags parity (§9.5)
+- **plugin**: Plugin host surface refresh (§15.1)
+- **plugin**: WASM plugin host parity (§15.1)
+- **render**: Streaming pipeline + injection surface refresh (§7.1, §10.2)
+- **render**: PPR shell split parity (§10.4)
+- **config**: Re-export extract_public so the §22 fuzz target can drive it
+- **odf**: TS encoder covers Date/BigInt/Map/Set/URL/RegExp/typed-arrays, byte-parity with Rust (§9.5)
+- **jshost**: V8 prelude defines __oxide_op_request so 'use cache' reaches the cache tier (§9.3)
+- **cli**: A fresh oxide dev bundles the client once so hydration/router/loading work (§13.1, P0-7)
+- **react**: Update() resolves /__data deferred values on navigation (§7.1, §9.2)
+- **vue**: Update() resolves /__data deferred values on navigation (§7.1, §9.2)
+- **svelte**: Update() resolves /__data deferred values on navigation (§7.1, §9.2)
+- **solid**: Update() resolves /__data deferred values on navigation (§7.1, §9.2)
+- **config**: Spec-canonical cache.l0.maxSize, complete schema keys, fix i18n.strategy enum (§14.1, §14.2)
+- **cache**: L0 Vary fingerprint covers the configured cache.l0.vary headers (§11.2, §14.1)
+- **server,cli**: /_oxide/og renders Open Graph PNGs through a trait seam (§16.3)
+- **dev,cli**: The inspector waterfall records live per-request stage timings (§20)
+- **trace**: Propagate W3C traceparent into outgoing fetch on the Node backend (§20)
+- **session**: Wire SessionCodec from security.sessionKeys into locals.session (§16.6)
+- **http3**: Advertise Alt-Svc h3 when the QUIC listener is enabled (§12.1)
+- **core-wasm**: Expose decode_odf for the edge build (§9.5, D18)
+- **cli**: Oxide check runs tsgo + oxlint when present, loud SKIPPED otherwise (§19.1)
+- **render**: Deferred boundaries stream as each settles, not in declaration order (§7.1)
+- **router**: Add RouteEntry.needs_parent field for §9.2 parallel layout loads
+- **cli**: Run last layout + page load in parallel when needs_parent=false (§9.2)
+- **cli**: Prerender error-status carried through L0 seed manifest (§10.2 step 5)
+- **cli**: Middleware chain runs outer→inner and threads locals (§8.5)
+- **jshost**: Expose parsed searchParams on load(event)/action(event) (§8.3, §9.1)
+- **cache**: Redis and S3 L2 cache handlers (feature-gated §11.2)
+- **cli**: Attach Redis/S3 L2 drivers in build_framework_stack; retire redis/s3 no-op (§11.2)
+- **jshost**: Wire V8 compile_module op through transform_handler (§6.2/§15)
+- **playwright**: Real-browser E2E over oxide start; fix 6 product bugs found while running them
+- **graph**: §5 B/C/D/E — Input::Resolver+PluginOptions, rkyv artifact envelope, writeBranches gate + S3 remote, lockfile dev invalidation
+- **cache**: §5D — writeBranches remote gate + GC after build + `oxide cache gc` subcommand
+- **dx**: §19-C routes CACHE + analyze SHARE% + §15-F compat doc + §16-E OG test
+- **platform**: §16-F SVG ?react + §16-A srcset helper
+- §19-E code-frame + §16-F real SVG ?react build wiring
+- **starters**: §19-F shape-specific extra routes
+- **plugins**: §15-A JS plugin chain — load, validate-at-load, call
+- §16-G session roundtrip + §19-D MCP oxide_state
+- **bundler**: §15-B resolve_hook + load_hook
+- **plugins**: §15-C dev-path transforms — close the dev≠build gap
+- **plugins**: §15-D native plugin registry
+- **i18n**: §16-D catalog loader + messages.d.ts typegen
+- §16-D wire i18n typegen into build + §16-A img?w= variant modules
+- **mdx**: Section 16-C MDX compile via tooling pool
+- **dx**: §19-B real oxide add + real oxide audit
+- **i18n**: §16-D locale-aware typegen href
+- **fonts**: §16-B subset pass + documented deviations
+- **graph**: §5-A conservative landing — build_graph module records a DemandGraph over a build's inputs
+- **graph**: §5-A wire build_graph into cmd_build + surface stats in oxide analyze
+- **modules**: §15-E load-side skeleton — resolve modules and inject their routes
+- **modules**: §15-E wire module route injection into scan_routes (build/dev/routes/analyze/check)
+- **modules**: §15-E acceptance — module route renders; namespaced segments under /modules/<name>
+- **modules**: §15-E wire module transform hook into build_js_plugin_hook
+- **modules**: §15-E add reports merged vs deferred contributions + MOD-ADAPTER check
+- **mcp**: §19-D oxide_graph reads the last build's DemandGraph snapshot
+- **cache**: HMAC entry sealing (new module)
+- **cache**: Entry wire encode/decode (new module)
+- **cache**: CacheHandler::get_arc — P-03 zero-copy hot path
+- **cache**: Redis handler — redacted URL in errors + get_arc
+- **cache**: S3 handler — redacted endpoint + get_arc
+- **cache**: FlightOwnerGuard — S-15 cleanup on every exit
+- **cache**: P-03 get_arc on TieredCache
+- **config**: OgConfig { enabled } + EndpointToggle — S-09
+- **config**: Layer recognizes the 'og' key
+- **config**: JSON Schema for the endpoint toggles
+- **router**: Archive adjustments for the matcher
+- **router**: Public surface for the matcher additions
+- **router**: Matcher refinements
+- **router**: Rule-evaluation updates
+- **server**: S-09 OG opt-in + S-20 rewrite-hop + P-12 asset cache
+- **jshost**: Worker updates for the new server contract
+- **oxide**: BytesToBase64 helper (new export)
+- **oxide**: ODF typed values — BigInt, Date, Map, Set, URL, RegExp, typed arrays
+- **oxide**: Server entry aligned with the codec changes
+- **graph**: §5-A full incremental — per-route prerender records
+- **cli**: §19-B migrate codemods (new module)
+- **cli**: §5-A incremental wiring + §19-B cmd_migrate + §15-E hook wiring
+- **graph**: §5-C put_sealed / get_sealed — CAS wraps artifacts in the rkyv envelope
+- **cli**: §5-C precompile cache uses the sealed artifact path
+- **cli**: §5-E lockfile invalidation + §15-B renderChunk/generateBundle/transformHtml
+- **bundler**: §15-B RenderChunkHook / GenerateBundleHook / TransformHtmlHook
+- **bundler**: Run renderChunk + generateBundle on emitted chunks
+- **react**: <Image> component — §16-A
+- **assets**: Content.d.ts typegen — §16-C
+- **cli**: Emit content.d.ts during build — §16-C
+- **cli**: Emit per-locale message catalogs during build — §16-D
+- **oxide**: Client message catalog loader — §16-D
+- **vue**: <Image> component — §16-A
+- **solid**: <Image> component — §16-A
+- **svelte**: <Image> component — §16-A
+- **cli**: Wire 9 of 13 remaining plugin hooks
+- **cli**: Oxide analyze prints the top modules by reachable bytes — §19-C
+- **compiler**: Parse errors carry a location + code frame (§19-E)
+- **bundler**: Keep a failed pass's full diagnostic (§19-E)
+- **cli**: Per-route message subsets (16-D)
+- **oxide**: Client loader prefers the per-route subset (16-D)
+- **cli**: Per-env bundle fingerprints (5-A)
+- **cli**: Skip an unchanged env's bundle (5-A)
+- **jshost**: Side-effect lint reports a 1-based line (19-E)
+- **cli**: Code frames on the remaining diagnostic families (19-E)
+- **graph**: Record per-route chunk hashes (5-A)
+- **cache**: Strict MAC sealing by default (WP-A1)
+- **cache**: Redis honors strict MAC sealing (WP-A1)
+- **cache**: S3 honors strict MAC sealing + redacts the bucket (WP-A1, A4)
+- **server**: OG rate limit, asset-cache TTL, ssrf header allowlist (WP-A3/A5/A6)
+- **jshost**: Deferred settles stream per-promise (WP-B1/B2)
+- **loader**: Run_streaming API for per-settle defer delivery (WP-B2 pt.1)
+- **core-wasm**: Wasm-bindgen exports for the edge Worker (B-01)
+- **adapters**: Prefer the wasm edge export, fall back to JS (B-02)
+- **server**: Skip already-run middleware on a rewrite (B-22)
+- **jshost**: Expose `searchParams` on the loader event
+- **dev**: Render recorded request waterfalls (B-17)
+- **oxide**: ODF Error / Ref / Deferred tags
+- **cli**: Deferred settles flush per-settle (B2) + edge wasm-bindgen (B-01)
+- **bundler**: Expose svg_react + carry the three post-emit hook types
+- **bundler**: Surface a failed pass's diagnostic, not just its string (19-E)
+- **cli**: Http cache handler + a separate tooling pool size
+- **cli**: Resolve a module's `routes` / `adapters` / `typegen` contract fields
+- **cli**: Seal compiled JS through the CAS envelope (5-C)
+- **compiler**: Parse errors carry location + code frame (19-E)
+- **graph**: ContentStore::get_sealed (5-C)
+- **graph**: ComputeCtx::record_resolver (5-B)
+- **jshost**: `__oxideParseSearchParams` + loader event searchParams
+- **jshost**: OXIDE_DEFER_BUFFERED kill switch (B5)
+- **jshost**: V8 streaming loader sink (B-03 / B4)
+- **server**: LoaderRunner::run_streaming (B2)
+- **oxide**: Resolve deferred slots from streamed settle scripts (B3)
+- **config**: `server.h3Advertise` (C3)
+- **server**: Gate Alt-Svc on http3_advertise (C3)
+- **server**: LoaderOutput.session (WP-D1)
+- **cli**: Parse the loader's session from the worker payload (WP-D1)
+- **jshost**: Loader event exposes a mutable `session`, returned to the host (WP-D1)
+- **cli**: Persist a loader's session mutation, on every render path (WP-D1)
+- **config**: `render.ppr` flag (P0-4)
+- **config**: Schema for `render.ppr`
+- **render**: Client resolver script for PPR holes (P0-4)
+- **cli**: Report enables() and accurate hook-merge messaging (J2, J4)
+- **config**: Add writeBranches to build schema (N2)
+- **jshost**: Compile_module_sync and route V8 loader through it (G1)
+- **jshost**: ComponentSource struct on FrameworkRenderInput
+- **jshost**: Wire ComponentSource through the runtime host
+- **cli**: Adapter passes ComponentSource to framework render
+- **worker**: Loader consumes ComponentSource for route resolution
+- **oxide**: Add ComponentSource wire type
+- **oxide**: Real-ssr accepts ComponentSource from the host
+- **react**: Export ComponentSource helpers
+- **react**: Real-adapter consumes ComponentSource
+- **solid**: Export ComponentSource helpers
+- **solid**: Real-adapter consumes ComponentSource
+- **svelte**: Export ComponentSource helpers
+- **svelte**: Real-adapter consumes ComponentSource
+- **vue**: Export ComponentSource helpers
+- **vue**: Real-adapter consumes ComponentSource
+- **server**: /_oxide/ready + renderer warm-up (§6.4 / Wave M)
+- **bundler**: Lazy SSR adapter entry + manifest-only load (§6.4 / Wave M)
+- **loader**: Thread traceparent into the loader payload (G2)
+- **bundler,cli**: Carry layout_chain in client + server manifests (O1)
+- **cli**: Per-locale prerender + locale on PageRenderInput (O2)
+- **dev**: Trace_id on waterfall rows and MCP exposure (O3a)
+- **cli**: Audit --json (O4a)
+- **website**: Oxide-website starter (other agent's work)
+- **dev,cli**: Record a deferred-settles stage on the waterfall (O3b)
+- **search**: Route search index at build + client-side reader (K2)
+- **pwa**: Stale-while-revalidate + offline fallback + sw config (K3)
+- **content**: GetCollection/getEntry for loaders (K1)
+- **cli**: /__data session test; NativePlugin::enables() wired into cmd_check (WP-r9-3 test + WP-J2)
+- **oxide**: Layout_chain field + layoutChunksFor helper (O1, 1/2)
+- **oxide**: Router walks the layout chain on prefetch (O1, 2/2)
+- **cli**: P0-1b — bundle edge entry into dist/deploy/edge_bundle.js
+- **adapters**: Ssr:'real' is the default (§14.1 literal reaches real SSR)
+- **dev**: §5.6 cancellation — mid-flight file change aborts stale dispatch
+- **config**: Og.rateLimit, images.maxConcurrency/maxDimension, build.routeSearch
+- **config**: Oxide-schema regenerator binary
+- **config**: Check in the JSON Schema artifact
+- **jshost**: Offline_plugins pool config + collect deadline
+- **jshost**: Fetch shim refuses network under --offline-plugins
+- **jshost**: Thread trace context into actions
+- **server**: Image result cache, concurrency cap, LQIP; rate-limit eviction; trusted OG peer; action trace
+- **server**: EndpointDispatcher takes trace context
+- **cli**: Offline-plugins, HMR plugin hooks, session persistence, image + OG config, meta lifting, locale, route-search opt-out
+- **i18n**: Warm the active locale catalog at boot
+- **ssr**: Emit JSON-LD entries as their own script
+- **react**: Html lang from the resolved locale (page and error shells)
+- **vue**: Html lang from the resolved locale (page and error shells)
+- **svelte**: Html lang from the resolved locale (page and error shells)
+- **solid**: Html lang from the resolved locale (page and error shells)
+- **adapters**: The edge cache key is the canonical blake3 L0 key
+- **cli**: PPR shell invalidation, content rescan in dev, atomic content writes
+- **website**: Read blog and docs through getCollection/getEntry
+- **website**: Await readPost (now backed by getEntry)
+- **website**: Await listPosts (now backed by getCollection)
+- **website**: Await readDoc (now backed by getEntry)
+- **website**: Await readDoc (now backed by getEntry)
+- **website**: Await listPosts (now backed by getCollection)
+- **website**: Await listPosts in the RSS route (now backed by getCollection)
+- **scripts**: Gate the "K1, wired" claim and the r10 counts
+- **bench**: A checker for the report's prose ranges
+- **server**: PageRenderInput carries the resolved defer() map
+- **jshost**: FrameworkRenderInput forwards the resolved defer map
+- **cli**: To_fw_input forwards the resolved defer map to the worker
+- **cli**: Pass the loader's resolved defer values into the render
+- **ssr**: Resolve defer() placeholders before the component sees them
+- **server**: PageRenderInput carries the request's CSP nonce
+- **jshost**: FrameworkRenderInput forwards the nonce to the worker
+- **cli**: To_fw_input forwards the nonce
+- **cli**: Stamp the CSP nonce onto the render input, both paths
+- **oxide**: RenderInput carries the CSP nonce
+- **oxide**: The §7.1 boundary registry and wire shapes, in the core
+- **oxide**: Export the boundary registry and wire helpers from oxide/server
+- **ssr**: Capture and stream `<Defer>` boundaries in makeRealAdapter
+- **vue**: `<Defer>` for the suspense: 'core' adapter
+- **server**: SocketRunResult carries broadcast and targeted frames
+- **jshost**: SocketOutcome parses broadcasts and targets from the worker
+- **jshost**: Socket ctx gains broadcast, sendTo, clients, headers
+- **server**: Socket fan-out and presence
+- **cli**: Wire the socket registry and clear PPR shells on dev edits
+- **oxide**: SocketContext type for §9.6 handlers
+- **smoke**: The chat socket exercises broadcast and presence
+- **react**: The IR renderer nests `input.layouts`
+- **vue**: The IR renderer nests `input.layouts`
+- **svelte**: The IR renderer nests `input.layouts`
+- **solid**: The IR renderer nests `input.layouts`
+- **scripts**: One source of truth for the README's test counts
+- **scripts**: Gate the README against measured reality
+- **cli**: Stamp the client manifest with whether i18n catalogs exist
+- **oxide**: Skip the catalog fetch when the build emitted none
+- **oxide**: Register the manifest's i18n locales before warming the catalog
+- **oxide**: Export setMessageLocales from oxide/client
+- **smoke**: Enable the PWA manifest so the service worker is emitted
+- **scripts**: Gate spec anchors against the frozen spec
+- **cli**: A successful form action re-renders the page with `data.form` (§9.3)
+- **smoke**: A form-first route for the no-JS fixture (§9.3)
+- **smoke**: The comment action (§9.3)
+- **smoke**: The comment route is actions-only, with no loader
+- **config**: `build.edgeExternals` (§18 / D18)
+- **config**: Schema entry for `build.edgeExternals`
+- **cli**: Thread `build.edgeExternals` into the edge bundle
+- **core-wasm**: `merge_head_structured` — the Rust port of the edge head merge (WP-C1)
+- **adapters**: The edge handler prefers `merge_head_structured` when wasm is present
+- **dev**: Rescan the route table on a route-file change (WP-B, deviation 3)
+- **dev**: Rebuild renderer component sources on route rescan (WP-B follow-up)
+- **jshost**: Plugin:load / plugin:call on the V8 backend
+- **oxide/client**: FormatIcu — plural/select/number formatting at render
+- **packages**: Oxide-og — OpenGraph image generator
+- **svelte**: Defer.svelte — <Defer> component for suspense: 'core' (§7.1)
+- **vue**: Expose <Defer> at @oxide/vue/defer
+- **oxide**: Derive sizes from a srcset width ladder (§16.1)
+- **vue**: <Image> derives sizes from srcset when absent (§16.1)
+- **solid**: <Image> derives sizes from srcset when absent (§16.1)
+- **svelte**: <Image> derives sizes from srcset when absent (§16.1)
+- **react**: <Image> derives sizes from srcset when absent (§16.1)
+- **cli**: Thread precompiled sources into the edge bundle (WP-J)
+- **jshost/socket**: Expose the socket's own id via ctx.id
+
+### CI
+
+- Add the test and lint workflow
+- Update workflow
+- Fixtures-v8 + bench-gate jobs (PH0-03)
+- Plugin fixture gate (§15-F)
+- P0-1c — wasm32 target in rust CI + wasm32-edge gate
+- Wire the launch-content gate into the workflow
+- Run the prose-sync check in the bench-gate job
+- **conformance**: Run config-surface.test.ts in the conformance job
+- Run the CLI render e2e in the jshost-e2e job
+- Run hmr_e2e and config_cache_e2e in the jshost-e2e job
+- Run the Playwright suite per browser (§22)
+- Run the spec-anchor gate
+- Miri on the pure-Rust crates (§22)
+- **conformance**: Run D20 suite on Linux, macOS, Windows
+- **wasm32-edge**: Fail when edge.wasm imports glue that isn't committed (B3)
+
+### Chores
+
+- Ignore build artifacts and editor scratch files
+- Add the just task recipes
+- **git**: Ignore adapter test .tmp dirs
+- **git**: Ignore e2e artifact dir under packages/react
+- Update Cargo.lock
+- Update crates/jshost/src/lib.rs
+- Update Cargo.lock
+- Update Cargo.lock
+- Update Cargo.lock
+- **git**: Ignore loader E2E temp dir
+- **bundler-test**: `transform_hook: None` in the BundleOptions fixture
+- **bundler-test**: `transform_hook: None` in the BundleOptions fixture
+- **bundler-test**: `transform_hook: None` in the BundleOptions fixture
+- **bundler**: `transform_hook: None` in the prebundle constructor
+- **server-test**: `image_endpoint` + `server_fns` in the Pipeline literals
+- **jshost**: `oxide-cache` dependency
+- Lockfile for oxide-compiler -> oxide-jshost + oxide-cache
+- **jshost**: `oxide-compiler` + `oxide-cache` dependencies
+- **config**: Accept `manifest` as a top-level key
+- **bundler**: Prebundle options carry css_transform: None (§6.6)
+- **server**: Depend on ring (§16.6)
+- Lockfile for ring (§16.6)
+- **jshost**: Export ActionHost + ActionOutcome (§9.3)
+- **jshost**: Depend on oxc_resolver + deno_error for the V8 loader (§4.2)
+- **bundler**: Prebundle options carry inline_dynamic_imports
+- **react**: Record the real load error on globalThis for diagnosis (§7)
+- **oxide**: Surface the SSR-unavailable reason in the fallback comment (§7)
+- **solid**: Restore the renderBody comment (§7)
+- **jshost**: Depend on ring for the entropy op (§4.6)
+- Lockfile for ring + jshost deps (§4.6)
+- **oxide**: Export the vitals hook (§16.6)
+- **oxide**: Re-export reportWebVitals from the package root (§16.6)
+- **oxide**: Export the script scheduler (§16.6)
+- **oxide**: Re-export the script scheduler from the package root (§16.6)
+- **render**: Depend on base64 for script placeholders (§16.6)
+- Lockfile for base64 in oxide-render (§16.6)
+- Ignore top-level .oxide/ build state (PH0-01)
+- Ignore examples/.v8-gate-* temp roots (PH0-03)
+- **jshost**: Depend on base64 for cache ops (BUG-02)
+- Lockfile for base64 in oxide-jshost (BUG-02)
+- **bundler**: Prebundle uses default resolve conditions (BUG-SOLID)
+- Ignore precompile temp files + gate temp roots
+- **jshost**: Route: None in tooling + test CallInput literals (PERF-02)
+- **cli**: Depend on dashmap for the single-flight map (PERF-04)
+- Lockfile for dashmap in oxide-cli (PERF-04)
+- Lockfile for blake3 in oxide-core-wasm (SPEC-22)
+- Justfile back to the plain watchexec invocation
+- Up readme
+- Logo
+- Docs
+- Ignore fuzz/target (cargo-fuzz build dir)
+- Insta without json/yaml features — they pull serde_json/preserve_order workspace-wide
+- **cargo**: Point workspace repository URL at github.com/elcoosp/oxide
+- Readme
+- Ignore playwright test-results/
+- Cargo.lock after graph §5 features
+- **workspace**: Add dependencies for cache auth/codec + jshost changes
+- **lockfile**: Update for new workspace dependencies
+- **cache**: Add dependencies for HMAC auth + entry codec
+- **router**: Add dependency for the archive work
+- **router**: Minor scan adjustments
+- **server**: Add moka for the P-12 asset-body cache
+- **jshost**: V8 op adjustments
+- **cli**: Framework_shim adjustment for the new cache contract
+- WIP
+- **assets**: Register the content typegen module
+- **oxide**: Export the client message loader
+- **oxide**: Add the ./client/messages export path
+- **vue**: Add the ./image export path
+- **vue**: Re-export Image from the package root
+- **solid**: Add the ./image export path
+- **solid**: Re-export Image from the package root
+- **svelte**: Add the ./image export path
+- WIP
+- Readme
+- **cli**: Pipeline literal gains the OG rate-limit fields
+- **core-wasm**: Cdylib + wasm-bindgen for the edge artifact (B-01)
+- **cli**: Add oxide-graph
+- **server**: Add tokio-stream (P-15)
+- **assets**: Gate the font_subset module on the `subset` feature
+- **cli**: Tidy the build_graph imports
+- **cli**: Pipeline literal carries http3_advertise
+- **examples**: React smoke-app ComponentSource config
+- **examples**: Solid smoke-app ComponentSource config
+- **examples**: Svelte smoke-app ComponentSource config
+- **examples**: Vue smoke-app ComponentSource config
+- **bench**: Poll /_oxide/ready instead of /_oxide/health
+- Gitignore playwright test-results
+- Gitignore dump.txt, test-results, oxide-launch-content
+- Gitignore .DS_Store
+- **bundler**: Rustfmt RouteBundle literal in convert()
+- **assets**: Sort module declarations and re-exports
+- **assets**: Rustfmt route_search.rs (line wraps)
+- **cache**: Rustfmt http_handler.rs test helpers
+- **cli**: Rustfmt ComponentSource literal in build_framework_stack
+- **cli**: Rustfmt traceparent assertion in loader_shim tests
+- **cli**: Rustfmt WaterfallEntry construction in mcp.rs
+- **cli**: Rustfmt tests.rs (line wraps, no behavior change)
+- **config**: Drop stray blank line in KNOWN_KEYS
+- **config**: Fix indentation of r8 duplicate-guard comment
+- **config**: Rustfmt schema_stability.rs assertions
+- **dev**: Rustfmt trace_id literals in RequestTimingsRow tests
+- **jshost**: Rustfmt framework_host.rs (line wraps)
+- **jshost**: Rustfmt trace assertions in loader_host tests
+- **jshost**: Rustfmt compile_module_sync signature
+- **server**: Rustfmt warm() default impl
+- **server**: Collapse extra blank lines in trace_context tests
+- **server**: Rustfmt ..Default::default() indent in pipeline helpers
+- **bench**: Remove dead now_us(); fix stale seconds comment
+- **cli**: Correct stale componentFor comments in tests
+- **r9**: Bench-report truth pass + four surviving nits (WP-r9-6 + WP-r9-10 partial)
+- Ignore packages/*/.oxide and packages/**/.*.oxide.ts build artifacts
+- **config**: Regenerate the checked-in schema for `build.edgeExternals`
+- **playwright**: Add test:dev-rescan script
+- Readme
+- **cli/tests**: Drop the ignored edge_wasm_executes_its_exports test
+
+### Dependencies
+
+- **deps**: Add ring to the workspace (§16.6 session AEAD)
+- **deps**: Enable wasmtime/wat (foundation for future wasm fixtures); defer CLI positive-arm test to Wave 4
+- **deps**: Add subsetter (font subsetting)
+- **deps**: Lockfile for wasm-bindgen and the cli graph dep
+- **deps**: Tokio-stream for the blocking-codec bridge (P-15)
+- **deps**: Cargo.lock — proptest for oxide-odf fuzz target
+- **deps**: Declare the playwright-family override
+
+### Documentation
+
+- Add the coding conventions
+- Add the Apache-2.0 license
+- Add the MIT license
+- Add the project README
+- Add the development work log
+- Add the Oxide Technical Specification v0.1
+- Map spec sections to crates (architecture)
+- Log the implementation deviations and resolutions
+- Add logo.png
+- **odf**: Add the odf_fixture example
+- **conformance**: Describe the fixture layout
+- **benchmarks**: Describe the benchmark harness (spec 21)
+- **smoke-app**: Add the smoke-app config
+- **smoke-app**: Add the page loader
+- **smoke-app**: Add the page component
+- **smoke-app**: Add the page loader
+- **smoke-app**: Add the page component
+- Remove the deviations log
+- **solid**: Note @solidjs/web 2.0 in real-adapter header
+- **oxide**: Document JS↔Rust real-adapter contract for §6.3/§7 wiring
+- **worklog**: Record §6.3/§7 read-path milestone + remaining pipeline work
+- **worklog**: Record framework adapter pipeline end-to-end wiring milestone
+- **worklog**: Record §7 read-path milestone for all HTML-producing CLI commands
+- **worklog**: Record session 4 — framework read path + HMR wired
+- **worklog**: Session 5 — framework adapter read path complete
+- **worklog**: Session 6 — streaming + runtime generateParams
+- Reference README for smoke-app + test:smoke shortcut
+- **worklog**: Session 7 — bundler transform gap closed
+- **worklog,handoff**: Session 8 — all non-spec-gated follow-ups closed
+- **worklog,handoff**: Session 9 — the three §7 follow-ups
+- **worklog,handoff,conventions**: Session 10 — the islands-to-server-fns arc
+- **worklog**: Session 11 — tags, WASM plugins, remote images, AST inference
+- **worklog**: Session 12 — §9.3 L1 cache reaches a wall on the loader path
+- **worklog**: Session 13 — §9.3 L1 cache complete
+- **benchmarks**: First §21 report, with three findings
+- **worklog**: Session 14 — §6.6 CSS wiring complete; the prior plan was dead code
+- **worklog**: Session 15 — cookies/sessions, precompile CAS, fonts, warm build
+- **worklog**: §11 L0 response cache on the request path
+- **worklog**: §9.3 form actions on the server
+- **handoff**: Session 15 — actions, L0 cache, warm build, fonts, sessions
+- **worklog**: Session 16 — §4.4 lint; §21 cold start re-measured; fingerprint temp-file fix
+- **worklog**: §21 finding 2 — SSR externals cut Vue's bundle 951 KB → 522 B
+- **worklog**: §21 finding 2 — SSR externals cut Vue's bundle 951 KB → 522 B
+- **worklog**: Dedupe the finding-2 note
+- **handoff**: Session 16 — §4.4 lint, §21 re-measured, SSR externals
+- **worklog**: Session 17 — real V8 host; cold-start lever was a blocking config load
+- **worklog**: Session 17 — V8 runs a real bundle; boot profile 391ms → 42ms
+- **worklog**: Session 17 — the §4.4 snapshot blob works; honest cold-start caveat
+- **worklog**: Session 18 — V8 runtime built out; the CJS-interop boundary
+- **worklog**: Session 18 — V8 infra committed; full V8 render flaky on CJS interop
+- **worklog**: Session 18 final — V8 backend works; the flakiness was the harness
+- **worklog**: Session 19 — §16.6 web-vitals reporting hook
+- **worklog**: Session 19 — §16.6 web-vitals reporting hook
+- **worklog**: PH0-01 baseline green — 623 Rust + 218 TS, four-fixture PASS (PH0-01)
+- **bench**: Regenerate report with measured numbers + honest findings (PH0-02)
+- **worklog**: PH0-03 — V8 gate PASS, bench gate, CI jobs (PH0-03)
+- **worklog**: BUG-01 — revalidate tag+path invalidation (BUG-01)
+- **worklog**: BUG-02 — shared cache tier + V8 cache ops (BUG-02)
+- **worklog**: BUG-03 — dead-worker isolation + leak-once snapshot (BUG-03)
+- **worklog**: BUG-05 — deterministic build secret, byte-stable manifests (BUG-05)
+- **worklog**: BUG-06 — pass errors fail loudly, diagnostics persisted (BUG-06)
+- **worklog**: BUG-13/14/15/16 + SEC-07 escape batch (small correctness)
+- **worklog**: BUG-08 — .css as server side-effect import (BUG-08)
+- **worklog**: BUG-09 — SSR fallback hardening (BUG-09)
+- **worklog**: BUG-10 — scaffold fixes verified across 16 scaffolds (BUG-10)
+- **worklog**: BUG-12 — versioned snapshot envelope (BUG-12)
+- **worklog**: SEC-02 — CSPRNG ids + HSTS on TLS (SEC-02)
+- **worklog**: SEC-07 — output escaping complete (SEC-07)
+- **worklog**: SEC-04 — CSRF hardening + issuer (SEC-04)
+- **worklog**: BUG-SOLID — worker-first resolve conditions fix Solid on V8 (BUG-SOLID)
+- **worklog**: BUG-04 — V8 dispatch parity verified live (BUG-04)
+- **worklog**: SEC-01 — rate limiting end-to-end (SEC-01)
+- **worklog**: SEC-03 — DNS + redirect SSRF validation (SEC-03)
+- **worklog**: BUG-07 — prelude correctness with negative control (BUG-07)
+- **worklog**: SEC-05 — trusted proxy + allow-lists (SEC-05)
+- **worklog**: SEC-05 — trusted proxy + allow-lists (SEC-05)
+- **worklog**: SEC-06 — slowloris + TLS accept (SEC-06)
+- **worklog**: SEC-08 — secrets guard + image-sig hardening (SEC-08)
+- **worklog**: SEC-08 — secrets guard + image-sig hardening (SEC-08)
+- **worklog**: SEC-11 — pipeline order + server-fn rules (SEC-11)
+- **worklog**: BUG-11 — config dead keys + schema drift (BUG-11)
+- **worklog**: SEC-09 — dev inspector token + host check (SEC-09)
+- **worklog**: SEC-10 — cookie keys default + doctor check (SEC-10)
+- **worklog**: SEC-10 — cookie keys default + doctor check (SEC-10)
+- **worklog**: SEC-10 — cookie keys default + doctor check (SEC-10)
+- **worklog**: Dedupe lock-retry duplicates + add the PH0-02 entry
+- **worklog**: PH0-03 gate hardening + BUG-17 (V8 generateParams race)
+- **worklog**: Correct the V8 generateParams finding — harness, not product
+- **worklog**: PERF-01 slice 1 — /__data + ODF payload (PERF-01)
+- **worklog**: PERF-01 slice 1 — /__data + ODF payload (PERF-01)
+- **worklog**: PERF-01 slice 2 — serialize op; island-props scoped (PERF-01)
+- **worklog**: PERF-01 slice 3 — island props ODF, complete (PERF-01)
+- **worklog**: PERF-02 slice 1 — pool sizing; affinity scoped (PERF-02)
+- **worklog**: PERF-06 slice 1 — dynamic compression (PERF-06)
+- **worklog**: PERF-06 slice 1 — dynamic compression (PERF-06)
+- **worklog**: PERF-06 slice 1 — dynamic compression (PERF-06)
+- **worklog**: Dedupe lock-retry duplicate blocks
+- **worklog**: PERF-06 slice 2 — real Server-Timing total (PERF-06)
+- **worklog**: Dedupe repeated blocks (keep-first)
+- **worklog**: PERF-02 slice 2 — route affinity, complete (PERF-02)
+- **worklog**: PERF-02 slice 2 — route affinity, complete (PERF-02)
+- **worklog**: PERF-02 slice 2 — route affinity, complete (PERF-02)
+- **worklog**: Dedupe repeated PERF-02 blocks
+- **worklog**: PERF-04 slice 2 — single-flight (PERF-04)
+- **worklog**: PERF-04 slice 3 — build seeding, complete (PERF-04)
+- **worklog**: Dedupe PERF-04 blocks
+- **worklog**: PERF-10 — resolver reuse (PERF-10)
+- **worklog**: Dedupe PERF-05 blocks
+- **worklog**: PERF-07 — rkyv archive on serve (PERF-07)
+- **worklog**: PERF-09 slice 1 — module metadata (PERF-09)
+- **worklog**: PERF-09 slice 1 — module metadata (PERF-09)
+- **worklog**: PERF-09 slice 2 — route-true bytes (PERF-09)
+- **worklog**: PERF-09 slice 3 — why from metadata, complete (PERF-09)
+- **worklog**: Dedupe repeated blocks
+- **worklog**: PERF-11 — notify watcher (PERF-11)
+- **worklog**: PERF-11 — notify watcher (PERF-11)
+- **worklog**: PERF-05 slice 2 — fetch shim, complete (PERF-05)
+- **worklog**: Dedupe PERF-05/11 blocks
+- **worklog**: PERF-06 slice 3 — per-stage timing, complete (PERF-06)
+- **worklog**: PERF-06 slice 3 — per-stage timing, complete (PERF-06)
+- **worklog**: Dedupe
+- **worklog**: PERF-12 — binary frames (PERF-12)
+- **worklog**: PERF-12 — binary frames (PERF-12)
+- **worklog**: PERF-03 slice 1 — streaming ops (PERF-03)
+- **worklog**: Dedupe
+- **worklog**: Dedupe
+- **worklog**: PERF-03 slice 2 — V8 streaming, complete (PERF-03)
+- **worklog**: PERF-11 slice 2 — idle pre-warm, complete (PERF-11)
+- **worklog**: Dedupe
+- **worklog**: PERF-02 slice 2 — pool gauges, complete (PERF-02)
+- **worklog**: PERF-02 slice 2 — pool gauges, complete (PERF-02)
+- **worklog**: Dedupe
+- **worklog**: PERF-04 slice 4 — streaming fill, complete (PERF-04)
+- **worklog**: Dedupe
+- **worklog**: PERF-03 final status — pool-level concurrency (PERF-03)
+- **worklog**: Dedupe
+- **worklog**: SPEC-05 — forbidden-import guard (SPEC-05)
+- **worklog**: SPEC-11 — stream recovery (SPEC-11)
+- **worklog**: SPEC-11 — stream recovery (SPEC-11)
+- **worklog**: SPEC-11 — stream recovery (SPEC-11)
+- **worklog**: SPEC-11 — stream recovery (SPEC-11)
+- **worklog**: SPEC-11 — stream recovery (SPEC-11)
+- **worklog**: SPEC-22 — real blake3 edge keys (SPEC-22)
+- **worklog**: Dedupe
+- **worklog**: SPEC-25 — dual budgets (SPEC-25)
+- **worklog**: SPEC-10 — i18n locale routing (SPEC-10)
+- **worklog**: SPEC-13 — mimalloc (SPEC-13)
+- **worklog**: SPEC-05 guard refinement (SPEC-05)
+- **worklog**: SPEC-24 — JSON logs + redaction (SPEC-24)
+- **worklog**: Dedupe
+- **worklog**: SPEC-16 — workspace detection (SPEC-16)
+- **worklog**: SPEC-16 slice 2 — linked package watching, complete (SPEC-16)
+- **worklog**: SPEC-16 slice 2 — linked package watching, complete (SPEC-16)
+- **worklog**: SPEC-04 — HTTP remote cache (SPEC-04)
+- **worklog**: Dedupe
+- **worklog**: SPEC-14 — HMR end-to-end (SPEC-14)
+- **worklog**: SPEC-14 — HMR end-to-end (SPEC-14)
+- **worklog**: SPEC-02 — loud shims + JSH-V8KIND (SPEC-02)
+- **worklog**: SPEC-21 — PWA module (SPEC-21)
+- **worklog**: SPEC-20 — ICU4X formatters verified present (SPEC-20)
+- **worklog**: SPEC-12 — HTTP cache handler (SPEC-12)
+- **worklog**: SPEC-12 — HTTP cache handler (SPEC-12)
+- **worklog**: SPEC-09 — typegen data types + build hook (SPEC-09)
+- **worklog**: SPEC-17 — JS plugin bridge (SPEC-17)
+- **worklog**: SPEC-17 — JS plugin bridge (SPEC-17)
+- **handoff**: §bucket-2 session handoff (6 of 7 user-visible gaps closed)
+- **handoff**: Detailed bucket-2 session — implementations + remaining gaps
+- **handoff**: Bucket-2 COMPLETE — all 7 gaps + deferred items implemented (§7.1, §8.2-8.5, §9.2, §10.2-10.3)
+- **cli**: Correct the false 'layout loads run in parallel' comment; document the sequential reality (§9.2)
+- **handoff**: Wave 1 + 2 complete — 7 P0s, 14 P1s closed, 3 Wave-3 items; what remains
+- Correct stale middleware/v8_ops comments; de-duplicate WORKLOG SPEC-09/SPEC-17 entries
+- **handoff**: Refresh HANDOFF.md for Wave 3 close-out; append WORKLOG session entry
+- **wave4**: Re-measure benchmarks, refresh architecture.md, close Wave 4.1/4.5
+- **bench**: Re-measure with L0 + solid both working
+- **bench**: Use fresh same-HEAD numbers in report.md
+- Refresh HANDOFF.md — session complete at 98f02d4 (§5-A + §15-E landed)
+- HANDOFF update — §19-D landed at 4e38dec; §7 points at fresh work
+- Rename technical specification (drop ' v0.1' suffix)
+- Mark the wired js hooks as wired in the compat table
+- **readme**: Refresh the code/test count badges
+- Record the two remaining spec deviations precisely
+- **readme**: Refresh the badge counts
+- **assets**: Note the unchecked/external schema fallback in content.d.ts
+- **readme**: Refresh the badge counts
+- **bench**: Honest 2026-10-21 re-measure after ComponentSource
+- **bench**: 2026-10-21 wave M re-measure with readiness + lazy entry
+- **spec**: Split Part I / Part II (N1); feat(cli): cache MDX precompile (K4)
+- **bench**: Re-measure at HEAD (§21 M1)
+- **bench**: L0 table from corrected (µs) Server-Timing values (§21 M1)
+- Adapter logos + per-package READMEs + main README refresh
+- **website**: Migrate the config + correct the false claims (r8 P0.4)
+- **architecture**: Route component resolution (§6.4, §7)
+- **deviations**: Dev route additions require restart (WP-C1)
+- **oxide**: Server README — resolver owns components
+- **react**: Update config-surface comments to resolver model
+- **react**: Real-adapter usage comment uses resolver model
+- **playwright**: Add og.spec.ts row; close the unclosed sh fence
+- **website**: Retract fabricated fix-claims, re-anchor every number to r9 (r9 WP-2)
+- **playwright,cli**: CI section + spec count; scan filter matches its message (r9 nit sweep)
+- **plugin-compat**: Document the enables() design and its scope (WP-J2 close)
+- Move oxide-v0.2-feature-designs.md into docs/ideas/
+- Retire stale HANDOFF-bucket2 / HANDOFF-wave2 session records
+- **spec-v0.2-draft**: Update cross-references to the moved ideas/ path
+- **worklog**: Mark retired HANDOFF references as historical
+- **deviations**: Record the two wasm32 bugs the P0-1c gate caught
+- **readme**: Commit previously-unstaged README refresh
+- **readme**: Re-anchor the built/wiring list to what is actually open
+- **worklog**: Record the 2026-10-22 wiring pass
+- **dev**: Fix wateraflls typo in the WaterfallRecorder doc comment
+- **bench**: Sync the ttfb prose range to the table (134-158ms)
+- **spec-v0.2**: Drop HANDOFF.md from the orient line
+- **spec-v0.2**: Read order points at deviations, not HANDOFF
+- **readme**: Re-anchor the feature list and counts to r10
+- **readme**: Correct the Rust test count to the measured 1,190
+- **site**: Re-anchor introducing-oxide's counts and score to r10
+- **site**: Re-anchor the homepage counts and score to r10
+- **site**: Scope the audit post's test counts to its own round
+- **bench**: The prose-sync claim now names what CI actually does
+- **cli**: Rewrite two garbled comment blocks in the smoke-app tests
+- **handoff**: Stamp the 2026-10-19 session file as superseded
+- **site**: Correct the edge claim in introducing-oxide's gap list
+- **deviations**: Record why <Defer> is designed-not-shipped (§7.1)
+- **deviations**: Mark the swapper-nonce obstacle fixed
+- **deviations**: The edge JS fallback now emits the canonical L0 key
+- **worklog**: Record the 2026-10-23 pass
+- **readme**: Re-anchor the built list to the socket and PPR work
+- **readme**: Re-anchor counts to measured values
+- **readme**: Drop four claims this session made false
+- **cli**: Drop the invented `K4` work-package label
+- Replace the invented K1/K2/K3 labels with the real spec sections
+- Replace the invented K1/K2/K3 labels with the real spec sections
+- Replace the invented K1/K2/K3 labels with the real spec sections
+- Replace the invented K1/K2/K3 labels with the real spec sections
+- Replace the invented K1/K2/K3 labels with the real spec sections
+- Replace the invented K1/K2/K3 labels with the real spec sections
+- Replace the invented K1/K2 labels with §16.5
+- Replace the invented K1/K2 labels with §16.5
+- Replace the invented K1/K2 labels with §16.5
+- Replace the invented K1/K2 labels with §16.5
+- **oxide**: Replace the invented K2 label with §16.5
+- **playwright**: Correct the sw spec's spec anchor
+- **readme**: The Playwright suite is 23 specs on three engines, not 18 on Chromium
+- **deviations**: Correct the edge-externals claim
+- **readme**: Test count 1202 -> 1203 (the edgeExternals test)
+- **deviations**: Close deviation 4 — edge mergeHead has a Rust implementation
+- **readme**: Test count 1203 -> 1209 (the merge_head_structured tests)
+- **deviations**: Close deviation 6 — edge.wasm embedded at CLI build time
+- **cli/build_cache**: Describe the current transform scratch medium
+- **jshost/hmr_e2e**: Note the scratch medium has moved twice
+- **deviations**: Close deviation 3 (WP-B dev route rescan)
+- **readme**: Deviation count 7 -> 6 (deviation 5 retired)
+- **plugin-compat**: Mark plugin:load/plugin:call wired on V8
+- **deviations**: Narrow deviation 7 — Vue <Defer> shipped; Svelte missing
+- **deviations**: Close deviation 7 (<Defer> for suspense: 'core' adapters)
+- **deviations**: Correct deviation 7 status — the Svelte export claim
+- **readme**: Test counts 1212→1214 Rust, 454→443 TS
+- Audit the 2026-10-24 release plan against the tree
+- Extend release-plan audit with B0-B6 verdicts
+- **readme**: Correct bare-vs-annotated ignore counts and TS file count
+- **readme**: Sync test counts to measured values
+- **audit**: B3 verdict — CONFIRMED, payload is inert
+- **deviations**: Deviation 6 → partially closed (payload inert)
+- **audit**: Remove reference to the deleted ignored test in B3
+
+### Fixed
+
+- **solid**: Tolerate Solid SSR class trailing space and text escape surface
+- **svelte**: Match Svelte SSR escape semantics (< only, no >) in real-SSR test
+- **oxide**: Accept object components (Vue options API) in real-adapter
+- **solid**: Pre-invoke component factory so sync throws propagate
+- **cli**: Place 'oxide config' parse tests before the first #[test] (module scope)
+- **cli**: Make 'route' the only positional in 'oxide render'; root becomes --root
+- **jshost**: Write E2E config as unique file at base dir (path + race fix)
+- **cli**: Use #[tokio::test] for the CLI E2E (NodePool needs a Tokio reactor)
+- **jshost**: Manual Debug impl for FrameworkHostRenderer (pool is not Debug)
+- **jshost**: Atomic counter in E2E nonce (parallel test race)
+- **cli**: Pass route id (not URL pattern) to the page renderer
+- **cli**: Normalize route id for the renderer + loader (strip /page)
+- **cli**: Canonicalize root + normalize route id in write_prerender + build E2E
+- **jshost**: Raw-HTML wire + 'oxide render --stream' exercises it
+- **config**: Minimal scan picks up adapter + routes.dir
+- **adapters**: Dockerfile missing newline before USER
+- **adapters**: Preserve indentation in Netlify toml + SAM yaml
+- **adapters**: Real § in raw-string configs + deploy_matrix tests
+- **server,cli**: Streaming injector splices BEFORE </body>, tested in oxide-server
+- **config**: The static extractor tolerates a dynamic value per key (§14.2)
+- **compiler**: Destructured request params infer dynamic (§10.1)
+- **cli**: An explicit config.render wins over AST inference (§10.1)
+- **config**: A non-callback dynamic value defers to V8 evaluation (§14.2)
+- **odf**: Iterative ref resolver, no stack overflow on deep payloads (§17.1)
+- **odf**: Iterative wire decoder, bounded depth without recursion (§17.1)
+- **odf**: Iterative encoder over an explicit work stack (§17.1)
+- **odf**: Bitexact_eq iterative to survive deep structures (§17.1)
+- **assets**: @font-face format() hint matches the file container (§16.2)
+- **cli**: Exclude *.oxide.ts build temp files from the build fingerprint (§5.1)
+- **jshost**: Resolve file:// and absolute specifiers without a stat race (§4.2)
+- **jshost**: V8 loader resolves with browser conditions, not node (§4.6)
+- **cli**: Bundle the V8 config graph with browser conditions (§4.2)
+- **jshost**: MessageChannel/MessagePort polyfill for React's SSR scheduler (§4.6)
+- **jshost**: Resolve with worker-first conditions for SSR runtimes (§4.6)
+- **jshost**: V8_bundle_tdd uses V8Host::new() after the struct change (PH0-01)
+- **jshost**: V8_module_tdd uses V8Host::new() after the struct change (PH0-01)
+- **jshost**: Integration.rs uses V8Host::new() after the struct change (PH0-01)
+- **cli**: L0Cache::invalidate_path delegates to the handler (BUG-01)
+- **cli**: Honour tag + path revalidate events, tag L0 entries with path: (BUG-01)
+- **cli**: L0 wraps the framework stack's shared TieredCache (BUG-02)
+- **jshost**: V8Pool replaces dead workers, leak the snapshot once (BUG-03)
+- BUG-13 byte-span import scan + jsxImportSource, BUG-14 AVIF doc, BUG-15 bounded dataCache, BUG-16 pre-cast guard, SEC-07 escape single-quote
+- **jshost**: Treat .css as a server side-effect import in worker + V8 loaders (BUG-08)
+- **oxide,adapters**: Escape SSR fallback diagnostics, per-adapter lastError, loud 500 (BUG-09)
+- **create-oxide**: Working dashboard scaffold, props.data idiom, PageProps type (BUG-10)
+- **server**: CSPRNG request ids (unpredictable CSP nonces) + HSTS only on TLS (SEC-02)
+- **render,cli,server**: Escape error pages, single quotes, metric labels (SEC-07)
+- **server**: CSRF gating matrix, constant-time token compare, oxide_csrf issuer (SEC-04)
+- **cli**: Config bundle resolves worker-first so @solidjs/web gets its SSR build (BUG-SOLID)
+- **server**: SSRF validation survives DNS + redirects, connect-by-IP (SEC-03)
+- **jshost**: Stream-safe TextDecoder, macrotask MessagePort, robust setInterval (BUG-07)
+- **cli**: Populate SecuritySettings allow-lists + cookie keys from config (SEC-05)
+- **server**: Slowloris header timeout + TLS handshake off the accept loop (SEC-06)
+- **assets**: Image signatures are the full 256-bit digest, constant-time compare (SEC-08)
+- **server**: Verify_image_sig uses the full digest + constant-time compare (SEC-08)
+- **server**: §12.1 static-before-rules order + full rules on the server-fn route (SEC-11)
+- **config**: Schema drift — server.backend, cache.l0MaxSize, security keys, build.ssrExternals (BUG-11)
+- **cli**: Honour server.host/cache.l0MaxSize/build.sourcemap; warn on dynamic config (BUG-11)
+- **cli**: Default cookie keys from .oxide/secret; doctor checks key strength (SEC-10)
+- **harness**: Kill the whole process tree on watchexec restart + gate lock
+- **cli**: Guard flags only leaked literals, not bare object identifiers (SPEC-05)
+- **cli**: Guard flags only leaked literals, not bare object identifiers (SPEC-05)
+- **router,cli**: Typegen reads per-route LoaderData via the routes root (SPEC-09)
+- **client**: BootWithRouter hydrates the SSR root before attaching the router (§8.4)
+- **cli**: Island boot entry uses bootWithRouter so SSR root hydrates before the router attaches (§8.4)
+- **server**: Iterate layout chain outermost→innermost; accept object components from layoutFor (§8.2)
+- **react**: Expand layout child descriptors into React elements before renderToString (§8.2)
+- **cli**: Framework-render path emits the computed status (unmatched URLs now 404, §10.2 step 5)
+- **cli,smoke-app**: Not-found directory id is its own componentFor key, not a stripped form (§10.2 step 5)
+- **server**: Hoist props above try so error.tsx catch handler can read it; add error-boundary tests (§10.2 step 5)
+- **cli**: Shadow endpoint dispatcher per-call so the async block moves a clone (§8.1)
+- **render**: Ox:swap swapper carries the resolved content as detail.value (§7.1)
+- **cli**: Move middleware execution before the loader phase (§8.1, §8.5)
+- **cli**: Forward locals + locale through loader_shim input_to_payload (§8.1, §9.1, SPEC-10)
+- **client-router**: RouterOptions.manifest is optional — never read by createRouter (§8.4)
+- **client**: FindLoading normalizes trailing slashes so /slow/ keys match /slow paths (§8.4)
+- **hydrate,defer-glue**: Wire loader data into the glue on hydrate + update so deferred slots exist (§7.1, §9.2)
+- **cli**: Shadow self-dispatch handle per call for middleware rewrite (§8.5)
+- **solid**: Keep only the robust renderSolidToStream
+- **vue**: Robust stream normalization with a renderToString fallback (§7.1)
+- **vue**: Guard the Node-stream bridge and drop a dangling comment in renderVueToStream (§7.1)
+- **cli**: Recover a moved tier when the disk tier fails to open
+- **jshost**: Dedupe the SocketHost block
+- **server**: Dedupe SocketDispatcher block
+- **cli**: Reassign the consuming NodeHost transform builder (§6.2)
+- **cli**: Mut the mapped channel receiver for poll_recv (§9.6)
+- **cli**: Use CasKey::of for the remote precompile keys (§5.4)
+- **server,cli**: Re-export quinn::ServerConfig as H3ServerConfig so the CLI needs no quinn dep (§12.1)
+- **cli**: Call the module-level h3_config_from_tls + serve_http3 (§12.1)
+- **cli**: Drop a stray rx_main borrow (the receiver is moved into the spawn) (§12.1)
+- **dev**: RouteTableInspector carries waterfalls — from_router_table + state() (§20)
+- **solid**: Real-adapter wires the streaming + descriptor paths (§7.1)
+- **jshost**: LoaderHost forwards parent_data + locale so await parent() works (§9.2)
+- **cli**: Loader_shim forwards parent_data + locale to the worker (§9.2)
+- **server**: Error.tsx renders a real HTTP 500 (first-chunk contract) (§10.2 step 5)
+- **adapters**: Cloudflare_worker_entry — raw-string template so the emitted JS keeps its indentation (§18)
+- **adapters**: Node_server_entry — raw-string template so the emitted JS keeps its indentation (§18)
+- **client-router**: Prefix manifest chunk imports with the client base so preload stops 404ing (§6.4)
+- **hmr,client**: Ox:data carries {route,odf} from the inline HMR client; boot decodes it (§13.3)
+- **cli**: Middleware headers ride L0 hits and single-flight followers (§8.5, §11.1)
+- **hmr**: Advertise the real build_id; drop always-empty ModuleUpdate code/boundary fields (§13.3)
+- **cli**: Prerender runs the layout load chain and threads parent_data (§9.2)
+- **dev**: ModuleUpdate test construction drops the removed boundary/code fields (§13.3)
+- **client**: /__data deferred + locale reach the nav input and resolve defer slots (§7.1, §9.2)
+- **ir**: The conformance renderer honors input.errorRoute on a throw (§10.2 step 5)
+- **server-test**: Initialize OxideRequest.trace in inject_before_close_tdd
+- **socket**: Worker close:null must be treated as 'no close' (was killing read loop)
+- **client**: Swap route Component on nav + carry layouts through /__data
+- **solid+l0**: Use @solidjs/web (solid-js v2 dropped ./web export); normalize render_mode in dispatch
+- **dev**: Disable L0 in dev mode so edits reach the response (HMR half 1/2)
+- **hmr**: Make every dev edit reach the response (1/15 → 15/15)
+- **mdx**: Put mdx arm BEFORE the wildcard so it is reachable
+- **bundler**: Add resolve_hook/load_hook to remaining 3 test BundleOptions literals
+- **cli**: Update add/audit tests for new install + OSV lockfile behavior
+- **oxide**: Hmr client updates
+- **oxide**: Router client updates
+- **cli**: Crate::Entry -> Entry in L0Cache.entry
+- **jshost**: Run worker stdout readers on a dedicated runtime
+- **jshost**: Bind worker child pipes to the dedicated runtime — real deadlock fix
+- **jshost**: Dispatch plugin hooks with positional arguments
+- **cli**: Accept a plugin's bare-string hook result
+- **assets**: Parse inline YAML arrays in frontmatter
+- **jshost**: Dev loader calls transform with positional args
+- **cache**: Single-flight owner drop always clears the entry (WP-A2)
+- **oxide**: Decode the bootstrap payload as ODF, not base64 JSON
+- **cli**: Bound the deferred-settle wait (WP-B2)
+- **bundler**: Map SVG `class` to `className` in the generated component
+- **cache**: Bound every redis op with L2_OP_TIMEOUT
+- **cache**: Bound the s3 delete with L2_OP_TIMEOUT
+- **cache**: Subtract the previous size on an overwrite
+- **cli**: AUDIT-LOCKFORMAT names the file when the lockfile has no packages map
+- **cli**: Fall back to "input.mdx" when the path has no filename
+- **config**: Default `write_branches` to None
+- **router**: Emit the locale union only when locales are configured
+- **cli**: Multibyte-safe skip in scan_bare_imports (I4)
+- **jshost**: Hoist components to framework:render payload (WP-B3)
+- **worker**: Accept components at payload or input level
+- **cli**: Default SSR externals to framework runtimes
+- **bench**: Extract_table must match padded headers (was silently passing)
+- **worker**: Alias [slug] <-> _slug_ in component resolver (WP-A2)
+- **bench**: Measure L0 p50 from Server-Timing, not curl wall clock
+- **bundler**: Emit canonical route id in SSR adapter entry (WP-A2)
+- **loader**: Pass parent_id to to_traceparent at the trace call site (G2)
+- **jshost**: Forward trace through build_payload (G2 real closure)
+- **bench**: Cache_bench converts Server-Timing ms to µs correctly
+- **cache**: Seal HttpCacheHandler's L2 envelope (r8 P0-8)
+- **cli**: Persist loader session mutations on all serve paths (WP-D1)
+- **cli**: WP-D1 — the /__data paths, done right
+- **cli**: Thread traceparent through the remaining loader call sites (G2)
+- **cli**: Loader session cookie wins over middleware (WP-D1 precedence)
+- **content,cli**: Content-hash cache key, entries-before-prerender, OXIDE_ROOT in build/start/render (r9 WP-1)
+- **ppr**: Refuse to shell a middleware-cookie response too (WP-r9-4)
+- **cli,worker**: /__data session parity + worker session-on-throw (WP-r9-3)
+- **cli,config**: Wire security.sessionTtlSecs via a process-global atomic (r9 Max-Age)
+- **jshost,server**: Bounded chunked collect; unhashed search-index cache (P0-2 + WP-r9-7a)
+- **cli**: Manifest-driven SSR entry + cmd_render ComponentSource (P0-10 residues)
+- **ppr**: Shell key is the L0 key shape, not the raw URL (r9 residue)
+- **ppr**: LRU shell eviction + remove diagnostic block (r9 residue)
+- **adapters**: Edge mergeHead is JS-only (P0-1a)
+- **core-wasm**: Compile for wasm32 — bridge ODF↔JSON in bindings; scope ld flag
+- **dispatch**: Close L0 middleware blind spot + D1 short-circuit session drops (WP-r10-3 + WP-r10-1 partial)
+- **dispatch**: Close D1 — middleware + layout Ok arms persist sessions
+- **jshost**: Mid-stream worker crash surfaces as JSH-CRASH, not silent partial (P0-2b)
+- **jshost**: Snapshot side-effect lint no longer flags same-line function bodies
+- **config**: JSON Schema accepts the new config knobs
+- **i18n**: Route subset merges into the catalog instead of replacing it
+- **middleware**: A short-circuit redirect carries its Location header
+- **server**: The fresh image render carries its LQIP header; test the cache
+- **assets**: Strip markup from the search index title too
+- **cli**: The prerender path hands defer values to the render
+- **react**: The IR renderer resolves defer() placeholders before the walk
+- **vue**: The IR renderer resolves defer() placeholders before the walk
+- **svelte**: The IR renderer resolves defer() placeholders before the walk
+- **solid**: The IR renderer resolves defer() placeholders before the walk
+- **react**: The deferred-boundary swapper carries the request's CSP nonce
+- **vue**: The deferred-boundary swapper carries the request's CSP nonce
+- **svelte**: The deferred-boundary swapper carries the request's CSP nonce
+- **solid**: The deferred-boundary swapper carries the request's CSP nonce
+- **render**: The boundary swapper matches any host, not just <template>
+- **react**: The swapper selector matches any boundary host
+- **vue**: The swapper selector matches any boundary host
+- **svelte**: The swapper selector matches any boundary host
+- **solid**: The swapper selector matches any boundary host
+- **jshost**: An actions-only page.server.ts yields empty data, not an error
+- **cli**: Declare the embedded edge.wasm static (WP-C2 follow-up)
+- **jshost**: Stop writing compiled modules next to user source
+- **jshost**: Transform scratch dir to <root>/.oxide/transform/ (import scope)
+- **packages/oxide-og**: Pin playwright to the version the tree resolves
+- **svelte**: Add the missing ./defer export
+- **oxide/boundary**: Dispatch {id, value} on ox:swap
+- **react/protocol**: Dispatch {id, value} on ox:swap
+- **vue/protocol**: Dispatch {id, value} on ox:swap
+- **svelte/protocol**: Dispatch {id, value} on ox:swap
+- **solid/protocol**: Dispatch {id, value} on ox:swap
+- **oxide/i18n**: ICU exact-match uses post-offset n; threads # into exact branches
+- **cli**: Forward action Set-Cookie headers on 200 re-render (B6)
+
+### Performance
+
+- **cli,bundler**: NODE_ENV=production + sideEffects:false → 1 MB → 39 KB client
+- **cli**: Content-addressed cache for the §6.3 precompile pass (§5.4)
+- **cli**: Content-addressed cache for the §6.3 precompile pass (§5.4)
+- **cli**: Content-addressed cache for the §6.3 precompile pass (§5.4)
+- **cli**: Load the framework renderer lazily so the server binds first (§21)
+- **cli**: Size the render/loader pool by available parallelism (PERF-02)
+- **jshost**: Build the oxc_resolver once per TranspileLoader (PERF-10)
+- **cli**: Serve routes from the mmap'd rkyv archive (PERF-07)
+- **server**: Compress_body runs on the blocking pool, not the reactor (§12.1 step 8)
+- **cli**: Hash project files in parallel
+- **cli**: Split the tooling pool from the render pool
+- **jshost**: Memoize the V8 compile_module op
+- **jshost**: Cache compiled modules by hash
+- **router**: Cache layout chains behind an RwLock
+- **jshost**: Cache the framework config per module generation
+
+### Refactored
+
+- **oxide**: Real-adapter takes buildHead(input), not head(ctx)
+- **solid**: Import renderToStringAsync from @solidjs/web (Solid 2.0)
+- **solid**: Detect renderToString (Solid 2.0) alongside renderToStringAsync (1.x)
+- **cli**: Thread FrameworkStack through cmd_dev/cmd_serve/cmd_build
+- **jshost**: Drive the V8 dispatch promise via with_event_loop_promise (§4.2)
+- **jshost**: Snapshot_build_runtime — one fixed runtime extension (§4.4)
+- **cli**: L0 make_entry/store_entry/key_of for single-flight (PERF-04)
+- Delete the dead prebundle module — it had no production caller (§6.5)
+- **bundler**: Remove prebundle.rs (dead module deletion)
+- **assets**: Pick the first readable candidate font
+- **cache**: Zstd-compress the entry body + parse a WireEntry envelope
+- **cli**: PrerenderTarget + deferred-settle flush (mixed)
+- **cli**: Migrate Conversion builder helpers
+- **diagnostics**: Code-frame gutter formatting
+- **server**: Arc<Vec<(String, String)>> headers (mixed)
+- **jshost**: Loader_host tidy
+- **cli**: Rename the parallel arm's stage to `overlap-saved`
+- **oxide**: Extract resolveDeferredPlaceholders into a shared module
+- **ssr**: Import the shared placeholder resolver
+
+### Reverted
+
+- Declare the playwright override (untested in pnpm 10)
+
+### Style
+
+- Cargo fmt --all (pre-existing drift across 7 files)
+- **jshost**: Cargo fmt on the spawn_child call sites
+- **jshost**: Cargo fmt in the offline-plugins test
+- **server**: Cargo fmt on the image-endpoint additions
+- **cli**: Cargo fmt on the trace/meta additions
+
+### Testing
+
+- **adapters**: Scaffold the integration test binary
+- **assets**: Scaffold the integration test binary
+- **bundler**: Scaffold the integration test binary
+- **bundler**: Add the bundler_rolldown TDD suite
+- **bundler**: Add the bundler TDD suite
+- **cache**: Scaffold the integration test binary
+- **cache**: Add the cache TDD suite
+- **cli**: Scaffold the integration test binary
+- **compiler**: Scaffold the integration test binary
+- **compiler**: Add the compiler TDD suite
+- **config**: Scaffold the integration test binary
+- **core-wasm**: Scaffold the integration test binary
+- **dev**: Scaffold the integration test binary
+- **diagnostics**: Scaffold the integration test binary
+- **graph**: Scaffold the integration test binary
+- **graph**: Capture proptest regressions for graph_tdd
+- **graph**: Add the graph TDD suite
+- **jshost**: Scaffold the integration test binary
+- **odf**: Scaffold the integration test binary
+- **odf**: Add the bigint expected JSON fixture
+- **odf**: Add the bigint golden binary fixture
+- **odf**: Add the cycle expected JSON fixture
+- **odf**: Add the cycle golden binary fixture
+- **odf**: Add the deferred expected JSON fixture
+- **odf**: Add the deferred golden binary fixture
+- **odf**: Add the empty-containers expected JSON fixture
+- **odf**: Add the empty-containers golden binary fixture
+- **odf**: Add the errors expected JSON fixture
+- **odf**: Add the errors golden binary fixture
+- **odf**: Add the kitchen-sink expected JSON fixture
+- **odf**: Add the kitchen-sink golden binary fixture
+- **odf**: Add the map-mixed-keys expected JSON fixture
+- **odf**: Add the map-mixed-keys golden binary fixture
+- **odf**: Add the nested-arrays expected JSON fixture
+- **odf**: Add the nested-arrays golden binary fixture
+- **odf**: Add the number-specials expected JSON fixture
+- **odf**: Add the number-specials golden binary fixture
+- **odf**: Add the object-keys-sorted expected JSON fixture
+- **odf**: Add the object-keys-sorted golden binary fixture
+- **odf**: Add the primitives expected JSON fixture
+- **odf**: Add the primitives golden binary fixture
+- **odf**: Add the set-mixed expected JSON fixture
+- **odf**: Add the set-mixed golden binary fixture
+- **odf**: Add the shared-structure expected JSON fixture
+- **odf**: Add the shared-structure golden binary fixture
+- **odf**: Add the strings expected JSON fixture
+- **odf**: Add the strings golden binary fixture
+- **odf**: Add the temporal expected JSON fixture
+- **odf**: Add the temporal golden binary fixture
+- **odf**: Add the typed-arrays expected JSON fixture
+- **odf**: Add the typed-arrays golden binary fixture
+- **plugin**: Scaffold the integration test binary
+- **render**: Scaffold the integration test binary
+- **render**: Add the render TDD suite
+- **router**: Scaffold the integration test binary
+- **router**: Capture proptest regressions for integration
+- **server**: Scaffold the integration test binary
+- **server**: Add the server TDD suite
+- **create-oxide**: Add scaffold.test tests
+- **oxide**: Add defer-glue.test tests
+- **oxide**: Add enhance.test tests
+- **oxide**: Add the odf-lite test helper
+- **oxide**: Add islands.test tests
+- **oxide**: Add odf.test tests
+- **oxide**: Add router.test tests
+- **oxide**: Add server.test tests
+- **oxide**: Add test-app.test tests
+- **react**: Add adapter.test tests
+- **react**: Add the fake-dom test helper
+- **solid**: Add adapter.test tests
+- **solid**: Add the fake-dom test helper
+- **svelte**: Add adapter.test tests
+- **svelte**: Add the fake-dom test helper
+- **vue**: Add adapter.test tests
+- **vue**: Add the fake-dom test helper
+- **conformance**: Add the Atlas reference app (spec 22)
+- **conformance**: Add the conformance runner
+- **conformance**: Add the cross-adapter assertion set (spec 22, D20)
+- **conformance**: Wire the runner into node:test
+- (assets) add the lightningcss_tdd tests
+- (bundler) update the bundler_rolldown_tdd tests
+- (compiler) update the compiler_tdd tests
+- (plugin) add the wasm_tdd tests
+- (server) update the server_tdd tests
+- **adapters**: Cover target emission
+- **assets**: Cover content and i18n
+- **assets**: Lightningcss backend TDD
+- **cli**: Cover mcp and schema
+- **dev**: Cover dev server features
+- **jshost**: Cover new modules
+- **server**: Cover metrics and trace context
+- **assets**: Content collection TDD (spec 16.5)
+- **react**: Prove react-dom/server renders via adapter
+- **solid**: Prove solid-js/web renders via adapter
+- **svelte**: Prove svelte/server renders via adapter
+- **vue**: Prove @vue/server-renderer renders via adapter
+- **react**: Expect templated title (Home · Atlas) from layout head merge
+- **solid**: Prove real-adapter factory renders through solid-js/web
+- **svelte**: Prove real-adapter factory renders through svelte/server
+- **vue**: Prove real-adapter factory renders through @vue/server-renderer
+- **solid**: Target @solidjs/web API surface (Solid 2.0)
+- **solid**: Cover both renderer entries; un-skip the suite now Solid 2.0 loads
+- **react**: Cover createAdapter IR/real dispatch
+- **solid**: Cover createAdapter IR/real dispatch
+- **svelte**: Cover createAdapter IR/real dispatch
+- **vue**: Cover createAdapter IR/real dispatch
+- **react**: Rewrite adapter-factory test with quoted heredoc (no shell mangling)
+- **solid**: Rewrite adapter-factory test with quoted heredoc (no shell mangling)
+- **svelte**: Rewrite adapter-factory test with quoted heredoc (no shell mangling)
+- **vue**: Rewrite adapter-factory test with quoted heredoc (no shell mangling)
+- **conformance**: Pin §14 config-surface factory contract on all 4 adapters
+- **cli**: Cover 'oxide config' arg parsing
+- **cli**: Cover 'oxide render' arg parsing with route + --root
+- **jshost**: E2e load+render through a real oxide.config.mjs (spec 7, 6.3)
+- **cli**: E2e prove 'oxide render' dispatches real React SSR (spec 7)
+- **server**: Pipeline attaches + defaults off the page renderer
+- **server**: Set page_renderer: None in all Pipeline literals
+- **cli**: Prove build_dispatch routes through PageRenderer + falls back to IR (spec 7)
+- **cli**: Update start_server callers for the new page_renderer param
+- **cli**: Update callers for FrameworkStack + extended build_dispatch signature
+- **cli**: Cover loader phase in build_dispatch — data threading, short-circuit, no-server-module (spec 9.1)
+- **jshost**: E2e prove real .mjs loader runs through the Node worker (spec 9.1)
+- **jshost**: E2e prove invalidate forces module reload (spec 13.3)
+- **oxide**: Cover defineConfig identity + bare-module import
+- **cli**: E2e the smoke-app fixture through config + render (spec 14, 7)
+- **cli**: E2e the dev server against smoke-app over HTTP (spec 7, 12)
+- **cli**: Retry connect in dev-server E2E (spawn/accept race)
+- **cli**: Assert chunked transfer for streaming responses
+- **cli**: 'oxide start' E2E — production server + chunked streaming
+- **server**: Deterministic hand-built frame in ws UTF-8 test
+- **cli**: CLI-level conformance E2E — emitted tree is valid JS
+- **config,cli**: Island extractor + CLI E2E; silence V8 linker chatter
+- **fixtures**: CLI-level conformance gate for all four adapters
+- **compiler**: Tag-thunk coverage for `'use cache'` (§9.3)
+- **compiler**: `infer_render_mode` coverage
+- **bundler**: The plugin transform hook runs and its output reaches the chunk
+- **server**: Remote image source validation
+- **jshost**: `Op::CompileModule` in the ops-table roundtrip
+- **bundler**: Options fixture carries css_transform: None (§6.6)
+- **bundler**: Options fixture carries css_transform: None (§6.6)
+- **bundler**: A .css import through RolldownBundler runs the CSS hook (§6.6)
+- **bundler**: ChunkBundler hands each stylesheet to css_transform (§6.6)
+- **compiler**: Destructured cookies/locals/searchParams → dynamic (§10.1)
+- **cli**: Widen readiness-poll budgets (§22 harness robustness)
+- **jshost**: Widen worker-readiness budget (§22 harness robustness)
+- **server**: Widen readiness-poll budget (§22 harness robustness)
+- Lock in loader set-cookie/header round-trip (§9.2/§16.6)
+- Lock in loader set-cookie/header round-trip (§9.2/§16.6)
+- **cli**: LoaderOutput literals carry the new side-effect fields (§9.2)
+- **assets**: Font format hint + fallback-face metric override (§16.2)
+- **cli**: Build_dispatch fixtures carry the L0 + action args (§9.3/§11.1)
+- **cli**: Make the L0 stale-entry test deterministic (§11.1)
+- **jshost**: V8 integration tests exercise real module loading (§4.2)
+- **jshost**: The V8 host evaluates a real built route module (§4.2)
+- **jshost**: The snapshot builder handles a real bundle graph (§4.4)
+- **jshost**: The V8 loader runs real TypeScript (§4.2)
+- **bundler**: Options carry inline_dynamic_imports
+- **bundler**: Options carry inline_dynamic_imports
+- **bundler**: Options carry inline_dynamic_imports
+- **bundler**: Options carry inline_dynamic_imports
+- **server**: The vitals beacon records into metrics; malformed is 204 (§16.6)
+- **oxide**: The web-vitals hook batches and beacons samples (§16.6)
+- **oxide**: The <Script> strategies inject and schedule correctly (§16.6)
+- **render**: The <Script> placeholder emitter by shape and escaping (§16.6)
+- **jshost**: Op_decls asserts the documented 5-op surface (PH0-01)
+- **fixtures**: V8-backend gate — snapshot + 10/10 sequential serve (PH0-03)
+- **cli**: Path/tag invalidation semantics for L0 (BUG-01)
+- **cli**: L0 and the worker share one cache handler (BUG-02)
+- **bundler**: Fixtures set resolve_conditions: None (BUG-SOLID)
+- **router**: Rate-limit rule allows within budget (SEC-01)
+- **server**: Rate-limit allows the first call, 429s the next with Retry-After (SEC-01)
+- **server**: Every resolved address is validated against the SSRF ranges (SEC-03)
+- **server**: A slow header drip is dropped at the timeout (SEC-06)
+- **assets**: Image signature is 64 hex (SEC-08)
+- **server**: Static assets serve before rules per §12.1 (SEC-11)
+- **server**: Inspector requires the dev token; dev host rejects non-local (SEC-09)
+- **cli**: Dev inspector test uses the SEC-09 token (SEC-09)
+- **fixtures**: Harden the V8 gate — PID port, warm-up, no cross-kill pkill
+- **cli**: /__data returns the ODF route-data envelope (PERF-01)
+- **oxide**: The ODF encoder — golden bytes, round-trip, fallbacks (PERF-01)
+- Island props decode via decodeIslandProps (ODF-or-JSON) (PERF-01)
+- **server**: Compressible responses gzip when offered (PERF-06)
+- **server,cli**: Pipeline literals gain i18n; analyze keeps clientJs fallback
+- **server,cli**: Pipeline literals gain hmr; dev-server call gains the hub arg
+- **client**: BootWithRouter hydrates the SSR root before attaching the router (§8.4)
+- **server**: Nested layout chain renders outermost-first, legacy layoutFor still works (§8.2)
+- **smoke-app**: Add a root layout that nests every page — end-to-end proof of §8.2
+- **smoke-app**: Error.tsx renders on a throwing page with the error message (§10.2 step 5)
+- **cli**: Unmatched URL is a 404 — assert the new status in the renderer-branch test (§10.2 step 5)
+- **smoke-app**: Route.ts API handler — end-to-end proof of endpoint dispatch (§8.1, §10.2 step 7)
+- **cli**: Pass endpoint_dispatcher arg to all build_dispatch test call sites (§8.1)
+- **client**: Defer-glue resolves detail.value; document the streamed-HTML vs data gap (§7.1, §9.2)
+- **smoke-app**: Middleware.ts injects locals + short-circuits with a redirect (§8.1, §8.5)
+- **cli**: Build_dispatch callers pass the middleware_dispatcher arg (§8.1)
+- **smoke-app**: Loading.tsx slow route — end-to-end proof of the loading boundary map (§8.4)
+- **server**: Add the deferred field to the LoaderOutput round-trip literal (§9.2)
+- **client**: Loading boundary paints + tears down the overlay on nav (§8.4)
+- **smoke-app**: Chat/socket.ts — end-to-end WebSocket route (§9.6)
+- **smoke-app**: SSE endpoint — end-to-end streaming response (§9.6)
+- **client**: Route-manifest resolves real components from client.manifest.json (§6.4)
+- **client**: Boot resolves the real page component from the manifest (§8.4)
+- **client**: Loading boundary fires on manifest-driven navigation (§8.4)
+- **client**: Hmr client message handling (§13.3)
+- **cli**: Dispatch/pipeline tests updated for the P0/P1 surface (§8.4, §11.2)
+- **router**: Integration parity for the P0/P1 surface (§8)
+- **jshost**: Framework host e2e parity (§7)
+- **jshost**: Hmr e2e parity (§13.3)
+- **jshost**: Integration parity (§4)
+- **jshost**: Loader host e2e — parent_data + locale (§9.2)
+- **jshost**: Snapshot bundle parity (§4.4)
+- **jshost**: V8 bundle parity (§4.2)
+- **jshost**: V8 dispatch parity for the P0/P1 ops (§4.2)
+- **jshost**: V8 module loader parity (§4.2)
+- **jshost**: V8 prelude parity (§4.2)
+- **compiler**: TDD parity (§6)
+- **bundler**: TDD parity (§6)
+- **bundler**: Rolldown TDD parity (§6.4)
+- **bundler**: JSX lowering TDD parity (§6.3)
+- **assets**: Unit parity (§16)
+- **assets**: Content collection TDD (§16.5)
+- **assets**: Lightningcss TDD (§6.6)
+- **adapters**: Emit tests for every deploy target (§18)
+- **adapters**: Deploy capability matrix coverage (§18)
+- **cache**: TDD parity for tiers + remote (§11)
+- **config**: Integration parity (§14)
+- **core-wasm**: Edge subset tests (§2 D18)
+- **dev**: Dev TDD parity (§13)
+- **graph**: Graph TDD parity (§5)
+- **odf**: Integration parity (§9.5)
+- **plugin**: WASM TDD parity (§15)
+- **render**: TDD parity (§7.1)
+- **server**: Inject_before_close TDD parity (§10.2)
+- **server**: Pipeline TDD parity for the 500 + sockets surface (§10.2, §9.6)
+- **render**: Add insta + snapshot the head/boundary/island/injection output surface (§22)
+- **render**: 12 insta snapshots lock the emitted HTML fragments (§22)
+- **adapters**: 7 insta snapshots for _headers/_redirects/dockerfile/cloudflare artifacts (§22)
+- **adapters**: Snapshot node_server_entry + vercel_functions_json artifacts (§18, §22)
+- **fuzz**: Four cargo-fuzz targets — odf_decode, router_match, config_extract, path_split (§22)
+- **fuzz**: Commit the fuzz crate lockfile for reproducible fuzz runs (§22)
+- **smoke-app**: Nested layout + page calling await parent() — proves prerender threading (§9.2)
+- **adapters**: Sort JSON keys before snapshotting so preserve_order unification cannot flip it (§22)
+- **conformance**: The D20 cross-adapter suite — one assertion set, four adapters (§22)
+- **conformance**: Add the §8.4 prefetch assertion; drop a redundant duplicate suite (§22)
+- **conformance**: The §8.4 prefetch assertion (suite edit that missed the prior commit)
+- **cli**: Pin §9.2 parallel layout-load behavior with peak-concurrency probe; refresh stale deviation comment
+- **cli**: Verify build_transform_hook returns None without a wasm plugin (§15.1)
+- **playwright**: Add middleware/loading/socket/sse specs for smoke-app-react (§8.5, §8.4, §9.6)
+- **playwright**: Pin per-spec ports; quarantine boot-hydration-blocked specs
+- **graph**: §5-A build writes snapshot; forced rebuild recomputes 0 nodes
+- **modules**: §15-E loader unit tests — contract resolution, routes fallback, has_unmerged_hooks
+- **cache**: Update for the get_arc contract
+- **server**: Initializer for the rewrite_hops field
+- **server**: Rewrite_hops contract + asset-cache behaviour
+- **oxide**: ODF typed-value coverage
+- **cli**: §5-A incremental + §19-B migrate + §15-E hook collectors
+- **smoke**: Opt into the OG endpoint (S-09)
+- **bundler**: BundleOptions literals gain the three §15-B hook fields
+- **bundler**: BundleOptions literals gain the three §15-B hook fields
+- **bundler**: BundleOptions literals gain the three §15-B hook fields
+- **bundler**: BundleOptions literals gain the three §15-B hook fields
+- **cli**: §5-E lockfile invalidation
+- **cli**: Document the current-thread deadlock in the plugin test
+- **cli**: Plugin-options test on current-thread runtime — the deadlock proof
+- **fixtures**: Plugin hook fixtures + gate (§15-F)
+- **oxide**: Client message loader
+- **vue**: <Image> component
+- **solid**: <Image> component
+- **svelte**: Compile and SSR-render the <Image> component
+- **fixtures**: Lifecycle-plugin covering the build-time hooks
+- **fixtures**: Two more plugin gate cases
+- **oxide**: Per-route subset preference
+- **cli**: The client bundle is skipped only when its own inputs change
+- **cli**: Literal locating + per-route chunk records
+- **assets**: Lock the WOFF2 deviation (16-B)
+- **server**: Pipeline literals gain the OG rate-limit fields
+- **cache**: Wave A acceptance
+- **server,cache**: Wave A acceptance tests (A3/A4/A5/A6)
+- **adapters**: Wasm-preference path
+- **server**: OxideRequest literals gain mw_resume_after
+- **server**: OxideRequest literals gain mw_resume_after
+- **jshost**: Loader event carries searchParams (ignored: boots V8)
+- **dev**: Waterfall rendering
+- **oxide**: Error / Ref / Deferred round-trip
+- **cli**: Rewrite-once middleware + OxideRequest literals
+- **cli**: WP-B2 acceptance — per-settle flush, close-last, no-settle identity
+- **adapters**: Assert the wasm cache-key path is taken
+- **adapters**: Snapshot gains the Cache-Control header
+- **assets**: Locale fixture files for the catalog loader
+- **bundler**: RenderChunk marker assertion
+- **bundler**: Opts() helper takes (root, env, entries)
+- **cli**: L0 nonce/body assertions report the inputs on failure
+- **cli**: `pwa` alias resolves to the manifest plugin
+- **cli**: Request literals use Arc<Vec<..>> headers
+- **config**: The schema exposes `fonts.families`
+- **dev**: Drop two obsolete assertions
+- **jshost**: Op-decl count includes loader_emit
+- **jshost**: Trim a stale assertion
+- **jshost**: V8 loader event carries searchParams + streaming settles
+- **render**: Head snapshot with a quoted description
+- **server**: Request literals use Arc headers
+- **server**: Request literals use Arc headers + OG rate-limit fields
+- **oxide**: B3 acceptance — late settle scripts, rejection, dispose
+- **server**: C3 — alt-svc present only when advertised
+- **cli**: LoaderOutput parses a session (WP-D1)
+- **server**: C3 alt-svc assertions use the real dispatch helper
+- **conformance**: Cover ComponentSource config surface
+- **cli**: L0 hit-rate regression + prerendered 500 serving (L1, L3a)
+- **cli**: S-20 508 guard + P-12 asset cache serving (L3b, L3c)
+- **ci**: L2 redis + L4 fuzz + L5 schema/grep gates (§22)
+- **ci**: L6a/d/e — loader e2e + HMR harness CI, dev-L0 pointer
+- **react**: L6b — pin layout-swap tree + fix two stale miss assertions
+- **playwright**: Socket second-client isolation (L6c)
+- **jshost**: E2e resolver-supplies-components without componentFor
+- **cli**: Pin WP-D1 parallel-arm session + G2 trace threading
+- **adapters**: Repair stale merge_head wasm assertion (P0-1a residue)
+- **server**: Audit §12.2 zero-downtime reload via SO_REUSEPORT
+- **config**: Fail when the checked-in schema drifts
+- **jshost**: Probe worker for the offline-plugins contract
+- **jshost**: Offline-plugins wiring and deny, both directions
+- **server**: Endpoint fixture carries the new image fields
+- **cli**: Build fixture carries the offline_plugins field
+- **content**: Rename the 'caches by mtime' test to content-hash
+- **jshost**: Prove the config cache is keyed on the disk generation
+- **adapters**: The edge JS fallback emits a canonical L0 key
+- **cli**: Zero-import `oxide render` resolves components from the built entry
+- **cli**: L0 middleware-cookie refusal + short-circuit session persistence
+- **react**: `<html lang>` follows the resolved locale, with an injection guard
+- **vue**: `<html lang>` follows the resolved locale, with an injection guard
+- **svelte**: `<html lang>` follows the resolved locale, with an injection guard
+- **solid**: `<html lang>` follows the resolved locale, with an injection guard
+- **jshost**: Hmr_e2e asserts content freshness, not the obsolete staleness window
+- **react**: Defer() values reach the component
+- **vue**: Defer() values reach the component
+- **svelte**: Defer() values reach the component
+- **solid**: Defer() values reach the component
+- **react**: The IR renderer resolves defer() values
+- **vue**: The IR renderer resolves defer() values
+- **svelte**: The IR renderer resolves defer() values
+- **solid**: The IR renderer resolves defer() values
+- **react**: The defer swapper carries the nonce, and omits it when unset
+- **vue**: The defer swapper carries the nonce, and omits it when unset
+- **svelte**: The defer swapper carries the nonce, and omits it when unset
+- **solid**: The defer swapper carries the nonce, and omits it when unset
+- **render**: The swapper selector is attribute-only
+- **render**: Accept the swapper-selector snapshot
+- **render**: Accept the swapper-selector snapshot
+- **render**: Accept the swapper-selector snapshot
+- **react**: SimulateSwap matches the widened selector
+- **vue**: SimulateSwap matches the widened selector
+- **svelte**: SimulateSwap matches the widened selector
+- **solid**: SimulateSwap matches the widened selector
+- **conformance**: A non-template boundary host swaps too
+- **cli**: PPR tag/path invalidation and content-rescan scoping
+- **playwright**: Socket broadcast and presence, end to end
+- **react**: The IR renderer nests layouts outermost → innermost
+- **vue**: The IR renderer nests layouts outermost → innermost
+- **svelte**: The IR renderer nests layouts outermost → innermost
+- **solid**: The IR renderer nests layouts outermost → innermost
+- **playwright**: Add Firefox and WebKit projects (§22 browser matrix)
+- **playwright**: The service worker registers, precaches, and serves offline
+- **playwright**: The form action works with JavaScript disabled (§9.3, §22)
+- **cli**: `edgeExternals` is threaded through the edge bundle
+- **adapters**: The flat merge_head is still not wasm-routed, the structured one is
+- **playwright**: Warm-up navigation in loading.spec beforeAll (WebKit cold-start flake)
+- **playwright**: WP-B dev route rescan end-to-end
+- **cli**: Settle bridge bounds the withheld tail across fragmented chunks
+- **smoke-app**: Deferred-boundary fixture route
+- **playwright**: Deferred settles stream one at a time (§7.1 / B2)
+- **jshost**: V8 plugin ops load once and call hooks positionally
+- **oxide/client**: ICU plural/select/number coverage for formatIcu
+- **svelte**: <Defer> SSR — placeholder marker, resolved inline, shape check
+- **vue**: <Defer> SSR — placeholder marker, resolved inline
+- **svelte**: Export-map contract — every export resolves, ./defer advertised
+- **vue**: Export-map contract — every export resolves, ./defer advertised
+- **oxide**: Image-sizes — width extraction, ladder derivation, edge cases
+- **react**: <Image> sizes derived from srcset when absent
+- **vue**: <Image> sizes derived from srcset when absent
+- **solid**: <Image> sizes derived from srcset when absent
+- **svelte**: <Image> sizes derived from srcset when absent
+- **cli**: Edge bundle consults the precompiled map (WP-J)
+- **smoke-app/socket**: Welcome carries id; sendto handler
+- **playwright/socket**: SendTo delivers to the target, not the sender
+- **oxide/i18n**: ICU offset×exact and # in =N branches
+- **smoke-app**: Setcookie action fixture
+- **cli**: B6 helper unit test + dispatch integration test
+
+### Build
+
+- Pin the resolved dependency graph
+- Initialize the Oxide workspace manifest
+- Pin the Rust toolchain
+- **adapters**: Declare the crate manifest
+- **assets**: Declare the crate manifest
+- **bundler**: Declare the crate manifest
+- **cache**: Declare the crate manifest
+- **cli**: Declare the crate manifest
+- **compiler**: Declare the crate manifest
+- **config**: Declare the crate manifest
+- **core-wasm**: Declare the crate manifest
+- **dev**: Declare the crate manifest
+- **diagnostics**: Declare the crate manifest
+- **graph**: Declare the crate manifest
+- **jshost**: Declare the crate manifest
+- **odf**: Declare the crate manifest
+- **plugin**: Declare the crate manifest
+- **render**: Declare the crate manifest
+- **router**: Declare the crate manifest
+- **server**: Declare the crate manifest
+- **create-oxide**: Declare the package manifest
+- **oxide**: Declare the package manifest
+- **oxide**: Add the TypeScript config
+- **react**: Declare the package manifest
+- **solid**: Declare the package manifest
+- **svelte**: Declare the package manifest
+- **vue**: Declare the package manifest
+- **conformance**: Declare the conformance package
+- Refresh lockfile after dependency additions
+- Bump workspace deps and add real backend crates
+- (assets) declare the crate manifest
+- (plugin) declare the crate manifest
+- (server) declare the crate manifest
+- **workspace**: Update lockfile
+- **workspace**: Update workspace manifest
+- **assets**: Add deps for content and i18n
+- **bundler**: Add deps for prebundle
+- **cli**: Add deps for MCP
+- **dev**: Add deps for HTTPS and QR
+- **jshost**: Add deno_core dep
+- **server**: Add deps for metrics and OTLP
+- **npm**: Configure hoisted node_modules and peer resolution
+- **pnpm**: Add root package.json with test scripts
+- **pnpm**: Declare pnpm workspace packages
+- **pnpm**: Record lockfile for React peer deps
+- **pnpm**: Record lockfile for Vue/Svelte/Solid peer deps
+- **solid**: Migrate to solid-js 2.0.0-rc.14 + @solidjs/web
+- **pnpm**: Lockfile for solid-js 2.0.0-rc.14 + @solidjs/web
+- **vue**: Migrate to vue 3.6.0-rc.11 + @vue/server-renderer (Vapor Mode + reactivity rewrite)
+- **pnpm**: Lockfile for vue 3.6.0-rc.11
+- **workspace**: Drop strip=debuginfo from [profile.test] (disk-constrained env)
+- **cli**: Depend on futures (executor) for async CLI E2E tests
+- **pnpm**: Lockfile refresh after futures removal
+- **cli**: Drop unused futures dep (block_on no longer needed)
+- **server**: Add serde + async-trait deps for the renderer trait
+- **cli**: Set page_renderer: None in the dev-server Pipeline literal
+- **cli**: Add async-trait + serde_json deps for the framework shim
+- **cli**: Add bytes dep for OxideRequest construction in dispatch tests
+- **pnpm**: Lockfile refresh for examples/smoke-app
+- **pnpm**: Add examples/* to the workspace
+- **smoke-app**: Declare the app as a workspace member with local deps
+
+<!-- generated by git-cliff -->
