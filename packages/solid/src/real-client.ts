@@ -32,6 +32,17 @@ let cachedWeb: SolidWebClientLike | undefined
 let cachedCreate: ((type: unknown, props: unknown) => unknown) | undefined
 let attempted = false
 
+/** Structural type guard: `v` has at least one of the Solid core
+ * element/component factory functions. Both the ESM namespace shape and
+ * the interop `.default` shape expose these on the same keys. */
+function isSolidCoreLike(v: unknown): v is SolidCoreLike {
+  if (typeof v !== 'object' || v === null) return false
+  const rec = v as Record<string, unknown>
+  const hasElement = typeof rec.createElement === 'function'
+  const hasComponent = typeof rec.createComponent === 'function'
+  return hasElement || hasComponent
+}
+
 async function load(): Promise<{
   web: SolidWebClientLike
   create: (type: unknown, props: unknown) => unknown
@@ -57,16 +68,21 @@ async function load(): Promise<{
   // the canonical name).
   let core: SolidCoreLike | undefined
   try {
-    const mod = (await import('solid-js')) as unknown as
-      | (SolidCoreLike & { default?: SolidCoreLike })
-      | { default: SolidCoreLike }
-    // Two possible module shapes: an ESM namespace with named exports
-    // (createElement/createComponent on `mod`), or an interop wrapper
-    // with the real object under `.default`.
-    if ('default' in mod && mod.default !== undefined) {
-      core = mod.default
+    const mod: unknown = await import('solid-js')
+    // Two possible module shapes at runtime: an ESM namespace with named
+    // exports (createElement/createComponent on `mod`), or an interop
+    // wrapper with the real object under `.default`. Narrow structurally —
+    // no `as unknown as` cast. `isSolidCoreLike` accepts either shape by
+    // checking for the function fields the module actually exposes.
+    if (typeof mod !== 'object' || mod === null) return undefined
+    const modRec = mod as Record<string, unknown>
+    const def = modRec.default
+    if (isSolidCoreLike(def)) {
+      core = def
+    } else if (isSolidCoreLike(modRec)) {
+      core = modRec
     } else {
-      core = mod
+      return undefined
     }
   } catch {
     return undefined
