@@ -30,7 +30,7 @@ function fakeDoc(scripts: Array<{ textContent: string | null }> = []): any {
 
 test('defer-glue: resolved defer() values from a script resolve the slots', async () => {
   const doc = fakeDoc([{ textContent: '{"1":"hello","2":{"x":42}}' }])
-  const glue = attachDeferGlue({ doc: doc as unknown as Document })
+  const glue = attachDeferGlue({ doc: doc })
   const data: any = { a: { __deferred: 1 }, b: { __deferred: 2 } }
   glue.wire(data)
 
@@ -43,7 +43,7 @@ test('defer-glue: a deferred error payload rejects the slot', async () => {
   const doc = fakeDoc([
     { textContent: '{"7":{"__oxide_deferred_error":"boom"}}' },
   ])
-  const glue = attachDeferGlue({ doc: doc as unknown as Document })
+  const glue = attachDeferGlue({ doc: doc })
   const data: any = { v: { __deferred: 7 } }
   glue.wire(data)
   await assert.rejects(() => data.v as Promise<unknown>, /boom/)
@@ -55,7 +55,7 @@ test('defer-glue: a malformed script is skipped, not fatal', async () => {
     { textContent: '{not valid json' },
     { textContent: '{"3":"ok"}' },
   ])
-  const glue = attachDeferGlue({ doc: doc as unknown as Document })
+  const glue = attachDeferGlue({ doc: doc })
   const data: any = { v: { __deferred: 3 } }
   glue.wire(data)
   assert.equal(await (data.v as Promise<unknown>), 'ok', 'later valid script still resolves')
@@ -65,6 +65,6 @@ test('defer-glue: a malformed script is skipped, not fatal', async () => {
 test('defer-glue: empty textContent is a no-op', async () => {
   const doc = fakeDoc([{ textContent: '' }, { textContent: null }])
   // Must not throw, must not resolve anything.
-  const glue = attachDeferGlue({ doc: doc as unknown as Document })
+  const glue = attachDeferGlue({ doc: doc })
   glue.dispose()
 })
