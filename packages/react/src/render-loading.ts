@@ -22,7 +22,7 @@ async function loadReactRuntime(): Promise<{
     import('react-dom/client'),
   ])
   cachedReact = reactMod as unknown as typeof cachedReact
-  cachedRoot = clientMod as unknown as ReactDomClientRootLike
+  cachedRoot = clientMod
   return { root: cachedRoot!, react: cachedReact! }
 }
 
