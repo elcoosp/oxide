@@ -26,7 +26,15 @@ const skip = !available
 const source = available ? await getSolidSource() : undefined
 
 async function getWeb(): Promise<Record<string, unknown>> {
-  return (await getSolidWeb()) as unknown as Record<string, unknown>
+  const web = await getSolidWeb()
+  // SolidWebLike is a class-shaped interface with method fields; each is
+  // own-property on the runtime object, so a structural Record copy works.
+  if (web === undefined) throw new Error('getSolidWeb: undefined')
+  const rec: Record<string, unknown> = {}
+  for (const key of Object.keys(web)) {
+    rec[key] = (web as unknown as Record<string, unknown>)[key]
+  }
+  return rec
 }
 
 test('real SSR: upstream Solid renderer is resolvable', { skip }, async () => {
