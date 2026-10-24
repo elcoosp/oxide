@@ -1,5 +1,5 @@
 // src/routes/docs/[page]/page.server.ts — renders any doc page by slug.
-import { defineLoad, defineMeta, error } from '@oxide-fw/oxide/server'
+import { defineLoad, defineMeta, error } from '@oxide-fw/core/server'
 import { readDoc } from '../../../lib/md.server.ts'
 
 export const config = { render: 'isr', revalidate: 3600, tags: ['docs'] }

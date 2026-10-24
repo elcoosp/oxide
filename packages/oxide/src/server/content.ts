@@ -10,7 +10,7 @@
 //
 // A loader calls:
 //
-//   import { getCollection, getEntry } from '@oxide-fw/oxide/server'
+//   import { getCollection, getEntry } from '@oxide-fw/core/server'
 //   export async function load() {
 //     const posts = await getCollection('blog')
 //     const hello = await getEntry('blog', 'hello-world')

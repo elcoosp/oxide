@@ -217,7 +217,7 @@ fn use_cache_unmarked_functions_untouched() {
 
 // ------------------------------------------------------ server-fn stub pass
 
-const SERVER_FN_SRC: &str = r#"import { serverFn } from '@oxide-fw/oxide/server';
+const SERVER_FN_SRC: &str = r#"import { serverFn } from '@oxide-fw/core/server';
 
 export const addToCart = serverFn(async (productId: string) => {
   return db.add(productId);
@@ -400,7 +400,7 @@ fn hmr_is_idempotent() {
 // ---------------------------------------------------- ScannerTransformer e2e
 
 const PAGE_SERVER: &str = r#"import { db } from './db.server';
-import { serverFn } from '@oxide-fw/oxide/server';
+import { serverFn } from '@oxide-fw/core/server';
 
 export const getPosts = serverFn(async () => {
   return db.query('SELECT * FROM posts');

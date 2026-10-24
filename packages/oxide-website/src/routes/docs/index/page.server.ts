@@ -1,6 +1,6 @@
 // src/routes/docs/index/page.server.ts — /docs renders the getting-started
 // page (same content as /docs/getting-started; the radix tree keeps both).
-import { defineLoad, defineMeta, error } from '@oxide-fw/oxide/server'
+import { defineLoad, defineMeta, error } from '@oxide-fw/core/server'
 import { readDoc } from '../../../lib/md.server.ts'
 
 export const config = { render: 'isr', revalidate: 3600, tags: ['docs'] }

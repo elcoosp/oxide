@@ -901,7 +901,7 @@ fn generate_island_boot_entry(
     out.push_str(&format!(
         "import {{ clientAdapter }} from '@oxide-fw/{framework}';\n"
     ));
-    out.push_str("import { bootWithRouter, installBootRuntime } from '@oxide-fw/oxide/client/boot';\n");
+    out.push_str("import { bootWithRouter, installBootRuntime } from '@oxide-fw/core/client/boot';\n");
     let mut idents: Vec<(String, String)> = Vec::new();
     for (name, src) in islands {
         let abs = root.join(src);
@@ -1008,7 +1008,7 @@ fn generate_island_boot_entry(
     );
     // §16.6 / §20: report Core Web Vitals to `/_oxide/vitals`. Guarded and
     // no-op outside the browser; the boot entry only runs in one.
-    out.push_str("import { reportWebVitals } from '@oxide-fw/oxide/client';\nreportWebVitals();\n");
+    out.push_str("import { reportWebVitals } from '@oxide-fw/core/client';\nreportWebVitals();\n");
     // §16.6 / SPEC-21: auto-register the service worker when the project
     // configured a PWA manifest. `emit_pwa_worker` wrote `/pwa-register.js`;
     // loading it from the boot entry is what the spec's "auto-registration"

@@ -2,7 +2,7 @@
 // suite. The fast slot settles first and the slow one ~800ms later, so a
 // streamed response must flush two resolution scripts at distinct times —
 // not batch them after the slowest promise.
-import { defineLoad } from '@oxide-fw/oxide/server'
+import { defineLoad } from '@oxide-fw/core/server'
 
 export const config = { render: 'dynamic' }
 

@@ -1,4 +1,4 @@
-import { defineLoad } from '@oxide-fw/oxide/server'
+import { defineLoad } from '@oxide-fw/core/server'
 
 export const load = defineLoad(async ({ parent }: { parent: () => Promise<{ org?: string }> }) => {
   const p = await parent()

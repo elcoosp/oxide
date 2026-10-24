@@ -8,7 +8,7 @@
 // Supported markdown subset (keep posts inside it): headings #..####,
 // paragraphs, -/* and 1. lists, pipe tables, > blockquotes, ``` fences,
 // --- rules, inline `code`, **bold**, [links](https://… or /relative).
-import { getCollection, getEntry } from '@oxide-fw/oxide/server'
+import { getCollection, getEntry } from '@oxide-fw/core/server'
 
 export interface Frontmatter {
   [key: string]: string

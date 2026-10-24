@@ -46,7 +46,7 @@ fn envmap(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
 
 /// The exact §14.1 example from the spec (byte-for-byte).
 const SPEC_EXAMPLE: &str = r#"// oxide.config.ts
-import { defineConfig } from '@oxide-fw/oxide'
+import { defineConfig } from '@oxide-fw/core'
 import react from '@oxide-fw/react'       // or @oxide-fw/vue | @oxide-fw/svelte | @oxide-fw/solid
 import tailwind from '@oxide-fw/tailwind'
 

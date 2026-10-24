@@ -30,7 +30,7 @@ fn extract_full(source: &str) -> Option<Value> {
         };
         sc.skip_trivia()?;
         if sc.peek() != Some('(') {
-            // e.g. the `import { defineConfig } from '@oxide-fw/oxide'` binding — keep looking
+            // e.g. the `import { defineConfig } from '@oxide-fw/core'` binding — keep looking
             from = start;
             continue;
         }

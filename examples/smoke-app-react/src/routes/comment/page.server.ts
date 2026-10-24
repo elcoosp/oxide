@@ -7,7 +7,7 @@
 // made an actions-only route unusable — the form POST could not re-render
 // the page it belonged to. The worker now accepts `actions`-or-`config`-
 // only modules and yields empty data.
-import { defineAction } from '@oxide-fw/oxide/server'
+import { defineAction } from '@oxide-fw/core/server'
 
 export const actions = {
   comment: defineAction({

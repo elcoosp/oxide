@@ -4,7 +4,7 @@
 // `blog`, so publishing a new post can invalidate precisely. Markdown is
 // read and rendered server-side (see src/lib/md.server.ts); `meta` merges
 // into the neutral head model (§16.3).
-import { defineLoad, defineMeta, error } from '@oxide-fw/oxide/server'
+import { defineLoad, defineMeta, error } from '@oxide-fw/core/server'
 import { readPost } from '../../../lib/md.server.ts'
 
 export const config = { render: 'isr', revalidate: 3600, tags: ['blog'] }
