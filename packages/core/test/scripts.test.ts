@@ -154,7 +154,7 @@ test('loadScripts scans data-ox-script placeholders and schedules them', () => {
   tag.attrs['data-ox-script'] = ''
   tag.attrs['data-ox-strategy'] = 'defer'
   tag.attrs['data-ox-src'] = '/from-tag.js'
-  ;(doc as unknown as { querySelectorAll: () => FakeEl[] }).querySelectorAll = () => [tag]
+  doc.querySelectorAll = () => [tag]
   loadScripts({ doc: doc as never })
   assert.equal(head.length, 1)
   assert.equal(mustEl(head, 0).src, '/from-tag.js')
@@ -167,7 +167,7 @@ test('loadScripts decodes an inline base64 body', () => {
   const tag = doc.createElement('script')
   tag.attrs['data-ox-script'] = ''
   tag.attrs['data-ox-inline'] = b64
-  ;(doc as unknown as { querySelectorAll: () => FakeEl[] }).querySelectorAll = () => [tag]
+  doc.querySelectorAll = () => [tag]
   loadScripts({ doc: doc as never })
   assert.equal(mustEl(head, 0).textContent, code)
 })
