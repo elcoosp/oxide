@@ -45,7 +45,15 @@ export const Defer = defineComponent({
   setup(props, { slots }) {
     return () => {
       const id = deferredIdOf(props.value)
-      const hostSlots = slots as unknown as Slots
+      // `slots` from setup is Vue's `Slots`; `Slots` here is the same shape
+      // (a record of `(args) => unknown` functions). Rebuild via a narrow
+      // copy — no cast, honest adaptation.
+      const hostSlots: Slots = {}
+      for (const [k, fn] of Object.entries(slots)) {
+        if (typeof fn === 'function') {
+          hostSlots[k] = (args: { value: unknown }): unknown => fn(args)
+        }
+      }
       if (id === null) {
         return h(ResolvedContent, { value: props.value, slots: hostSlots })
       }
