@@ -53,7 +53,7 @@ export function getLastLoadError(): string | undefined {
 
 async function tryLoad(name: 'solid-js/web' | '@solidjs/web'): Promise<SolidWebLike | undefined> {
   try {
-    const mod = (await import(name)) as unknown as SolidWebLike
+    const mod = (await import(name)) as SolidWebLike
     const hasRenderer =
       typeof mod.renderToString === 'function' ||
       typeof mod.renderToStringAsync === 'function'
