@@ -71,7 +71,7 @@ interface ClientHandle {
 // Tree building (client side of the shared deterministic page registry)
 // ---------------------------------------------------------------------------
 
-interface PageProps {
+type PageProps = {
   route: string
   url: string
   params: Record<string, string | string[]>
@@ -88,7 +88,7 @@ function pageTreeFor(input: ClientInput, client: ClientHooks): Node {
     data: input.data as Record<string, unknown>,
     client,
   }
-  return el(page, props as unknown as Record<string, unknown>)
+  return el(page, props)
 }
 
 function pageRenderInput(input: ClientInput): Parameters<typeof renderShellToString>[0] {
