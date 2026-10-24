@@ -10,17 +10,19 @@
 
 /** A component: a plain function from props to a Node (§7 component model).
  *
- * `props` is `any` (not `Record<string, unknown>`) because the IR layer
- * holds a heterogeneous component registry (`PAGES`, `LAYOUTS`,
- * `islandModules`) where each entry declares its own props interface
- * (`PageProps`, `PageProps & { initialCount?: number }`, etc.). A stricter
- * signature cannot express "existential component of unknown props shape"
- * in TypeScript without per-callsite casts — parameter contravariance
- * forbids `(props: PageProps) => Node` from assigning to
- * `(props: Record<string, unknown>) => Node`. Standard for component
- * registries at this layer (React's `FC<any>`, Vue's `Component`, Solid's
- * `Component<any>`). This is the honest declaration, not a masking cast. */
-export type ComponentFn = (props: any) => Node
+ * `props` is `never` (not `any`) because the IR layer holds a heterogeneous
+ * component registry (`PAGES`, `LAYOUTS`, `islandModules`) where each entry
+ * declares its own props interface (`PageProps`,
+ * `PageProps & { initialCount?: number }`, etc.). TypeScript parameter
+ * contravariance makes `(props: PageProps) => Node` unassignable to
+ * `(props: Record<string, unknown>) => Node`, so `Record<string, unknown>`
+ * cannot represent the registry. `never` is contravariant bottom: every
+ * concrete component is assignable to `(props: never) => Node`. The IR
+ * walker widens at the callsite (see `callComponent` in render.ts) — the
+ * single documented existential-to-universal boundary. Same construction as
+ * the heterogeneous fn registry in packages/core/src/server/index.ts
+ * (`(...args: never[]) => unknown`). */
+export type ComponentFn = (props: never) => Node
 
 /** The tree kinds: fragment / element / text / raw / defer / island. */
 export type Node = FragmentNode | ElementNode | TextNode | RawNode | DeferNode | IslandNode
