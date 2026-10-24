@@ -11,7 +11,12 @@ interface WithBase64Globals {
   btoa?: (s: string) => string
   atob?: (s: string) => string
   Buffer?: {
+    // Two Node `Buffer.from` overloads actually used in this module:
+    //  - from(string, encoding): convert a string to bytes.
+    //  - from(Uint8Array):      copy an existing byte buffer.
+    // Both return an object whose `.toString(enc)` base64-encodes.
     from(s: string, enc: string): { toString(enc: string): string } & Uint8Array
+    from(bytes: Uint8Array): { toString(enc: string): string } & Uint8Array
   }
 }
 
@@ -50,9 +55,7 @@ export function bytesToBase64(bytes: Uint8Array): string {
   if (typeof g.btoa === 'function') return g.btoa(bytesToBinary(bytes))
   if (g.Buffer) {
     // `Buffer.from(bytes)` copies into a Node buffer, then base64-encodes.
-    const buf = (g.Buffer as unknown as {
-      from(input: Uint8Array): { toString(enc: string): string }
-    }).from(bytes)
+    const buf = g.Buffer.from(bytes)
     return buf.toString('base64')
   }
   throw new TypeError('bytesToBase64: no base64 encoder available')
