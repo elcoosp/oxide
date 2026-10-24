@@ -8,6 +8,16 @@ interface VNodeLike {
   props: Record<string, unknown> | null
 }
 
+/** Typed indexed access with a runtime bounds check. Throws a clear error
+ * (failing the test) instead of returning `T | undefined` — the honest way
+ * to satisfy `noUncheckedIndexedAccess` in tests whose fixtures are known
+ * non-empty. */
+function mustEl<T>(arr: readonly T[], i: number): T {
+  const v = arr[i]
+  if (v === undefined) throw new Error(`mustEl: index ${i} out of bounds (len=${arr.length})`)
+  return v
+}
+
 test('plain src + dims emits an img VNode', () => {
   const v = Image({ src: '/a.png', width: 400, height: 300, alt: 'A' }) as VNodeLike
   assert.equal(v.type, 'img')
@@ -41,14 +51,14 @@ test('priority emits [link, img] with eager + high priority', () => {
   }) as VNodeLike[]
   assert.ok(Array.isArray(out), 'priority returns an array')
   assert.equal(out.length, 2)
-  assert.equal(out[0].type, 'link')
-  assert.equal(out[0].props?.rel, 'preload')
-  assert.equal(out[0].props?.as, 'image')
-  assert.equal(out[0].props?.imagesrcset, '/hero.png?w=800 800w')
-  assert.equal(out[0].props?.imagesizes, '100vw')
-  assert.equal(out[1].type, 'img')
-  assert.equal(out[1].props?.loading, 'eager')
-  assert.equal(out[1].props?.fetchpriority, 'high')
+  assert.equal(mustEl(out, 0).type, 'link')
+  assert.equal(mustEl(out, 0).props?.rel, 'preload')
+  assert.equal(mustEl(out, 0).props?.as, 'image')
+  assert.equal(mustEl(out, 0).props?.imagesrcset, '/hero.png?w=800 800w')
+  assert.equal(mustEl(out, 0).props?.imagesizes, '100vw')
+  assert.equal(mustEl(out, 1).type, 'img')
+  assert.equal(mustEl(out, 1).props?.loading, 'eager')
+  assert.equal(mustEl(out, 1).props?.fetchpriority, 'high')
 })
 
 // §16.1: sizes derived from srcset when absent; explicit sizes wins.
