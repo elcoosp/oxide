@@ -274,6 +274,7 @@ function formatArgument(
   const rest = inner.slice(comma + 1).trim()
   if (!(name in values)) return `{${inner}}`
   const value = values[name]
+  if (value === undefined) return `{${inner}}`
   const second = rest.indexOf(',')
   const type = (second < 0 ? rest : rest.slice(0, second)).trim()
   const style = second < 0 ? '' : rest.slice(second + 1).trim()

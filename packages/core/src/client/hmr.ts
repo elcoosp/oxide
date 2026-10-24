@@ -53,13 +53,16 @@ function defaultUrl(): string {
 
 /** Swap the <link rel=stylesheet> whose href matches `path` (query-stripped). */
 function swapCss(doc: Document, path: string): boolean {
-  const bare = path.split('?')[0]
+  const bare = path.split('?').at(0) ?? ''
   const links = doc.querySelectorAll('link[rel="stylesheet"]')
   for (let i = 0; i < links.length; i++) {
-    const el = links[i] as HTMLLinkElement
-    const href = (el.getAttribute('href') ?? '').split('?')[0]
+    const el = links[i]
+    if (el === undefined) continue
+    const linkEl = el as HTMLLinkElement
+    const rawHref = linkEl.getAttribute('href') ?? ''
+    const href = rawHref.split('?').at(0) ?? ''
     if (href === bare || href.endsWith(bare)) {
-      el.setAttribute('href', `${bare}?t=${Date.now()}`)
+      linkEl.setAttribute('href', `${bare}?t=${Date.now()}`)
       return true
     }
   }

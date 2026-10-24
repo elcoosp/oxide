@@ -280,6 +280,7 @@ export function createRouter(opts: RouterOptions): Router {
       let ok = true
       for (let i = 0; i < routeSegs.length; i++) {
         const rs = routeSegs[i]
+        if (rs === undefined) { ok = false; break }
         // Param segment forms: `_slug_` (the manifest normalizes `[slug]`),
         // `[...rest]`, `[slug]`.
         const isParam = /^_|\[/.test(rs)
