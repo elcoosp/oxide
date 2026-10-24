@@ -107,10 +107,12 @@ test('boot: ox:data with {route, odf} decodes and calls adapter.update', async (
     await new Promise((r) => setTimeout(r, 10))
 
     assert.equal(updates.length, 1, 'adapter.update fired once')
-    assert.equal(updates[0].route, '/page')
-    assert.deepEqual(updates[0].data, { title: 'Hot' }, 'ODF decoded to the data payload')
+    const u0 = updates[0]
+    if (u0 === undefined) throw new Error('test invariant: updates[0] should be defined')
+    assert.equal(u0.route, '/page')
+    assert.deepEqual(u0.data, { title: 'Hot' }, 'ODF decoded to the data payload')
     // window.__oxide.params threaded through.
-    assert.deepEqual(updates[0].params, { slug: 'abc' })
+    assert.deepEqual(u0.params, { slug: 'abc' })
     dispose()
   } finally {
     restore()
