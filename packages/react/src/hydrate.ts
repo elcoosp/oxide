@@ -31,7 +31,12 @@ export interface OxElement {
   removeEventListener(type: string, fn: (ev: unknown) => void): void
   dispatchEvent?(ev: { type: string; detail?: unknown }): boolean
   innerHTML: string
-  ownerDocument?: OxDoc
+  /** The DOM specification types this as `Document | null` (null when the
+   *  element is detached from its document), not `Document | undefined`.
+   *  Widening to `OxDoc | null` makes OxElement DOM-faithful and lets a
+   *  fake DOM in tests (FakeDocument | null) structurally satisfy the type
+   *  without a cast. `hydrate.ts` already null-checks via `if (!doc)`. */
+  ownerDocument?: OxDoc | null
   querySelector?(sel: string): OxElement | null
   querySelectorAll?(sel: string): ArrayLike<OxElement>
 }
