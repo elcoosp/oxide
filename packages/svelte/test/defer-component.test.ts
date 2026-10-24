@@ -19,6 +19,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { compile } from 'svelte/compiler'
+import type { Component } from 'svelte'
 import { render } from 'svelte/server'
 import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -31,7 +32,7 @@ process.on('exit', () => {
   try { rmSync(TMP, { recursive: true, force: true }) } catch { /* best-effort */ }
 })
 
-async function build(): Promise<unknown> {
+async function build(): Promise<Component<Record<string, unknown>, Record<string, unknown>, string>> {
   rmSync(TMP, { recursive: true, force: true })
   mkdirSync(TMP, { recursive: true })
 
@@ -60,14 +61,14 @@ async function build(): Promise<unknown> {
   })
   writeFileSync(join(TMP, 'Wrapper.mjs'), wrapperOut.js.code)
 
-  const mod = (await import(pathToFileURL(join(TMP, 'Wrapper.mjs')).href)) as { default: unknown }
+  const mod = (await import(pathToFileURL(join(TMP, 'Wrapper.mjs')).href)) as { default: Component<Record<string, unknown>, Record<string, unknown>, string> }
   return mod.default
 }
 
 const Wrapper = await build()
 
 test('a placeholder value renders <ox-defer data-ox-b="id"> with the fallback', () => {
-  const { body } = render(Wrapper as never, {
+  const { body } = render(Wrapper, {
     props: { value: { __deferred: 0 }, fallbackText: 'Loading…' },
   })
   // The wire marker the swapper's attribute-only selector matches.
@@ -80,14 +81,14 @@ test('a placeholder value renders <ox-defer data-ox-b="id"> with the fallback', 
 })
 
 test('an already-resolved value renders children inline — no <ox-defer>', () => {
-  const { body } = render(Wrapper as never, { props: { value: 'hello' } })
+  const { body } = render(Wrapper, { props: { value: 'hello' } })
   assert.doesNotMatch(body, /<ox-defer/, body)
   assert.match(body, /<span[^>]*class="resolved"[^>]*>"hello"<\/span>/, body)
   assert.doesNotMatch(body, /class="fallback"/, body)
 })
 
 test('a placeholder with extra keys is NOT a boundary (shape must be exact)', () => {
-  const { body } = render(Wrapper as never, {
+  const { body } = render(Wrapper, {
     props: { value: { __deferred: 0, extra: true } },
   })
   assert.doesNotMatch(body, /<ox-defer/, body)
