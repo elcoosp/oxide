@@ -20,6 +20,8 @@ import { resolveDeferredPlaceholders } from '../../core/src/server/deferred.ts'
 import {
   el, t, raw, frag, deferred, island, deferPromise, escapeText, escapeAttr, hash6, toBase64,
   type Node, type ComponentFn, type DeferSource,
+
+  escapeScript,
 } from './ir.ts'
 import { boundaryFallback, boundaryContent, islandElement, errorBoundary, hydrationBootstrap } from './protocol.ts'
 
