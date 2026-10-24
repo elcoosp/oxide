@@ -28,6 +28,27 @@ export interface ReactDomClientLike {
 // Keep the module types the dynamic import actually produces — no local
 // minimal type. Callers narrow at the callsite; the alternative (minimal
 // interface + `as unknown as` conversion) defeats the point.
+
+/** Narrow an unknown island module export to a React function component.
+ *
+ * The FrameworkAdapter.hydrateIsland contract types `mod` as `unknown` — the
+ * framework cannot know the module's shape ahead of time. This helper is the
+ * honest runtime-guard-then-assert pattern: the body checks
+ * `typeof v === 'function'` (what a React function component IS at runtime,
+ * no amount of type machinery changes that), and TS uses that guard to narrow
+ * `unknown` to `FunctionComponent<Record<string, unknown>>` in the caller —
+ * without an `as` cast. A class component (rare in island code, and not what
+ * the SSR path emits) would also pass the runtime check; the signature just
+ * tells TS what to call it.
+ */
+function assertFunctionComponent(
+  v: unknown,
+): asserts v is import('react').FunctionComponent<Record<string, unknown>> {
+  if (typeof v !== 'function') {
+    throw new TypeError('island module must export a React function component')
+  }
+}
+
 let cachedClient: typeof import('react-dom/client') | undefined
 let cachedReact: typeof import('react') | undefined
 
@@ -76,10 +97,8 @@ export async function reactHydrateIsland(
   // function, the throw is the honest failure.
   const maybeDefault = (mod as { default?: unknown }).default
   const candidate: unknown = maybeDefault ?? mod
-  if (typeof candidate !== 'function') {
-    throw new TypeError('reactHydrateIsland: island module must export a default component')
-  }
-  const component = candidate as FunctionComponent
+  assertFunctionComponent(candidate)
+  const component = candidate
   const { client, react } = await loadReact()
   const element = react.createElement(
     component,
