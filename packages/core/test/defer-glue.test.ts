@@ -44,7 +44,7 @@ function fakeDoc() {
 
 test('wireDeferreds replaces {__deferred} placeholders with promise-likes', async () => {
   const doc = fakeDoc()
-  const glue = attachDeferGlue({ doc: doc as unknown as Document })
+  const glue = attachDeferGlue({ doc: doc })
   const data = { a: { __deferred: 1 }, list: [{ __deferred: 2 }], plain: 'x' }
   wireDeferreds(data, glue)
   assert.equal(typeof asDeferredSlot(data.a).then, 'function', 'placeholder became promise-like')
@@ -61,7 +61,7 @@ test('wireDeferreds replaces {__deferred} placeholders with promise-likes', asyn
 
 test('defer glue: ox:swap without a value resolves undefined; explicit reject rejects', async () => {
   const doc = fakeDoc()
-  const glue = attachDeferGlue({ doc: doc as unknown as Document })
+  const glue = attachDeferGlue({ doc: doc })
   const data = { later: { __deferred: 7 }, bad: { __deferred: 8 } }
   wireDeferreds(data, glue)
 
@@ -77,7 +77,7 @@ test('defer glue: swap event with error detail rejects; onSwap hook fires; dispo
   const doc = fakeDoc()
   const swapped: Array<{ id: number }> = []
   const glue = attachDeferGlue({
-    doc: doc as unknown as Document,
+    doc: doc,
     onSwap: (detail) => swapped.push(detail),
   })
   const data = { x: { __deferred: 3 } }
@@ -101,7 +101,7 @@ test('defer glue: swap event with error detail rejects; onSwap hook fires; dispo
 
 test('wireDeferreds: keeps non-deferred structure, handles cycles and nested maps', async () => {
   const doc = fakeDoc()
-  const glue = attachDeferGlue({ doc: doc as unknown as Document })
+  const glue = attachDeferGlue({ doc: doc })
   const data: Record<string, unknown> = { name: 'a' }
   data.self = data
   data.map = new Map([['k', { __deferred: 5 }]])
@@ -121,7 +121,7 @@ test('defer glue: ox:swap now carries the streamed HTML as detail.value', async 
   // so every `DeferredClient` resolved to `undefined`. The swapper now
   // includes the boundary's streamed `innerHTML` as `detail.value`.
   const doc = fakeDoc()
-  const glue = attachDeferGlue({ doc: doc as unknown as Document })
+  const glue = attachDeferGlue({ doc: doc })
   const data = { html: { __deferred: 42 } }
   wireDeferreds(data, glue)
   doc.dispatch('ox:swap', { detail: { id: 42, value: '<p class="done">ok</p>' } })
@@ -178,7 +178,7 @@ test('a per-settle script appended after load resolves its slot', async () => {
   const g = (globalThis as unknown as { MutationObserver?: unknown }).MutationObserver
   ;(globalThis as unknown as { MutationObserver?: unknown }).MutationObserver = MO
   try {
-    const glue = attachDeferGlue({ doc: doc as unknown as Document })
+    const glue = attachDeferGlue({ doc: doc })
     const slot = new DeferredClient<{ late: string }>()
     glue.registry.set(7, slot as unknown as DeferredClient)
     appendSettle('7', { late: 'arrived' })
@@ -195,7 +195,7 @@ test('a late per-settle rejection rejects the slot', async () => {
   const g = (globalThis as unknown as { MutationObserver?: unknown }).MutationObserver
   ;(globalThis as unknown as { MutationObserver?: unknown }).MutationObserver = MO
   try {
-    const glue = attachDeferGlue({ doc: doc as unknown as Document })
+    const glue = attachDeferGlue({ doc: doc })
     const slot = new DeferredClient<unknown>()
     glue.registry.set(3, slot as unknown as DeferredClient)
     appendSettle('3', { __oxide_deferred_error: 'boom' })
@@ -211,7 +211,7 @@ test('dispose disconnects the observer', () => {
   const g = (globalThis as unknown as { MutationObserver?: unknown }).MutationObserver
   ;(globalThis as unknown as { MutationObserver?: unknown }).MutationObserver = MO
   try {
-    const glue = attachDeferGlue({ doc: doc as unknown as Document })
+    const glue = attachDeferGlue({ doc: doc })
     glue.dispose()
     // The fake's disconnect nulls its callback; a later append would not
     // reach the glue. Reaching here without throwing is the assertion.
