@@ -401,13 +401,19 @@ function NotFoundPage(): Node {
 }
 
 function CounterIsland(input: Record<string, unknown>): Node {
-  const props = parsePageProps(input)
+  // CounterIsland is invoked two ways: (a) inline via `el(CounterIsland,
+  // { initialCount: N })` from IslandsPage (only the island's own props),
+  // and (b) via islandModules[key].default during client-side hydration
+  // (again with the island's own props). Neither supplies full PageProps —
+  // narrow only the fields used.
   const initialCount = typeof input.initialCount === 'number' ? input.initialCount : 0
+  const rawClient = input.client
+  const client: ClientHooks | undefined = rawClient === undefined ? undefined : parseClientHooks(rawClient)
   return el('div', { class: 'counter' },
-    el('span', { class: 'count' }, t(String(initialCount ?? 0))),
+    el('span', { class: 'count' }, t(String(initialCount))),
     el('button', {
       class: 'inc',
-      onClick: () => props.client?.update({ initialCount: Number(initialCount ?? 0) + 1 }),
+      onClick: () => client?.update({ initialCount: initialCount + 1 }),
     }, t('Increment')),
   )
 }
