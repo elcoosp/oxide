@@ -45,9 +45,9 @@ async function loadSolid(): Promise<{
   // in `solid-js/web`. The first import that resolves wins.
   let web: SolidWebLike
   try {
-    web = (await import('@solidjs/web')) as unknown as SolidWebLike
+    web = await import('@solidjs/web')
   } catch {
-    web = (await import('@solidjs/web')) as unknown as SolidWebLike
+    web = await import('@solidjs/web')
   }
   // `createElement` is exported from solid-js (the core runtime).
   const solid = (await import('solid-js')) as unknown as {
