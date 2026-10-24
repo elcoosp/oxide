@@ -83,9 +83,9 @@ export function createRealAdapter(opts: RealAdapterOptions) {
     // binary frame end-to-end.
     renderStream: renderReactToStream,
     rootAttrs: ' id="root" data-reactroot=""',
-    hydrate: hydrate as never,
-    hydrateIsland: reactHydrateIsland as never,
-    mount: mount as never,
+    hydrate: hydrate,
+    hydrateIsland: reactHydrateIsland,
+    mount: mount,
     update,
     opts,
   })
