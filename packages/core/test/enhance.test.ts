@@ -117,7 +117,7 @@ test('enhance: onError fires on failed responses; disposer detaches the listener
   const errors: unknown[] = []
   let listenerCount = () => form.listeners.get('submit')?.length ?? 0
   const dispose = enhance(form, {
-    fetch: (() => Promise.resolve(new Response('bad', { status: 500 }))) as unknown as typeof fetch,
+    fetch: (() => Promise.resolve(new Response('bad', { status: 500 }))) as typeof fetch,
     getFormData: () => new FormData(),
     onError: (e) => errors.push(e),
   })
@@ -137,7 +137,7 @@ test('enhance: default action is the current location', async () => {
     fetch: ((url: string | URL) => {
       calls.push(String(url))
       return Promise.resolve(new Response('ok', { headers: { 'content-type': 'text/plain' } }))
-    }) as unknown as typeof fetch,
+    }) as typeof fetch,
     getFormData: () => new FormData(),
   })
   form.dispatch('submit', { preventDefault() {} })
@@ -152,7 +152,7 @@ test('enhance: no-JS parity — form method attribute is always overridden to PO
     fetch: ((_url: string | URL, init?: RequestInit) => {
       calls.push(init)
       return Promise.resolve(new Response('{}', { headers: { 'content-type': 'application/json' } }))
-    }) as unknown as typeof fetch,
+    }) as typeof fetch,
     getFormData: () => new FormData(),
   })
   form.dispatch('submit', { preventDefault() {} })
