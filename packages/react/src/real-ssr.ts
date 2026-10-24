@@ -151,7 +151,7 @@ function expandDescriptor(
  * ./render.ts.
  */
 export async function renderReactToString(
-  Component: (props: Record<string, unknown>) => unknown,
+  Component: unknown,
   props: Record<string, unknown> = {},
 ): Promise<string> {
   const deps = await load()
@@ -186,7 +186,7 @@ export async function renderReactToString(
  * the same HTML, just as one chunk.
  */
 export async function renderReactToStream(
-  Component: (props: Record<string, unknown>) => unknown,
+  Component: unknown,
   props: Record<string, unknown> = {},
 ): Promise<ReadableStream<Uint8Array>> {
   const deps = await load()
