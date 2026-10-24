@@ -15,7 +15,7 @@
     <img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/>
     <img src="https://img.shields.io/badge/Workspace-17%20crates%20%2B%207%20packages-6F4E37?style=flat-square" alt="Workspace"/>
     <img src="https://img.shields.io/badge/Code-%E2%89%88113k%20lines-9CF?style=flat-square" alt="Lines of code"/>
-    <img src="https://img.shields.io/badge/Tests-1214%20Rust%20%7C%20443%2F443%20TS-brightgreen?style=flat-square" alt="Tests"/>
+    <img src="https://img.shields.io/badge/Tests-1215%20Rust%20%7C%20445%2F445%20TS-brightgreen?style=flat-square" alt="Tests"/>
     <img src="https://img.shields.io/badge/ODF-16%20golden%20fixtures-00BFFF?style=flat-square" alt="ODF golden fixtures"/>
     <img src="https://img.shields.io/badge/TS%20runtime-zero%20npm%20deps-228B22?style=flat-square" alt="Zero dependencies"/>
   </p>
@@ -243,7 +243,7 @@ typed arrays, `undefined`, cyclic and shared references, `Error` and deferred pr
 The repository is built test-first: each crate's `*_tdd.rs` suites were written against its
 contract before the implementation.
 
-- **1,214 Rust test functions** across 17 crates (27 gated behind bare `#[ignore]`, 29
+- **1,215 Rust test functions** across 17 crates (27 gated behind bare `#[ignore]`, 29
   more annotated with reasons, plus env-gated suites with stated reasons — the Node-loader e2e suite runs in CI's `jshost-e2e`
   job), including `proptest` property suites on the router and graph engines,
   `cargo-fuzz` harnesses for the ODF decoder, router matcher, config extractor and path
@@ -255,7 +255,7 @@ contract before the implementation.
   (cookie-refusal for both loader and middleware cookies on the shell **and** L0 paths,
   build-scoped shell keys, oldest-entry eviction, `/__data` no-reissue for untouched
   sessions, worker session-on-throw) and the §5.6 stale-dispatch cancellation tests.
-- **443 TypeScript test cases** across 74 files in the publishable packages — 475 total
+- **445 TypeScript test cases** across 74 files in the publishable packages — 475 total
   with the 32-assertion conformance suite, all green at this commit — on Node's built-in
   test runner, including
   the ODF decoder against the same golden fixtures as the Rust encoder (typed values:
@@ -344,7 +344,7 @@ count the gate cannot reproduce.
 | What | Value | Source of truth |
 |---|---|---|
 | Rust tests | 1,214 | `scripts/count-tests.sh` (static attr count) |
-| TypeScript tests | 443 packages + 32 conformance = 475, green | suites run + conformance run |
+| TypeScript tests | 445 packages + 32 conformance = 477, green | suites run + conformance run |
 | CI gates | 16 jobs | `.github/workflows/ci.yml` |
 | Browser e2e | 26 specs / 11 files × Chromium, Firefox, WebKit | `tests/playwright` |
 | Spec deviations | 2 open, 4 closed | [`docs/deviations.md`](docs/deviations.md) |
