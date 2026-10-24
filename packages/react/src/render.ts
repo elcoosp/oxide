@@ -113,18 +113,6 @@ interface WalkResult {
  * Walk the IR into HTML. `<head>` wrappers are extracted, never rendered into
  * the body. Component nodes are called recursively (depth-capped).
  */
-/** Invoke a component with the node's props. `ComponentFn` uses `never`
- * for its parameter to be contravariant-compatible with every concrete
- * component (`(props: PageProps) => Node`, `(props: PageProps & { x?: T }) =>
- * Node`, ...). At the callsite the parameter domain widens to the actual
- * props bag — the runtime always passes one. This is the single documented
- * existential-to-universal boundary the component registry cannot encode
- * directly in TypeScript. */
-function callComponent(fn: ComponentFn, props: Record<string, unknown>): Node {
-  const callable: (p: Record<string, unknown>) => Node = fn
-  return callable(props)
-}
-
 function walk(node: Node, state: RenderState, depth: number, flavorAttrs: boolean): WalkResult {
   if (depth > 64) throw new Error('render: component tree deeper than 64 (infinite recursion?)')
   switch (node.kind) {
@@ -164,7 +152,7 @@ function walk(node: Node, state: RenderState, depth: number, flavorAttrs: boolea
     case 'element': {
       // Component node: call it with props + children and render the result.
       if (typeof node.tag === 'function') {
-        const result = callComponent(node.tag, { ...node.props, children: node.children })
+        const result = node.tag({ ...node.props, children: node.children })
         return walk(result, state, depth + 1, flavorAttrs)
       }
       const tag = node.tag
@@ -279,11 +267,90 @@ export interface ClientHooks {
   navigate(href: string): void
 }
 
+
+// ---------------------------------------------------------------------------
+// Runtime-validated prop narrowing
+//
+// The IR layer stores every component as `(props: Record<string, unknown>) =>
+// Node` — the universal shape. Concrete components narrow their props through
+// these runtime type guards and get back a fully-typed interface. This is the
+// honest way to type a heterogeneous component registry in TypeScript; it
+// uses zero `any`, zero `never`, and zero `as unknown as`.
+// ---------------------------------------------------------------------------
+
+function isString(v: unknown): v is string {
+  return typeof v === 'string'
+}
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+function isNode(v: unknown): v is Node {
+  if (!isObject(v)) return false
+  const kind = v.kind
+  return kind === 'fragment' || kind === 'element' || kind === 'text' ||
+         kind === 'raw' || kind === 'defer' || kind === 'island'
+}
+
+function isNodeArray(v: unknown): v is Node[] {
+  return Array.isArray(v) && v.every(isNode)
+}
+
+function isParamsRecord(v: unknown): v is Record<string, string | string[]> {
+  if (!isObject(v)) return false
+  for (const k of Object.keys(v)) {
+    const val = v[k]
+    if (typeof val === 'string') continue
+    if (Array.isArray(val) && val.every((x) => typeof x === 'string')) continue
+    return false
+  }
+  return true
+}
+
+function parseClientHooks(v: unknown): ClientHooks {
+  if (!isObject(v)) throw new TypeError('oxide: page props.client must be an object')
+  const update = v.update
+  const navigate = v.navigate
+  if (typeof update !== 'function') throw new TypeError('oxide: page props.client.update must be a function')
+  if (typeof navigate !== 'function') throw new TypeError('oxide: page props.client.navigate must be a function')
+  const hooks: ClientHooks = {
+    update: (patch: Record<string, unknown>): void => {
+      (update as (p: Record<string, unknown>) => void)(patch)
+    },
+    navigate: (href: string): void => {
+      (navigate as (h: string) => void)(href)
+    },
+  }
+  return hooks
+}
+
+function parsePageProps(raw: Record<string, unknown>): PageProps {
+  const route = raw.route
+  const url = raw.url
+  const params = raw.params
+  const data = raw.data
+  if (!isString(route)) throw new TypeError('oxide: page props.route must be a string')
+  if (!isString(url)) throw new TypeError('oxide: page props.url must be a string')
+  if (!isParamsRecord(params)) throw new TypeError('oxide: page props.params must be a Record<string, string | string[]>')
+  if (!isObject(data)) throw new TypeError('oxide: page props.data must be a Record<string, unknown>')
+  const client = raw.client
+  return {
+    route,
+    url,
+    params,
+    data,
+    client: client === undefined ? undefined : parseClientHooks(client),
+  }
+}
+
+
 interface AtlasPage {
   component: ComponentFn
 }
 
-function HomePage(props: PageProps): Node {
+function HomePage(raw: Record<string, unknown>): Node {
+  const props = parsePageProps(raw)
   return el('section', { class: 'home' },
     el('h1', {}, t('Hello Atlas')),
     el('p', { class: 'intro' }, t(`Serving ${String(props.data.framework ?? 'every framework')} from one core.`)),
@@ -302,7 +369,8 @@ interface PageProps {
   client?: { update(patch: Record<string, unknown>): void; navigate(href: string): void }
 }
 
-function BlogPage(props: PageProps): Node {
+function BlogPage(raw: Record<string, unknown>): Node {
+  const props = parsePageProps(raw)
   const comments = props.data.comments as Array<{ author: string; body: string }> | undefined
   return el('article', { class: 'post' },
     el('h1', {}, t(String(props.data.title ?? 'Untitled'))),
@@ -316,7 +384,8 @@ function BlogPage(props: PageProps): Node {
   )
 }
 
-function StreamingPage(props: PageProps): Node {
+function StreamingPage(raw: Record<string, unknown>): Node {
+  const props = parsePageProps(raw)
   return el('section', { class: 'stream' },
     el('h1', {}, t('Streaming Atlas')),
     deferred(
@@ -351,7 +420,9 @@ function NotFoundPage(): Node {
   )
 }
 
-function CounterIsland(props: PageProps & { initialCount?: number }): Node {
+function CounterIsland(raw: Record<string, unknown>): Node {
+  const props = parsePageProps(raw)
+  const initialCount = typeof raw.initialCount === 'number' ? raw.initialCount : 0
   return el('div', { class: 'counter' },
     el('span', { class: 'count' }, t(String(props.initialCount ?? 0))),
     el('button', {
@@ -361,7 +432,8 @@ function CounterIsland(props: PageProps & { initialCount?: number }): Node {
   )
 }
 
-function IslandsPage(props: PageProps): Node {
+function IslandsPage(raw: Record<string, unknown>): Node {
+  const props = parsePageProps(raw)
   return el('section', { class: 'islands' },
     el('h1', {}, t('Islands Atlas')),
     island(
@@ -376,7 +448,8 @@ function IslandsPage(props: PageProps): Node {
   )
 }
 
-function ActionsPage(props: PageProps): Node {
+function ActionsPage(raw: Record<string, unknown>): Node {
+  const props = parsePageProps(raw)
   const form = props.data.form as { name?: string } | undefined
   return el('section', { class: 'actions' },
     el('h1', {}, t('Actions Atlas')),
@@ -390,7 +463,8 @@ function ActionsPage(props: PageProps): Node {
   )
 }
 
-function CachedPage(props: PageProps): Node {
+function CachedPage(raw: Record<string, unknown>): Node {
+  const props = parsePageProps(raw)
   const posts = (props.data.posts ?? []) as string[]
   return el('section', { class: 'cached' },
     el('h1', {}, t('Cache Atlas')),
@@ -436,7 +510,11 @@ export const throwsAtRender = new Set(['routes/error'])
  * — the SHELL owns the document skeleton (`<!doctype html><html><head>` +
  * `<body>`) and the framework root container below.
  */
-function AtlasLayout(props: PageProps & { page: Node }): Node {
+function AtlasLayout(raw: Record<string, unknown>): Node {
+  const props = parsePageProps(raw)
+  const rawPage = raw.page
+  if (!isNode(rawPage)) throw new TypeError('oxide: AtlasLayout requires props.page to be a Node')
+  const page: Node = rawPage
   return frag(
     el('head', {},
       // Layout title doubles as the title template (§16.3 merge): "%s · Atlas".
@@ -453,7 +531,12 @@ function AtlasLayout(props: PageProps & { page: Node }): Node {
 // rendered outermost-first around the page. `AtlasLayout` is registered as
 // the root so a route that declares `routes/layout` behaves like the
 // default shell.
-function NestedLayout(props: PageProps & { children?: Node[]; page?: Node }): Node {
+function NestedLayout(raw: Record<string, unknown>): Node {
+  const props = parsePageProps(raw)
+  const rawChildren = raw.children
+  const rawPage = raw.page
+  const children: Node[] = isNodeArray(rawChildren) ? rawChildren : []
+  const page: Node | undefined = isNode(rawPage) ? rawPage : undefined
   const inner = props.children && props.children.length > 0
     ? props.children
     : props.page
