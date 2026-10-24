@@ -45,6 +45,16 @@ interface FakeEl {
   remove(): void
 }
 
+/** Typed indexed access with a runtime bounds check. Throws a clear error
+ * (failing the test) instead of returning `T | undefined` — the honest way
+ * to satisfy `noUncheckedIndexedAccess` in tests whose fixtures are known
+ * non-empty. No casts, no `any`, no `!`, no `?? default`. */
+function mustEl<T>(arr: readonly T[], i: number): T {
+  const v = arr[i]
+  if (v === undefined) throw new Error(`mustEl: index ${i} out of bounds (len=${arr.length})`)
+  return v
+}
+
 test('css-update swaps the matching stylesheet href', () => {
   const saved = (globalThis as Record<string, unknown>).document
   const { doc, links, make } = fakeDoc()
@@ -169,10 +179,10 @@ test('route-data-update with a pushed payload decodes it and dispatches ox:data'
     assert.equal(handled, true)
     await new Promise((r) => setTimeout(r, 10))
     assert.equal(dispatched.length, 1, 'one ox:data dispatched')
-    assert.equal(dispatched[0].type, 'ox:data')
-    assert.equal(dispatched[0].detail?.route, '/slow')
-    assert.deepEqual(dispatched[0].detail?.input?.data, { items: [1, 2] })
-    assert.deepEqual(dispatched[0].detail?.input?.params, { slug: 'x' })
+    assert.equal(mustEl(dispatched, 0).type, 'ox:data')
+    assert.equal(mustEl(dispatched, 0).detail?.route, '/slow')
+    assert.deepEqual(mustEl(dispatched, 0).detail?.input?.data, { items: [1, 2] })
+    assert.deepEqual(mustEl(dispatched, 0).detail?.input?.params, { slug: 'x' })
   } finally {
     restore()
   }
@@ -195,7 +205,12 @@ test('route-data-update without a payload re-fetches /__data for the current rou
     await new Promise((r) => setTimeout(r, 10))
     assert.deepEqual(fetched, ['/__data?route=%2Fslow%3Fx%3D1'], 'current path (+search) fetched')
     assert.equal(dispatched.length, 1)
-    assert.equal(dispatched[0].detail?.input?.data && (dispatched[0].detail!.input!.data as { n?: number }).n, 7)
+    const d0 = mustEl(dispatched, 0)
+    const d0Data = d0.detail?.input?.data
+    const n = typeof d0Data === 'object' && d0Data !== null && 'n' in d0Data
+      ? (d0Data as Record<string, unknown>).n
+      : undefined
+    assert.equal(n, 7)
   } finally {
     restore()
   }
