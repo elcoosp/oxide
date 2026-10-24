@@ -58,7 +58,7 @@ async function load(): Promise<{ react: ReactLike; server: ReactDomServerLike } 
   attempted = true
   try {
     const reactMod = await import('react')
-    const serverMod = (await import('react-dom/server')) as unknown as ReactDomServerLike
+    const serverMod = await import('react-dom/server')
     const react = (reactMod.default ?? reactMod) as ReactLike
     if (typeof react.createElement !== 'function') {
       lastLoadError =
