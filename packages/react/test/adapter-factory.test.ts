@@ -47,7 +47,6 @@ test('factory: createAdapter() defaults to real SSR (§14.1)', async () => {
   const html = await drain(
     a.render(
       input({
-        // @ts-expect-error — test attaches the resolver the runtime would.
         resolve: (id: string) => {
           calls.push(id)
           return undefined
