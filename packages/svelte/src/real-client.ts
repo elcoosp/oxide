@@ -73,7 +73,7 @@ export async function mountSveltePageRoot(
 ): Promise<RealPageRoot | undefined> {
   const svelte = await load()
   if (!svelte) return undefined
-  const el = container as unknown as Element
+  const el = container
   const mountFresh = (p: Record<string, unknown>): unknown => {
     el.innerHTML = ''
     return svelte.mount(Component, { target: el, props: p })
