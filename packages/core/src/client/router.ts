@@ -407,7 +407,7 @@ export function createRouter(opts: RouterOptions): Router {
     if (navId !== navSeq) {
       // A newer navigation took over; tear down the loading state it superseded.
       try {
-        opts.onNavigateEnd?.(input!)
+        opts.onNavigateEnd?.(input)
       } catch {
         // swallow
       }
@@ -421,12 +421,12 @@ export function createRouter(opts: RouterOptions): Router {
       // Fires just before the tree swaps. The caller tears down whatever
       // `onNavigateStart` rendered; the swap itself is `adapter.update`.
       try {
-        opts.onNavigateEnd?.(input!)
+        opts.onNavigateEnd?.(input)
       } catch (e) {
         console.warn?.('router: onNavigateEnd threw', e)
       }
       history[nav.replace ? 'replaceState' : 'pushState'](state, '', path)
-      opts.adapter.update(input!)
+      opts.adapter.update(input)
     }
     // View Transitions hook (§8.4): wrap the swap when the platform has it
     if (doc.startViewTransition) doc.startViewTransition(commit)
