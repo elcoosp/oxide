@@ -48,17 +48,12 @@ test('real SSR: escapes text content (XSS safety parity with the IR path)', { sk
 
 test('real SSR: hooks execute during render (useState initial value)', { skip }, async () => {
   const React = (await getReact())!
-  const { useState } = (await import('react')) as unknown as {
-    useState: <T>(initial: T) => [T, (next: T) => void]
-  }
+  const { useState } = await import('react')
   const Counter = () => {
     const [n] = useState(7)
     return React.createElement('span', { className: 'count' }, String(n))
   }
-  const html = await renderReactToString(
-    Counter as unknown as (props: Record<string, unknown>) => unknown,
-    {},
-  )
+  const html = await renderReactToString(Counter, {})
   assert.ok(html.includes('>7</span>'), `expected count in ${html}`)
 })
 
