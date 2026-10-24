@@ -49,7 +49,12 @@ test('defer(promise) yields a marker; defineLoad serializes it to the Value::Def
   const ev2 = makeEvent()
   const out = await load2(ev2)
   assert.deepEqual(out.later, { __deferred: 1 })
-  const registryOut = (ev2 as unknown as { __oxideDeferredRegistry?: Map<number, Promise<unknown>> }).__oxideDeferredRegistry
+  const registryCandidate = ev2 !== null && typeof ev2 === 'object' && '__oxideDeferredRegistry' in ev2
+    ? (ev2 as { __oxideDeferredRegistry: unknown }).__oxideDeferredRegistry
+    : undefined
+  const registryOut = registryCandidate instanceof Map
+    ? (registryCandidate as Map<number, Promise<unknown>>)
+    : undefined
   assert.equal(await registryOut?.get(1), 'x')
 })
 
