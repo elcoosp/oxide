@@ -60,7 +60,7 @@ test('P1-9: normalizeInput keeps deferred + locale from /__data', async () => {
     doc,
     history,
     location,
-    fetch: (async () => new Response(odf as unknown as BodyInit, { status: 200 })) as unknown as typeof fetch,
+    fetch: (async () => new Response(odf, { status: 200 })) as unknown as typeof fetch,
     scrollTo: () => {},
     getScroll: () => ({ x: 0, y: 0 }),
   })
