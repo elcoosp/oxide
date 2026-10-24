@@ -126,7 +126,7 @@ export async function mountSolidPageRoot(
 ): Promise<RealPageRoot | undefined> {
   const rt = await load()
   if (!rt) return undefined
-  const el = container as unknown as Element
+  const el = container
   let disposer: unknown
   const renderFresh = (p: Record<string, unknown>): unknown => {
     el.innerHTML = ''
