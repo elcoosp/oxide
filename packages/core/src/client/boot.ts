@@ -65,7 +65,7 @@ function ensureInstalled(w: BootWindow): void {
     }
     hydrateIslands(opts)
     // §16.6: schedule server-rendered `<Script>` placeholders by strategy.
-    loadScripts({ doc: doc as never })
+    loadScripts({ doc })
   }
 }
 
@@ -238,7 +238,7 @@ export function bootWithRouter(
       layouts,
     }
     try {
-      adapter.hydrate(root, input as never)
+      adapter.hydrate(root, input)
       hydratedRoot = true
     } catch (e) {
       console.error?.('oxide: root hydration failed; SPA router not attached', e)
@@ -250,8 +250,8 @@ export function bootWithRouter(
   //     `window.__oxide` (pure SPA, or non-SSR HTML) still gets island
   //     hydration here.
   try {
-    hydrateIslands({ doc: doc as never, adapter: adapter as never, loadChunk })
-    loadScripts({ doc: doc as never })
+    hydrateIslands({ doc: doc as unknown as IslandsOptions['doc'], adapter, loadChunk })
+    loadScripts({ doc })
   } catch (e) {
     console.error?.('oxide: island hydration failed', e)
   }
@@ -433,11 +433,11 @@ export function bootWithRouter(
   doc.addEventListener('ox:data', onData as EventListener)
 
   const router = createRouter({
-    adapter: adapter as unknown as { update(i: unknown): void },
+    adapter,
     onNavigateStart,
     onNavigateEnd,
     ...(opts.manifest ? { manifest: opts.manifest } : {}),
-  } as never)
+  })
   const disposeRouter = router.attach()
   return () => {
     disposeRouter()
