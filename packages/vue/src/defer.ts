@@ -19,7 +19,7 @@ type Slots = Record<string, ((args: { value: unknown }) => unknown) | undefined>
 const ResolvedContent = defineComponent({
   name: 'OxideDeferredContent',
   props: {
-    value: { type: null as unknown as PropType<unknown>, required: false },
+    value: { type: null, required: false },
     slots: { type: Object as PropType<Slots>, required: false },
   },
   setup(props) {
@@ -39,7 +39,7 @@ export const Defer = defineComponent({
   name: 'OxideDefer',
   props: {
     /** The placeholder from `props.rawData.<key>`. */
-    value: { type: null as unknown as PropType<unknown>, required: false },
+    value: { type: null, required: false },
     deferred: { type: Object as PropType<Record<string, unknown>>, required: false },
   },
   setup(props, { slots }) {
