@@ -291,7 +291,13 @@ function sweepCache(): void {
 }
 const cacheSweeper = setInterval(sweepCache, 60_000)
 // `unref` so a short-lived process is not kept alive by the sweeper.
-;(cacheSweeper as unknown as { unref?: () => void }).unref?.()
+// `cacheSweeper` is `ReturnType<typeof setInterval>`: Node returns a
+  // Timeout object (has `.unref`), browsers return a number (no `.unref`).
+  // Narrow via `typeof` — no cast.
+  if (typeof cacheSweeper === 'object' && cacheSweeper !== null && 'unref' in cacheSweeper
+      && typeof cacheSweeper.unref === 'function') {
+    cacheSweeper.unref()
+  }
 
 /** Drop cached entries carrying any of the given tags (soft→delete here; the
  * Rust TieredCache implements the stale-serve semantics, §11.3). */
