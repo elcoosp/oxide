@@ -38,7 +38,7 @@ function rejectedComments(): PromiseLike<unknown> {
 }
 
 /** The Atlas route table (spec §8.1 page conventions, adapter-neutral). */
-export const atlasRoutes: Record<string, AtlasRoute> = {
+export const atlasRoutes = {
   home: {
     route: 'routes/index',
     url: '/',
@@ -133,7 +133,7 @@ export const atlasRoutes: Record<string, AtlasRoute> = {
     data: { posts: ['Cache hits are L0 hits'] },
     head: HEAD('Cached', [{ name: 'ox-cache', content: 'tags=atlas:posts;life=60s' }]),
   },
-}
+} satisfies Record<string, AtlasRoute>
 
 /** Build a RenderInput from an Atlas route (loader data already applied). */
 export function asRenderInput(

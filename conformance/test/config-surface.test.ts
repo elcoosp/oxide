@@ -27,10 +27,10 @@ interface Bundle {
 }
 
 const BUNDLES: Bundle[] = [
-  { name: 'react', adapter: react, createAdapter: reactCreate as never, defaultFactory: reactDefault as never },
-  { name: 'vue', adapter: vue, createAdapter: vueCreate as never, defaultFactory: vueDefault as never },
-  { name: 'svelte', adapter: svelte, createAdapter: svelteCreate as never, defaultFactory: svelteDefault as never },
-  { name: 'solid', adapter: solid, createAdapter: solidCreate as never, defaultFactory: solidDefault as never },
+  { name: 'react', adapter: react, createAdapter: reactCreate, defaultFactory: reactDefault },
+  { name: 'vue', adapter: vue, createAdapter: vueCreate, defaultFactory: vueDefault },
+  { name: 'svelte', adapter: svelte, createAdapter: svelteCreate, defaultFactory: svelteDefault },
+  { name: 'solid', adapter: solid, createAdapter: solidCreate, defaultFactory: solidDefault },
 ]
 
 async function drain(stream: ReadableStream<Uint8Array>): Promise<string> {
@@ -70,7 +70,6 @@ for (const b of BUNDLES) {
       a.render(
         asRenderInput({
           ...atlas.home,
-          // @ts-expect-error — test attaches the resolver the runtime would.
           resolve: (id: string) => {
             calls.push(id)
             return undefined

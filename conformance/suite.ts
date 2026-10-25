@@ -15,7 +15,7 @@
 // fake DOM (no jsdom, no deps).
 
 import nodeAssert from 'node:assert/strict'
-import type { FrameworkAdapter } from '../packages/core/src/types.ts'
+import type { FrameworkAdapter, ClientInput } from '../packages/core/src/types.ts'
 import { createRouter } from '../packages/core/src/client/router.ts'
 import { decodeIslandProps } from '../packages/core/src/client/islands.ts'
 import { enhance } from '../packages/core/src/client/enhance.ts'
@@ -54,6 +54,24 @@ const MARKERS: Record<string, { root: RegExp; extra?: RegExp }> = {
 // ---------------------------------------------------------------------------
 
 const decoder = new TextDecoder()
+
+/** Narrowing helper for noUncheckedIndexedAccess; throws instead of
+ *  returning T | undefined. Same pattern as core tests. */
+function mustEl<T>(arr: readonly T[], i: number): T {
+  const v = arr[i]
+  if (v === undefined) throw new Error(`conformance: index ${i} out of bounds`)
+  return v
+}
+
+/** Bridge the fake-DOM element to Element at the test-fixture boundary.
+ *  FakeElement implements a small subset of the DOM; a real Element has
+ *  100+ members no hand-built fake can honestly satisfy. This is the one
+ *  documented assertion per fake-DOM interaction (same rationale as asDoc
+ *  in scripts.test.ts). */
+function asElement(v: { innerHTML: string; ownerDocument?: unknown }): Element {
+  return v as unknown as Element
+}
+
 
 async function drain(stream: ReadableStream<Uint8Array>): Promise<{ chunks: string[]; html: string }> {
   const chunks: string[] = []
@@ -286,7 +304,10 @@ export async function runSuite(adapter: Adapter, opts: SuiteOptions = {}): Promi
     assert(m, 'props attribute present')
     // PERF-01: props ride ODF (JSON fallback for the non-subset);
     // decodeIslandProps sniffs and handles both.
-    const props = decodeIslandProps(m![1])
+    if (m === null) throw new Error("conformance: island props missing")
+    const propsB64 = m[1]
+    if (propsB64 === undefined) throw new Error("conformance: island props empty")
+    const props = decodeIslandProps(propsB64)
     deepEqual(props, expect.islands.props, 'props round-trip')
     assert(html.includes(expect.islands.ssr), 'SSR content inside the island')
     return 'markup + props ok'
@@ -351,7 +372,7 @@ export async function runSuite(adapter: Adapter, opts: SuiteOptions = {}): Promi
         return true
       },
     }
-    const dispose = enhance(form as never, {
+    const dispose = enhance(form, {
       fetch: (async (input: string | Request | URL, init?: RequestInit) => {
         const req = new Request(input, init)
         posts.push({ url: req.url, method: req.method })
@@ -364,8 +385,8 @@ export async function runSuite(adapter: Adapter, opts: SuiteOptions = {}): Promi
     await tick(10)
     dispose()
     assert(posts.length === 1, 'one POST per submit')
-    assert(posts[0].method === 'POST', 'actions are POST-only (§17.1)')
-    assert(posts[0].url.endsWith('/actions'), 'form action target')
+    assert(mustEl(posts, 0).method === 'POST', 'actions are POST-only (§17.1)')
+    assert(mustEl(posts, 0).url.endsWith('/actions'), 'form action target')
     deepEqual(applied[0], { ok: true, message: 'Hello Grace' }, 'action result applied')
     return 'enhance ok'
   })
@@ -425,26 +446,33 @@ export async function runSuite(adapter: Adapter, opts: SuiteOptions = {}): Promi
     // Mount the home route, then navigate through the CORE router.
     const dom = createFakeDom('<div id="root"></div>')
     const root = dom.root!
-    const disposeMount = adapter.mount(root as Element, { route: 'routes/index', url: '/', params: {}, data: { framework: 'every framework' } }, { doc: dom.doc as never })
+    const disposeMount = adapter.mount(asElement(root), { route: 'routes/index', url: '/', params: {}, data: { framework: 'every framework' } })
     assert(root.innerHTML.includes(expect.home.content), 'SPA mount rendered the shell')
-    const updates: Array<Record<string, unknown>> = []
+    const updates: Array<ClientInput> = []
     const router = createRouter({
       adapter: {
         update(input) {
-          updates.push(input as unknown as Record<string, unknown>)
+          updates.push(input)
           adapter.update(input) // the real adapter swap (§7 update)
         },
       },
       manifest: { routes: {} },
-      doc: doc as never,
-      history: history as never,
-      location: location as never,
+      doc: doc,
+      history: history,
+      location: location,
       fetch: fetchStub,
     })
     const disposeRouter = router.attach()
     await router.goto('/blog/nav')
     assert(updates.length === 1, 'goto dispatched adapter.update exactly once')
-    assert((updates[0].data as { title: string }).title === 'POST title', 'ODF route data decoded (§9.5)')
+    {
+        const u0 = mustEl(updates, 0)
+        const u0data = u0.data
+        const u0title = u0data !== null && typeof u0data === 'object' && 'title' in u0data
+          ? (u0data as { title: unknown }).title
+          : undefined
+        assert(u0title === 'POST title', 'ODF route data decoded (§9.5)')
+      }
     assert(root.innerHTML.includes('POST title'), 'adapter.update swapped the route tree in the DOM')
     assert(root.innerHTML.includes('By Ada Lovelace · nav'), 'params decoded')
     disposeRouter()
@@ -516,13 +544,13 @@ export async function runSuite(adapter: Adapter, opts: SuiteOptions = {}): Promi
         data: { title: 'Prefetched', author: 'Ada', body: 'x' },
       }), { headers: { 'content-type': 'application/oxide+odf' } })
     }) as typeof fetch
-    const updates: Array<Record<string, unknown>> = []
+    const updates: Array<ClientInput> = []
     const router = createRouter({
-      adapter: { update(input) { updates.push(input as unknown as Record<string, unknown>) } },
+      adapter: { update(input) { updates.push(input) } },
       manifest: { routes: {} },
-      doc: doc as never,
-      history: history as never,
-      location: location as never,
+      doc: doc,
+      history: history,
+      location: location,
       fetch: fetchStub,
     })
     const dispose = router.attach()

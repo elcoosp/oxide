@@ -7,6 +7,15 @@ import { adapter as vue, islandModules as vueIslands } from '../packages/vue/src
 import { adapter as svelte, islandModules as svelteIslands } from '../packages/svelte/src/index.ts'
 import { adapter as solid, islandModules as solidIslands } from '../packages/solid/src/index.ts'
 
+
+/** Narrowing helper for noUncheckedIndexedAccess; throws instead of
+ *  returning T | undefined. */
+function mustEl<T>(arr: readonly T[], i: number): T {
+  const v = arr[i]
+  if (v === undefined) throw new Error(`conformance: index ${i} out of bounds`)
+  return v
+}
+
 const ADAPTERS: Array<[string, typeof react, Record<string, unknown>]> = [
   ['react', react, reactIslands],
   ['vue', vue, vueIslands],
@@ -21,18 +30,18 @@ for (const [name, adapter, islandChunks] of ADAPTERS) {
 }
 
 // --- table -----------------------------------------------------------------
-const names = all[0].results.map((r) => r.name)
+const names = mustEl(all, 0).results.map((r) => r.name)
 const width = Math.max(...names.map((n) => n.length)) + 2
 console.log('Oxide conformance suite (§22, D20) — one assertion set × four adapters\n')
 console.log(`${'assertion'.padEnd(width)}${ADAPTERS.map(([n]) => n.padStart(9)).join('')}`)
 let failures = 0
 for (let i = 0; i < names.length; i++) {
   const cells = all.map(({ results }) => {
-    const r = results[i]
+    const r = mustEl(results, i)
     if (!r.pass) failures++
     return (r.pass ? 'PASS' : 'FAIL').padStart(9)
   })
-  console.log(`${names[i].padEnd(width)}${cells.join('')}`)
+  console.log(`${mustEl(names, i).padEnd(width)}${cells.join('')}`)
 }
 console.log('')
 for (const { adapter, results } of all) {
