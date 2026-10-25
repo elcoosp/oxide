@@ -7,9 +7,14 @@
 // `componentFor` closure — that was the pre-§6.4 shape, migrated when
 // the build learned to own the route → component mapping.
 import react from '@oxide-fw/react'
+import { tailwind } from '@oxide-fw/tailwind'
 import { defineConfig } from '@oxide-fw/core'
 
 export default defineConfig({
+  // §6.6 / D5: Tailwind v4 native plugin. Precomputes CSS from `src/styles/tailwind.css`
+  // using Tailwind's own Rust scanner + compiler.
+  plugins: [tailwind()],
+
   // §16.3: origin used by the emitted sitemap.xml and robots.txt.
   siteUrl: 'https://oxide.dev',
 

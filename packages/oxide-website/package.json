@@ -20,6 +20,7 @@
     "react-dom": "^19.0.0",
     "sucrase": "^3.35.0",
     "@oxide-fw/core": "workspace:*",
-    "@oxide-fw/react": "workspace:*"
+    "@oxide-fw/react": "workspace:*",
+    "@oxide-fw/tailwind": "workspace:*"
   }
 }

@@ -14,6 +14,9 @@ importers:
       '@mdx-js/react':
         specifier: ^3.1.1
         version: 3.1.1(@types/react@19.3.0)(react@19.3.0)
+      '@oxide-fw/tailwind':
+        specifier: workspace:*
+        version: link:packages/modules/tailwind
       solid-jsx-oxc:
         specifier: 0.1.0-alpha.1
         version: 0.1.0-alpha.1
@@ -25,23 +28,7 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
-  conformance:
-    dependencies:
-      '@oxide-fw/core':
-        specifier: workspace:*
-        version: link:../packages/core
-      '@oxide-fw/react':
-        specifier: workspace:*
-        version: link:../packages/react
-      '@oxide-fw/solid':
-        specifier: workspace:*
-        version: link:../packages/solid
-      '@oxide-fw/svelte':
-        specifier: workspace:*
-        version: link:../packages/svelte
-      '@oxide-fw/vue':
-        specifier: workspace:*
-        version: link:../packages/vue
+  conformance: {}
 
   examples/smoke-app-react:
     dependencies:
@@ -159,6 +146,9 @@ importers:
       '@oxide-fw/react':
         specifier: workspace:*
         version: link:../react
+      '@oxide-fw/tailwind':
+        specifier: workspace:*
+        version: link:../modules/tailwind
       react:
         specifier: ^19.0.0
         version: 19.3.0

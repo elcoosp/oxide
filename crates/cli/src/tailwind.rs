@@ -51,6 +51,7 @@ pub async fn precompute(
     let has_tailwind = cfg.plugins.iter().any(|p| {
         p.get("engine").and_then(|e| e.as_str()) == Some("tailwind")
             || p.get("name").and_then(|n| n.as_str()) == Some("@oxide-fw/tailwind")
+            || p.get("name").and_then(|n| n.as_str()) == Some("tailwind")
     });
     if !has_tailwind {
         return Ok(None);
