@@ -11456,7 +11456,7 @@ async fn cmd_generate(root: &str, kind: &str, path: &str, w: Writer<'_>) -> anyh
              export async function load() {{\n  return {{ props: {{}} }};\n}}\n"
         );
         if actions {
-            s.push_str(&"\nexport const actions = {\n  async submit(_data) {\n    // TODO: validate + persist (§9.3)\n    return { ok: true };\n  },\n};\n".to_string());
+            s.push_str("\nexport const actions = {\n  async submit(_data) {\n    // TODO: validate + persist (§9.3)\n    return { ok: true };\n  },\n};\n");
         }
         s
     };
