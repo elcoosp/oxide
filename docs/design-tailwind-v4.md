@@ -15,7 +15,7 @@
 > graph-known files, so content scanning needs no separate glob pass."
 
 **Reality today:** no Tailwind integration exists. Zero callsites of
-`scan_tailwind_candidates()` outside tests. No `@oxide/tailwind` module.
+`scan_tailwind_candidates()` outside tests. No `@oxide-fw/tailwind` module.
 `packages/modules/` doesn't exist. Users cannot use Tailwind v4 with Oxide
 via any path the framework supports.
 
@@ -65,7 +65,7 @@ Not one method. The codebase conflated two packages. Removing the broken
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │ oxide.config.ts                                                 │
-│   import { tailwind } from '@oxide/tailwind'                    │
+│   import { tailwind } from '@oxide-fw/tailwind'                    │
 │   export default { plugins: [tailwind()] }                      │
 └──────────────────────────┬──────────────────────────────────────┘
                            │ config: PluginEntry::Tailwind
@@ -84,10 +84,10 @@ Not one method. The codebase conflated two packages. Removing the broken
 │ crates/jshost/src/tooling_pool.rs                               │
 │   tailwind_scan(sources)      → String[]                        │
 │   tailwind_compile(css, c)    → String                          │
-│   ── delegates to @oxide/tailwind/runtime.mjs                   │
+│   ── delegates to @oxide-fw/tailwind/runtime.mjs                   │
 │   ── zero subprocess, V8 in-process                             │
 └──────────────────────────┬──────────────────────────────────────┘
-                           │ await import('@oxide/tailwind/runtime.mjs')
+                           │ await import('@oxide-fw/tailwind/runtime.mjs')
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │ packages/modules/tailwind/                                      │
@@ -201,7 +201,7 @@ optimizations are Phase 6+ (out of scope for v0.1).
 
 ## 4. API surface
 
-### 4.1 `@oxide/tailwind` package
+### 4.1 `@oxide-fw/tailwind` package
 
 ```typescript
 // packages/modules/tailwind/index.ts
@@ -230,7 +230,7 @@ export function tailwind(options: TailwindOptions = {}): TailwindPluginEntry {
 
 ```typescript
 // oxide.config.ts
-import { tailwind } from '@oxide/tailwind'
+import { tailwind } from '@oxide-fw/tailwind'
 
 export default {
   plugins: [tailwind()],
@@ -292,8 +292,8 @@ Note: `require.resolve` inside ESM — will use `createRequire` or
 | Phase | Deliverable | Verified by | Commit |
 |---|---|---|---|
 | **0** | This design document | review | `docs(design): Tailwind v4 native plugin` |
-| **1** | Remove broken `tailwind_compile`; add correct `tailwind_scan` + `tailwind_compile` wrappers in `tooling_pool.rs` that delegate to `@oxide/tailwind/runtime.mjs` | unit tests calling real package APIs | `fix(jshost): tooling_pool uses correct @tailwindcss/oxide + tailwindcss APIs` |
-| **2** | `packages/modules/tailwind/` — config shim (`index.ts`) + runtime (`runtime.mjs`) + package.json with deps | pnpm install, tsc clean, smoke test | `feat(modules): @oxide/tailwind package` |
+| **1** | Remove broken `tailwind_compile`; add correct `tailwind_scan` + `tailwind_compile` wrappers in `tooling_pool.rs` that delegate to `@oxide-fw/tailwind/runtime.mjs` | unit tests calling real package APIs | `fix(jshost): tooling_pool uses correct @tailwindcss/oxide + tailwindcss APIs` |
+| **2** | `packages/modules/tailwind/` — config shim (`index.ts`) + runtime (`runtime.mjs`) + package.json with deps | pnpm install, tsc clean, smoke test | `feat(modules): @oxide-fw/tailwind package` |
 | **3** | `build_css_transform_hook` dispatches to tailwind when plugin active + source contains `@import "tailwindcss"` | integration: build a fixture with a tailwind entry, assert CSS contains expected utility classes | `feat(cli): dispatch CSS transform to tailwind when plugin active` |
 | **4** | HMR: incremental scan + CSS rebuild on file change | HMR test: edit a `.tsx`, new class → CSS updated, no reload | `feat(cli): tailwind HMR incremental CSS updates` |
 | **5** | Migrate `oxide-website` from `global.css` to `tailwind.css` (see §7) | build passes, dev server renders, visual regression check | `refactor(oxide-website): migrate to Tailwind v4` |
@@ -312,7 +312,7 @@ Total LOC estimate: ~600 code + ~400 test + ~200 doc.
   assert candidates match expected set (e.g., `['flex', 'bg-red-500']`)
 - `tooling_pool::tailwind_compile` — call with known CSS + candidates,
   assert output contains expected utility rules
-- `@oxide/tailwind::tailwind()` — typecheck only (no runtime)
+- `@oxide-fw/tailwind::tailwind()` — typecheck only (no runtime)
 
 ### Integration (Phase 3)
 
@@ -424,7 +424,7 @@ After Phase 5:
 - **CSS Modules + tailwind** — `.module.css` files continue through
   LightningCssBackend only. Tailwind doesn't apply to CSS modules
   (semantics differ — module classes are scoped).
-- **`oxide add @oxide/tailwind`** — Phase 5 of spec v0.2 (oxide add
+- **`oxide add @oxide-fw/tailwind`** — Phase 5 of spec v0.2 (oxide add
   automation) is separate. Users add it manually in `oxide.config.ts`
   for now.
 
