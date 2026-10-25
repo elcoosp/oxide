@@ -680,7 +680,7 @@ impl ChunkBundler {
             // (a Svelte SFC's precompiled JS is the source for that path),
             // but BEFORE disk. A `Some(src)` overrides the disk read entirely
             // (a virtual module).
-            let load_hook_source = if options.precompiled.get(&rp).is_none() {
+            let load_hook_source = if !options.precompiled.contains_key(&rp) {
                 if let Some(hook) = options.load_hook.as_ref() {
                     match hook.call(&rp.to_string_lossy()) {
                         Ok(v) => v,
