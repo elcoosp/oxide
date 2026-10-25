@@ -6826,8 +6826,8 @@ fn build_dispatch(
     session_codec: Option<std::sync::Arc<oxide_fw_server::SessionCodec>>,
     ppr_shells: Option<PprShells>,
 ) -> std::sync::Arc<dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync> {
-    build_dispatch_swappable(
-        SwappableRouteTree::new(tree),
+    build_dispatch_swappable(DispatchArgs {
+        swappable: SwappableRouteTree::new(tree),
         metrics,
         proxy_rules,
         page_renderer,
@@ -6846,7 +6846,7 @@ fn build_dispatch(
         waterfall,
         session_codec,
         ppr_shells,
-    )
+    })
 }
 
 /// §9.3 / B6: copy an action response's Set-Cookie headers into the
@@ -6870,51 +6870,51 @@ fn forward_action_set_cookies(
     }
 }
 
-fn build_dispatch_swappable(
-    swappable: SwappableRouteTree,
-    metrics: std::sync::Arc<oxide_fw_server::Metrics>,
-    proxy_rules: Vec<oxide_fw_dev::ProxyRule>,
-    page_renderer: Option<std::sync::Arc<dyn oxide_fw_server::PageRenderer>>,
-    loader_runner: Option<std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
-    routes_root: std::path::PathBuf,
-    boot_script_url: Option<String>,
-    l0: Option<std::sync::Arc<l0_cache::L0Cache>>,
-    actions: Option<std::sync::Arc<dyn oxide_fw_server::ActionDispatcher>>,
-    // PERF-07: when `Some`, route matching reads the mmap'd rkyv archive
-    // instead of the in-memory tree. Tests pass `None`.
-    archived: Option<std::sync::Arc<oxide_fw_router::ArchivedTree>>,
-    // PERF-02: the render/loader pool, so the dispatch can surface its live
-    // gauges into metrics. Tests pass `None`.
-    pool: Option<std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
-    // SPEC-10: the i18n config, when the project declares locales. `None`
-    // disables locale resolution (every loader sees `locale = ""`).
-    i18n_cfg: Option<oxide_fw_assets::i18n::I18nConfig>,
-    // §8.1 route.ts / §10.2 step 7: dispatch a matched Endpoint route.
-    // `None` means no `route.ts` execution is possible (a project without
-    // a worker pool, or a build-time call site).
-    endpoint_dispatcher: Option<std::sync::Arc<dyn oxide_fw_server::EndpointDispatcher>>,
-    // §8.1 middleware.ts / §8.5: dispatch a route's middleware before the
-    // loader/render phase. `None` means middleware is not executed.
-    middleware_dispatcher: Option<std::sync::Arc<dyn oxide_fw_server::MiddlewareDispatcher>>,
-    // §13.3: dev-only. When true, inject a self-contained HMR client script
-    // (connects to `/_oxide/hmr`, swaps CSS, reloads on server updates, shows
-    // the error overlay). `false` in production.
-    dev_hmr: bool,
-    // §11.2 / §14.1: the request headers the L0 key is fingerprinted by
-    // (`cache.l0.vary`). Empty disables header variance.
-    vary_headers: Vec<String>,
-    // §20: the per-request waterfall recorder. `None` for a non-inspector
-    // server; the dispatch then skips recording.
-    waterfall: Option<oxide_fw_dev::WaterfallRecorder>,
-    // §16.6: the session codec, built from `security.sessionKeys`. `None`
-    // when the project configures no keys — session cookies then carry no
-    // `locals.session` (the signed-only `sign_cookie` primitive remains for
-    // a project that wants a tamper-evident, non-confidential cookie).
-    session_codec: Option<std::sync::Arc<oxide_fw_server::SessionCodec>>,
-    // §10.8 / B-27: the PPR shell cache. `Some` only when `render.ppr` is on;
-    // the dispatch then serves a cached shell and streams holes into it.
-    ppr_shells: Option<PprShells>,
-) -> std::sync::Arc<dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync> {
+pub struct DispatchArgs {
+    pub swappable: SwappableRouteTree,
+    pub metrics: std::sync::Arc<oxide_fw_server::Metrics>,
+    pub proxy_rules: Vec<oxide_fw_dev::ProxyRule>,
+    pub page_renderer: Option<std::sync::Arc<dyn oxide_fw_server::PageRenderer>>,
+    pub loader_runner: Option<std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
+    pub routes_root: std::path::PathBuf,
+    pub boot_script_url: Option<String>,
+    pub l0: Option<std::sync::Arc<l0_cache::L0Cache>>,
+    pub actions: Option<std::sync::Arc<dyn oxide_fw_server::ActionDispatcher>>,
+    pub archived: Option<std::sync::Arc<oxide_fw_router::ArchivedTree>>,
+    pub pool: Option<std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
+    pub i18n_cfg: Option<oxide_fw_assets::i18n::I18nConfig>,
+    pub endpoint_dispatcher: Option<std::sync::Arc<dyn oxide_fw_server::EndpointDispatcher>>,
+    pub middleware_dispatcher: Option<std::sync::Arc<dyn oxide_fw_server::MiddlewareDispatcher>>,
+    pub dev_hmr: bool,
+    pub vary_headers: Vec<String>,
+    pub waterfall: Option<oxide_fw_dev::WaterfallRecorder>,
+    pub session_codec: Option<std::sync::Arc<oxide_fw_server::SessionCodec>>,
+    pub ppr_shells: Option<PprShells>,
+}
+
+fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync> {
+    let DispatchArgs {
+        swappable,
+        metrics,
+        proxy_rules,
+        page_renderer,
+        loader_runner,
+        routes_root,
+        boot_script_url,
+        l0,
+        actions,
+        archived,
+        pool,
+        i18n_cfg,
+        endpoint_dispatcher,
+        middleware_dispatcher,
+        dev_hmr,
+        vary_headers,
+        waterfall,
+        session_codec,
+        ppr_shells,
+    } = args;
+
     let boot_script_url_for_render = boot_script_url.clone();
     let ppr_for_render = ppr_shells.clone();
     let dev_hmr_for_render = dev_hmr;
@@ -10481,19 +10481,19 @@ async fn start_server_inner_full(
         .ppr
         .then(|| std::sync::Arc::new(std::sync::Mutex::new(PprShellStore::default())));
     let swappable_tree = SwappableRouteTree::new(std::sync::Arc::clone(&tree));
-    let dispatch = build_dispatch_swappable(
-        swappable_tree.clone(),
-        std::sync::Arc::clone(&metrics),
-        proxy_rules.clone(),
-        stack.page_renderer,
-        stack.loader_runner,
+    let dispatch = build_dispatch_swappable(DispatchArgs {
+        swappable: swappable_tree.clone(),
+        metrics: std::sync::Arc::clone(&metrics),
+        proxy_rules: proxy_rules.clone(),
+        page_renderer: stack.page_renderer,
+        loader_runner: stack.loader_runner,
         routes_root,
         boot_script_url,
         l0,
         actions,
         archived,
-        stack.pool.clone(),
-        {
+        pool: stack.pool.clone(),
+        i18n_cfg: {
             let c = &cfg.i18n;
             (!c.locales.is_empty()).then(|| oxide_fw_assets::i18n::I18nConfig {
                 locales: c.locales.clone(),
@@ -10503,18 +10503,12 @@ async fn start_server_inner_full(
         },
         endpoint_dispatcher,
         middleware_dispatcher,
-        // §13.3: HMR client injection is dev-only. `hmr` is `Some` exactly when
-        // the caller wired a dev hub (cmd_dev); serve/prod pass `None`.
-        hmr.is_some(),
-        // §11.2: the L0 Vary fingerprint set from `cache.l0.vary`.
-        cfg.cache.l0.vary.clone(),
-        // §20: the waterfall recorder (None for a non-inspector server).
-        waterfall_recorder.clone(),
-        // §16.6: the session codec (None when no keys are configured).
+        dev_hmr: hmr.is_some(),
+        vary_headers: cfg.cache.l0.vary.clone(),
+        waterfall: waterfall_recorder.clone(),
         session_codec,
-        // §10.8: PPR shells exist only when `render.ppr` is enabled.
-        ppr_shells.clone(),
-    );
+        ppr_shells: ppr_shells.clone(),
+    });
     // §5.6: dev-mode stale guard. When a HMR hub is wired, wrap the
     // dispatch so a mid-flight file change aborts the render (no serving
     // a result computed from pre-change source). Prod (no hub) is
