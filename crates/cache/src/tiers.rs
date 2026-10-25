@@ -232,7 +232,7 @@ impl DiskTier {
         } else {
             format!(
                 "h{}.bin",
-                blake3::hash(key.as_bytes()).to_string()[..32].to_string()
+                &blake3::hash(key.as_bytes()).to_string()[..32]
             )
         }
     }
@@ -415,11 +415,7 @@ impl DiskTier {
         let txn = self.index.begin_write().map_err(dberr)?;
         let removed: Option<Vec<u8>> = {
             let mut t = txn.open_table(ENTRY_TABLE).map_err(dberr)?;
-            let removed = match t.remove(key.as_bytes()).map_err(dberr)? {
-                Some(g) => Some(g.value().to_vec()),
-                None => None,
-            };
-            removed
+            t.remove(key.as_bytes()).map_err(dberr)?.map(|g| g.value().to_vec())
         };
         let idx: Option<DiskIndexEntry> = removed.and_then(|b| serde_json::from_slice(&b).ok());
         if let Some(idx) = &idx {

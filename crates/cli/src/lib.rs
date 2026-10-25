@@ -3452,18 +3452,6 @@ async fn prerender_targets(
     let mut renders = futures::stream::iter(to_render.into_iter().map(|i| {
         let sem = std::sync::Arc::clone(&sem);
         let t = &targets[i];
-        let dist = dist;
-        let route_id = route_id;
-        let pattern = pattern;
-        let nonce_for = nonce_for;
-        let page_renderer = page_renderer;
-        let loader_runner = loader_runner;
-        let module_path = module_path;
-        let boot_script_url = boot_script_url;
-        let layout_ids = layout_ids;
-        let layout_modules = layout_modules;
-        let error_route = error_route;
-        let plugin_head = plugin_head;
         async move {
             let _permit = sem.acquire().await;
             let out = write_prerender(

@@ -5155,7 +5155,7 @@ mod sha1_shim {
                 }
                 let (mut a, mut b, mut c, mut d, mut e) =
                     (self.h[0], self.h[1], self.h[2], self.h[3], self.h[4]);
-                for i in 0..80 {
+                for (i, w_i) in w.iter().enumerate() {
                     let (f, k) = match i {
                         0..=19 => ((b & c) | ((!b) & d), 0x5A827999),
                         20..=39 => (b ^ c ^ d, 0x6ED9EBA1),
@@ -5167,7 +5167,7 @@ mod sha1_shim {
                         .wrapping_add(f)
                         .wrapping_add(e)
                         .wrapping_add(k)
-                        .wrapping_add(w[i]);
+                        .wrapping_add(*w_i);
                     e = d;
                     d = c;
                     c = b.rotate_left(30);

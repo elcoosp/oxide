@@ -85,13 +85,11 @@ pub fn extract_from_html(route: &str, url: &str, html: &str) -> RouteSearchEntry
             t
         } else {
             let mut out = String::with_capacity(160);
-            let mut n = 0;
-            for ch in t.chars() {
+            for (n, ch) in t.chars().enumerate() {
                 if n >= 160 {
                     break;
                 }
                 out.push(ch);
-                n += 1;
             }
             // Trim to the last space so the result is not mid-word.
             if let Some(sp) = out.rfind(' ') {
