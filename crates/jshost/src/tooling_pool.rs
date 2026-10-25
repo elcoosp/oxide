@@ -180,3 +180,51 @@ mod tests {
     }
 
 }
+
+// tailwind tooling delegates to @oxide-fw/tailwind/runtime.mjs
+impl ToolingModules {
+    pub async fn tailwind_scan(&self, files: Vec<Value>) -> Result<Vec<String>> {
+        let out = self
+            .call_module(ModuleCall {
+                module: "@oxide-fw/tailwind/runtime.mjs".into(),
+                export: "scan".into(),
+                args: vec![serde_json::json!({ "sources": [], "files": files })],
+            })
+            .await?;
+        let arr = out.as_array().ok_or_else(|| {
+            crate::err(
+                "JSH-TOOLING",
+                format!("tailwind_scan: expected array result, got {out}"),
+            )
+        })?;
+        Ok(arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+    }
+
+    pub async fn tailwind_build(
+        &self,
+        css: &str,
+        base: &str,
+        candidates: &[String],
+    ) -> Result<String> {
+        let out = self
+            .call_module(ModuleCall {
+                module: "@oxide-fw/tailwind/runtime.mjs".into(),
+                export: "build".into(),
+                args: vec![serde_json::json!({
+                    "css": css,
+                    "base": base,
+                    "candidates": candidates,
+                })],
+            })
+            .await?;
+        out.get("css")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .ok_or_else(|| {
+                crate::err(
+                    "JSH-TOOLING",
+                    format!("tailwind_build: missing 'css' field, got {out}"),
+                )
+            })
+    }
+}
