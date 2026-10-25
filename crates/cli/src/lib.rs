@@ -6553,7 +6553,18 @@ pub async fn start_server(
 /// are preserved in the io error's text so a hyper-layer log line names
 /// the framework error. The kind is `Other` — there is no precise
 /// `ErrorKind` for "the worker crashed mid-render".
-fn render_stream_to_body_stream(src: oxide_fw_server::RenderStream) -> oxide_fw_server::BodyStream {
+/// SPEC §serve/stream: `render_stream_to_body_stream` is the no-recovery
+/// shim over [`render_stream_with_recovery`] for callers that stream a
+/// rendered document without a boundary or nonce context. An error from
+/// the source aborts the stream cleanly (no mid-stream `ox-error`
+/// recovery boundary) — exactly what `render_stream_with_recovery(..,
+/// None, None, ..)` provides, exposed as its own name because it is the
+/// SPEC's documented `serve/stream` entry point. The CLI itself uses the
+/// recovery form for page renders; this function remains public so a
+/// downstream crate depending on `oxide-fw-cli` as a library can stream a
+/// document with abort-on-error semantics without knowing the recovery
+/// variant's argument shape.
+pub fn render_stream_to_body_stream(src: oxide_fw_server::RenderStream) -> oxide_fw_server::BodyStream {
     render_stream_with_recovery(src, None, None, String::new())
 }
 
