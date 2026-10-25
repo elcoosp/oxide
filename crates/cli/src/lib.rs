@@ -1429,6 +1429,7 @@ async fn ensure_dev_client_bundle(
     rootp: &Path,
     cfg: &oxide_fw_config::OxideConfig,
     tree: &oxide_fw_router::RouteTree,
+    pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
     w: Writer<'_>,
 ) -> anyhow::Result<()> {
     let dist = rootp.join("dist");
@@ -1508,13 +1509,25 @@ async fn ensure_dev_client_bundle(
             .unwrap_or("react"),
     );
     let build_secret = build_secret(rootp).unwrap_or_default();
-    let transform_hook = build_transform_hook(rootp, cfg);
+    let wasm_hook = build_transform_hook(rootp, cfg);
+    let js_hook = build_js_plugin_hook(rootp, cfg, pool);
+    let transform_hook: Option<oxide_fw_bundler::TransformHook> = match (js_hook, wasm_hook) {
+        (Some(js), Some(wasm)) => Some(oxide_fw_bundler::TransformHook::new(
+            move |id, src| {
+                let after_js = js.call(id, src)?;
+                wasm.call(id, &after_js)
+            },
+        )),
+        (Some(js), None) => Some(js),
+        (None, Some(wasm)) => Some(wasm),
+        (None, None) => None,
+    };
     let css_transform = build_css_transform_hook(cfg, None);
 
     // §6.5 / §6.1: unminified, sourcemaps on (dev debugging). No precompile
     // pass here — the Oxc path handles TS/JSX; SFC precompile is a build-time
     // optimization, and a dev start should not block on the tooling pool.
-    let client_opts = bundle_env_options(
+    let mut client_opts = bundle_env_options(
         oxide_fw_bundler::BundleEnv::Client,
         client_entries,
         client_out,
@@ -1527,6 +1540,10 @@ async fn ensure_dev_client_bundle(
         true,  // sourcemap on for dev
         false, // P-23: unminified dev client bundle
     );
+    client_opts.resolve_hook = build_js_plugin_resolve_hook(rootp, cfg, pool);
+    client_opts.load_hook = build_js_plugin_load_hook(rootp, cfg, pool);
+    client_opts.render_chunk_hook = build_js_plugin_render_chunk_hook(rootp, cfg, pool);
+    client_opts.generate_bundle_hook = build_js_plugin_generate_bundle_hook(rootp, cfg, pool);
     use oxide_fw_bundler::Bundler as _;
     let rb = oxide_fw_bundler::RolldownBundler::new(rootp);
     match rb.bundle(&client_opts) {
@@ -1793,7 +1810,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // §13.1 / P0-7: a fresh `oxide dev` has no client bundle, so nothing
     // would hydrate, navigate, or load a route's JS. Build it once (unminified)
     // if the manifest is missing. A `dev` after `build` finds it and skips.
-    ensure_dev_client_bundle(&rootp, &cfg, &tree, w).await?;
+    ensure_dev_client_bundle(&rootp, &cfg, &tree, stack.tooling_pool.as_ref(), w).await?;
     // §16.4: tell the client whether this project has message
     // catalogs, so it does not fetch one that cannot exist.
     stamp_i18n_locales(&rootp, &cfg);
