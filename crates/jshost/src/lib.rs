@@ -33,6 +33,8 @@ use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
+type StreamSenders = Arc<std::sync::Mutex<HashMap<u64, mpsc::Sender<Result<Bytes>>>>>;
+
 pub mod snapshot;
 pub mod tooling;
 pub mod v8_loader;
@@ -3595,7 +3597,7 @@ async fn op_dispatch(
     fetch: Option<&dyn FetchHandler>,
     transform: Option<&dyn TransformHandler>,
     memo: Option<&oxide_fw_cache::FetchMemo>,
-    streams: Option<Arc<std::sync::Mutex<HashMap<u64, mpsc::Sender<Result<Bytes>>>>>>,
+    streams: Option<StreamSenders>,
     op: Op,
     args: &serde_json::Value,
 ) -> Result<serde_json::Value> {
