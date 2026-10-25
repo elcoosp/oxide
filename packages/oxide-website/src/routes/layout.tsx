@@ -3,7 +3,6 @@
 // Importing the stylesheet here is enough: the bundler hashes it through
 // Lightning CSS and the injector streams the <link> into every page's head.
 import type { ReactNode } from 'react'
-import '../styles/global.css'
 import '../styles/tailwind.css'
 import { site, nav, footerLinks } from '../lib/site.ts'
 
@@ -33,10 +32,6 @@ export default function RootLayout({ children }: Props) {
       </header>
 
       {children}
-
-      <div className="flex gap-2 bg-red-500 px-4 py-2 text-oxide-accent" data-tailwind-probe="active">
-        tailwind-probe
-      </div>
 
       <footer className="site-footer">
         <div className="container">
