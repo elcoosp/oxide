@@ -80,7 +80,7 @@ impl WasmPlugin {
         for hook in &manifest.hooks {
             let name = hook_export_name(hook);
             if probe_hook_signature(&instance, &mut store, name).is_some() {
-                available.push(hook.clone());
+                available.push(*hook);
             }
         }
 

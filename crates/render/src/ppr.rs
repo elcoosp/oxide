@@ -92,7 +92,7 @@ pub fn assemble(shell: &Shell, resolved: &BTreeMap<String, String>) -> Result<St
         let end_rel = after_q
             .find("></ox-hole>")
             .ok_or_else(|| err("RND-PPR", format!("hole `{id}` has no closing marker")))?;
-        let fill = resolved.get(id).cloned().unwrap_or_else(|| String::new());
+        let fill = resolved.get(id).cloned().unwrap_or_else(String::new);
         out.push_str(&fill);
         cursor = open + "<ox-hole id=\"".len() + close_q + 1 + end_rel + "></ox-hole>".len();
     }

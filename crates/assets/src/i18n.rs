@@ -202,7 +202,7 @@ fn group_thousands(int_part: &str, sep: &str) -> String {
     let mut out = String::with_capacity(int_part.len() + int_part.len() / 3);
     let bytes = int_part.as_bytes();
     for (i, b) in bytes.iter().enumerate() {
-        if i > 0 && (bytes.len() - i) % 3 == 0 {
+        if i > 0 && (bytes.len() - i).is_multiple_of(3) {
             out.push_str(sep);
         }
         out.push(*b as char);

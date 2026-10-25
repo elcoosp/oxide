@@ -217,8 +217,7 @@ fn cache_key_for(
 
 /// Run `compile`, consulting `cache` first. On a hit the compiler is skipped
 /// entirely; on a miss the result is stored. A cache error is logged and the
-/// freshly compiled value is returned.
-
+/// freshly compiled value is returned.///
 /// §5.4: cached version of a compiler that may legitimately return
 /// `None` (an empty MDX file compiles to nothing). Mirrors `cached_compile`,
 /// but distinguishes "compiled to nothing" (Ok(None), not cached) from

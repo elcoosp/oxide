@@ -190,7 +190,7 @@ fn read_value(r: &mut Reader<'_>, base: u32, started: &mut u32) -> Result<Value>
                     )
                 })?;
                 let len = r.varu()? as usize;
-                if len % kind.element_size() != 0 {
+                if !len.is_multiple_of(kind.element_size()) {
                     return Err(err(
                         "ODF-TAG",
                         format!(

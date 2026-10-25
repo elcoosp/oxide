@@ -134,6 +134,7 @@ pub struct OxideConfig {
 /// S-09: opt-in toggle for the OG rasterization endpoint.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+#[derive(Default)]
 pub struct OgConfig {
     pub enabled: bool,
     /// A3: per-peer token-bucket limit applied before rasterization.
@@ -141,14 +142,6 @@ pub struct OgConfig {
     pub rate_limit: OgRateLimit,
 }
 
-impl Default for OgConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            rate_limit: OgRateLimit::default(),
-        }
-    }
-}
 
 /// A3: the `og.rateLimit` knob. `max` renders per `windowSecs` per peer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -365,6 +358,7 @@ impl Default for RenderConfig {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase", default)]
+#[derive(Default)]
 pub struct CacheConfig {
     pub handler: CacheHandlerConfig,
     /// §14.1: `cache: { l0: { maxSize: "512mb" } }`.
@@ -399,14 +393,6 @@ impl Default for L0CacheConfig {
     }
 }
 
-impl Default for CacheConfig {
-    fn default() -> Self {
-        Self {
-            handler: CacheHandlerConfig::default(),
-            l0: L0CacheConfig::default(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", tag = "type")]
@@ -674,16 +660,11 @@ pub fn resolve_workspace_preset(dir: &Path, spec: &str) -> Option<PathBuf> {
     }
     let ws = detect_workspace_root(dir)?;
     let base = ws.join("node_modules").join(spec);
-    for cand in [
+    [
         base.join("oxide.preset.ts"),
         base.join("oxide.preset.json"),
         base.clone(),
-    ] {
-        if cand.is_file() {
-            return Some(cand);
-        }
-    }
-    None
+    ].into_iter().find(|cand| cand.is_file())
 }
 
 /// Size parser: "512mb" | "64kb" | "1gb" | plain bytes → u64.

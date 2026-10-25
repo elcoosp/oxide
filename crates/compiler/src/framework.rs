@@ -72,15 +72,11 @@ pub trait FrameworkCompiler: Send + Sync {
 /// The spec's §6.3 table calls for "Oxc JSX (automatic runtime) and native
 /// React Refresh". The pragma/runtime preamble is emitted here; the JSX
 /// lowering itself runs as part of the Oxc transform pass.
+#[derive(Default)]
 pub struct ReactInline {
     pub refresh: bool,
 }
 
-impl Default for ReactInline {
-    fn default() -> Self {
-        Self { refresh: false }
-    }
-}
 
 impl FrameworkCompiler for ReactInline {
     fn framework(&self) -> Framework {

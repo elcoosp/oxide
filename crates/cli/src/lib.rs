@@ -253,8 +253,7 @@ pub enum CacheOp {
 /// Entry point used by both `main.rs` and tests.
 ///
 /// Runs [`run_with_writer`] into a buffer, then flushes it to stdout (so tests can
-/// capture tables via [`run_with_writer`] while the binary keeps its real stdout).
-
+/// capture tables via [`run_with_writer`] while the binary keeps its real stdout).///
 /// Install the tracing subscriber (§20). Console logging is always on;
 /// OpenTelemetry OTLP export is opt-in via `OTEL_EXPORTER_OTLP_ENDPOINT`.
 /// When the env var is unset, no OTLP layer is installed and behaviour is
@@ -758,8 +757,7 @@ async fn scan_routes(
     Ok(tree)
 }
 
-/// URL pattern for display (§19.1 table): `/` for the root, `/a/b` otherwise.
-
+/// URL pattern for display (§19.1 table): `/` for the root, `/a/b` otherwise.///
 /// Extract a param name from a route segment: `:slug` → `slug`, `*rest` →
 /// `rest`, `*?opt` → `opt`. Returns `None` for static segments.
 fn param_name(segment: &str) -> Option<&str> {
@@ -2423,8 +2421,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
 
 /// `oxide build` (§6, §10.5): bundle client + ssr, prerender static routes, emit the
 /// deploy artifact for the configured adapter (§18). `--static` forces a static
-/// export target, which refuses dynamic routes without prerendered output (§10.5).
-
+/// export target, which refuses dynamic routes without prerendered output (§10.5).///
 /// Compile the `oxide-fw-core-wasm` crate to wasm32-unknown-unknown (§2 D18).
 ///
 /// Best-effort: returns `Ok(None)` when the target isn't installed (the
@@ -6677,7 +6674,6 @@ fn str_signals_error(s: &str) -> bool {
 /// split across chunk boundaries by keeping a rolling tail of the last
 /// `CLOSE.len() - 1` bytes and scanning for the tag on each new chunk.
 ///
-
 #[allow(clippy::too_many_arguments)]
 /// §9.3: parse an `application/x-www-form-urlencoded` body into the
 /// `[key, value]` entry list the worker's `action:run` op accepts. Percent
@@ -11768,13 +11764,11 @@ async fn cmd_migrate(root: &str, source: &str, write: bool, w: Writer<'_>) -> an
 }
 
 /// `oxide test` (§16.6): gates on build manifests; the in-process `app.fetch` helper
-/// itself lives in packages/oxide (documented in the output).
-
+/// itself lives in packages/oxide (documented in the output).///
 /// `oxide mcp` (§19.3): run the MCP server on stdio. The root path is resolved
 /// relative to cwd, same as every other command. The writer is ignored — the
 /// MCP protocol owns stdout; only a startup line is emitted to stderr to keep
-/// the JSON-RPC stream clean.
-
+/// the JSON-RPC stream clean.///
 /// `oxide schema` (§19.3): print the JSON Schema for `oxide.config.{ts,json}`.
 /// Editors pick this up via a `$schema` field in the config or a
 /// `json.schemas` setting.
