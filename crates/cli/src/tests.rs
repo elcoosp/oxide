@@ -3737,7 +3737,7 @@ impl oxide_fw_server::MiddlewareDispatcher for LayerMiddleware {
 
 fn tree_with_two_middleware_layers() -> std::sync::Arc<oxide_fw_router::RouteTree> {
     let mut tree = oxide_fw_router::RouteTree::new();
-    let mut page = |id: &str, segments: Vec<&str>, file: &str| oxide_fw_router::RouteEntry {
+    let page = |id: &str, segments: Vec<&str>, file: &str| oxide_fw_router::RouteEntry {
         id: oxide_fw_router::RouteId(id.into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: segments.into_iter().map(str::to_string).collect(),
@@ -3749,7 +3749,7 @@ fn tree_with_two_middleware_layers() -> std::sync::Arc<oxide_fw_router::RouteTre
         needs_parent: false,
     };
     tree.insert(page("routes/shop/page", vec!["shop"], "shop/page.tsx"));
-    let mut mw = |id: &str, segments: Vec<&str>, file: &str| oxide_fw_router::RouteEntry {
+    let mw = |id: &str, segments: Vec<&str>, file: &str| oxide_fw_router::RouteEntry {
         id: oxide_fw_router::RouteId(id.into()),
         kind: oxide_fw_router::RouteKind::Middleware,
         segments: segments.into_iter().map(str::to_string).collect(),

@@ -180,7 +180,7 @@ fn ts_type(ty: &FieldType) -> String {
 /// An explicit `NativeSchema` in config, when that field exists, overrides
 /// this.
 pub fn infer_schema(collection: &Collection) -> NativeSchema {
-    use serde_json::Value;
+    
     let total = collection.entries.len();
     // field → (observed type, count seen)
     let mut seen: BTreeMap<String, (FieldType, usize)> = BTreeMap::new();

@@ -69,7 +69,7 @@ fn scan_import_specs(src: &str) -> Vec<String> {
 async fn compile_mdx(pool: &Arc<dyn Pool>, path: &Path) -> anyhow::Result<Option<String>> {
     let source = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("read {}: {e}", path.display()))?;
-    let filename = path
+    let _filename = path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("input.mdx");

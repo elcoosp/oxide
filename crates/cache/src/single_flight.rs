@@ -91,7 +91,6 @@ pub enum FlightSlot {
     Follower(tokio::sync::broadcast::Receiver<Arc<Entry>>),
 }
 
-use dashmap::mapref::entry as map_entry;
 
 /// S-15: an RAII guard for an owner slot. Every owner exit path — success,
 /// loader `error(404)`/redirect, cookie short-circuit, render error — must

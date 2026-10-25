@@ -4805,7 +4805,7 @@ fn ws_socket_upgrade(
             buf.extend_from_slice(&chunk[..n]);
             let (frames, consumed) = match crate::ws::decode(&buf) {
                 Ok(v) => v,
-                Err(e) => {
+                Err(_e) => {
                     let _ = wr
                         .write_all(&crate::ws::encode(
                             &crate::ws::Frame::Close(Some(1002)),
@@ -4849,7 +4849,7 @@ fn ws_socket_upgrade(
                                     close_code = Some(code);
                                 }
                             }
-                            Err(e) => {
+                            Err(_e) => {
                                 close_code = Some(1011);
                             }
                         }

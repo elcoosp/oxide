@@ -1642,7 +1642,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     .iter()
     .map(|f| rootp.join(f))
     .find(|p| p.is_file());
-    let lock_hash = match &lockfile {
+    let _lock_hash = match &lockfile {
         Some(p) => {
             oxide_fw_bundler::ChunkBundler::content_hash(&[&std::fs::read(p).unwrap_or_default()])
         }
@@ -2981,7 +2981,7 @@ fn emit_snapshot_blob(root: &Path, server_out: &Path, w: Writer<'_>) -> anyhow::
 /// the V8 renderer at it. A no-op for the Node backend, which imports the
 /// config directly.
 fn emit_config_bundle(
-    cfg: &oxide_fw_config::OxideConfig,
+    _cfg: &oxide_fw_config::OxideConfig,
     root: &Path,
     precompiled: BTreeMap<PathBuf, String>,
     w: Writer<'_>,
@@ -10394,7 +10394,7 @@ async fn start_server_inner_full(
     } else {
         "production"
     };
-    let mut cfg = load_config_or_default(&rootp, cfg_env);
+    let cfg = load_config_or_default(&rootp, cfg_env);
     set_session_ttl(cfg.security.session_ttl_secs);
     // §10.1: refine inferred render modes from the AST, exactly as `oxide build`
     // does — otherwise the live server sees the scanner's line-oriented guess

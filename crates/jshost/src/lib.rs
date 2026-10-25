@@ -4179,7 +4179,7 @@ mod perf05_tests {
 }
 
 mod perf02_tests {
-    use super::*;
+    
 
     /// PERF-02: the same route always maps to the same worker index.
     #[test]
@@ -4203,7 +4203,7 @@ mod perf02_tests {
 }
 
 mod bug03_tests {
-    use super::*;
+    
 
     #[test]
     fn static_snapshot_leaks_once_and_is_stable() {
