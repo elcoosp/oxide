@@ -5,6 +5,8 @@
 
 use clap::{Parser, Subcommand};
 
+type LayoutSideEffects = Vec<(Vec<String>, Vec<(String, String)>)>;
+
 /// The wasm-bindgen-processed `oxide-fw-core-wasm` artifact, embedded at
 /// CLI build time so a user project without a cargo workspace containing
 /// `oxide-fw-core-wasm` still gets the accelerated edge path.
@@ -510,13 +512,10 @@ fn has_explicit_render_config(source: &str) -> bool {
         let abs = start + i;
         // `render`, `renderMode` and `render_mode` all declare the mode.
         let rest = &source[abs + "render".len()..];
-        let rest = if rest.starts_with("Mode") {
-            &rest["Mode".len()..]
-        } else if rest.starts_with("_mode") {
-            &rest["_mode".len()..]
-        } else {
-            rest
-        };
+        let rest = rest
+            .strip_prefix("Mode")
+            .or_else(|| rest.strip_prefix("_mode"))
+            .unwrap_or(rest);
         // Skip whitespace; require `:` then a quote (a literal value).
         let t = rest.trim_start();
         if let Some(after) = t.strip_prefix(':') {
@@ -7880,7 +7879,7 @@ fn build_dispatch_swappable(
             // full sequential chain. Layout-then-page precedence on
             // short-circuit matches the sequential order.
             let mut layout_data_chain: Vec<serde_json::Value> = Vec::new();
-            let mut layout_side_effects: Vec<(Vec<String>, Vec<(String, String)>)> = Vec::new();
+            let mut layout_side_effects: LayoutSideEffects = Vec::new();
             // §9.2 parallel path (v0.1): when the page does not call
             // `parent()` (`RouteEntry.needs_parent == false`), the last
             // layout load and the page load overlap via `tokio::join!`.

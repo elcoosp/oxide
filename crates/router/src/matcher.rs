@@ -9,6 +9,8 @@ use regex::Regex;
 use crate::segment::{SegKind, classify, seg_priority, split_path};
 use crate::{MatchResult, RouteEntry, RouteId, RouteKind, RouteTree};
 
+type BestMatch = (usize, i64, Vec<u8>, usize, BTreeMap<String, String>);
+
 /// Uniform read-only view over owned [`RouteEntry`] and the rkyv-archived entry type,
 /// so one matcher serves both the in-memory tree and the memory-mapped archive (§8.2).
 pub(crate) trait EntryLike {
@@ -63,7 +65,7 @@ pub(crate) fn match_in<E: EntryLike>(
     path: &str,
 ) -> Option<(usize, BTreeMap<String, String>, i64)> {
     let url = split_path(path);
-    let mut best: Option<(usize, i64, Vec<u8>, usize, BTreeMap<String, String>)> = None;
+    let mut best: Option<BestMatch> = None;
     for (i, e) in entries.iter().enumerate() {
         if !e.matchable() {
             continue;

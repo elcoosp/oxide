@@ -6,6 +6,9 @@ use std::collections::BTreeMap;
 use crate::segment::split_path;
 use crate::{NativeRule, Result, RuleOutcome, RulesEngine, ferr};
 
+type BucketKey = (f64, std::time::Instant, u32, u64);
+type Buckets = std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, BucketKey>>>;
+
 /// Compile-time validation + normalization (see `RulesEngine::compile` docs).
 pub(crate) fn compile_impl(rules: Vec<NativeRule>) -> Result<RulesEngine> {
     for (i, r) in rules.iter().enumerate() {
@@ -63,9 +66,7 @@ pub const RATE_LIMITER_MAX_KEYS: usize = 10_000;
 /// bucket would not).
 #[derive(Debug, Default)]
 pub struct TokenBuckets {
-    map: std::sync::Arc<
-        std::sync::Mutex<std::collections::BTreeMap<String, (f64, std::time::Instant, u32, u64)>>,
-    >,
+    map: Buckets,
 }
 
 impl Clone for TokenBuckets {

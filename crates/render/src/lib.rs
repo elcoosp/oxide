@@ -18,6 +18,8 @@
 //!   `ox:defer` event listener; the hydration bootstrap (and the client router's deferred
 //!   queue, §8.4) can then replay queued swaps by dispatching `ox:defer` events.
 
+
+type RewriterFn = Box<dyn FnMut(&[u8])>;
 pub mod ppr;
 
 use base64::Engine as _;
@@ -619,7 +621,7 @@ impl Injector {
         };
         let sink: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
         let out = Arc::clone(&sink);
-        let sink_fn: Box<dyn FnMut(&[u8])> =
+        let sink_fn: RewriterFn =
             Box::new(move |c: &[u8]| out.lock().unwrap().extend_from_slice(c));
         let rewriter = HtmlRewriter::new(settings, sink_fn);
         InjectStream {
@@ -671,7 +673,7 @@ fn element_handlers(
 }
 
 pub struct InjectStream {
-    rewriter: Option<HtmlRewriter<'static, Box<dyn FnMut(&[u8])>>>,
+    rewriter: Option<HtmlRewriter<'static, RewriterFn>>,
     sink: Arc<Mutex<Vec<u8>>>,
     body_seen: Arc<AtomicBool>,
     body_inject: Option<String>,
