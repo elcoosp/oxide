@@ -76,17 +76,26 @@ function splitRow(line: string): string[] {
   return t.split('|').map((c) => c.trim())
 }
 
+
+/** Typed indexed access; the parser's while guards prove the index is
+ *  valid but noUncheckedIndexedAccess doesn't narrow it. */
+function mustEl<T>(arr: readonly T[], i: number): T {
+  const v = arr[i]
+  if (v === undefined) throw new Error(`md.server: index ${i} out of bounds (len=${arr.length})`)
+  return v
+}
+
 /** Markdown block subset → HTML string. */
 export function mdToHtml(md: string): string {
   const lines = md.replace(/\r\n/g, '\n').split('\n')
   const out: string[] = []
   let i = 0
   while (i < lines.length) {
-    const line = lines[i]
+    const line = mustEl(lines, i)
     if (line.startsWith('```')) {
       const buf: string[] = []
       i++
-      while (i < lines.length && !lines[i].startsWith('```')) buf.push(lines[i++])
+      while (i < lines.length && !mustEl(lines, i).startsWith('```')) buf.push(mustEl(lines, i++))
       i++ // closing fence
       out.push(`<pre><code>${esc(buf.join('\n'))}</code></pre>`)
       continue
@@ -105,31 +114,31 @@ export function mdToHtml(md: string): string {
     }
     if (line.startsWith('> ')) {
       const buf: string[] = []
-      while (i < lines.length && lines[i].startsWith('> ')) buf.push(lines[i++].slice(2))
+      while (i < lines.length && mustEl(lines, i).startsWith('> ')) buf.push(mustEl(lines, i++).slice(2))
       out.push(`<blockquote><p>${buf.map(inline).join(' ')}</p></blockquote>`)
       continue
     }
     if (/^[-*]\s+/.test(line)) {
       const items: string[] = []
-      while (i < lines.length && /^[-*]\s+/.test(lines[i])) items.push(lines[i++].replace(/^[-*]\s+/, ''))
+      while (i < lines.length && /^[-*]\s+/.test(mustEl(lines, i))) items.push(mustEl(lines, i++).replace(/^[-*]\s+/, ''))
       out.push(`<ul>${items.map((it) => `<li>${inline(it)}</li>`).join('')}</ul>`)
       continue
     }
     if (/^\d+[.)]\s+/.test(line)) {
       const items: string[] = []
-      while (i < lines.length && /^\d+[.)]\s+/.test(lines[i])) items.push(lines[i++].replace(/^\d+[.)]\s+/, ''))
+      while (i < lines.length && /^\d+[.)]\s+/.test(mustEl(lines, i))) items.push(mustEl(lines, i++).replace(/^\d+[.)]\s+/, ''))
       out.push(`<ol>${items.map((it) => `<li>${inline(it)}</li>`).join('')}</ol>`)
       continue
     }
     if (
       line.trim().startsWith('|') &&
       i + 1 < lines.length &&
-      /^\|[\s:|-]+\|?\s*$/.test(lines[i + 1].trim())
+      /^\|[\s:|-]+\|?\s*$/.test(mustEl(lines, i + 1).trim())
     ) {
       const head = splitRow(line)
       i += 2
       const rows: string[][] = []
-      while (i < lines.length && lines[i].trim().startsWith('|')) rows.push(splitRow(lines[i++]))
+      while (i < lines.length && mustEl(lines, i).trim().startsWith('|')) rows.push(splitRow(mustEl(lines, i++)))
       const th = head.map((c) => `<th>${inline(c)}</th>`).join('')
       const trs = rows
         .map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join('')}</tr>`)
@@ -144,10 +153,10 @@ export function mdToHtml(md: string): string {
     const para: string[] = []
     while (
       i < lines.length &&
-      lines[i].trim() !== '' &&
-      !/^(#{1,4}\s|```|>|[-*]\s|\d+[.)]\s|\|)/.test(lines[i])
+      mustEl(lines, i).trim() !== '' &&
+      !/^(#{1,4}\s|```|>|[-*]\s|\d+[.)]\s|\|)/.test(mustEl(lines, i))
     ) {
-      para.push(lines[i++])
+      para.push(mustEl(lines, i++))
     }
     out.push(`<p>${para.map(inline).join(' ')}</p>`)
   }
