@@ -318,51 +318,6 @@ fn env_filter() -> tracing_subscriber::EnvFilter {
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
 }
 
-/// SPEC-24 / §20: redact secret-bearing fields before they reach a log line.
-/// A field key matching `cookie`/`authorization`/`set-cookie`/dev-token, or
-/// containing `secret`/`token`/`password`/`api_key`, is replaced with
-/// `[redacted]`. (Applied at the request-log call sites — the formatter emits
-/// whatever it is given, so the redaction happens before the event.)
-fn is_secret_key(k: &str) -> bool {
-    let k = k.to_ascii_lowercase();
-    matches!(
-        k.as_str(),
-        "cookie" | "authorization" | "set-cookie" | "x-oxide-fw-dev-token"
-    ) || k.contains("secret")
-        || k.contains("token")
-        || k.contains("password")
-        || k.contains("api_key")
-}
-
-/// SPEC-24 / §20: emit one structured request log line (JSON under
-/// `OXIDE_LOG=json`) with every secret-bearing header redacted. Called from
-/// the CLI's response finisher.
-fn log_request(
-    request_id: &str,
-    method: &str,
-    path: &str,
-    status: u16,
-    headers: &[(String, String)],
-) {
-    let mut fields = String::new();
-    for (k, v) in headers {
-        let val = if is_secret_key(k) {
-            "[redacted]"
-        } else {
-            v.as_str()
-        };
-        fields.push_str(&format!("{k}={val} "));
-    }
-    tracing::info!(
-        request_id = request_id,
-        method = method,
-        path = path,
-        status = status,
-        headers = fields.trim_end(),
-        "request"
-    );
-}
-
 /// Build the `tracing-opentelemetry` layer for the given OTLP endpoint.
 /// The returned layer is backed by a batch span processor whose lifetime is
 /// process-wide via a leaked `TracerProvider` — acceptable for a CLI that
@@ -1945,25 +1900,6 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // so a no-op touch (or a change to an unrelated file) does not churn the
     // framework module graph.
     let dev_graph = std::sync::Arc::new(oxide_fw_graph::DemandGraph::new());
-
-    /// A compute that reads one file, recording the `Input::File` edge. Its
-    /// output hash is the file content hash — an unchanged re-read is a
-    /// Survivor (early cutoff), so dependents are not re-run.
-    struct FileCompute(std::path::PathBuf);
-    impl oxide_fw_graph::Compute for FileCompute {
-        fn compute(
-            &self,
-            ctx: &mut oxide_fw_graph::ComputeCtx,
-        ) -> oxide_fw_diagnostics::Result<oxide_fw_graph::NodeOutput> {
-            let bytes = ctx.fs.read_file(&self.0)?;
-            let hash = blake3::hash(&bytes);
-            Ok(oxide_fw_graph::NodeOutput {
-                hash,
-                artifact: None,
-                deps: Default::default(),
-            })
-        }
-    }
 
     // §13.3: on any file-change event, bump the worker's module generation
     // so the next render/load sees fresh code. Best-effort: log a warning
@@ -6858,6 +6794,7 @@ impl SwappableRouteTree {
     }
 }
 
+#[cfg(test)]
 fn build_dispatch(
     tree: std::sync::Arc<oxide_fw_router::RouteTree>,
     metrics: std::sync::Arc<oxide_fw_server::Metrics>,
@@ -7930,7 +7867,7 @@ fn build_dispatch_swappable(
             // entry; these bracket load / render so `Server-Timing` can
             // report real per-stage durations instead of all-zeros.
             let stage_load_start = std::time::Instant::now();
-            let mut load_ms = 0.0f64;
+            let load_ms: f64;
 
             // §9.2: layout loads run in chain order (outer → inner); each
             // layout gets the pre-resolved data of its own outer layout as
@@ -10857,6 +10794,13 @@ async fn start_server_inner_full(
         None => dispatch,
     };
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    // Startup banner: the URL must be obvious on first run (Vite parity).
+    eprintln!();
+    eprintln!("  oxide dev");
+    eprintln!();
+    eprintln!("  Local:  http://localhost:{}/", port);
+    eprintln!("  Ready:  http://localhost:{}/_oxide/ready", port);
+    eprintln!();
     let (tx, rx) = tokio::sync::watch::channel(false);
     // §12.1: HTTP/3 rides QUIC over UDP on the same port. Enabled by
     // `server.http3` + TLS (QUIC has no plaintext mode). A second listener
@@ -13921,6 +13865,7 @@ impl PprShellStore {
         self.order.clear();
     }
 
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.map.len()
     }
@@ -13936,6 +13881,7 @@ impl PprShellStore {
     ///
     /// `VecDeque::remove(pos)` is O(256); taps run once per route per
     /// process, so the scan is invisible next to the render itself.
+    #[cfg(test)]
     pub(crate) fn insert(&mut self, key: String, shell: String) {
         self.insert_tagged(key, shell, Vec::new());
     }

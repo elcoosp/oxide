@@ -3724,7 +3724,6 @@ impl Pipeline {
             }
             oxide_fw_router::RuleOutcome::Rewrite(dest) => {
                 req.url = url_with_path(&req.url, &dest);
-                path = dest;
             }
             oxide_fw_router::RuleOutcome::Headers(map) => {
                 rule_headers = map.into_iter().collect();
@@ -3752,18 +3751,7 @@ impl Pipeline {
         NativePrefix::Dispatch(rule_headers, content_language)
     }
 
-    /// Append security headers (+ hash-mode CSP), rule headers and the Server-Timing
-    /// placeholder (kept only when dispatch did not set one — §12.1 step 8).
-    fn finish_response(
-        &self,
-        resp: OxideResponse,
-        rule_headers: &[(String, String)],
-        request_id: &str,
-    ) -> OxideResponse {
-        self.finish_response_with_request(resp, rule_headers, request_id, None, None)
-    }
-
-    /// `finish_response` plus the CSRF token issuer (SEC-04): on a GET/HEAD
+    /// Adds the CSRF token issuer (SEC-04): on a GET/HEAD
     /// response in `token` mode with no `oxide_csrf` cookie on the request,
     /// set a random 32-hex cookie (SameSite=Lax, Path=/). `method`/`cookie`
     /// are `None` on paths where the request is no longer available (all

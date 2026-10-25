@@ -804,18 +804,6 @@ fn oxide_plugins_with_sink(
     plugins
 }
 
-/// The plugin list for a run whose diagnostics are not collected (tests, or a
-/// caller that only needs the transform). Production goes through
-/// [`oxide_plugins_with_sink`] so a pass failure keeps its location and code
-/// frame.
-fn oxide_plugins(options: &BundleOptions, root: &Path) -> Vec<std::sync::Arc<Pluginable>> {
-    oxide_plugins_with_sink(
-        options,
-        root,
-        std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-    )
-}
-
 /// §6.2 steps 4-6: the framework passes Rolldown's own Oxc lowering does
 /// not perform. Rolldown strips TS and lowers JSX; it knows nothing about
 /// `'use cache'`, `serverFn(...)` stubs, or the server-only guard — so an

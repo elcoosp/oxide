@@ -4016,7 +4016,6 @@ mod tests {
 #[cfg(test)]
 mod bug12_tests {
     use super::*;
-
     fn write_envelope(
         dir: &std::path::Path,
         name: &str,
@@ -4114,6 +4113,7 @@ mod perf01_tests {
     }
 }
 
+#[cfg(test)]
 mod perf05_tests {
     use super::*;
     use async_trait::async_trait;
@@ -4178,10 +4178,10 @@ mod perf05_tests {
     }
 }
 
+#[cfg(test)]
 mod perf02_tests {
-    
-
-    /// PERF-02: the same route always maps to the same worker index.
+    use super::*;
+/// PERF-02: the same route always maps to the same worker index.
     #[test]
     fn route_affinity_is_stable_and_bounded() {
         let a1 = route_affinity(Some("routes/blog/[slug]"), 4);
@@ -4202,9 +4202,9 @@ mod perf02_tests {
     }
 }
 
+#[cfg(test)]
 mod bug03_tests {
-    
-
+    use super::*;
     #[test]
     fn static_snapshot_leaks_once_and_is_stable() {
         let host = V8Host::with_snapshot(vec![1, 2, 3, 4]);
