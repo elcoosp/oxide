@@ -177,16 +177,22 @@ impl std::error::Error for Diagnostic {}
 /// An error carrying a `Diagnostic`, so every subsystem error converts losslessly.
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
-pub struct OxideError(pub Diagnostic);
+pub struct OxideError(pub Box<Diagnostic>);
 
 impl OxideError {
     pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self(Diagnostic::error(code, message))
+        Self(Box::new(Diagnostic::error(code, message)))
     }
 }
 
 impl From<Diagnostic> for OxideError {
     fn from(d: Diagnostic) -> Self {
+        OxideError(Box::new(d))
+    }
+}
+
+impl From<Box<Diagnostic>> for OxideError {
+    fn from(d: Box<Diagnostic>) -> Self {
         OxideError(d)
     }
 }

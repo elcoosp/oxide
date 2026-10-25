@@ -203,7 +203,7 @@ pub const MAX_BYTES: usize = 256 * 1024 * 1024;
 pub const MAX_REFS: u32 = 1 << 20;
 
 pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
-    OxideError(Diagnostic::error(code, msg))
+    OxideError(Box::new(Diagnostic::error(code, msg)))
 }
 
 /// Build a two-node cyclic structure for tests and golden fixtures:

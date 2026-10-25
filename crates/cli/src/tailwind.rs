@@ -15,7 +15,7 @@ pub struct TailwindOutput {
 }
 
 fn bld_err(msg: impl Into<String>) -> OxideError {
-    OxideError(Diagnostic::error("BLD-TAILWIND", msg))
+    OxideError(Box::new(Diagnostic::error("BLD-TAILWIND", msg)))
 }
 
 /// True when the config declares the @oxide-fw/tailwind plugin.

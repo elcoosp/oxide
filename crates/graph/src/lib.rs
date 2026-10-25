@@ -30,7 +30,7 @@ use std::sync::Arc;
 pub type Result<T> = std::result::Result<T, OxideError>;
 
 pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
-    OxideError(Diagnostic::error(code, msg))
+    OxideError(Box::new(Diagnostic::error(code, msg)))
 }
 
 /// A node's stable key, e.g. `transform:<file>:<version>` or `chunk:<hash>`.

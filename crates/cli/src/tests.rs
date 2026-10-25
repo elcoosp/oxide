@@ -3223,9 +3223,9 @@ async fn stream_error_recovery_after_shell_emits_boundary() {
             .send(Ok(bytes::Bytes::from_static(b"<html>shell</html>")))
             .await;
         let _ = tx
-            .send(Err(oxide_fw_diagnostics::OxideError(
+            .send(Err(oxide_fw_diagnostics::OxideError(Box::new(
                 oxide_fw_diagnostics::Diagnostic::error("RND-TEST", "mid-stream boom"),
-            )))
+            ))))
             .await;
     });
     // `oxide_fw_server::RenderStream` is a boxed item stream.

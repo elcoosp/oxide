@@ -120,7 +120,7 @@ impl Transformer for OxcTransformer {
         ) {
             Ok((s, m)) => (s, m),
             Err(e) => {
-                diagnostics.push(e.0);
+                diagnostics.push(*e.0);
                 (code, None)
             }
         };
@@ -244,7 +244,7 @@ impl OxcTransformer {
                     d = d.with_code_frame(frame);
                 }
             }
-            return Err(crate::OxideError(d));
+            return Err(crate::OxideError(Box::new(d)));
         }
 
         let mut code = input.code.clone();

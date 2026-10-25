@@ -36,7 +36,7 @@ use std::sync::{Arc, Mutex};
 pub type Result<T> = std::result::Result<T, OxideError>;
 
 pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
-    OxideError(Diagnostic::error(code, msg))
+    OxideError(Box::new(Diagnostic::error(code, msg)))
 }
 
 /// Render mode (§10.1). Inference: `static` unless the load reads request-specific

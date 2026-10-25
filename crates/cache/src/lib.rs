@@ -48,7 +48,7 @@ pub type Result<T> = std::result::Result<T, OxideError>;
 
 /// Build a crate-local error with a stable `CAC-NNN`-style code (spec §19.4).
 pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
-    OxideError(Diagnostic::error(code, msg))
+    OxideError(Box::new(Diagnostic::error(code, msg)))
 }
 
 /// Cache entry policy (§11.3).

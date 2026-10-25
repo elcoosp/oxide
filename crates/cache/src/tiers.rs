@@ -134,10 +134,10 @@ struct DiskIndexEntry {
 }
 
 fn dberr(e: impl std::fmt::Display) -> OxideError {
-    OxideError(
+    OxideError(Box::new(
         Diagnostic::error("CAC-DB", format!("redb: {e}"))
             .with_fix("check disk space/permissions for the cache root"),
-    )
+    ))
 }
 
 fn jsonerr(e: serde_json::Error) -> OxideError {
@@ -183,10 +183,10 @@ impl DiskTier {
         max_entry: u64,
     ) -> Result<Self> {
         std::fs::create_dir_all(&root).map_err(|e| {
-            OxideError(
+            OxideError(Box::new(
                 Diagnostic::error("CAC-IO", format!("create {}: {e}", root.display()))
                     .with_fix("check that the cache root is writable"),
-            )
+            ))
         })?;
         std::fs::create_dir_all(root.join("blobs")).map_err(ioerr)?;
         let index = Database::create(root.join("index.redb")).map_err(dberr)?;

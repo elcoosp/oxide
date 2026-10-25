@@ -39,7 +39,7 @@ pub use oxc_backend::{OxcTransformer, lower_to_js};
 pub type Result<T> = std::result::Result<T, OxideError>;
 
 pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
-    OxideError(Diagnostic::error(code, msg))
+    OxideError(Box::new(Diagnostic::error(code, msg)))
 }
 
 /// Target environment of a transform (§6.1: client, ssr, edge).

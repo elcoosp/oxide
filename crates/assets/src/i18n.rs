@@ -354,7 +354,7 @@ impl MessageFormatter {
                         "check the ICU MessageFormat syntax; braces must balance and plural \
                          cases must include `other`",
                     );
-                    oxide_fw_diagnostics::OxideError(d)
+                    oxide_fw_diagnostics::OxideError(Box::new(d))
                 })?;
                 let compiled = std::sync::Arc::new(compiled);
                 cache.insert(template.to_string(), std::sync::Arc::clone(&compiled));

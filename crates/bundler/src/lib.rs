@@ -36,7 +36,7 @@ pub use rolldown_backend::RolldownBundler;
 pub type Result<T> = std::result::Result<T, OxideError>;
 
 pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
-    OxideError(Diagnostic::error(code, msg))
+    OxideError(Box::new(Diagnostic::error(code, msg)))
 }
 
 fn io_err(what: &str, e: std::io::Error) -> OxideError {
@@ -800,7 +800,7 @@ impl ChunkBundler {
                             }
                             queue.push_back((sp.specifier.clone(), dep));
                         }
-                        Err(e) => diagnostics.push(e.0),
+                        Err(e) => diagnostics.push(*e.0),
                     }
                 }
             }
@@ -1399,7 +1399,7 @@ fn lower_module_to_js(
             out.code
         }
         Err(e) => {
-            diagnostics.push(e.0);
+            diagnostics.push(*e.0);
             code.to_string()
         }
     }

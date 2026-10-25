@@ -58,7 +58,7 @@ pub use tooling_pool::{ModuleCall, ToolingModules};
 pub type Result<T> = std::result::Result<T, OxideError>;
 
 pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
-    OxideError(Diagnostic::error(code, msg))
+    OxideError(Box::new(Diagnostic::error(code, msg)))
 }
 
 /// Pool sizing (§4.3): render pool default = physical cores; each isolate interleaves
@@ -3546,18 +3546,18 @@ fn fail_all(worker: &Worker, code: String, message: String) {
         for (_, tx) in streams.drain() {
             // Best-effort: a consumer that already went away dropped the
             // receiver; that stream is closed and has no one to notify.
-            let _ = tx.try_send(Err(OxideError(Diagnostic::error(
+            let _ = tx.try_send(Err(OxideError(Box::new(Diagnostic::error(
                 code.clone(),
                 message.clone(),
-            ))));
+            )))));
         }
     }
     let mut pending = worker.pending.lock().unwrap();
     for (_, p) in pending.drain() {
-        let _ = p.tx.send(Err(OxideError(Diagnostic::error(
+        let _ = p.tx.send(Err(OxideError(Box::new(Diagnostic::error(
             code.clone(),
             message.clone(),
-        ))));
+        )))));
     }
 }
 
@@ -3923,7 +3923,7 @@ fn handle_worker_msg(msg: WorkerMsg, worker: &Arc<Worker>) {
         }
         WorkerMsg::CallErr { id, diagnostic } => {
             drop_stream(worker, id);
-            resolve(worker, id, Err(OxideError(diagnostic)));
+            resolve(worker, id, Err(OxideError(Box::new(diagnostic))));
         }
         // §4.5 / §9.3: a `cache_get` / `cache_set` / `cache_tag` request
         // from user code. The reader owns stdout; the response goes back on

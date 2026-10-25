@@ -198,7 +198,7 @@ fn target_to_alias_value(root: &Path, target: &str) -> AliasValue {
 fn unresolved(root: &Path, specifier: &str, from: &Path) -> OxideError {
     let spec = specifier.split('?').next().unwrap_or(specifier);
     let pkg = spec.split('/').next().unwrap_or(spec);
-    OxideError(
+    OxideError(Box::new(
         Diagnostic::error(
             "BLD-RESOLVE",
             format!(
@@ -211,5 +211,5 @@ fn unresolved(root: &Path, specifier: &str, from: &Path) -> OxideError {
             "check the specifier spelling, add a tsconfig `paths` entry, or install `{pkg}` \
              (node_modules/{pkg})"
         )),
-    )
+    ))
 }

@@ -2871,12 +2871,12 @@ fn emit_snapshot_blob(root: &Path, server_out: &Path, w: Writer<'_>) -> anyhow::
     let built = std::thread::spawn(oxide_fw_jshost::snapshot_build_runtime)
         .join()
         .unwrap_or_else(|_| {
-            Err(oxide_fw_diagnostics::OxideError(
+            Err(oxide_fw_diagnostics::OxideError(Box::new(
                 oxide_fw_diagnostics::Diagnostic::error(
                     "SNP-PANIC",
                     "snapshot builder thread panicked",
                 ),
-            ))
+            )))
         });
 
     match built {
@@ -5229,7 +5229,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         }
     let server_outcome = rb.bundle(&server_opts).map_err(|e| {
         let mut diags = client_outcome.diagnostics.clone();
-        diags.push(e.0.clone());
+        diags.push((*e.0).clone());
         persist_diagnostics(&rootp, &diags);
         anyhow::anyhow!("{} {}", e.0.code, e.0.message)
     })?;
@@ -9726,10 +9726,10 @@ fn build_js_plugin_hook(
                         .enable_all()
                         .build()
                         .map_err(|e| {
-                            oxide_fw_diagnostics::OxideError(oxide_fw_diagnostics::Diagnostic::error(
+                            oxide_fw_diagnostics::OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(
                                 "PLG-BRIDGE",
                                 format!("bridge runtime: {e}"),
-                            ))
+                            )))
                         })?;
                     rt.block_on(async move {
                         let need_load = {
@@ -9775,16 +9775,16 @@ fn build_js_plugin_hook(
                                 export: "transform".into(),
                             };
                             let mut stream = pool.call(entry, call).await.map_err(|e| {
-                                oxide_fw_diagnostics::OxideError(oxide_fw_diagnostics::Diagnostic::error(
+                                oxide_fw_diagnostics::OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(
                                     "PLG-CALL",
                                     format!("plugin transform failed: {}", e.0.message),
-                                ))
+                                )))
                             })?;
                             let bytes = stream.collect().await.map_err(|e| {
-                                oxide_fw_diagnostics::OxideError(oxide_fw_diagnostics::Diagnostic::error(
+                                oxide_fw_diagnostics::OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(
                                     "PLG-CALL",
                                     format!("plugin transform read failed: {}", e.0.message),
-                                ))
+                                )))
                             })?;
                             if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes)
                                 && let Some(s) = hook_result_str(&v, "code") {
@@ -9796,12 +9796,12 @@ fn build_js_plugin_hook(
                 })
                 .join()
                 .unwrap_or_else(|_| {
-                    Err(oxide_fw_diagnostics::OxideError(
+                    Err(oxide_fw_diagnostics::OxideError(Box::new(
                         oxide_fw_diagnostics::Diagnostic::error(
                             "PLG-BRIDGE",
                             "plugin bridge thread panicked",
                         ),
-                    ))
+                    )))
                 })
         })
     }))
@@ -10918,7 +10918,7 @@ async fn cmd_check(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
         Ok(lc) => outln!(w, "config: OK ({} env vars)", lc.env.len()),
         Err(e) => {
             outln!(w, "config: {} {}", e.0.code, e.0.message);
-            diags.push(e.0.clone());
+            diags.push((*e.0).clone());
             ok = false;
         }
     }
@@ -10955,7 +10955,7 @@ async fn cmd_check(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
         }
         Err(e) => {
             outln!(w, "native plugins: {} {}", e.0.code, e.0.message);
-            diags.push(e.0.clone());
+            diags.push((*e.0).clone());
             ok = false;
         }
     }
@@ -12149,10 +12149,10 @@ fn build_js_plugin_resolve_hook(
                         .enable_all()
                         .build()
                         .map_err(|e| {
-                            oxide_fw_diagnostics::OxideError(oxide_fw_diagnostics::Diagnostic::error(
+                            oxide_fw_diagnostics::OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(
                                 "PLG-BRIDGE",
                                 format!("bridge runtime: {e}"),
-                            ))
+                            )))
                         })?;
                     rt.block_on(async move {
                         let need_load = {
@@ -12216,12 +12216,12 @@ fn build_js_plugin_resolve_hook(
                 })
                 .join()
                 .unwrap_or_else(|_| {
-                    Err(oxide_fw_diagnostics::OxideError(
+                    Err(oxide_fw_diagnostics::OxideError(Box::new(
                         oxide_fw_diagnostics::Diagnostic::error(
                             "PLG-BRIDGE",
                             "plugin bridge thread panicked",
                         ),
-                    ))
+                    )))
                 })
         })
     }))
@@ -12254,10 +12254,10 @@ fn build_js_plugin_load_hook(
                         .enable_all()
                         .build()
                         .map_err(|e| {
-                            oxide_fw_diagnostics::OxideError(oxide_fw_diagnostics::Diagnostic::error(
+                            oxide_fw_diagnostics::OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(
                                 "PLG-BRIDGE",
                                 format!("bridge runtime: {e}"),
-                            ))
+                            )))
                         })?;
                     rt.block_on(async move {
                         let need_load = {
@@ -12319,12 +12319,12 @@ fn build_js_plugin_load_hook(
                 })
                 .join()
                 .unwrap_or_else(|_| {
-                    Err(oxide_fw_diagnostics::OxideError(
+                    Err(oxide_fw_diagnostics::OxideError(Box::new(
                         oxide_fw_diagnostics::Diagnostic::error(
                             "PLG-BRIDGE",
                             "plugin bridge thread panicked",
                         ),
-                    ))
+                    )))
                 })
         })
     }))
@@ -12518,10 +12518,10 @@ fn build_js_plugin_render_chunk_hook(
                         .enable_all()
                         .build()
                         .map_err(|e| {
-                            oxide_fw_diagnostics::OxideError(oxide_fw_diagnostics::Diagnostic::error(
+                            oxide_fw_diagnostics::OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(
                                 "PLG-BRIDGE",
                                 format!("bridge runtime: {e}"),
-                            ))
+                            )))
                         })?;
                     rt.block_on(async move {
                         let need_load = {
@@ -12586,12 +12586,12 @@ fn build_js_plugin_render_chunk_hook(
                 })
                 .join()
                 .unwrap_or_else(|_| {
-                    Err(oxide_fw_diagnostics::OxideError(
+                    Err(oxide_fw_diagnostics::OxideError(Box::new(
                         oxide_fw_diagnostics::Diagnostic::error(
                             "PLG-BRIDGE",
                             "renderChunk bridge thread panicked",
                         ),
-                    ))
+                    )))
                 })
         })
     }))
@@ -12623,10 +12623,10 @@ fn build_js_plugin_generate_bundle_hook(
                         .enable_all()
                         .build()
                         .map_err(|e| {
-                            oxide_fw_diagnostics::OxideError(oxide_fw_diagnostics::Diagnostic::error(
+                            oxide_fw_diagnostics::OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(
                                 "PLG-BRIDGE",
                                 format!("bridge runtime: {e}"),
-                            ))
+                            )))
                         })?;
                     rt.block_on(async move {
                         let need_load = {
@@ -12690,12 +12690,12 @@ fn build_js_plugin_generate_bundle_hook(
                 })
                 .join()
                 .unwrap_or_else(|_| {
-                    Err(oxide_fw_diagnostics::OxideError(
+                    Err(oxide_fw_diagnostics::OxideError(Box::new(
                         oxide_fw_diagnostics::Diagnostic::error(
                             "PLG-BRIDGE",
                             "generateBundle bridge thread panicked",
                         ),
-                    ))
+                    )))
                 })
         })
     }))
@@ -12729,10 +12729,10 @@ fn build_js_plugin_transform_html_hook(
                             .enable_all()
                             .build()
                             .map_err(|e| {
-                                oxide_fw_diagnostics::OxideError(oxide_fw_diagnostics::Diagnostic::error(
+                                oxide_fw_diagnostics::OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(
                                     "PLG-BRIDGE",
                                     format!("bridge runtime: {e}"),
-                                ))
+                                )))
                             })?;
                         rt.block_on(async move {
                             let need_load = {
@@ -12798,12 +12798,12 @@ fn build_js_plugin_transform_html_hook(
                     })
                     .join()
                     .unwrap_or_else(|_| {
-                        Err(oxide_fw_diagnostics::OxideError(
+                        Err(oxide_fw_diagnostics::OxideError(Box::new(
                             oxide_fw_diagnostics::Diagnostic::error(
                                 "PLG-BRIDGE",
                                 "transformHtml bridge thread panicked",
                             ),
-                        ))
+                        )))
                     })
             })
         },

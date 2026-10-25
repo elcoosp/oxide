@@ -345,9 +345,9 @@ fn validate(value: &Value, framework_source: &str) -> Result<()> {
                 ),
                 None => err("CFG-UNKNOWN-KEY", format!("unknown config key `{key}`")),
             };
-            return Err(OxideError(e.0.with_fix(format!(
+            return Err(OxideError(Box::new(e.0.with_fix(format!(
                 "rename `{key}` to a valid top-level config key (one of {KNOWN_KEYS:?})"
-            ))));
+            )))));
         }
     }
     let adapter_missing = value
@@ -366,7 +366,7 @@ fn validate(value: &Value, framework_source: &str) -> Result<()> {
             "add `framework.adapter` to the config, e.g. `framework: react({ compiler: true })`"
                 .into(),
         );
-        return Err(OxideError(d));
+        return Err(OxideError(Box::new(d)));
     }
     Ok(())
 }

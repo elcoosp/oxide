@@ -50,7 +50,7 @@ pub use og_backend::SvgOgBackend;
 pub type Result<T> = std::result::Result<T, OxideError>;
 
 pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
-    OxideError(Diagnostic::error(code, msg))
+    OxideError(Box::new(Diagnostic::error(code, msg)))
 }
 
 /// Asset import queries (§6.7): `?url`, `?raw`, `?inline`, `?worker`,

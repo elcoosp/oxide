@@ -33,7 +33,7 @@ pub type Result<T> = std::result::Result<T, OxideError>;
 pub use schema::{CONFIG_SCHEMA_URI, config_schema, config_schema_pretty};
 
 pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
-    OxideError(Diagnostic::error(code, msg))
+    OxideError(Box::new(Diagnostic::error(code, msg)))
 }
 
 /// §16.6: service worker configuration.

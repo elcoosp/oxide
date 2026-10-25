@@ -66,9 +66,9 @@ impl oxide_fw_jshost::FetchHandler for CliFetchHandler {
                 headers,
                 body,
             }),
-            Err(e) => Err(oxide_fw_diagnostics::OxideError(
+            Err(e) => Err(oxide_fw_diagnostics::OxideError(Box::new(
                 oxide_fw_diagnostics::Diagnostic::error("JSH-FETCH", e),
-            )),
+            ))),
         }
     }
 }

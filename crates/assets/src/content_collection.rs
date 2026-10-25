@@ -106,7 +106,7 @@ pub struct CollectionEntry {
 /// Hidden files (`.` or `_` prefix) and non-`.md`/`.mdx` files are ignored.
 pub fn scan_collection(cfg: &CollectionConfig) -> Result<Collection> {
     if !cfg.dir.is_dir() {
-        return Err(crate::OxideError(
+        return Err(crate::OxideError(Box::new(
             Diagnostic::error(
                 "AST-DIR",
                 format!(
@@ -116,7 +116,7 @@ pub fn scan_collection(cfg: &CollectionConfig) -> Result<Collection> {
                 ),
             )
             .with_fix("create the directory or fix the collection's `dir` in config"),
-        ));
+        )));
     }
 
     let mut entries: Vec<CollectionEntry> = Vec::new();

@@ -17,7 +17,7 @@ pub use wasm::{WasmPlugin, hook_export_name};
 pub type Result<T> = std::result::Result<T, OxideError>;
 
 pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
-    OxideError(Diagnostic::error(code, msg))
+    OxideError(Box::new(Diagnostic::error(code, msg)))
 }
 
 /// Plugin ordering (§15.1): enforce pre/post around the native chain.

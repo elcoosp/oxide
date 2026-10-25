@@ -247,7 +247,7 @@ impl Bundler for RolldownBundler {
             .ok()
             .and_then(|sink| sink.first().cloned());
         if let Some(d) = plugin_failure {
-            return Err(crate::OxideError(d));
+            return Err(crate::OxideError(Box::new(d)));
         }
 
         // SPEC-15.2: run `renderChunk` over every emitted chunk file, then
@@ -995,7 +995,7 @@ impl Plugin for OxidePassesPlugin {
                     // hook error channel requires. The bundler drains the
                     // sink into `BundleOutput::diagnostics`.
                     if let Ok(mut sink) = self.diagnostics.lock() {
-                        sink.push(e.0.clone());
+                        sink.push((*e.0).clone());
                     }
                     pass_error = Some(format!("CMP-PASS {}: {}", args.id, e.0.message));
                     None

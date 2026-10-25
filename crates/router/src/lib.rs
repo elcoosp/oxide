@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 pub type Result<T> = std::result::Result<T, OxideError>;
 
 pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
-    OxideError(Diagnostic::error(code, msg))
+    OxideError(Box::new(Diagnostic::error(code, msg)))
 }
 
 /// Internal helper: an error with a known fix attached (§19.4).
@@ -36,7 +36,7 @@ pub(crate) fn ferr(
     msg: impl Into<String>,
     fix: impl Into<String>,
 ) -> OxideError {
-    OxideError(err(code, msg).0.with_fix(fix))
+    OxideError(Box::new(err(code, msg).0.with_fix(fix)))
 }
 
 mod archive;

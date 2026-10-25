@@ -47,7 +47,7 @@ pub type Result<T> = std::result::Result<T, OxideError>;
 pub use metrics::Metrics;
 
 pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
-    OxideError(Diagnostic::error(code, msg))
+    OxideError(Box::new(Diagnostic::error(code, msg)))
 }
 
 /// A platform-agnostic request handed to the pipeline (web-standard shape, G5).
@@ -5202,7 +5202,7 @@ pub mod ws {
     pub type Result<T> = std::result::Result<T, OxideError>;
 
     fn ws_err(msg: impl Into<String>) -> OxideError {
-        OxideError(Diagnostic::error("SRV-WS", msg))
+        OxideError(Box::new(Diagnostic::error("SRV-WS", msg)))
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
