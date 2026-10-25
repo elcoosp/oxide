@@ -31,7 +31,9 @@ export function pngDataUri(path: string): string {
  * Throws with a helpful message if one is missing.
  */
 export function loadAssets(inputDir?: string): OgAssets {
-  const dir = resolve(inputDir ?? join(dirname(require.main!.filename), "..", "assets"));
+  const mainFile = require.main?.filename
+  if (mainFile === undefined) throw new Error("oxide-og: cannot determine module entrypoint")
+  const dir = resolve(inputDir ?? join(dirname(mainFile), "..", "assets"))
   const out = {} as OgAssets;
   for (const [key, file] of ICON_NAMES) {
     const p = join(dir, file);

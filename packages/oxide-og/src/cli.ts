@@ -22,6 +22,15 @@ const DEFAULTS = {
   footerRight: "MIT OR Apache-2.0",
 };
 
+/** Extract a required string from parseArgs values; throws with a clear
+ *  message when the flag is missing (or non-string). Runtime check is the
+ *  narrowing primitive -- no `!`, no cast. */
+function requireString(values: Record<string, string | boolean | undefined>, key: string): string {
+  const v = values[key]
+  if (typeof v !== "string") throw new Error(`oxide-og: --${key} is required (got ${typeof v})`)
+  return v
+}
+
 function main(): Promise<void> {
   return run();
 }
@@ -95,17 +104,17 @@ Options:
       options: {
         width: preset.width,
         height: preset.height,
-        headline: values.headline!,
-        sub: values.sub!,
-        repo: values.repo!,
-        kicker: values.kicker!,
-        version: values.version!,
-        footerLeft: values["footer-left"]!,
-        footerRight: values["footer-right"]!,
+        headline: requireString(values, "headline"),
+        sub: requireString(values, "sub"),
+        repo: requireString(values, "repo"),
+        kicker: requireString(values, "kicker"),
+        version: requireString(values, "version"),
+        footerLeft: requireString(values, "footer-left"),
+        footerRight: requireString(values, "footer-right"),
       },
     });
     const outName = theme === "dark" ? preset.name.replace(/\.png$/, "-dark.png") : preset.name;
-    const outPath = join(resolve(values.out!), outName);
+    const outPath = join(resolve(requireString(values, "out")), outName);
     await renderToPng({ html, width: preset.width, height: preset.height, outPath, scale });
     console.log(`✓ ${outPath}  (${preset.width}×${preset.height} @${scale}x, ${theme})`);
   }
