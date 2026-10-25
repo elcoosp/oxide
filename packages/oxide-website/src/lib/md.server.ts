@@ -102,8 +102,8 @@ export function mdToHtml(md: string): string {
     }
     const h = /^(#{1,4})\s+(.*)$/.exec(line)
     if (h) {
-      const level = h[1].length
-      out.push(`<h${level}>${inline(h[2])}</h${level}>`)
+      const level = mustEl(h, 1).length
+      out.push(`<h${level}>${inline(mustEl(h, 2))}</h${level}>`)
       i++
       continue
     }
@@ -243,3 +243,51 @@ export function xmlEsc(s: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
 }
+
+// ---------------------------------------------------------------------------
+// Runtime-narrowing helpers for page meta callbacks.
+//
+// `defineMeta`'s callback receives `data: unknown` -- the framework can't
+// connect it to the return type of a separately-declared `defineLoad`. These
+// helpers do the `typeof`/`in` narrowing once, in one place, returning the
+// typed shape (or defaults). Zero casts: TypeScript 4.9 narrows `data` via
+// `'post' in data` to `object & Record<'post', unknown>`.
+// ---------------------------------------------------------------------------
+
+export interface SiteMeta {
+  title: string
+  description: string
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null
+}
+
+function readMetaField(data: unknown, field: 'post' | 'doc'): SiteMeta {
+  if (!isRecord(data) || !(field in data)) {
+    return { title: field === 'post' ? 'Blog' : 'Docs', description: '' }
+  }
+  const entity = data[field]
+  if (!isRecord(entity) || !('meta' in entity)) {
+    return { title: field === 'post' ? 'Blog' : 'Docs', description: '' }
+  }
+  const meta = entity.meta
+  if (!isRecord(meta)) {
+    return { title: field === 'post' ? 'Blog' : 'Docs', description: '' }
+  }
+  return {
+    title: typeof meta.title === 'string' ? meta.title : (field === 'post' ? 'Blog' : 'Docs'),
+    description: typeof meta.description === 'string' ? meta.description : '',
+  }
+}
+
+/** Extract typed site metadata from a `post`-shaped load result. */
+export function readPostMeta(data: unknown): SiteMeta {
+  return readMetaField(data, 'post')
+}
+
+/** Extract typed site metadata from a `doc`-shaped load result. */
+export function readDocMeta(data: unknown): SiteMeta {
+  return readMetaField(data, 'doc')
+}
+

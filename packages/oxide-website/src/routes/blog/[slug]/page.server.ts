@@ -5,21 +5,24 @@
 // read and rendered server-side (see src/lib/md.server.ts); `meta` merges
 // into the neutral head model (§16.3).
 import { defineLoad, defineMeta, error } from '@oxide-fw/core/server'
-import { readPost } from '../../../lib/md.server.ts'
+import { readPost, readPostMeta } from '../../../lib/md.server.ts'
 
 export const config = { render: 'isr', revalidate: 3600, tags: ['blog'] }
 
-export const load = defineLoad(async ({ params }) => {
+export const load = defineLoad<{ post: NonNullable<Awaited<ReturnType<typeof readPost>>> }>(async ({ params }) => {
   const slug = String(params?.slug ?? '')
   const post = await readPost(slug)
   if (!post) error(404, `no blog post for "${slug}"`)
   return { post }
 })
 
-export const meta = defineMeta(({ data }) => ({
-  title: `${data?.post?.meta?.title ?? 'Blog'} — Oxide`,
-  description: data?.post?.meta?.description ?? '',
-}))
+export const meta = defineMeta(({ data }) => {
+  const meta = readPostMeta(data)
+  return {
+    title: `${meta.title} — Oxide`,
+    description: meta.description,
+  }
+})
 
 // Worker-evaluated at build time to enumerate prerender slugs. The `.map`
 // call shape keeps this out of static extraction on purpose.

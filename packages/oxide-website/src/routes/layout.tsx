@@ -2,11 +2,12 @@
 // <html>/<body> document; layouts compose the app chrome around pages.
 // Importing the stylesheet here is enough: the bundler hashes it through
 // Lightning CSS and the injector streams the <link> into every page's head.
+import type { ReactNode } from 'react'
 import '../styles/global.css'
 import { site, nav, footerLinks } from '../lib/site.ts'
 
 interface Props {
-  children?: unknown
+  children?: ReactNode
 }
 
 export default function RootLayout({ children }: Props) {
@@ -30,7 +31,7 @@ export default function RootLayout({ children }: Props) {
         </div>
       </header>
 
-      {children as never}
+      {children}
 
       <footer className="site-footer">
         <div className="container">
