@@ -2285,6 +2285,35 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                     | oxide_fw_dev::FileEvent::Removed(p) => p,
                 };
                 let pstr = path.to_string_lossy().to_string();
+                // Phase 4: tailwind source change -> rebuild CSS to disk.
+                if tailwind::has_tailwind(&cfg) && tailwind::is_source_file(&pstr) {
+                    if let Some(pool) = hmr_tooling_pool.clone() {
+                        match tailwind::rebuild_for_dev(pool, &cfg, &rootp).await {
+                            Ok(Some((url, css))) => {
+                                tracing::info!(
+                                    path = %pstr,
+                                    url = %url,
+                                    bytes = css.len(),
+                                    "tailwind HMR: rebuilt CSS"
+                                );
+                                hub.publish(HmrMessage::CssUpdate { path: url, code: css });
+                            }
+                            Ok(None) => {
+                                tracing::debug!(
+                                    path = %pstr,
+                                    "tailwind HMR: no CSS change to publish"
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    path = %pstr,
+                                    err = %e.0.message,
+                                    "tailwind HMR: rebuild failed"
+                                );
+                            }
+                        }
+                    }
+                }
                 let kind = oxide_fw_dev::classify_path(&pstr);
                 match oxide_fw_dev::hmr_behavior(kind) {
                     HmrBehavior::StyleSwap => hub.publish(HmrMessage::CssUpdate {
