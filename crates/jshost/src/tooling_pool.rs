@@ -107,19 +107,6 @@ impl ToolingModules {
         .await
     }
 
-    /// Convenience: Tailwind v4 Rust engine via its napi binding
-    /// (`@tailwindcss/oxide`).
-    pub async fn tailwind_compile(&self, css: &str, candidates: &[String]) -> Result<Value> {
-        self.call_module(ModuleCall {
-            module: "@tailwindcss/oxide".into(),
-            export: "compile".into(),
-            args: vec![
-                Value::String(css.into()),
-                serde_json::to_value(candidates).unwrap_or_default(),
-            ],
-        })
-        .await
-    }
 }
 
 #[cfg(test)]
@@ -192,15 +179,4 @@ mod tests {
         assert_eq!(call["args"][1], "App.vue");
     }
 
-    #[tokio::test]
-    async fn tailwind_convenience_sends_expected_shape() {
-        let tp = ToolingModules::new(entry_echo());
-        let cands = vec!["flex".to_string(), "p-4".to_string()];
-        let out = tp.tailwind_compile(".x {}", &cands).await.unwrap();
-        let call = &out["echo"];
-        assert_eq!(call["module"], "@tailwindcss/oxide");
-        assert_eq!(call["export"], "compile");
-        assert_eq!(call["args"][0], ".x {}");
-        assert_eq!(call["args"][1][1], "p-4");
-    }
 }
