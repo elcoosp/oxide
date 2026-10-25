@@ -1831,7 +1831,7 @@ enum V8Msg {
     Call {
         id: u64,
         entry: EntryRef,
-        input: CallInput,
+        input: Box<CallInput>,
     },
     /// Sent by the pool during warm replacement (§4.3). The worker exits its
     /// recv loop after handling any already-dequeued call.
@@ -2774,7 +2774,7 @@ impl Pool for V8Pool {
             .send(V8Msg::Call {
                 id,
                 entry: entry.clone(),
-                input: req.clone(),
+                input: Box::new(req.clone()),
             })
             .await
         {

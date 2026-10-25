@@ -657,7 +657,7 @@ impl std::io::Write for ChunkSink {
 
 enum StreamEncoder {
     Zstd(Box<zstd::stream::write::Encoder<'static, ChunkSink>>),
-    Gzip(flate2::write::GzEncoder<ChunkSink>),
+    Gzip(Box<flate2::write::GzEncoder<ChunkSink>>),
 }
 
 impl StreamEncoder {
@@ -666,10 +666,10 @@ impl StreamEncoder {
             "zstd" => Ok(StreamEncoder::Zstd(Box::new(
                 zstd::stream::write::Encoder::new(sink, 3)?,
             ))),
-            _ => Ok(StreamEncoder::Gzip(flate2::write::GzEncoder::new(
+            _ => Ok(StreamEncoder::Gzip(Box::new(flate2::write::GzEncoder::new(
                 sink,
                 flate2::Compression::new(3),
-            ))),
+            )))),
         }
     }
 }
