@@ -866,7 +866,7 @@ pub fn csp_header(mode: &str, nonce: &str) -> String {
 /// every cross-origin browser fetch carries `Origin`, and explicit cross-site signals
 /// are caught above). In `token` mode a failing origin check is rescued by the
 /// double-submit pair `x-oxide-csrf` header == `oxide_csrf` cookie.
-pub fn csrf_check(req: &OxideRequest, mode: &str) -> std::result::Result<(), Diagnostic> {
+pub fn csrf_check(req: &OxideRequest, mode: &str) -> std::result::Result<(), Box<Diagnostic>> {
     let method = req.method.to_ascii_uppercase();
     if matches!(method.as_str(), "GET" | "HEAD" | "OPTIONS") {
         return Ok(());
@@ -896,7 +896,7 @@ pub fn csrf_check(req: &OxideRequest, mode: &str) -> std::result::Result<(), Dia
     Ok(())
 }
 
-fn csrf_reject(req: &OxideRequest, mode: &str) -> std::result::Result<(), Diagnostic> {
+fn csrf_reject(req: &OxideRequest, mode: &str) -> std::result::Result<(), Box<Diagnostic>> {
     if mode.eq_ignore_ascii_case("token") {
         let header = req.header("x-oxide-csrf");
         let cookie = cookie_value(req.header("cookie").unwrap_or(""), "oxide_csrf");
@@ -908,10 +908,10 @@ fn csrf_reject(req: &OxideRequest, mode: &str) -> std::result::Result<(), Diagno
             }
         }
     }
-    Err(Diagnostic::error(
+    Err(Box::new(Diagnostic::error(
         "SRV-CSRF",
         "cross-origin request rejected by Origin/Sec-Fetch-Site verification",
-    ))
+    )))
 }
 
 pub fn cookie_value<'a>(cookie_header: &'a str, name: &str) -> Option<&'a str> {
