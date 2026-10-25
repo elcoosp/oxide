@@ -682,7 +682,6 @@ impl EndpointHost {
     /// Run `route.ts` for `module_path` with the method/handler convention.
     /// The body is base64-encoded in the payload — a route.ts can be an
     /// upload proxy, so the wire must carry arbitrary bytes.
-    #[allow(clippy::too_many_arguments)]
     pub async fn run(
         &self,
         module_path: &str,
@@ -867,7 +866,6 @@ impl MiddlewareHost {
         Self { pool }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn run(
         &self,
         module_path: &str,

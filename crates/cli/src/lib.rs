@@ -3355,7 +3355,6 @@ fn inject_island_boot_script(shell: &str, boot_url: &str, nonce: &str) -> String
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 /// P-20: one prerender target (a route + one `generateParams` entry).
 /// §16.4 / O2: locale set to prerender for. A project without i18n
 /// config returns a single empty-string locale; one with i18n returns
@@ -3415,7 +3414,6 @@ struct PrerenderTarget {
 /// the worker pool, at most `render_concurrency()` at a time. Results are
 /// returned in target order, so seed manifests and graph records stay
 /// deterministic regardless of completion order.
-#[allow(clippy::too_many_arguments)]
 async fn prerender_targets(
     dist: &Path,
     route_id: &str,
@@ -3845,7 +3843,6 @@ async fn write_prerender(
 /// + ODF encode. Success is 200 with `application/oxide+odf`; a loader
 ///
 /// short-circuit (`error()`/`redirect()`) propagates its status/location.
-#[allow(clippy::too_many_arguments)]
 async fn route_data_response(
     req: &oxide_fw_server::OxideRequest,
     loader_runner: Option<&std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
@@ -3899,7 +3896,6 @@ async fn route_data_response(
     resp
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn route_data_response_inner(
     req: &oxide_fw_server::OxideRequest,
     loader_runner: Option<&std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
@@ -6675,7 +6671,6 @@ fn str_signals_error(s: &str) -> bool {
 /// split across chunk boundaries by keeping a rolling tail of the last
 /// `CLOSE.len() - 1` bytes and scanning for the tag on each new chunk.
 ///
-#[allow(clippy::too_many_arguments)]
 /// §9.3: parse an `application/x-www-form-urlencoded` body into the
 /// `[key, value]` entry list the worker's `action:run` op accepts. Percent
 /// decoding handles `+` as space. A malformed pair is skipped, not fatal.
@@ -7353,7 +7348,7 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
             let resume_after = req_owned.mw_resume_after.clone();
             let mut pending_resume = resume_after
                 .as_ref()
-                .map(|_| {
+                .and_then(|_| {
                     // Only honour the marker when the target layer is present in
                     // this route's chain; otherwise run the chain normally.
                     let present = middleware_module_paths
@@ -7361,7 +7356,7 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
                         .any(|p| p.to_string_lossy() == resume_after.as_deref().unwrap_or(""));
                     present.then(|| resume_after.clone().unwrap_or_default())
                 })
-                .flatten();
+                ;
             if let Some(dispatcher) = middleware_for_dispatch.as_deref() {
                 for mp in &middleware_module_paths {
                     let module_path_s = mp.to_string_lossy().to_string();

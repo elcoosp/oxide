@@ -3083,7 +3083,6 @@ async fn run_server_fn(
 /// headers the action set ride the response; revalidations are applied to
 /// nothing here (the pipeline has no cache handle) — they are surfaced on
 /// the response as a header the cache layer can read.
-#[allow(clippy::too_many_arguments)]
 pub async fn run_action(
     dispatcher: Option<&dyn ActionDispatcher>,
     module_path: &str,

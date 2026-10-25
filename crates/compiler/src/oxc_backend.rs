@@ -559,7 +559,6 @@ fn walk_var_decl_for_use_cache(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn emit_use_cache_edit(
     code: &str,
     func: &oxc_ast::ast::Function<'_>,

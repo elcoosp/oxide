@@ -1310,7 +1310,6 @@ impl ChunkBundler {
 
 /// Depth-first chunk walk from an entry chunk: preload file order (entry first)
 /// plus the CSS of every visited chunk, deduplicated (§6.4, §10.2 step 4).
-#[allow(clippy::too_many_arguments)]
 fn dfs_chunks(
     cname: &str,
     imports_by_name: &BTreeMap<String, Vec<String>>,
