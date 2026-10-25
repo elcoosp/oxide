@@ -333,7 +333,8 @@ impl ModuleLoader for TranspileLoader {
                 // G1: route through the same transform + lower pipeline the
                 // `compile_module` op runs, so a plugin's `transform` hook
                 // reaches a V8 build (it previously reached only Node).
-                let js = crate::v8_ops::compile_module_sync(
+                
+                crate::v8_ops::compile_module_sync(
                     path.to_string_lossy().into_owned(),
                     src.clone(),
                     lang.to_string(),
@@ -345,8 +346,7 @@ impl ModuleLoader for TranspileLoader {
                         e.0.code,
                         e.0.message
                     ))
-                })?;
-                js
+                })?
             } else {
                 src
             };

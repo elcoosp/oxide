@@ -130,12 +130,11 @@ pub fn apply(plan: &MigrationPlan) -> Result<(), String> {
             errors.push(format!("refusing to overwrite {}", dst.display()));
             continue;
         }
-        if let Some(parent) = dst.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
+        if let Some(parent) = dst.parent()
+            && let Err(e) = std::fs::create_dir_all(parent) {
                 errors.push(format!("cannot create {}: {e}", parent.display()));
                 continue;
             }
-        }
         let bytes = match &c.body {
             Some(b) => b.as_bytes().to_vec(),
             None => match std::fs::read(&c.from) {
@@ -258,17 +257,15 @@ fn plan_next_page(root: &Path, src: &Path, out: &mut Vec<Conversion>) {
     // (Note: `PathBuf::join` with an absolute RHS replaces the whole path —
     // strip leading `/` explicitly, never `strip_prefix("api")` on a
     // `/`-separated relative path.)
-    if let Some(api_rel) = rel
+    if let Ok(api_rel) = rel
         .strip_prefix("api/")
         .or_else(|_| rel.strip_prefix("api\\"))
-        .ok()
     {
         let mut dst = routes_root(root).join("api");
-        if let Some(parent) = api_rel.parent() {
-            if !parent.as_os_str().is_empty() {
+        if let Some(parent) = api_rel.parent()
+            && !parent.as_os_str().is_empty() {
                 dst = dst.join(parent);
             }
-        }
         let dir_name = strip_ext(api_rel.file_name().and_then(|n| n.to_str()).unwrap_or(""));
         let dst = dst.join(dir_name).join(format!("route.{ext}"));
         out.push(Conversion::rename(src.to_path_buf(), dst));

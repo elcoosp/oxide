@@ -69,10 +69,7 @@ impl TraceContext {
     pub fn from_headers(headers: &BTreeMap<String, String>) -> Option<Self> {
         let mut found: Option<Self> = None;
         for (k, v) in headers {
-            match k.to_ascii_lowercase().as_str() {
-                "traceparent" => found = Self::parse_traceparent(v),
-                _ => {}
-            }
+            if k.to_ascii_lowercase().as_str() == "traceparent" { found = Self::parse_traceparent(v) }
         }
         if let Some(mut tc) = found {
             for (k, v) in headers {

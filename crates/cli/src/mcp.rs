@@ -165,8 +165,8 @@ impl OxideMcp {
         let routes_json = self.root.join(".oxide/types/routes.json");
         let mut modes: BTreeMap<String, String> = BTreeMap::new();
         let mut tags: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        if let Ok(bytes) = std::fs::read(&routes_json) {
-            if let Ok(rows) = serde_json::from_slice::<Vec<serde_json::Value>>(&bytes) {
+        if let Ok(bytes) = std::fs::read(&routes_json)
+            && let Ok(rows) = serde_json::from_slice::<Vec<serde_json::Value>>(&bytes) {
                 for row in rows {
                     if let Some(p) = row.get("pattern").and_then(|v| v.as_str()) {
                         if let Some(m) = row.get("renderMode").and_then(|v| v.as_str()) {
@@ -183,7 +183,6 @@ impl OxideMcp {
                     }
                 }
             }
-        }
 
         let routes: Vec<RouteInfo> = tree
             .table()
@@ -226,22 +225,20 @@ impl OxideMcp {
         report.cache_dir = Some(cache_dir.to_string_lossy().into_owned());
 
         let blobs = cache_dir.join("blobs");
-        if blobs.is_dir() {
-            if let Ok(rd) = std::fs::read_dir(&blobs) {
+        if blobs.is_dir()
+            && let Ok(rd) = std::fs::read_dir(&blobs) {
                 for shard in rd.flatten() {
                     if let Ok(files) = std::fs::read_dir(shard.path()) {
                         for f in files.flatten() {
-                            if let Ok(m) = f.metadata() {
-                                if m.is_file() {
+                            if let Ok(m) = f.metadata()
+                                && m.is_file() {
                                     report.disk_bytes += m.len();
                                     report.blob_count += 1;
                                 }
-                            }
                         }
                     }
                 }
             }
-        }
         json_result(&report)
     }
 

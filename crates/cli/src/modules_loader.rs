@@ -96,13 +96,12 @@ impl ResolvedModule {
 fn names_to_load(rootp: &Path, cfg: &OxideConfig) -> Vec<String> {
     let mut names: BTreeSet<String> = cfg.modules.iter().cloned().collect();
     let modules_json = rootp.join(".oxide/modules.json");
-    if let Ok(bytes) = std::fs::read(&modules_json) {
-        if let Ok(arr) = serde_json::from_slice::<Vec<String>>(&bytes) {
+    if let Ok(bytes) = std::fs::read(&modules_json)
+        && let Ok(arr) = serde_json::from_slice::<Vec<String>>(&bytes) {
             for n in arr {
                 names.insert(n);
             }
         }
-    }
     names.into_iter().collect()
 }
 

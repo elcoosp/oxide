@@ -377,9 +377,9 @@ impl StaticAssets {
             None
         };
 
-        if let Some(enc) = negotiated.as_deref() {
-            if let Some(variant) = entry.precompressed.get(enc) {
-                if let Some(body) = cached_asset_body(variant) {
+        if let Some(enc) = negotiated.as_deref()
+            && let Some(variant) = entry.precompressed.get(enc)
+                && let Some(body) = cached_asset_body(variant) {
                     // Range on a compressed variant → full 200 (no partial decode).
                     let len = body.len().to_string();
                     let mut resp = OxideResponse::new(200, body);
@@ -390,8 +390,6 @@ impl StaticAssets {
                     return Some(resp);
                 }
                 // variant unreadable → fall through to the identity body
-            }
-        }
 
         let Some(full) = cached_asset_body(&entry.path) else {
             return None;
@@ -837,11 +835,10 @@ fn alt_svc_for(port: u16) -> &'static str {
     use std::sync::{Mutex, OnceLock};
     static CACHE: OnceLock<Mutex<std::collections::HashMap<u16, &'static str>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
-    if let Ok(guard) = cache.lock() {
-        if let Some(v) = guard.get(&port) {
+    if let Ok(guard) = cache.lock()
+        && let Some(v) = guard.get(&port) {
             return v;
         }
-    }
     let leaked: &'static str = Box::leak(format!("h3=\":{port}\"; ma=86400").into_boxed_str());
     if let Ok(mut guard) = cache.lock() {
         guard.insert(port, leaked);
@@ -922,11 +919,10 @@ fn csrf_reject(req: &OxideRequest, mode: &str) -> std::result::Result<(), Diagno
 pub fn cookie_value<'a>(cookie_header: &'a str, name: &str) -> Option<&'a str> {
     for pair in cookie_header.split(';') {
         let pair = pair.trim();
-        if let Some((k, v)) = pair.split_once('=') {
-            if k.trim() == name {
+        if let Some((k, v)) = pair.split_once('=')
+            && k.trim() == name {
                 return Some(v.trim());
             }
-        }
     }
     None
 }
@@ -1165,11 +1161,10 @@ pub fn ws_origin_ok(
     if o_host.is_empty() {
         return false;
     }
-    if let Some(h) = host_header.map(host_authority) {
-        if o_host.eq_ignore_ascii_case(&h) {
+    if let Some(h) = host_header.map(host_authority)
+        && o_host.eq_ignore_ascii_case(&h) {
             return true;
         }
-    }
     allow_list.iter().any(|a| a.eq_ignore_ascii_case(o_host))
 }
 
@@ -1429,11 +1424,10 @@ impl I18nPolicy {
     fn explicit<'a>(&self, path: &'a str) -> Option<(String, &'a str)> {
         for loc in &self.locales {
             let pref = format!("/{loc}");
-            if let Some(rest) = path.strip_prefix(&pref) {
-                if rest.is_empty() || rest.starts_with('/') {
+            if let Some(rest) = path.strip_prefix(&pref)
+                && (rest.is_empty() || rest.starts_with('/')) {
                     return Some((loc.clone(), if rest.is_empty() { "/" } else { rest }));
                 }
-            }
         }
         None
     }
@@ -2054,13 +2048,12 @@ fn percent_decode_query(s: &str) -> String {
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
             let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok();
-            if let Some(h) = hex {
-                if let Ok(b) = u8::from_str_radix(h, 16) {
+            if let Some(h) = hex
+                && let Ok(b) = u8::from_str_radix(h, 16) {
                     out.push(b as char);
                     i += 3;
                     continue;
                 }
-            }
         }
         out.push(bytes[i] as char);
         i += 1;
@@ -2354,8 +2347,8 @@ fn serve_image_endpoint(endpoint: Option<&ImageEndpoint>, raw_url: &str) -> Nati
     let format_static = parsed.format;
     // §16.1: never allocate a canvas larger than the configured ceiling.
     for (name, dim) in [("w", parsed.width), ("h", parsed.height)] {
-        if let Some(d) = dim {
-            if d == 0 || d > endpoint.max_dimension {
+        if let Some(d) = dim
+            && (d == 0 || d > endpoint.max_dimension) {
                 return NativePrefix::Raw(
                     OxideResponse::new(
                         400,
@@ -2367,7 +2360,6 @@ fn serve_image_endpoint(endpoint: Option<&ImageEndpoint>, raw_url: &str) -> Nati
                     .with_header("content-type", "text/plain; charset=utf-8"),
                 );
             }
-        }
     }
     // §16.1: cache the transformed bytes by (source, format, w, h, q). The
     // source bytes are hashed, so a changed file naturally misses. The key
@@ -2561,13 +2553,12 @@ pub fn percent_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(h), Some(l)) = (hex_nib(bytes[i + 1]), hex_nib(bytes[i + 2])) {
+        if bytes[i] == b'%' && i + 2 < bytes.len()
+            && let (Some(h), Some(l)) = (hex_nib(bytes[i + 1]), hex_nib(bytes[i + 2])) {
                 out.push((h << 4) | l);
                 i += 3;
                 continue;
             }
-        }
         out.push(bytes[i]);
         i += 1;
     }
@@ -3026,11 +3017,10 @@ async fn fetch_remote_checked(
 pub fn remote_pattern_allows(patterns: &[RemoteImagePattern], host: &str, scheme: &str) -> bool {
     let host = host.to_ascii_lowercase();
     patterns.iter().any(|p| {
-        if let Some(proto) = &p.protocol {
-            if !proto.eq_ignore_ascii_case(scheme) {
+        if let Some(proto) = &p.protocol
+            && !proto.eq_ignore_ascii_case(scheme) {
                 return false;
             }
-        }
         let pat = p.host.to_ascii_lowercase();
         if let Some(suffix) = pat.strip_prefix("*.") {
             host.ends_with(&format!(".{suffix}"))
@@ -3374,15 +3364,14 @@ impl Pipeline {
                         resp = resp.with_header("Server-Timing", format!("total;dur={ms:.2}"));
                     }
                     // SPEC-10: the resolved locale rides the page response.
-                    if let Some(loc) = &content_language {
-                        if !resp
+                    if let Some(loc) = &content_language
+                        && !resp
                             .headers
                             .iter()
                             .any(|(k, _)| k.eq_ignore_ascii_case("content-language"))
                         {
                             resp = resp.with_header("Content-Language", loc.clone());
                         }
-                    }
                     self.finish_response_full_async(
                         resp,
                         &rule_headers,
@@ -3495,8 +3484,8 @@ impl Pipeline {
         // because the browser does not read the response anyway. Recording
         // never enters JS.
         if req.method.eq_ignore_ascii_case("POST") && path == "/_oxide/vitals" {
-            if let Some(m) = &self.metrics {
-                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&req.body) {
+            if let Some(m) = &self.metrics
+                && let Ok(v) = serde_json::from_slice::<serde_json::Value>(&req.body) {
                     // Accept one sample `{name, value, route?}` or an array.
                     let items: Vec<&serde_json::Value> = match &v {
                         serde_json::Value::Array(a) => a.iter().collect(),
@@ -3510,14 +3499,12 @@ impl Pipeline {
                         // mint a metrics key per unique `route`. Normalize to a
                         // route-id shape and fold anything else into `_other`.
                         let route = sanitize_route_label(raw_route);
-                        if !name.is_empty() {
-                            if let Some(val) = value {
+                        if !name.is_empty()
+                            && let Some(val) = value {
                                 m.observe_vital(name, &route, val);
                             }
-                        }
                     }
                 }
-            }
             return NativePrefix::Raw(OxideResponse::new(204, Bytes::new()));
         }
 
@@ -3527,14 +3514,13 @@ impl Pipeline {
                 || (req.method.eq_ignore_ascii_case("GET") && path == "/__oxide/state");
             if is_inspector {
                 // SEC-09: gate on the dev session token when one is set.
-                if let Some(want) = &self.dev_token {
-                    if !dev_token_ok(req, want) {
+                if let Some(want) = &self.dev_token
+                    && !dev_token_ok(req, want) {
                         return NativePrefix::Raw(
                             OxideResponse::new(403, "inspector requires the dev token")
                                 .with_header("content-type", "text/plain; charset=utf-8"),
                         );
                     }
-                }
                 if path == "/__oxide" {
                     return NativePrefix::Raw(
                         OxideResponse::new(200, insp.render_html())
@@ -3653,7 +3639,7 @@ impl Pipeline {
             let fn_auth = req.header("authorization");
             match self
                 .rules
-                .evaluate_with_auth(&path, &fn_client_key, fn_auth.as_deref())
+                .evaluate_with_auth(&path, &fn_client_key, fn_auth)
             {
                 oxide_fw_router::RuleOutcome::Headers(map) => {
                     rule_headers = map.into_iter().collect();
@@ -3695,13 +3681,11 @@ impl Pipeline {
         // for the dispatch path; a static hit returns before rules run.
         let mut rule_headers: Vec<(String, String)> = Vec::new();
         let is_get_head = matches!(req.method.to_ascii_uppercase().as_str(), "GET" | "HEAD");
-        if is_get_head && (path_has_extension(&path) || path.starts_with("/_oxide/static")) {
-            if let Some(assets) = &self.assets {
-                if let Some(resp) = assets.serve(req, &path) {
+        if is_get_head && (path_has_extension(&path) || path.starts_with("/_oxide/static"))
+            && let Some(assets) = &self.assets
+                && let Some(resp) = assets.serve(req, &path) {
                     return NativePrefix::Static(resp, rule_headers);
                 }
-            }
-        }
 
         // (5) native rules (§12.1 step 4).
         // SEC-01 / S-10: bucket per client from the *socket peer*; an
@@ -3712,7 +3696,7 @@ impl Pipeline {
         let req_auth = req.header("authorization");
         match self
             .rules
-            .evaluate_with_auth(&path, &client_key, req_auth.as_deref())
+            .evaluate_with_auth(&path, &client_key, req_auth)
         {
             oxide_fw_router::RuleOutcome::Redirect {
                 destination,
@@ -3838,9 +3822,9 @@ impl Pipeline {
                     .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
                     .map(|(_, v)| v.clone())
                     .unwrap_or_default();
-                if is_compressible(&ct_owned) {
-                    if let Some(enc) = negotiate_encoding(ae, &["zstd", "gzip"]) {
-                        if let Some(stream) = resp.stream.take() {
+                if is_compressible(&ct_owned)
+                    && let Some(enc) = negotiate_encoding(ae, &["zstd", "gzip"])
+                        && let Some(stream) = resp.stream.take() {
                             resp.stream = Some(spawn_stream_compressor(&enc, stream));
                             resp.headers
                                 .retain(|(k, _)| !k.eq_ignore_ascii_case("content-length"));
@@ -3848,8 +3832,6 @@ impl Pipeline {
                             resp.headers
                                 .push(("Vary".to_string(), "Accept-Encoding".to_string()));
                         }
-                    }
-                }
             }
             let compressible = resp.stream.is_none() && !resp.body.is_empty() && !already_encoded;
             if compressible {
@@ -3859,8 +3841,8 @@ impl Pipeline {
                     .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
                     .map(|(_, v)| v.clone())
                     .unwrap_or_default();
-                if is_compressible(&ct_owned) {
-                    if let Some(enc) = negotiate_encoding(ae, &["zstd", "gzip"]) {
+                if is_compressible(&ct_owned)
+                    && let Some(enc) = negotiate_encoding(ae, &["zstd", "gzip"]) {
                         let body = resp.body.clone();
                         let orig_len = body.len();
                         let enc_for_task = enc.clone();
@@ -3868,8 +3850,8 @@ impl Pipeline {
                             compress_body(&enc_for_task, &body, 3).ok()
                         })
                         .await;
-                        if let Ok(Some(compressed)) = joined {
-                            if compressed.len() < orig_len {
+                        if let Ok(Some(compressed)) = joined
+                            && compressed.len() < orig_len {
                                 resp.body = compressed;
                                 resp.headers
                                     .retain(|(k, _)| !k.eq_ignore_ascii_case("content-length"));
@@ -3877,9 +3859,7 @@ impl Pipeline {
                                 resp.headers
                                     .push(("Vary".to_string(), "Accept-Encoding".to_string()));
                             }
-                        }
                     }
-                }
             }
         }
         self.finish_response_full(resp, rule_headers, request_id, method, cookie_header, None)
@@ -3959,7 +3939,7 @@ impl Pipeline {
                 let secure = if self.tls { "; Secure" } else { "" };
                 r = r.with_header(
                     "Set-Cookie",
-                    &format!("oxide_csrf={hex}; Path=/; SameSite=Lax{secure}"),
+                    format!("oxide_csrf={hex}; Path=/; SameSite=Lax{secure}"),
                 );
             }
         }
@@ -4114,11 +4094,10 @@ pub fn to_hyper_response(resp: OxideResponse) -> HyperResponse<BoxBody<Bytes, st
     );
     // Set content-length only for the collected branch. For streams we
     // don't know the length; hyper uses chunked transfer encoding.
-    if !has_len && !no_len_status && !is_streaming {
-        if let Ok(val) = hyper::header::HeaderValue::from_str(&body_len.to_string()) {
+    if !has_len && !no_len_status && !is_streaming
+        && let Ok(val) = hyper::header::HeaderValue::from_str(&body_len.to_string()) {
             out.headers_mut().insert(hyper::header::CONTENT_LENGTH, val);
         }
-    }
     out
 }
 
@@ -4336,8 +4315,8 @@ impl Server {
                             // `hyper::upgrade::OnUpgrade` handle lives on the
                             // hyper request. Dev only (`pipeline.hmr` is None in
                             // production).
-                            if let Some(hub) = pipeline.hmr.as_ref() {
-                                if req.uri().path() == "/_oxide/hmr" {
+                            if let Some(hub) = pipeline.hmr.as_ref()
+                                && req.uri().path() == "/_oxide/hmr" {
                                     // S-04: dev WS — enforce the dev Host gate
                                     // (DNS rebinding) and a same-origin check.
                                     let origin = req
@@ -4379,7 +4358,6 @@ impl Server {
                                         ),
                                     );
                                 }
-                            }
                             // §9.6: a WebSocket upgrade for a matched
                             // `socket.ts` route. Checked before the normal
                             // pipeline so the `hyper::upgrade::OnUpgrade`
@@ -5157,7 +5135,7 @@ mod sha1_shim {
             self.buf.extend_from_slice(&bit_len.to_be_bytes());
             let blocks: Vec<[u8; 64]> = self
                 .buf
-                .chunks_exact(64)
+                .as_chunks::<64>().0.iter()
                 .map(|c| {
                     let mut b = [0u8; 64];
                     b.copy_from_slice(c);

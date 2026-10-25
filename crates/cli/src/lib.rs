@@ -612,8 +612,8 @@ async fn scan_routes(
     // `.oxide/plugins/` and registered as a synthetic root middleware
     // entry, so the existing chain (which joins a route's ancestor
     // middleware files) runs it for every route.
-    if let Some(pool) = pool {
-        if !collect_plugin_paths_for_hook(&root_abs, cfg, "serverMiddleware").is_empty() {
+    if let Some(pool) = pool
+        && !collect_plugin_paths_for_hook(&root_abs, cfg, "serverMiddleware").is_empty() {
             let results = call_js_plugin_hook(
                 &root_abs,
                 cfg,
@@ -662,7 +662,6 @@ async fn scan_routes(
                 });
             }
         }
-    }
     // §15-E: merge every `oxide.module` package's routes into the tree. This
     // is the single seam every command funnels through (build, dev, routes,
     // analyze, check) — patching it here makes a module's routes visible
@@ -699,8 +698,8 @@ async fn scan_routes(
     // result is `{ entries: [{ id, file, kind?, segments? }] }`. The file
     // must exist inside the project; the id is used as given (a plugin is
     // expected to namespace it). A malformed entry is reported and skipped.
-    if let Some(pool) = pool {
-        if !collect_plugin_paths_for_hook(&root_abs, cfg, "routes").is_empty() {
+    if let Some(pool) = pool
+        && !collect_plugin_paths_for_hook(&root_abs, cfg, "routes").is_empty() {
             let results = call_js_plugin_hook(
                 &root_abs,
                 cfg,
@@ -755,7 +754,6 @@ async fn scan_routes(
                 }
             }
         }
-    }
 
     Ok(tree)
 }
@@ -1833,8 +1831,8 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // the hub already reloads on module updates, so the hook's value today
     // is the notification plus a place for a plugin to install its own
     // listeners against the hub.
-    if !collect_plugin_paths_for_hook(&rootp, &cfg, "configureServer").is_empty() {
-        if let Some(pool) = hmr_pool.as_ref() {
+    if !collect_plugin_paths_for_hook(&rootp, &cfg, "configureServer").is_empty()
+        && let Some(pool) = hmr_pool.as_ref() {
             let _ = call_js_plugin_hook(
                 &rootp,
                 &cfg,
@@ -1848,7 +1846,6 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             )
             .await;
         }
-    }
     let started = start_dev_server_full(
         root,
         flags.port,
@@ -1899,11 +1896,10 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                     continue;
                 }
                 // A package has a package.json or Cargo.toml at its root.
-                if p.join("package.json").is_file() || p.join("Cargo.toml").is_file() {
-                    if p != rootp && !watch_roots.contains(&p) {
+                if (p.join("package.json").is_file() || p.join("Cargo.toml").is_file())
+                    && p != rootp && !watch_roots.contains(&p) {
                         watch_roots.push(p);
                     }
-                }
             }
         }
     }
@@ -2101,12 +2097,12 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 .all(|s| !s.contains(':') && !s.contains('*'))
         })
         .map(|e| {
-            let path = if e.segments.is_empty() {
+            
+            if e.segments.is_empty() {
                 "/".to_string()
             } else {
                 format!("/{}", e.segments.join("/"))
-            };
-            path
+            }
         })
         .collect();
     let mut idle_since = std::time::Instant::now();
@@ -2138,11 +2134,10 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             // §10.8: PPR shells are keyed by build id; dev's id is stable, so
             // a source edit must clear the store explicitly or the next
             // visitor is served a shell from the pre-edit render.
-            if let Some(shells) = started.ppr_shells.as_ref() {
-                if let Ok(mut store) = shells.lock() {
+            if let Some(shells) = started.ppr_shells.as_ref()
+                && let Ok(mut store) = shells.lock() {
                     store.clear();
                 }
-            }
             // §16.5: rescan collections before the loaders for this batch run.
             // The write is atomic (`write_content_atomic`) and lands under
             // `dist`, which the filter above ignores to avoid a notify loop.
@@ -2216,13 +2211,12 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                     }
                 }
             }
-            if force_reload {
-                if let Some(hub) = started.hmr.as_ref() {
+            if force_reload
+                && let Some(hub) = started.hmr.as_ref() {
                     hub.publish(oxide_fw_dev::HmrMessage::FullReload {
                         reason: "plugin handleHotUpdate requested a reload".to_string(),
                     });
                 }
-            }
             idle_since = std::time::Instant::now();
             warmed = false;
         }
@@ -2239,8 +2233,8 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 };
                 let pstr = path.to_string_lossy().to_string();
                 // Phase 4: tailwind source change -> rebuild CSS to disk.
-                if tailwind::has_tailwind(&cfg) && tailwind::is_source_file(&pstr) {
-                    if let Some(pool) = hmr_tooling_pool.clone() {
+                if tailwind::has_tailwind(&cfg) && tailwind::is_source_file(&pstr)
+                    && let Some(pool) = hmr_tooling_pool.clone() {
                         match tailwind::rebuild_for_dev(pool, &cfg, &rootp).await {
                             Ok(Some((url, css))) => {
                                 tracing::info!(
@@ -2266,7 +2260,6 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                             }
                         }
                     }
-                }
                 let kind = oxide_fw_dev::classify_path(&pstr);
                 match oxide_fw_dev::hmr_behavior(kind) {
                     HmrBehavior::StyleSwap => hub.publish(HmrMessage::CssUpdate {
@@ -3031,8 +3024,8 @@ fn emit_config_bundle(
                     if let Ok(rd) = std::fs::read_dir(&bundle_dir) {
                         for e in rd.flatten() {
                             let src = e.path();
-                            if src.extension().is_some_and(|x| x == "js") {
-                                if let Some(name) = src.file_name() {
+                            if src.extension().is_some_and(|x| x == "js")
+                                && let Some(name) = src.file_name() {
                                     let dst = root.join(".oxide").join(name);
                                     std::fs::copy(&src, &dst).map_err(|err| {
                                         anyhow::anyhow!(
@@ -3043,7 +3036,6 @@ fn emit_config_bundle(
                                     })?;
                                     copied += 1;
                                 }
-                            }
                         }
                     }
                     let from = root.join(".oxide").join(&file);
@@ -3512,7 +3504,7 @@ async fn prerender_targets(
     drop(renders);
 
     let mut ordered = Vec::with_capacity(targets.len());
-    for (t, r) in targets.into_iter().zip(results.into_iter()) {
+    for (t, r) in targets.into_iter().zip(results) {
         let Some((html, status)) = r else {
             continue;
         };
@@ -4978,7 +4970,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         }
     } else {
         rb.bundle(&client_opts).map_err(|e| {
-            persist_diagnostics(&rootp, &[e.0.clone()]);
+            persist_diagnostics(&rootp, std::slice::from_ref(&e.0));
             anyhow::anyhow!("{} {}", e.0.code, e.0.message)
         })?
     };
@@ -5119,7 +5111,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                             // object/array export (`actions`, `config`, a route
                             // table) has a common name that appears in every
                             // chunk — only its literal *contents* leak.
-                            let rhs = after.splitn(2, '=').nth(1).unwrap_or("");
+                            let rhs = after.split_once('=').map(|x| x.1).unwrap_or("");
                             let mut in_str = false;
                             let mut lit = String::new();
                             let mut quote = '\0';
@@ -5183,8 +5175,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                         "import it via a server function (9.4) or move the value \
                          into a non-server module",
                     );
-                    if let Ok(src) = std::fs::read_to_string(sp) {
-                        if let Some((line_no, col)) = find_literal_line(&src, ident) {
+                    if let Ok(src) = std::fs::read_to_string(sp)
+                        && let Some((line_no, col)) = find_literal_line(&src, ident) {
                             diag = diag.at(oxide_fw_diagnostics::Location::file(
                                 sp.to_string_lossy(),
                                 line_no as u32,
@@ -5196,7 +5188,6 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                                 diag = diag.with_code_frame(frame);
                             }
                         }
-                    }
                     hits.push(diag);
                     break;
                 }
@@ -5232,11 +5223,10 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // scan let a failed `CMP-SECRET` build look "unchanged" on the next run:
     // `skip_client` was true, the scan saw no chunks, and the build went
     // green without ever re-checking the leaking bundle.
-    if !skip_client {
-        if let Err(e) = build_cache::env_store(&rootp, "client", &client_fp) {
+    if !skip_client
+        && let Err(e) = build_cache::env_store(&rootp, "client", &client_fp) {
             eprintln!("warn: could not store client env fingerprint: {e}");
         }
-    }
     let server_outcome = rb.bundle(&server_opts).map_err(|e| {
         let mut diags = client_outcome.diagnostics.clone();
         diags.push(e.0.clone());
@@ -5461,11 +5451,10 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     // Substitute params into the segment list to build a path.
                     let mut segs: Vec<String> = e.segments.clone();
                     for s in segs.iter_mut() {
-                        if let Some(name) = param_name(s) {
-                            if let Some(v) = params_map.get(name) {
+                        if let Some(name) = param_name(s)
+                            && let Some(v) = params_map.get(name) {
                                 *s = v.clone();
                             }
-                        }
                     }
                     let base_rel = if segs.is_empty() {
                         "index.html".to_string()
@@ -5571,11 +5560,10 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                         for params_map in &params {
                             let mut segs: Vec<String> = e.segments.clone();
                             for s in segs.iter_mut() {
-                                if let Some(name) = param_name(s) {
-                                    if let Some(v) = params_map.get(name) {
+                                if let Some(name) = param_name(s)
+                                    && let Some(v) = params_map.get(name) {
                                         *s = v.clone();
                                     }
-                                }
                             }
                             let base_rel = if segs.is_empty() {
                                 "index.html".to_string()
@@ -5804,11 +5792,10 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     continue;
                 };
                 match hook.call(route_id, &html) {
-                    Ok(Some(new_html)) if new_html != html => {
-                        if std::fs::write(&path, &new_html).is_ok() {
+                    Ok(Some(new_html)) if new_html != html
+                        && std::fs::write(&path, &new_html).is_ok() => {
                             touched += 1;
                         }
-                    }
                     _ => {}
                 }
             }
@@ -6198,8 +6185,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     if matches!(
         target,
         oxide_fw_adapters::Target::Cloudflare | oxide_fw_adapters::Target::CloudflarePages
-    ) {
-        if let Some(edge_entry) = find_edge_entry(&rootp) {
+    )
+        && let Some(edge_entry) = find_edge_entry(&rootp) {
             match bundle_edge_entry(
                 &rootp,
                 &dist,
@@ -6226,7 +6213,6 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 }
             }
         }
-    }
 
     let written = oxide_fw_adapters::emit(target, &artifact, &dist.join("deploy"))
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
@@ -6613,8 +6599,7 @@ fn render_stream_with_recovery(
                     }
                     // No shell yet (or no boundary context): the old abort.
                     let _ = tx
-                        .send(Err(std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        .send(Err(std::io::Error::other(
                             format!("{}: {}", e.0.code, e.0.message),
                         )))
                         .await;
@@ -7361,16 +7346,13 @@ fn build_dispatch_swappable(
             // missing or tampered cookie is an empty session, never an error.
             // B-05: the sealed token rides the `Cookie` header, never a
             // header named `oxide_session`; read it through the cookie parser.
-            if let Some(codec) = session_codec.as_deref() {
-                if let Some(token) = req_owned
+            if let Some(codec) = session_codec.as_deref()
+                && let Some(token) = req_owned
                     .header("cookie")
                     .and_then(|h| oxide_fw_server::cookie_value(h, "oxide_session"))
-                {
-                    if let Ok(sess) = oxide_fw_server::Session::decode(codec, token) {
+                    && let Ok(sess) = oxide_fw_server::Session::decode(codec, token) {
                         middleware_locals["session"] = sess.to_value();
                     }
-                }
-            }
             // B-05: baseline for the session write-back. Middleware is the
             // only phase that can refine `locals.session` (the loader gets a
             // deserialized copy), so diffing around it captures every change.
@@ -7405,7 +7387,7 @@ fn build_dispatch_swappable(
                     // nothing has accumulated — see the trait doc).
                     let locals_for_call: Option<&serde_json::Value> = if middleware_locals
                         .as_object()
-                        .map_or(false, |o| !o.is_empty())
+                        .is_some_and(|o| !o.is_empty())
                     {
                         Some(&middleware_locals)
                     } else {
@@ -7438,15 +7420,14 @@ fn build_dispatch_swappable(
                                 // (`{ short: true, status, redirect }`), not
                                 // as a `location` header. Without this the
                                 // browser got a 302 with no destination.
-                                if let Some(loc) = out.redirect.as_deref() {
-                                    if !resp
+                                if let Some(loc) = out.redirect.as_deref()
+                                    && !resp
                                         .headers
                                         .iter()
                                         .any(|(k, _)| k.eq_ignore_ascii_case("location"))
                                     {
                                         resp = resp.with_header("location", loc);
                                     }
-                                }
                                 // §16.6 / WP-r10-1 / B-05: a middleware that
                                 // mutates `locals.session` AND short-circuits
                                 // must persist the mutation. The post-loop
@@ -7611,8 +7592,7 @@ fn build_dispatch_swappable(
             let mut action_form: Option<serde_json::Value> = None;
             if let (Some(action), Some(module_path)) =
                 (action_name.as_deref(), module_path.as_deref())
-            {
-                if let Some(dispatcher) = action_dispatcher.as_deref() {
+                && let Some(dispatcher) = action_dispatcher.as_deref() {
                     let form_json = {
                         let entries = parse_form_urlencoded(&req_owned.body);
                         serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string())
@@ -7720,13 +7700,12 @@ fn build_dispatch_swappable(
                         return resp;
                     }
                 }
-            }
 
             // §11.1 L0: a cache hit serves the stored response with the
             // live request's CSP nonce substituted in, no JS on the path.
-            if l0_eligible {
-                if let Some(cache) = l0.as_ref() {
-                    if let Some(hit) = cache.get(&l0_route, &l0_params, &l0_vary).await {
+            if l0_eligible
+                && let Some(cache) = l0.as_ref()
+                    && let Some(hit) = cache.get(&l0_route, &l0_params, &l0_vary).await {
                         // PERF-04: a conditional request whose validator
                         // matches the stored ETag gets a 304 (no body). The
                         // ETag is weak-formatted so a cache can still serve
@@ -7823,8 +7802,6 @@ fn build_dispatch_swappable(
                         }
                         return resp;
                     }
-                }
-            }
 
             // PERF-04: single-flight. A concurrent miss for the same L0
             // key awaits the in-flight owner instead of rendering again.
@@ -7895,7 +7872,7 @@ fn build_dispatch_swappable(
             // entry; these bracket load / render so `Server-Timing` can
             // report real per-stage durations instead of all-zeros.
             let stage_load_start = std::time::Instant::now();
-            let load_ms: f64;
+            
 
             // §9.2: layout loads run in chain order (outer → inner); each
             // layout gets the pre-resolved data of its own outer layout as
@@ -8254,8 +8231,8 @@ fn build_dispatch_swappable(
                         );
                     }
                 }
-            } else if has_server_module {
-                if let (Some(runner), Some(module_path), Some(route_id)) =
+            } else if has_server_module
+                && let (Some(runner), Some(module_path), Some(route_id)) =
                     (loader_runner.as_ref(), module_path, route_id)
                 {
                     // Pass the normalized id (no `/page` suffix) so user
@@ -8362,7 +8339,6 @@ fn build_dispatch_swappable(
                         }
                     }
                 }
-            }
 
             // §8.1 route.ts / §10.2 step 7: an Endpoint route returns a
             // Web `Response` directly, bypassing the loader + render
@@ -8432,7 +8408,7 @@ fn build_dispatch_swappable(
 
             // §7: render phase. Attached renderer wins; otherwise IR placeholder.
             // PERF-06: the loader phase is done; record its duration.
-            load_ms = stage_load_start.elapsed().as_secs_f64() * 1000.0;
+            let load_ms: f64 = stage_load_start.elapsed().as_secs_f64() * 1000.0;
             let stage_render_start = std::time::Instant::now();
 
             if let Some(renderer) = page_renderer.as_ref() {
@@ -8487,11 +8463,10 @@ fn build_dispatch_swappable(
                 // result in `data.form`. Injected here rather than seeded
                 // before the loader because the loader assigns `data`
                 // wholesale; this runs after it, so both survive.
-                if let Some(form) = action_form.take() {
-                    if let Some(obj) = data.as_object_mut() {
+                if let Some(form) = action_form.take()
+                    && let Some(obj) = data.as_object_mut() {
                         obj.insert("form".to_string(), form);
                     }
-                }
                 input.data = data;
                 // §8.2: hand the layout chain to the adapter so it can
                 // nest the page. The adapter renders
@@ -8792,8 +8767,7 @@ fn build_dispatch_swappable(
                                 // both. `middleware_sets_cookie` is defined
                                 // above for the PPR guard.
                                 && !middleware_sets_cookie
-                        {
-                            if let Some(cache) = l0.as_ref() {
+                            && let Some(cache) = l0.as_ref() {
                                 let nonce = oxide_fw_server::nonce_for(&req_owned.request_id);
                                 let cache = std::sync::Arc::clone(cache);
                                 let l0_route = l0_route.clone();
@@ -8904,7 +8878,6 @@ fn build_dispatch_swappable(
                                 }
                                 return resp;
                             }
-                        }
                         // §10.2 step 5 / §8.3: the framework render path
                         // always used to emit a hardcoded 200 regardless of
                         // the computed `status`. That made an unmatched URL
@@ -9172,9 +9145,9 @@ fn build_image_endpoint(
         .or_else(|| {
             std::env::var("OXIDE_IMAGE_UNSIGNED")
                 .is_ok()
-                .then(|| String::new())
+                .then(String::new)
         })
-        .or_else(|| build_secret(&rootp).ok());
+        .or_else(|| build_secret(rootp).ok());
     let _ = &cfg.images; // reserved: remotePatterns gating lands with the fetch path
 
     // §16.1: remote sources are gated by `config.images.remotePatterns`.
@@ -9813,11 +9786,10 @@ fn build_js_plugin_hook(
                                     format!("plugin transform read failed: {}", e.0.message),
                                 ))
                             })?;
-                            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                                if let Some(s) = hook_result_str(&v, "code") {
+                            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes)
+                                && let Some(s) = hook_result_str(&v, "code") {
                                     code = s;
                                 }
-                            }
                         }
                         Ok(code)
                     })
@@ -10409,13 +10381,13 @@ async fn start_server_inner_full(
                         Ok(h) => {
                             tier = tier.with_remote(std::sync::Arc::new(h));
                             tracing::info!(
-                                url = %oxide_fw_cache::redacted_url(&url),
+                                url = %oxide_fw_cache::redacted_url(url),
                                 "cache.handler=redis: attached remote tier",
                             );
                         }
                         Err(e) => {
                             tracing::warn!(
-                                url = %oxide_fw_cache::redacted_url(&url),
+                                url = %oxide_fw_cache::redacted_url(url),
                                 error = %e.0.message,
                                 "cache.handler=redis: connection failed; \
                                  continuing with local tier only",
@@ -10470,13 +10442,13 @@ async fn start_server_inner_full(
     // (dev, or a build with no prerendered pages) is a no-op.
     if let Some(cache) = l0.as_ref() {
         let seed_path = rootp.join("dist/server/l0-seed.json");
-        if let Ok(bytes) = std::fs::read(&seed_path) {
-            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+        if let Ok(bytes) = std::fs::read(&seed_path)
+            && let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
                 // Only seed a manifest from THIS build.
                 let same_build =
                     v.get("build_id").and_then(|b| b.as_str()) == Some(build_id.as_str());
-                if same_build {
-                    if let Some(entries) = v.get("entries").and_then(|e| e.as_array()) {
+                if same_build
+                    && let Some(entries) = v.get("entries").and_then(|e| e.as_array()) {
                         for e in entries {
                             let key = e.get("key").and_then(|k| k.as_str()).unwrap_or("");
                             let body = e.get("body").and_then(|b| b.as_str()).unwrap_or("");
@@ -10489,9 +10461,7 @@ async fn start_server_inner_full(
                             }
                         }
                     }
-                }
             }
-        }
     }
     // PERF-07: prefer the mmap'd rkyv route archive when the build wrote one.
     // A missing/stale archive falls back to the in-memory tree (dev, or a
@@ -10653,12 +10623,11 @@ async fn resolve_port(requested: u16) -> u16 {
     if requested != 0 {
         return requested;
     }
-    if let Ok(listener) = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await {
-        if let Ok(addr) = listener.local_addr() {
+    if let Ok(listener) = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await
+        && let Ok(addr) = listener.local_addr() {
             drop(listener);
             return addr.port();
         }
-    }
     0
 }
 
@@ -11206,9 +11175,8 @@ async fn cmd_doctor(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     let cache_ok = std::fs::create_dir_all(&cache_dir).is_ok();
     let cache_ok = cache_ok && {
         let probe = cache_dir.join(".oxide-doctor-probe");
-        let writable =
-            std::fs::write(&probe, b"probe").is_ok() && std::fs::remove_file(&probe).is_ok();
-        writable
+        
+        std::fs::write(&probe, b"probe").is_ok() && std::fs::remove_file(&probe).is_ok()
     };
     check(w, cache_ok, "cache directory writable (.oxide/cache)")?;
     // §9.4 / BUG-05: the build secret makes server-fn ids stable across
@@ -11488,9 +11456,7 @@ async fn cmd_generate(root: &str, kind: &str, path: &str, w: Writer<'_>) -> anyh
              export async function load() {{\n  return {{ props: {{}} }};\n}}\n"
         );
         if actions {
-            s.push_str(&format!(
-                "\nexport const actions = {{\n  async submit(_data) {{\n    // TODO: validate + persist (§9.3)\n    return {{ ok: true }};\n  }},\n}};\n"
-            ));
+            s.push_str(&"\nexport const actions = {\n  async submit(_data) {\n    // TODO: validate + persist (§9.3)\n    return { ok: true };\n  },\n};\n".to_string());
         }
         s
     };
@@ -12421,12 +12387,11 @@ fn route_source_hash(
         hash_file_into(&mut h, p);
     }
     // Error boundary (if any).
-    if let Some(eid) = error_route_id {
-        if let Some(ee) = tree.entries.iter().find(|x| x.id.0 == eid) {
+    if let Some(eid) = error_route_id
+        && let Some(ee) = tree.entries.iter().find(|x| x.id.0 == eid) {
             let efile = routes_root.join(&ee.file);
             hash_file_into(&mut h, &efile);
         }
-    }
     h.finalize().to_hex().to_string()
 }
 
@@ -13054,11 +13019,10 @@ async fn plugin_render_head(
     };
     for r in results {
         for field in ["meta", "link", "style", "script"] {
-            if let Some(arr) = r.get(field).and_then(|v| v.as_array()) {
-                if let Some(slot) = obj.get_mut(field).and_then(|v| v.as_array_mut()) {
+            if let Some(arr) = r.get(field).and_then(|v| v.as_array())
+                && let Some(slot) = obj.get_mut(field).and_then(|v| v.as_array_mut()) {
                     slot.extend(arr.iter().cloned());
                 }
-            }
         }
     }
     merged
@@ -13548,8 +13512,8 @@ fn strip_close_and_append_settles(
         // §20 / O3b: record the settle window on the request's waterfall
         // row. Merges with the initial middleware/load/render record via
         // `record_staged` — the two calls produce one row per request.
-        if settle_count > 0 {
-            if let Some(rec) = waterfall {
+        if settle_count > 0
+            && let Some(rec) = waterfall {
                 let settle_ms = settles_started.elapsed().as_secs_f64() * 1000.0;
                 rec.record_staged(
                     &request_id,
@@ -13557,7 +13521,6 @@ fn strip_close_and_append_settles(
                     trace_id,
                 );
             }
-        }
         // Close the document only after every settle has been delivered.
         let _ = tx.send(Ok(Bytes::from_static(CLOSE))).await;
         // `tx` drops, closing the body stream.
@@ -13586,6 +13549,7 @@ pub(crate) struct PprShellEntry {
     tags: Vec<String>,
 }
 
+#[derive(Default)]
 pub(crate) struct PprShellStore {
     map: std::collections::HashMap<String, PprShellEntry>,
     /// Insertion order for eviction. A re-insert appends a fresh occurrence;
@@ -13593,14 +13557,6 @@ pub(crate) struct PprShellStore {
     order: std::collections::VecDeque<String>,
 }
 
-impl Default for PprShellStore {
-    fn default() -> Self {
-        Self {
-            map: std::collections::HashMap::new(),
-            order: std::collections::VecDeque::new(),
-        }
-    }
-}
 
 impl PprShellStore {
     pub(crate) fn get(&self, key: &str) -> Option<&String> {
@@ -13707,16 +13663,14 @@ fn ppr_tap_stream(
             }
         }
         // The client already saw EOF; storing after this point adds no latency.
-        if let Ok(html) = String::from_utf8(collected) {
-            if let Ok(shell) = oxide_fw_render::ppr::split_shell(&html) {
-                if !shell.hole_ids.is_empty() {
+        if let Ok(html) = String::from_utf8(collected)
+            && let Ok(shell) = oxide_fw_render::ppr::split_shell(&html)
+                && !shell.hole_ids.is_empty() {
                     let stored = shell.html.replace(&nonce, l0_cache::NONCE_SENTINEL);
                     if let Ok(mut store) = shells.lock() {
                         store.insert_tagged(key, stored, tags);
                     }
                 }
-            }
-        }
     });
     Box::pin(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)))
 }

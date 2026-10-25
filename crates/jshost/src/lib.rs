@@ -508,7 +508,7 @@ pub(crate) fn b64_decode(s: &str) -> Result<Vec<u8>> {
     }
     let raw: Vec<u8> = s.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
     let pad = raw.iter().rev().take(2).filter(|&&b| b == b'=').count();
-    if pad > 2 || (raw.len() - pad) % 4 == 1 || raw.len() % 4 != 0 {
+    if pad > 2 || (raw.len() - pad) % 4 == 1 || !raw.len().is_multiple_of(4) {
         return Err(err(
             "JSH-B64",
             format!("invalid base64 length/padding ({}) chars", s.len()),
@@ -661,15 +661,11 @@ impl Pool for ScriptedPool {
 ///
 /// The default host has no handler and fails calls with `JSH-NOSCRIPT`; use
 /// [`ScriptedHost::with_handler`] to install one.
+#[derive(Default)]
 pub struct ScriptedHost {
     handler: Option<ScriptedHandler>,
 }
 
-impl Default for ScriptedHost {
-    fn default() -> Self {
-        Self { handler: None }
-    }
-}
 
 impl ScriptedHost {
     /// Build a scripted host whose pools execute `handler` for every call.
@@ -3806,13 +3802,12 @@ async fn op_dispatch(
             // Memoize GETs only (a POST with a body is already keyed by the
             // body hash, but a side-effecting request should not be replayed).
             let memo_key = (method == "GET").then(|| oxide_fw_cache::memo_key(&method, url, &body));
-            if let (Some(m), Some(k)) = (memo, memo_key.as_deref()) {
-                if let Some(hit) = m.get(k) {
+            if let (Some(m), Some(k)) = (memo, memo_key.as_deref())
+                && let Some(hit) = m.get(k) {
                     let v: serde_json::Value =
                         serde_json::from_slice(&hit).unwrap_or(serde_json::Value::Null);
                     return Ok(v);
                 }
-            }
             let resp = handler.fetch(&method, url, &headers, &body).await?;
             use base64::Engine as _;
             let out = serde_json::json!({
@@ -3900,26 +3895,23 @@ fn handle_worker_msg(msg: WorkerMsg, worker: &Arc<Worker>) {
             if complete {
                 drop_stream(worker, id);
                 resolve(worker, id, Ok(CallStream::Complete(Bytes::from(body))));
-            } else if let Some(tx) = stream_sender(worker, id) {
-                if tx.try_send(Ok(Bytes::from(body))).is_err() {
+            } else if let Some(tx) = stream_sender(worker, id)
+                && tx.try_send(Ok(Bytes::from(body))).is_err() {
                     drop_stream(worker, id); // collector gone
                 }
-            }
         }
         WorkerMsg::CallChunkBin { id, data } => {
-            if let Some(tx) = stream_sender(worker, id) {
-                if tx.try_send(Ok(Bytes::from(data))).is_err() {
+            if let Some(tx) = stream_sender(worker, id)
+                && tx.try_send(Ok(Bytes::from(data))).is_err() {
                     drop_stream(worker, id);
                 }
-            }
         }
         WorkerMsg::CallChunk { id, data_b64 } => match b64_decode(&data_b64) {
             Ok(bytes) => {
-                if let Some(tx) = stream_sender(worker, id) {
-                    if tx.try_send(Ok(Bytes::from(bytes))).is_err() {
+                if let Some(tx) = stream_sender(worker, id)
+                    && tx.try_send(Ok(Bytes::from(bytes))).is_err() {
                         drop_stream(worker, id); // collector gone: stop buffering
                     }
-                }
             }
             Err(e) => {
                 drop_stream(worker, id);

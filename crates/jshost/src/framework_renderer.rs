@@ -136,16 +136,14 @@ impl FrameworkRenderInput {
             "layouts": self.layouts,
             "errorRoute": self.error_route_id,
         });
-        if let Some(cs) = &self.components {
-            if !cs.is_empty() {
+        if let Some(cs) = &self.components
+            && !cs.is_empty() {
                 payload["components"] = serde_json::to_value(cs).unwrap_or(Value::Null);
             }
-        }
-        if let Some(loc) = &self.locale {
-            if !loc.is_empty() {
+        if let Some(loc) = &self.locale
+            && !loc.is_empty() {
                 payload["locale"] = Value::String(loc.clone());
             }
-        }
         // §7.1 / §9.2: the resolved `defer()` map. The adapter substitutes
         // `{__deferred: id}` in `data` with these values before rendering.
         if !self.deferred.is_empty() {

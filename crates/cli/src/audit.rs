@@ -227,19 +227,17 @@ fn severity_of(v: &OsvVuln) -> String {
             if let Some(sev) = es.get("severity").and_then(|s| s.as_str()) {
                 return sev.to_ascii_uppercase();
             }
-            if let Some(arr) = es.get("severity").and_then(|s| s.as_array()) {
-                if let Some(s) = arr.first().and_then(|v| v.as_str()) {
+            if let Some(arr) = es.get("severity").and_then(|s| s.as_array())
+                && let Some(s) = arr.first().and_then(|v| v.as_str()) {
                     return s.to_ascii_uppercase();
                 }
-            }
         }
     }
     // Priority 2: database_specific.severity.
-    if let Some(db) = &v.database_specific {
-        if let Some(sev) = db.get("severity").and_then(|s| s.as_str()) {
+    if let Some(db) = &v.database_specific
+        && let Some(sev) = db.get("severity").and_then(|s| s.as_str()) {
             return sev.to_ascii_uppercase();
         }
-    }
     String::new()
 }
 

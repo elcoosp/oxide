@@ -321,7 +321,7 @@ pub async fn remote_cache_handler(
                 Ok(h) => Some(Arc::new(h) as Arc<dyn oxide_fw_cache::CacheHandler>),
                 Err(e) => {
                     tracing::warn!(
-                        url = %oxide_fw_cache::redacted_url(&url),
+                        url = %oxide_fw_cache::redacted_url(url),
                         error = %e.0.message,
                         "cache.handler=redis: connection failed; \
                          continuing with local tier only",
@@ -371,15 +371,13 @@ pub async fn build_framework_stack(
     // inside `build_framework_stack`, before any render request. The value
     // is a best-effort peek at the config file's first `framework: X(...)`
     // match; the CLI can override it via the same env var.
-    if let Some(cfg_path) = config_path {
-        if std::env::var_os("OXIDE_FRAMEWORK").is_none() {
-            if let Some(name) = peek_framework_name(cfg_path) {
+    if let Some(cfg_path) = config_path
+        && std::env::var_os("OXIDE_FRAMEWORK").is_none()
+            && let Some(name) = peek_framework_name(cfg_path) {
                 // SAFETY: called before any worker thread is spawned; no
                 // concurrent reader or writer touches this variable.
                 unsafe { std::env::set_var("OXIDE_FRAMEWORK", name) };
             }
-        }
-    }
 
     // §4.2 / D2: the backend is selectable via `server.backend` in the
     // project config. `Node` (default) resolves npm from the workspace;
@@ -499,7 +497,7 @@ pub async fn build_framework_stack(
     // compile failure: a Vue fixture with `backend: "v8"` otherwise sends
     // `tooling:vue-compile` to the V8 pool, which has no such op.
     let tooling_pool: Arc<dyn oxide_fw_jshost::Pool> = if matches!(backend, JsBackend::V8) {
-        match {
+        let res = {
             let mut h = NodeHost::new(NodeHost::worker_script_default())
                 .with_cache_handler(Arc::clone(&cache_tier))
                 .with_fetch_handler(Arc::clone(&fetch_handler));
@@ -510,7 +508,7 @@ pub async fn build_framework_stack(
                 size: tooling_pool_size(),
                 ..Default::default()
             })
-        } {
+        }; match res {
             Ok(p) => p,
             Err(e) => {
                 eprintln!(
@@ -523,7 +521,7 @@ pub async fn build_framework_stack(
     } else {
         // B-23: on the Node backend, the render lane and the tooling lane are
         // separate Node pools so a slow compile cannot block an SSR render.
-        match {
+        let res = {
             let mut h = NodeHost::new(NodeHost::worker_script_default())
                 .with_cache_handler(Arc::clone(&cache_tier))
                 .with_fetch_handler(Arc::clone(&fetch_handler));
@@ -534,7 +532,7 @@ pub async fn build_framework_stack(
                 size: tooling_pool_size(),
                 ..Default::default()
             })
-        } {
+        }; match res {
             Ok(p) => p,
             Err(e) => {
                 eprintln!(
@@ -657,16 +655,14 @@ pub(crate) fn resolve_ssr_entry(dist_server: &std::path::Path) -> Option<String>
 
     // (2) Prefer the lazy sibling of the declared entry (Wave M perf win).
     let prefer_eager = std::env::var_os("OXIDE_SSR_EAGER").is_some();
-    if !prefer_eager {
-        if let Some(decl) = declared.as_deref() {
-            if let Some(lazy_sibling) = decl.strip_suffix("index.js") {
+    if !prefer_eager
+        && let Some(decl) = declared.as_deref()
+            && let Some(lazy_sibling) = decl.strip_suffix("index.js") {
                 let lazy = dist_server.join(format!("{lazy_sibling}lazy.js"));
                 if lazy.is_file() {
                     return Some(lazy.to_string_lossy().to_string());
                 }
             }
-        }
-    }
 
     // (3) The declared entry itself.
     if let Some(decl) = declared {
@@ -699,8 +695,8 @@ impl LazyFrameworkRenderer {
             .read()
             .map(|g| g.clone())
             .unwrap_or_default();
-        if src.entry.is_none() && src.sources.is_empty() {
-            if let Some(root) = std::path::Path::new(&self.config_path).parent() {
+        if src.entry.is_none() && src.sources.is_empty()
+            && let Some(root) = std::path::Path::new(&self.config_path).parent() {
                 // §6.4 / P0-10: the manifest's `adapter_entry` names where
                 // the build wrote the SSR entry; `resolve_ssr_entry` reads
                 // it and prefers the lazy sibling (Wave M perf win).
@@ -708,7 +704,6 @@ impl LazyFrameworkRenderer {
                     src.entry = Some(entry);
                 }
             }
-        }
         if !src.is_empty() {
             input.components = Some(src);
         }
@@ -775,8 +770,8 @@ pub async fn dev_component_sources(
     let comp_dir = project_root.join(".oxide/components");
     let mut out = std::collections::BTreeMap::new();
     for (id, src) in entries {
-        if let Some(js) = precompiled.get(&src) {
-            if std::fs::create_dir_all(&comp_dir).is_ok() {
+        if let Some(js) = precompiled.get(&src)
+            && std::fs::create_dir_all(&comp_dir).is_ok() {
                 let name = format!(
                     "{}.mjs",
                     blake3::hash(format!("{id}\u{0}{}", src.display()).as_bytes()).to_hex()
@@ -787,7 +782,6 @@ pub async fn dev_component_sources(
                     continue;
                 }
             }
-        }
         out.insert(id, src.to_string_lossy().to_string());
     }
     out

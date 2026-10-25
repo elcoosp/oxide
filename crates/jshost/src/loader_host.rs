@@ -786,7 +786,7 @@ impl EndpointHost {
         #[allow(unreachable_code)]
         {
             let v: Value = Value::Null;
-            return Self::from_complete_json(v);
+            Self::from_complete_json(v)
         }
     }
 
