@@ -98,27 +98,19 @@ fn checked_in_schema_matches_the_function() {
     });
     let generated = oxide_fw_config::config_schema_pretty().expect("schema renders");
 
-    // Byte-for-byte. A reformatted file is drift too — regenerate, do not
-    // hand-edit the checked-in artifact.
-    if on_disk != generated {
-        // Show the first differing line for a useful failure.
-        let a: Vec<&str> = on_disk.lines().collect();
-        let b: Vec<&str> = generated.lines().collect();
-        let first_diff = a
-            .iter()
-            .zip(b.iter())
-            .position(|(x, y)| x != y)
-            .unwrap_or(a.len().min(b.len()));
-        panic!(
-            "schemas/oxide-fw-config.schema.json is stale (first diff at line {}).\n\
-             checked-in: {:?}\n\
-             generated:  {:?}\n\
-             Regenerate with:\n  \
-             cargo run -p oxide-fw-config --bin oxide-schema -- \
-             > schemas/oxide-fw-config.schema.json",
-            first_diff + 1,
-            a.get(first_diff),
-            b.get(first_diff),
-        );
-    }
+    // Semantic comparison. JSON object key order is not meaningful to any
+    // consumer (editor, validator, downstream tool) -- only field content is.
+    // Byte-for-byte was too strict: serde_json map representation depends on
+    // whether `preserve_order` is enabled, which can flip under workspace-wide
+    // feature unification (another crate's dev-deps activating it). Comparing
+    // parsed Values enforces the actual invariant (same field set + values) and
+    // still catches real drift; regeneration remains the fix for drift.
+    let on_disk_value: serde_json::Value = serde_json::from_str(&on_disk)
+        .unwrap_or_else(|e| panic!("checked-in schema is not valid JSON: {e}"));
+    let generated_value: serde_json::Value = serde_json::from_str(&generated)
+        .unwrap_or_else(|e| panic!("generated schema is not valid JSON: {e}"));
+    assert_eq!(
+        on_disk_value, generated_value,
+        "schemas/oxide-fw-config.schema.json is stale (semantic diff -- field added, removed, or value changed). Regenerate with:\n  cargo run -p oxide-fw-config --bin oxide-schema -- > schemas/oxide-fw-config.schema.json"
+    );
 }
