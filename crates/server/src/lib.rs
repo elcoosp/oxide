@@ -391,9 +391,7 @@ impl StaticAssets {
                 }
                 // variant unreadable → fall through to the identity body
 
-        let Some(full) = cached_asset_body(&entry.path) else {
-            return None;
-        };
+        let full = cached_asset_body(&entry.path)?;
 
         if req.method.eq_ignore_ascii_case("HEAD") {
             let mut resp = OxideResponse::new(200, Bytes::new());

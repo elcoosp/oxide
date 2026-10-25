@@ -3443,7 +3443,7 @@ impl JsHost for NodeHost {
 /// - `CallErr` resolves the pending call with the worker's diagnostic.
 /// - stdout EOF (worker exit) fails all pending calls with `JSH-CRASH` and bumps
 ///   the `crashed` counter (§4.3 failure isolation).
-/// The runtime the worker's child process (and its reader task) live on.
+///   The runtime the worker's child process (and its reader task) live on.
 ///
 /// A **dedicated** runtime, separate from whatever the caller is using. A
 /// worker's stdin/stdout pipes are bound to this runtime at spawn time

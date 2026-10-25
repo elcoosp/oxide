@@ -69,9 +69,7 @@ fn extract_islands_map(source: &str) -> Option<Value> {
     let needle = "islands";
     let mut from = 0usize;
     let key_at = loop {
-        let Some(rel) = stripped[from..].find(needle) else {
-            return None;
-        };
+        let rel = stripped[from..].find(needle)?;
         let at = from + rel;
         from = at + needle.len();
         // Word-boundary check before `islands` (skip `some_islands`).
@@ -401,7 +399,7 @@ impl<'a> Scanner<'a> {
 
     /// `peek() == '/'` precondition; checks the *second* char without consuming.
     fn next_after_slash_is(&self, c: char) -> bool {
-        self.s[self.p + 1..].chars().next() == Some(c)
+        self.s[self.p + 1..].starts_with(c)
     }
 
     fn parse_value(&mut self) -> Option<Value> {
