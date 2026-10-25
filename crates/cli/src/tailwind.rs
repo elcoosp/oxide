@@ -1,16 +1,4 @@
-// §6.6 / D5: native Tailwind v4 integration.
-//
-// When the config declares `plugins: [{ engine: "tailwind", ... }]`, this
-// module precomputes the full Tailwind CSS for the project's entry stylesheet
-// and hands it to `build_css_transform_hook` — which substitutes it in when
-// the bundler reaches that file. Everything else (other CSS files) still goes
-// through Lightning CSS as before.
-//
-// The actual Tailwind work runs in `@oxide-fw/tailwind/runtime.mjs` via the
-// tooling pool (`ToolingModules::tailwind_scan` / `tailwind_build`), which
-// uses Tailwind's own Rust scanner (`@tailwindcss/oxide`) and its own JS
-// compiler (`tailwindcss`). We do not reimplement Tailwind.
-
+// Section 6.6 / D5: native Tailwind v4 integration.
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -21,9 +9,6 @@ use oxide_fw_jshost::{Pool, ToolingModules};
 
 const SOURCE_EXTENSIONS: [&str; 7] = ["ts", "tsx", "js", "jsx", "vue", "svelte", "html"];
 
-/// The result of precomputing Tailwind for a project: which entry stylesheet
-/// was processed, and its fully compiled CSS (Tailwind output already run
-/// through Lightning CSS for the target browsers).
 pub struct TailwindOutput {
     pub entry: PathBuf,
     pub css: String,
@@ -33,36 +18,50 @@ fn bld_err(msg: impl Into<String>) -> OxideError {
     OxideError(Diagnostic::error("BLD-TAILWIND", msg))
 }
 
-/// Scan project sources, run Tailwind's compiler, run Lightning CSS, and
-/// return the final CSS keyed to the entry stylesheet path.
+/// True when the config declares the @oxide-fw/tailwind plugin.
 ///
-/// Returns `Ok(None)` when:
-///   - the config doesn't declare the `@oxide-fw/tailwind` plugin, or
-///   - the plugin is declared but no CSS file under `src/styles/` contains
-///     `@import "tailwindcss"` (a warning is logged).
-///
-/// Errors only on genuine failures (I/O, Tailwind scanner/compiler crash,
-/// Lightning CSS parse error) — never on absence.
-pub async fn precompute(
-    pool: Arc<dyn Pool>,
-    cfg: &OxideConfig,
-    root: &Path,
-) -> Result<Option<TailwindOutput>, OxideError> {
-    let has_tailwind = cfg.plugins.iter().any(|p| {
+/// The static config extractor parses `plugins: [tailwind()]` into
+/// `{ name: "tailwind" }` — same convention as `framework: react()` becoming
+/// `{ name: "react" }`. The runtime object produced by `tailwind()` is
+/// `{ name: "@oxide-fw/tailwind", engine: "tailwind" }`. Match all three forms.
+pub fn has_tailwind(cfg: &OxideConfig) -> bool {
+    cfg.plugins.iter().any(|p| {
         p.get("engine").and_then(|e| e.as_str()) == Some("tailwind")
             || p.get("name").and_then(|n| n.as_str()) == Some("@oxide-fw/tailwind")
             || p.get("name").and_then(|n| n.as_str()) == Some("tailwind")
-    });
-    if !has_tailwind {
-        return Ok(None);
-    }
+    })
+}
 
+/// True for source files that could contain tailwind class names.
+/// Excludes .server.ts/.server.tsx (server-only, no client classes),
+/// oxide.config.* (the config file itself), and .css/.scss/.sass
+/// (those go through HmrBehavior::StyleSwap).
+pub fn is_source_file(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".server.ts") || lower.ends_with(".server.tsx") {
+        return false;
+    }
+    if lower.contains("oxide.config") {
+        return false;
+    }
+    if lower.ends_with(".css") || lower.ends_with(".scss") || lower.ends_with(".sass") {
+        return false;
+    }
+    [".ts", ".tsx", ".js", ".jsx", ".vue", ".svelte", ".html"]
+        .iter()
+        .any(|ext| lower.ends_with(ext))
+}
+
+async fn compute_css(
+    pool: Arc<dyn Pool>,
+    cfg: &OxideConfig,
+    root: &Path,
+) -> Result<Option<(PathBuf, String)>, OxideError> {
     let entry = match find_entry_css(root) {
         Ok(Some(p)) => p,
         Ok(None) => {
             eprintln!(
-                "oxide: tailwind plugin active but no stylesheet under src/styles/ contains \
-                 `@import \"tailwindcss\"` — skipping Tailwind"
+                "oxide: tailwind plugin active but no stylesheet under src/styles/ contains `@import \"tailwindcss\"` — skipping Tailwind"
             );
             return Ok(None);
         }
@@ -71,8 +70,7 @@ pub async fn precompute(
 
     let src_dir = root.join("src");
     let mut files: Vec<serde_json::Value> = Vec::new();
-    collect_sources(&src_dir, &mut files)
-        .map_err(|e| bld_err(format!("walk src: {e}")))?;
+    collect_sources(&src_dir, &mut files).map_err(|e| bld_err(format!("walk src: {e}")))?;
     if files.is_empty() {
         eprintln!(
             "oxide: tailwind plugin active but no source files found under {} — skipping",
@@ -83,7 +81,6 @@ pub async fn precompute(
 
     let tooling = ToolingModules::new(pool);
     let candidates = tooling.tailwind_scan(files).await?;
-
     let css_src = std::fs::read_to_string(&entry)
         .map_err(|e| bld_err(format!("read {}: {e}", entry.display())))?;
     let base = entry
@@ -103,10 +100,64 @@ pub async fn precompute(
         .transform(&input)
         .map_err(|e| bld_err(format!("lightningcss: {}", e.0.message)))?;
 
-    Ok(Some(TailwindOutput {
-        entry,
-        css: out.code,
-    }))
+    Ok(Some((entry, out.code)))
+}
+
+pub async fn precompute(
+    pool: Arc<dyn Pool>,
+    cfg: &OxideConfig,
+    root: &Path,
+) -> Result<Option<TailwindOutput>, OxideError> {
+    if !has_tailwind(cfg) {
+        return Ok(None);
+    }
+    match compute_css(pool, cfg, root).await? {
+        Some((entry, css)) => Ok(Some(TailwindOutput { entry, css })),
+        None => Ok(None),
+    }
+}
+
+/// Dev-time HMR: rebuild CSS and overwrite the existing dist/client/tailwind-*.css.
+/// Returns (url, css) when the CSS changed, None when no-op.
+pub async fn rebuild_for_dev(
+    pool: Arc<dyn Pool>,
+    cfg: &OxideConfig,
+    root: &Path,
+) -> Result<Option<(String, String)>, OxideError> {
+    if !has_tailwind(cfg) {
+        return Ok(None);
+    }
+
+    let dist = root.join("dist").join("client");
+    let existing = std::fs::read_dir(&dist).ok().and_then(|rd| {
+        rd.filter_map(Result::ok).map(|e| e.path()).find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("tailwind-") && n.ends_with(".css"))
+                .unwrap_or(false)
+        })
+    });
+    let Some(existing_path) = existing else {
+        return Ok(None);
+    };
+
+    let Some((_entry, new_css)) = compute_css(pool, cfg, root).await? else {
+        return Ok(None);
+    };
+
+    let current = std::fs::read_to_string(&existing_path).unwrap_or_default();
+    if current == new_css {
+        return Ok(None);
+    }
+
+    std::fs::write(&existing_path, &new_css)
+        .map_err(|e| bld_err(format!("write {}: {e}", existing_path.display())))?;
+
+    let basename = existing_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("tailwind.css");
+    Ok(Some((format!("/client/{basename}"), new_css)))
 }
 
 fn find_entry_css(root: &Path) -> std::io::Result<Option<PathBuf>> {
