@@ -3408,33 +3408,54 @@ struct PrerenderTarget {
 }
 
 /// P-20: render a route's `generateParams` targets with bounded parallelism.
+pub struct PrerenderTargetsArgs<'a> {
+    pub dist: &'a Path,
+    pub route_id: &'a str,
+    pub pattern: &'a str,
+    pub targets: Vec<PrerenderTarget>,
+    pub nonce: &'a str,
+    pub nonce_for: &'a str,
+    pub page_renderer: Option<&'a std::sync::Arc<dyn oxide_fw_server::PageRenderer>>,
+    pub loader_runner: Option<&'a std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
+    pub module_path: Option<&'a Path>,
+    pub boot_script_url: Option<&'a str>,
+    pub layout_ids: &'a [String],
+    pub layout_modules: &'a [(String, std::path::PathBuf)],
+    pub error_route: Option<&'a str>,
+    pub plugin_head: &'a serde_json::Value,
+    pub prev_prerenders: &'a std::collections::BTreeMap<
+        (String, String),
+        &'a crate::build_graph::RoutePrerenderRecord,
+    >,
+    pub route_src_hash: &'a str,
+}
+
 ///
 /// Reuse (an unchanged source hash + an existing output file) is cheap and
 /// stays synchronous. Only the targets that must actually render go through
 /// the worker pool, at most `render_concurrency()` at a time. Results are
 /// returned in target order, so seed manifests and graph records stay
 /// deterministic regardless of completion order.
-async fn prerender_targets(
-    dist: &Path,
-    route_id: &str,
-    pattern: &str,
-    targets: Vec<PrerenderTarget>,
-    nonce: &str,
-    nonce_for: &str,
-    page_renderer: Option<&std::sync::Arc<dyn oxide_fw_server::PageRenderer>>,
-    loader_runner: Option<&std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
-    module_path: Option<&Path>,
-    boot_script_url: Option<&str>,
-    layout_ids: &[String],
-    layout_modules: &[(String, std::path::PathBuf)],
-    error_route: Option<&str>,
-    plugin_head: &serde_json::Value,
-    prev_prerenders: &std::collections::BTreeMap<
-        (String, String),
-        &crate::build_graph::RoutePrerenderRecord,
-    >,
-    route_src_hash: &str,
-) -> anyhow::Result<(Vec<(PrerenderTarget, String, u16)>, usize)> {
+async fn prerender_targets(args: PrerenderTargetsArgs<'_>) -> anyhow::Result<(Vec<(PrerenderTarget, String, u16)>, usize)> {
+    let PrerenderTargetsArgs {
+        dist,
+        route_id,
+        pattern,
+        targets,
+        nonce,
+        nonce_for,
+        page_renderer,
+        loader_runner,
+        module_path,
+        boot_script_url,
+        layout_ids,
+        layout_modules,
+        error_route,
+        plugin_head,
+        prev_prerenders,
+        route_src_hash,
+    } = args;
+
     use futures::StreamExt as _;
 
     let mut results: Vec<Option<(String, u16)>> = (0..targets.len()).map(|_| None).collect();
@@ -3471,24 +3492,24 @@ async fn prerender_targets(
         let t = &targets[i];
         async move {
             let _permit = sem.acquire().await;
-            let out = write_prerender(
-                dist,
-                &t.rel,
-                route_id,
-                pattern,
-                &t.url_path,
-                &t.params,
-                &t.locale,
-                nonce_for,
-                page_renderer,
-                loader_runner,
-                module_path,
-                boot_script_url,
-                layout_ids,
-                layout_modules,
-                error_route,
-                plugin_head,
-            )
+            let out = write_prerender(PrerenderArgs {
+        dist: dist,
+        rel: &t.rel,
+        route_id: route_id,
+        pattern: pattern,
+        url_path: &t.url_path,
+        params: &t.params,
+        locale: &t.locale,
+        nonce: nonce_for,
+        page_renderer: page_renderer,
+        loader_runner: loader_runner,
+        module_path: module_path,
+        boot_script_url: boot_script_url,
+        layouts: layout_ids,
+        layout_module_paths: layout_modules,
+        error_route_id: error_route,
+        plugin_head: plugin_head,
+    })
             .await;
             (i, out)
         }
@@ -3508,45 +3529,46 @@ async fn prerender_targets(
     }
     Ok((ordered, reused))
 }
+pub struct PrerenderArgs<'a> {
+    pub dist: &'a Path,
+    pub rel: &'a str,
+    pub route_id: &'a str,
+    pub pattern: &'a str,
+    pub url_path: &'a str,
+    pub params: &'a BTreeMap<String, String>,
+    pub locale: &'a str,
+    pub nonce: &'a str,
+    pub page_renderer: Option<&'a std::sync::Arc<dyn oxide_fw_server::PageRenderer>>,
+    pub loader_runner: Option<&'a std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
+    pub module_path: Option<&'a Path>,
+    pub boot_script_url: Option<&'a str>,
+    pub layouts: &'a [String],
+    pub layout_module_paths: &'a [(String, std::path::PathBuf)],
+    pub error_route_id: Option<&'a str>,
+    pub plugin_head: &'a serde_json::Value,
+}
 
-async fn write_prerender(
-    dist: &Path,
-    rel: &str,
-    route_id: &str,
-    pattern: &str,
-    url_path: &str,
-    params: &BTreeMap<String, String>,
-    locale: &str,
-    nonce: &str,
-    page_renderer: Option<&std::sync::Arc<dyn oxide_fw_server::PageRenderer>>,
-    loader_runner: Option<&std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
-    module_path: Option<&Path>,
-    boot_script_url: Option<&str>,
-    // §8.2: layout chain for this route, outermost first. Populated by the
-    // caller from `MatchInfo.layout_chain`; the adapter nests the page
-    // inside them. Empty means "no layouts wrap this page".
-    layouts: &[String],
-    // §9.2: layout `(id, layout.server.ts path)` pairs, outermost first. The
-    // prerender path runs each layout's `load()` before the page load and
-    // threads `parent_data`, so a prerendered page's `await parent()` sees
-    // the real layout data (mirrors the live and /__data paths).
-    layout_module_paths: &[(String, std::path::PathBuf)],
-    // §10.2 step 5: nearest ancestor `error.tsx` route id, if any. The
-    // adapter renders it on an SSR throw. Mirrors the live-dispatch
-    // resolution — an error thrown while prerendering has the same
-    // fallback path.
-    // STATUS NOTE (§10.2 step 5): a LIVE page that renders its error route
-    // returns HTTP 500 (the §10.2 error-status contract marker). A
-    // PRERENDERED error page is baked at build time; the marker in the
-    // adapter's buffered output is captured below and carried through the
-    // L0 seed manifest so `oxide start` serves it with the real status.
-    // (Wave 3 fix — was a documented "baked 200" deviation.)
-    error_route_id: Option<&str>,
-    // §15.2: `renderHead` — the neutral head model a plugin contributed for
-    // this route. Merged into the model the adapter receives. Empty for a
-    // build with no `renderHead` plugin.
-    plugin_head: &serde_json::Value,
-) -> anyhow::Result<(String, u16)> {
+
+async fn write_prerender(args: PrerenderArgs<'_>) -> anyhow::Result<(String, u16)> {
+    let PrerenderArgs {
+        dist,
+        rel,
+        route_id,
+        pattern,
+        url_path,
+        params,
+        locale,
+        nonce,
+        page_renderer,
+        loader_runner,
+        module_path,
+        boot_script_url,
+        layouts,
+        layout_module_paths,
+        error_route_id,
+        plugin_head,
+    } = args;
+
     // §9.1: run the loader for this route (if the module exists and a
     // loader runner is attached) to obtain the data the render phase
     // receives. Prerendered static pages previously always wrote `{}`
@@ -3829,6 +3851,23 @@ async fn write_prerender(
     Ok((html, prerender_status))
 }
 
+pub struct RouteDataArgs<'a> {
+    pub req: &'a oxide_fw_server::OxideRequest,
+    pub loader_runner: Option<&'a std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
+    pub module_path: Option<&'a std::path::Path>,
+    pub route_id: Option<&'a str>,
+    pub params: &'a std::collections::BTreeMap<String, String>,
+    pub metrics: &'a std::sync::Arc<oxide_fw_server::Metrics>,
+    pub started: std::time::Instant,
+    pub middleware_locals: &'a serde_json::Value,
+    pub middleware_headers: &'a [(String, String)],
+    pub layout_module_paths: &'a [(String, std::path::PathBuf)],
+    pub locale: &'a str,
+    pub session_codec: Option<&'a oxide_fw_server::SessionCodec>,
+    pub middleware_ms: f64,
+    pub waterfall: Option<&'a oxide_fw_dev::WaterfallRecorder>,
+}
+
 /// PERF-01 / §8.4: answer a `/__data?route=<path>` request. Returns the
 /// ODF-encoded `{route, url, params, data, deferred, locale}` envelope the
 /// client router's `normalizeInput` expects (extra keys are ignored by
@@ -3843,28 +3882,8 @@ async fn write_prerender(
 /// + ODF encode. Success is 200 with `application/oxide+odf`; a loader
 ///
 /// short-circuit (`error()`/`redirect()`) propagates its status/location.
-async fn route_data_response(
-    req: &oxide_fw_server::OxideRequest,
-    loader_runner: Option<&std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
-    module_path: Option<&std::path::Path>,
-    route_id: Option<&str>,
-    params: &std::collections::BTreeMap<String, String>,
-    metrics: &std::sync::Arc<oxide_fw_server::Metrics>,
-    started: std::time::Instant,
-    middleware_locals: &serde_json::Value,
-    middleware_headers: &[(String, String)],
-    layout_module_paths: &[(String, std::path::PathBuf)],
-    locale: &str,
-    // §16.6 / WP-D1: session codec for re-sealing a loader-mutated
-    // session on the data path.
-    session_codec: Option<&oxide_fw_server::SessionCodec>,
-    // B-17: the `/__data` branch also shows up in the inspector waterfall,
-    // split into the middleware phase it shares with SSR and its own load.
-    middleware_ms: f64,
-    waterfall: Option<&oxide_fw_dev::WaterfallRecorder>,
-) -> oxide_fw_server::OxideResponse {
-    let request_id = req.request_id.clone();
-    let resp = route_data_response_inner(
+async fn route_data_response(args: RouteDataArgs<'_>) -> oxide_fw_server::OxideResponse {
+    let RouteDataArgs {
         req,
         loader_runner,
         module_path,
@@ -3877,7 +3896,25 @@ async fn route_data_response(
         layout_module_paths,
         locale,
         session_codec,
-    )
+        middleware_ms,
+        waterfall,
+    } = args;
+
+    let request_id = req.request_id.clone();
+    let resp = route_data_response_inner(RouteDataInnerArgs {
+        req: req,
+        loader_runner: loader_runner,
+        module_path: module_path,
+        route_id: route_id,
+        params: params,
+        metrics: metrics,
+        started: started,
+        middleware_locals: middleware_locals,
+        middleware_headers: middleware_headers,
+        layout_module_paths: layout_module_paths,
+        locale: locale,
+        session_codec: session_codec,
+    })
     .await;
     if let Some(rec) = waterfall {
         let total = started.elapsed().as_secs_f64() * 1000.0;
@@ -3895,27 +3932,38 @@ async fn route_data_response(
     }
     resp
 }
+pub struct RouteDataInnerArgs<'a> {
+    pub req: &'a oxide_fw_server::OxideRequest,
+    pub loader_runner: Option<&'a std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
+    pub module_path: Option<&'a std::path::Path>,
+    pub route_id: Option<&'a str>,
+    pub params: &'a std::collections::BTreeMap<String, String>,
+    pub metrics: &'a std::sync::Arc<oxide_fw_server::Metrics>,
+    pub started: std::time::Instant,
+    pub middleware_locals: &'a serde_json::Value,
+    pub middleware_headers: &'a [(String, String)],
+    pub layout_module_paths: &'a [(String, std::path::PathBuf)],
+    pub locale: &'a str,
+    pub session_codec: Option<&'a oxide_fw_server::SessionCodec>,
+}
 
-async fn route_data_response_inner(
-    req: &oxide_fw_server::OxideRequest,
-    loader_runner: Option<&std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
-    module_path: Option<&std::path::Path>,
-    route_id: Option<&str>,
-    params: &std::collections::BTreeMap<String, String>,
-    metrics: &std::sync::Arc<oxide_fw_server::Metrics>,
-    started: std::time::Instant,
-    // §8.4 parity: the middleware phase ran before this branch; its locals
-    // feed the loads and its headers ride the response.
-    middleware_locals: &serde_json::Value,
-    middleware_headers: &[(String, String)],
-    // §9.2 parity: layout chain (outermost → innermost) for the data
-    // route, each entry `(layout id, layout.server.ts path)`.
-    layout_module_paths: &[(String, std::path::PathBuf)],
-    // SPEC-10: the resolved request locale.
-    locale: &str,
-    // §16.6 / WP-D1: session codec (see the wrapper's doc).
-    session_codec: Option<&oxide_fw_server::SessionCodec>,
-) -> oxide_fw_server::OxideResponse {
+
+async fn route_data_response_inner(args: RouteDataInnerArgs<'_>) -> oxide_fw_server::OxideResponse {
+    let RouteDataInnerArgs {
+        req,
+        loader_runner,
+        module_path,
+        route_id,
+        params,
+        metrics,
+        started,
+        middleware_locals,
+        middleware_headers,
+        layout_module_paths,
+        locale,
+        session_codec,
+    } = args;
+
     // `?route=<percent-encoded path>` (default `/`).
     let route_q = req
         .url
@@ -5466,24 +5514,24 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     }
                 }
                 // P-20: bounded-parallel render across this route's params.
-                let (rows, reused) = prerender_targets(
-                    &dist,
-                    &route_id,
-                    &pattern,
-                    targets,
-                    &nonce,
-                    &nonce_for,
-                    stack.page_renderer.as_ref(),
-                    stack.loader_runner.as_ref(),
-                    module_path.as_deref(),
-                    boot_script_url.as_deref(),
-                    &layout_ids,
-                    &prerender_layout_modules,
-                    prerender_error_route_id.as_deref(),
-                    &plugin_head,
-                    &prev_prerenders,
-                    &route_src_hash,
-                )
+                let (rows, reused) = prerender_targets(PrerenderTargetsArgs {
+        dist: &dist,
+        route_id: &route_id,
+        pattern: &pattern,
+        targets: targets,
+        nonce: &nonce,
+        nonce_for: &nonce_for,
+        page_renderer: stack.page_renderer.as_ref(),
+        loader_runner: stack.loader_runner.as_ref(),
+        module_path: module_path.as_deref(),
+        boot_script_url: boot_script_url.as_deref(),
+        layout_ids: &layout_ids,
+        layout_modules: &prerender_layout_modules,
+        error_route: prerender_error_route_id.as_deref(),
+        plugin_head: &plugin_head,
+        prev_prerenders: &prev_prerenders,
+        route_src_hash: &route_src_hash,
+    })
                 .await?;
                 reused_prerender_count += reused;
                 let mut outs: Vec<String> = Vec::with_capacity(rows.len());
@@ -5575,24 +5623,24 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                                 });
                             }
                         }
-                        let (rows, reused) = prerender_targets(
-                            &dist,
-                            &route_id,
-                            &pattern,
-                            targets,
-                            &nonce,
-                            &nonce_for,
-                            stack.page_renderer.as_ref(),
-                            stack.loader_runner.as_ref(),
-                            module_path.as_deref(),
-                            boot_script_url.as_deref(),
-                            &layout_ids,
-                            &prerender_layout_modules,
-                            prerender_error_route_id.as_deref(),
-                            &plugin_head,
-                            &prev_prerenders,
-                            &route_src_hash,
-                        )
+                        let (rows, reused) = prerender_targets(PrerenderTargetsArgs {
+        dist: &dist,
+        route_id: &route_id,
+        pattern: &pattern,
+        targets: targets,
+        nonce: &nonce,
+        nonce_for: &nonce_for,
+        page_renderer: stack.page_renderer.as_ref(),
+        loader_runner: stack.loader_runner.as_ref(),
+        module_path: module_path.as_deref(),
+        boot_script_url: boot_script_url.as_deref(),
+        layout_ids: &layout_ids,
+        layout_modules: &prerender_layout_modules,
+        error_route: prerender_error_route_id.as_deref(),
+        plugin_head: &plugin_head,
+        prev_prerenders: &prev_prerenders,
+        route_src_hash: &route_src_hash,
+    })
                         .await?;
                         reused_prerender_count += reused;
                         let mut outs: Vec<String> = Vec::with_capacity(rows.len());
@@ -5700,46 +5748,46 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                                 reused_prerender_count += 1;
                                 (fresh, status)
                             } else {
-                                write_prerender(
-                                    &dist,
-                                    &rel,
-                                    &route_id,
-                                    &pattern,
-                                    &url_path,
-                                    &empty_params,
-                                    locale,
-                                    &nonce_for,
-                                    stack.page_renderer.as_ref(),
-                                    stack.loader_runner.as_ref(),
-                                    module_path.as_deref(),
-                                    boot_script_url.as_deref(),
-                                    &layout_ids,
-                                    &prerender_layout_modules,
-                                    prerender_error_route_id.as_deref(),
-                                    &plugin_head,
-                                )
+                                write_prerender(PrerenderArgs {
+        dist: &dist,
+        rel: &rel,
+        route_id: &route_id,
+        pattern: &pattern,
+        url_path: &url_path,
+        params: &empty_params,
+        locale: locale,
+        nonce: &nonce_for,
+        page_renderer: stack.page_renderer.as_ref(),
+        loader_runner: stack.loader_runner.as_ref(),
+        module_path: module_path.as_deref(),
+        boot_script_url: boot_script_url.as_deref(),
+        layouts: &layout_ids,
+        layout_module_paths: &prerender_layout_modules,
+        error_route_id: prerender_error_route_id.as_deref(),
+        plugin_head: &plugin_head,
+    })
                                 .await?
                             }
                         }
                         None => {
-                            write_prerender(
-                                &dist,
-                                &rel,
-                                &route_id,
-                                &pattern,
-                                &url_path,
-                                &empty_params,
-                                locale,
-                                &nonce_for,
-                                stack.page_renderer.as_ref(),
-                                stack.loader_runner.as_ref(),
-                                module_path.as_deref(),
-                                boot_script_url.as_deref(),
-                                &layout_ids,
-                                &prerender_layout_modules,
-                                prerender_error_route_id.as_deref(),
-                                &plugin_head,
-                            )
+                            write_prerender(PrerenderArgs {
+        dist: &dist,
+        rel: &rel,
+        route_id: &route_id,
+        pattern: &pattern,
+        url_path: &url_path,
+        params: &empty_params,
+        locale: locale,
+        nonce: &nonce_for,
+        page_renderer: stack.page_renderer.as_ref(),
+        loader_runner: stack.loader_runner.as_ref(),
+        module_path: module_path.as_deref(),
+        boot_script_url: boot_script_url.as_deref(),
+        layouts: &layout_ids,
+        layout_module_paths: &prerender_layout_modules,
+        error_route_id: prerender_error_route_id.as_deref(),
+        plugin_head: &plugin_head,
+    })
                             .await?
                         }
                     };
@@ -7549,22 +7597,22 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
             // loader's data + resolved defers, and the resolved locale —
             // no render, just loaders + ODF encode.
             if is_data_request {
-                return route_data_response(
-                    &req_owned,
-                    loader_runner.as_ref(),
-                    module_path.as_deref(),
-                    route_id.as_deref(),
-                    &params,
-                    &metrics,
-                    started,
-                    &middleware_locals,
-                    &middleware_headers,
-                    &layout_module_paths,
-                    &resolved_locale,
-                    session_codec.as_deref(),
-                    middleware_ms,
-                    waterfall.as_ref(),
-                )
+                return route_data_response(RouteDataArgs {
+        req: &req_owned,
+        loader_runner: loader_runner.as_ref(),
+        module_path: module_path.as_deref(),
+        route_id: route_id.as_deref(),
+        params: &params,
+        metrics: &metrics,
+        started: started,
+        middleware_locals: &middleware_locals,
+        middleware_headers: &middleware_headers,
+        layout_module_paths: &layout_module_paths,
+        locale: &resolved_locale,
+        session_codec: session_codec.as_deref(),
+        middleware_ms: middleware_ms,
+        waterfall: waterfall.as_ref(),
+    })
                 .await;
             }
 

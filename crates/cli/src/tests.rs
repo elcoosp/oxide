@@ -894,24 +894,24 @@ async fn write_prerender_threads_loader_data_into_renderer() {
     let loader_runner: Arc<dyn oxide_fw_server::LoaderRunner> = loader;
 
     let params: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
-    write_prerender(
-        &dist,
-        "prerendered/index.html",
-        "routes/index",
-        "/",
-        "/",
-        &params,
-        "", // no i18n locale in this test
-        "test-nonce",
-        Some(&page_renderer),
-        Some(&loader_runner),
-        Some(std::path::Path::new("/fake/page.server.ts")),
-        None, // no island boot script in this test
-        &[],  // no layouts in this test
-        &[],  // no layout chain in this test
-        None, // no error.tsx in this test
-        &serde_json::json!({"meta":[],"link":[],"style":[],"script":[]}),
-    )
+    write_prerender(PrerenderArgs {
+        dist: &dist,
+        rel: "prerendered/index.html",
+        route_id: "routes/index",
+        pattern: "/",
+        url_path: "/",
+        params: &params,
+        locale: "",
+        nonce: "test-nonce",
+        page_renderer: Some(&page_renderer),
+        loader_runner: Some(&loader_runner),
+        module_path: Some(std::path::Path::new("/fake/page.server.ts")),
+        boot_script_url: None,
+        layouts: &[],
+        layout_module_paths: &[],
+        error_route_id: None,
+        plugin_head: &serde_json::json!({"meta":[],"link":[],"style":[],"script":[]}),
+    })
     .await
     .expect("write_prerender ok");
 
@@ -940,24 +940,24 @@ async fn write_prerender_without_loader_uses_empty_data() {
     let page_renderer: Arc<dyn oxide_fw_server::PageRenderer> = renderer;
 
     let params: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
-    write_prerender(
-        &dist,
-        "prerendered/index.html",
-        "routes/index",
-        "/",
-        "/",
-        &params,
-        "", // no i18n locale in this test
-        "test-nonce",
-        Some(&page_renderer),
-        None,
-        None,
-        None, // no island boot script
-        &[],  // no layouts
-        &[],  // no layout chain
-        None, // no error.tsx
-        &serde_json::json!({"meta":[],"link":[],"style":[],"script":[]}),
-    )
+    write_prerender(PrerenderArgs {
+        dist: &dist,
+        rel: "prerendered/index.html",
+        route_id: "routes/index",
+        pattern: "/",
+        url_path: "/",
+        params: &params,
+        locale: "",
+        nonce: "test-nonce",
+        page_renderer: Some(&page_renderer),
+        loader_runner: None,
+        module_path: None,
+        boot_script_url: None,
+        layouts: &[],
+        layout_module_paths: &[],
+        error_route_id: None,
+        plugin_head: &serde_json::json!({"meta":[],"link":[],"style":[],"script":[]}),
+    })
     .await
     .expect("write_prerender ok");
 
@@ -4328,24 +4328,24 @@ async fn write_prerender_carries_500_status_for_marker_body() {
     let renderer: std::sync::Arc<dyn oxide_fw_server::PageRenderer> =
         std::sync::Arc::new(BufferedErrorMarkerRenderer);
     let params: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
-    let (html, status) = crate::write_prerender(
-        &dist,
-        "prerendered/index.html",
-        "routes/index",
-        "/",
-        "/",
-        &params,
-        "", // no i18n locale in this test
-        "test-nonce",
-        Some(&renderer),
-        None, // no loader
-        None, // no module_path
-        None, // no boot script
-        &[],  // no layouts
-        &[],  // no layout server modules
-        None, // no error_route
-        &serde_json::json!({"meta":[],"link":[],"style":[],"script":[]}),
-    )
+    let (html, status) = crate::write_prerender(PrerenderArgs {
+        dist: &dist,
+        rel: "prerendered/index.html",
+        route_id: "routes/index",
+        pattern: "/",
+        url_path: "/",
+        params: &params,
+        locale: "",
+        nonce: "test-nonce",
+        page_renderer: Some(&renderer),
+        loader_runner: None,
+        module_path: None,
+        boot_script_url: None,
+        layouts: &[],
+        layout_module_paths: &[],
+        error_route_id: None,
+        plugin_head: &serde_json::json!({"meta":[],"link":[],"style":[],"script":[]}),
+    })
     .await
     .expect("write_prerender succeeds");
     assert_eq!(
@@ -4365,24 +4365,24 @@ async fn write_prerender_carries_200_status_for_clean_body() {
     let renderer: std::sync::Arc<dyn oxide_fw_server::PageRenderer> =
         std::sync::Arc::new(CleanBodyRenderer);
     let params: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
-    let (_html, status) = crate::write_prerender(
-        &dist,
-        "prerendered/index.html",
-        "routes/index",
-        "/",
-        "/",
-        &params,
-        "", // no i18n locale in this test
-        "test-nonce",
-        Some(&renderer),
-        None,
-        None,
-        None,
-        &[],
-        &[],
-        None,
-        &serde_json::json!({"meta":[],"link":[],"style":[],"script":[]}),
-    )
+    let (_html, status) = crate::write_prerender(PrerenderArgs {
+        dist: &dist,
+        rel: "prerendered/index.html",
+        route_id: "routes/index",
+        pattern: "/",
+        url_path: "/",
+        params: &params,
+        locale: "",
+        nonce: "test-nonce",
+        page_renderer: Some(&renderer),
+        loader_runner: None,
+        module_path: None,
+        boot_script_url: None,
+        layouts: &[],
+        layout_module_paths: &[],
+        error_route_id: None,
+        plugin_head: &serde_json::json!({"meta":[],"link":[],"style":[],"script":[]}),
+    })
     .await
     .expect("write_prerender succeeds");
     assert_eq!(status, 200, "no marker → 200");
