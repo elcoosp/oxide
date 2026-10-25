@@ -1049,25 +1049,35 @@ fn default_ssr_externals() -> Vec<String> {
     .collect()
 }
 
-fn bundle_env_options(
-    env: oxide_fw_bundler::BundleEnv,
-    entries: BTreeMap<String, PathBuf>,
-    out_dir: PathBuf,
-    precompiled: BTreeMap<PathBuf, String>,
-    jsx_import_source: Option<String>,
-    build_secret: String,
-    transform_hook: Option<oxide_fw_bundler::TransformHook>,
-    css_transform: oxide_fw_bundler::CssTransformHook,
-    // §6.1: specifiers left external in the SSR bundle. Empty for client/edge
-    // (a browser bundle cannot resolve a bare import) and for the default
-    // self-contained server bundle; populated from `build.ssrExternals`.
-    ssr_externals: Vec<String>,
-    // BUG-11: `build.sourcemap` (`off` | `file` | `hidden`). `off` → no maps.
-    sourcemap_on: bool,
-    // P-23: production builds minify; the dev client bundle stays unminified
-    // for debugging and a faster fresh `oxide dev`.
-    minify: bool,
-) -> oxide_fw_bundler::BundleOptions {
+pub struct BundleEnvArgs {
+    pub env: oxide_fw_bundler::BundleEnv,
+    pub entries: BTreeMap<String, PathBuf>,
+    pub out_dir: PathBuf,
+    pub precompiled: BTreeMap<PathBuf, String>,
+    pub jsx_import_source: Option<String>,
+    pub build_secret: String,
+    pub transform_hook: Option<oxide_fw_bundler::TransformHook>,
+    pub css_transform: oxide_fw_bundler::CssTransformHook,
+    pub ssr_externals: Vec<String>,
+    pub sourcemap_on: bool,
+    pub minify: bool,
+}
+
+fn bundle_env_options(args: BundleEnvArgs) -> oxide_fw_bundler::BundleOptions {
+    let BundleEnvArgs {
+        env,
+        entries,
+        out_dir,
+        precompiled,
+        jsx_import_source,
+        build_secret,
+        transform_hook,
+        css_transform,
+        ssr_externals,
+        sourcemap_on,
+        minify,
+    } = args;
+
     // §6.1: `process.env.NODE_ENV` drives React's dev-vs-production
     // bundle selection. Setting it at the CLI level (rather than in the
     // bundler) keeps the bundler agnostic of a project's framework — the
@@ -1531,19 +1541,19 @@ async fn ensure_dev_client_bundle(
     // §6.5 / §6.1: unminified, sourcemaps on (dev debugging). No precompile
     // pass here — the Oxc path handles TS/JSX; SFC precompile is a build-time
     // optimization, and a dev start should not block on the tooling pool.
-    let mut client_opts = bundle_env_options(
-        oxide_fw_bundler::BundleEnv::Client,
-        client_entries,
-        client_out,
-        BTreeMap::new(),
-        jsx_source,
+    let mut client_opts = bundle_env_options(BundleEnvArgs {
+        env: oxide_fw_bundler::BundleEnv::Client,
+        entries: client_entries,
+        out_dir: client_out,
+        precompiled: BTreeMap::new(),
+        jsx_import_source: jsx_source,
         build_secret,
         transform_hook,
         css_transform,
-        Vec::new(),
-        true,  // sourcemap on for dev
-        false, // P-23: unminified dev client bundle
-    );
+        ssr_externals: Vec::new(),
+        sourcemap_on: true,
+        minify: false,
+    });
     client_opts.resolve_hook = build_js_plugin_resolve_hook(rootp, cfg, pool);
     client_opts.load_hook = build_js_plugin_load_hook(rootp, cfg, pool);
     client_opts.render_chunk_hook = build_js_plugin_render_chunk_hook(rootp, cfg, pool);
@@ -4259,19 +4269,19 @@ async fn bundle_edge_entry(
     let mut entries: BTreeMap<String, PathBuf> = BTreeMap::new();
     entries.insert("edge".to_string(), entry.to_path_buf());
 
-    let opts = bundle_env_options(
-        oxide_fw_bundler::BundleEnv::Edge,
+    let opts = bundle_env_options(BundleEnvArgs {
+        env: oxide_fw_bundler::BundleEnv::Edge,
         entries,
-        out_dir.clone(),
+        out_dir: out_dir.clone(),
         precompiled,
-        None,
-        "edge".to_string(),
-        None,
+        jsx_import_source: None,
+        build_secret: "edge".to_string(),
+        transform_hook: None,
         css_transform,
-        Vec::new(),
-        false,
-        true,
-    );
+        ssr_externals: Vec::new(),
+        sourcemap_on: false,
+        minify: true,
+    });
 
     // `bundle_env_options` only populates externals for the SSR env; the edge
     // env is self-contained by default. Apply the declared set here rather
@@ -4690,32 +4700,32 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     };
     let css_transform = build_css_transform_hook(&cfg, tw_output.map(std::sync::Arc::new));
 
-    let client_opts = bundle_env_options(
-        oxide_fw_bundler::BundleEnv::Client,
-        client_entries,
-        client_out.clone(),
-        client_precompiled,
-        jsx_source.clone(),
-        build_secret.clone(),
-        transform_hook.clone(),
-        css_transform.clone(),
-        Vec::new(),
-        cfg.build.sourcemap != "off",
-        true, // production build minifies
-    );
-    let server_opts = bundle_env_options(
-        oxide_fw_bundler::BundleEnv::Ssr,
-        server_entries.clone(),
-        server_out.clone(),
-        server_precompiled.clone(),
-        jsx_source,
+    let client_opts = bundle_env_options(BundleEnvArgs {
+        env: oxide_fw_bundler::BundleEnv::Client,
+        entries: client_entries,
+        out_dir: client_out.clone(),
+        precompiled: client_precompiled,
+        jsx_import_source: jsx_source.clone(),
+        build_secret: build_secret.clone(),
+        transform_hook: transform_hook.clone(),
+        css_transform: css_transform.clone(),
+        ssr_externals: Vec::new(),
+        sourcemap_on: cfg.build.sourcemap != "off",
+        minify: true,
+    });
+    let server_opts = bundle_env_options(BundleEnvArgs {
+        env: oxide_fw_bundler::BundleEnv::Ssr,
+        entries: server_entries.clone(),
+        out_dir: server_out.clone(),
+        precompiled: server_precompiled.clone(),
+        jsx_import_source: jsx_source,
         build_secret,
         transform_hook,
-        css_transform.clone(),
-        cfg.build.ssr_externals.clone(),
-        cfg.build.sourcemap != "off",
-        true, // production build minifies
-    );
+        css_transform: css_transform.clone(),
+        ssr_externals: cfg.build.ssr_externals.clone(),
+        sourcemap_on: cfg.build.sourcemap != "off",
+        minify: true,
+    });
     // §15.2: `buildStart` fires once, before the first module is bundled.
     // `buildEnd` fires after the last, with a summary. Both are
     // notifications — a failure is logged by the dispatcher and skipped.
