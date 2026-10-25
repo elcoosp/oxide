@@ -501,7 +501,8 @@ mod tests {
         assert_eq!(hex.len(), 64);
         assert_eq!(key_from_hex(&hex), Some(key.clone()));
         assert_eq!(key_from_hex("zz"), None);
-        let store = ContentStore::open(std::env::temp_dir().join("oxide-cas-test-paths")).unwrap();
+        let _tmp = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(_tmp.path()).unwrap();
         let p = store.blob_path(&key);
         assert!(p.to_string_lossy().ends_with(&format!("{hex}.zst")));
     }
