@@ -100,16 +100,6 @@ pub fn parse_native_plugins(cfg: &OxideConfig) -> Result<Vec<NativePlugin>, Oxid
     Ok(out)
 }
 
-/// Is `plugin` declared? A thin wrapper over `parse_native_plugins` for
-/// callers that want to gate a feature on the plugin's presence without
-/// threading the full list. `false` on parse error (the OWNER of validation
-/// — `cmd_check`, `cmd_build` — has already failed loudly by then).
-pub fn enables(cfg: &OxideConfig, plugin: NativePlugin) -> bool {
-    parse_native_plugins(cfg)
-        .map(|v| v.iter().any(|n| *n == plugin))
-        .unwrap_or(false)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

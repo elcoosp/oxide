@@ -106,11 +106,6 @@ impl AdapterPageRenderer {
     pub fn new(inner: Arc<dyn FrameworkRenderer>) -> Self {
         Self { inner }
     }
-
-    /// Access to the wrapped renderer (for tests and introspection).
-    pub fn inner(&self) -> &Arc<dyn FrameworkRenderer> {
-        &self.inner
-    }
 }
 
 fn to_fw_input(input: PageRenderInput) -> FrameworkRenderInput {

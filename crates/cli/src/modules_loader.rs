@@ -235,15 +235,15 @@ pub fn inject_routes(tree: &mut RouteTree, mods: &[ResolvedModule]) -> usize {
         let Some(ref routes_dir) = m.routes_dir else {
             continue;
         };
-        if !routes_dir.is_dir() {
+        if !m.routes_present() {
             continue;
         }
         let subtree = match RouteTree::scan(routes_dir) {
             Ok(t) => t,
             Err(e) => {
                 eprintln!(
-                    "warn: module `{}` routes scan failed: {} {}",
-                    m.name, e.0.code, e.0.message
+                    "warn: module `{}` (at {}) routes scan failed: {} {}",
+                    m.name, m.dir.display(), e.0.code, e.0.message
                 );
                 continue;
             }

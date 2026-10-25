@@ -86,6 +86,7 @@ impl L0Cache {
 
     /// Store a response. The caller passes the body with [`NONCE_SENTINEL`] in
     /// place of the live nonce, and a header set without the CSP header.
+    #[cfg(test)]
     pub async fn put(
         &self,
         route: &str,
@@ -146,6 +147,7 @@ impl L0Cache {
 
     /// PERF-04: the canonical L0 key for a (route, params, vary) triple — the
     /// single-flight key must match it exactly.
+    #[cfg(test)]
     pub fn key_of(&self, route: &str, params: &str, vary: &str) -> String {
         self.key(route, params, vary)
     }
@@ -251,6 +253,7 @@ impl CachedResponse {
 
     /// True when the body still carries the sentinel (i.e. it was stored with
     /// a substitutable nonce).
+    #[cfg(test)]
     pub fn has_sentinel(&self) -> bool {
         self.entry
             .body

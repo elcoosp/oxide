@@ -11777,11 +11777,11 @@ async fn cmd_migrate(root: &str, source: &str, write: bool, w: Writer<'_>) -> an
     }
     match crate::migrate::apply(&plan) {
         Ok(()) => {
-            outln!(w, "  wrote {converted} file(s)");
+            outln!(w, "  wrote {converted} file(s) from source `{}`", plan.source);
             Ok(0)
         }
         Err(e) => {
-            outln!(w, "  write errors:");
+            outln!(w, "  write errors (source: `{}`):", plan.source);
             for line in e.lines() {
                 outln!(w, "    {line}");
             }
