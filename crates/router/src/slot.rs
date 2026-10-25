@@ -107,11 +107,10 @@ pub fn resolve_slots(
     let mut out = SlotMatch::default();
 
     // 1. Fill in the default slot from the primary path.
-    if let Some(children) = slots.iter().find(|s| s.name == "children") {
-        if let Some(p) = children.paths.iter().find(|p| matches_route(p, route)) {
+    if let Some(children) = slots.iter().find(|s| s.name == "children")
+        && let Some(p) = children.paths.iter().find(|p| matches_route(p, route)) {
             out.slots.insert("children".into(), p.clone());
         }
-    }
 
     // 2. Additional parallel slots — any whose paths match the route.
     for s in slots {

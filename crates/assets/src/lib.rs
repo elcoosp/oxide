@@ -434,14 +434,13 @@ pub struct DefaultFontBackend;
 /// to a neutral 100% face.
 fn metric_overrides_for(spec: &FontSpec) -> Option<font_metrics::MetricOverrides> {
     for p in &spec.local_paths {
-        if let Ok(bytes) = std::fs::read(p) {
-            if let Ok(m) = font_metrics::read_metrics(&bytes) {
+        if let Ok(bytes) = std::fs::read(p)
+            && let Ok(m) = font_metrics::read_metrics(&bytes) {
                 return Some(font_metrics::metric_overrides(
                     m,
                     font_metrics::TIMES_NEW_ROMAN,
                 ));
             }
-        }
     }
     None
 }

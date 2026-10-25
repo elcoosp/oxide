@@ -156,11 +156,10 @@ pub fn edge_manifest_routes(tree_json: &serde_json::Value) -> Result<Vec<String>
     let mut out: Vec<String> = Vec::with_capacity(rows.len());
     let mut seen = std::collections::BTreeSet::new();
     for row in rows {
-        if let Some(pattern) = row.get("pattern").and_then(|p| p.as_str()) {
-            if seen.insert(pattern.to_string()) {
+        if let Some(pattern) = row.get("pattern").and_then(|p| p.as_str())
+            && seen.insert(pattern.to_string()) {
                 out.push(pattern.to_string());
             }
-        }
     }
     Ok(out)
 }
@@ -192,11 +191,10 @@ pub fn merge_head_structured(
 
     for src in [base, over] {
         let Some(obj) = src.as_object() else { continue };
-        if let Some(t) = obj.get("title") {
-            if !t.is_null() {
+        if let Some(t) = obj.get("title")
+            && !t.is_null() {
                 title = t.clone();
             }
-        }
         if let Some(arr) = obj.get("meta").and_then(|v| v.as_array()) {
             meta.extend(arr.iter().cloned());
         }

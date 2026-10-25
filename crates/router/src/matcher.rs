@@ -180,11 +180,10 @@ pub(crate) fn layout_chain<E: EntryLike>(entries: &[E], route_id: &str) -> Vec<R
 fn regex_for(pattern: &str) -> Option<Regex> {
     static CACHE: OnceLock<RwLock<HashMap<String, Regex>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| RwLock::new(HashMap::new()));
-    if let Ok(guard) = cache.read() {
-        if let Some(re) = guard.get(pattern) {
+    if let Ok(guard) = cache.read()
+        && let Some(re) = guard.get(pattern) {
             return Some(re.clone());
         }
-    }
     let full = format!("^(?:{pattern})$");
     let re = Regex::new(&full).ok()?;
     if let Ok(mut guard) = cache.write() {

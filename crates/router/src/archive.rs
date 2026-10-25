@@ -100,8 +100,8 @@ pub(crate) fn archive_impl(tree: &RouteTree, out: &Path) -> Result<()> {
             "check route entries for non-UTF-8 paths or cycles",
         )
     })?;
-    if let Some(parent) = out.parent() {
-        if !parent.as_os_str().is_empty() {
+    if let Some(parent) = out.parent()
+        && !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent).map_err(|e| {
                 ferr(
                     "RTR-100",
@@ -110,7 +110,6 @@ pub(crate) fn archive_impl(tree: &RouteTree, out: &Path) -> Result<()> {
                 )
             })?;
         }
-    }
     fs::write(out, &bytes).map_err(|e| {
         ferr(
             "RTR-100",

@@ -203,8 +203,8 @@ pub fn scan_import_spans(code: &str) -> Vec<ImportSpan> {
                             j += 1;
                         }
                     }
-                    if is_word_opt(code, toks.get(j), "from") {
-                        if let Some(Tok::Str { value }) = toks.get(j + 1).map(|x| &x.kind) {
+                    if is_word_opt(code, toks.get(j), "from")
+                        && let Some(Tok::Str { value }) = toks.get(j + 1).map(|x| &x.kind) {
                             let end_idx = stmt_end_idx(&toks, j + 1);
                             out.push(ImportSpan {
                                 start: t.start,
@@ -215,7 +215,6 @@ pub fn scan_import_spans(code: &str) -> Vec<ImportSpan> {
                             i = end_idx;
                             continue;
                         }
-                    }
                     i += 1; // e.g. `import x = require('y')` — not an ESM import
                     continue;
                 }
@@ -1046,8 +1045,7 @@ fn walk_stmt_for_request_reads<'a>(
         Statement::ExportDefaultDeclaration(e) => {
             if let oxc_ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(f) =
                 &e.declaration
-            {
-                if let Some(body) = &f.body {
+                && let Some(body) = &f.body {
                     for s in &body.statements {
                         walk_stmt_for_request_reads(s, source, found);
                         if found.is_some() {
@@ -1055,7 +1053,6 @@ fn walk_stmt_for_request_reads<'a>(
                         }
                     }
                 }
-            }
         }
         Statement::FunctionDeclaration(f) => {
             if check_fn_params_for_request_read(&f.params, source, found) {
@@ -1147,24 +1144,22 @@ fn walk_expr<'a>(
                     return;
                 }
             }
-            if let Expression::Identifier(obj) = &m.object {
-                if obj.name.as_str() == "request" && m.property.name.as_str() == "headers" {
+            if let Expression::Identifier(obj) = &m.object
+                && obj.name.as_str() == "request" && m.property.name.as_str() == "headers" {
                     *found = Some((
                         (m.span.start as usize, m.span.end as usize),
                         "request.headers",
                     ));
                     return;
                 }
-            }
             walk_expr(&m.object, source, found);
         }
         Expression::ComputedMemberExpression(m) => {
-            if let Expression::Identifier(obj) = &m.object {
-                if let Some(name) = request_scoped_name(obj.name.as_str()) {
+            if let Expression::Identifier(obj) = &m.object
+                && let Some(name) = request_scoped_name(obj.name.as_str()) {
                     *found = Some(((m.span.start as usize, m.span.end as usize), name));
                     return;
                 }
-            }
             walk_expr(&m.object, source, found);
             walk_expr(&m.expression, source, found);
         }

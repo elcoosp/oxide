@@ -237,11 +237,10 @@ impl Catalog {
             return m;
         }
         // Language subtag fallback: `pt-BR` → `pt`.
-        if let Some(lang) = locale.split('-').next() {
-            if let Some(m) = self.entries.get(lang).and_then(|c| c.get(key)) {
+        if let Some(lang) = locale.split('-').next()
+            && let Some(m) = self.entries.get(lang).and_then(|c| c.get(key)) {
                 return m;
             }
-        }
         self.entries
             .get(default)
             .and_then(|c| c.get(key))
@@ -262,8 +261,8 @@ impl Catalog {
         let bytes = template.as_bytes();
         let mut i = 0;
         while i < bytes.len() {
-            if bytes[i] == b'{' {
-                if let Some(close_rel) = template[i..].find('}') {
+            if bytes[i] == b'{'
+                && let Some(close_rel) = template[i..].find('}') {
                     let close = i + close_rel;
                     let name = &template[i + 1..close];
                     if let Some(v) = args.get(name) {
@@ -272,7 +271,6 @@ impl Catalog {
                     i = close + 1;
                     continue;
                 }
-            }
             out.push(bytes[i] as char);
             i += 1;
         }
@@ -744,11 +742,10 @@ pub fn load_catalog_from_dir(locales_root: &std::path::Path) -> Result<Catalog> 
                 .iter()
                 .map(|c| c.to_string_lossy().into_owned())
                 .collect();
-            if let Some(last) = parts.last_mut() {
-                if let Some(stem) = last.strip_suffix(".json") {
+            if let Some(last) = parts.last_mut()
+                && let Some(stem) = last.strip_suffix(".json") {
                     *last = stem.to_string();
                 }
-            }
             // Drop a leading file whose stem equals the locale name.
             if parts.first().map(String::as_str) == Some(locale) && parts.len() == 1 {
                 parts.clear();

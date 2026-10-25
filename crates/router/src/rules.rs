@@ -18,15 +18,14 @@ pub(crate) fn compile_impl(rules: Vec<NativeRule>) -> Result<RulesEngine> {
             ));
         }
         let segs: Vec<&str> = r.source.split('/').filter(|s| !s.is_empty()).collect();
-        if let Some(pos) = segs.iter().position(|s| *s == "*") {
-            if pos != segs.len() - 1 {
+        if let Some(pos) = segs.iter().position(|s| *s == "*")
+            && pos != segs.len() - 1 {
                 return Err(ferr(
                     "RTR-110",
                     format!("rule #{n}: `*` must be the last segment of the source"),
                     "move `*` to the end, e.g. `/docs/*`",
                 ));
             }
-        }
         if r.rule_type.as_deref() == Some("rewrite") && r.destination.is_none() {
             return Err(ferr(
                 "RTR-110",
@@ -191,11 +190,10 @@ pub(crate) fn evaluate_impl(
                 return RuleOutcome::AuthRequired;
             }
         }
-        if rule.rule_type.as_deref() == Some("rewrite") {
-            if let Some(dest) = &rule.destination {
+        if rule.rule_type.as_deref() == Some("rewrite")
+            && let Some(dest) = &rule.destination {
                 return RuleOutcome::Rewrite(substitute(dest, &params));
             }
-        }
         if let Some(dest) = &rule.destination {
             return RuleOutcome::Redirect {
                 destination: substitute(dest, &params),

@@ -197,11 +197,10 @@ impl RouteTree {
     /// P-02: cached layout chain for `route_id` (outermost first). Computed
     /// once per id, then cloned per match — no O(entries) re-scan.
     pub(crate) fn layout_chain_cached(&self, route_id: &str) -> Vec<RouteId> {
-        if let Ok(c) = self.layout_chains.read() {
-            if let Some(v) = c.get(route_id) {
+        if let Ok(c) = self.layout_chains.read()
+            && let Some(v) = c.get(route_id) {
                 return v.clone();
             }
-        }
         let chain = matcher::layout_chain(&self.entries, route_id);
         if let Ok(mut c) = self.layout_chains.write() {
             c.insert(route_id.to_string(), chain.clone());
@@ -211,11 +210,10 @@ impl RouteTree {
 
     /// P-06: build (once) the middleware/error/not-found prefix indexes.
     fn dispatch_index(&self) -> std::sync::Arc<DispatchIndex> {
-        if let Ok(c) = self.dispatch.read() {
-            if let Some(idx) = c.as_ref() {
+        if let Ok(c) = self.dispatch.read()
+            && let Some(idx) = c.as_ref() {
                 return std::sync::Arc::clone(idx);
             }
-        }
         let mut middleware: Vec<(String, std::path::PathBuf, usize)> = Vec::new();
         let mut errors: Vec<(String, String, usize)> = Vec::new();
         let mut not_found: Option<String> = None;

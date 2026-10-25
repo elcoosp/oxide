@@ -139,12 +139,11 @@ impl Encoder {
         }
         match v {
             Value::Array(_) | Value::Object(_) | Value::Map(_) | Value::Set(_) => {
-                if register {
-                    if let Some(wrote_ref) = self.dedup_or_register(v)? {
+                if register
+                    && let Some(wrote_ref) = self.dedup_or_register(v)? {
                         debug_assert!(wrote_ref);
                         return Ok(false);
                     }
-                }
                 self.write_header(v)?;
                 Ok(true)
             }

@@ -22,13 +22,12 @@ static KEY: OnceLock<[u8; 32]> = OnceLock::new();
 fn key() -> &'static [u8; 32] {
     KEY.get_or_init(|| {
         if let Ok(v) = std::env::var("OXIDE_CACHE_MAC_KEY") {
-            if let Ok(bytes) = hex_decode(&v) {
-                if bytes.len() >= 32 {
+            if let Ok(bytes) = hex_decode(&v)
+                && bytes.len() >= 32 {
                     let mut k = [0u8; 32];
                     k.copy_from_slice(&bytes[..32]);
                     return k;
                 }
-            }
             // Raw (non-hex) value: derive 32 bytes deterministically.
             let mut k = [0u8; 32];
             let h = blake3::hash(v.as_bytes());

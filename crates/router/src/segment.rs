@@ -41,14 +41,13 @@ pub(crate) fn classify(seg: &str) -> SegKind<'_> {
         SegKind::CatchAll(name)
     } else if let Some(rest) = seg.strip_prefix(':') {
         // `:name{regex}` — regex spans from the first `{` to the final `}`.
-        if rest.ends_with('}') {
-            if let Some(open) = rest.find('{') {
+        if rest.ends_with('}')
+            && let Some(open) = rest.find('{') {
                 return SegKind::Param {
                     name: &rest[..open],
                     constraint: Some(&rest[open + 1..rest.len() - 1]),
                 };
             }
-        }
         SegKind::Param {
             name: rest,
             constraint: None,
@@ -73,13 +72,12 @@ pub(crate) fn percent_decode(s: &str) -> String {
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(hi), Some(lo)) = (hexval(bytes[i + 1]), hexval(bytes[i + 2])) {
+        if bytes[i] == b'%' && i + 2 < bytes.len()
+            && let (Some(hi), Some(lo)) = (hexval(bytes[i + 1]), hexval(bytes[i + 2])) {
                 out.push(hi << 4 | lo);
                 i += 3;
                 continue;
             }
-        }
         out.push(bytes[i]);
         i += 1;
     }

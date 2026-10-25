@@ -455,8 +455,8 @@ fn walk_export_decl_for_use_cache(
                 .as_ref()
                 .map(|i| i.name.as_str().to_string())
                 .unwrap_or_default();
-            if let Some(body) = func.body.as_ref() {
-                if let Some((ds, de)) = find_use_cache_directive(body) {
+            if let Some(body) = func.body.as_ref()
+                && let Some((ds, de)) = find_use_cache_directive(body) {
                     emit_use_cache_edit(
                         code,
                         func,
@@ -472,7 +472,6 @@ fn walk_export_decl_for_use_cache(
                         directives,
                     );
                 }
-            }
         }
         Declaration::VariableDeclaration(var) => {
             walk_var_decl_for_use_cache(var, code, mod_arg, edits, directives);

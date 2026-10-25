@@ -594,11 +594,10 @@ impl Injector {
         })
         .map_err(|e| err("RND-INJECT", format!("html injection failed: {e}")))?;
         let mut out = out;
-        if !body_seen.load(Ordering::Acquire) {
-            if let Some(b) = body_inject.as_ref() {
+        if !body_seen.load(Ordering::Acquire)
+            && let Some(b) = body_inject.as_ref() {
                 out.push_str(b);
             }
-        }
         Ok(out)
     }
 
@@ -746,11 +745,10 @@ impl InjectStream {
             )
         })?;
         let mut out = std::mem::take(&mut *self.sink.lock().unwrap());
-        if !self.body_seen.load(Ordering::Acquire) {
-            if let Some(b) = &self.body_inject {
+        if !self.body_seen.load(Ordering::Acquire)
+            && let Some(b) = &self.body_inject {
                 out.extend_from_slice(b.as_bytes());
             }
-        }
         Ok(out)
     }
 }
@@ -782,12 +780,11 @@ fn ensure_head(html: &str) -> String {
     if find_tag_open(html, "head").is_some() {
         return html.to_string();
     }
-    if let Some(i) = find_tag_open(html, "html") {
-        if let Some(gt) = html[i..].find('>') {
+    if let Some(i) = find_tag_open(html, "html")
+        && let Some(gt) = html[i..].find('>') {
             let at = i + gt + 1;
             return format!("{}<head></head>{}", &html[..at], &html[at..]);
         }
-    }
     format!("<head></head>{html}")
 }
 

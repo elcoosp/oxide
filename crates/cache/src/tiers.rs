@@ -204,11 +204,10 @@ impl DiskTier {
             let table = rtxn.open_table(ENTRY_TABLE).map_err(dberr)?;
             let iter = table.iter().map_err(dberr)?;
             for row in iter {
-                if let Ok((_, v)) = row {
-                    if let Ok(idx) = serde_json::from_slice::<DiskIndexEntry>(v.value()) {
+                if let Ok((_, v)) = row
+                    && let Ok(idx) = serde_json::from_slice::<DiskIndexEntry>(v.value()) {
                         cur = cur.saturating_add(idx.size);
                     }
-                }
             }
         }
         Ok(Self {
@@ -589,8 +588,8 @@ impl TieredCache {
         }
 
         // L1: disk (promote on hit).
-        if let Some(disk) = &self.disk {
-            if let Some(e) = disk.get(key)? {
+        if let Some(disk) = &self.disk
+            && let Some(e) = disk.get(key)? {
                 match classify(&e, now) {
                     Freshness::Fresh => {
                         self.memory.insert(key, e.clone());
@@ -607,11 +606,10 @@ impl TieredCache {
                     }
                 }
             }
-        }
 
         // L2: remote (promote on hit).
-        if let Some(remote) = &self.remote {
-            if let Some(e) = remote.get(key).await? {
+        if let Some(remote) = &self.remote
+            && let Some(e) = remote.get(key).await? {
                 match classify(&e, now) {
                     Freshness::Fresh => {
                         self.memory.insert(key, e.clone());
@@ -628,7 +626,6 @@ impl TieredCache {
                     }
                 }
             }
-        }
 
         self.misses.fetch_add(1, Ordering::Relaxed);
         Ok(None)
@@ -808,16 +805,14 @@ impl TieredCache {
         if let Some(e) = self.memory.get(key) {
             return Ok(Some(e));
         }
-        if let Some(disk) = &self.disk {
-            if let Some(e) = disk.get(key)? {
+        if let Some(disk) = &self.disk
+            && let Some(e) = disk.get(key)? {
                 return Ok(Some(Arc::new(e)));
             }
-        }
-        if let Some(remote) = &self.remote {
-            if let Some(e) = remote.get(key).await? {
+        if let Some(remote) = &self.remote
+            && let Some(e) = remote.get(key).await? {
                 return Ok(Some(Arc::new(e)));
             }
-        }
         Ok(None)
     }
 }

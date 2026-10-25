@@ -268,8 +268,8 @@ pub fn emit(target: Target, artifact: &BuildArtifact, out_dir: &Path) -> Result<
             // be statically exported — unless `static.fallback` provides an HTML
             // file to emit as `404.html`, in which case the config accepts the
             // trade-off explicitly.
-            if artifact.static_fallback.is_none() {
-                if let Some(routes) = route_table(&artifact.server_manifest) {
+            if artifact.static_fallback.is_none()
+                && let Some(routes) = route_table(&artifact.server_manifest) {
                     for (route, row) in &routes {
                         let mode = row
                             .get("render_mode")
@@ -286,7 +286,6 @@ pub fn emit(target: Target, artifact: &BuildArtifact, out_dir: &Path) -> Result<
                         }
                     }
                 }
-            }
             // Copy every prerendered output. The intermediate `prerendered/`
             // prefix is stripped so files land at host-ready paths
             // (`/blog/hello.html`, not `/prerendered/blog/hello.html`).

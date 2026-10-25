@@ -215,11 +215,10 @@ impl CacheHandler for S3CacheHandler {
         .await;
         if let Ok(metas) = collected {
             for loc in metas {
-                if let Some(k) = loc.rsplit('/').next() {
-                    if !keys.iter().any(|e| e == k) {
+                if let Some(k) = loc.rsplit('/').next()
+                    && !keys.iter().any(|e| e == k) {
                         keys.push(k.to_string());
                     }
-                }
             }
         }
         Ok(keys)

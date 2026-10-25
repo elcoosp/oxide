@@ -636,16 +636,14 @@ pub fn detect_workspace_root(dir: &Path) -> Option<PathBuf> {
         if d.join("pnpm-workspace.yaml").is_file() {
             return Some(d.to_path_buf());
         }
-        if let Ok(pkg) = std::fs::read_to_string(d.join("package.json")) {
-            if pkg.contains("\"workspaces\"") || pkg.contains("'workspaces'") {
+        if let Ok(pkg) = std::fs::read_to_string(d.join("package.json"))
+            && (pkg.contains("\"workspaces\"") || pkg.contains("'workspaces'")) {
                 return Some(d.to_path_buf());
             }
-        }
-        if let Ok(cargo) = std::fs::read_to_string(d.join("Cargo.toml")) {
-            if cargo.contains("[workspace]") {
+        if let Ok(cargo) = std::fs::read_to_string(d.join("Cargo.toml"))
+            && cargo.contains("[workspace]") {
                 return Some(d.to_path_buf());
             }
-        }
         cur = d.parent();
     }
     None
