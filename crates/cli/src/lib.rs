@@ -1554,7 +1554,7 @@ async fn ensure_dev_client_bundle(
     );
     let build_secret = build_secret(rootp).unwrap_or_default();
     let transform_hook = build_transform_hook(rootp, cfg);
-    let css_transform = build_css_transform_hook(cfg);
+    let css_transform = build_css_transform_hook(cfg, None);
 
     // §6.5 / §6.1: unminified, sourcemaps on (dev debugging). No precompile
     // pass here — the Oxc path handles TS/JSX; SFC precompile is a build-time
@@ -4722,7 +4722,11 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         (None, None) => None,
     };
     // §6.6: Lightning CSS for every emitted stylesheet.
-    let css_transform = build_css_transform_hook(&cfg);
+    let tw_output = match stack.tooling_pool.clone() {
+        Some(pool) => tailwind::precompute(pool, &cfg, &rootp).await?,
+        None => None,
+    };
+    let css_transform = build_css_transform_hook(&cfg, tw_output.map(std::sync::Arc::new));
 
     let client_opts = bundle_env_options(
         oxide_fw_bundler::BundleEnv::Client,
@@ -9645,21 +9649,24 @@ fn plugins_allow_absolute(cfg: &OxideConfig) -> bool {
 /// §6.6: the CSS transform the bundler calls for every emitted stylesheet.
 /// Wraps `LightningCssBackend` (Lightning CSS with the project's browser
 /// target) so the bundler does not depend on `oxide-fw-assets`.
-fn build_css_transform_hook(cfg: &OxideConfig) -> oxide_fw_bundler::CssTransformHook {
+fn build_css_transform_hook(
+    cfg: &OxideConfig,
+    tailwind: Option<std::sync::Arc<tailwind::TailwindOutput>>,
+) -> oxide_fw_bundler::CssTransformHook {
     use oxide_fw_assets::{CssBackend as _, CssInput, CssKind, LightningCssBackend};
 
-    // `build.target` is the browserslist expression (`baseline-widely-available`
-    // by default); lightningcss accepts the same shape.
     let targets = vec![cfg.build.target.clone()];
+    let tw_entry = tailwind.as_ref().map(|t| t.entry.clone());
+    let tw_css = tailwind.as_ref().map(|t| t.css.clone());
     oxide_fw_bundler::CssTransformHook::new(move |path, source, is_module, minify| {
+        let effective_source: &str = match (&tw_entry, &tw_css) {
+            (Some(entry), Some(css)) if std::path::Path::new(path) == entry.as_path() => css.as_str(),
+            _ => source,
+        };
         let input = CssInput {
-            code: source.to_string(),
+            code: effective_source.to_string(),
             file: Some(path.to_string()),
-            kind: if is_module {
-                CssKind::Module
-            } else {
-                CssKind::Global
-            },
+            kind: if is_module { CssKind::Module } else { CssKind::Global },
             minify,
             targets: targets.clone(),
         };
@@ -14036,3 +14043,5 @@ fn find_subslice(hay: &[u8], needle: &[u8]) -> Option<usize> {
     }
     hay.windows(needle.len()).position(|w| w == needle)
 }
+
+mod tailwind;
