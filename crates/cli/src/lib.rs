@@ -1049,7 +1049,7 @@ fn default_ssr_externals() -> Vec<String> {
     .collect()
 }
 
-pub struct BundleEnvArgs {
+pub(crate) struct BundleEnvArgs {
     pub env: oxide_fw_bundler::BundleEnv,
     pub entries: BTreeMap<String, PathBuf>,
     pub out_dir: PathBuf,
@@ -6865,7 +6865,7 @@ fn forward_action_set_cookies(
     }
 }
 
-pub struct DispatchArgs {
+pub(crate) struct DispatchArgs {
     pub swappable: SwappableRouteTree,
     pub metrics: std::sync::Arc<oxide_fw_server::Metrics>,
     pub proxy_rules: Vec<oxide_fw_dev::ProxyRule>,
