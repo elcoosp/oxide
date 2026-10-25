@@ -5,6 +5,15 @@
 
 use clap::{Parser, Subcommand};
 
+type LoaderInputs = (
+    Option<std::path::PathBuf>,
+    Option<String>,
+    std::collections::BTreeMap<String, String>,
+    bool,
+    Option<String>,
+    bool,
+);
+
 type LayoutSideEffects = Vec<(Vec<String>, Vec<(String, String)>)>;
 
 /// The wasm-bindgen-processed `oxide-fw-core-wasm` artifact, embedded at
@@ -6918,11 +6927,12 @@ fn build_dispatch_swappable(
     // hop header, so the new URL goes through the normal match → loader →
     // render path. The hop header prevents an infinite rewrite loop (a
     // middleware that always rewrites to itself would otherwise spin).
-    let self_dispatch: std::sync::Arc<
+    type SelfDispatch = std::sync::Arc<
         std::sync::OnceLock<
             std::sync::Arc<dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync>,
         >,
-    > = std::sync::Arc::new(std::sync::OnceLock::new());
+    >;
+    let self_dispatch: SelfDispatch = std::sync::Arc::new(std::sync::OnceLock::new());
     let self_dispatch_for_closure = std::sync::Arc::clone(&self_dispatch);
     let dispatch_fn: std::sync::Arc<
         dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync,
@@ -7056,14 +7066,7 @@ fn build_dispatch_swappable(
 
         // Pre-compute the loader inputs synchronously so the async block
         // owns plain data (no borrow of `matched`).
-        let (module_path, route_id, params, has_server_module, render_mode, needs_parent): (
-            Option<std::path::PathBuf>,
-            Option<String>,
-            std::collections::BTreeMap<String, String>,
-            bool,
-            Option<String>,
-            bool,
-        ) = match &matched {
+        let (module_path, route_id, params, has_server_module, render_mode, needs_parent): LoaderInputs = match &matched {
             Some(m) => {
                 let has_srv = m.route.has_server_module;
                 // BUG: only produce a module_path when the route actually
