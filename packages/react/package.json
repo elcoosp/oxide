@@ -10,7 +10,8 @@
     "./package.json": "./package.json",
     "./real-adapter": "./src/real-adapter.ts",
     "./render": "./src/render.ts",
-    "./image": "./src/image.ts"
+    "./image": "./src/image.ts",
+    "./test/helpers/fake-dom": "./test/helpers/fake-dom.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts",
@@ -47,5 +48,8 @@
   "sideEffects": false,
   "files": [
     "src"
-  ]
+  ],
+  "dependencies": {
+    "@oxide-fw/core": "workspace:*"
+  }
 }

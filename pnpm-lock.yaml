@@ -25,7 +25,23 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
-  conformance: {}
+  conformance:
+    dependencies:
+      '@oxide-fw/core':
+        specifier: workspace:*
+        version: link:../packages/core
+      '@oxide-fw/react':
+        specifier: workspace:*
+        version: link:../packages/react
+      '@oxide-fw/solid':
+        specifier: workspace:*
+        version: link:../packages/solid
+      '@oxide-fw/svelte':
+        specifier: workspace:*
+        version: link:../packages/svelte
+      '@oxide-fw/vue':
+        specifier: workspace:*
+        version: link:../packages/vue
 
   examples/smoke-app-react:
     dependencies:
@@ -154,6 +170,10 @@ importers:
         version: 3.35.1
 
   packages/react:
+    dependencies:
+      '@oxide-fw/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@types/react':
         specifier: ^19.0.0
@@ -169,6 +189,10 @@ importers:
         version: 19.3.0(react@19.3.0)
 
   packages/solid:
+    dependencies:
+      '@oxide-fw/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@solidjs/web':
         specifier: ^2.0.0-rc.14
@@ -178,12 +202,20 @@ importers:
         version: 2.0.0-rc.14
 
   packages/svelte:
+    dependencies:
+      '@oxide-fw/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       svelte:
         specifier: ^5.0.0
         version: 5.57.2
 
   packages/vue:
+    dependencies:
+      '@oxide-fw/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@vue/server-renderer':
         specifier: ^3.6.0-rc.11

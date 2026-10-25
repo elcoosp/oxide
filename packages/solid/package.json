@@ -45,5 +45,8 @@
   "sideEffects": false,
   "files": [
     "src"
-  ]
+  ],
+  "dependencies": {
+    "@oxide-fw/core": "workspace:*"
+  }
 }
