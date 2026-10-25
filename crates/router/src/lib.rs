@@ -240,7 +240,7 @@ impl RouteTree {
         // Outermost middleware first (shorter base); nearest error first
         // (longer base).
         middleware.sort_by_key(|(_, _, len)| *len);
-        errors.sort_by(|a, b| b.2.cmp(&a.2));
+        errors.sort_by_key(|a| std::cmp::Reverse(a.2));
         let prefix = |base: &str| -> String {
             if base == "routes" || base.is_empty() {
                 String::new() // matches everything

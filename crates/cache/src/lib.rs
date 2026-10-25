@@ -3,6 +3,7 @@
 //! - L0: full response (HTML, headers, tags) — Rust, no JS on hit.
 //! - L1: data from `cache()` / `'use cache'` (ODF bytes).
 //! - L2: outbound fetch memoization within a request + optional cross-request.
+//!
 //! Semantics (§11.3): TTL, stale-while-revalidate, stale-if-error, single-flight
 //! coalescing, soft/hard tag invalidation, distributed invalidation via pub/sub,
 //! build seeding, HTTP headers (Cache-Control, ETag, Vary, Last-Modified) + 304.

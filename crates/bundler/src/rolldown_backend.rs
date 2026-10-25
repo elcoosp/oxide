@@ -131,8 +131,10 @@ impl RolldownBundler {
         // runtime — the chunk bundles, but the elements are React
         // elements and Solid's SSR produces an empty string.
         let transform = options.jsx_import_source.as_ref().map(|src| {
-            let mut jsx = RolldownJsxOptions::default();
-            jsx.import_source = Some(src.clone());
+            let jsx = RolldownJsxOptions {
+                import_source: Some(src.clone()),
+                ..Default::default()
+            };
             BundlerTransformOptions {
                 jsx: Some(Either::Right(jsx)),
                 ..Default::default()

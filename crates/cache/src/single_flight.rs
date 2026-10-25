@@ -68,10 +68,7 @@ impl SingleFlight {
     ) -> usize {
         map.remove(key); // before publish — see module docs
         match (slot, entry) {
-            (FlightSlot::Owner(tx), Some(value)) => match tx.send(value) {
-                Ok(followers) => followers,
-                Err(_) => 0, // no followers subscribed; nothing to coalesce
-            },
+            (FlightSlot::Owner(tx), Some(value)) => tx.send(value).unwrap_or_default(),
             _ => 0, // failed owner or a follower slot: cleanup only
         }
     }

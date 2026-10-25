@@ -5217,7 +5217,7 @@ pub mod ws {
     /// Deterministic client mask key (counter PRNG — predictable for tests).
     pub fn next_mask_key() -> [u8; 4] {
         let n = MASK_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let s = n.wrapping_mul(0x9E3779B97F4A7C15) ^ 0xB5_B5_B5_B5_9E37_79B9;
+        let s = n.wrapping_mul(0x9E3779B97F4A7C15) ^ 0xB5B5_B5B5_9E37_79B9;
         [(s >> 24) as u8, (s >> 16) as u8, (s >> 8) as u8, s as u8]
     }
 

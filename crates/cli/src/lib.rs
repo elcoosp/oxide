@@ -2734,11 +2734,7 @@ fn emit_fonts(
             provider: fam.provider.clone(),
             weights: fam.weights.clone(),
             styles: fam.styles.clone(),
-            subset: if fam.provider.is_empty() {
-                cfg.fonts.subset.clone()
-            } else {
-                cfg.fonts.subset.clone()
-            },
+            subset: cfg.fonts.subset.clone(),
             local_paths,
         };
         match DefaultFontBackend.bundle(&spec) {
@@ -3342,7 +3338,6 @@ fn inject_island_boot_script(shell: &str, boot_url: &str, nonce: &str) -> String
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 /// P-20: one prerender target (a route + one `generateParams` entry).
 /// §16.4 / O2: locale set to prerender for. A project without i18n
 /// config returns a single empty-string locale; one with i18n returns
@@ -3842,8 +3837,8 @@ async fn write_prerender(
 /// (`parent_data`) that ran for a full SSR render run here too. What is
 /// deliberately skipped is the RENDER — no adapter, no HTML, just loaders
 /// + ODF encode. Success is 200 with `application/oxide+odf`; a loader
+///
 /// short-circuit (`error()`/`redirect()`) propagates its status/location.
-#[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
 async fn route_data_response(
     req: &oxide_fw_server::OxideRequest,
@@ -10594,7 +10589,7 @@ async fn start_server_inner_full(
                     tracing::warn!(code = %e.0.code, "http3 listener stopped: {}", e.0.message);
                 }
             });
-            let _ = h3_task;
+            let _h3_task = h3_task;
         }
         if let Err(e) =
             oxide_fw_server::Server::serve_with_tls(bind_addr, pipeline, dispatch, rx_main, tls).await
@@ -11192,7 +11187,7 @@ async fn cmd_doctor(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
         .iter()
         .enumerate()
         .filter(|(_, k)| k.len() < 32)
-        .map(|(i, k)| i * 0 + k.len())
+        .map(|(_, k)| k.len())
         .collect();
     if cfg.security.cookie_keys.is_empty() {
         outln!(w, "[--] cookie keys: none set (derived from .oxide/secret)");
