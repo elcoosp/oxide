@@ -296,7 +296,10 @@ pub trait EndpointDispatcher: Send + Sync {
     /// on-disk path to `route.ts`; `method` is the HTTP method; `body` is the
     /// raw request body (a route.ts can be an upload proxy, so the wire must
     /// carry arbitrary bytes). The result is the raw `Response` shape.
-    async fn dispatch(&self, args: EndpointDispatchArgs<'_>) -> std::result::Result<EndpointRunResult, EndpointRunError>;
+    async fn dispatch(
+        &self,
+        args: EndpointDispatchArgs<'_>,
+    ) -> std::result::Result<EndpointRunResult, EndpointRunError>;
 }
 
 /// The result of a `route.ts` run.
@@ -352,7 +355,10 @@ pub trait MiddlewareDispatcher: Send + Sync {
     /// Dispatch `middleware.ts` for a request. `module_path` is the on-disk
     /// path; `locals` is the request-scoped state accumulated so far (an
     /// outer middleware's locals, if any). The result carries the directive.
-    async fn dispatch(&self, args: MiddlewareDispatchArgs<'_>) -> std::result::Result<MiddlewareRunResult, MiddlewareRunError>;
+    async fn dispatch(
+        &self,
+        args: MiddlewareDispatchArgs<'_>,
+    ) -> std::result::Result<MiddlewareRunResult, MiddlewareRunError>;
 }
 
 /// The result of a `middleware.ts` run.
