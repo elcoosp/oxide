@@ -93,7 +93,7 @@ jobs:
       - name: TS package tests (zero-dep, Node type stripping)
         run: |
           set -e
-          for d in packages/core packages/react packages/vue packages/svelte packages/solid packages/create-oxide; do
+          for d in packages/core packages/tailwind packages/react packages/vue packages/svelte packages/solid packages/create-oxide; do
             pnpm -C "$d" test
           done
 

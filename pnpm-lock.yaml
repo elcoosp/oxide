@@ -16,7 +16,7 @@ importers:
         version: 3.1.1(@types/react@19.3.0)(react@19.3.0)
       '@oxide-fw/tailwind':
         specifier: workspace:*
-        version: link:packages/modules/tailwind
+        version: link:packages/tailwind
       solid-jsx-oxc:
         specifier: 0.1.0-alpha.1
         version: 0.1.0-alpha.1
@@ -100,22 +100,6 @@ importers:
 
   packages/create-oxide: {}
 
-  packages/modules/tailwind:
-    dependencies:
-      '@tailwindcss/oxide':
-        specifier: ^4.3.3
-        version: 4.3.3
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.20.5
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
   packages/oxide-og:
     dependencies:
       '@fontsource/inter':
@@ -148,7 +132,7 @@ importers:
         version: link:../react
       '@oxide-fw/tailwind':
         specifier: workspace:*
-        version: link:../modules/tailwind
+        version: link:../tailwind
       react:
         specifier: ^19.0.0
         version: 19.3.0
@@ -200,6 +184,22 @@ importers:
       svelte:
         specifier: ^5.0.0
         version: 5.57.2
+
+  packages/tailwind:
+    dependencies:
+      '@tailwindcss/oxide':
+        specifier: ^4.3.3
+        version: 4.3.3
+      tailwindcss:
+        specifier: ^4.3.3
+        version: 4.3.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.5
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
 
   packages/vue:
     dependencies:
