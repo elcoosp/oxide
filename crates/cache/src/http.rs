@@ -42,9 +42,10 @@ pub fn conditional_response(req_headers: &[(String, String)], entry: &Entry) -> 
             .find(|(k, _)| k.eq_ignore_ascii_case("last-modified"))
             .and_then(|(_, v)| parse_http_date(v));
         if let (Some(lm), Some(ims_secs)) = (last_modified, parse_http_date(ims))
-            && lm <= ims_secs {
-                return Some(304);
-            }
+            && lm <= ims_secs
+        {
+            return Some(304);
+        }
     }
     None
 }
