@@ -7,6 +7,7 @@
 //! backend behind `ImageBackend` (D19) — resize/encode to AVIF/WebP/JPEG/PNG with
 //! `?w=&format=` queries, srcset/sizes, LQIP placeholders, intrinsic dimensions.
 //! Fonts: provider fetch → subset → WOFF2 → preload + size-adjust metric overrides.
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 use blake3::Hasher;
 use oxide_fw_diagnostics::{Diagnostic, OxideError};
@@ -468,7 +469,6 @@ impl FontBackend for DefaultFontBackend {
         // complex scripts. See `font_subset.rs` header for the full
         // rationale.
         #[cfg(feature = "subset")]
-        #[cfg_attr(docsrs, doc(cfg(feature = "subset")))]
         let codepoints: std::collections::BTreeSet<u32> = {
             let markers: Vec<&str> = spec.subset.iter().map(String::as_str).collect();
             font_subset::harvest_codepoints(markers)
@@ -493,7 +493,6 @@ impl FontBackend for DefaultFontBackend {
             // TrueType (subsetter emits sfnt); we rename the file to `.ttf`
             // so the CSS `format()` hint matches the actual container.
             #[cfg(feature = "subset")]
-            #[cfg_attr(docsrs, doc(cfg(feature = "subset")))]
             let (name, bytes) = if !spec.subset.is_empty() {
                 match font_subset::subset_for_codepoints(&bytes, &codepoints) {
                     Ok(Some(subset)) => {

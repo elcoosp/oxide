@@ -9,6 +9,7 @@
 //!
 //! Layout: `demand` holds the Tier A engine, `cas` the Tier B store,
 //! `trackers` the concrete input trackers handed to computations.
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod artifacts;
 #[cfg(feature = "s3")]

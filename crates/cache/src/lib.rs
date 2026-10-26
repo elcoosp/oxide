@@ -14,6 +14,7 @@
 //! (coalescing, §11.3), [`http`] (Cache-Control/ETag/304 + fetch memo).
 
 #![forbid(unsafe_code)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod auth;
 pub mod codec;
