@@ -23,7 +23,7 @@
 ## Install
 
 ```bash
-pnpm add @oxide/vue vue @vue/server-renderer
+pnpm add @oxide-fw/vue vue @vue/server-renderer
 ```
 
 `vue` and `@vue/server-renderer` are **peer dependencies**

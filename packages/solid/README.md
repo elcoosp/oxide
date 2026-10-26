@@ -23,7 +23,7 @@
 ## Install
 
 ```bash
-pnpm add @oxide/solid solid-js @solidjs/web
+pnpm add @oxide-fw/solid solid-js @solidjs/web
 ```
 
 `solid-js` and `@solidjs/web` are **peer dependencies**

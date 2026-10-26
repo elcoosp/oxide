@@ -15,10 +15,10 @@ framework from the core runtime (`packages/oxide`).
 
 | Adapter | Package | Extensions | Suspense | HMR strategy |
 | --- | --- | --- | --- | --- |
-| React | `@oxide/react` | `.tsx` | native | refresh |
-| Vue | `@oxide/vue` | `.vue` | core | component |
-| Svelte | `@oxide/svelte` | `.svelte` | core | component |
-| Solid | `@oxide/solid` | `.tsx` | native | component |
+| React | `@oxide-fw/react` | `.tsx` | native | refresh |
+| Vue | `@oxide-fw/vue` | `.vue` | core | component |
+| Svelte | `@oxide-fw/svelte` | `.svelte` | core | component |
+| Solid | `@oxide-fw/solid` | `.tsx` | native | component |
 
 Each adapter ships a zero-dependency neutral IR renderer **and** a bridge to the real upstream
 renderer (`react-dom/server`, `@vue/server-renderer`, `svelte/server`, `@solidjs/web`). Framework

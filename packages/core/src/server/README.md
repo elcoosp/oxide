@@ -7,7 +7,7 @@ suite and runs with zero framework deps) and the real upstream renderer
 
 ## What each adapter package exports
 
-Every `@oxide/react`, `@oxide/vue`, `@oxide/svelte`, `@oxide/solid` exports:
+Every `@oxide-fw/react`, `@oxide-fw/vue`, `@oxide-fw/svelte`, `@oxide-fw/solid` exports:
 
 | Export | Shape | Purpose |
 | :--- | :--- | :--- |

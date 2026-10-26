@@ -23,6 +23,11 @@
 ## Install
 
 ```bash
+npm install @oxide-fw/core
+```
+
+
+```bash
 pnpm add oxide
 ```
 

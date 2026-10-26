@@ -33,7 +33,7 @@ reads the build's emitted entries.
 
 ## Run it
 
-The app resolves `oxide` / `@oxide/react` through the pnpm workspace, so it
+The app resolves `oxide` / `@oxide-fw/react` through the pnpm workspace, so it
 lives **inside the Oxide monorepo** at `packages/oxide-website/`:
 
 ```sh

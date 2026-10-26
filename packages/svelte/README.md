@@ -22,7 +22,7 @@
 ## Install
 
 ```bash
-pnpm add @oxide/svelte svelte
+pnpm add @oxide-fw/svelte svelte
 ```
 
 `svelte` is a **peer dependency** (`^5.0.0`). The adapter itself has zero

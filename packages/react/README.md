@@ -22,7 +22,7 @@
 ## Install
 
 ```bash
-pnpm add @oxide/react react react-dom
+pnpm add @oxide-fw/react react react-dom
 ```
 
 `react` and `react-dom` are **peer dependencies** (`^19.0.0`). The adapter

@@ -22,6 +22,7 @@
 ## Quick start
 
 ```bash
+npx create-oxide@latest my-app
 pnpm create oxide my-app
 ```
 
@@ -63,10 +64,10 @@ file. There is no template-download step; a scaffold works offline.
 
 | Flag | Adapter | Suspense |
 | --- | --- | --- |
-| `--framework react` | `@oxide/react` | `native` (React `<Suspense>`) |
-| `--framework vue` | `@oxide/vue` | `core` (`<Defer>` from the adapter) |
-| `--framework svelte` | `@oxide/svelte` | `core` (`<Defer>` from the adapter) |
-| `--framework solid` | `@oxide/solid` | `native` (Solid's own `<Suspense>`) |
+| `--framework react` | `@oxide-fw/react` | `native` (React `<Suspense>`) |
+| `--framework vue` | `@oxide-fw/vue` | `core` (`<Defer>` from the adapter) |
+| `--framework svelte` | `@oxide-fw/svelte` | `core` (`<Defer>` from the adapter) |
+| `--framework solid` | `@oxide-fw/solid` | `native` (Solid's own `<Suspense>`) |
 
 The choice determines the adapter package installed, the
 `jsxImportSource`-equivalent written into the config, and the component
@@ -81,7 +82,7 @@ A scaffolded project is a normal pnpm project with:
 ```
 my-app/
   oxide.config.ts         # framework + routes dir + deploy target
-  package.json            # oxide, @oxide/<framework>, framework runtime
+  package.json            # oxide, @oxide-fw/<framework>, framework runtime
   tsconfig.json           # strict, moduleResolution: bundler
   src/
     routes/
