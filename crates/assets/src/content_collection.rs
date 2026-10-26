@@ -249,20 +249,21 @@ fn validate_native(
     }
     for (field, ty) in &schema.optional {
         if let Some(v) = entry.frontmatter.get(field)
-            && !field_matches(v, ty) {
-                out.push(
-                    Diagnostic::error(
-                        "AST-SCH",
-                        format!(
-                            "collection `{coll}` entry `{}` optional field `{field}` \
+            && !field_matches(v, ty)
+        {
+            out.push(
+                Diagnostic::error(
+                    "AST-SCH",
+                    format!(
+                        "collection `{coll}` entry `{}` optional field `{field}` \
                              has wrong type (expected {})",
-                            entry.slug,
-                            type_name(ty)
-                        ),
-                    )
-                    .with_fix(format!("change `{field}` to a {}", type_name(ty))),
-                );
-            }
+                        entry.slug,
+                        type_name(ty)
+                    ),
+                )
+                .with_fix(format!("change `{field}` to a {}", type_name(ty))),
+            );
+        }
     }
 }
 
@@ -438,9 +439,10 @@ pub fn build_search_index(coll: &Collection, indexed_fields: &[String]) -> Searc
         let mut fields: BTreeMap<String, String> = BTreeMap::new();
         for f in indexed_fields {
             if let Some(v) = e.frontmatter.get(f)
-                && let Some(s) = v.as_str() {
-                    fields.insert(f.clone(), s.to_string());
-                }
+                && let Some(s) = v.as_str()
+            {
+                fields.insert(f.clone(), s.to_string());
+            }
         }
 
         let mut text = String::new();
