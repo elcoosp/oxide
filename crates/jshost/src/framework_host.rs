@@ -98,7 +98,7 @@ impl FrameworkHost {
     /// Render `input` through the adapter the config at `config_path` exports.
     /// The worker emits the adapter's HTML as chunked raw bytes; this method
     /// collects those chunks and returns the UTF-8 string. Use
-    /// [`render_streaming`] when the caller wants to consume chunks as they
+    /// `render_streaming` when the caller wants to consume chunks as they
     /// arrive.
     ///
     /// # Errors
@@ -150,7 +150,7 @@ impl FrameworkHost {
         })
     }
 
-    /// Streaming variant of [`render`]: hands back the raw [`CallStream`]
+    /// Streaming variant of `render`: hands back the raw [`CallStream`]
     /// from the pool without collecting it. This is the low-level primitive
     /// a hyper-body writer wants — pull a chunk, write it, pull the next.
     ///
@@ -160,7 +160,7 @@ impl FrameworkHost {
     /// concatenated base64 payloads decode to raw UTF-8 HTML bytes. The
     /// `CallStream::Chunked` variant this returns has already decoded
     /// base64; iterating it yields byte chunks of the HTML directly, in
-    /// order. Concatenating all chunks yields exactly what [`render`]
+    /// order. Concatenating all chunks yields exactly what `render`
     /// returns as a string.
     ///
     /// # Contract
