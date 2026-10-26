@@ -73,7 +73,15 @@ const require = createRequire(import.meta.url);
 const sucrase = (() => { try { return require('sucrase') } catch { return null } })();
 const solidJsxOxc = (() => {
   try {
-    const m = require('solid-jsx-oxc')
+    let m
+    try {
+      m = require('solid-jsx-oxc')
+    } catch (e) {
+      throw new Error(
+        `solid-compile requires the native \`solid-jsx-oxc\` binding for ${process.platform}-${process.arch}. ` +
+        `Underlying: ${e && e.message ? e.message : String(e)}`
+      )
+    }
     return m.default ?? m
   } catch {
     return null

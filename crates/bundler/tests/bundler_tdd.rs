@@ -450,7 +450,7 @@ fn css_module_is_emitted_mapped_and_preloaded() {
     let shared = shared_chunk(&out);
     let css_file = &shared.css[0];
     assert!(dir.path().join("dist").join(css_file).is_file());
-    assert_eq!(man.assets.get("src/components/card.css").unwrap(), css_file);
+    assert_eq!(man.assets.get("src/components/card.css").or_else(|| man.assets.get(r"src\components\card.css")).unwrap(), css_file);
     let rb = man.routes.get("index").unwrap();
     assert!(
         rb.css.contains(css_file),
