@@ -97,11 +97,12 @@ fn names_to_load(rootp: &Path, cfg: &OxideConfig) -> Vec<String> {
     let mut names: BTreeSet<String> = cfg.modules.iter().cloned().collect();
     let modules_json = rootp.join(".oxide/modules.json");
     if let Ok(bytes) = std::fs::read(&modules_json)
-        && let Ok(arr) = serde_json::from_slice::<Vec<String>>(&bytes) {
-            for n in arr {
-                names.insert(n);
-            }
+        && let Ok(arr) = serde_json::from_slice::<Vec<String>>(&bytes)
+    {
+        for n in arr {
+            names.insert(n);
         }
+    }
     names.into_iter().collect()
 }
 
@@ -242,7 +243,10 @@ pub fn inject_routes(tree: &mut RouteTree, mods: &[ResolvedModule]) -> usize {
             Err(e) => {
                 eprintln!(
                     "warn: module `{}` (at {}) routes scan failed: {} {}",
-                    m.name, m.dir.display(), e.0.code, e.0.message
+                    m.name,
+                    m.dir.display(),
+                    e.0.code,
+                    e.0.message
                 );
                 continue;
             }
