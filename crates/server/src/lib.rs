@@ -381,17 +381,18 @@ impl StaticAssets {
 
         if let Some(enc) = negotiated.as_deref()
             && let Some(variant) = entry.precompressed.get(enc)
-                && let Some(body) = cached_asset_body(variant) {
-                    // Range on a compressed variant → full 200 (no partial decode).
-                    let len = body.len().to_string();
-                    let mut resp = OxideResponse::new(200, body);
-                    resp = with_asset_headers(resp, entry, &etag_h, cache_ctl);
-                    resp.headers
-                        .push(("Content-Encoding".into(), enc.to_string()));
-                    resp.headers.push(("Content-Length".into(), len));
-                    return Some(resp);
-                }
-                // variant unreadable → fall through to the identity body
+            && let Some(body) = cached_asset_body(variant)
+        {
+            // Range on a compressed variant → full 200 (no partial decode).
+            let len = body.len().to_string();
+            let mut resp = OxideResponse::new(200, body);
+            resp = with_asset_headers(resp, entry, &etag_h, cache_ctl);
+            resp.headers
+                .push(("Content-Encoding".into(), enc.to_string()));
+            resp.headers.push(("Content-Length".into(), len));
+            return Some(resp);
+        }
+        // variant unreadable → fall through to the identity body
 
         let full = cached_asset_body(&entry.path)?;
 
@@ -668,10 +669,9 @@ impl StreamEncoder {
             "zstd" => Ok(StreamEncoder::Zstd(Box::new(
                 zstd::stream::write::Encoder::new(sink, 3)?,
             ))),
-            _ => Ok(StreamEncoder::Gzip(Box::new(flate2::write::GzEncoder::new(
-                sink,
-                flate2::Compression::new(3),
-            )))),
+            _ => Ok(StreamEncoder::Gzip(Box::new(
+                flate2::write::GzEncoder::new(sink, flate2::Compression::new(3)),
+            ))),
         }
     }
 }
@@ -836,9 +836,10 @@ fn alt_svc_for(port: u16) -> &'static str {
     static CACHE: OnceLock<Mutex<std::collections::HashMap<u16, &'static str>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
     if let Ok(guard) = cache.lock()
-        && let Some(v) = guard.get(&port) {
-            return v;
-        }
+        && let Some(v) = guard.get(&port)
+    {
+        return v;
+    }
     let leaked: &'static str = Box::leak(format!("h3=\":{port}\"; ma=86400").into_boxed_str());
     if let Ok(mut guard) = cache.lock() {
         guard.insert(port, leaked);
@@ -920,9 +921,10 @@ pub fn cookie_value<'a>(cookie_header: &'a str, name: &str) -> Option<&'a str> {
     for pair in cookie_header.split(';') {
         let pair = pair.trim();
         if let Some((k, v)) = pair.split_once('=')
-            && k.trim() == name {
-                return Some(v.trim());
-            }
+            && k.trim() == name
+        {
+            return Some(v.trim());
+        }
     }
     None
 }
@@ -1162,9 +1164,10 @@ pub fn ws_origin_ok(
         return false;
     }
     if let Some(h) = host_header.map(host_authority)
-        && o_host.eq_ignore_ascii_case(&h) {
-            return true;
-        }
+        && o_host.eq_ignore_ascii_case(&h)
+    {
+        return true;
+    }
     allow_list.iter().any(|a| a.eq_ignore_ascii_case(o_host))
 }
 
@@ -1425,9 +1428,10 @@ impl I18nPolicy {
         for loc in &self.locales {
             let pref = format!("/{loc}");
             if let Some(rest) = path.strip_prefix(&pref)
-                && (rest.is_empty() || rest.starts_with('/')) {
-                    return Some((loc.clone(), if rest.is_empty() { "/" } else { rest }));
-                }
+                && (rest.is_empty() || rest.starts_with('/'))
+            {
+                return Some((loc.clone(), if rest.is_empty() { "/" } else { rest }));
+            }
         }
         None
     }
@@ -1727,7 +1731,10 @@ pub trait ActionDispatcher: Send + Sync {
     /// Run the named action from `module_path` with the form body. `Ok`
     /// carries the action's result (status, location, data, cookies,
     /// headers, revalidations); `Err` is a coded transport/runner failure.
-    async fn dispatch(&self, args: ActionDispatchArgs<'_>) -> std::result::Result<ActionRunResult, DispatchError>;
+    async fn dispatch(
+        &self,
+        args: ActionDispatchArgs<'_>,
+    ) -> std::result::Result<ActionRunResult, DispatchError>;
 }
 
 /// The result of an action run, in the shape the pipeline builds a response
@@ -2046,11 +2053,12 @@ fn percent_decode_query(s: &str) -> String {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
             let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok();
             if let Some(h) = hex
-                && let Ok(b) = u8::from_str_radix(h, 16) {
-                    out.push(b as char);
-                    i += 3;
-                    continue;
-                }
+                && let Ok(b) = u8::from_str_radix(h, 16)
+            {
+                out.push(b as char);
+                i += 3;
+                continue;
+            }
         }
         out.push(bytes[i] as char);
         i += 1;
@@ -2345,18 +2353,19 @@ fn serve_image_endpoint(endpoint: Option<&ImageEndpoint>, raw_url: &str) -> Nati
     // §16.1: never allocate a canvas larger than the configured ceiling.
     for (name, dim) in [("w", parsed.width), ("h", parsed.height)] {
         if let Some(d) = dim
-            && (d == 0 || d > endpoint.max_dimension) {
-                return NativePrefix::Raw(
-                    OxideResponse::new(
-                        400,
-                        format!(
-                            "image `{name}` out of range (max {})",
-                            endpoint.max_dimension
-                        ),
-                    )
-                    .with_header("content-type", "text/plain; charset=utf-8"),
-                );
-            }
+            && (d == 0 || d > endpoint.max_dimension)
+        {
+            return NativePrefix::Raw(
+                OxideResponse::new(
+                    400,
+                    format!(
+                        "image `{name}` out of range (max {})",
+                        endpoint.max_dimension
+                    ),
+                )
+                .with_header("content-type", "text/plain; charset=utf-8"),
+            );
+        }
     }
     // §16.1: cache the transformed bytes by (source, format, w, h, q). The
     // source bytes are hashed, so a changed file naturally misses. The key
@@ -2550,12 +2559,14 @@ pub fn percent_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len()
-            && let (Some(h), Some(l)) = (hex_nib(bytes[i + 1]), hex_nib(bytes[i + 2])) {
-                out.push((h << 4) | l);
-                i += 3;
-                continue;
-            }
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(h), Some(l)) = (hex_nib(bytes[i + 1]), hex_nib(bytes[i + 2]))
+        {
+            out.push((h << 4) | l);
+            i += 3;
+            continue;
+        }
         out.push(bytes[i]);
         i += 1;
     }
@@ -2770,7 +2781,7 @@ pub fn first_blocked_addr(
 /// before this fix the code was a plain GET with default redirect-following
 /// and zero re-checks.
 /// PERF-05: a general SSRF-safe HTTP fetch for the `fetch` op (user code's
-/// server-side `fetch()`). Unlike [`fetch_remote_checked`] (image endpoint,
+/// server-side `fetch()`). Unlike `fetch_remote_checked` (image endpoint,
 /// GET-only, host-pattern-gated), this supports any method + headers + body
 /// and is gated only by the SSRF block ranges. Returns
 /// `(status, headers, body)`.
@@ -3015,9 +3026,10 @@ pub fn remote_pattern_allows(patterns: &[RemoteImagePattern], host: &str, scheme
     let host = host.to_ascii_lowercase();
     patterns.iter().any(|p| {
         if let Some(proto) = &p.protocol
-            && !proto.eq_ignore_ascii_case(scheme) {
-                return false;
-            }
+            && !proto.eq_ignore_ascii_case(scheme)
+        {
+            return false;
+        }
         let pat = p.host.to_ascii_lowercase();
         if let Some(suffix) = pat.strip_prefix("*.") {
             host.ends_with(&format!(".{suffix}"))
@@ -3119,16 +3131,16 @@ pub async fn run_action(args: RunActionArgs<'_>) -> OxideResponse {
     };
     match dispatcher
         .dispatch(ActionDispatchArgs {
-        module_path,
-        action,
-        form_json,
-        params,
-        url,
-        method,
-        headers,
-        locals,
-        trace,
-    })
+            module_path,
+            action,
+            form_json,
+            params,
+            url,
+            method,
+            headers,
+            locals,
+            trace,
+        })
         .await
     {
         Ok(out) => {
@@ -3379,9 +3391,9 @@ impl Pipeline {
                             .headers
                             .iter()
                             .any(|(k, _)| k.eq_ignore_ascii_case("content-language"))
-                        {
-                            resp = resp.with_header("Content-Language", loc.clone());
-                        }
+                    {
+                        resp = resp.with_header("Content-Language", loc.clone());
+                    }
                     self.finish_response_full_async(
                         resp,
                         &rule_headers,
@@ -3495,26 +3507,28 @@ impl Pipeline {
         // never enters JS.
         if req.method.eq_ignore_ascii_case("POST") && path == "/_oxide/vitals" {
             if let Some(m) = &self.metrics
-                && let Ok(v) = serde_json::from_slice::<serde_json::Value>(&req.body) {
-                    // Accept one sample `{name, value, route?}` or an array.
-                    let items: Vec<&serde_json::Value> = match &v {
-                        serde_json::Value::Array(a) => a.iter().collect(),
-                        other => vec![other],
-                    };
-                    for it in items {
-                        let name = it.get("name").and_then(|x| x.as_str()).unwrap_or("");
-                        let value = it.get("value").and_then(|x| x.as_f64());
-                        let raw_route = it.get("route").and_then(|x| x.as_str()).unwrap_or("");
-                        // S-18: the endpoint is public, so an attacker could
-                        // mint a metrics key per unique `route`. Normalize to a
-                        // route-id shape and fold anything else into `_other`.
-                        let route = sanitize_route_label(raw_route);
-                        if !name.is_empty()
-                            && let Some(val) = value {
-                                m.observe_vital(name, &route, val);
-                            }
+                && let Ok(v) = serde_json::from_slice::<serde_json::Value>(&req.body)
+            {
+                // Accept one sample `{name, value, route?}` or an array.
+                let items: Vec<&serde_json::Value> = match &v {
+                    serde_json::Value::Array(a) => a.iter().collect(),
+                    other => vec![other],
+                };
+                for it in items {
+                    let name = it.get("name").and_then(|x| x.as_str()).unwrap_or("");
+                    let value = it.get("value").and_then(|x| x.as_f64());
+                    let raw_route = it.get("route").and_then(|x| x.as_str()).unwrap_or("");
+                    // S-18: the endpoint is public, so an attacker could
+                    // mint a metrics key per unique `route`. Normalize to a
+                    // route-id shape and fold anything else into `_other`.
+                    let route = sanitize_route_label(raw_route);
+                    if !name.is_empty()
+                        && let Some(val) = value
+                    {
+                        m.observe_vital(name, &route, val);
                     }
                 }
+            }
             return NativePrefix::Raw(OxideResponse::new(204, Bytes::new()));
         }
 
@@ -3525,12 +3539,13 @@ impl Pipeline {
             if is_inspector {
                 // SEC-09: gate on the dev session token when one is set.
                 if let Some(want) = &self.dev_token
-                    && !dev_token_ok(req, want) {
-                        return NativePrefix::Raw(
-                            OxideResponse::new(403, "inspector requires the dev token")
-                                .with_header("content-type", "text/plain; charset=utf-8"),
-                        );
-                    }
+                    && !dev_token_ok(req, want)
+                {
+                    return NativePrefix::Raw(
+                        OxideResponse::new(403, "inspector requires the dev token")
+                            .with_header("content-type", "text/plain; charset=utf-8"),
+                    );
+                }
                 if path == "/__oxide" {
                     return NativePrefix::Raw(
                         OxideResponse::new(200, insp.render_html())
@@ -3691,11 +3706,13 @@ impl Pipeline {
         // for the dispatch path; a static hit returns before rules run.
         let mut rule_headers: Vec<(String, String)> = Vec::new();
         let is_get_head = matches!(req.method.to_ascii_uppercase().as_str(), "GET" | "HEAD");
-        if is_get_head && (path_has_extension(&path) || path.starts_with("/_oxide/static"))
+        if is_get_head
+            && (path_has_extension(&path) || path.starts_with("/_oxide/static"))
             && let Some(assets) = &self.assets
-                && let Some(resp) = assets.serve(req, &path) {
-                    return NativePrefix::Static(resp, rule_headers);
-                }
+            && let Some(resp) = assets.serve(req, &path)
+        {
+            return NativePrefix::Static(resp, rule_headers);
+        }
 
         // (5) native rules (§12.1 step 4).
         // SEC-01 / S-10: bucket per client from the *socket peer*; an
@@ -3704,10 +3721,7 @@ impl Pipeline {
         // a fresh bucket.
         let client_key = self.client_key(req);
         let req_auth = req.header("authorization");
-        match self
-            .rules
-            .evaluate_with_auth(&path, &client_key, req_auth)
-        {
+        match self.rules.evaluate_with_auth(&path, &client_key, req_auth) {
             oxide_fw_router::RuleOutcome::Redirect {
                 destination,
                 status,
@@ -3834,14 +3848,15 @@ impl Pipeline {
                     .unwrap_or_default();
                 if is_compressible(&ct_owned)
                     && let Some(enc) = negotiate_encoding(ae, &["zstd", "gzip"])
-                        && let Some(stream) = resp.stream.take() {
-                            resp.stream = Some(spawn_stream_compressor(&enc, stream));
-                            resp.headers
-                                .retain(|(k, _)| !k.eq_ignore_ascii_case("content-length"));
-                            resp.headers.push(("Content-Encoding".to_string(), enc));
-                            resp.headers
-                                .push(("Vary".to_string(), "Accept-Encoding".to_string()));
-                        }
+                    && let Some(stream) = resp.stream.take()
+                {
+                    resp.stream = Some(spawn_stream_compressor(&enc, stream));
+                    resp.headers
+                        .retain(|(k, _)| !k.eq_ignore_ascii_case("content-length"));
+                    resp.headers.push(("Content-Encoding".to_string(), enc));
+                    resp.headers
+                        .push(("Vary".to_string(), "Accept-Encoding".to_string()));
+                }
             }
             let compressible = resp.stream.is_none() && !resp.body.is_empty() && !already_encoded;
             if compressible {
@@ -3852,24 +3867,26 @@ impl Pipeline {
                     .map(|(_, v)| v.clone())
                     .unwrap_or_default();
                 if is_compressible(&ct_owned)
-                    && let Some(enc) = negotiate_encoding(ae, &["zstd", "gzip"]) {
-                        let body = resp.body.clone();
-                        let orig_len = body.len();
-                        let enc_for_task = enc.clone();
-                        let joined = tokio::task::spawn_blocking(move || {
-                            compress_body(&enc_for_task, &body, 3).ok()
-                        })
-                        .await;
-                        if let Ok(Some(compressed)) = joined
-                            && compressed.len() < orig_len {
-                                resp.body = compressed;
-                                resp.headers
-                                    .retain(|(k, _)| !k.eq_ignore_ascii_case("content-length"));
-                                resp.headers.push(("Content-Encoding".to_string(), enc));
-                                resp.headers
-                                    .push(("Vary".to_string(), "Accept-Encoding".to_string()));
-                            }
+                    && let Some(enc) = negotiate_encoding(ae, &["zstd", "gzip"])
+                {
+                    let body = resp.body.clone();
+                    let orig_len = body.len();
+                    let enc_for_task = enc.clone();
+                    let joined = tokio::task::spawn_blocking(move || {
+                        compress_body(&enc_for_task, &body, 3).ok()
+                    })
+                    .await;
+                    if let Ok(Some(compressed)) = joined
+                        && compressed.len() < orig_len
+                    {
+                        resp.body = compressed;
+                        resp.headers
+                            .retain(|(k, _)| !k.eq_ignore_ascii_case("content-length"));
+                        resp.headers.push(("Content-Encoding".to_string(), enc));
+                        resp.headers
+                            .push(("Vary".to_string(), "Accept-Encoding".to_string()));
                     }
+                }
             }
         }
         self.finish_response_full(resp, rule_headers, request_id, method, cookie_header, None)
@@ -4104,10 +4121,13 @@ pub fn to_hyper_response(resp: OxideResponse) -> HyperResponse<BoxBody<Bytes, st
     );
     // Set content-length only for the collected branch. For streams we
     // don't know the length; hyper uses chunked transfer encoding.
-    if !has_len && !no_len_status && !is_streaming
-        && let Ok(val) = hyper::header::HeaderValue::from_str(&body_len.to_string()) {
-            out.headers_mut().insert(hyper::header::CONTENT_LENGTH, val);
-        }
+    if !has_len
+        && !no_len_status
+        && !is_streaming
+        && let Ok(val) = hyper::header::HeaderValue::from_str(&body_len.to_string())
+    {
+        out.headers_mut().insert(hyper::header::CONTENT_LENGTH, val);
+    }
     out
 }
 
@@ -5145,7 +5165,9 @@ mod sha1_shim {
             self.buf.extend_from_slice(&bit_len.to_be_bytes());
             let blocks: Vec<[u8; 64]> = self
                 .buf
-                .as_chunks::<64>().0.iter()
+                .as_chunks::<64>()
+                .0
+                .iter()
                 .map(|c| {
                     let mut b = [0u8; 64];
                     b.copy_from_slice(c);
