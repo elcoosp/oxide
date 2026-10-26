@@ -4,29 +4,88 @@
   "description": "Oxide runtime package: server data APIs (\u00a79), ODF wire decoder (\u00a79.5/D11), core client router (\u00a78.4/D9), islands loader (\u00a710.3), test helper (\u00a716.6). Zero runtime dependencies; runs on Node 24 type stripping.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./server": "./src/server/index.ts",
-    "./server/boundary": "./src/server/boundary.ts",
-    "./server/deferred": "./src/server/deferred.ts",
-    "./server/real-ssr": "./src/server/real-ssr.ts",
-    "./client": "./src/client/index.ts",
-    "./client/boot": "./src/client/boot.ts",
-    "./client/defer-glue": "./src/client/defer-glue.ts",
-    "./client/enhance": "./src/client/enhance.ts",
-    "./client/islands": "./src/client/islands.ts",
-    "./client/messages": "./src/client/messages.ts",
-    "./client/route-manifest": "./src/client/route-manifest.ts",
-    "./client/router": "./src/client/router.ts",
-    "./bytes": "./src/bytes.ts",
-    "./fn": "./src/fn.ts",
-    "./image-sizes": "./src/image-sizes.ts",
-    "./odf-encode": "./src/odf-encode.ts",
-    "./types": "./src/types.ts",
-    "./test": "./src/test.ts",
-    "./test/helpers/odf-lite": "./test/helpers/odf-lite.ts",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "default": "./dist/server.js"
+    },
+    "./server/boundary": {
+      "types": "./dist/server-boundary.d.ts",
+      "default": "./dist/server-boundary.js"
+    },
+    "./server/deferred": {
+      "types": "./dist/server-deferred.d.ts",
+      "default": "./dist/server-deferred.js"
+    },
+    "./server/real-ssr": {
+      "types": "./dist/server-real-ssr.d.ts",
+      "default": "./dist/server-real-ssr.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    },
+    "./client/boot": {
+      "types": "./dist/client-boot.d.ts",
+      "default": "./dist/client-boot.js"
+    },
+    "./client/defer-glue": {
+      "types": "./dist/client-defer-glue.d.ts",
+      "default": "./dist/client-defer-glue.js"
+    },
+    "./client/enhance": {
+      "types": "./dist/client-enhance.d.ts",
+      "default": "./dist/client-enhance.js"
+    },
+    "./client/islands": {
+      "types": "./dist/client-islands.d.ts",
+      "default": "./dist/client-islands.js"
+    },
+    "./client/messages": {
+      "types": "./dist/client-messages.d.ts",
+      "default": "./dist/client-messages.js"
+    },
+    "./client/route-manifest": {
+      "types": "./dist/client-route-manifest.d.ts",
+      "default": "./dist/client-route-manifest.js"
+    },
+    "./client/router": {
+      "types": "./dist/client-router.d.ts",
+      "default": "./dist/client-router.js"
+    },
+    "./bytes": {
+      "types": "./dist/bytes.d.ts",
+      "default": "./dist/bytes.js"
+    },
+    "./fn": {
+      "types": "./dist/fn.d.ts",
+      "default": "./dist/fn.js"
+    },
+    "./image-sizes": {
+      "types": "./dist/image-sizes.d.ts",
+      "default": "./dist/image-sizes.js"
+    },
+    "./odf-encode": {
+      "types": "./dist/odf-encode.d.ts",
+      "default": "./dist/odf-encode.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "default": "./dist/types.js"
+    },
+    "./test": {
+      "types": "./dist/test.d.ts",
+      "default": "./dist/test.js"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "prepublishOnly": "pnpm build",
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
@@ -43,6 +102,20 @@
   "license": "MIT",
   "sideEffects": false,
   "files": [
-    "src"
-  ]
+    "dist",
+    "README.md"
+  ],
+  "types": "./dist/index.d.ts",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "devDependencies": {
+    "tsdown": "^0.23.1",
+    "typescript": "^5.7.0"
+  },
+  "publishConfig": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/elcoosp/oxide.git",
+    "directory": "packages/core"
+  }
 }

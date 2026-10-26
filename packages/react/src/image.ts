@@ -27,8 +27,32 @@
 // shape is stable across React versions and the wire output is
 // byte-predictable for tests.
 
-import { createElement, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
+import { createRequire } from 'node:module'
 import { deriveSizesFromSrcset } from '../../core/src/image-sizes.ts'
+
+// `react` is an optional peer. Resolve `createElement` lazily so importing
+// this module does not require `react` to be installed — calling `Image()`
+// still does. The Proxy lets call sites keep writing `createElement(...)`
+// unchanged while deferring the require to call time.
+const requireReactImage_ = createRequire(import.meta.url)
+type CreateElementFn = typeof import('react').createElement
+let cachedCreateElement: CreateElementFn | undefined
+function resolveCreateElement(): CreateElementFn {
+  if (cachedCreateElement) return cachedCreateElement
+  cachedCreateElement = (requireReactImage_('react') as { createElement: CreateElementFn }).createElement
+  return cachedCreateElement
+}
+const createElement: CreateElementFn = new Proxy(
+  function (..._args: unknown[]): unknown {
+    throw new Error('oxide: react not yet loaded')
+  },
+  {
+    apply(_t, thisArg, args) {
+      return (resolveCreateElement() as (...a: unknown[]) => unknown).apply(thisArg, args)
+    },
+  },
+) as CreateElementFn
 
 /** The shape a `?w=` import produces. All fields optional so a plain `src`
  *  plus explicit `width`/`height` also satisfies the props. */

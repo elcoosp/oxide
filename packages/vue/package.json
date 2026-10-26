@@ -4,16 +4,40 @@
   "description": "Vue adapter for Oxide: adapter manifest + render/hydrate over the neutral IR (spec \u00a77). Zero runtime dependencies; runs on Node 24 type stripping. Without @vue/server-renderer installed the adapter renders the neutral element-tree IR itself.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./hydrate": "./src/hydrate.ts",
-    "./ir": "./src/ir.ts",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./hydrate": {
+      "types": "./dist/hydrate.d.ts",
+      "default": "./dist/hydrate.js"
+    },
+    "./ir": {
+      "types": "./dist/ir.d.ts",
+      "default": "./dist/ir.js"
+    },
     "./package.json": "./package.json",
-    "./real-adapter": "./src/real-adapter.ts",
-    "./render": "./src/render.ts",
-    "./image": "./src/image.ts",
-    "./defer": "./src/defer.ts"
+    "./real-adapter": {
+      "types": "./dist/real-adapter.d.ts",
+      "default": "./dist/real-adapter.js"
+    },
+    "./render": {
+      "types": "./dist/render.d.ts",
+      "default": "./dist/render.js"
+    },
+    "./image": {
+      "types": "./dist/image.d.ts",
+      "default": "./dist/image.js"
+    },
+    "./defer": {
+      "types": "./dist/defer.d.ts",
+      "default": "./dist/defer.js"
+    }
   },
   "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "prepublishOnly": "pnpm build",
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
@@ -40,12 +64,15 @@
     }
   },
   "devDependencies": {
-    "vue": "^3.6.0-rc.11",
-    "@vue/server-renderer": "^3.6.0-rc.11"
+    "@vue/server-renderer": "^3.6.0-rc.11",
+    "tsdown": "^0.23.1",
+    "typescript": "^5.7.0",
+    "vue": "^3.6.0-rc.11"
   },
   "sideEffects": false,
   "files": [
-    "src"
+    "dist",
+    "README.md"
   ],
   "dependencies": {
     "@oxide-fw/core": "workspace:*"
@@ -57,5 +84,8 @@
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "types": "./dist/index.d.ts",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js"
 }

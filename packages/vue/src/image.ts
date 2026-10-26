@@ -7,8 +7,18 @@
 //
 // Vue has no JSX intrinsic restriction, so `h('img', …)` renders directly.
 
-import { h, type VNode } from 'vue'
+import type { VNode } from 'vue'
+import { createRequire } from 'node:module'
 import { deriveSizesFromSrcset } from '../../core/src/image-sizes.ts'
+
+const require_ = createRequire(import.meta.url)
+type VueH = typeof import('vue').h
+let cachedH: VueH | undefined
+function getVueH(): VueH {
+  if (cachedH) return cachedH
+  cachedH = (require_('vue') as { h: VueH }).h
+  return cachedH
+}
 
 export interface ImageVariantModule {
   src?: string
@@ -29,6 +39,7 @@ export interface ImageProps extends ImageVariantModule {
 }
 
 export function Image(props: ImageProps): VNode | VNode[] {
+  const h = getVueH()
   const {
     src,
     srcset,

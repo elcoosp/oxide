@@ -3,18 +3,19 @@
   "version": "0.1.0",
   "description": "Tailwind v4 native plugin for Oxide. Uses @tailwindcss/oxide (Rust scanner) and tailwindcss (CSS compiler) directly via Oxide's tooling pool \u2014 zero PostCSS, zero subprocess.",
   "type": "module",
-  "main": "./index.ts",
+  "main": "./dist/index.js",
   "exports": {
     ".": {
-      "types": "./index.ts",
-      "import": "./index.ts"
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     },
-    "./runtime.mjs": "./runtime.mjs"
+    "./runtime.mjs": "./runtime.mjs",
+    "./package.json": "./package.json"
   },
   "files": [
-    "index.ts",
-    "runtime.mjs",
-    "README.md"
+    "dist",
+    "README.md",
+    "runtime.mjs"
   ],
   "dependencies": {
     "@tailwindcss/oxide": "^4.3.3",
@@ -22,6 +23,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "tsdown": "^0.23.1",
     "typescript": "^5.7.0"
   },
   "engines": {
@@ -30,9 +32,16 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/elcoosp/oxide"
+    "url": "git+https://github.com/elcoosp/oxide.git"
   },
   "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "prepublishOnly": "pnpm build",
     "test": "node ../../scripts/test-tailwind-runtime.mjs"
-  }
+  },
+  "sideEffects": false,
+  "types": "./dist/index.d.ts",
+  "module": "./dist/index.js",
+  "publishConfig": {}
 }

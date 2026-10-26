@@ -4,16 +4,36 @@
   "description": "React adapter for Oxide: manifest + render/hydrate per spec \u00a77. Zero runtime dependencies; runs on Node 24 type stripping. Without framework deps installed the adapter renders the neutral element-tree IR itself (the real react-dom/server replaces the renderer when deps exist).",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./hydrate": "./src/hydrate.ts",
-    "./ir": "./src/ir.ts",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./hydrate": {
+      "types": "./dist/hydrate.d.ts",
+      "default": "./dist/hydrate.js"
+    },
+    "./ir": {
+      "types": "./dist/ir.d.ts",
+      "default": "./dist/ir.js"
+    },
     "./package.json": "./package.json",
-    "./real-adapter": "./src/real-adapter.ts",
-    "./render": "./src/render.ts",
-    "./image": "./src/image.ts",
-    "./test/helpers/fake-dom": "./test/helpers/fake-dom.ts"
+    "./real-adapter": {
+      "types": "./dist/real-adapter.d.ts",
+      "default": "./dist/real-adapter.js"
+    },
+    "./render": {
+      "types": "./dist/render.d.ts",
+      "default": "./dist/render.js"
+    },
+    "./image": {
+      "types": "./dist/image.d.ts",
+      "default": "./dist/image.js"
+    }
   },
   "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "prepublishOnly": "pnpm build",
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
@@ -40,14 +60,17 @@
     }
   },
   "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0"
+    "tsdown": "^0.23.1",
+    "typescript": "^5.7.0"
   },
   "sideEffects": false,
   "files": [
-    "src"
+    "dist",
+    "README.md"
   ],
   "dependencies": {
     "@oxide-fw/core": "workspace:*"
@@ -59,5 +82,8 @@
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "types": "./dist/index.d.ts",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js"
 }

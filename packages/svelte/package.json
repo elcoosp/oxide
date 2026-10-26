@@ -4,16 +4,34 @@
   "description": "Svelte adapter for Oxide: adapter manifest + render/hydrate over the neutral IR (spec \u00a77). Zero runtime dependencies; runs on Node 24 type stripping. Without the Svelte SSR runtime installed the adapter renders the neutral element-tree IR itself.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./hydrate": "./src/hydrate.ts",
-    "./ir": "./src/ir.ts",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./hydrate": {
+      "types": "./dist/hydrate.d.ts",
+      "default": "./dist/hydrate.js"
+    },
+    "./ir": {
+      "types": "./dist/ir.d.ts",
+      "default": "./dist/ir.js"
+    },
     "./package.json": "./package.json",
-    "./real-adapter": "./src/real-adapter.ts",
-    "./render": "./src/render.ts",
+    "./real-adapter": {
+      "types": "./dist/real-adapter.d.ts",
+      "default": "./dist/real-adapter.js"
+    },
+    "./render": {
+      "types": "./dist/render.d.ts",
+      "default": "./dist/render.js"
+    },
     "./image": "./src/Image.svelte",
     "./defer": "./src/Defer.svelte"
   },
   "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "prepublishOnly": "pnpm build",
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
@@ -36,11 +54,16 @@
     }
   },
   "devDependencies": {
-    "svelte": "^5.0.0"
+    "svelte": "^5.0.0",
+    "tsdown": "^0.23.1",
+    "typescript": "^5.7.0"
   },
   "sideEffects": false,
   "files": [
-    "src"
+    "dist",
+    "src/Defer.svelte",
+    "src/Image.svelte",
+    "README.md"
   ],
   "dependencies": {
     "@oxide-fw/core": "workspace:*"
@@ -52,5 +75,8 @@
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "types": "./dist/index.d.ts",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js"
 }

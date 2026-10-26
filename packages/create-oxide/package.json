@@ -3,11 +3,14 @@
   "version": "0.1.0",
   "description": "Scaffold Oxide starters: 4 frameworks x minimal/blog/dashboard/storefront (spec \u00a719.2). Zero dependencies.",
   "type": "module",
-  "main": "./src/cli.ts",
+  "main": "./dist/index.js",
   "bin": {
-    "create-oxide": "./src/cli.ts"
+    "create-oxide": "./dist/index.js"
   },
   "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "prepublishOnly": "pnpm build",
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
@@ -15,12 +18,28 @@
     "node": ">=24"
   },
   "files": [
-    "src"
+    "dist",
+    "README.md"
   ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/elcoosp/oxide.git",
     "directory": "packages/create-oxide"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
+  "types": "./dist/index.d.ts",
+  "module": "./dist/index.js",
+  "devDependencies": {
+    "tsdown": "^0.23.1",
+    "typescript": "^5.7.0"
+  },
+  "publishConfig": {}
 }

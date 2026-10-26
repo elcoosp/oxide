@@ -11,7 +11,7 @@
 // two would need a wrapper component. A page that wants the preload adds
 // it via the adapter's `head()`; documented in the compat notes.
 
-import * as web from '@solidjs/web'
+import { createRequire } from 'node:module'
 import { deriveSizesFromSrcset } from '../../core/src/image-sizes.ts'
 
 export interface ImageVariantModule {
@@ -34,6 +34,24 @@ export interface ImageProps extends ImageVariantModule {
 
 interface SsrElementFn {
   (tag: string, attrs: Record<string, unknown>, children: unknown, dynamic: boolean): unknown
+}
+
+// `@solidjs/web` is an optional peer. Resolve it lazily inside `Image()` so
+// importing this module does not require the package to be installed.
+// Calling `Image()` without it falls through to the descriptor fallback.
+const requireSolidImage_ = createRequire(import.meta.url)
+type WebModule = { ssrElement?: SsrElementFn }
+let cachedWeb: WebModule | undefined
+let webAttempted = false
+function getWeb(): WebModule | undefined {
+  if (webAttempted) return cachedWeb
+  webAttempted = true
+  try {
+    cachedWeb = requireSolidImage_('@solidjs/web') as WebModule
+  } catch {
+    cachedWeb = undefined
+  }
+  return cachedWeb
 }
 
 export function Image(props: ImageProps): unknown {
@@ -66,7 +84,7 @@ export function Image(props: ImageProps): unknown {
   if (cls) attrs.class = cls
   if (priority) attrs.fetchpriority = 'high'
 
-  const ssrElement = web.ssrElement
+  const ssrElement = getWeb()?.ssrElement
   if (typeof ssrElement !== 'function') {
     // No web renderer available — return a descriptor a caller can render
     // itself; the SSR pass treats an unknown return as "nothing to render".
