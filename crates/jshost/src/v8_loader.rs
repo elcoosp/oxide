@@ -330,21 +330,26 @@ impl ModuleLoader for TranspileLoader {
                 Some("ts" | "tsx" | "jsx")
             ) {
                 let lang = lang_of(&path);
-                // G1: route through the same transform + lower pipeline the
-                // `compile_module` op runs, so a plugin's `transform` hook
-                // reaches a V8 build (it previously reached only Node).
-
-                crate::v8_ops::compile_module_sync(
-                    path.to_string_lossy().into_owned(),
+                let path_str = path.to_string_lossy().into_owned();
+                let after_plugins = crate::v8_ops::compile_module_sync(
+                    path_str.clone(),
                     src.clone(),
                     lang.to_string(),
                 )
                 .map_err(|e| {
                     deno_error::JsErrorBox::generic(format!(
                         "compile {}: {} {}",
-                        path.display(),
-                        e.0.code,
-                        e.0.message
+                        path.display(), e.0.code, e.0.message
+                    ))
+                })?;
+                oxide_fw_compiler::lower_to_js(
+                    &after_plugins, lang, &path_str, _jsx.as_deref(),
+                )
+                .map(|(c, _map)| c)
+                .map_err(|e| {
+                    deno_error::JsErrorBox::generic(format!(
+                        "lower {}: {} {}",
+                        path.display(), e.0.code, e.0.message
                     ))
                 })?
             } else {

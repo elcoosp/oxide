@@ -1806,10 +1806,14 @@ pub(crate) fn oxide_extension() -> deno_core::Extension {
     let bootstrap_src = crate::snapshot::escape_non_ascii(V8_BOOTSTRAP);
     let bootstrap =
         ExtensionFileSource::new_computed("oxide:bootstrap", Arc::from(bootstrap_src.as_str()));
+    let url_polyfill = ExtensionFileSource::new_computed(
+        "oxide:url_polyfill",
+        Arc::from(include_str!("init/url_polyfill.js")),
+    );
     deno_core::Extension {
         name: "oxide_runtime",
         deps: &[],
-        js_files: Cow::Owned(vec![bootstrap]),
+        js_files: Cow::Owned(vec![bootstrap, url_polyfill]),
         esm_files: Cow::Borrowed(&[]),
         lazy_loaded_esm_files: Cow::Borrowed(&[]),
         lazy_loaded_js_files: Cow::Borrowed(&[]),
