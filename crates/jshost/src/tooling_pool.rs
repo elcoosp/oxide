@@ -106,7 +106,6 @@ impl ToolingModules {
         })
         .await
     }
-
 }
 
 #[cfg(test)]
@@ -178,7 +177,6 @@ mod tests {
         assert_eq!(call["args"][0], "<template/>");
         assert_eq!(call["args"][1], "App.vue");
     }
-
 }
 
 // tailwind tooling delegates to @oxide-fw/tailwind/runtime.mjs
@@ -197,7 +195,10 @@ impl ToolingModules {
                 format!("tailwind_scan: expected array result, got {out}"),
             )
         })?;
-        Ok(arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        Ok(arr
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect())
     }
 
     pub async fn tailwind_build(
