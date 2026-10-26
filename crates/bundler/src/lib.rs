@@ -879,9 +879,10 @@ impl ChunkBundler {
                 let owner = &owners[&m.resolved][0];
                 chunk_of.insert(m.resolved.clone(), entry_chunks[owner].clone());
             } else if cnt == 0
-                && let Some((_, name)) = entry_chunks.iter().next() {
-                    chunk_of.insert(m.resolved.clone(), name.clone());
-                }
+                && let Some((_, name)) = entry_chunks.iter().next()
+            {
+                chunk_of.insert(m.resolved.clone(), name.clone());
+            }
         }
 
         // CSS modules ride the chunk of their (first, deterministic) importer
@@ -968,9 +969,10 @@ impl ChunkBundler {
                 if let Some(deps) = edges.get(m) {
                     for d in deps {
                         if let Some(tc) = chunk_of.get(d)
-                            && tc != name {
-                                imports.insert(tc.clone());
-                            }
+                            && tc != name
+                        {
+                            imports.insert(tc.clone());
+                        }
                     }
                 }
             }
@@ -1164,15 +1166,17 @@ impl ChunkBundler {
                 return r.to_string_lossy().to_string();
             }
             if let Some(cr) = &canon_root
-                && let Ok(r) = p.strip_prefix(cr) {
-                    return r.to_string_lossy().to_string();
-                }
+                && let Ok(r) = p.strip_prefix(cr)
+            {
+                return r.to_string_lossy().to_string();
+            }
             // Symlink-free fallback: try the canonical form of the file too.
             if let Ok(cp) = p.canonicalize() {
                 if let Some(cr) = &canon_root
-                    && let Ok(r) = cp.strip_prefix(cr) {
-                        return r.to_string_lossy().to_string();
-                    }
+                    && let Ok(r) = cp.strip_prefix(cr)
+                {
+                    return r.to_string_lossy().to_string();
+                }
                 if let Ok(r) = cp.strip_prefix(&self.root) {
                     return r.to_string_lossy().to_string();
                 }
@@ -1442,10 +1446,11 @@ fn rewrite_imports(
         if tc == own_chunk {
             edits.push((sp.start, sp.end, String::new()));
         } else if let Some(dep_file) = file_of.get(tc)
-            && let Some(off) = code[sp.start..sp.end].find(&sp.specifier) {
-                let at = sp.start + off;
-                edits.push((at, at + sp.specifier.len(), format!("./{dep_file}")));
-            }
+            && let Some(off) = code[sp.start..sp.end].find(&sp.specifier)
+        {
+            let at = sp.start + off;
+            edits.push((at, at + sp.specifier.len(), format!("./{dep_file}")));
+        }
     }
     if edits.is_empty() {
         return code.to_string();
@@ -1491,9 +1496,11 @@ fn export_names(code: &str) -> Vec<String> {
                         j += 1;
                     }
                     if let Some(t) = toks.get(j)
-                        && t.kind == Tok::Ident && !word(t, "default") {
-                            names.push(code[t.start..t.end].to_string());
-                        }
+                        && t.kind == Tok::Ident
+                        && !word(t, "default")
+                    {
+                        names.push(code[t.start..t.end].to_string());
+                    }
                     i = j + 1;
                     continue;
                 }
