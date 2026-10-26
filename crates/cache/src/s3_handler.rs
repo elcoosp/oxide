@@ -32,7 +32,7 @@ use std::time::Duration;
 /// request path (a timeout is a miss + degradation, never a hang).
 const L2_OP_TIMEOUT: Duration = Duration::from_millis(500);
 
-/// An S3-backed [`CacheHandler`](crate::CacheHandler).
+/// An S3-backed [`CacheHandler`].
 pub struct S3CacheHandler {
     store: Arc<dyn ObjectStore>,
 }
@@ -216,9 +216,10 @@ impl CacheHandler for S3CacheHandler {
         if let Ok(metas) = collected {
             for loc in metas {
                 if let Some(k) = loc.rsplit('/').next()
-                    && !keys.iter().any(|e| e == k) {
-                        keys.push(k.to_string());
-                    }
+                    && !keys.iter().any(|e| e == k)
+                {
+                    keys.push(k.to_string());
+                }
             }
         }
         Ok(keys)
