@@ -30,3 +30,7 @@ proptest = { workspace = true }
 [features]
 default = []
 s3 = ["dep:object_store"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
