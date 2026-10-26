@@ -2,12 +2,53 @@
 
 **CSS, images, fonts, i18n catalogs, and Tailwind v4 — the asset pipeline.**
 
-[![Crates.io](https://img.shields.io/crates/v/oxide-fw-assets.svg)](https://crates.io/crates/oxide-fw-assets) [![docs.rs](https://docs.rs/oxide-fw-assets/badge.svg)](https://docs.rs/oxide-fw-assets) [![License](https://img.shields.io/crates/l/oxide-fw-assets.svg)](https://github.com/elcoosp/oxide#license) [![MSRV](https://img.shields.io/badge/MSRV-1.98-blue.svg)](https://github.com/elcoosp/oxide)
+[![Crates.io](https://img.shields.io/crates/v/oxide-fw-assets.svg)](https://crates.io/crates/oxide-fw-assets) [![docs.rs](https://docs.rs/oxide-fw-assets/badge.svg)](https://docs.rs/oxide-fw-assets)
 
-Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
+> [!NOTE]
+> Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
 
-Full API documentation: [docs.rs/oxide-fw-assets](https://docs.rs/oxide-fw-assets)
+## Overview
 
-## License
+Everything Oxide does to turn source assets into runtime-ready files. CSS is processed through Lightning CSS, images through the `image` + `ravif` + `resvg` crates, fonts through subsetting, i18n catalogs are parsed and negotiated per request, and Tailwind v4 is bridged from its Rust scanner to the CLI.
 
-Licensed under either of [Apache License, Version 2.0](https://github.com/elcoosp/oxide/blob/main/LICENSE-APACHE) or [MIT License](https://github.com/elcoosp/oxide/blob/main/LICENSE-MIT) at your option.
+## What it provides
+
+- **`LightningCssBackend`** — bundling, nesting, autoprefixing, minification against the project's browser target
+- **`RustImageBackend`** — decode, resize, encode to PNG/JPEG/WebP/AVIF
+- **`SvgOgBackend`** — OG-image rasterization (resvg + taffy + parley)
+- **Font subsetting** — via `subsetter` + `skrifa`
+- **i18n** — catalog parsing, locale negotiation, content negotiation
+- **Content collections** — frontmatter, markdown, per-route typegen
+- **Tailwind v4** — the runtime bridge to `@tailwindcss/oxide`
+
+## Usage
+
+```rust
+use oxide_fw_assets::{CssBackend, CssInput, CssKind, LightningCssBackend};
+
+let out = LightningCssBackend.transform(&CssInput {
+    code: ".card { color: var(--fg); }".into(),
+    file: None,
+    kind: CssKind::Global,
+    minify: true,
+    targets: vec!["chrome 100".into()],
+})?;
+println!("{}", out.code);
+```
+
+> [!TIP]
+> Enable the `image`, `font`, or `i18n` features to keep the default build lean if you only need one of them.
+
+## How it fits in Oxide
+
+`oxide-fw-bundler` builds a `CssTransformHook` from `LightningCssBackend`. `oxide-fw-server` uses the image endpoint from this crate for on-demand transformation. `oxide-fw-cli` wires Tailwind's Rust scanner via the tooling pool.
+
+## See also
+
+- [`oxide-fw-bundler`](https://crates.io/crates/oxide-fw-bundler) — consumes the CSS transform
+- [`oxide-fw-server`](https://crates.io/crates/oxide-fw-server) — serves the image endpoint
+- [`oxide-fw-cli`](https://crates.io/crates/oxide-fw-cli) — orchestrates the pipeline
+
+---
+
+Full API reference: [docs.rs/oxide-fw-assets](https://docs.rs/oxide-fw-assets)
