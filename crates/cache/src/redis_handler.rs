@@ -35,7 +35,7 @@ use std::time::Duration;
 /// stall the request path (a timeout is a miss + one degraded log).
 const L2_OP_TIMEOUT: Duration = Duration::from_millis(250);
 
-/// A Redis-backed [`CacheHandler`](crate::CacheHandler).
+/// A Redis-backed [`CacheHandler`].
 pub struct RedisCacheHandler {
     conn: ConnectionManager,
     /// B-18: true once a transport error has been reported so the log isn't
