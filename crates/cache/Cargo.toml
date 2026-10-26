@@ -34,3 +34,7 @@ tempfile = { workspace = true }
 [features]
 redis = ["dep:redis"]
 s3 = ["dep:object_store"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
