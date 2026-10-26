@@ -5,8 +5,8 @@
 //! Tracked inputs: file contents (by blake3), directory listings, resolver results,
 //! env vars, config keys, plugin options, tool versions (§5.2).
 //!
-//! Layout: [`demand`] holds the Tier A engine, [`cas`] the Tier B store,
-//! [`trackers`] the concrete input trackers handed to computations.
+//! Layout: `demand` holds the Tier A engine, `cas` the Tier B store,
+//! `trackers` the concrete input trackers handed to computations.
 
 pub mod artifacts;
 #[cfg(feature = "s3")]
@@ -203,7 +203,7 @@ pub trait Compute: Send + Sync {
 /// Context handed to computations; every read is recorded as a dependency.
 ///
 /// The `fs`/`env`/`config` fields are trait objects whose concrete values are
-/// recording wrappers created per computation (see [`demand`]); reads through
+/// recording wrappers created per computation (see `demand`); reads through
 /// them append to the node's dependency set.
 pub struct ComputeCtx<'a> {
     pub fs: &'a mut dyn FileTracker,
