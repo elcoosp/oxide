@@ -48,14 +48,16 @@ pub fn fingerprint(root: &Path, mode: &str, static_export: bool) -> String {
     // A rebuilt CLI must invalidate the cache. Hashing the ~140 MB binary is
     // too expensive, so size + mtime of the running executable stands in.
     if let Ok(exe) = std::env::current_exe()
-        && let Ok(md) = std::fs::metadata(&exe) {
-            h.update(&md.len().to_le_bytes());
-            if let Ok(t) = md.modified()
-                && let Ok(d) = t.duration_since(std::time::UNIX_EPOCH) {
-                    h.update(&d.as_secs().to_le_bytes());
-                    h.update(&d.subsec_nanos().to_le_bytes());
-                }
+        && let Ok(md) = std::fs::metadata(&exe)
+    {
+        h.update(&md.len().to_le_bytes());
+        if let Ok(t) = md.modified()
+            && let Ok(d) = t.duration_since(std::time::UNIX_EPOCH)
+        {
+            h.update(&d.as_secs().to_le_bytes());
+            h.update(&d.subsec_nanos().to_le_bytes());
         }
+    }
 
     let mut files: Vec<PathBuf> = Vec::new();
     collect_files(root, &mut files);
@@ -265,13 +267,15 @@ pub fn env_fingerprint(
     }
     // The running binary invalidates (a compiler change changes output).
     if let Ok(exe) = std::env::current_exe()
-        && let Ok(md) = std::fs::metadata(&exe) {
-            h.update(&md.len().to_le_bytes());
-            if let Ok(t) = md.modified()
-                && let Ok(d) = t.duration_since(std::time::UNIX_EPOCH) {
-                    h.update(&d.as_secs().to_le_bytes());
-                }
+        && let Ok(md) = std::fs::metadata(&exe)
+    {
+        h.update(&md.len().to_le_bytes());
+        if let Ok(t) = md.modified()
+            && let Ok(d) = t.duration_since(std::time::UNIX_EPOCH)
+        {
+            h.update(&d.as_secs().to_le_bytes());
         }
+    }
     h.update(&[0]);
     // Entry set, sorted for determinism.
     let mut sorted: Vec<&(String, PathBuf)> = entries.iter().collect();
