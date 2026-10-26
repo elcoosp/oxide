@@ -60,9 +60,10 @@ pub fn subset_for_codepoints(
     glyphs.insert(0);
     for cp in codepoints {
         if let Some(ch) = char::from_u32(*cp)
-            && let Some(gid) = charmap.map(ch) {
-                glyphs.insert(gid.to_u32() as u16);
-            }
+            && let Some(gid) = charmap.map(ch)
+        {
+            glyphs.insert(gid.to_u32() as u16);
+        }
     }
     // If the only glyph is `.notdef`, subsetting produces nothing useful.
     if glyphs.len() <= 1 {
