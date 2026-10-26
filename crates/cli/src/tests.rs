@@ -4,10 +4,22 @@
 //! [`run_with_writer`] with a buffered writer (no process stdout capture needed).
 
 use super::*;
+
+/// Global async lock for tests that mutate process-global state
+/// (`OXIDE_ROOT`, `OXIDE_FORCE_BUILD`, `.oxide/` files).
+///
+/// Why tokio::sync::Mutex and not std::sync::Mutex or serial_test:
+/// tests here are `#[tokio::test]` (current-thread runtime). A blocking
+/// mutex (parking_lot / std) parks the single OS thread the runtime
+/// needs to poll other futures, so two serialized tests deadlock forever:
+/// one holds the lock, the other parks the thread it would need to wake
+/// up. `tokio::sync::Mutex::lock().await` yields instead of parking —
+/// the runtime progresses the holder's future, and the waiter wakes up
+/// when the lock is released.
+static TEST_SERIAL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 use clap::CommandFactory;
 use oxide_fw_server::ActionDispatchArgs;
 use oxide_fw_server::MiddlewareDispatchArgs;
-use serial_test::serial;
 use std::path::PathBuf;
 
 // ------------------------------------------------------------------ helpers
@@ -1699,8 +1711,8 @@ fn cli_parses_all_spec_commands() {
 // ------------------------------------------------------------------- routes
 
 #[tokio::test]
-#[serial]
 async fn routes_prints_table_and_writes_typegen() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     let (_d, root) = fixture_project();
     let (code, out) = run_ok(&["oxide", "routes", "--root", root.to_str().unwrap()]).await;
     assert_eq!(code, 0);
@@ -1886,8 +1898,8 @@ async fn doctor_all_pass_on_fixture() {
 // ----------------------------------------------------------------------- add
 
 #[tokio::test]
-#[serial]
 async fn add_appends_module_and_dedupes() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     let _g = ENV_LOCK.lock().unwrap();
     use std::fs;
     let dir = tempfile::tempdir().unwrap();
@@ -2011,8 +2023,8 @@ async fn generate_unknown_kind_exits_two() {
 // --------------------------------------------------------------------- cache
 
 #[tokio::test]
-#[serial]
 async fn cache_stats_inspect_clear_roundtrip() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
     let cache = root.join(".oxide/cache");
@@ -4834,8 +4846,8 @@ async fn session_codec_tampered_cookie_yields_empty_session() {
 }
 
 #[tokio::test]
-#[serial]
 async fn dev_writes_plugin_registry() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     use std::fs;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
@@ -4965,8 +4977,8 @@ fn extract_img_w_spec_handles_jpeg() {
 // ---- SPEC-19.1 / §19-B: oxide add + oxide audit ----------------------------
 
 #[tokio::test]
-#[serial]
 async fn add_records_oxide_module() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     let _g = ENV_LOCK.lock().unwrap();
     use std::fs;
     let dir = tempfile::tempdir().unwrap();
@@ -5005,8 +5017,8 @@ async fn add_records_oxide_module() {
 }
 
 #[tokio::test]
-#[serial]
 async fn add_records_plain_npm_package_with_note() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     use std::fs;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
@@ -5036,8 +5048,8 @@ async fn add_records_plain_npm_package_with_note() {
 }
 
 #[tokio::test]
-#[serial]
 async fn audit_offline_without_cache_is_a_clear_error() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     let _g = ENV_LOCK.lock().unwrap();
     use std::fs;
     let dir = tempfile::tempdir().unwrap();
@@ -5078,8 +5090,8 @@ async fn audit_json_mode_emits_stable_schema() {
 }
 
 #[tokio::test]
-#[serial]
 async fn audit_no_lockfile_is_a_clear_error() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     let _g = ENV_LOCK.lock().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
@@ -5097,8 +5109,8 @@ async fn audit_no_lockfile_is_a_clear_error() {
 // ─── §5-A: build_graph snapshot tests ─────────────────────────────────────
 
 #[tokio::test]
-#[serial]
 async fn build_writes_graph_snapshot() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     let (_d, root) = fixture_project();
     let (code, out) = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
     assert_eq!(code, 0, "build: {out}");
@@ -5126,8 +5138,8 @@ async fn build_writes_graph_snapshot() {
 }
 
 #[tokio::test]
-#[serial]
 async fn second_build_recomputes_nothing() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     let (_d, root) = fixture_project();
     let (code1, _out1) = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
     assert_eq!(code1, 0);
@@ -5173,8 +5185,8 @@ async fn second_build_recomputes_nothing() {
 /// `oxide add` with `OXIDE_ADD_NO_INSTALL=1`, runs a build, and asserts the
 /// route's prerendered HTML exists with the module's marker.
 #[tokio::test]
-#[serial]
 async fn module_route_is_injected_and_built() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     let _g = ENV_LOCK.lock().unwrap();
     use std::fs;
     let (_d, root) = fixture_project();
@@ -5263,8 +5275,8 @@ async fn module_route_is_injected_and_built() {
 // ─── §15-E: modules_loader unit tests ─────────────────────────────────────
 
 #[test]
-#[serial]
 fn modules_loader_resolves_entry_and_routes_from_contract() {
+    let _serial_guard = TEST_SERIAL_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
     let pkg = root.join("node_modules/acme-mod");
@@ -5373,8 +5385,8 @@ fn modules_loader_missing_package_is_skipped_not_fatal() {
 }
 
 #[tokio::test]
-#[serial]
 async fn add_reports_module_contributions() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     let _g = ENV_LOCK.lock().unwrap();
     use std::fs;
     let dir = tempfile::tempdir().unwrap();
@@ -5419,8 +5431,8 @@ async fn add_reports_module_contributions() {
 }
 
 #[tokio::test]
-#[serial]
 async fn add_warns_on_adapter_mismatch() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     let _g = ENV_LOCK.lock().unwrap();
     use std::fs;
     let dir = tempfile::tempdir().unwrap();
@@ -5798,8 +5810,8 @@ async fn migrate_unknown_source_and_missing_marker() {
 /// that route and reuses the rest. Both assertions read the build's own
 /// `incremental: reused N …` line — the same line a user sees.
 #[tokio::test]
-#[serial]
 async fn incremental_build_reuses_unchanged_prerenders() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     use std::fs;
     let (_d, root) = fixture_project();
     // Two static pages so "touch one, reuse the other" is observable. The
@@ -5976,8 +5988,8 @@ fn collect_plugin_paths_skips_missing_js_plugin_files() {
 /// A module file that imports a bare package records a `Resolver` edge; the
 /// snapshot's `dep_count` reflects it. A relative-only import records none.
 #[tokio::test]
-#[serial]
 async fn build_records_resolver_edges_for_bare_imports() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     use std::fs;
     let (_d, root) = fixture_project();
     // Fixture has a page importing nothing (both pages in `fixture_project`
@@ -6032,8 +6044,8 @@ async fn build_records_resolver_edges_for_bare_imports() {
 // Before that binding, this test hung forever under a current-thread
 // runtime; with it, the build completes normally.
 #[tokio::test]
-#[serial]
 async fn build_records_plugin_options_for_plugin_entries_only() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     use std::fs;
     let (_d, root) = fixture_project();
     // A plugin file that the config declares as `kind:js`. The module that
@@ -6151,8 +6163,8 @@ impl oxide_fw_graph::Compute for FileComputeForTest {
 /// that module is never in the client graph (§6.4 guard). Editing a page
 /// component must.
 #[tokio::test]
-#[serial]
 async fn client_bundle_skips_only_when_its_own_inputs_change() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     use std::fs;
     let (_d, root) = fixture_project();
     let build = |force: bool| {
@@ -6238,8 +6250,8 @@ fn find_literal_line_returns_none_for_absent_literal() {
 }
 
 #[tokio::test]
-#[serial]
 async fn build_records_per_route_chunk_hashes() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     use std::fs;
     let (_d, root) = fixture_project();
     let (code, out) = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;

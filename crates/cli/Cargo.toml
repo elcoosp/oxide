@@ -54,7 +54,6 @@ opentelemetry = { workspace = true }
 
 futures = { workspace = true }
 [dev-dependencies]
-serial_test = { version = "3", features = ["async"] }
 tempfile = { workspace = true }
 
 [package.metadata.docs.rs]
