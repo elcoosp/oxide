@@ -96,7 +96,7 @@ impl Default for PoolConfig {
 /// What to call in the JS host.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntryRef {
-    /// e.g. "render", "tooling:compile", "fn:<id>".
+    /// e.g. "render", "tooling:compile", "fn:`<id>`".
     pub kind: String,
     pub module: String,
     pub export: String,
@@ -667,7 +667,6 @@ impl Pool for ScriptedPool {
 pub struct ScriptedHost {
     handler: Option<ScriptedHandler>,
 }
-
 
 impl ScriptedHost {
     /// Build a scripted host whose pools execute `handler` for every call.
@@ -3337,7 +3336,7 @@ impl Pool for NodePool {
     }
 
     /// Mark the pool draining (new calls → `JSH-DRAIN`) and wait — bounded by
-    /// [`DRAIN_BUDGET`] — for in-flight calls to finish (§12.2).
+    /// `DRAIN_BUDGET` — for in-flight calls to finish (§12.2).
     async fn drain(&self) {
         self.draining.store(true, Ordering::Relaxed);
         let deadline = Instant::now() + DRAIN_BUDGET;
@@ -3805,11 +3804,12 @@ async fn op_dispatch(
             // body hash, but a side-effecting request should not be replayed).
             let memo_key = (method == "GET").then(|| oxide_fw_cache::memo_key(&method, url, &body));
             if let (Some(m), Some(k)) = (memo, memo_key.as_deref())
-                && let Some(hit) = m.get(k) {
-                    let v: serde_json::Value =
-                        serde_json::from_slice(&hit).unwrap_or(serde_json::Value::Null);
-                    return Ok(v);
-                }
+                && let Some(hit) = m.get(k)
+            {
+                let v: serde_json::Value =
+                    serde_json::from_slice(&hit).unwrap_or(serde_json::Value::Null);
+                return Ok(v);
+            }
             let resp = handler.fetch(&method, url, &headers, &body).await?;
             use base64::Engine as _;
             let out = serde_json::json!({
@@ -3898,22 +3898,25 @@ fn handle_worker_msg(msg: WorkerMsg, worker: &Arc<Worker>) {
                 drop_stream(worker, id);
                 resolve(worker, id, Ok(CallStream::Complete(Bytes::from(body))));
             } else if let Some(tx) = stream_sender(worker, id)
-                && tx.try_send(Ok(Bytes::from(body))).is_err() {
-                    drop_stream(worker, id); // collector gone
-                }
+                && tx.try_send(Ok(Bytes::from(body))).is_err()
+            {
+                drop_stream(worker, id); // collector gone
+            }
         }
         WorkerMsg::CallChunkBin { id, data } => {
             if let Some(tx) = stream_sender(worker, id)
-                && tx.try_send(Ok(Bytes::from(data))).is_err() {
-                    drop_stream(worker, id);
-                }
+                && tx.try_send(Ok(Bytes::from(data))).is_err()
+            {
+                drop_stream(worker, id);
+            }
         }
         WorkerMsg::CallChunk { id, data_b64 } => match b64_decode(&data_b64) {
             Ok(bytes) => {
                 if let Some(tx) = stream_sender(worker, id)
-                    && tx.try_send(Ok(Bytes::from(bytes))).is_err() {
-                        drop_stream(worker, id); // collector gone: stop buffering
-                    }
+                    && tx.try_send(Ok(Bytes::from(bytes))).is_err()
+                {
+                    drop_stream(worker, id); // collector gone: stop buffering
+                }
             }
             Err(e) => {
                 drop_stream(worker, id);
@@ -4175,7 +4178,7 @@ mod perf05_tests {
 #[cfg(test)]
 mod perf02_tests {
     use super::*;
-/// PERF-02: the same route always maps to the same worker index.
+    /// PERF-02: the same route always maps to the same worker index.
     #[test]
     fn route_affinity_is_stable_and_bounded() {
         let a1 = route_affinity(Some("routes/blog/[slug]"), 4);
