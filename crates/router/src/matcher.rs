@@ -183,9 +183,10 @@ fn regex_for(pattern: &str) -> Option<Regex> {
     static CACHE: OnceLock<RwLock<HashMap<String, Regex>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| RwLock::new(HashMap::new()));
     if let Ok(guard) = cache.read()
-        && let Some(re) = guard.get(pattern) {
-            return Some(re.clone());
-        }
+        && let Some(re) = guard.get(pattern)
+    {
+        return Some(re.clone());
+    }
     let full = format!("^(?:{pattern})$");
     let re = Regex::new(&full).ok()?;
     if let Ok(mut guard) = cache.write() {
