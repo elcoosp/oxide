@@ -166,23 +166,24 @@ impl OxideMcp {
         let mut modes: BTreeMap<String, String> = BTreeMap::new();
         let mut tags: BTreeMap<String, Vec<String>> = BTreeMap::new();
         if let Ok(bytes) = std::fs::read(&routes_json)
-            && let Ok(rows) = serde_json::from_slice::<Vec<serde_json::Value>>(&bytes) {
-                for row in rows {
-                    if let Some(p) = row.get("pattern").and_then(|v| v.as_str()) {
-                        if let Some(m) = row.get("renderMode").and_then(|v| v.as_str()) {
-                            modes.insert(p.to_string(), m.to_string());
-                        }
-                        if let Some(ts) = row.get("tags").and_then(|v| v.as_array()) {
-                            tags.insert(
-                                p.to_string(),
-                                ts.iter()
-                                    .filter_map(|t| t.as_str().map(String::from))
-                                    .collect(),
-                            );
-                        }
+            && let Ok(rows) = serde_json::from_slice::<Vec<serde_json::Value>>(&bytes)
+        {
+            for row in rows {
+                if let Some(p) = row.get("pattern").and_then(|v| v.as_str()) {
+                    if let Some(m) = row.get("renderMode").and_then(|v| v.as_str()) {
+                        modes.insert(p.to_string(), m.to_string());
+                    }
+                    if let Some(ts) = row.get("tags").and_then(|v| v.as_array()) {
+                        tags.insert(
+                            p.to_string(),
+                            ts.iter()
+                                .filter_map(|t| t.as_str().map(String::from))
+                                .collect(),
+                        );
                     }
                 }
             }
+        }
 
         let routes: Vec<RouteInfo> = tree
             .table()
@@ -226,19 +227,21 @@ impl OxideMcp {
 
         let blobs = cache_dir.join("blobs");
         if blobs.is_dir()
-            && let Ok(rd) = std::fs::read_dir(&blobs) {
-                for shard in rd.flatten() {
-                    if let Ok(files) = std::fs::read_dir(shard.path()) {
-                        for f in files.flatten() {
-                            if let Ok(m) = f.metadata()
-                                && m.is_file() {
-                                    report.disk_bytes += m.len();
-                                    report.blob_count += 1;
-                                }
+            && let Ok(rd) = std::fs::read_dir(&blobs)
+        {
+            for shard in rd.flatten() {
+                if let Ok(files) = std::fs::read_dir(shard.path()) {
+                    for f in files.flatten() {
+                        if let Ok(m) = f.metadata()
+                            && m.is_file()
+                        {
+                            report.disk_bytes += m.len();
+                            report.blob_count += 1;
                         }
                     }
                 }
             }
+        }
         json_result(&report)
     }
 
