@@ -3,7 +3,7 @@
 //!
 //! # Memory tier (moka, spec §11.2)
 //!
-//! L0/L1 memory tier is a [`moka::sync::Cache`] with a weigher of [`entry_weight`];
+//! L0/L1 memory tier is a [`moka::sync::Cache`] with a weigher of `entry_weight`;
 //! moka enforces `max_capacity` by weight and uses its TinyLFU admission policy
 //! (spec §11.2: "moka, TinyLFU, weighted by bytes"). Entries heavier than the cap
 //! are refused by moka's own admission rule, matching the previous policy.
@@ -205,9 +205,10 @@ impl DiskTier {
             let iter = table.iter().map_err(dberr)?;
             for row in iter {
                 if let Ok((_, v)) = row
-                    && let Ok(idx) = serde_json::from_slice::<DiskIndexEntry>(v.value()) {
-                        cur = cur.saturating_add(idx.size);
-                    }
+                    && let Ok(idx) = serde_json::from_slice::<DiskIndexEntry>(v.value())
+                {
+                    cur = cur.saturating_add(idx.size);
+                }
             }
         }
         Ok(Self {
@@ -230,10 +231,7 @@ impl DiskTier {
         if plain {
             format!("{key}.bin")
         } else {
-            format!(
-                "h{}.bin",
-                &blake3::hash(key.as_bytes()).to_string()[..32]
-            )
+            format!("h{}.bin", &blake3::hash(key.as_bytes()).to_string()[..32])
         }
     }
 
@@ -415,7 +413,9 @@ impl DiskTier {
         let txn = self.index.begin_write().map_err(dberr)?;
         let removed: Option<Vec<u8>> = {
             let mut t = txn.open_table(ENTRY_TABLE).map_err(dberr)?;
-            t.remove(key.as_bytes()).map_err(dberr)?.map(|g| g.value().to_vec())
+            t.remove(key.as_bytes())
+                .map_err(dberr)?
+                .map(|g| g.value().to_vec())
         };
         let idx: Option<DiskIndexEntry> = removed.and_then(|b| serde_json::from_slice(&b).ok());
         if let Some(idx) = &idx {
@@ -585,43 +585,45 @@ impl TieredCache {
 
         // L1: disk (promote on hit).
         if let Some(disk) = &self.disk
-            && let Some(e) = disk.get(key)? {
-                match classify(&e, now) {
-                    Freshness::Fresh => {
-                        self.memory.insert(key, e.clone());
-                        self.bump_hit(false);
-                        return Ok(Some(Hit::Fresh(Arc::new(e))));
-                    }
-                    Freshness::Stale => {
-                        self.memory.insert(key, e.clone());
-                        self.bump_hit(true);
-                        return Ok(Some(Hit::Stale(Arc::new(e))));
-                    }
-                    Freshness::Expired => {
-                        disk.delete(key)?;
-                    }
+            && let Some(e) = disk.get(key)?
+        {
+            match classify(&e, now) {
+                Freshness::Fresh => {
+                    self.memory.insert(key, e.clone());
+                    self.bump_hit(false);
+                    return Ok(Some(Hit::Fresh(Arc::new(e))));
+                }
+                Freshness::Stale => {
+                    self.memory.insert(key, e.clone());
+                    self.bump_hit(true);
+                    return Ok(Some(Hit::Stale(Arc::new(e))));
+                }
+                Freshness::Expired => {
+                    disk.delete(key)?;
                 }
             }
+        }
 
         // L2: remote (promote on hit).
         if let Some(remote) = &self.remote
-            && let Some(e) = remote.get(key).await? {
-                match classify(&e, now) {
-                    Freshness::Fresh => {
-                        self.memory.insert(key, e.clone());
-                        self.bump_hit(false);
-                        return Ok(Some(Hit::Fresh(Arc::new(e))));
-                    }
-                    Freshness::Stale => {
-                        self.memory.insert(key, e.clone());
-                        self.bump_hit(true);
-                        return Ok(Some(Hit::Stale(Arc::new(e))));
-                    }
-                    Freshness::Expired => {
-                        remote.delete(key).await?;
-                    }
+            && let Some(e) = remote.get(key).await?
+        {
+            match classify(&e, now) {
+                Freshness::Fresh => {
+                    self.memory.insert(key, e.clone());
+                    self.bump_hit(false);
+                    return Ok(Some(Hit::Fresh(Arc::new(e))));
+                }
+                Freshness::Stale => {
+                    self.memory.insert(key, e.clone());
+                    self.bump_hit(true);
+                    return Ok(Some(Hit::Stale(Arc::new(e))));
+                }
+                Freshness::Expired => {
+                    remote.delete(key).await?;
                 }
             }
+        }
 
         self.misses.fetch_add(1, Ordering::Relaxed);
         Ok(None)
@@ -802,13 +804,15 @@ impl TieredCache {
             return Ok(Some(e));
         }
         if let Some(disk) = &self.disk
-            && let Some(e) = disk.get(key)? {
-                return Ok(Some(Arc::new(e)));
-            }
+            && let Some(e) = disk.get(key)?
+        {
+            return Ok(Some(Arc::new(e)));
+        }
         if let Some(remote) = &self.remote
-            && let Some(e) = remote.get(key).await? {
-                return Ok(Some(Arc::new(e)));
-            }
+            && let Some(e) = remote.get(key).await?
+        {
+            return Ok(Some(Arc::new(e)));
+        }
         Ok(None)
     }
 }
