@@ -265,9 +265,10 @@ impl Bundler for RolldownBundler {
                     continue;
                 };
                 if let Ok(Some(new_src)) = hook.call(&c.file, &src)
-                    && new_src != src {
-                        let _ = std::fs::write(&file_path, &new_src);
-                    }
+                    && new_src != src
+                {
+                    let _ = std::fs::write(&file_path, &new_src);
+                }
             }
         }
         if let Some(hook) = generate_bundle_hook.as_ref() {
