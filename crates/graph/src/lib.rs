@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 //! oxide-fw-graph — demand-driven incremental engine + content-addressed store (spec §5, D6).
 //!
 //! Tier A: in-memory demand graph with fine-grained dependency tracking and early cutoff.

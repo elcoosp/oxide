@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 //! oxide-fw-jshost — JsHost trait, NodeHost backend, ops, pools (spec §4, D2).
 //!
 //! Rust owns everything except user code and JS-only compilers (D1). The `JsHost`

@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 //! oxide-fw-odf — the Oxide Data Format (spec §9.5, D11).
 //!
 //! A devalue-compatible superset: JSON primitives plus `Date`, `Map`, `Set`, `BigInt`,

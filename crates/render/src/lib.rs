@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 //! oxide-fw-render — streaming pipeline, html injection, boundary protocol (spec §7.1, §10, D12).
 //!
 //! The render sequence (§10.2): route matched + L0 checked → loads in isolate →

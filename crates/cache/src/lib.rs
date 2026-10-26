@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 //! oxide-fw-cache — L0/L1/L2 tiers, tags, single-flight, handlers (spec §11).
 //!
 //! - L0: full response (HTML, headers, tags) — Rust, no JS on hit.

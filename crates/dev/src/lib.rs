@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 //! oxide-fw-dev — watcher, HMR, overlay, inspector (spec §13).
 //!
 //! Startup (§13.1): load config (static extract), open persistent cache, start the

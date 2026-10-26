@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 //! oxide-fw-compiler — Oxc passes (spec §6.2–6.4, §9.3–9.4, D4).
 //!
 //! This crate implements the compiler passes behind a `Transformer` trait so the

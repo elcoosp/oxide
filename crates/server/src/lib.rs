@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 //! oxide-fw-server — hyper pipeline, static assets, compression, TLS, rules (spec §12, §17, D7, D13).
 //!
 //! Request pipeline (§12.1): accept → limits + request id → static asset match

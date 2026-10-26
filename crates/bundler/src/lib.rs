@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 //! oxide-fw-bundler — bundler integration + environments + manifests (spec §6.4, D3).
 //!
 //! Rolldown is used as a library behind the `Bundler` trait (D3). This workspace ships

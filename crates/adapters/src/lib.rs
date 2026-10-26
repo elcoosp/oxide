@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 //! oxide-fw-adapters — deployment adapters (spec §18).
 //!
 //! A deploy adapter transforms build output into a deployable artifact. The portable

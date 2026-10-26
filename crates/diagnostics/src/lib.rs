@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 //! oxide-fw-diagnostics — one diagnostic format shared by Rust, tooling workers and isolates (spec §19.4).
 //!
 //! Every error has: a stable code, a severity, a source-mapped code frame, the cause chain,

@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 //! oxide-fw-cli — clap entry, commands (spec §19.1).
 //!
 //! Commands: dev, build, start, preview, routes, analyze, check, why, doctor,

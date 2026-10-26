@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 //! oxide-fw-config — typed, validated, layered configuration (spec §14, D14).
 //!
 //! Layering (§14.2): defaults → preset → `oxide.config.ts` → mode file

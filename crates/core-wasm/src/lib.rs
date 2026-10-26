@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 //! oxide-fw-core-wasm — edge subset (spec §2 D18, §18 cloudflare target).
 //!
 //! Compiles the core features that must run where Rust cannot run V8: router, cache

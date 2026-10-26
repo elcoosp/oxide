@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 //! oxide-fw-router — route tree, matcher, typegen, rules engine (spec §8, D8).
 //!
 //! The route tree is compiled at build into a radix tree (static > param > optional >
