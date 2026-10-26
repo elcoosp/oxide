@@ -53,7 +53,8 @@ impl Transformer for OxcTransformer {
                     let line_start = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
                     let col = before[line_start..].chars().count() + 1;
                     d = d.at(oxidation_location(&input.path, line, col));
-                    let frame = oxide_fw_diagnostics::render_code_frame(&input.code, line, Some(col));
+                    let frame =
+                        oxide_fw_diagnostics::render_code_frame(&input.code, line, Some(col));
                     if !frame.is_empty() {
                         d = d.with_code_frame(frame);
                     }
@@ -390,19 +391,19 @@ fn walk_top_stmt_for_use_cache(
             if let Some(body) = $func.body.as_ref() {
                 if let Some((ds, de)) = find_use_cache_directive(body) {
                     emit_use_cache_edit(UseCacheEditArgs {
-        code,
-        func: $func,
-        body,
-        directive_start: ds,
-        directive_end: de,
-        span_start: $span_start,
-        exported: $exported,
-        binding: $binding,
-        name: &$name,
-        mod_arg,
-        edits,
-        directives,
-    });
+                        code,
+                        func: $func,
+                        body,
+                        directive_start: ds,
+                        directive_end: de,
+                        span_start: $span_start,
+                        exported: $exported,
+                        binding: $binding,
+                        name: &$name,
+                        mod_arg,
+                        edits,
+                        directives,
+                    });
                 }
             }
         }};
@@ -456,22 +457,23 @@ fn walk_export_decl_for_use_cache(
                 .map(|i| i.name.as_str().to_string())
                 .unwrap_or_default();
             if let Some(body) = func.body.as_ref()
-                && let Some((ds, de)) = find_use_cache_directive(body) {
-                    emit_use_cache_edit(UseCacheEditArgs {
-        code,
-        func,
-        body,
-        directive_start: ds,
-        directive_end: de,
-        span_start: func.span.start,
-        exported,
-        binding: false,
-        name: &name,
-        mod_arg,
-        edits,
-        directives,
-    });
-                }
+                && let Some((ds, de)) = find_use_cache_directive(body)
+            {
+                emit_use_cache_edit(UseCacheEditArgs {
+                    code,
+                    func,
+                    body,
+                    directive_start: ds,
+                    directive_end: de,
+                    span_start: func.span.start,
+                    exported,
+                    binding: false,
+                    name: &name,
+                    mod_arg,
+                    edits,
+                    directives,
+                });
+            }
         }
         Declaration::VariableDeclaration(var) => {
             walk_var_decl_for_use_cache(var, code, mod_arg, edits, directives);
@@ -572,7 +574,6 @@ pub struct UseCacheEditArgs<'a> {
     pub edits: &'a mut Vec<(u32, u32, String)>,
     pub directives: &'a mut Vec<Directive>,
 }
-
 
 fn emit_use_cache_edit(args: UseCacheEditArgs<'_>) {
     let UseCacheEditArgs {
