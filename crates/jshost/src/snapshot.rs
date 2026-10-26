@@ -100,19 +100,20 @@ pub fn lint_top_level_side_effects(path: &str, source: &str) -> Vec<SideEffect> 
             _ => {
                 let mut advanced = 1;
                 if depth == 0
-                    && let Some(rest) = source.get(i..) {
-                        for (needle, msg) in PATTERNS {
-                            if rest.starts_with(needle) {
-                                out.push(SideEffect {
-                                    path: path.to_string(),
-                                    line,
-                                    message: (*msg).to_string(),
-                                });
-                                advanced = needle.len();
-                                break;
-                            }
+                    && let Some(rest) = source.get(i..)
+                {
+                    for (needle, msg) in PATTERNS {
+                        if rest.starts_with(needle) {
+                            out.push(SideEffect {
+                                path: path.to_string(),
+                                line,
+                                message: (*msg).to_string(),
+                            });
+                            advanced = needle.len();
+                            break;
                         }
                     }
+                }
                 i += advanced;
             }
         }
