@@ -101,15 +101,16 @@ pub(crate) fn archive_impl(tree: &RouteTree, out: &Path) -> Result<()> {
         )
     })?;
     if let Some(parent) = out.parent()
-        && !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).map_err(|e| {
-                ferr(
-                    "RTR-100",
-                    format!("cannot create archive directory {}: {e}", parent.display()),
-                    "check write permissions for the output directory",
-                )
-            })?;
-        }
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|e| {
+            ferr(
+                "RTR-100",
+                format!("cannot create archive directory {}: {e}", parent.display()),
+                "check write permissions for the output directory",
+            )
+        })?;
+    }
     fs::write(out, &bytes).map_err(|e| {
         ferr(
             "RTR-100",
