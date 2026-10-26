@@ -35,10 +35,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-      - name: Build oxide-core-wasm for wasm32
-        run: cargo build -p oxide-core-wasm --target wasm32-unknown-unknown --release
+      - name: Build oxide-fw-core-wasm for wasm32
+        run: cargo build -p oxide-fw-core-wasm --target wasm32-unknown-unknown --release
       - name: Assert edge.wasm was produced
-        run: test -s target/wasm32-unknown-unknown/release/oxide_core_wasm.wasm
+        run: test -s target/wasm32-unknown-unknown/release/oxide_fw_core_wasm.wasm
       - name: Assert committed wasm is either functional or documented inert (B3)
         # The committed artifact at crates/cli/resources/edge.wasm is raw
         # wasm-bindgen output. If it imports __wbindgen_* it needs a .js
@@ -193,7 +193,7 @@ jobs:
         env:
           OXIDE_TEST_REDIS_URL: redis://127.0.0.1:6379
         run: |
-          cargo test -p oxide-cache --features redis -- --include-ignored
+          cargo test -p oxide-fw-cache --features redis -- --include-ignored
 
   fuzz-decode:
     name: ODF decoder fuzz (§22)
@@ -202,7 +202,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Property-based fuzz (1000 random inputs per case)
-        run: cargo test -p oxide-odf --test fuzz_decode --release
+        run: cargo test -p oxide-fw-odf --test fuzz_decode --release
 
   stale-strings:
     name: doc-rot grep gate (§23)
@@ -263,10 +263,10 @@ jobs:
         # of the same subsystem reported different verdicts for the same
         # class of bug.
         run: |
-          cargo test -p oxide-jshost --test loader_host_e2e -- --ignored --test-threads=1
-          cargo test -p oxide-jshost --test framework_host_e2e -- --ignored --test-threads=1
-          cargo test -p oxide-jshost --test hmr_e2e -- --ignored --test-threads=1
-          cargo test -p oxide-jshost --test config_cache_e2e -- --ignored --test-threads=1
+          cargo test -p oxide-fw-jshost --test loader_host_e2e -- --ignored --test-threads=1
+          cargo test -p oxide-fw-jshost --test framework_host_e2e -- --ignored --test-threads=1
+          cargo test -p oxide-fw-jshost --test hmr_e2e -- --ignored --test-threads=1
+          cargo test -p oxide-fw-jshost --test config_cache_e2e -- --ignored --test-threads=1
       - name: Run the CLI render e2e (resolver path)
         # P0-10's evidence chain: `oxide render` on a zero-import config
         # must reach real SSR through the built entry. Drives the CLI
@@ -324,5 +324,5 @@ jobs:
         # unsupported under Miri. `oxide-router` aborts on a filesystem test
         # (Miri isolation), not on undefined behaviour.
         run: |
-          cargo +nightly miri test -p oxide-odf --lib
-          cargo +nightly miri test -p oxide-diagnostics --lib
+          cargo +nightly miri test -p oxide-fw-odf --lib
+          cargo +nightly miri test -p oxide-fw-diagnostics --lib
