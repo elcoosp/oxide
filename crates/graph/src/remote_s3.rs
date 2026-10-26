@@ -1,4 +1,4 @@
-//! SPEC-5D: an S3-backed [`RemoteCache`](crate::RemoteCache), gated on the
+//! SPEC-5D: an S3-backed [`RemoteCache`], gated on the
 //! `s3` feature. Mirrors [`crate::HttpRemoteCache`]: `fetch` reads the CAS
 //! key's blob, `store` writes it. Credentials/region come from `AWS_*` env
 //! vars (via `object_store::aws::AmazonS3Builder::from_env`).
