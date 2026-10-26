@@ -235,13 +235,14 @@ fn extract_minimal_framework(source: &str) -> Option<Value> {
             };
             let after_colon_ws = after_colon.trim_start();
             if let Some(rest) = after_colon_ws.strip_prefix(name)
-                && rest.trim_start().starts_with('(') {
-                    obj.insert(
-                        "framework".into(),
-                        serde_json::json!({ "name": name, "adapter": name }),
-                    );
-                    break 'outer;
-                }
+                && rest.trim_start().starts_with('(')
+            {
+                obj.insert(
+                    "framework".into(),
+                    serde_json::json!({ "name": name, "adapter": name }),
+                );
+                break 'outer;
+            }
         }
     }
 
@@ -300,9 +301,10 @@ fn scan_top_level_string(source: &str, key: &str) -> Option<String> {
         }
         let next = bytes.get(abs + key.len()).copied();
         if let Some(n) = next
-            && (n.is_ascii_alphanumeric() || n == b'_' || n == b'$') {
-                continue;
-            }
+            && (n.is_ascii_alphanumeric() || n == b'_' || n == b'$')
+        {
+            continue;
+        }
         let tail = &source[abs + key.len()..];
         let after_ws = tail.trim_start();
         let Some(after_colon) = after_ws.strip_prefix(':') else {
