@@ -26,7 +26,7 @@ The bridging layer between the Oxide Rust render pipeline and each framework's s
 
 ## Usage
 
-```rust
+```rust,ignore
 use oxide_fw_adapters::{AdapterPageRenderer, FrameworkRenderer};
 
 let inner: Arc<dyn FrameworkRenderer> = /* from oxide-fw-jshost */;

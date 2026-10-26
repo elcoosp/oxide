@@ -29,7 +29,7 @@ Concurrent misses for the same key run one render — the rest await the result 
 
 ## Usage
 
-```rust
+```rust,ignore
 use oxide_fw_cache::{CacheHandler, TieredCache};
 use std::sync::Arc;
 
