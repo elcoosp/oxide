@@ -97,8 +97,7 @@ function resolveStylesheet(id, base) {
         : id.endsWith('.css')
           ? id.slice('tailwindcss/'.length)
           : `${id.slice('tailwindcss/'.length)}.css`
-    const url = new URL(`./node_modules/tailwindcss/${relative}`, import.meta.url)
-    return decodeFilePath(url)
+    return _require.resolve(`tailwindcss/${relative}`)
   }
   return path.resolve(base, id)
 }
