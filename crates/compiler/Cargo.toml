@@ -24,3 +24,7 @@ oxc_semantic = { workspace = true }
 oxc_transformer = { workspace = true }
 oxc_codegen = { workspace = true }
 oxc_sourcemap = "9.0.0"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
