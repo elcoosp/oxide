@@ -33,7 +33,6 @@
     "url": "https://github.com/elcoosp/oxide"
   },
   "scripts": {
-    "test": "node ../../scripts/test-tailwind-runtime.mjs",
-    "pretest": "node ../../scripts/ensure-tailwind-css.mjs"
+    "test": "node ../../scripts/test-tailwind-runtime.mjs"
   }
 }

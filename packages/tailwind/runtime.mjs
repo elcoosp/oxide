@@ -19,6 +19,57 @@ import { Scanner } from '@tailwindcss/oxide'
 import { compile } from 'tailwindcss'
 import fs from 'node:fs'
 import path from 'node:path'
+import { createRequire } from 'node:module'
+
+// `createRequire(import.meta.url)` makes `require.resolve()` resolve
+// relative to THIS module's location, not the caller's cwd. That's
+// exactly what we need for Tailwind's own CSS files: they live in
+// `node_modules/tailwindcss/`, wherever pnpm (or npm, or yarn) placed
+// it. The caller's `base` is only used for the USER's own `@import`
+// statements — Tailwind's own imports must resolve from the package.
+const _require = createRequire(import.meta.url)
+
+function _resolveTailwindCss(name) {
+  try {
+    return _require.resolve(name)
+  } catch {
+    return null
+  }
+}
+
+const _TAILWIND_BUILTINS = {
+  'tailwindcss': _resolveTailwindCss('tailwindcss/index.css'),
+  'tailwindcss/index.css': _resolveTailwindCss('tailwindcss/index.css'),
+  'tailwindcss/preflight': _resolveTailwindCss('tailwindcss/preflight.css'),
+  'tailwindcss/preflight.css': _resolveTailwindCss('tailwindcss/preflight.css'),
+  'tailwindcss/theme': _resolveTailwindCss('tailwindcss/theme.css'),
+  'tailwindcss/theme.css': _resolveTailwindCss('tailwindcss/theme.css'),
+  'tailwindcss/utilities': _resolveTailwindCss('tailwindcss/utilities.css'),
+  'tailwindcss/utilities.css': _resolveTailwindCss('tailwindcss/utilities.css'),
+}
+
+async function _loadStylesheet(id, base) {
+  // 1. Tailwind's own built-in CSS imports — resolve from THIS module,
+  //    not from `base`.
+  const builtin = _TAILWIND_BUILTINS[id]
+  if (builtin) {
+    const content = await fs.promises.readFile(builtin, 'utf-8')
+    return { path: builtin, base: path.dirname(builtin), content }
+  }
+
+  // 2. Try normal resolution from the caller's base (user's `@import`
+  //    statements).
+  try {
+    const resolved = _require.resolve(id, { paths: [base] })
+    const content = await fs.promises.readFile(resolved, 'utf-8')
+    return { path: resolved, base: path.dirname(resolved), content }
+  } catch {}
+
+  // 3. Try relative to base (for relative imports like `./theme.css`).
+  const candidate = path.resolve(base, id.endsWith('.css') ? id : id + '.css')
+  const content = await fs.promises.readFile(candidate, 'utf-8')
+  return { path: candidate, base: path.dirname(candidate), content }
+}
 
 /**
  * Health check — the tooling pool calls this once at startup to fail fast
