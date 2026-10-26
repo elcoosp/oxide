@@ -179,10 +179,40 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
   const strategy = cfg.opts.ssr ?? 'auto'
   // §6.4: components come from the runtime resolver; the config's
   // `componentFor` (if any) is an explicit advanced override.
+  const unwrapModuleDefault = (v: unknown, id: string): unknown => {
+    if (v === null || typeof v !== 'object') return v
+    if (typeof v === 'function') return v
+    const tag = Reflect.get(v as object, Symbol.toStringTag)
+    const strTag = Object.prototype.toString.call(v)
+    const hasDefault = 'default' in (v as object)
+    const defaultVal = hasDefault ? (v as { default: unknown }).default : undefined
+    const defaultType = typeof defaultVal
+    // ESM namespace: either detection method works
+    if (tag === 'Module' || strTag === '[object Module]') {
+      return defaultVal
+    }
+    // CJS interop wrapper with callable default
+    if (hasDefault && defaultType === 'function') {
+      return defaultVal
+    }
+    // React.memo / forwardRef / lazy -> pass through
+    if (Reflect.get(v as object, '$$typeof') !== undefined) {
+      return v
+    }
+    // Unknown shape: throw so the message lands in the OX-500 body (curl-visible)
+    throw new Error(
+      '[oxide:resolve] id=' + id +
+      ' unknown-object-shape Symbol.toStringTag=' + String(tag) +
+      ' toString=' + strTag +
+      ' hasDefault=' + hasDefault +
+      ' defaultType=' + defaultType +
+      ' constructorName=' + String(((v as { constructor?: { name?: string } }).constructor || {}).name || '?')
+    )
+  }
   const resolveComponent = (input: RenderInput, id: string): unknown => {
     const r = (input as RenderInput & { resolve?: (id: string) => unknown }).resolve
-    if (typeof r === 'function') return r(id)
-    return cfg.opts.componentFor?.(id)
+    if (typeof r === 'function') return unwrapModuleDefault(r(id), id)
+    return unwrapModuleDefault(cfg.opts.componentFor?.(id), id)
   }
   const missing = (kind: string, id: string): void => {
     console.error(`[oxide] ${cfg.name}: no component resolved for ${kind} \`${id}\``)
