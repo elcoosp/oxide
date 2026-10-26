@@ -333,7 +333,7 @@ impl ModuleLoader for TranspileLoader {
                 // G1: route through the same transform + lower pipeline the
                 // `compile_module` op runs, so a plugin's `transform` hook
                 // reaches a V8 build (it previously reached only Node).
-                
+
                 crate::v8_ops::compile_module_sync(
                     path.to_string_lossy().into_owned(),
                     src.clone(),
