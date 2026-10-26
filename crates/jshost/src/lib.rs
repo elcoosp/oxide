@@ -1212,6 +1212,36 @@ globalThis.__oxideDispatch = async function (kind, moduleUrl, exportName, payloa
     });
   }
   try {
+    // Middleware (spec §8.1) takes two arguments, returns a directive
+    // object that loader_host parses at the top level (short/status/
+    // headers/redirect/rewrite/locals). Every other export takes one
+    // payload arg, and its return value is wrapped in {ok, value} for the
+    // caller.
+    if (kind === 'middleware' || kind === 'middleware:run') {
+      const req = {
+        url: payload.url ?? '/',
+        method: payload.method ?? 'GET',
+        headers: payload.headers ?? [],
+        params: payload.params ?? {},
+      };
+      const ctx = { locals: payload.locals ?? {} };
+      const raw = await fn(req, ctx);
+      // loader_host expects the directive unwrapped. Derive `short` from
+      // the presence of a `redirect` (matches the Node worker's shape for
+      // the same directive). Propagate ctx.locals mutations so the loader
+      // sees them.
+      const out = (raw && typeof raw === 'object') ? { ...raw } : {};
+      if (out.redirect && out.short === undefined) out.short = true;
+      if (out.redirect && out.status === undefined) out.status = 302;
+      if (out.redirect && !out.headers) out.headers = [['location', out.redirect]];
+      if (out.locals === undefined
+          && ctx.locals
+          && typeof ctx.locals === 'object'
+          && Object.keys(ctx.locals).length > 0) {
+        out.locals = ctx.locals;
+      }
+      return JSON.stringify(out);
+    }
     const value = await fn(payload);
     return JSON.stringify({ ok: true, value: value === undefined ? null : value });
   } catch (e) {
