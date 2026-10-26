@@ -226,9 +226,9 @@ pub async fn op_oxide_fetch(
         && !headers
             .iter()
             .any(|(k, _)| k.eq_ignore_ascii_case("traceparent"))
-        {
-            headers.push(("traceparent".to_string(), tp));
-        }
+    {
+        headers.push(("traceparent".to_string(), tp));
+    }
     use base64::Engine as _;
     let body = base64::engine::general_purpose::STANDARD
         .decode(&body_b64)
