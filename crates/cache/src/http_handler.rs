@@ -17,7 +17,7 @@
 use crate::{Entry, Result, auth, codec, err};
 use async_trait::async_trait;
 
-/// An HTTP-backed [`CacheHandler`](crate::CacheHandler).
+/// An HTTP-backed `CacheHandler`.
 pub struct HttpCacheHandler {
     base: String,
 }
