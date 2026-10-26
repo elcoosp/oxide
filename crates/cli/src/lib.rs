@@ -1037,14 +1037,17 @@ fn jsx_import_source_for(framework: &str) -> Option<String> {
 /// applies when that list is empty. Extra entries are harmless — an external
 /// that is never imported is never resolved.
 fn default_ssr_externals() -> Vec<String> {
+    // REACT_BUNDLED_IN_SSR: react and react-dom are deliberately NOT in the
+    // externals list. V8 has no CJS→ESM interop (Node's ESM loader does via
+    // cjs-module-lexer); a route file's `import { jsx } from
+    // "react/jsx-runtime"` hits react's CJS jsx-runtime and fails with
+    // "does not provide an export named jsx". Bundling react into the SSR
+    // output turns the import into a relative chunk, which V8 resolves.
+    //
+    // Vue / Svelte / Solid are ESM-native: no CJS interop needed. Keep
+    // them external so their server runtimes stay per-framework and a
+    // route file continues to import from the package directly.
     [
-        // React
-        "react",
-        "react-dom",
-        "react/jsx-runtime",
-        "react/jsx-dev-runtime",
-        "react-dom/server",
-        "react-dom/client",
         // Vue
         "vue",
         "vue/server-renderer",
