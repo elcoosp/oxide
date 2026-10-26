@@ -6,7 +6,8 @@
 
 **The `oxide` command-line tool.**
 
-[![Crates.io](https://img.shields.io/crates/v/oxide-fw-cli.svg)](https://crates.io/crates/oxide-fw-cli) [![docs.rs](https://docs.rs/oxide-fw-cli/badge.svg)](https://docs.rs/oxide-fw-cli)
+[![Crates.io](https://img.shields.io/crates/v/oxide-fw-cli?style=for-the-badge&logo=rust&label=crates.io)](https://crates.io/crates/oxide-fw-cli) [![Downloads](https://img.shields.io/crates/d/oxide-fw-cli?style=for-the-badge&logo=rust&label=downloads)](https://crates.io/crates/oxide-fw-cli) [![docs.rs](https://img.shields.io/docsrs/oxide-fw-cli?style=for-the-badge&logo=docs.rs)](https://docs.rs/oxide-fw-cli) [![MSRV](https://img.shields.io/badge/MSRV-1.98%2B-blue?style=for-the-badge&logo=rust)](https://github.com/elcoosp/oxide#rust-version)
+[![License](https://img.shields.io/crates/l/oxide-fw-cli?style=for-the-badge)](https://github.com/elcoosp/oxide#license) [![CI](https://img.shields.io/github/actions/workflow/status/elcoosp/oxide/ci.yml?style=for-the-badge&logo=github&label=CI)](https://github.com/elcoosp/oxide/actions) [![crate size](https://img.shields.io/crates/size/oxide-fw-cli?style=for-the-badge&label=size)](https://crates.io/crates/oxide-fw-cli)
 
 > **Note:** Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
 

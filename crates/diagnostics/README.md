@@ -6,7 +6,8 @@
 
 **The framework's error type — `OxideError` and `Diagnostic`.**
 
-[![Crates.io](https://crates.io/crates/oxide-fw-diagnostics) `soon`] [![docs.rs](https://docs.rs/oxide-fw-diagnostics/badge.svg)](https://docs.rs/oxide-fw-diagnostics)
+[![Crates.io](https://img.shields.io/crates/v/oxide-fw-diagnostics?style=for-the-badge&logo=rust&label=crates.io)](https://crates.io/crates/oxide-fw-diagnostics) [![Downloads](https://img.shields.io/crates/d/oxide-fw-diagnostics?style=for-the-badge&logo=rust&label=downloads)](https://crates.io/crates/oxide-fw-diagnostics) [![docs.rs](https://img.shields.io/docsrs/oxide-fw-diagnostics?style=for-the-badge&logo=docs.rs)](https://docs.rs/oxide-fw-diagnostics) [![MSRV](https://img.shields.io/badge/MSRV-1.98%2B-blue?style=for-the-badge&logo=rust)](https://github.com/elcoosp/oxide#rust-version)
+[![License](https://img.shields.io/crates/l/oxide-fw-diagnostics?style=for-the-badge)](https://github.com/elcoosp/oxide#license) [![CI](https://img.shields.io/github/actions/workflow/status/elcoosp/oxide/ci.yml?style=for-the-badge&logo=github&label=CI)](https://github.com/elcoosp/oxide/actions) [![crate size](https://img.shields.io/crates/size/oxide-fw-diagnostics?style=for-the-badge&label=size)](https://crates.io/crates/oxide-fw-diagnostics)
 
 > **Note:** Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
 
