@@ -113,6 +113,8 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install NASM
+        run: sudo apt-get update && sudo apt-get install -y nasm
       - name: Build the CLI
         run: cargo build -p oxide-fw-cli
       - name: Plugin fixture gate
@@ -263,6 +265,8 @@ jobs:
         with: { version: 9 }
       - name: Install workspace deps (for the worker's tsx loader)
         run: pnpm install --frozen-lockfile || pnpm install
+      - name: Build workspace packages
+        run: pnpm build
       - name: Run the ignored loader_host / framework_host e2e tests
         # Both are real e2e runs (spawn a Node worker, exercise the wire).
         # No `|| true` on either: if the framework host tests regress, the
@@ -307,6 +311,8 @@ jobs:
         run: cargo build -p oxide-fw-cli
       - name: Install workspace deps
         run: pnpm install --frozen-lockfile || pnpm install
+      - name: Build workspace packages
+        run: pnpm build
       - name: Install Playwright browser
         working-directory: tests/playwright
         run: pnpm exec playwright install --with-deps ${{ matrix.browser }}
