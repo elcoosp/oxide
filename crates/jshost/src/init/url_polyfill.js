@@ -91,6 +91,15 @@
   function URL(input, base) {
     if (!(this instanceof URL)) throw new TypeError('URL constructor called without new');
     input = String(input);
+    const isAbsolute = /^[a-zA-Z][a-zA-Z0-9+.\-]*:/.test(input);
+    if (base === undefined && !isAbsolute) {
+      // Pragmatic extension: real WHATWG URL throws here, but the framework's
+      // middleware host passes a bare path (e.g. '/' or '/?/greet') as
+      // request.url. Treat as same-origin-relative under a synthetic base so
+      // common middleware patterns (new URL(request.url)) work. Absolute
+      // inputs are unaffected. Host audit (pass full URL) is deferred.
+      return new URL(input, 'http://localhost');
+    }
     if (base !== undefined) {
       const b = base instanceof URL ? base : new URL(String(base));
       if (!/^[a-zA-Z][a-zA-Z0-9+.\-]*:/.test(input)) {
