@@ -44,5 +44,13 @@
   ],
   "dependencies": {
     "@oxide-fw/core": "workspace:*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/elcoosp/oxide.git",
+    "directory": "packages/svelte"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

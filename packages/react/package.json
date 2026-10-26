@@ -51,5 +51,13 @@
   ],
   "dependencies": {
     "@oxide-fw/core": "workspace:*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/elcoosp/oxide.git",
+    "directory": "packages/react"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

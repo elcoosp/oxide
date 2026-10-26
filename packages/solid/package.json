@@ -48,5 +48,13 @@
   ],
   "dependencies": {
     "@oxide-fw/core": "workspace:*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/elcoosp/oxide.git",
+    "directory": "packages/solid"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
