@@ -30,13 +30,17 @@ pub use single_flight::{FlightOwnerGuard, FlightSlot, SingleFlight};
 pub use tiers::{CacheStats, DiskTier, MemoryTier, TieredCache};
 
 #[cfg(feature = "redis")]
+#[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
 pub mod redis_handler;
 #[cfg(feature = "redis")]
+#[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
 pub use redis_handler::{RedisCacheHandler, redacted_url};
 
 #[cfg(feature = "s3")]
+#[cfg_attr(docsrs, doc(cfg(feature = "s3")))]
 pub mod s3_handler;
 #[cfg(feature = "s3")]
+#[cfg_attr(docsrs, doc(cfg(feature = "s3")))]
 pub use s3_handler::S3CacheHandler;
 
 use blake3::Hasher;
