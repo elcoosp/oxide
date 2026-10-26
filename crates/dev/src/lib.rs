@@ -355,9 +355,10 @@ fn walk_root(root: &Path, out: &mut BTreeMap<PathBuf, String>) {
             }
             walk_root(&p, out);
         } else if p.is_file()
-            && let Some(hash) = hash_file(&p) {
-                out.insert(p, hash);
-            }
+            && let Some(hash) = hash_file(&p)
+        {
+            out.insert(p, hash);
+        }
     }
 }
 
