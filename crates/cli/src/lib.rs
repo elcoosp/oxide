@@ -8,6 +8,9 @@ use oxide_fw_jshost::loader_host::ActionRunArgs;
 use oxide_fw_jshost::loader_host::LoaderRunArgs;
 use oxide_fw_jshost::loader_host::EndpointRunArgs;
 use oxide_fw_server::RunActionArgs;
+use oxide_fw_server::EndpointDispatchArgs;
+use oxide_fw_server::MiddlewareDispatchArgs;
+use oxide_fw_server::ActionDispatchArgs;
 
 type LoaderInputs = (
     Option<std::path::PathBuf>,
@@ -7432,15 +7435,15 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
                         None
                     };
                     let mw_res = dispatcher
-                        .dispatch(
-                            &module_path_s,
-                            &req_owned.method,
-                            &req_owned.url,
-                            &endpoint_params_json,
-                            &req_owned.headers,
-                            endpoint_body.as_ref(),
-                            locals_for_call,
-                        )
+                        .dispatch(MiddlewareDispatchArgs {
+        module_path: &module_path_s,
+        method: &req_owned.method,
+        url: &req_owned.url,
+        params: &endpoint_params_json,
+        headers: &req_owned.headers,
+        body: endpoint_body.as_ref(),
+        locals: locals_for_call,
+    })
                         .await;
                     match mw_res {
                         Ok(out) => {
@@ -8395,16 +8398,16 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
                     )
                 });
                 match dispatcher
-                    .dispatch(
-                        &module_path_s,
-                        &req_owned.method,
-                        &req_owned.url,
-                        &endpoint_params_json,
-                        &req_owned.headers,
-                        endpoint_body.as_ref(),
-                        &middleware_locals,
-                        endpoint_trace.as_ref(),
-                    )
+                    .dispatch(EndpointDispatchArgs {
+        module_path: &module_path_s,
+        method: &req_owned.method,
+        url: &req_owned.url,
+        params: &endpoint_params_json,
+        headers: &req_owned.headers,
+        body: endpoint_body.as_ref(),
+        locals: &middleware_locals,
+        trace: endpoint_trace.as_ref(),
+    })
                     .await
                 {
                     Ok(out) => {
@@ -9306,18 +9309,19 @@ struct ActionDispatcherImpl {
 
 #[async_trait::async_trait]
 impl oxide_fw_server::ActionDispatcher for ActionDispatcherImpl {
-    async fn dispatch(
-        &self,
-        module_path: &str,
-        action: &str,
-        form_json: &str,
-        params: &serde_json::Map<String, serde_json::Value>,
-        url: &str,
-        method: &str,
-        headers: &[(String, String)],
-        locals: &serde_json::Value,
-        trace: Option<&serde_json::Value>,
-    ) -> std::result::Result<oxide_fw_server::ActionRunResult, oxide_fw_server::DispatchError> {
+    async fn dispatch(&self, args: ActionDispatchArgs<'_>) -> std::result::Result<oxide_fw_server::ActionRunResult, oxide_fw_server::DispatchError> {
+    let ActionDispatchArgs {
+        module_path,
+        action,
+        form_json,
+        params,
+        url,
+        method,
+        headers,
+        locals,
+        trace,
+    } = args;
+
         match self
             .host
             .run(ActionRunArgs {
@@ -9378,17 +9382,18 @@ struct EndpointDispatcherImpl {
 
 #[async_trait::async_trait]
 impl oxide_fw_server::EndpointDispatcher for EndpointDispatcherImpl {
-    async fn dispatch(
-        &self,
-        module_path: &str,
-        method: &str,
-        url: &str,
-        params: &serde_json::Map<String, serde_json::Value>,
-        headers: &[(String, String)],
-        body: &[u8],
-        locals: &serde_json::Value,
-        trace: Option<&serde_json::Value>,
-    ) -> std::result::Result<oxide_fw_server::EndpointRunResult, oxide_fw_server::EndpointRunError> {
+    async fn dispatch(&self, args: EndpointDispatchArgs<'_>) -> std::result::Result<oxide_fw_server::EndpointRunResult, oxide_fw_server::EndpointRunError> {
+    let EndpointDispatchArgs {
+        module_path,
+        method,
+        url,
+        params,
+        headers,
+        body,
+        locals,
+        trace,
+    } = args;
+
         match self
             .host
             .run(LoaderRunArgs {
@@ -9510,17 +9515,17 @@ struct MiddlewareDispatcherImpl {
 
 #[async_trait::async_trait]
 impl oxide_fw_server::MiddlewareDispatcher for MiddlewareDispatcherImpl {
-    async fn dispatch(
-        &self,
-        module_path: &str,
-        method: &str,
-        url: &str,
-        params: &serde_json::Map<String, serde_json::Value>,
-        headers: &[(String, String)],
-        body: &[u8],
-        locals: Option<&serde_json::Value>,
-    ) -> std::result::Result<oxide_fw_server::MiddlewareRunResult, oxide_fw_server::MiddlewareRunError>
-    {
+    async fn dispatch(&self, args: MiddlewareDispatchArgs<'_>) -> std::result::Result<oxide_fw_server::MiddlewareRunResult, oxide_fw_server::MiddlewareRunError> {
+    let MiddlewareDispatchArgs {
+        module_path,
+        method,
+        url,
+        params,
+        headers,
+        body,
+        locals,
+    } = args;
+
         match self
             .host
             .run(EndpointRunArgs {

@@ -7,6 +7,8 @@
 //! Security defaults (§17.1) enforced in Rust before JS.
 
 #![forbid(unsafe_code)]
+pub use page_renderer::EndpointDispatchArgs;
+pub use page_renderer::MiddlewareDispatchArgs;
 
 pub mod loader;
 pub mod metrics;
@@ -1705,6 +1707,18 @@ pub fn socket_route_for<'a>(
 }
 
 /// §9.3: the seam between the HTTP pipeline and whichever runtime runs a
+pub struct ActionDispatchArgs<'a> {
+    pub module_path: &'a str,
+    pub action: &'a str,
+    pub form_json: &'a str,
+    pub params: &'a serde_json::Map<String, serde_json::Value>,
+    pub url: &'a str,
+    pub method: &'a str,
+    pub headers: &'a [(String, String)],
+    pub locals: &'a serde_json::Value,
+    pub trace: Option<&'a serde_json::Value>,
+}
+
 /// user's form action. Mirrors `ServerFnDispatcher`: the pipeline owns the
 /// request parsing, the CSRF check, and the response envelope; the CLI wires
 /// a dispatcher backed by the render pool.
@@ -1713,22 +1727,7 @@ pub trait ActionDispatcher: Send + Sync {
     /// Run the named action from `module_path` with the form body. `Ok`
     /// carries the action's result (status, location, data, cookies,
     /// headers, revalidations); `Err` is a coded transport/runner failure.
-    async fn dispatch(
-        &self,
-        module_path: &str,
-        action: &str,
-        form_json: &str,
-        params: &serde_json::Map<String, serde_json::Value>,
-        url: &str,
-        method: &str,
-        headers: &[(String, String)],
-        // §8.1 middleware.ts / §9.1: request-scoped locals injected by
-        // middleware. An action's `event.locals` reads this; absent (empty
-        // object) when no middleware ran.
-        locals: &serde_json::Value,
-        // §20: W3C trace context for outgoing fetches inside the action.
-        trace: Option<&serde_json::Value>,
-    ) -> std::result::Result<ActionRunResult, DispatchError>;
+    async fn dispatch(&self, args: ActionDispatchArgs<'_>) -> std::result::Result<ActionRunResult, DispatchError>;
 }
 
 /// The result of an action run, in the shape the pipeline builds a response
@@ -3119,17 +3118,17 @@ pub async fn run_action(args: RunActionArgs<'_>) -> OxideResponse {
         );
     };
     match dispatcher
-        .dispatch(
-            module_path,
-            action,
-            form_json,
-            params,
-            url,
-            method,
-            headers,
-            locals,
-            trace,
-        )
+        .dispatch(ActionDispatchArgs {
+        module_path,
+        action,
+        form_json,
+        params,
+        url,
+        method,
+        headers,
+        locals,
+        trace,
+    })
         .await
     {
         Ok(out) => {

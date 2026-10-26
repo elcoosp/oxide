@@ -6,6 +6,8 @@
 use super::*;
 use clap::CommandFactory;
 use std::path::PathBuf;
+use oxide_fw_server::MiddlewareDispatchArgs;
+use oxide_fw_server::ActionDispatchArgs;
 
 // ------------------------------------------------------------------ helpers
 
@@ -3520,17 +3522,17 @@ struct ScriptedMiddleware {
 
 #[async_trait::async_trait]
 impl oxide_fw_server::MiddlewareDispatcher for ScriptedMiddleware {
-    async fn dispatch(
-        &self,
-        _module_path: &str,
-        _method: &str,
-        _url: &str,
-        _params: &serde_json::Map<String, serde_json::Value>,
-        _headers: &[(String, String)],
-        _body: &[u8],
-        _locals: Option<&serde_json::Value>,
-    ) -> std::result::Result<oxide_fw_server::MiddlewareRunResult, oxide_fw_server::MiddlewareRunError>
-    {
+    async fn dispatch(&self, args: MiddlewareDispatchArgs<'_>) -> std::result::Result<oxide_fw_server::MiddlewareRunResult, oxide_fw_server::MiddlewareRunError> {
+    let MiddlewareDispatchArgs {
+        module_path: _,
+        method: _,
+        url: _,
+        params: _,
+        headers,
+        body,
+        locals,
+    } = args;
+
         Ok(oxide_fw_server::MiddlewareRunResult {
             short: self.short_status.is_some(),
             status: self.short_status.unwrap_or(200),
@@ -3624,17 +3626,17 @@ struct RewriteOnceMiddleware {
 
 #[async_trait::async_trait]
 impl oxide_fw_server::MiddlewareDispatcher for RewriteOnceMiddleware {
-    async fn dispatch(
-        &self,
-        module_path: &str,
-        _method: &str,
-        _url: &str,
-        _params: &serde_json::Map<String, serde_json::Value>,
-        _headers: &[(String, String)],
-        _body: &[u8],
-        _locals: Option<&serde_json::Value>,
-    ) -> std::result::Result<oxide_fw_server::MiddlewareRunResult, oxide_fw_server::MiddlewareRunError>
-    {
+    async fn dispatch(&self, args: MiddlewareDispatchArgs<'_>) -> std::result::Result<oxide_fw_server::MiddlewareRunResult, oxide_fw_server::MiddlewareRunError> {
+    let MiddlewareDispatchArgs {
+        module_path,
+        method: _,
+        url: _,
+        params: _,
+        headers,
+        body: _,
+        locals: _,
+    } = args;
+
         let inner = module_path.ends_with("shop/middleware.ts");
         self.calls.lock().unwrap().push(module_path.to_string());
         Ok(oxide_fw_server::MiddlewareRunResult {
@@ -3706,17 +3708,17 @@ struct LayerMiddleware;
 
 #[async_trait::async_trait]
 impl oxide_fw_server::MiddlewareDispatcher for LayerMiddleware {
-    async fn dispatch(
-        &self,
-        module_path: &str,
-        _method: &str,
-        _url: &str,
-        _params: &serde_json::Map<String, serde_json::Value>,
-        _headers: &[(String, String)],
-        _body: &[u8],
-        _locals: Option<&serde_json::Value>,
-    ) -> std::result::Result<oxide_fw_server::MiddlewareRunResult, oxide_fw_server::MiddlewareRunError>
-    {
+    async fn dispatch(&self, args: MiddlewareDispatchArgs<'_>) -> std::result::Result<oxide_fw_server::MiddlewareRunResult, oxide_fw_server::MiddlewareRunError> {
+    let MiddlewareDispatchArgs {
+        module_path,
+        method: _,
+        url: _,
+        params: _,
+        headers,
+        body: _,
+        locals: _,
+    } = args;
+
         let inner = module_path.ends_with("shop/middleware.ts");
         let headers = if inner {
             vec![("x-tenant-frame".to_string(), "SAMEORIGIN".to_string())]
@@ -4412,17 +4414,17 @@ impl ChainProbeMiddleware {
 
 #[async_trait::async_trait]
 impl oxide_fw_server::MiddlewareDispatcher for ChainProbeMiddleware {
-    async fn dispatch(
-        &self,
-        module_path: &str,
-        _method: &str,
-        _url: &str,
-        _params: &serde_json::Map<String, serde_json::Value>,
-        _headers: &[(String, String)],
-        _body: &[u8],
-        locals: Option<&serde_json::Value>,
-    ) -> std::result::Result<oxide_fw_server::MiddlewareRunResult, oxide_fw_server::MiddlewareRunError>
-    {
+    async fn dispatch(&self, args: MiddlewareDispatchArgs<'_>) -> std::result::Result<oxide_fw_server::MiddlewareRunResult, oxide_fw_server::MiddlewareRunError> {
+    let MiddlewareDispatchArgs {
+        module_path,
+        method: _,
+        url: _,
+        params: _,
+        headers,
+        body,
+        locals,
+    } = args;
+
         self.seen
             .lock()
             .unwrap()
@@ -8515,18 +8517,19 @@ async fn action_set_cookie_survives_200_rerender() {
     struct CookieDispatcher;
     #[async_trait::async_trait]
     impl oxide_fw_server::ActionDispatcher for CookieDispatcher {
-        async fn dispatch(
-            &self,
-            _module_path: &str,
-            _action: &str,
-            _form_json: &str,
-            _params: &serde_json::Map<String, serde_json::Value>,
-            _url: &str,
-            _method: &str,
-            _headers: &[(String, String)],
-            _locals: &serde_json::Value,
-            _trace: Option<&serde_json::Value>,
-        ) -> Result<oxide_fw_server::ActionRunResult, oxide_fw_server::DispatchError> {
+        async fn dispatch(&self, args: ActionDispatchArgs<'_>) -> Result<oxide_fw_server::ActionRunResult, oxide_fw_server::DispatchError> {
+    let ActionDispatchArgs {
+        module_path: _,
+        action: _,
+        form_json: _,
+        params: _,
+        url: _,
+        method: _,
+        headers,
+        locals: _,
+        trace: _,
+    } = args;
+
             Ok(oxide_fw_server::ActionRunResult {
                 status: 200,
                 location: None,

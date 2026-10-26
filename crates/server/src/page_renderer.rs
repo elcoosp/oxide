@@ -276,6 +276,17 @@ mod tests {
 // ---------------------------------------------------------------------------
 
 /// The seam between the HTTP pipeline and whichever runtime executes a
+pub struct EndpointDispatchArgs<'a> {
+    pub module_path: &'a str,
+    pub method: &'a str,
+    pub url: &'a str,
+    pub params: &'a serde_json::Map<String, serde_json::Value>,
+    pub headers: &'a [(String, String)],
+    pub body: &'a [u8],
+    pub locals: &'a serde_json::Value,
+    pub trace: Option<&'a serde_json::Value>,
+}
+
 /// route's `route.ts` handler. Mirrors `ActionDispatcher`; the CLI wires a
 /// dispatcher backed by the render pool (`oxide-fw-jshost::EndpointHost`); tests
 /// can wire a table of closures.
@@ -285,20 +296,7 @@ pub trait EndpointDispatcher: Send + Sync {
     /// on-disk path to `route.ts`; `method` is the HTTP method; `body` is the
     /// raw request body (a route.ts can be an upload proxy, so the wire must
     /// carry arbitrary bytes). The result is the raw `Response` shape.
-    async fn dispatch(
-        &self,
-        module_path: &str,
-        method: &str,
-        url: &str,
-        params: &serde_json::Map<String, serde_json::Value>,
-        headers: &[(String, String)],
-        body: &[u8],
-        // §8.1 middleware.ts / §9.1: request-scoped locals injected by
-        // middleware. A route.ts's `ctx.locals` reads this.
-        locals: &serde_json::Value,
-        // §20: W3C trace context for outgoing fetches inside the endpoint.
-        trace: Option<&serde_json::Value>,
-    ) -> std::result::Result<EndpointRunResult, EndpointRunError>;
+    async fn dispatch(&self, args: EndpointDispatchArgs<'_>) -> std::result::Result<EndpointRunResult, EndpointRunError>;
 }
 
 /// The result of a `route.ts` run.
@@ -336,6 +334,16 @@ pub struct EndpointRunError {
 // ---------------------------------------------------------------------------
 
 /// The seam between the HTTP pipeline and whichever runtime executes a
+pub struct MiddlewareDispatchArgs<'a> {
+    pub module_path: &'a str,
+    pub method: &'a str,
+    pub url: &'a str,
+    pub params: &'a serde_json::Map<String, serde_json::Value>,
+    pub headers: &'a [(String, String)],
+    pub body: &'a [u8],
+    pub locals: Option<&'a serde_json::Value>,
+}
+
 /// route's `middleware.ts`. The middleware runs **before** route match,
 /// loader, and render, and can short-circuit, rewrite, add headers, or inject
 /// `locals`.
@@ -344,16 +352,7 @@ pub trait MiddlewareDispatcher: Send + Sync {
     /// Dispatch `middleware.ts` for a request. `module_path` is the on-disk
     /// path; `locals` is the request-scoped state accumulated so far (an
     /// outer middleware's locals, if any). The result carries the directive.
-    async fn dispatch(
-        &self,
-        module_path: &str,
-        method: &str,
-        url: &str,
-        params: &serde_json::Map<String, serde_json::Value>,
-        headers: &[(String, String)],
-        body: &[u8],
-        locals: Option<&serde_json::Value>,
-    ) -> std::result::Result<MiddlewareRunResult, MiddlewareRunError>;
+    async fn dispatch(&self, args: MiddlewareDispatchArgs<'_>) -> std::result::Result<MiddlewareRunResult, MiddlewareRunError>;
 }
 
 /// The result of a `middleware.ts` run.
