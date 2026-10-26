@@ -633,10 +633,12 @@ fn topo_order(closure: &BTreeSet<NodeKey>, nodes: &DashMap<NodeKey, NodeOutput>)
         if let Some(out) = nodes.get(k) {
             for d in out.value().deps.iter() {
                 if let Input::Node(dep, _) = d
-                    && closure.contains(dep) && dep != k {
-                        dependents.entry(dep.clone()).or_default().push(k.clone());
-                        *indegree.get_mut(k).unwrap() += 1;
-                    }
+                    && closure.contains(dep)
+                    && dep != k
+                {
+                    dependents.entry(dep.clone()).or_default().push(k.clone());
+                    *indegree.get_mut(k).unwrap() += 1;
+                }
             }
         }
     }
