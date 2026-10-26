@@ -269,23 +269,24 @@ pub fn emit(target: Target, artifact: &BuildArtifact, out_dir: &Path) -> Result<
             // file to emit as `404.html`, in which case the config accepts the
             // trade-off explicitly.
             if artifact.static_fallback.is_none()
-                && let Some(routes) = route_table(&artifact.server_manifest) {
-                    for (route, row) in &routes {
-                        let mode = row
-                            .get("render_mode")
-                            .or_else(|| row.get("renderMode"))
-                            .and_then(|v| v.as_str());
-                        if mode == Some("dynamic") && !artifact.prerendered.contains_key(route) {
-                            return Err(err(
-                                "ADP-STATIC-DYN",
-                                format!(
-                                    "route `{route}` is `dynamic` and has no prerendered output; \
+                && let Some(routes) = route_table(&artifact.server_manifest)
+            {
+                for (route, row) in &routes {
+                    let mode = row
+                        .get("render_mode")
+                        .or_else(|| row.get("renderMode"))
+                        .and_then(|v| v.as_str());
+                    if mode == Some("dynamic") && !artifact.prerendered.contains_key(route) {
+                        return Err(err(
+                            "ADP-STATIC-DYN",
+                            format!(
+                                "route `{route}` is `dynamic` and has no prerendered output; \
                                      static export requires prerendering or `static.fallback` (§10.5)"
-                                ),
-                            ));
-                        }
+                            ),
+                        ));
                     }
                 }
+            }
             // Copy every prerendered output. The intermediate `prerendered/`
             // prefix is stripped so files land at host-ready paths
             // (`/blog/hello.html`, not `/prerendered/blog/hello.html`).
