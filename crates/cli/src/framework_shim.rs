@@ -59,7 +59,8 @@ impl oxide_fw_jshost::FetchHandler for CliFetchHandler {
         headers: &[(String, String)],
         body: &[u8],
     ) -> oxide_fw_diagnostics::Result<oxide_fw_jshost::FetchResponse> {
-        match oxide_fw_server::ssrf_safe_fetch(method, url, headers, body, &self.ssrf_allow_list).await
+        match oxide_fw_server::ssrf_safe_fetch(method, url, headers, body, &self.ssrf_allow_list)
+            .await
         {
             Ok((status, headers, body)) => Ok(oxide_fw_jshost::FetchResponse {
                 status,
@@ -373,11 +374,12 @@ pub async fn build_framework_stack(
     // match; the CLI can override it via the same env var.
     if let Some(cfg_path) = config_path
         && std::env::var_os("OXIDE_FRAMEWORK").is_none()
-            && let Some(name) = peek_framework_name(cfg_path) {
-                // SAFETY: called before any worker thread is spawned; no
-                // concurrent reader or writer touches this variable.
-                unsafe { std::env::set_var("OXIDE_FRAMEWORK", name) };
-            }
+        && let Some(name) = peek_framework_name(cfg_path)
+    {
+        // SAFETY: called before any worker thread is spawned; no
+        // concurrent reader or writer touches this variable.
+        unsafe { std::env::set_var("OXIDE_FRAMEWORK", name) };
+    }
 
     // §4.2 / D2: the backend is selectable via `server.backend` in the
     // project config. `Node` (default) resolves npm from the workspace;
@@ -508,7 +510,8 @@ pub async fn build_framework_stack(
                 size: tooling_pool_size(),
                 ..Default::default()
             })
-        }; match res {
+        };
+        match res {
             Ok(p) => p,
             Err(e) => {
                 eprintln!(
@@ -532,7 +535,8 @@ pub async fn build_framework_stack(
                 size: tooling_pool_size(),
                 ..Default::default()
             })
-        }; match res {
+        };
+        match res {
             Ok(p) => p,
             Err(e) => {
                 eprintln!(
@@ -657,12 +661,13 @@ pub(crate) fn resolve_ssr_entry(dist_server: &std::path::Path) -> Option<String>
     let prefer_eager = std::env::var_os("OXIDE_SSR_EAGER").is_some();
     if !prefer_eager
         && let Some(decl) = declared.as_deref()
-            && let Some(lazy_sibling) = decl.strip_suffix("index.js") {
-                let lazy = dist_server.join(format!("{lazy_sibling}lazy.js"));
-                if lazy.is_file() {
-                    return Some(lazy.to_string_lossy().to_string());
-                }
-            }
+        && let Some(lazy_sibling) = decl.strip_suffix("index.js")
+    {
+        let lazy = dist_server.join(format!("{lazy_sibling}lazy.js"));
+        if lazy.is_file() {
+            return Some(lazy.to_string_lossy().to_string());
+        }
+    }
 
     // (3) The declared entry itself.
     if let Some(decl) = declared {
@@ -695,15 +700,17 @@ impl LazyFrameworkRenderer {
             .read()
             .map(|g| g.clone())
             .unwrap_or_default();
-        if src.entry.is_none() && src.sources.is_empty()
-            && let Some(root) = std::path::Path::new(&self.config_path).parent() {
-                // §6.4 / P0-10: the manifest's `adapter_entry` names where
-                // the build wrote the SSR entry; `resolve_ssr_entry` reads
-                // it and prefers the lazy sibling (Wave M perf win).
-                if let Some(entry) = resolve_ssr_entry(&root.join("dist/server")) {
-                    src.entry = Some(entry);
-                }
+        if src.entry.is_none()
+            && src.sources.is_empty()
+            && let Some(root) = std::path::Path::new(&self.config_path).parent()
+        {
+            // §6.4 / P0-10: the manifest's `adapter_entry` names where
+            // the build wrote the SSR entry; `resolve_ssr_entry` reads
+            // it and prefers the lazy sibling (Wave M perf win).
+            if let Some(entry) = resolve_ssr_entry(&root.join("dist/server")) {
+                src.entry = Some(entry);
             }
+        }
         if !src.is_empty() {
             input.components = Some(src);
         }
@@ -771,17 +778,18 @@ pub async fn dev_component_sources(
     let mut out = std::collections::BTreeMap::new();
     for (id, src) in entries {
         if let Some(js) = precompiled.get(&src)
-            && std::fs::create_dir_all(&comp_dir).is_ok() {
-                let name = format!(
-                    "{}.mjs",
-                    blake3::hash(format!("{id}\u{0}{}", src.display()).as_bytes()).to_hex()
-                );
-                let path = comp_dir.join(name);
-                if std::fs::write(&path, js).is_ok() {
-                    out.insert(id, path.to_string_lossy().to_string());
-                    continue;
-                }
+            && std::fs::create_dir_all(&comp_dir).is_ok()
+        {
+            let name = format!(
+                "{}.mjs",
+                blake3::hash(format!("{id}\u{0}{}", src.display()).as_bytes()).to_hex()
+            );
+            let path = comp_dir.join(name);
+            if std::fs::write(&path, js).is_ok() {
+                out.insert(id, path.to_string_lossy().to_string());
+                continue;
             }
+        }
         out.insert(id, src.to_string_lossy().to_string());
     }
     out
@@ -933,7 +941,6 @@ mod tests {
 
 #[cfg(test)]
 mod backend_tests {
-    
 
     /// With `server.backend = "v8"`, `build_framework_stack` must construct
     /// the pool via `V8Host` (not `NodeHost`). We cannot spawn the CLI
@@ -953,7 +960,8 @@ mod backend_tests {
     #[tokio::test]
     async fn node_backend_builds_a_pool() {
         use oxide_fw_jshost::JsHost;
-        let node = oxide_fw_jshost::NodeHost::new(oxide_fw_jshost::NodeHost::worker_script_default());
+        let node =
+            oxide_fw_jshost::NodeHost::new(oxide_fw_jshost::NodeHost::worker_script_default());
         assert_eq!(node.backend_name(), "node");
     }
 }
