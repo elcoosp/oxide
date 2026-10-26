@@ -3402,7 +3402,7 @@ fn prefixed_prerender_path(
     }
 }
 
-struct PrerenderTarget {
+pub struct PrerenderTarget {
     rel: String,
     url_path: String,
     params: BTreeMap<String, String>,
@@ -3497,22 +3497,22 @@ async fn prerender_targets(args: PrerenderTargetsArgs<'_>) -> anyhow::Result<(Ve
         async move {
             let _permit = sem.acquire().await;
             let out = write_prerender(PrerenderArgs {
-        dist: dist,
+        dist,
         rel: &t.rel,
-        route_id: route_id,
-        pattern: pattern,
+        route_id,
+        pattern,
         url_path: &t.url_path,
         params: &t.params,
         locale: &t.locale,
         nonce: nonce_for,
-        page_renderer: page_renderer,
-        loader_runner: loader_runner,
-        module_path: module_path,
-        boot_script_url: boot_script_url,
+        page_renderer,
+        loader_runner,
+        module_path,
+        boot_script_url,
         layouts: layout_ids,
         layout_module_paths: layout_modules,
         error_route_id: error_route,
-        plugin_head: plugin_head,
+        plugin_head,
     })
             .await;
             (i, out)
@@ -3906,18 +3906,18 @@ async fn route_data_response(args: RouteDataArgs<'_>) -> oxide_fw_server::OxideR
 
     let request_id = req.request_id.clone();
     let resp = route_data_response_inner(RouteDataInnerArgs {
-        req: req,
-        loader_runner: loader_runner,
-        module_path: module_path,
-        route_id: route_id,
-        params: params,
-        metrics: metrics,
-        started: started,
-        middleware_locals: middleware_locals,
-        middleware_headers: middleware_headers,
-        layout_module_paths: layout_module_paths,
-        locale: locale,
-        session_codec: session_codec,
+        req,
+        loader_runner,
+        module_path,
+        route_id,
+        params,
+        metrics,
+        started,
+        middleware_locals,
+        middleware_headers,
+        layout_module_paths,
+        locale,
+        session_codec,
     })
     .await;
     if let Some(rec) = waterfall {
@@ -5522,7 +5522,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         dist: &dist,
         route_id: &route_id,
         pattern: &pattern,
-        targets: targets,
+        targets,
         nonce: &nonce,
         nonce_for: &nonce_for,
         page_renderer: stack.page_renderer.as_ref(),
@@ -5631,7 +5631,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         dist: &dist,
         route_id: &route_id,
         pattern: &pattern,
-        targets: targets,
+        targets,
         nonce: &nonce,
         nonce_for: &nonce_for,
         page_renderer: stack.page_renderer.as_ref(),
@@ -5759,7 +5759,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         pattern: &pattern,
         url_path: &url_path,
         params: &empty_params,
-        locale: locale,
+        locale,
         nonce: &nonce_for,
         page_renderer: stack.page_renderer.as_ref(),
         loader_runner: stack.loader_runner.as_ref(),
@@ -5781,7 +5781,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         pattern: &pattern,
         url_path: &url_path,
         params: &empty_params,
-        locale: locale,
+        locale,
         nonce: &nonce_for,
         page_renderer: stack.page_renderer.as_ref(),
         loader_runner: stack.loader_runner.as_ref(),
@@ -7608,13 +7608,13 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
         route_id: route_id.as_deref(),
         params: &params,
         metrics: &metrics,
-        started: started,
+        started,
         middleware_locals: &middleware_locals,
         middleware_headers: &middleware_headers,
         layout_module_paths: &layout_module_paths,
         locale: &resolved_locale,
         session_codec: session_codec.as_deref(),
-        middleware_ms: middleware_ms,
+        middleware_ms,
         waterfall: waterfall.as_ref(),
     })
                 .await;
@@ -7644,7 +7644,7 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
         dispatcher: Some(dispatcher),
         module_path: &module_path.to_string_lossy(),
         route: &action_route,
-        action: action,
+        action,
         form_json: &form_json,
         params: &action_params,
         url: &req_owned.url,
@@ -9321,15 +9321,15 @@ impl oxide_fw_server::ActionDispatcher for ActionDispatcherImpl {
         match self
             .host
             .run(ActionRunArgs {
-        module_path: module_path,
-        action: action,
-        form_json: form_json,
-        params: params,
-        url: url,
-        method: method,
-        headers: headers,
-        locals: locals,
-        trace: trace,
+        module_path,
+        action,
+        form_json,
+        params,
+        url,
+        method,
+        headers,
+        locals,
+        trace,
     })
             .await
         {
@@ -9392,14 +9392,14 @@ impl oxide_fw_server::EndpointDispatcher for EndpointDispatcherImpl {
         match self
             .host
             .run(LoaderRunArgs {
-        module_path: module_path,
-        method: method,
-        url: url,
-        params: params,
-        headers: headers,
-        body: body,
-        locals: locals,
-        trace: trace,
+        module_path,
+        method,
+        url,
+        params,
+        headers,
+        body,
+        locals,
+        trace,
     })
             .await
         {
@@ -9524,13 +9524,13 @@ impl oxide_fw_server::MiddlewareDispatcher for MiddlewareDispatcherImpl {
         match self
             .host
             .run(EndpointRunArgs {
-        module_path: module_path,
-        method: method,
-        url: url,
-        params: params,
-        headers: headers,
-        body: body,
-        locals: locals,
+        module_path,
+        method,
+        url,
+        params,
+        headers,
+        body,
+        locals,
     })
             .await
         {

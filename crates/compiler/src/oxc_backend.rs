@@ -390,18 +390,18 @@ fn walk_top_stmt_for_use_cache(
             if let Some(body) = $func.body.as_ref() {
                 if let Some((ds, de)) = find_use_cache_directive(body) {
                     emit_use_cache_edit(UseCacheEditArgs {
-        code: code,
+        code,
         func: $func,
-        body: body,
+        body,
         directive_start: ds,
         directive_end: de,
         span_start: $span_start,
         exported: $exported,
         binding: $binding,
         name: &$name,
-        mod_arg: mod_arg,
-        edits: edits,
-        directives: directives,
+        mod_arg,
+        edits,
+        directives,
     });
                 }
             }
@@ -458,18 +458,18 @@ fn walk_export_decl_for_use_cache(
             if let Some(body) = func.body.as_ref()
                 && let Some((ds, de)) = find_use_cache_directive(body) {
                     emit_use_cache_edit(UseCacheEditArgs {
-        code: code,
-        func: func,
-        body: body,
+        code,
+        func,
+        body,
         directive_start: ds,
         directive_end: de,
         span_start: func.span.start,
-        exported: exported,
+        exported,
         binding: false,
         name: &name,
-        mod_arg: mod_arg,
-        edits: edits,
-        directives: directives,
+        mod_arg,
+        edits,
+        directives,
     });
                 }
         }
