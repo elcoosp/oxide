@@ -18,7 +18,6 @@
 //!   `ox:defer` event listener; the hydration bootstrap (and the client router's deferred
 //!   queue, §8.4) can then replay queued swaps by dispatching `ox:defer` events.
 
-
 type RewriterFn = Box<dyn FnMut(&[u8])>;
 pub mod ppr;
 
@@ -597,9 +596,10 @@ impl Injector {
         .map_err(|e| err("RND-INJECT", format!("html injection failed: {e}")))?;
         let mut out = out;
         if !body_seen.load(Ordering::Acquire)
-            && let Some(b) = body_inject.as_ref() {
-                out.push_str(b);
-            }
+            && let Some(b) = body_inject.as_ref()
+        {
+            out.push_str(b);
+        }
         Ok(out)
     }
 
@@ -607,7 +607,7 @@ impl Injector {
     ///
     /// Byte-equal to [`Injector::inject_into_html`] over the same concatenated input.
     /// The `<head>` insertion (documents lacking one) is decided once the streamed
-    /// prologue reveals a `<head>`/`<body>` open tag (or [`HEAD_DECISION_LIMIT`] bytes
+    /// prologue reveals a `<head>`/`<body>` open tag (or `HEAD_DECISION_LIMIT` bytes
     /// have arrived), so shells must start their head within that window.
     pub fn streaming(self) -> InjectStream {
         let (head_inject, body_inject) = self.injection_fragments();
@@ -748,9 +748,10 @@ impl InjectStream {
         })?;
         let mut out = std::mem::take(&mut *self.sink.lock().unwrap());
         if !self.body_seen.load(Ordering::Acquire)
-            && let Some(b) = &self.body_inject {
-                out.extend_from_slice(b.as_bytes());
-            }
+            && let Some(b) = &self.body_inject
+        {
+            out.extend_from_slice(b.as_bytes());
+        }
         Ok(out)
     }
 }
@@ -783,10 +784,11 @@ fn ensure_head(html: &str) -> String {
         return html.to_string();
     }
     if let Some(i) = find_tag_open(html, "html")
-        && let Some(gt) = html[i..].find('>') {
-            let at = i + gt + 1;
-            return format!("{}<head></head>{}", &html[..at], &html[at..]);
-        }
+        && let Some(gt) = html[i..].find('>')
+    {
+        let at = i + gt + 1;
+        return format!("{}<head></head>{}", &html[..at], &html[at..]);
+    }
     format!("<head></head>{html}")
 }
 
