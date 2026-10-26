@@ -4,6 +4,10 @@
 //! add, generate, cache, audit, migrate, test (in-process app.fetch helper).
 
 use clap::{Parser, Subcommand};
+use oxide_fw_jshost::loader_host::ActionRunArgs;
+use oxide_fw_jshost::loader_host::LoaderRunArgs;
+use oxide_fw_jshost::loader_host::EndpointRunArgs;
+use oxide_fw_server::RunActionArgs;
 
 type LoaderInputs = (
     Option<std::path::PathBuf>,
@@ -7636,19 +7640,19 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
                             |tp| serde_json::json!({"traceparent": tp, "tracestate": t.tracestate}),
                         )
                     });
-                    let resp = oxide_fw_server::run_action(
-                        Some(dispatcher),
-                        &module_path.to_string_lossy(),
-                        &action_route,
-                        action,
-                        &form_json,
-                        &action_params,
-                        &req_owned.url,
-                        &req_owned.method,
-                        &req_owned.headers,
-                        &middleware_locals,
-                        action_trace.as_ref(),
-                    )
+                    let resp = oxide_fw_server::run_action(RunActionArgs {
+        dispatcher: Some(dispatcher),
+        module_path: &module_path.to_string_lossy(),
+        route: &action_route,
+        action: action,
+        form_json: &form_json,
+        params: &action_params,
+        url: &req_owned.url,
+        method: &req_owned.method,
+        headers: &req_owned.headers,
+        locals: &middleware_locals,
+        trace: action_trace.as_ref(),
+    })
                     .await;
                     // B-17: actions get their own waterfall row so the
                     // inspector shows form-POST latency next to renders.
@@ -9316,17 +9320,17 @@ impl oxide_fw_server::ActionDispatcher for ActionDispatcherImpl {
     ) -> std::result::Result<oxide_fw_server::ActionRunResult, oxide_fw_server::DispatchError> {
         match self
             .host
-            .run(
-                module_path,
-                action,
-                form_json,
-                params,
-                url,
-                method,
-                headers,
-                locals,
-                trace,
-            )
+            .run(ActionRunArgs {
+        module_path: module_path,
+        action: action,
+        form_json: form_json,
+        params: params,
+        url: url,
+        method: method,
+        headers: headers,
+        locals: locals,
+        trace: trace,
+    })
             .await
         {
             Ok(out) => Ok(oxide_fw_server::ActionRunResult {
@@ -9387,16 +9391,16 @@ impl oxide_fw_server::EndpointDispatcher for EndpointDispatcherImpl {
     ) -> std::result::Result<oxide_fw_server::EndpointRunResult, oxide_fw_server::EndpointRunError> {
         match self
             .host
-            .run(
-                module_path,
-                method,
-                url,
-                params,
-                headers,
-                body,
-                locals,
-                trace,
-            )
+            .run(LoaderRunArgs {
+        module_path: module_path,
+        method: method,
+        url: url,
+        params: params,
+        headers: headers,
+        body: body,
+        locals: locals,
+        trace: trace,
+    })
             .await
         {
             Ok(out) => {
@@ -9519,7 +9523,15 @@ impl oxide_fw_server::MiddlewareDispatcher for MiddlewareDispatcherImpl {
     {
         match self
             .host
-            .run(module_path, method, url, params, headers, body, locals)
+            .run(EndpointRunArgs {
+        module_path: module_path,
+        method: method,
+        url: url,
+        params: params,
+        headers: headers,
+        body: body,
+        locals: locals,
+    })
             .await
         {
             Ok(out) => Ok(oxide_fw_server::MiddlewareRunResult {

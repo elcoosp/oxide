@@ -389,20 +389,20 @@ fn walk_top_stmt_for_use_cache(
         ($func:expr, $span_start:expr, $exported:expr, $binding:expr, $name:expr) => {{
             if let Some(body) = $func.body.as_ref() {
                 if let Some((ds, de)) = find_use_cache_directive(body) {
-                    emit_use_cache_edit(
-                        code,
-                        $func,
-                        body,
-                        ds,
-                        de,
-                        $span_start,
-                        $exported,
-                        $binding,
-                        &$name,
-                        mod_arg,
-                        edits,
-                        directives,
-                    );
+                    emit_use_cache_edit(UseCacheEditArgs {
+        code: code,
+        func: $func,
+        body: body,
+        directive_start: ds,
+        directive_end: de,
+        span_start: $span_start,
+        exported: $exported,
+        binding: $binding,
+        name: &$name,
+        mod_arg: mod_arg,
+        edits: edits,
+        directives: directives,
+    });
                 }
             }
         }};
@@ -457,20 +457,20 @@ fn walk_export_decl_for_use_cache(
                 .unwrap_or_default();
             if let Some(body) = func.body.as_ref()
                 && let Some((ds, de)) = find_use_cache_directive(body) {
-                    emit_use_cache_edit(
-                        code,
-                        func,
-                        body,
-                        ds,
-                        de,
-                        func.span.start,
-                        exported,
-                        false,
-                        &name,
-                        mod_arg,
-                        edits,
-                        directives,
-                    );
+                    emit_use_cache_edit(UseCacheEditArgs {
+        code: code,
+        func: func,
+        body: body,
+        directive_start: ds,
+        directive_end: de,
+        span_start: func.span.start,
+        exported: exported,
+        binding: false,
+        name: &name,
+        mod_arg: mod_arg,
+        edits: edits,
+        directives: directives,
+    });
                 }
         }
         Declaration::VariableDeclaration(var) => {
@@ -558,21 +558,38 @@ fn walk_var_decl_for_use_cache(
         });
     }
 }
+pub struct UseCacheEditArgs<'a> {
+    pub code: &'a str,
+    pub func: &'a oxc_ast::ast::Function<'a>,
+    pub body: &'a oxc_ast::ast::FunctionBody<'a>,
+    pub directive_start: u32,
+    pub directive_end: u32,
+    pub span_start: u32,
+    pub exported: bool,
+    pub binding: bool,
+    pub name: &'a str,
+    pub mod_arg: &'a str,
+    pub edits: &'a mut Vec<(u32, u32, String)>,
+    pub directives: &'a mut Vec<Directive>,
+}
 
-fn emit_use_cache_edit(
-    code: &str,
-    func: &oxc_ast::ast::Function<'_>,
-    body: &oxc_ast::ast::FunctionBody<'_>,
-    directive_start: u32,
-    directive_end: u32,
-    span_start: u32,
-    exported: bool,
-    binding: bool,
-    name: &str,
-    mod_arg: &str,
-    edits: &mut Vec<(u32, u32, String)>,
-    directives: &mut Vec<Directive>,
-) {
+
+fn emit_use_cache_edit(args: UseCacheEditArgs<'_>) {
+    let UseCacheEditArgs {
+        code,
+        func,
+        body,
+        directive_start,
+        directive_end,
+        span_start,
+        exported,
+        binding,
+        name,
+        mod_arg,
+        edits,
+        directives,
+    } = args;
+
     let fn_span_end = func.span.end;
     let fn_text_raw = &code[span_start as usize..fn_span_end as usize];
     let mut fn_text = fn_text_raw.to_string();

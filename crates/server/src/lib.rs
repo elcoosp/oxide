@@ -3077,27 +3077,41 @@ async fn run_server_fn(
     }
 }
 
+pub struct RunActionArgs<'a> {
+    pub dispatcher: Option<&'a dyn ActionDispatcher>,
+    pub module_path: &'a str,
+    pub route: &'a str,
+    pub action: &'a str,
+    pub form_json: &'a str,
+    pub params: &'a serde_json::Map<String, serde_json::Value>,
+    pub url: &'a str,
+    pub method: &'a str,
+    pub headers: &'a [(String, String)],
+    pub locals: &'a serde_json::Value,
+    pub trace: Option<&'a serde_json::Value>,
+}
+
 /// §9.3: run a form action through the dispatcher and build the response.
 /// A not-found action is a 404, a transport failure a 500; a validated
 /// failure (422) and the action's own status pass through. Cookies and
 /// headers the action set ride the response; revalidations are applied to
 /// nothing here (the pipeline has no cache handle) — they are surfaced on
 /// the response as a header the cache layer can read.
-pub async fn run_action(
-    dispatcher: Option<&dyn ActionDispatcher>,
-    module_path: &str,
-    route: &str,
-    action: &str,
-    form_json: &str,
-    params: &serde_json::Map<String, serde_json::Value>,
-    url: &str,
-    method: &str,
-    headers: &[(String, String)],
-    // §8.1 middleware.ts / §9.1: request-scoped locals injected by middleware.
-    locals: &serde_json::Value,
-    // §20: W3C trace context for outgoing fetches inside the action.
-    trace: Option<&serde_json::Value>,
-) -> OxideResponse {
+pub async fn run_action(args: RunActionArgs<'_>) -> OxideResponse {
+    let RunActionArgs {
+        dispatcher,
+        module_path,
+        route,
+        action,
+        form_json,
+        params,
+        url,
+        method,
+        headers,
+        locals,
+        trace,
+    } = args;
+
     let Some(dispatcher) = dispatcher else {
         return OxideResponse::json(
             500,

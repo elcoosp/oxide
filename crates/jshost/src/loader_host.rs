@@ -559,6 +559,18 @@ pub enum RevalidateEvent {
     Path { path: String },
 }
 
+pub struct ActionRunArgs<'a> {
+    pub module_path: &'a str,
+    pub action: &'a str,
+    pub form_json: &'a str,
+    pub params: &'a serde_json::Map<String, Value>,
+    pub url: &'a str,
+    pub method: &'a str,
+    pub headers: &'a [(String, String)],
+    pub locals: &'a Value,
+    pub trace: Option<&'a Value>,
+}
+
 impl ActionHost {
     pub fn new(pool: Arc<dyn Pool>) -> Self {
         Self { pool }
@@ -566,21 +578,19 @@ impl ActionHost {
 
     /// Run the named action in `module_path`. `form_json` is the JSON array
     /// of `[key, value]` form entries.
-    pub async fn run(
-        &self,
-        module_path: &str,
-        action: &str,
-        form_json: &str,
-        params: &serde_json::Map<String, Value>,
-        url: &str,
-        method: &str,
-        headers: &[(String, String)],
-        // §8.1 middleware.ts / §9.1: request-scoped locals injected by
-        // middleware; delivered to the action's `event.locals`.
-        locals: &Value,
-        // §20: W3C trace context for outgoing fetches inside the action.
-        trace: Option<&Value>,
-    ) -> Result<ActionOutcome> {
+    pub async fn run(&self, args: ActionRunArgs<'_>) -> Result<ActionOutcome> {
+    let ActionRunArgs {
+        module_path,
+        action,
+        form_json,
+        params,
+        url,
+        method,
+        headers,
+        locals,
+        trace,
+    } = args;
+
         let payload = serde_json::json!({
             "module_path": module_path,
             "action": action,
@@ -674,6 +684,17 @@ pub struct EndpointOutcome {
     pub stream: Option<tokio::sync::mpsc::Receiver<crate::Result<bytes::Bytes>>>,
 }
 
+pub struct LoaderRunArgs<'a> {
+    pub module_path: &'a str,
+    pub method: &'a str,
+    pub url: &'a str,
+    pub params: &'a serde_json::Map<String, Value>,
+    pub headers: &'a [(String, String)],
+    pub body: &'a [u8],
+    pub locals: &'a Value,
+    pub trace: Option<&'a Value>,
+}
+
 impl EndpointHost {
     pub fn new(pool: Arc<dyn Pool>) -> Self {
         Self { pool }
@@ -682,20 +703,18 @@ impl EndpointHost {
     /// Run `route.ts` for `module_path` with the method/handler convention.
     /// The body is base64-encoded in the payload — a route.ts can be an
     /// upload proxy, so the wire must carry arbitrary bytes.
-    pub async fn run(
-        &self,
-        module_path: &str,
-        method: &str,
-        url: &str,
-        params: &serde_json::Map<String, Value>,
-        headers: &[(String, String)],
-        body: &[u8],
-        // §8.1 middleware.ts / §9.1: request-scoped locals injected by
-        // middleware; delivered to the route.ts handler's `ctx.locals`.
-        locals: &Value,
-        // §20: W3C trace context for outgoing fetches inside the endpoint.
-        trace: Option<&Value>,
-    ) -> Result<EndpointOutcome> {
+    pub async fn run(&self, args: LoaderRunArgs<'_>) -> Result<EndpointOutcome> {
+    let LoaderRunArgs {
+        module_path,
+        method,
+        url,
+        params,
+        headers,
+        body,
+        locals,
+        trace,
+    } = args;
+
         use base64::Engine as _;
         let body_b64 = if body.is_empty() {
             String::new()
@@ -861,21 +880,32 @@ pub struct MiddlewareOutcome {
     pub locals: Option<serde_json::Value>,
 }
 
+pub struct EndpointRunArgs<'a> {
+    pub module_path: &'a str,
+    pub method: &'a str,
+    pub url: &'a str,
+    pub params: &'a serde_json::Map<String, Value>,
+    pub headers: &'a [(String, String)],
+    pub body: &'a [u8],
+    pub locals: Option<&'a serde_json::Value>,
+}
+
 impl MiddlewareHost {
     pub fn new(pool: Arc<dyn Pool>) -> Self {
         Self { pool }
     }
 
-    pub async fn run(
-        &self,
-        module_path: &str,
-        method: &str,
-        url: &str,
-        params: &serde_json::Map<String, Value>,
-        headers: &[(String, String)],
-        body: &[u8],
-        locals: Option<&serde_json::Value>,
-    ) -> Result<MiddlewareOutcome> {
+    pub async fn run(&self, args: EndpointRunArgs<'_>) -> Result<MiddlewareOutcome> {
+    let EndpointRunArgs {
+        module_path,
+        method,
+        url,
+        params,
+        headers,
+        body,
+        locals,
+    } = args;
+
         use base64::Engine as _;
         let body_b64 = if body.is_empty() {
             String::new()
