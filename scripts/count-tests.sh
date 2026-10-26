@@ -24,7 +24,7 @@ rust_count() {
 ts_counts() {
   local total=0 files
   for d in packages/react packages/vue packages/svelte packages/solid \
-           packages/oxide packages/create-oxide; do
+           packages/core packages/create-oxide; do
     local n
     n=$(pnpm -C "$d" test 2>/dev/null | grep -E '^# pass' | tail -1 | awk '{print $3}')
     total=$((total + ${n:-0}))
