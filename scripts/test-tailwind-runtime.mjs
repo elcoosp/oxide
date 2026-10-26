@@ -1,7 +1,7 @@
 // Standalone test for @oxide-fw/tailwind/runtime.mjs — no Oxide build required.
 // Run: node scripts/test-tailwind-runtime.mjs
 
-import { ping, scan, build } from '../packages/modules/tailwind/runtime.mjs'
+import { ping, scan, build } from '../packages/tailwind/runtime.mjs'
 
 console.log('1. ping()')
 const pingResult = await ping()

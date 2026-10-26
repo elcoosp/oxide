@@ -1,7 +1,7 @@
 {
   "name": "@oxide-fw/tailwind",
   "version": "0.1.0",
-  "description": "Tailwind v4 native plugin for Oxide. Uses @tailwindcss/oxide (Rust scanner) and tailwindcss (CSS compiler) directly via Oxide's tooling pool — zero PostCSS, zero subprocess.",
+  "description": "Tailwind v4 native plugin for Oxide. Uses @tailwindcss/oxide (Rust scanner) and tailwindcss (CSS compiler) directly via Oxide's tooling pool \u2014 zero PostCSS, zero subprocess.",
   "type": "module",
   "main": "./index.ts",
   "exports": {
@@ -31,5 +31,8 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/elcoosp/oxide"
+  },
+  "scripts": {
+    "test": "node ../../scripts/test-tailwind-runtime.mjs"
   }
 }
