@@ -6,6 +6,14 @@ on:
   # runs on a schedule rather than on every push.
   schedule:
     - cron: '0 4 * * *'
+
+concurrency:
+  # Cancel superseded runs on the same branch. Without this, every
+  # push spawns a new full matrix run that queues behind the previous,
+  # burning CI minutes and hiding real failures behind a backlog.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   rust:
     strategy:

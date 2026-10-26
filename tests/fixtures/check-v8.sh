@@ -64,9 +64,9 @@ fi
 
 # Work on a temp copy so the checked-in fixture stays clean. The copy lives
 # UNDER examples/ (not /tmp): pnpm wires workspace deps through the repo-root
-# node_modules, and the V8/Node loaders resolve `@oxide/react` by walking up
+# node_modules, and the V8/Node loaders resolve `@oxide-fw/react` by walking up
 # from the config file. A copy in /tmp loses that walk-up and fails with
-# JSH-FRAMEWORK "cannot resolve `@oxide/react`".
+# JSH-FRAMEWORK "cannot resolve `@oxide-fw/react`".
 WORK="$ROOT/examples/.v8-gate-$$"
 DIR="$WORK/smoke-app-react"
 cleanup() {
@@ -85,9 +85,9 @@ mkdir -p "$DIR"
     | ( cd "$DIR" && tar xf - )
 
 # Symlink the fixture's own node_modules into the copy. pnpm places the
-# workspace symlinks (`@oxide/react` -> packages/react) in the *app's*
+# workspace symlinks (`@oxide-fw/react` -> packages/react) in the *app's*
 # node_modules, not the repo root; without them the loader cannot resolve
-# `@oxide/react` and the build fails JSH-FRAMEWORK. Copying the dir would
+# `@oxide-fw/react` and the build fails JSH-FRAMEWORK. Copying the dir would
 # break the symlinks inside it; a symlink to the whole dir preserves them.
 if [ -d "$SRC/node_modules" ]; then
     ln -s "$SRC/node_modules" "$DIR/node_modules"
