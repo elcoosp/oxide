@@ -5016,6 +5016,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxide-fw-schema"
+version = "0.1.0"
+dependencies = [
+ "oxide-fw-config",
+ "oxide-fw-diagnostics",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oxide-fw-server"
 version = "0.1.0"
 dependencies = [

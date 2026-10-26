@@ -1,0 +1,19 @@
+[package]
+name = "oxide-fw-schema"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "JSON Schema generation for oxide.config.ts — editor autocomplete and CI validation"
+readme = "README.md"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+oxide-fw-diagnostics = { workspace = true }
+oxide-fw-config = { workspace = true }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
