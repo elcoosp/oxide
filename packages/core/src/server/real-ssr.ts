@@ -199,15 +199,8 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
     if (Reflect.get(v as object, '$$typeof') !== undefined) {
       return v
     }
-    // Unknown shape: throw so the message lands in the OX-500 body (curl-visible)
-    throw new Error(
-      '[oxide:resolve] id=' + id +
-      ' unknown-object-shape Symbol.toStringTag=' + String(tag) +
-      ' toString=' + strTag +
-      ' hasDefault=' + hasDefault +
-      ' defaultType=' + defaultType +
-      ' constructorName=' + String(((v as { constructor?: { name?: string } }).constructor || {}).name || '?')
-    )
+    // Unknown shape: pass through unchanged.
+    return v
   }
   const resolveComponent = (input: RenderInput, id: string): unknown => {
     const r = (input as RenderInput & { resolve?: (id: string) => unknown }).resolve

@@ -1280,7 +1280,8 @@ impl ChunkBundler {
             );
             for (i, (_, cname)) in entry_chunks.iter().enumerate() {
                 entry.push_str(&format!(
-                    "import * as route_{i} from \"../{}\";\n",
+                    "import * as route_{i}_mod from \"../{}\";\n\
+             const route_{i} = (route_{i}_mod && route_{i}_mod.default !== undefined) ? route_{i}_mod.default : route_{i}_mod;\n",
                     file_of[cname]
                 ));
             }
