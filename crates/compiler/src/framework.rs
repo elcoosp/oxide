@@ -77,7 +77,6 @@ pub struct ReactInline {
     pub refresh: bool,
 }
 
-
 impl FrameworkCompiler for ReactInline {
     fn framework(&self) -> Framework {
         Framework::React
