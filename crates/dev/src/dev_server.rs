@@ -75,9 +75,10 @@ pub fn generate_dev_cert() -> Result<DevCert> {
                 continue;
             }
             if let IpAddr::V4(v4) = ip
-                && v4.is_link_local() {
-                    continue;
-                }
+                && v4.is_link_local()
+            {
+                continue;
+            }
             sans.push(s);
         }
     }
@@ -240,10 +241,11 @@ pub fn apply_proxy(rules: &[ProxyRule], path: &str, query: Option<&str>) -> Opti
     let path_part = if path_part.is_empty() { "/" } else { path_part };
     let mut url = format!("{target}{path_part}");
     if let Some(q) = query
-        && !q.is_empty() {
-            url.push('?');
-            url.push_str(q);
-        }
+        && !q.is_empty()
+    {
+        url.push('?');
+        url.push_str(q);
+    }
     Some(ProxyMatch {
         url,
         rule: rule.clone(),
