@@ -142,7 +142,6 @@ pub struct OgConfig {
     pub rate_limit: OgRateLimit,
 }
 
-
 /// A3: the `og.rateLimit` knob. `max` renders per `windowSecs` per peer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -393,7 +392,6 @@ impl Default for L0CacheConfig {
     }
 }
 
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum CacheHandlerConfig {
@@ -637,13 +635,15 @@ pub fn detect_workspace_root(dir: &Path) -> Option<PathBuf> {
             return Some(d.to_path_buf());
         }
         if let Ok(pkg) = std::fs::read_to_string(d.join("package.json"))
-            && (pkg.contains("\"workspaces\"") || pkg.contains("'workspaces'")) {
-                return Some(d.to_path_buf());
-            }
+            && (pkg.contains("\"workspaces\"") || pkg.contains("'workspaces'"))
+        {
+            return Some(d.to_path_buf());
+        }
         if let Ok(cargo) = std::fs::read_to_string(d.join("Cargo.toml"))
-            && cargo.contains("[workspace]") {
-                return Some(d.to_path_buf());
-            }
+            && cargo.contains("[workspace]")
+        {
+            return Some(d.to_path_buf());
+        }
         cur = d.parent();
     }
     None
@@ -662,7 +662,9 @@ pub fn resolve_workspace_preset(dir: &Path, spec: &str) -> Option<PathBuf> {
         base.join("oxide.preset.ts"),
         base.join("oxide.preset.json"),
         base.clone(),
-    ].into_iter().find(|cand| cand.is_file())
+    ]
+    .into_iter()
+    .find(|cand| cand.is_file())
 }
 
 /// Size parser: "512mb" | "64kb" | "1gb" | plain bytes → u64.
