@@ -498,7 +498,10 @@ fn transform_hook_error_does_not_fail_the_build() {
     write(dir.path(), "src/index.js", "export const a = 1;\n");
 
     let hook = TransformHook::new(|_id: &str, _source: &str| {
-        Err(oxide_fw_bundler::err("PLG-TEST", "simulated plugin failure"))
+        Err(oxide_fw_bundler::err(
+            "PLG-TEST",
+            "simulated plugin failure",
+        ))
     });
     let mut o = opts(dir.path(), BundleEnv::Client, &[("index", "src/index.js")]);
     o.transform_hook = Some(hook);
