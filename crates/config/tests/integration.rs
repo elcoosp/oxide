@@ -2,7 +2,9 @@
 //! through its public API: env-file parsing, size parsing, static extraction
 //! (including the exact §14.1 example), layering, validation and public env.
 
-use oxide_fw_config::{OxideConfig, extract_static_config, load_with_env, parse_env_file, parse_size};
+use oxide_fw_config::{
+    OxideConfig, extract_static_config, load_with_env, parse_env_file, parse_size,
+};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
