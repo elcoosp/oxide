@@ -1,6 +1,6 @@
 //! §5.4 rkyv artifact envelope for CAS bodies.
 //!
-//! The CAS (see [`crate::cas`]) treats artifact bodies as opaque bytes.
+//! The CAS (see `crate::cas`) treats artifact bodies as opaque bytes.
 //! This module adds a small rkyv envelope with a `blake3` `archived_hash`
 //! so a partial write, a disk bit-flip, or a tampered blob is caught on
 //! load (`GRAPH-CORRUPT`) instead of being fed back into a build.
