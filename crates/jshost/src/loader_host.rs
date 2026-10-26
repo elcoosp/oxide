@@ -579,17 +579,17 @@ impl ActionHost {
     /// Run the named action in `module_path`. `form_json` is the JSON array
     /// of `[key, value]` form entries.
     pub async fn run(&self, args: ActionRunArgs<'_>) -> Result<ActionOutcome> {
-    let ActionRunArgs {
-        module_path,
-        action,
-        form_json,
-        params,
-        url,
-        method,
-        headers,
-        locals,
-        trace,
-    } = args;
+        let ActionRunArgs {
+            module_path,
+            action,
+            form_json,
+            params,
+            url,
+            method,
+            headers,
+            locals,
+            trace,
+        } = args;
 
         let payload = serde_json::json!({
             "module_path": module_path,
@@ -704,16 +704,16 @@ impl EndpointHost {
     /// The body is base64-encoded in the payload — a route.ts can be an
     /// upload proxy, so the wire must carry arbitrary bytes.
     pub async fn run(&self, args: LoaderRunArgs<'_>) -> Result<EndpointOutcome> {
-    let LoaderRunArgs {
-        module_path,
-        method,
-        url,
-        params,
-        headers,
-        body,
-        locals,
-        trace,
-    } = args;
+        let LoaderRunArgs {
+            module_path,
+            method,
+            url,
+            params,
+            headers,
+            body,
+            locals,
+            trace,
+        } = args;
 
         use base64::Engine as _;
         let body_b64 = if body.is_empty() {
@@ -896,15 +896,15 @@ impl MiddlewareHost {
     }
 
     pub async fn run(&self, args: EndpointRunArgs<'_>) -> Result<MiddlewareOutcome> {
-    let EndpointRunArgs {
-        module_path,
-        method,
-        url,
-        params,
-        headers,
-        body,
-        locals,
-    } = args;
+        let EndpointRunArgs {
+            module_path,
+            method,
+            url,
+            params,
+            headers,
+            body,
+            locals,
+        } = args;
 
         use base64::Engine as _;
         let body_b64 = if body.is_empty() {
