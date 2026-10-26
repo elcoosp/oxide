@@ -5,12 +5,12 @@
 
 use clap::{Parser, Subcommand};
 use oxide_fw_jshost::loader_host::ActionRunArgs;
-use oxide_fw_jshost::loader_host::LoaderRunArgs;
 use oxide_fw_jshost::loader_host::EndpointRunArgs;
-use oxide_fw_server::RunActionArgs;
+use oxide_fw_jshost::loader_host::LoaderRunArgs;
+use oxide_fw_server::ActionDispatchArgs;
 use oxide_fw_server::EndpointDispatchArgs;
 use oxide_fw_server::MiddlewareDispatchArgs;
-use oxide_fw_server::ActionDispatchArgs;
+use oxide_fw_server::RunActionArgs;
 
 type LoaderInputs = (
     Option<std::path::PathBuf>,
@@ -627,55 +627,56 @@ async fn scan_routes(
     // entry, so the existing chain (which joins a route's ancestor
     // middleware files) runs it for every route.
     if let Some(pool) = pool
-        && !collect_plugin_paths_for_hook(&root_abs, cfg, "serverMiddleware").is_empty() {
-            let results = call_js_plugin_hook(
-                &root_abs,
-                cfg,
-                pool,
-                "serverMiddleware",
-                serde_json::json!({ "root": root_abs.to_string_lossy() }),
-            )
-            .await;
-            let plugins_dir = root_abs.join(".oxide/plugins");
-            let _ = std::fs::create_dir_all(&plugins_dir);
-            for (i, r) in results.iter().enumerate() {
-                let Some(src) = r.get("source").and_then(|s| s.as_str()) else {
-                    continue;
-                };
-                let name = r
-                    .get("name")
-                    .and_then(|n| n.as_str())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| format!("plugin-{i}"));
-                let safe: String = name
-                    .chars()
-                    .map(|c| {
-                        if c.is_alphanumeric() || c == '-' || c == '_' {
-                            c
-                        } else {
-                            '_'
-                        }
-                    })
-                    .collect();
-                let file = plugins_dir.join(format!("{safe}.middleware.mjs"));
-                if std::fs::write(&file, src).is_err() {
-                    continue;
-                }
-                tree.insert(oxide_fw_router::RouteEntry {
-                    // A root middleware: base dir `routes`, so it wraps every
-                    // route (the chain rule is a prefix match).
-                    id: oxide_fw_router::RouteId(format!("routes/{safe}.plugin-middleware")),
-                    kind: oxide_fw_router::RouteKind::Middleware,
-                    segments: Vec::new(),
-                    file,
-                    render_mode: None,
-                    tags: Vec::new(),
-                    has_server_module: false,
-                    needs_parent: false,
-                    slot: None,
-                });
+        && !collect_plugin_paths_for_hook(&root_abs, cfg, "serverMiddleware").is_empty()
+    {
+        let results = call_js_plugin_hook(
+            &root_abs,
+            cfg,
+            pool,
+            "serverMiddleware",
+            serde_json::json!({ "root": root_abs.to_string_lossy() }),
+        )
+        .await;
+        let plugins_dir = root_abs.join(".oxide/plugins");
+        let _ = std::fs::create_dir_all(&plugins_dir);
+        for (i, r) in results.iter().enumerate() {
+            let Some(src) = r.get("source").and_then(|s| s.as_str()) else {
+                continue;
+            };
+            let name = r
+                .get("name")
+                .and_then(|n| n.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("plugin-{i}"));
+            let safe: String = name
+                .chars()
+                .map(|c| {
+                    if c.is_alphanumeric() || c == '-' || c == '_' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+            let file = plugins_dir.join(format!("{safe}.middleware.mjs"));
+            if std::fs::write(&file, src).is_err() {
+                continue;
             }
+            tree.insert(oxide_fw_router::RouteEntry {
+                // A root middleware: base dir `routes`, so it wraps every
+                // route (the chain rule is a prefix match).
+                id: oxide_fw_router::RouteId(format!("routes/{safe}.plugin-middleware")),
+                kind: oxide_fw_router::RouteKind::Middleware,
+                segments: Vec::new(),
+                file,
+                render_mode: None,
+                tags: Vec::new(),
+                has_server_module: false,
+                needs_parent: false,
+                slot: None,
+            });
         }
+    }
     // §15-E: merge every `oxide.module` package's routes into the tree. This
     // is the single seam every command funnels through (build, dev, routes,
     // analyze, check) — patching it here makes a module's routes visible
@@ -713,61 +714,62 @@ async fn scan_routes(
     // must exist inside the project; the id is used as given (a plugin is
     // expected to namespace it). A malformed entry is reported and skipped.
     if let Some(pool) = pool
-        && !collect_plugin_paths_for_hook(&root_abs, cfg, "routes").is_empty() {
-            let results = call_js_plugin_hook(
-                &root_abs,
-                cfg,
-                pool,
-                "routes",
-                serde_json::json!({ "root": root_abs.to_string_lossy() }),
-            )
-            .await;
-            for r in results {
-                let Some(list) = r.get("entries").and_then(|e| e.as_array()) else {
+        && !collect_plugin_paths_for_hook(&root_abs, cfg, "routes").is_empty()
+    {
+        let results = call_js_plugin_hook(
+            &root_abs,
+            cfg,
+            pool,
+            "routes",
+            serde_json::json!({ "root": root_abs.to_string_lossy() }),
+        )
+        .await;
+        for r in results {
+            let Some(list) = r.get("entries").and_then(|e| e.as_array()) else {
+                continue;
+            };
+            for e in list {
+                let Some(id) = e.get("id").and_then(|v| v.as_str()) else {
                     continue;
                 };
-                for e in list {
-                    let Some(id) = e.get("id").and_then(|v| v.as_str()) else {
-                        continue;
-                    };
-                    let Some(rel) = e.get("file").and_then(|v| v.as_str()) else {
-                        continue;
-                    };
-                    let file = root_abs.join(rel);
-                    if !file.starts_with(&root_abs) || !file.is_file() {
-                        eprintln!("warn: routes hook entry `{id}` has no readable file; skipped");
-                        continue;
-                    }
-                    let kind = match e.get("kind").and_then(|v| v.as_str()).unwrap_or("page") {
-                        "layout" => oxide_fw_router::RouteKind::Layout,
-                        "endpoint" | "route" => oxide_fw_router::RouteKind::Endpoint,
-                        "loading" => oxide_fw_router::RouteKind::Loading,
-                        "error" => oxide_fw_router::RouteKind::Error,
-                        _ => oxide_fw_router::RouteKind::Page,
-                    };
-                    let segments: Vec<String> = e
-                        .get("segments")
-                        .and_then(|v| v.as_array())
-                        .map(|a| {
-                            a.iter()
-                                .filter_map(|x| x.as_str().map(str::to_string))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    tree.insert(oxide_fw_router::RouteEntry {
-                        id: oxide_fw_router::RouteId(id.to_string()),
-                        kind,
-                        segments,
-                        file,
-                        render_mode: None,
-                        tags: Vec::new(),
-                        has_server_module: false,
-                        needs_parent: false,
-                        slot: None,
-                    });
+                let Some(rel) = e.get("file").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let file = root_abs.join(rel);
+                if !file.starts_with(&root_abs) || !file.is_file() {
+                    eprintln!("warn: routes hook entry `{id}` has no readable file; skipped");
+                    continue;
                 }
+                let kind = match e.get("kind").and_then(|v| v.as_str()).unwrap_or("page") {
+                    "layout" => oxide_fw_router::RouteKind::Layout,
+                    "endpoint" | "route" => oxide_fw_router::RouteKind::Endpoint,
+                    "loading" => oxide_fw_router::RouteKind::Loading,
+                    "error" => oxide_fw_router::RouteKind::Error,
+                    _ => oxide_fw_router::RouteKind::Page,
+                };
+                let segments: Vec<String> = e
+                    .get("segments")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                tree.insert(oxide_fw_router::RouteEntry {
+                    id: oxide_fw_router::RouteId(id.to_string()),
+                    kind,
+                    segments,
+                    file,
+                    render_mode: None,
+                    tags: Vec::new(),
+                    has_server_module: false,
+                    needs_parent: false,
+                    slot: None,
+                });
             }
         }
+    }
 
     Ok(tree)
 }
@@ -867,7 +869,9 @@ fn generate_island_boot_entry(
     out.push_str(&format!(
         "import {{ clientAdapter }} from '@oxide-fw/{framework}';\n"
     ));
-    out.push_str("import { bootWithRouter, installBootRuntime } from '@oxide-fw/core/client/boot';\n");
+    out.push_str(
+        "import { bootWithRouter, installBootRuntime } from '@oxide-fw/core/client/boot';\n",
+    );
     let mut idents: Vec<(String, String)> = Vec::new();
     for (name, src) in islands {
         let abs = root.join(src);
@@ -1211,7 +1215,8 @@ async fn hmr_route_data_update(
     let Some(loader) = loader else {
         return (pattern, String::new());
     };
-    let input = oxide_fw_server::LoaderRunInput::new(module_path, route_for_loader, pattern.clone());
+    let input =
+        oxide_fw_server::LoaderRunInput::new(module_path, route_for_loader, pattern.clone());
     match loader.run(input).await {
         Ok(out) if out.status == 200 => {
             let payload = serde_json::json!({
@@ -1533,12 +1538,10 @@ async fn ensure_dev_client_bundle(
     let wasm_hook = build_transform_hook(rootp, cfg);
     let js_hook = build_js_plugin_hook(rootp, cfg, pool);
     let transform_hook: Option<oxide_fw_bundler::TransformHook> = match (js_hook, wasm_hook) {
-        (Some(js), Some(wasm)) => Some(oxide_fw_bundler::TransformHook::new(
-            move |id, src| {
-                let after_js = js.call(id, src)?;
-                wasm.call(id, &after_js)
-            },
-        )),
+        (Some(js), Some(wasm)) => Some(oxide_fw_bundler::TransformHook::new(move |id, src| {
+            let after_js = js.call(id, src)?;
+            wasm.call(id, &after_js)
+        })),
         (Some(js), None) => Some(js),
         (None, Some(wasm)) => Some(wasm),
         (None, None) => None,
@@ -1855,20 +1858,21 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // is the notification plus a place for a plugin to install its own
     // listeners against the hub.
     if !collect_plugin_paths_for_hook(&rootp, &cfg, "configureServer").is_empty()
-        && let Some(pool) = hmr_pool.as_ref() {
-            let _ = call_js_plugin_hook(
-                &rootp,
-                &cfg,
-                pool,
-                "configureServer",
-                serde_json::json!({
-                    "root": rootp.to_string_lossy(),
-                    "hmrUrl": "/_oxide/hmr",
-                    "buildId": hmr_build_id.clone(),
-                }),
-            )
-            .await;
-        }
+        && let Some(pool) = hmr_pool.as_ref()
+    {
+        let _ = call_js_plugin_hook(
+            &rootp,
+            &cfg,
+            pool,
+            "configureServer",
+            serde_json::json!({
+                "root": rootp.to_string_lossy(),
+                "hmrUrl": "/_oxide/hmr",
+                "buildId": hmr_build_id.clone(),
+            }),
+        )
+        .await;
+    }
     let started = start_dev_server_full(
         root,
         flags.port,
@@ -1920,9 +1924,11 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 }
                 // A package has a package.json or Cargo.toml at its root.
                 if (p.join("package.json").is_file() || p.join("Cargo.toml").is_file())
-                    && p != rootp && !watch_roots.contains(&p) {
-                        watch_roots.push(p);
-                    }
+                    && p != rootp
+                    && !watch_roots.contains(&p)
+                {
+                    watch_roots.push(p);
+                }
             }
         }
     }
@@ -1974,7 +1980,10 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // returned set is non-empty only when a node actually recomputed (early
     // cutoff spares unchanged content), so the worker generation bumps only
     // when there is real new code to see.
-    fn graph_invalidated(dev_graph: &oxide_fw_graph::DemandGraph, ev: &oxide_fw_dev::FileEvent) -> bool {
+    fn graph_invalidated(
+        dev_graph: &oxide_fw_graph::DemandGraph,
+        ev: &oxide_fw_dev::FileEvent,
+    ) -> bool {
         let path = match ev {
             oxide_fw_dev::FileEvent::Modified(p)
             | oxide_fw_dev::FileEvent::Created(p)
@@ -2120,7 +2129,6 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 .all(|s| !s.contains(':') && !s.contains('*'))
         })
         .map(|e| {
-            
             if e.segments.is_empty() {
                 "/".to_string()
             } else {
@@ -2158,9 +2166,10 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             // a source edit must clear the store explicitly or the next
             // visitor is served a shell from the pre-edit render.
             if let Some(shells) = started.ppr_shells.as_ref()
-                && let Ok(mut store) = shells.lock() {
-                    store.clear();
-                }
+                && let Ok(mut store) = shells.lock()
+            {
+                store.clear();
+            }
             // §16.5: rescan collections before the loaders for this batch run.
             // The write is atomic (`write_content_atomic`) and lands under
             // `dist`, which the filter above ignores to avoid a notify loop.
@@ -2234,12 +2243,11 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                     }
                 }
             }
-            if force_reload
-                && let Some(hub) = started.hmr.as_ref() {
-                    hub.publish(oxide_fw_dev::HmrMessage::FullReload {
-                        reason: "plugin handleHotUpdate requested a reload".to_string(),
-                    });
-                }
+            if force_reload && let Some(hub) = started.hmr.as_ref() {
+                hub.publish(oxide_fw_dev::HmrMessage::FullReload {
+                    reason: "plugin handleHotUpdate requested a reload".to_string(),
+                });
+            }
             idle_since = std::time::Instant::now();
             warmed = false;
         }
@@ -2256,33 +2264,38 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 };
                 let pstr = path.to_string_lossy().to_string();
                 // Phase 4: tailwind source change -> rebuild CSS to disk.
-                if tailwind::has_tailwind(&cfg) && tailwind::is_source_file(&pstr)
-                    && let Some(pool) = hmr_tooling_pool.clone() {
-                        match tailwind::rebuild_for_dev(pool, &cfg, &rootp).await {
-                            Ok(Some((url, css))) => {
-                                tracing::info!(
-                                    path = %pstr,
-                                    url = %url,
-                                    bytes = css.len(),
-                                    "tailwind HMR: rebuilt CSS"
-                                );
-                                hub.publish(HmrMessage::CssUpdate { path: url, code: css });
-                            }
-                            Ok(None) => {
-                                tracing::debug!(
-                                    path = %pstr,
-                                    "tailwind HMR: no CSS change to publish"
-                                );
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    path = %pstr,
-                                    err = %e.0.message,
-                                    "tailwind HMR: rebuild failed"
-                                );
-                            }
+                if tailwind::has_tailwind(&cfg)
+                    && tailwind::is_source_file(&pstr)
+                    && let Some(pool) = hmr_tooling_pool.clone()
+                {
+                    match tailwind::rebuild_for_dev(pool, &cfg, &rootp).await {
+                        Ok(Some((url, css))) => {
+                            tracing::info!(
+                                path = %pstr,
+                                url = %url,
+                                bytes = css.len(),
+                                "tailwind HMR: rebuilt CSS"
+                            );
+                            hub.publish(HmrMessage::CssUpdate {
+                                path: url,
+                                code: css,
+                            });
+                        }
+                        Ok(None) => {
+                            tracing::debug!(
+                                path = %pstr,
+                                "tailwind HMR: no CSS change to publish"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                path = %pstr,
+                                err = %e.0.message,
+                                "tailwind HMR: rebuild failed"
+                            );
                         }
                     }
+                }
                 let kind = oxide_fw_dev::classify_path(&pstr);
                 match oxide_fw_dev::hmr_behavior(kind) {
                     HmrBehavior::StyleSwap => hub.publish(HmrMessage::CssUpdate {
@@ -3043,17 +3056,18 @@ fn emit_config_bundle(
                         for e in rd.flatten() {
                             let src = e.path();
                             if src.extension().is_some_and(|x| x == "js")
-                                && let Some(name) = src.file_name() {
-                                    let dst = root.join(".oxide").join(name);
-                                    std::fs::copy(&src, &dst).map_err(|err| {
-                                        anyhow::anyhow!(
-                                            "copy {} -> {}: {err}",
-                                            src.display(),
-                                            dst.display()
-                                        )
-                                    })?;
-                                    copied += 1;
-                                }
+                                && let Some(name) = src.file_name()
+                            {
+                                let dst = root.join(".oxide").join(name);
+                                std::fs::copy(&src, &dst).map_err(|err| {
+                                    anyhow::anyhow!(
+                                        "copy {} -> {}: {err}",
+                                        src.display(),
+                                        dst.display()
+                                    )
+                                })?;
+                                copied += 1;
+                            }
                         }
                     }
                     let from = root.join(".oxide").join(&file);
@@ -3443,7 +3457,9 @@ pub struct PrerenderTargetsArgs<'a> {
 /// the worker pool, at most `render_concurrency()` at a time. Results are
 /// returned in target order, so seed manifests and graph records stay
 /// deterministic regardless of completion order.
-async fn prerender_targets(args: PrerenderTargetsArgs<'_>) -> anyhow::Result<(Vec<(PrerenderTarget, String, u16)>, usize)> {
+async fn prerender_targets(
+    args: PrerenderTargetsArgs<'_>,
+) -> anyhow::Result<(Vec<(PrerenderTarget, String, u16)>, usize)> {
     let PrerenderTargetsArgs {
         dist,
         route_id,
@@ -3500,23 +3516,23 @@ async fn prerender_targets(args: PrerenderTargetsArgs<'_>) -> anyhow::Result<(Ve
         async move {
             let _permit = sem.acquire().await;
             let out = write_prerender(PrerenderArgs {
-        dist,
-        rel: &t.rel,
-        route_id,
-        pattern,
-        url_path: &t.url_path,
-        params: &t.params,
-        locale: &t.locale,
-        nonce: nonce_for,
-        page_renderer,
-        loader_runner,
-        module_path,
-        boot_script_url,
-        layouts: layout_ids,
-        layout_module_paths: layout_modules,
-        error_route_id: error_route,
-        plugin_head,
-    })
+                dist,
+                rel: &t.rel,
+                route_id,
+                pattern,
+                url_path: &t.url_path,
+                params: &t.params,
+                locale: &t.locale,
+                nonce: nonce_for,
+                page_renderer,
+                loader_runner,
+                module_path,
+                boot_script_url,
+                layouts: layout_ids,
+                layout_module_paths: layout_modules,
+                error_route_id: error_route,
+                plugin_head,
+            })
             .await;
             (i, out)
         }
@@ -3554,7 +3570,6 @@ pub struct PrerenderArgs<'a> {
     pub error_route_id: Option<&'a str>,
     pub plugin_head: &'a serde_json::Value,
 }
-
 
 async fn write_prerender(args: PrerenderArgs<'_>) -> anyhow::Result<(String, u16)> {
     let PrerenderArgs {
@@ -3824,8 +3839,8 @@ async fn write_prerender(args: PrerenderArgs<'_>) -> anyhow::Result<(String, u16
             // throws React #418).
             "layouts": layouts,
         });
-        let odf =
-            oxide_fw_odf::encode_to_bytes(&oxide_fw_odf::Value::from_json(&payload)).unwrap_or_default();
+        let odf = oxide_fw_odf::encode_to_bytes(&oxide_fw_odf::Value::from_json(&payload))
+            .unwrap_or_default();
         use base64::Engine as _;
         injector.odf_payload_b64 = Some(base64::engine::general_purpose::STANDARD.encode(&odf));
     }
@@ -3954,7 +3969,6 @@ pub struct RouteDataInnerArgs<'a> {
     pub session_codec: Option<&'a oxide_fw_server::SessionCodec>,
 }
 
-
 async fn route_data_response_inner(args: RouteDataInnerArgs<'_>) -> oxide_fw_server::OxideResponse {
     let RouteDataInnerArgs {
         req,
@@ -3977,8 +3991,10 @@ async fn route_data_response_inner(args: RouteDataInnerArgs<'_>) -> oxide_fw_ser
         .split_once('?')
         .map(|(_, q)| q)
         .and_then(|q| {
-            q.split('&')
-                .find_map(|kv| kv.strip_prefix("route=").map(oxide_fw_server::percent_decode))
+            q.split('&').find_map(|kv| {
+                kv.strip_prefix("route=")
+                    .map(oxide_fw_server::percent_decode)
+            })
         })
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "/".to_string());
@@ -4173,7 +4189,10 @@ async fn route_data_response_inner(args: RouteDataInnerArgs<'_>) -> oxide_fw_ser
                 metrics.observe("_data", started.elapsed(), 500);
                 return oxide_fw_server::OxideResponse::html(
                     500,
-                    format!("loader error: {}", oxide_fw_render::escape_text(&e.0.message)),
+                    format!(
+                        "loader error: {}",
+                        oxide_fw_render::escape_text(&e.0.message)
+                    ),
                 );
             }
         }
@@ -4202,8 +4221,8 @@ async fn route_data_response_inner(args: RouteDataInnerArgs<'_>) -> oxide_fw_ser
         "layouts": layout_ids,
     });
     // §9.5 / D11: encode as ODF, the wire format the client decodes.
-    let body =
-        oxide_fw_odf::encode_to_bytes(&oxide_fw_odf::Value::from_json(&payload)).unwrap_or_default();
+    let body = oxide_fw_odf::encode_to_bytes(&oxide_fw_odf::Value::from_json(&payload))
+        .unwrap_or_default();
     metrics.observe("_data", started.elapsed(), 200);
     let mut resp = oxide_fw_server::OxideResponse::new(200, body)
         .with_header("content-type", "application/oxide+odf");
@@ -4416,7 +4435,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         // `tooling_pool` is a method on the `JsHost` trait, not an inherent
         // method — the trait must be in scope.
         use oxide_fw_jshost::JsHost as _;
-        let host = oxide_fw_jshost::NodeHost::new(oxide_fw_jshost::NodeHost::worker_script_default());
+        let host =
+            oxide_fw_jshost::NodeHost::new(oxide_fw_jshost::NodeHost::worker_script_default());
         if let Ok(pool) = host.tooling_pool(oxide_fw_jshost::PoolConfig::default()) {
             let patches = fire_lifecycle_hook(
                 &rootp,
@@ -5059,9 +5079,9 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                             .chars()
                             .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
                             .collect();
-                        if let Some(reason) =
-                            oxide_fw_jshost::v8_loader::requires_node_backend(&format!("node:{bname}"))
-                        {
+                        if let Some(reason) = oxide_fw_jshost::v8_loader::requires_node_backend(
+                            &format!("node:{bname}"),
+                        ) {
                             needs.push(reason);
                         }
                         rest = &after[bname.len().min(after.len())..];
@@ -5225,18 +5245,19 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                          into a non-server module",
                     );
                     if let Ok(src) = std::fs::read_to_string(sp)
-                        && let Some((line_no, col)) = find_literal_line(&src, ident) {
-                            diag = diag.at(oxide_fw_diagnostics::Location::file(
-                                sp.to_string_lossy(),
-                                line_no as u32,
-                                col as u32,
-                            ));
-                            let frame =
-                                oxide_fw_diagnostics::render_code_frame(&src, line_no, Some(col));
-                            if !frame.is_empty() {
-                                diag = diag.with_code_frame(frame);
-                            }
+                        && let Some((line_no, col)) = find_literal_line(&src, ident)
+                    {
+                        diag = diag.at(oxide_fw_diagnostics::Location::file(
+                            sp.to_string_lossy(),
+                            line_no as u32,
+                            col as u32,
+                        ));
+                        let frame =
+                            oxide_fw_diagnostics::render_code_frame(&src, line_no, Some(col));
+                        if !frame.is_empty() {
+                            diag = diag.with_code_frame(frame);
                         }
+                    }
                     hits.push(diag);
                     break;
                 }
@@ -5272,10 +5293,9 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // scan let a failed `CMP-SECRET` build look "unchanged" on the next run:
     // `skip_client` was true, the scan saw no chunks, and the build went
     // green without ever re-checking the leaking bundle.
-    if !skip_client
-        && let Err(e) = build_cache::env_store(&rootp, "client", &client_fp) {
-            eprintln!("warn: could not store client env fingerprint: {e}");
-        }
+    if !skip_client && let Err(e) = build_cache::env_store(&rootp, "client", &client_fp) {
+        eprintln!("warn: could not store client env fingerprint: {e}");
+    }
     let server_outcome = rb.bundle(&server_opts).map_err(|e| {
         let mut diags = client_outcome.diagnostics.clone();
         diags.push((*e.0).clone());
@@ -5501,9 +5521,10 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     let mut segs: Vec<String> = e.segments.clone();
                     for s in segs.iter_mut() {
                         if let Some(name) = param_name(s)
-                            && let Some(v) = params_map.get(name) {
-                                *s = v.clone();
-                            }
+                            && let Some(v) = params_map.get(name)
+                        {
+                            *s = v.clone();
+                        }
                     }
                     let base_rel = if segs.is_empty() {
                         "index.html".to_string()
@@ -5522,23 +5543,23 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 }
                 // P-20: bounded-parallel render across this route's params.
                 let (rows, reused) = prerender_targets(PrerenderTargetsArgs {
-        dist: &dist,
-        route_id: &route_id,
-        pattern: &pattern,
-        targets,
-        nonce: &nonce,
-        nonce_for: &nonce_for,
-        page_renderer: stack.page_renderer.as_ref(),
-        loader_runner: stack.loader_runner.as_ref(),
-        module_path: module_path.as_deref(),
-        boot_script_url: boot_script_url.as_deref(),
-        layout_ids: &layout_ids,
-        layout_modules: &prerender_layout_modules,
-        error_route: prerender_error_route_id.as_deref(),
-        plugin_head: &plugin_head,
-        prev_prerenders: &prev_prerenders,
-        route_src_hash: &route_src_hash,
-    })
+                    dist: &dist,
+                    route_id: &route_id,
+                    pattern: &pattern,
+                    targets,
+                    nonce: &nonce,
+                    nonce_for: &nonce_for,
+                    page_renderer: stack.page_renderer.as_ref(),
+                    loader_runner: stack.loader_runner.as_ref(),
+                    module_path: module_path.as_deref(),
+                    boot_script_url: boot_script_url.as_deref(),
+                    layout_ids: &layout_ids,
+                    layout_modules: &prerender_layout_modules,
+                    error_route: prerender_error_route_id.as_deref(),
+                    plugin_head: &plugin_head,
+                    prev_prerenders: &prev_prerenders,
+                    route_src_hash: &route_src_hash,
+                })
                 .await?;
                 reused_prerender_count += reused;
                 let mut outs: Vec<String> = Vec::with_capacity(rows.len());
@@ -5582,7 +5603,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                 let params_via_worker: Option<Vec<std::collections::BTreeMap<String, String>>> =
                     match (stack.pool.as_ref(), module_path.as_deref()) {
                         (Some(pool), Some(mp)) => {
-                            let host = oxide_fw_jshost::LoaderHost::new(std::sync::Arc::clone(pool));
+                            let host =
+                                oxide_fw_jshost::LoaderHost::new(std::sync::Arc::clone(pool));
                             match host.generate_params(&mp.to_string_lossy()).await {
                                 Ok(list) => Some(list),
                                 Err(e) => {
@@ -5610,9 +5632,10 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                             let mut segs: Vec<String> = e.segments.clone();
                             for s in segs.iter_mut() {
                                 if let Some(name) = param_name(s)
-                                    && let Some(v) = params_map.get(name) {
-                                        *s = v.clone();
-                                    }
+                                    && let Some(v) = params_map.get(name)
+                                {
+                                    *s = v.clone();
+                                }
                             }
                             let base_rel = if segs.is_empty() {
                                 "index.html".to_string()
@@ -5631,23 +5654,23 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                             }
                         }
                         let (rows, reused) = prerender_targets(PrerenderTargetsArgs {
-        dist: &dist,
-        route_id: &route_id,
-        pattern: &pattern,
-        targets,
-        nonce: &nonce,
-        nonce_for: &nonce_for,
-        page_renderer: stack.page_renderer.as_ref(),
-        loader_runner: stack.loader_runner.as_ref(),
-        module_path: module_path.as_deref(),
-        boot_script_url: boot_script_url.as_deref(),
-        layout_ids: &layout_ids,
-        layout_modules: &prerender_layout_modules,
-        error_route: prerender_error_route_id.as_deref(),
-        plugin_head: &plugin_head,
-        prev_prerenders: &prev_prerenders,
-        route_src_hash: &route_src_hash,
-    })
+                            dist: &dist,
+                            route_id: &route_id,
+                            pattern: &pattern,
+                            targets,
+                            nonce: &nonce,
+                            nonce_for: &nonce_for,
+                            page_renderer: stack.page_renderer.as_ref(),
+                            loader_runner: stack.loader_runner.as_ref(),
+                            module_path: module_path.as_deref(),
+                            boot_script_url: boot_script_url.as_deref(),
+                            layout_ids: &layout_ids,
+                            layout_modules: &prerender_layout_modules,
+                            error_route: prerender_error_route_id.as_deref(),
+                            plugin_head: &plugin_head,
+                            prev_prerenders: &prev_prerenders,
+                            route_src_hash: &route_src_hash,
+                        })
                         .await?;
                         reused_prerender_count += reused;
                         let mut outs: Vec<String> = Vec::with_capacity(rows.len());
@@ -5756,45 +5779,45 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                                 (fresh, status)
                             } else {
                                 write_prerender(PrerenderArgs {
-        dist: &dist,
-        rel: &rel,
-        route_id: &route_id,
-        pattern: &pattern,
-        url_path: &url_path,
-        params: &empty_params,
-        locale,
-        nonce: &nonce_for,
-        page_renderer: stack.page_renderer.as_ref(),
-        loader_runner: stack.loader_runner.as_ref(),
-        module_path: module_path.as_deref(),
-        boot_script_url: boot_script_url.as_deref(),
-        layouts: &layout_ids,
-        layout_module_paths: &prerender_layout_modules,
-        error_route_id: prerender_error_route_id.as_deref(),
-        plugin_head: &plugin_head,
-    })
+                                    dist: &dist,
+                                    rel: &rel,
+                                    route_id: &route_id,
+                                    pattern: &pattern,
+                                    url_path: &url_path,
+                                    params: &empty_params,
+                                    locale,
+                                    nonce: &nonce_for,
+                                    page_renderer: stack.page_renderer.as_ref(),
+                                    loader_runner: stack.loader_runner.as_ref(),
+                                    module_path: module_path.as_deref(),
+                                    boot_script_url: boot_script_url.as_deref(),
+                                    layouts: &layout_ids,
+                                    layout_module_paths: &prerender_layout_modules,
+                                    error_route_id: prerender_error_route_id.as_deref(),
+                                    plugin_head: &plugin_head,
+                                })
                                 .await?
                             }
                         }
                         None => {
                             write_prerender(PrerenderArgs {
-        dist: &dist,
-        rel: &rel,
-        route_id: &route_id,
-        pattern: &pattern,
-        url_path: &url_path,
-        params: &empty_params,
-        locale,
-        nonce: &nonce_for,
-        page_renderer: stack.page_renderer.as_ref(),
-        loader_runner: stack.loader_runner.as_ref(),
-        module_path: module_path.as_deref(),
-        boot_script_url: boot_script_url.as_deref(),
-        layouts: &layout_ids,
-        layout_module_paths: &prerender_layout_modules,
-        error_route_id: prerender_error_route_id.as_deref(),
-        plugin_head: &plugin_head,
-    })
+                                dist: &dist,
+                                rel: &rel,
+                                route_id: &route_id,
+                                pattern: &pattern,
+                                url_path: &url_path,
+                                params: &empty_params,
+                                locale,
+                                nonce: &nonce_for,
+                                page_renderer: stack.page_renderer.as_ref(),
+                                loader_runner: stack.loader_runner.as_ref(),
+                                module_path: module_path.as_deref(),
+                                boot_script_url: boot_script_url.as_deref(),
+                                layouts: &layout_ids,
+                                layout_module_paths: &prerender_layout_modules,
+                                error_route_id: prerender_error_route_id.as_deref(),
+                                plugin_head: &plugin_head,
+                            })
                             .await?
                         }
                     };
@@ -5841,10 +5864,11 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     continue;
                 };
                 match hook.call(route_id, &html) {
-                    Ok(Some(new_html)) if new_html != html
-                        && std::fs::write(&path, &new_html).is_ok() => {
-                            touched += 1;
-                        }
+                    Ok(Some(new_html))
+                        if new_html != html && std::fs::write(&path, &new_html).is_ok() =>
+                    {
+                        touched += 1;
+                    }
                     _ => {}
                 }
             }
@@ -6234,34 +6258,34 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     if matches!(
         target,
         oxide_fw_adapters::Target::Cloudflare | oxide_fw_adapters::Target::CloudflarePages
-    )
-        && let Some(edge_entry) = find_edge_entry(&rootp) {
-            match bundle_edge_entry(
-                &rootp,
-                &dist,
-                &edge_entry,
-                css_transform,
-                cfg.build.edge_externals.clone(),
-                server_precompiled.clone(),
-                w,
-            )
-            .await
-            {
-                Ok(Some(path)) => {
-                    outln!(w, "edge_bundle.js: {}", path.display());
-                }
-                Ok(None) => {
-                    outln!(
-                        w,
-                        "edge entry `{}` produced no entry chunk; edge_handler.js will use its JS fallback",
-                        edge_entry.display()
-                    );
-                }
-                Err(e) => {
-                    anyhow::bail!("edge bundle failed: {e}");
-                }
+    ) && let Some(edge_entry) = find_edge_entry(&rootp)
+    {
+        match bundle_edge_entry(
+            &rootp,
+            &dist,
+            &edge_entry,
+            css_transform,
+            cfg.build.edge_externals.clone(),
+            server_precompiled.clone(),
+            w,
+        )
+        .await
+        {
+            Ok(Some(path)) => {
+                outln!(w, "edge_bundle.js: {}", path.display());
+            }
+            Ok(None) => {
+                outln!(
+                    w,
+                    "edge entry `{}` produced no entry chunk; edge_handler.js will use its JS fallback",
+                    edge_entry.display()
+                );
+            }
+            Err(e) => {
+                anyhow::bail!("edge bundle failed: {e}");
             }
         }
+    }
 
     let written = oxide_fw_adapters::emit(target, &artifact, &dist.join("deploy"))
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
@@ -6589,7 +6613,7 @@ pub async fn start_server(
 /// the framework error. The kind is `Other` — there is no precise
 /// `ErrorKind` for "the worker crashed mid-render".
 /// SPEC §serve/stream: `render_stream_to_body_stream` is the no-recovery
-/// shim over [`render_stream_with_recovery`] for callers that stream a
+/// shim over `render_stream_with_recovery` for callers that stream a
 /// rendered document without a boundary or nonce context. An error from
 /// the source aborts the stream cleanly (no mid-stream `ox-error`
 /// recovery boundary) — exactly what `render_stream_with_recovery(..,
@@ -6599,7 +6623,9 @@ pub async fn start_server(
 /// downstream crate depending on `oxide-fw-cli` as a library can stream a
 /// document with abort-on-error semantics without knowing the recovery
 /// variant's argument shape.
-pub fn render_stream_to_body_stream(src: oxide_fw_server::RenderStream) -> oxide_fw_server::BodyStream {
+pub fn render_stream_to_body_stream(
+    src: oxide_fw_server::RenderStream,
+) -> oxide_fw_server::BodyStream {
     render_stream_with_recovery(src, None, None, String::new())
 }
 
@@ -6648,9 +6674,10 @@ fn render_stream_with_recovery(
                     }
                     // No shell yet (or no boundary context): the old abort.
                     let _ = tx
-                        .send(Err(std::io::Error::other(
-                            format!("{}: {}", e.0.code, e.0.message),
-                        )))
+                        .send(Err(std::io::Error::other(format!(
+                            "{}: {}",
+                            e.0.code, e.0.message
+                        ))))
                         .await;
                     return;
                 }
@@ -6942,7 +6969,9 @@ pub(crate) struct DispatchArgs {
     pub ppr_shells: Option<PprShells>,
 }
 
-fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync> {
+fn build_dispatch_swappable(
+    args: DispatchArgs,
+) -> std::sync::Arc<dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync> {
     let DispatchArgs {
         swappable,
         metrics,
@@ -7091,7 +7120,10 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
                 let raw_q = req.url.split_once('?').map(|(_, q)| q).unwrap_or("");
                 raw_q
                     .split('&')
-                    .find_map(|kv| kv.strip_prefix("route=").map(oxide_fw_server::percent_decode))
+                    .find_map(|kv| {
+                        kv.strip_prefix("route=")
+                            .map(oxide_fw_server::percent_decode)
+                    })
                     .filter(|s| !s.is_empty())
                     .unwrap_or_else(|| "/".to_string())
             } else {
@@ -7259,7 +7291,9 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
             .filter_map(|lid| {
                 tree.entries
                     .iter()
-                    .find(|e| e.id.0 == *lid && matches!(e.kind, oxide_fw_router::RouteKind::Layout))
+                    .find(|e| {
+                        e.id.0 == *lid && matches!(e.kind, oxide_fw_router::RouteKind::Layout)
+                    })
                     .map(|e| {
                         (
                             lid.clone(),
@@ -7391,9 +7425,10 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
                 && let Some(token) = req_owned
                     .header("cookie")
                     .and_then(|h| oxide_fw_server::cookie_value(h, "oxide_session"))
-                    && let Ok(sess) = oxide_fw_server::Session::decode(codec, token) {
-                        middleware_locals["session"] = sess.to_value();
-                    }
+                && let Ok(sess) = oxide_fw_server::Session::decode(codec, token)
+            {
+                middleware_locals["session"] = sess.to_value();
+            }
             // B-05: baseline for the session write-back. Middleware is the
             // only phase that can refine `locals.session` (the loader gets a
             // deserialized copy), so diffing around it captures every change.
@@ -7401,17 +7436,14 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
             let mut middleware_headers: Vec<(String, String)> = Vec::new();
             // B-22: resume after the layer that issued the rewrite.
             let resume_after = req_owned.mw_resume_after.clone();
-            let mut pending_resume = resume_after
-                .as_ref()
-                .and_then(|_| {
-                    // Only honour the marker when the target layer is present in
-                    // this route's chain; otherwise run the chain normally.
-                    let present = middleware_module_paths
-                        .iter()
-                        .any(|p| p.to_string_lossy() == resume_after.as_deref().unwrap_or(""));
-                    present.then(|| resume_after.clone().unwrap_or_default())
-                })
-                ;
+            let mut pending_resume = resume_after.as_ref().and_then(|_| {
+                // Only honour the marker when the target layer is present in
+                // this route's chain; otherwise run the chain normally.
+                let present = middleware_module_paths
+                    .iter()
+                    .any(|p| p.to_string_lossy() == resume_after.as_deref().unwrap_or(""));
+                present.then(|| resume_after.clone().unwrap_or_default())
+            });
             if let Some(dispatcher) = middleware_for_dispatch.as_deref() {
                 for mp in &middleware_module_paths {
                     let module_path_s = mp.to_string_lossy().to_string();
@@ -7426,24 +7458,22 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
                     // upload middleware sees what it needs, plus the
                     // locals accumulated by outer middlewares (None when
                     // nothing has accumulated — see the trait doc).
-                    let locals_for_call: Option<&serde_json::Value> = if middleware_locals
-                        .as_object()
-                        .is_some_and(|o| !o.is_empty())
-                    {
-                        Some(&middleware_locals)
-                    } else {
-                        None
-                    };
+                    let locals_for_call: Option<&serde_json::Value> =
+                        if middleware_locals.as_object().is_some_and(|o| !o.is_empty()) {
+                            Some(&middleware_locals)
+                        } else {
+                            None
+                        };
                     let mw_res = dispatcher
                         .dispatch(MiddlewareDispatchArgs {
-        module_path: &module_path_s,
-        method: &req_owned.method,
-        url: &req_owned.url,
-        params: &endpoint_params_json,
-        headers: &req_owned.headers,
-        body: endpoint_body.as_ref(),
-        locals: locals_for_call,
-    })
+                            module_path: &module_path_s,
+                            method: &req_owned.method,
+                            url: &req_owned.url,
+                            params: &endpoint_params_json,
+                            headers: &req_owned.headers,
+                            body: endpoint_body.as_ref(),
+                            locals: locals_for_call,
+                        })
                         .await;
                     match mw_res {
                         Ok(out) => {
@@ -7466,9 +7496,9 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
                                         .headers
                                         .iter()
                                         .any(|(k, _)| k.eq_ignore_ascii_case("location"))
-                                    {
-                                        resp = resp.with_header("location", loc);
-                                    }
+                                {
+                                    resp = resp.with_header("location", loc);
+                                }
                                 // §16.6 / WP-r10-1 / B-05: a middleware that
                                 // mutates `locals.session` AND short-circuits
                                 // must persist the mutation. The post-loop
@@ -7605,21 +7635,21 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
             // no render, just loaders + ODF encode.
             if is_data_request {
                 return route_data_response(RouteDataArgs {
-        req: &req_owned,
-        loader_runner: loader_runner.as_ref(),
-        module_path: module_path.as_deref(),
-        route_id: route_id.as_deref(),
-        params: &params,
-        metrics: &metrics,
-        started,
-        middleware_locals: &middleware_locals,
-        middleware_headers: &middleware_headers,
-        layout_module_paths: &layout_module_paths,
-        locale: &resolved_locale,
-        session_codec: session_codec.as_deref(),
-        middleware_ms,
-        waterfall: waterfall.as_ref(),
-    })
+                    req: &req_owned,
+                    loader_runner: loader_runner.as_ref(),
+                    module_path: module_path.as_deref(),
+                    route_id: route_id.as_deref(),
+                    params: &params,
+                    metrics: &metrics,
+                    started,
+                    middleware_locals: &middleware_locals,
+                    middleware_headers: &middleware_headers,
+                    layout_module_paths: &layout_module_paths,
+                    locale: &resolved_locale,
+                    session_codec: session_codec.as_deref(),
+                    middleware_ms,
+                    waterfall: waterfall.as_ref(),
+                })
                 .await;
             }
 
@@ -7633,216 +7663,218 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
             let mut action_form: Option<serde_json::Value> = None;
             if let (Some(action), Some(module_path)) =
                 (action_name.as_deref(), module_path.as_deref())
-                && let Some(dispatcher) = action_dispatcher.as_deref() {
-                    let form_json = {
-                        let entries = parse_form_urlencoded(&req_owned.body);
-                        serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string())
-                    };
-                    let action_trace = req_owned.trace.as_ref().and_then(|t| {
-                        t.to_traceparent(&t.parent_id).map(
-                            |tp| serde_json::json!({"traceparent": tp, "tracestate": t.tracestate}),
-                        )
-                    });
-                    let resp = oxide_fw_server::run_action(RunActionArgs {
-        dispatcher: Some(dispatcher),
-        module_path: &module_path.to_string_lossy(),
-        route: &action_route,
-        action,
-        form_json: &form_json,
-        params: &action_params,
-        url: &req_owned.url,
-        method: &req_owned.method,
-        headers: &req_owned.headers,
-        locals: &middleware_locals,
-        trace: action_trace.as_ref(),
-    })
-                    .await;
-                    // B-17: actions get their own waterfall row so the
-                    // inspector shows form-POST latency next to renders.
-                    if let Some(rec) = waterfall.as_ref() {
-                        let total = started.elapsed().as_secs_f64() * 1000.0;
-                        rec.record_with_trace(
-                            &req_owned.request_id,
-                            vec![
-                                ("middleware".to_string(), middleware_ms),
-                                ("action".to_string(), (total - middleware_ms).max(0.0)),
-                            ],
-                            req_owned.trace.as_ref().map(|t| t.trace_id.clone()),
-                        );
+                && let Some(dispatcher) = action_dispatcher.as_deref()
+            {
+                let form_json = {
+                    let entries = parse_form_urlencoded(&req_owned.body);
+                    serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string())
+                };
+                let action_trace = req_owned.trace.as_ref().and_then(|t| {
+                    t.to_traceparent(&t.parent_id).map(
+                        |tp| serde_json::json!({"traceparent": tp, "tracestate": t.tracestate}),
+                    )
+                });
+                let resp = oxide_fw_server::run_action(RunActionArgs {
+                    dispatcher: Some(dispatcher),
+                    module_path: &module_path.to_string_lossy(),
+                    route: &action_route,
+                    action,
+                    form_json: &form_json,
+                    params: &action_params,
+                    url: &req_owned.url,
+                    method: &req_owned.method,
+                    headers: &req_owned.headers,
+                    locals: &middleware_locals,
+                    trace: action_trace.as_ref(),
+                })
+                .await;
+                // B-17: actions get their own waterfall row so the
+                // inspector shows form-POST latency next to renders.
+                if let Some(rec) = waterfall.as_ref() {
+                    let total = started.elapsed().as_secs_f64() * 1000.0;
+                    rec.record_with_trace(
+                        &req_owned.request_id,
+                        vec![
+                            ("middleware".to_string(), middleware_ms),
+                            ("action".to_string(), (total - middleware_ms).max(0.0)),
+                        ],
+                        req_owned.trace.as_ref().map(|t| t.trace_id.clone()),
+                    );
+                }
+                // §11.3: apply any tag/path invalidations the action
+                // asked for, then return the response.
+                if let Some(rev) = resp.header("x-oxide-revalidate") {
+                    let events: Vec<(String, String)> = rev
+                        .split(',')
+                        .filter_map(|e| {
+                            e.split_once(':')
+                                .map(|(k, v)| (k.to_string(), v.to_string()))
+                        })
+                        .collect();
+                    if let Some(cache) = l0.as_ref() {
+                        // BUG-01: before this fix, `tag` events were
+                        // dropped and `path` events were passed to
+                        // `invalidate_tag` raw (no `path:` prefix), so
+                        // neither ever matched a cached entry.
+                        for (kind, value) in &events {
+                            match kind.as_str() {
+                                "tag" => {
+                                    cache.invalidate_tag(value, true).await;
+                                }
+                                "path" => {
+                                    cache.invalidate_path(value, true).await;
+                                }
+                                _ => {}
+                            }
+                        }
                     }
-                    // §11.3: apply any tag/path invalidations the action
-                    // asked for, then return the response.
-                    if let Some(rev) = resp.header("x-oxide-revalidate") {
-                        let events: Vec<(String, String)> = rev
-                            .split(',')
-                            .filter_map(|e| {
-                                e.split_once(':')
-                                    .map(|(k, v)| (k.to_string(), v.to_string()))
-                            })
-                            .collect();
-                        if let Some(cache) = l0.as_ref() {
-                            // BUG-01: before this fix, `tag` events were
-                            // dropped and `path` events were passed to
-                            // `invalidate_tag` raw (no `path:` prefix), so
-                            // neither ever matched a cached entry.
-                            for (kind, value) in &events {
+                    // PPR shells carry the same tags; drop them with the
+                    // L0 entries so a revalidate action cannot leave a
+                    // stale shell serving the old document.
+                    if let Some(shells) = ppr_for_request.as_ref() {
+                        for (kind, value) in &events {
+                            if let Ok(mut store) = shells.lock() {
                                 match kind.as_str() {
                                     "tag" => {
-                                        cache.invalidate_tag(value, true).await;
+                                        store.invalidate_tag(value);
                                     }
                                     "path" => {
-                                        cache.invalidate_path(value, true).await;
+                                        store.invalidate_path(value);
                                     }
                                     _ => {}
                                 }
                             }
                         }
-                        // PPR shells carry the same tags; drop them with the
-                        // L0 entries so a revalidate action cannot leave a
-                        // stale shell serving the old document.
-                        if let Some(shells) = ppr_for_request.as_ref() {
-                            for (kind, value) in &events {
-                                if let Ok(mut store) = shells.lock() {
-                                    match kind.as_str() {
-                                        "tag" => {
-                                            store.invalidate_tag(value);
-                                        }
-                                        "path" => {
-                                            store.invalidate_path(value);
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    // §8.5: headers the middleware phase added ride the
-                    // action response (they were accumulated but never
-                    // applied — the previous drop made a CSP/security
-                    // header set in middleware vanish on POSTs).
-                    let mut resp = resp;
-                    for (k, v) in &middleware_headers {
-                        resp = resp.with_header(k, v.clone());
-                    }
-                    // §9.3: 200 → carry the result into the render and fall
-                    // through. Anything else (a redirect, a validation
-                    // failure) is the action's own answer and returns.
-                    if resp.status == 200 {
-                        // B6 fix: copy the action's Set-Cookie headers into
-                        // middleware_headers before the response is dropped —
-                        // the render path applies middleware_headers to every
-                        // response it produces, so the cookie rides the
-                        // re-rendered response. Non-200 responses return `resp`
-                        // directly (they already carry the headers).
-                        forward_action_set_cookies(&resp.headers, &mut middleware_headers);
-                        action_form = serde_json::from_slice::<serde_json::Value>(&resp.body).ok();
-                    } else {
-                        metrics.observe(&label, started.elapsed(), resp.status);
-                        return resp;
                     }
                 }
+                // §8.5: headers the middleware phase added ride the
+                // action response (they were accumulated but never
+                // applied — the previous drop made a CSP/security
+                // header set in middleware vanish on POSTs).
+                let mut resp = resp;
+                for (k, v) in &middleware_headers {
+                    resp = resp.with_header(k, v.clone());
+                }
+                // §9.3: 200 → carry the result into the render and fall
+                // through. Anything else (a redirect, a validation
+                // failure) is the action's own answer and returns.
+                if resp.status == 200 {
+                    // B6 fix: copy the action's Set-Cookie headers into
+                    // middleware_headers before the response is dropped —
+                    // the render path applies middleware_headers to every
+                    // response it produces, so the cookie rides the
+                    // re-rendered response. Non-200 responses return `resp`
+                    // directly (they already carry the headers).
+                    forward_action_set_cookies(&resp.headers, &mut middleware_headers);
+                    action_form = serde_json::from_slice::<serde_json::Value>(&resp.body).ok();
+                } else {
+                    metrics.observe(&label, started.elapsed(), resp.status);
+                    return resp;
+                }
+            }
 
             // §11.1 L0: a cache hit serves the stored response with the
             // live request's CSP nonce substituted in, no JS on the path.
             if l0_eligible
                 && let Some(cache) = l0.as_ref()
-                    && let Some(hit) = cache.get(&l0_route, &l0_params, &l0_vary).await {
-                        // PERF-04: a conditional request whose validator
-                        // matches the stored ETag gets a 304 (no body). The
-                        // ETag is weak-formatted so a cache can still serve
-                        // it after a nonce-only body change.
-                        let etag = format!("W/\"{}\"", hit.etag());
-                        let inm = req_owned.header("if-none-match").map(str::to_string);
-                        if inm.as_deref().is_some_and(|v| {
-                            v.split(',')
-                                .map(str::trim)
-                                .any(|t| t == etag || t == hit.etag() || t == "*")
-                        }) {
-                            let mut resp = oxide_fw_server::OxideResponse::new(304, "");
-                            resp = resp.with_header("etag", etag.clone());
-                            resp = resp.with_header("x-oxide-fw-cache", "L0-hit");
-                            // P0-5: middleware runs per request and its
-                            // headers must reflect THIS request, not the
-                            // request that stored the entry. Apply before
-                            // returning so an L0 hit carries them too.
-                            for (k, v) in &middleware_headers {
-                                resp = resp.with_header(k, v.clone());
-                            }
-                            metrics.observe(&label, started.elapsed(), 304);
-                            if let Some(rec) = waterfall.as_ref() {
-                                rec.record(
-                                    &req_owned.request_id,
-                                    vec![(
-                                        "cache-hit".to_string(),
-                                        started.elapsed().as_secs_f64() * 1000.0,
-                                    )],
-                                );
-                            }
-                            return resp;
-                        }
-                        // P-05: stale-while-revalidate. A stale hit is served
-                        // immediately, and the entry is dropped in the
-                        // background so the *next* request misses, re-renders
-                        // and re-stores (single-flight coalesces concurrent
-                        // misses). Previously the entry served stale forever
-                        // within the SWR window with nobody refreshing it.
-                        if hit.stale {
-                            let bg = cache.clone();
-                            let bg_path = l0_path.clone();
-                            if let Some(shells) = ppr_for_request.as_ref() {
-                                let bg_shells = std::sync::Arc::clone(shells);
-                                let bg_shell_path = bg_path.clone();
-                                tokio::spawn(async move {
-                                    if let Ok(mut store) = bg_shells.lock() {
-                                        store.invalidate_path(&bg_shell_path);
-                                    }
-                                });
-                            }
-                            tokio::spawn(async move {
-                                let _ = bg.invalidate_path(&bg_path, false).await;
-                            });
-                        }
-                        let nonce = oxide_fw_server::nonce_for(&req_owned.request_id);
-                        let body = hit.materialize(&nonce);
-                        let mut resp = oxide_fw_server::OxideResponse::new(hit.status(), body);
-                        for (k, v) in &hit.headers() {
-                            resp = resp.with_header(k, v.clone());
-                        }
-                        resp = resp.with_header("etag", etag);
-                        // §20: an explicit cache-outcome header makes the L0
-                        // layer observable and testable. A stale serve
-                        // (within the SWR window) is labelled so the caller
-                        // can see it; background regeneration is scoped.
-                        resp = resp.with_header(
-                            "x-oxide-fw-cache",
-                            if hit.stale { "L0-stale" } else { "L0-hit" },
-                        );
-                        // P0-5: middleware headers reflect this request; a
-                        // cached body must not suppress an auth/security
-                        // header the middleware just set.
-                        for (k, v) in &middleware_headers {
-                            resp = resp.with_header(k, v.clone());
-                        }
-                        metrics.observe(&label, started.elapsed(), hit.status());
-                        // B-17: hit rows sit next to miss rows in the
-                        // inspector so cache-hit rate is visible.
-                        if let Some(rec) = waterfall.as_ref() {
-                            rec.record_with_trace(
-                                &req_owned.request_id,
-                                vec![(
-                                    if hit.stale {
-                                        "cache-stale"
-                                    } else {
-                                        "cache-hit"
-                                    }
-                                    .to_string(),
-                                    started.elapsed().as_secs_f64() * 1000.0,
-                                )],
-                                req_owned.trace.as_ref().map(|t| t.trace_id.clone()),
-                            );
-                        }
-                        return resp;
+                && let Some(hit) = cache.get(&l0_route, &l0_params, &l0_vary).await
+            {
+                // PERF-04: a conditional request whose validator
+                // matches the stored ETag gets a 304 (no body). The
+                // ETag is weak-formatted so a cache can still serve
+                // it after a nonce-only body change.
+                let etag = format!("W/\"{}\"", hit.etag());
+                let inm = req_owned.header("if-none-match").map(str::to_string);
+                if inm.as_deref().is_some_and(|v| {
+                    v.split(',')
+                        .map(str::trim)
+                        .any(|t| t == etag || t == hit.etag() || t == "*")
+                }) {
+                    let mut resp = oxide_fw_server::OxideResponse::new(304, "");
+                    resp = resp.with_header("etag", etag.clone());
+                    resp = resp.with_header("x-oxide-fw-cache", "L0-hit");
+                    // P0-5: middleware runs per request and its
+                    // headers must reflect THIS request, not the
+                    // request that stored the entry. Apply before
+                    // returning so an L0 hit carries them too.
+                    for (k, v) in &middleware_headers {
+                        resp = resp.with_header(k, v.clone());
                     }
+                    metrics.observe(&label, started.elapsed(), 304);
+                    if let Some(rec) = waterfall.as_ref() {
+                        rec.record(
+                            &req_owned.request_id,
+                            vec![(
+                                "cache-hit".to_string(),
+                                started.elapsed().as_secs_f64() * 1000.0,
+                            )],
+                        );
+                    }
+                    return resp;
+                }
+                // P-05: stale-while-revalidate. A stale hit is served
+                // immediately, and the entry is dropped in the
+                // background so the *next* request misses, re-renders
+                // and re-stores (single-flight coalesces concurrent
+                // misses). Previously the entry served stale forever
+                // within the SWR window with nobody refreshing it.
+                if hit.stale {
+                    let bg = cache.clone();
+                    let bg_path = l0_path.clone();
+                    if let Some(shells) = ppr_for_request.as_ref() {
+                        let bg_shells = std::sync::Arc::clone(shells);
+                        let bg_shell_path = bg_path.clone();
+                        tokio::spawn(async move {
+                            if let Ok(mut store) = bg_shells.lock() {
+                                store.invalidate_path(&bg_shell_path);
+                            }
+                        });
+                    }
+                    tokio::spawn(async move {
+                        let _ = bg.invalidate_path(&bg_path, false).await;
+                    });
+                }
+                let nonce = oxide_fw_server::nonce_for(&req_owned.request_id);
+                let body = hit.materialize(&nonce);
+                let mut resp = oxide_fw_server::OxideResponse::new(hit.status(), body);
+                for (k, v) in &hit.headers() {
+                    resp = resp.with_header(k, v.clone());
+                }
+                resp = resp.with_header("etag", etag);
+                // §20: an explicit cache-outcome header makes the L0
+                // layer observable and testable. A stale serve
+                // (within the SWR window) is labelled so the caller
+                // can see it; background regeneration is scoped.
+                resp = resp.with_header(
+                    "x-oxide-fw-cache",
+                    if hit.stale { "L0-stale" } else { "L0-hit" },
+                );
+                // P0-5: middleware headers reflect this request; a
+                // cached body must not suppress an auth/security
+                // header the middleware just set.
+                for (k, v) in &middleware_headers {
+                    resp = resp.with_header(k, v.clone());
+                }
+                metrics.observe(&label, started.elapsed(), hit.status());
+                // B-17: hit rows sit next to miss rows in the
+                // inspector so cache-hit rate is visible.
+                if let Some(rec) = waterfall.as_ref() {
+                    rec.record_with_trace(
+                        &req_owned.request_id,
+                        vec![(
+                            if hit.stale {
+                                "cache-stale"
+                            } else {
+                                "cache-hit"
+                            }
+                            .to_string(),
+                            started.elapsed().as_secs_f64() * 1000.0,
+                        )],
+                        req_owned.trace.as_ref().map(|t| t.trace_id.clone()),
+                    );
+                }
+                return resp;
+            }
 
             // PERF-04: single-flight. A concurrent miss for the same L0
             // key awaits the in-flight owner instead of rendering again.
@@ -7913,7 +7945,6 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
             // entry; these bracket load / render so `Server-Timing` can
             // report real per-stage durations instead of all-zeros.
             let stage_load_start = std::time::Instant::now();
-            
 
             // §9.2: layout loads run in chain order (outer → inner); each
             // layout gets the pre-resolved data of its own outer layout as
@@ -8268,118 +8299,121 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
                         metrics.observe(&label, started.elapsed(), 500);
                         return oxide_fw_server::OxideResponse::html(
                             500,
-                            format!("loader error: {}", oxide_fw_render::escape_text(&e.0.message)),
+                            format!(
+                                "loader error: {}",
+                                oxide_fw_render::escape_text(&e.0.message)
+                            ),
                         );
                     }
                 }
             } else if has_server_module
                 && let (Some(runner), Some(module_path), Some(route_id)) =
                     (loader_runner.as_ref(), module_path, route_id)
-                {
-                    // Pass the normalized id (no `/page` suffix) so user
-                    // `load(event)` implementations see the route
-                    // directory they expect.
-                    let route_for_loader = route_id
-                        .strip_suffix("/page")
-                        .unwrap_or(&route_id)
-                        .to_string();
-                    let mut input = oxide_fw_server::LoaderRunInput::new(
-                        module_path.to_string_lossy().to_string(),
-                        route_for_loader,
-                        req_owned.url.clone(),
-                    );
-                    input.method = req_owned.method.clone();
-                    input.headers = req_owned.headers.as_ref().clone();
-                    input.params = params.clone();
-                    // §8.1 middleware.ts / §9.1: request-scoped locals
-                    // injected by the middleware that just ran. `{}` when
-                    // no middleware executed.
-                    input.locals = middleware_locals.clone();
-                    // SPEC-10: expose the resolved locale to `load()`.
-                    input.locale = resolved_locale.clone();
-                    // §20 / G2: thread the inbound W3C trace so the loader's
-                    // server-side fetch calls join the request trace.
-                    input.trace = req_owned.trace.as_ref().and_then(|t| {
-                        t.to_traceparent(&t.parent_id).map(
-                            |tp| serde_json::json!({"traceparent": tp, "tracestate": t.tracestate}),
-                        )
-                    });
-                    // §9.2: the innermost layout's data — what `parent()`
-                    // reads in a page load.
-                    input.parent_data = layout_data_chain
-                        .last()
-                        .cloned()
-                        .unwrap_or(serde_json::Value::Null);
+            {
+                // Pass the normalized id (no `/page` suffix) so user
+                // `load(event)` implementations see the route
+                // directory they expect.
+                let route_for_loader = route_id
+                    .strip_suffix("/page")
+                    .unwrap_or(&route_id)
+                    .to_string();
+                let mut input = oxide_fw_server::LoaderRunInput::new(
+                    module_path.to_string_lossy().to_string(),
+                    route_for_loader,
+                    req_owned.url.clone(),
+                );
+                input.method = req_owned.method.clone();
+                input.headers = req_owned.headers.as_ref().clone();
+                input.params = params.clone();
+                // §8.1 middleware.ts / §9.1: request-scoped locals
+                // injected by the middleware that just ran. `{}` when
+                // no middleware executed.
+                input.locals = middleware_locals.clone();
+                // SPEC-10: expose the resolved locale to `load()`.
+                input.locale = resolved_locale.clone();
+                // §20 / G2: thread the inbound W3C trace so the loader's
+                // server-side fetch calls join the request trace.
+                input.trace = req_owned.trace.as_ref().and_then(|t| {
+                    t.to_traceparent(&t.parent_id).map(
+                        |tp| serde_json::json!({"traceparent": tp, "tracestate": t.tracestate}),
+                    )
+                });
+                // §9.2: the innermost layout's data — what `parent()`
+                // reads in a page load.
+                input.parent_data = layout_data_chain
+                    .last()
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
 
-                    match runner.run_streaming(input.clone()).await {
-                        Ok((out, settles)) => {
-                            if out.short_circuits() {
-                                // fall through to the short-circuit arm below
-                                // by re-dispatching on the same shape.
-                                let body = out
-                                    .data
-                                    .get("message")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                let mut resp = oxide_fw_server::OxideResponse::new(out.status, body);
-                                if let Some(loc) = out.location {
-                                    resp = resp.with_header("location", loc);
-                                }
-                                for c in &out.set_cookies {
-                                    resp = resp.with_header("set-cookie", c.clone());
-                                }
-                                for (k, v) in &out.headers {
-                                    resp = resp.with_header(k, v.clone());
-                                }
-                                // §16.6 / WP-D1 / WP-r10-1: a page
-                                // short-circuit (sequential arm, streaming
-                                // path) must persist any session mutation.
-                                if let Some(cookie) = encode_session_cookie(
-                                    out.session.as_ref(),
-                                    session_before.as_ref(),
-                                    session_codec.as_deref(),
-                                ) {
-                                    resp = resp.with_header("set-cookie", cookie);
-                                }
-                                metrics.observe(&label, started.elapsed(), out.status);
-                                return resp;
+                match runner.run_streaming(input.clone()).await {
+                    Ok((out, settles)) => {
+                        if out.short_circuits() {
+                            // fall through to the short-circuit arm below
+                            // by re-dispatching on the same shape.
+                            let body = out
+                                .data
+                                .get("message")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let mut resp = oxide_fw_server::OxideResponse::new(out.status, body);
+                            if let Some(loc) = out.location {
+                                resp = resp.with_header("location", loc);
                             }
-                            data = out.data;
-                            loader_set_cookies = out.set_cookies;
-                            loader_headers = out.headers;
-                            deferred_values = out.deferred;
-                            page_settles = Some(settles);
-                            // §16.6 / WP-D1: a loader that mutated
-                            // `event.session` has its change persisted. The
-                            // helper compares against the inbound session so
-                            // an untouched one does not re-issue a cookie.
+                            for c in &out.set_cookies {
+                                resp = resp.with_header("set-cookie", c.clone());
+                            }
+                            for (k, v) in &out.headers {
+                                resp = resp.with_header(k, v.clone());
+                            }
+                            // §16.6 / WP-D1 / WP-r10-1: a page
+                            // short-circuit (sequential arm, streaming
+                            // path) must persist any session mutation.
                             if let Some(cookie) = encode_session_cookie(
                                 out.session.as_ref(),
                                 session_before.as_ref(),
                                 session_codec.as_deref(),
                             ) {
-                                loader_set_cookies.push(cookie);
+                                resp = resp.with_header("set-cookie", cookie);
                             }
+                            metrics.observe(&label, started.elapsed(), out.status);
+                            return resp;
                         }
-                        Err(e) => {
-                            tracing::error!(
-                                code = %e.0.code,
-                                error = %e.0.message,
-                                route = %label,
-                                "loader failed",
-                            );
-                            metrics.observe(&label, started.elapsed(), 500);
-                            return oxide_fw_server::OxideResponse::html(
-                                500,
-                                format!(
-                                    "loader error: {}",
-                                    oxide_fw_render::escape_text(&e.0.message)
-                                ),
-                            );
+                        data = out.data;
+                        loader_set_cookies = out.set_cookies;
+                        loader_headers = out.headers;
+                        deferred_values = out.deferred;
+                        page_settles = Some(settles);
+                        // §16.6 / WP-D1: a loader that mutated
+                        // `event.session` has its change persisted. The
+                        // helper compares against the inbound session so
+                        // an untouched one does not re-issue a cookie.
+                        if let Some(cookie) = encode_session_cookie(
+                            out.session.as_ref(),
+                            session_before.as_ref(),
+                            session_codec.as_deref(),
+                        ) {
+                            loader_set_cookies.push(cookie);
                         }
                     }
+                    Err(e) => {
+                        tracing::error!(
+                            code = %e.0.code,
+                            error = %e.0.message,
+                            route = %label,
+                            "loader failed",
+                        );
+                        metrics.observe(&label, started.elapsed(), 500);
+                        return oxide_fw_server::OxideResponse::html(
+                            500,
+                            format!(
+                                "loader error: {}",
+                                oxide_fw_render::escape_text(&e.0.message)
+                            ),
+                        );
+                    }
                 }
+            }
 
             // §8.1 route.ts / §10.2 step 7: an Endpoint route returns a
             // Web `Response` directly, bypassing the loader + render
@@ -8399,15 +8433,15 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
                 });
                 match dispatcher
                     .dispatch(EndpointDispatchArgs {
-        module_path: &module_path_s,
-        method: &req_owned.method,
-        url: &req_owned.url,
-        params: &endpoint_params_json,
-        headers: &req_owned.headers,
-        body: endpoint_body.as_ref(),
-        locals: &middleware_locals,
-        trace: endpoint_trace.as_ref(),
-    })
+                        module_path: &module_path_s,
+                        method: &req_owned.method,
+                        url: &req_owned.url,
+                        params: &endpoint_params_json,
+                        headers: &req_owned.headers,
+                        body: endpoint_body.as_ref(),
+                        locals: &middleware_locals,
+                        trace: endpoint_trace.as_ref(),
+                    })
                     .await
                 {
                     Ok(out) => {
@@ -8416,7 +8450,9 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
                         // drives the response body from `out.stream`;
                         // a buffered one uses `out.body`.
                         let mut resp = match out.stream {
-                            Some(stream) => oxide_fw_server::OxideResponse::stream(out.status, stream),
+                            Some(stream) => {
+                                oxide_fw_server::OxideResponse::stream(out.status, stream)
+                            }
                             None => oxide_fw_server::OxideResponse::new(
                                 out.status,
                                 bytes::Bytes::from(out.body),
@@ -8505,9 +8541,10 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
                 // before the loader because the loader assigns `data`
                 // wholesale; this runs after it, so both survive.
                 if let Some(form) = action_form.take()
-                    && let Some(obj) = data.as_object_mut() {
-                        obj.insert("form".to_string(), form);
-                    }
+                    && let Some(obj) = data.as_object_mut()
+                {
+                    obj.insert("form".to_string(), form);
+                }
                 input.data = data;
                 // §8.2: hand the layout chain to the adapter so it can
                 // nest the page. The adapter renders
@@ -8808,117 +8845,118 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
                                 // both. `middleware_sets_cookie` is defined
                                 // above for the PPR guard.
                                 && !middleware_sets_cookie
-                            && let Some(cache) = l0.as_ref() {
-                                let nonce = oxide_fw_server::nonce_for(&req_owned.request_id);
-                                let cache = std::sync::Arc::clone(cache);
-                                let l0_route = l0_route.clone();
-                                let l0_path = l0_path.clone();
-                                let headers_for_store = loader_headers.clone();
-                                // P-04: reuse the key already computed for the
-                                // flight instead of re-deriving it at store time.
-                                let store_key = flight_key.clone();
-                                let flight_owner = flight_owner.take();
-                                let render_ms = stage_render_start.elapsed().as_secs_f64() * 1000.0;
-                                let (tx, mut rx) = tokio::sync::mpsc::channel::<
-                                    std::result::Result<bytes::Bytes, std::io::Error>,
-                                >(8);
-                                tokio::spawn(async move {
-                                    use futures::StreamExt as _;
-                                    let mut src = body;
-                                    let mut collected: Vec<u8> = Vec::new();
-                                    while let Some(item) = src.next().await {
-                                        match item {
-                                            Ok(chunk) => {
-                                                collected.extend_from_slice(&chunk);
-                                                if tx.send(Ok(chunk)).await.is_err() {
-                                                    // Client gone: no store
-                                                    // (the render did not
-                                                    // finish).
-                                                    return;
-                                                }
-                                            }
-                                            Err(e) => {
-                                                let _ = tx.send(Err(e)).await;
+                            && let Some(cache) = l0.as_ref()
+                        {
+                            let nonce = oxide_fw_server::nonce_for(&req_owned.request_id);
+                            let cache = std::sync::Arc::clone(cache);
+                            let l0_route = l0_route.clone();
+                            let l0_path = l0_path.clone();
+                            let headers_for_store = loader_headers.clone();
+                            // P-04: reuse the key already computed for the
+                            // flight instead of re-deriving it at store time.
+                            let store_key = flight_key.clone();
+                            let flight_owner = flight_owner.take();
+                            let render_ms = stage_render_start.elapsed().as_secs_f64() * 1000.0;
+                            let (tx, mut rx) = tokio::sync::mpsc::channel::<
+                                std::result::Result<bytes::Bytes, std::io::Error>,
+                            >(8);
+                            tokio::spawn(async move {
+                                use futures::StreamExt as _;
+                                let mut src = body;
+                                let mut collected: Vec<u8> = Vec::new();
+                                while let Some(item) = src.next().await {
+                                    match item {
+                                        Ok(chunk) => {
+                                            collected.extend_from_slice(&chunk);
+                                            if tx.send(Ok(chunk)).await.is_err() {
+                                                // Client gone: no store
+                                                // (the render did not
+                                                // finish).
                                                 return;
                                             }
                                         }
+                                        Err(e) => {
+                                            let _ = tx.send(Err(e)).await;
+                                            return;
+                                        }
                                     }
-                                    // Close the client stream NOW — the
-                                    // store below must not delay EOF.
-                                    drop(tx);
-                                    let sentineled = String::from_utf8_lossy(&collected)
-                                        .replace(&nonce, l0_cache::NONCE_SENTINEL)
-                                        .into_bytes();
-                                    let mut store_headers = vec![(
-                                        "content-type".to_string(),
-                                        "text/html; charset=utf-8".to_string(),
-                                    )];
-                                    for (k, v) in &headers_for_store {
-                                        store_headers.push((k.clone(), v.clone()));
-                                    }
-                                    let entry = cache.make_entry(
-                                        200,
-                                        store_headers,
-                                        sentineled,
-                                        vec![l0_route.clone(), format!("path:{}", l0_path)],
-                                    );
-                                    cache.store_entry(&store_key, entry.clone()).await;
-                                    if let Some(guard) = flight_owner {
-                                        guard.publish(std::sync::Arc::new(entry));
-                                    }
-                                });
-                                let stream: oxide_fw_server::BodyStream =
-                                    Box::pin(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)));
-                                let t = oxide_fw_render::RequestTimings {
-                                    middleware_ms,
-                                    cache_ms: 0.0,
-                                    load_ms,
-                                    render_ms,
-                                    inject_ms: 0.0,
-                                };
-                                if let Some(rec) = waterfall.as_ref() {
-                                    // §20 / O3: attach the inbound W3C
-                                    // trace id so this row correlates with
-                                    // the request's spans downstream.
-                                    rec.record_with_trace(
-                                        &req_owned.request_id,
-                                        vec![
-                                            ("middleware".to_string(), middleware_ms),
-                                            ("load".to_string(), load_ms),
-                                            ("render".to_string(), render_ms),
-                                        ],
-                                        req_owned.trace.as_ref().map(|t| t.trace_id.clone()),
-                                    );
-                                    // SPEC-19.3 / §19-D: also persist the
-                                    // snapshot to disk so the MCP server (a
-                                    // separate process) can read the live
-                                    // waterfalls via `oxide_state`. The
-                                    // dispatch closure doesn't have `rootp`
-                                    // in scope (it's captured at server
-                                    // construction), so we capture the path
-                                    // via the existing `routes_root` prefix
-                                    // resolution — but that's per-dispatch.
-                                    // Simpler: use the CWD, which is the
-                                    // project root for the dev server.
-                                    let waterfall_path =
-                                        std::path::PathBuf::from(".oxide/last-waterfalls.json");
-                                    rec.persist_to(&waterfall_path);
                                 }
-                                let mut resp =
-                                    oxide_fw_server::OxideResponse::stream(final_status, stream)
-                                        .with_header("content-type", "text/html; charset=utf-8")
-                                        .with_header("x-oxide-fw-cache", "L0-miss")
-                                        .with_header("Server-Timing", t.server_timing());
-                                for (k, v) in &loader_headers {
-                                    resp = resp.with_header(k, v.clone());
+                                // Close the client stream NOW — the
+                                // store below must not delay EOF.
+                                drop(tx);
+                                let sentineled = String::from_utf8_lossy(&collected)
+                                    .replace(&nonce, l0_cache::NONCE_SENTINEL)
+                                    .into_bytes();
+                                let mut store_headers = vec![(
+                                    "content-type".to_string(),
+                                    "text/html; charset=utf-8".to_string(),
+                                )];
+                                for (k, v) in &headers_for_store {
+                                    store_headers.push((k.clone(), v.clone()));
                                 }
-                                // §8.5: middleware headers ride the teed
-                                // response too.
-                                for (k, v) in &middleware_headers {
-                                    resp = resp.with_header(k, v.clone());
+                                let entry = cache.make_entry(
+                                    200,
+                                    store_headers,
+                                    sentineled,
+                                    vec![l0_route.clone(), format!("path:{}", l0_path)],
+                                );
+                                cache.store_entry(&store_key, entry.clone()).await;
+                                if let Some(guard) = flight_owner {
+                                    guard.publish(std::sync::Arc::new(entry));
                                 }
-                                return resp;
+                            });
+                            let stream: oxide_fw_server::BodyStream =
+                                Box::pin(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)));
+                            let t = oxide_fw_render::RequestTimings {
+                                middleware_ms,
+                                cache_ms: 0.0,
+                                load_ms,
+                                render_ms,
+                                inject_ms: 0.0,
+                            };
+                            if let Some(rec) = waterfall.as_ref() {
+                                // §20 / O3: attach the inbound W3C
+                                // trace id so this row correlates with
+                                // the request's spans downstream.
+                                rec.record_with_trace(
+                                    &req_owned.request_id,
+                                    vec![
+                                        ("middleware".to_string(), middleware_ms),
+                                        ("load".to_string(), load_ms),
+                                        ("render".to_string(), render_ms),
+                                    ],
+                                    req_owned.trace.as_ref().map(|t| t.trace_id.clone()),
+                                );
+                                // SPEC-19.3 / §19-D: also persist the
+                                // snapshot to disk so the MCP server (a
+                                // separate process) can read the live
+                                // waterfalls via `oxide_state`. The
+                                // dispatch closure doesn't have `rootp`
+                                // in scope (it's captured at server
+                                // construction), so we capture the path
+                                // via the existing `routes_root` prefix
+                                // resolution — but that's per-dispatch.
+                                // Simpler: use the CWD, which is the
+                                // project root for the dev server.
+                                let waterfall_path =
+                                    std::path::PathBuf::from(".oxide/last-waterfalls.json");
+                                rec.persist_to(&waterfall_path);
                             }
+                            let mut resp =
+                                oxide_fw_server::OxideResponse::stream(final_status, stream)
+                                    .with_header("content-type", "text/html; charset=utf-8")
+                                    .with_header("x-oxide-fw-cache", "L0-miss")
+                                    .with_header("Server-Timing", t.server_timing());
+                            for (k, v) in &loader_headers {
+                                resp = resp.with_header(k, v.clone());
+                            }
+                            // §8.5: middleware headers ride the teed
+                            // response too.
+                            for (k, v) in &middleware_headers {
+                                resp = resp.with_header(k, v.clone());
+                            }
+                            return resp;
+                        }
                         // §10.2 step 5 / §8.3: the framework render path
                         // always used to emit a hardcoded 200 regardless of
                         // the computed `status`. That made an unmatched URL
@@ -8969,7 +9007,10 @@ fn build_dispatch_swappable(args: DispatchArgs) -> std::sync::Arc<dyn Fn(oxide_f
                         metrics.observe(&label, started.elapsed(), 500);
                         oxide_fw_server::OxideResponse::html(
                             500,
-                            format!("render error: {}", oxide_fw_render::escape_text(&e.0.message)),
+                            format!(
+                                "render error: {}",
+                                oxide_fw_render::escape_text(&e.0.message)
+                            ),
                         )
                     }
                 }
@@ -9309,32 +9350,35 @@ struct ActionDispatcherImpl {
 
 #[async_trait::async_trait]
 impl oxide_fw_server::ActionDispatcher for ActionDispatcherImpl {
-    async fn dispatch(&self, args: ActionDispatchArgs<'_>) -> std::result::Result<oxide_fw_server::ActionRunResult, oxide_fw_server::DispatchError> {
-    let ActionDispatchArgs {
-        module_path,
-        action,
-        form_json,
-        params,
-        url,
-        method,
-        headers,
-        locals,
-        trace,
-    } = args;
+    async fn dispatch(
+        &self,
+        args: ActionDispatchArgs<'_>,
+    ) -> std::result::Result<oxide_fw_server::ActionRunResult, oxide_fw_server::DispatchError> {
+        let ActionDispatchArgs {
+            module_path,
+            action,
+            form_json,
+            params,
+            url,
+            method,
+            headers,
+            locals,
+            trace,
+        } = args;
 
         match self
             .host
             .run(ActionRunArgs {
-        module_path,
-        action,
-        form_json,
-        params,
-        url,
-        method,
-        headers,
-        locals,
-        trace,
-    })
+                module_path,
+                action,
+                form_json,
+                params,
+                url,
+                method,
+                headers,
+                locals,
+                trace,
+            })
             .await
         {
             Ok(out) => Ok(oxide_fw_server::ActionRunResult {
@@ -9348,7 +9392,9 @@ impl oxide_fw_server::ActionDispatcher for ActionDispatcherImpl {
                     .into_iter()
                     .map(|ev| match ev {
                         oxide_fw_jshost::RevalidateEvent::Tag { tag } => ("tag".to_string(), tag),
-                        oxide_fw_jshost::RevalidateEvent::Path { path } => ("path".to_string(), path),
+                        oxide_fw_jshost::RevalidateEvent::Path { path } => {
+                            ("path".to_string(), path)
+                        }
                     })
                     .collect(),
             }),
@@ -9382,30 +9428,34 @@ struct EndpointDispatcherImpl {
 
 #[async_trait::async_trait]
 impl oxide_fw_server::EndpointDispatcher for EndpointDispatcherImpl {
-    async fn dispatch(&self, args: EndpointDispatchArgs<'_>) -> std::result::Result<oxide_fw_server::EndpointRunResult, oxide_fw_server::EndpointRunError> {
-    let EndpointDispatchArgs {
-        module_path,
-        method,
-        url,
-        params,
-        headers,
-        body,
-        locals,
-        trace,
-    } = args;
+    async fn dispatch(
+        &self,
+        args: EndpointDispatchArgs<'_>,
+    ) -> std::result::Result<oxide_fw_server::EndpointRunResult, oxide_fw_server::EndpointRunError>
+    {
+        let EndpointDispatchArgs {
+            module_path,
+            method,
+            url,
+            params,
+            headers,
+            body,
+            locals,
+            trace,
+        } = args;
 
         match self
             .host
             .run(LoaderRunArgs {
-        module_path,
-        method,
-        url,
-        params,
-        headers,
-        body,
-        locals,
-        trace,
-    })
+                module_path,
+                method,
+                url,
+                params,
+                headers,
+                body,
+                locals,
+                trace,
+            })
             .await
         {
             Ok(out) => {
@@ -9515,28 +9565,34 @@ struct MiddlewareDispatcherImpl {
 
 #[async_trait::async_trait]
 impl oxide_fw_server::MiddlewareDispatcher for MiddlewareDispatcherImpl {
-    async fn dispatch(&self, args: MiddlewareDispatchArgs<'_>) -> std::result::Result<oxide_fw_server::MiddlewareRunResult, oxide_fw_server::MiddlewareRunError> {
-    let MiddlewareDispatchArgs {
-        module_path,
-        method,
-        url,
-        params,
-        headers,
-        body,
-        locals,
-    } = args;
+    async fn dispatch(
+        &self,
+        args: MiddlewareDispatchArgs<'_>,
+    ) -> std::result::Result<
+        oxide_fw_server::MiddlewareRunResult,
+        oxide_fw_server::MiddlewareRunError,
+    > {
+        let MiddlewareDispatchArgs {
+            module_path,
+            method,
+            url,
+            params,
+            headers,
+            body,
+            locals,
+        } = args;
 
         match self
             .host
             .run(EndpointRunArgs {
-        module_path,
-        method,
-        url,
-        params,
-        headers,
-        body,
-        locals,
-    })
+                module_path,
+                method,
+                url,
+                params,
+                headers,
+                body,
+                locals,
+            })
             .await
         {
             Ok(out) => Ok(oxide_fw_server::MiddlewareRunResult {
@@ -9580,7 +9636,8 @@ impl oxide_fw_server::SocketDispatcher for SocketDispatcherImpl {
         phase: &str,
         payload: serde_json::Value,
         socket_id: &str,
-    ) -> std::result::Result<oxide_fw_server::SocketRunResult, oxide_fw_server::SocketRunError> {
+    ) -> std::result::Result<oxide_fw_server::SocketRunResult, oxide_fw_server::SocketRunError>
+    {
         match self.host.run(module_path, phase, payload, socket_id).await {
             Ok(out) => Ok(oxide_fw_server::SocketRunResult {
                 sends: out.sends,
@@ -9678,13 +9735,19 @@ fn build_css_transform_hook(
     let tw_css = tailwind.as_ref().map(|t| t.css.clone());
     oxide_fw_bundler::CssTransformHook::new(move |path, source, is_module, minify| {
         let effective_source: &str = match (&tw_entry, &tw_css) {
-            (Some(entry), Some(css)) if std::path::Path::new(path) == entry.as_path() => css.as_str(),
+            (Some(entry), Some(css)) if std::path::Path::new(path) == entry.as_path() => {
+                css.as_str()
+            }
             _ => source,
         };
         let input = CssInput {
             code: effective_source.to_string(),
             file: Some(path.to_string()),
-            kind: if is_module { CssKind::Module } else { CssKind::Global },
+            kind: if is_module {
+                CssKind::Module
+            } else {
+                CssKind::Global
+            },
             minify,
             targets: targets.clone(),
         };
@@ -9777,10 +9840,12 @@ fn build_js_plugin_hook(
                         .enable_all()
                         .build()
                         .map_err(|e| {
-                            oxide_fw_diagnostics::OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(
-                                "PLG-BRIDGE",
-                                format!("bridge runtime: {e}"),
-                            )))
+                            oxide_fw_diagnostics::OxideError(Box::new(
+                                oxide_fw_diagnostics::Diagnostic::error(
+                                    "PLG-BRIDGE",
+                                    format!("bridge runtime: {e}"),
+                                ),
+                            ))
                         })?;
                     rt.block_on(async move {
                         let need_load = {
@@ -9826,21 +9891,26 @@ fn build_js_plugin_hook(
                                 export: "transform".into(),
                             };
                             let mut stream = pool.call(entry, call).await.map_err(|e| {
-                                oxide_fw_diagnostics::OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(
-                                    "PLG-CALL",
-                                    format!("plugin transform failed: {}", e.0.message),
-                                )))
+                                oxide_fw_diagnostics::OxideError(Box::new(
+                                    oxide_fw_diagnostics::Diagnostic::error(
+                                        "PLG-CALL",
+                                        format!("plugin transform failed: {}", e.0.message),
+                                    ),
+                                ))
                             })?;
                             let bytes = stream.collect().await.map_err(|e| {
-                                oxide_fw_diagnostics::OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(
-                                    "PLG-CALL",
-                                    format!("plugin transform read failed: {}", e.0.message),
-                                )))
+                                oxide_fw_diagnostics::OxideError(Box::new(
+                                    oxide_fw_diagnostics::Diagnostic::error(
+                                        "PLG-CALL",
+                                        format!("plugin transform read failed: {}", e.0.message),
+                                    ),
+                                ))
                             })?;
                             if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes)
-                                && let Some(s) = hook_result_str(&v, "code") {
-                                    code = s;
-                                }
+                                && let Some(s) = hook_result_str(&v, "code")
+                            {
+                                code = s;
+                            }
                         }
                         Ok(code)
                     })
@@ -10494,25 +10564,23 @@ async fn start_server_inner_full(
     if let Some(cache) = l0.as_ref() {
         let seed_path = rootp.join("dist/server/l0-seed.json");
         if let Ok(bytes) = std::fs::read(&seed_path)
-            && let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                // Only seed a manifest from THIS build.
-                let same_build =
-                    v.get("build_id").and_then(|b| b.as_str()) == Some(build_id.as_str());
-                if same_build
-                    && let Some(entries) = v.get("entries").and_then(|e| e.as_array()) {
-                        for e in entries {
-                            let key = e.get("key").and_then(|k| k.as_str()).unwrap_or("");
-                            let body = e.get("body").and_then(|b| b.as_str()).unwrap_or("");
-                            let status =
-                                e.get("status").and_then(|s| s.as_u64()).unwrap_or(200) as u16;
-                            if !key.is_empty() && !body.is_empty() {
-                                cache
-                                    .seed_entry(key, body.as_bytes().to_vec(), status)
-                                    .await;
-                            }
-                        }
+            && let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes)
+        {
+            // Only seed a manifest from THIS build.
+            let same_build = v.get("build_id").and_then(|b| b.as_str()) == Some(build_id.as_str());
+            if same_build && let Some(entries) = v.get("entries").and_then(|e| e.as_array()) {
+                for e in entries {
+                    let key = e.get("key").and_then(|k| k.as_str()).unwrap_or("");
+                    let body = e.get("body").and_then(|b| b.as_str()).unwrap_or("");
+                    let status = e.get("status").and_then(|s| s.as_u64()).unwrap_or(200) as u16;
+                    if !key.is_empty() && !body.is_empty() {
+                        cache
+                            .seed_entry(key, body.as_bytes().to_vec(), status)
+                            .await;
                     }
+                }
             }
+        }
     }
     // PERF-07: prefer the mmap'd rkyv route archive when the build wrote one.
     // A missing/stale archive falls back to the in-memory tree (dev, or a
@@ -10646,7 +10714,8 @@ async fn start_server_inner_full(
             let _h3_task = h3_task;
         }
         if let Err(e) =
-            oxide_fw_server::Server::serve_with_tls(bind_addr, pipeline, dispatch, rx_main, tls).await
+            oxide_fw_server::Server::serve_with_tls(bind_addr, pipeline, dispatch, rx_main, tls)
+                .await
         {
             tracing::error!(code = %e.0.code, "server stopped with error");
         }
@@ -10669,10 +10738,11 @@ async fn resolve_port(requested: u16) -> u16 {
         return requested;
     }
     if let Ok(listener) = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await
-        && let Ok(addr) = listener.local_addr() {
-            drop(listener);
-            return addr.port();
-        }
+        && let Ok(addr) = listener.local_addr()
+    {
+        drop(listener);
+        return addr.port();
+    }
     0
 }
 
@@ -11070,7 +11140,8 @@ async fn cmd_check(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     // skipped rather than failing `check`.
     if plugin_declares_any(&rootp, &cfg, &["diagnostics"]) {
         use oxide_fw_jshost::JsHost as _;
-        let host = oxide_fw_jshost::NodeHost::new(oxide_fw_jshost::NodeHost::worker_script_default());
+        let host =
+            oxide_fw_jshost::NodeHost::new(oxide_fw_jshost::NodeHost::worker_script_default());
         if let Ok(pool) = host.tooling_pool(oxide_fw_jshost::PoolConfig::default()) {
             let results = call_js_plugin_hook(
                 &rootp,
@@ -11220,7 +11291,7 @@ async fn cmd_doctor(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     let cache_ok = std::fs::create_dir_all(&cache_dir).is_ok();
     let cache_ok = cache_ok && {
         let probe = cache_dir.join(".oxide-doctor-probe");
-        
+
         std::fs::write(&probe, b"probe").is_ok() && std::fs::remove_file(&probe).is_ok()
     };
     check(w, cache_ok, "cache directory writable (.oxide/cache)")?;
@@ -11799,7 +11870,11 @@ async fn cmd_migrate(root: &str, source: &str, write: bool, w: Writer<'_>) -> an
     }
     match crate::migrate::apply(&plan) {
         Ok(()) => {
-            outln!(w, "  wrote {converted} file(s) from source `{}`", plan.source);
+            outln!(
+                w,
+                "  wrote {converted} file(s) from source `{}`",
+                plan.source
+            );
             Ok(0)
         }
         Err(e) => {
@@ -12179,95 +12254,100 @@ fn build_js_plugin_resolve_hook(
     }
     let pool = std::sync::Arc::clone(pool);
     let loaded = std::sync::Arc::new(std::sync::Mutex::new(false));
-    Some(oxide_fw_bundler::ResolveHook::new(move |specifier, from| {
-        let pool = std::sync::Arc::clone(&pool);
-        let loaded = std::sync::Arc::clone(&loaded);
-        let plugins = plugins.clone();
-        let specifier = specifier.to_string();
-        let from = from.to_string();
-        std::thread::scope(|scope| {
-            scope
-                .spawn(|| -> oxide_fw_diagnostics::Result<Option<PathBuf>> {
-                    let rt = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .map_err(|e| {
-                            oxide_fw_diagnostics::OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(
-                                "PLG-BRIDGE",
-                                format!("bridge runtime: {e}"),
-                            )))
-                        })?;
-                    rt.block_on(async move {
-                        let need_load = {
-                            let mut g = loaded.lock().unwrap();
-                            if *g {
-                                false
-                            } else {
-                                *g = true;
-                                true
-                            }
-                        };
-                        for path in &plugins {
-                            if need_load {
-                                let load = oxide_fw_jshost::CallInput {
-                                    payload: serde_json::json!({ "path": path }),
+    Some(oxide_fw_bundler::ResolveHook::new(
+        move |specifier, from| {
+            let pool = std::sync::Arc::clone(&pool);
+            let loaded = std::sync::Arc::clone(&loaded);
+            let plugins = plugins.clone();
+            let specifier = specifier.to_string();
+            let from = from.to_string();
+            std::thread::scope(|scope| {
+                scope
+                    .spawn(|| -> oxide_fw_diagnostics::Result<Option<PathBuf>> {
+                        let rt = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .map_err(|e| {
+                                oxide_fw_diagnostics::OxideError(Box::new(
+                                    oxide_fw_diagnostics::Diagnostic::error(
+                                        "PLG-BRIDGE",
+                                        format!("bridge runtime: {e}"),
+                                    ),
+                                ))
+                            })?;
+                        rt.block_on(async move {
+                            let need_load = {
+                                let mut g = loaded.lock().unwrap();
+                                if *g {
+                                    false
+                                } else {
+                                    *g = true;
+                                    true
+                                }
+                            };
+                            for path in &plugins {
+                                if need_load {
+                                    let load = oxide_fw_jshost::CallInput {
+                                        payload: serde_json::json!({ "path": path }),
+                                        headers: Default::default(),
+                                        has_body: false,
+                                        request_id: format!("plugin:load:{path}"),
+                                        route: None,
+                                    };
+                                    let entry = oxide_fw_jshost::EntryRef {
+                                        kind: "plugin:load".into(),
+                                        module: path.clone(),
+                                        export: "default".into(),
+                                    };
+                                    let _ = pool.call(entry, load).await;
+                                }
+                                let call = oxide_fw_jshost::CallInput {
+                                    payload: serde_json::json!({
+                                        "path": path,
+                                        "hook": "resolveId",
+                                        "args": { "specifier": specifier, "from": from },
+                                    }),
                                     headers: Default::default(),
                                     has_body: false,
-                                    request_id: format!("plugin:load:{path}"),
+                                    request_id: format!("plugin:call:{path}:resolveId"),
                                     route: None,
                                 };
                                 let entry = oxide_fw_jshost::EntryRef {
-                                    kind: "plugin:load".into(),
+                                    kind: "plugin:call".into(),
                                     module: path.clone(),
-                                    export: "default".into(),
+                                    export: "resolveId".into(),
                                 };
-                                let _ = pool.call(entry, load).await;
+                                // A plugin that does not export resolveId (or one
+                                // whose call errors) passes to the next plugin.
+                                let Ok(mut stream) = pool.call(entry, call).await else {
+                                    continue;
+                                };
+                                let Ok(bytes) = stream.collect().await else {
+                                    continue;
+                                };
+                                let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes)
+                                else {
+                                    continue;
+                                };
+                                if let Some(id_str) = hook_result_str(&v, "id") {
+                                    return Ok(Some(PathBuf::from(id_str)));
+                                }
                             }
-                            let call = oxide_fw_jshost::CallInput {
-                                payload: serde_json::json!({
-                                    "path": path,
-                                    "hook": "resolveId",
-                                    "args": { "specifier": specifier, "from": from },
-                                }),
-                                headers: Default::default(),
-                                has_body: false,
-                                request_id: format!("plugin:call:{path}:resolveId"),
-                                route: None,
-                            };
-                            let entry = oxide_fw_jshost::EntryRef {
-                                kind: "plugin:call".into(),
-                                module: path.clone(),
-                                export: "resolveId".into(),
-                            };
-                            // A plugin that does not export resolveId (or one
-                            // whose call errors) passes to the next plugin.
-                            let Ok(mut stream) = pool.call(entry, call).await else {
-                                continue;
-                            };
-                            let Ok(bytes) = stream.collect().await else {
-                                continue;
-                            };
-                            let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-                                continue;
-                            };
-                            if let Some(id_str) = hook_result_str(&v, "id") {
-                                return Ok(Some(PathBuf::from(id_str)));
-                            }
-                        }
-                        Ok(None)
+                            Ok(None)
+                        })
                     })
-                })
-                .join()
-                .unwrap_or_else(|_| {
-                    Err(oxide_fw_diagnostics::OxideError(Box::new(
-                        oxide_fw_diagnostics::Diagnostic::error(
-                            "PLG-BRIDGE",
-                            "plugin bridge thread panicked",
-                        ),
-                    )))
-                })
-        })
-    }))
+                    .join()
+                    .unwrap_or_else(|_| {
+                        Err(oxide_fw_diagnostics::OxideError(Box::new(
+                            oxide_fw_diagnostics::Diagnostic::error(
+                                "PLG-BRIDGE",
+                                "plugin bridge thread panicked",
+                            ),
+                        )))
+                    })
+            })
+        },
+    ))
 }
 
 /// SPEC-15.2: build the `load` hook. Chaining: the FIRST plugin that
@@ -12297,10 +12377,12 @@ fn build_js_plugin_load_hook(
                         .enable_all()
                         .build()
                         .map_err(|e| {
-                            oxide_fw_diagnostics::OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(
-                                "PLG-BRIDGE",
-                                format!("bridge runtime: {e}"),
-                            )))
+                            oxide_fw_diagnostics::OxideError(Box::new(
+                                oxide_fw_diagnostics::Diagnostic::error(
+                                    "PLG-BRIDGE",
+                                    format!("bridge runtime: {e}"),
+                                ),
+                            ))
                         })?;
                     rt.block_on(async move {
                         let need_load = {
@@ -12431,10 +12513,11 @@ fn route_source_hash(
     }
     // Error boundary (if any).
     if let Some(eid) = error_route_id
-        && let Some(ee) = tree.entries.iter().find(|x| x.id.0 == eid) {
-            let efile = routes_root.join(&ee.file);
-            hash_file_into(&mut h, &efile);
-        }
+        && let Some(ee) = tree.entries.iter().find(|x| x.id.0 == eid)
+    {
+        let efile = routes_root.join(&ee.file);
+        hash_file_into(&mut h, &efile);
+    }
     h.finalize().to_hex().to_string()
 }
 
@@ -12548,96 +12631,101 @@ fn build_js_plugin_render_chunk_hook(
     }
     let pool = std::sync::Arc::clone(pool);
     let loaded = std::sync::Arc::new(std::sync::Mutex::new(false));
-    Some(oxide_fw_bundler::RenderChunkHook::new(move |file, source| {
-        let pool = std::sync::Arc::clone(&pool);
-        let loaded = std::sync::Arc::clone(&loaded);
-        let plugins = plugins.clone();
-        let file = file.to_string();
-        let source = source.to_string();
-        std::thread::scope(|scope| {
-            scope
-                .spawn(|| -> oxide_fw_diagnostics::Result<Option<String>> {
-                    let rt = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .map_err(|e| {
-                            oxide_fw_diagnostics::OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(
-                                "PLG-BRIDGE",
-                                format!("bridge runtime: {e}"),
-                            )))
-                        })?;
-                    rt.block_on(async move {
-                        let need_load = {
-                            let mut g = loaded.lock().unwrap();
-                            if *g {
-                                false
-                            } else {
-                                *g = true;
-                                true
-                            }
-                        };
-                        let mut code = source;
-                        let mut changed = false;
-                        for path in &plugins {
-                            if need_load {
+    Some(oxide_fw_bundler::RenderChunkHook::new(
+        move |file, source| {
+            let pool = std::sync::Arc::clone(&pool);
+            let loaded = std::sync::Arc::clone(&loaded);
+            let plugins = plugins.clone();
+            let file = file.to_string();
+            let source = source.to_string();
+            std::thread::scope(|scope| {
+                scope
+                    .spawn(|| -> oxide_fw_diagnostics::Result<Option<String>> {
+                        let rt = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .map_err(|e| {
+                                oxide_fw_diagnostics::OxideError(Box::new(
+                                    oxide_fw_diagnostics::Diagnostic::error(
+                                        "PLG-BRIDGE",
+                                        format!("bridge runtime: {e}"),
+                                    ),
+                                ))
+                            })?;
+                        rt.block_on(async move {
+                            let need_load = {
+                                let mut g = loaded.lock().unwrap();
+                                if *g {
+                                    false
+                                } else {
+                                    *g = true;
+                                    true
+                                }
+                            };
+                            let mut code = source;
+                            let mut changed = false;
+                            for path in &plugins {
+                                if need_load {
+                                    let req = oxide_fw_jshost::CallInput {
+                                        payload: serde_json::json!({ "path": path }),
+                                        headers: Default::default(),
+                                        has_body: false,
+                                        request_id: format!("plugin:load:{path}"),
+                                        route: None,
+                                    };
+                                    let entry = oxide_fw_jshost::EntryRef {
+                                        kind: "plugin:load".into(),
+                                        module: path.clone(),
+                                        export: "default".into(),
+                                    };
+                                    let _ = pool.call(entry, req).await;
+                                }
                                 let req = oxide_fw_jshost::CallInput {
-                                    payload: serde_json::json!({ "path": path }),
+                                    payload: serde_json::json!({
+                                        "path": path,
+                                        "hook": "renderChunk",
+                                        "args": { "file": file, "code": code },
+                                    }),
                                     headers: Default::default(),
                                     has_body: false,
-                                    request_id: format!("plugin:load:{path}"),
+                                    request_id: format!("plugin:call:{path}:renderChunk"),
                                     route: None,
                                 };
                                 let entry = oxide_fw_jshost::EntryRef {
-                                    kind: "plugin:load".into(),
+                                    kind: "plugin:call".into(),
                                     module: path.clone(),
-                                    export: "default".into(),
+                                    export: "renderChunk".into(),
                                 };
-                                let _ = pool.call(entry, req).await;
+                                let Ok(mut stream) = pool.call(entry, req).await else {
+                                    continue;
+                                };
+                                let Ok(bytes) = stream.collect().await else {
+                                    continue;
+                                };
+                                let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes)
+                                else {
+                                    continue;
+                                };
+                                if let Some(s) = hook_result_str(&v, "code") {
+                                    code = s;
+                                    changed = true;
+                                }
                             }
-                            let req = oxide_fw_jshost::CallInput {
-                                payload: serde_json::json!({
-                                    "path": path,
-                                    "hook": "renderChunk",
-                                    "args": { "file": file, "code": code },
-                                }),
-                                headers: Default::default(),
-                                has_body: false,
-                                request_id: format!("plugin:call:{path}:renderChunk"),
-                                route: None,
-                            };
-                            let entry = oxide_fw_jshost::EntryRef {
-                                kind: "plugin:call".into(),
-                                module: path.clone(),
-                                export: "renderChunk".into(),
-                            };
-                            let Ok(mut stream) = pool.call(entry, req).await else {
-                                continue;
-                            };
-                            let Ok(bytes) = stream.collect().await else {
-                                continue;
-                            };
-                            let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-                                continue;
-                            };
-                            if let Some(s) = hook_result_str(&v, "code") {
-                                code = s;
-                                changed = true;
-                            }
-                        }
-                        Ok(if changed { Some(code) } else { None })
+                            Ok(if changed { Some(code) } else { None })
+                        })
                     })
-                })
-                .join()
-                .unwrap_or_else(|_| {
-                    Err(oxide_fw_diagnostics::OxideError(Box::new(
-                        oxide_fw_diagnostics::Diagnostic::error(
-                            "PLG-BRIDGE",
-                            "renderChunk bridge thread panicked",
-                        ),
-                    )))
-                })
-        })
-    }))
+                    .join()
+                    .unwrap_or_else(|_| {
+                        Err(oxide_fw_diagnostics::OxideError(Box::new(
+                            oxide_fw_diagnostics::Diagnostic::error(
+                                "PLG-BRIDGE",
+                                "renderChunk bridge thread panicked",
+                            ),
+                        )))
+                    })
+            })
+        },
+    ))
 }
 
 /// §15-B: build the `generateBundle` hook. Chaining: the LAST plugin that
@@ -12666,10 +12754,12 @@ fn build_js_plugin_generate_bundle_hook(
                         .enable_all()
                         .build()
                         .map_err(|e| {
-                            oxide_fw_diagnostics::OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(
-                                "PLG-BRIDGE",
-                                format!("bridge runtime: {e}"),
-                            )))
+                            oxide_fw_diagnostics::OxideError(Box::new(
+                                oxide_fw_diagnostics::Diagnostic::error(
+                                    "PLG-BRIDGE",
+                                    format!("bridge runtime: {e}"),
+                                ),
+                            ))
                         })?;
                     rt.block_on(async move {
                         let need_load = {
@@ -12772,10 +12862,12 @@ fn build_js_plugin_transform_html_hook(
                             .enable_all()
                             .build()
                             .map_err(|e| {
-                                oxide_fw_diagnostics::OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(
-                                    "PLG-BRIDGE",
-                                    format!("bridge runtime: {e}"),
-                                )))
+                                oxide_fw_diagnostics::OxideError(Box::new(
+                                    oxide_fw_diagnostics::Diagnostic::error(
+                                        "PLG-BRIDGE",
+                                        format!("bridge runtime: {e}"),
+                                    ),
+                                ))
                             })?;
                         rt.block_on(async move {
                             let need_load = {
@@ -13063,9 +13155,10 @@ async fn plugin_render_head(
     for r in results {
         for field in ["meta", "link", "style", "script"] {
             if let Some(arr) = r.get(field).and_then(|v| v.as_array())
-                && let Some(slot) = obj.get_mut(field).and_then(|v| v.as_array_mut()) {
-                    slot.extend(arr.iter().cloned());
-                }
+                && let Some(slot) = obj.get_mut(field).and_then(|v| v.as_array_mut())
+            {
+                slot.extend(arr.iter().cloned());
+            }
         }
     }
     merged
@@ -13094,7 +13187,10 @@ async fn resolve_cache_handler_via_plugin(
     // handler, since choosing it is the whole point.
     use oxide_fw_jshost::JsHost as _;
     let host = oxide_fw_jshost::NodeHost::new(oxide_fw_jshost::NodeHost::worker_script_default());
-    let Some(pool) = host.tooling_pool(oxide_fw_jshost::PoolConfig::default()).ok() else {
+    let Some(pool) = host
+        .tooling_pool(oxide_fw_jshost::PoolConfig::default())
+        .ok()
+    else {
         return Ok(None);
     };
     let results = call_js_plugin_hook(
@@ -13556,14 +13652,15 @@ fn strip_close_and_append_settles(
         // row. Merges with the initial middleware/load/render record via
         // `record_staged` — the two calls produce one row per request.
         if settle_count > 0
-            && let Some(rec) = waterfall {
-                let settle_ms = settles_started.elapsed().as_secs_f64() * 1000.0;
-                rec.record_staged(
-                    &request_id,
-                    vec![("deferred-settles".to_string(), settle_ms)],
-                    trace_id,
-                );
-            }
+            && let Some(rec) = waterfall
+        {
+            let settle_ms = settles_started.elapsed().as_secs_f64() * 1000.0;
+            rec.record_staged(
+                &request_id,
+                vec![("deferred-settles".to_string(), settle_ms)],
+                trace_id,
+            );
+        }
         // Close the document only after every settle has been delivered.
         let _ = tx.send(Ok(Bytes::from_static(CLOSE))).await;
         // `tx` drops, closing the body stream.
@@ -13599,7 +13696,6 @@ pub(crate) struct PprShellStore {
     /// the older one is skipped on evict (the map lookup says which is live).
     order: std::collections::VecDeque<String>,
 }
-
 
 impl PprShellStore {
     pub(crate) fn get(&self, key: &str) -> Option<&String> {
@@ -13708,12 +13804,13 @@ fn ppr_tap_stream(
         // The client already saw EOF; storing after this point adds no latency.
         if let Ok(html) = String::from_utf8(collected)
             && let Ok(shell) = oxide_fw_render::ppr::split_shell(&html)
-                && !shell.hole_ids.is_empty() {
-                    let stored = shell.html.replace(&nonce, l0_cache::NONCE_SENTINEL);
-                    if let Ok(mut store) = shells.lock() {
-                        store.insert_tagged(key, stored, tags);
-                    }
-                }
+            && !shell.hole_ids.is_empty()
+        {
+            let stored = shell.html.replace(&nonce, l0_cache::NONCE_SENTINEL);
+            if let Ok(mut store) = shells.lock() {
+                store.insert_tagged(key, stored, tags);
+            }
+        }
     });
     Box::pin(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)))
 }
