@@ -152,9 +152,10 @@ impl std::fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "[{}] {}", self.code, self.message)?;
         if let Some(loc) = &self.location
-            && let Some(file) = &loc.file {
-                write!(f, " at {file}:{}", loc.line)?;
-            }
+            && let Some(file) = &loc.file
+        {
+            write!(f, " at {file}:{}", loc.line)?;
+        }
         // SPEC-19E: a code frame (source snippet with a marker) is displayed
         // when the diagnostic carries one. Producers populate this when the
         // upstream span is available (Oxc compile diagnostics already flow
