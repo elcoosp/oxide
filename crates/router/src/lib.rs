@@ -198,9 +198,10 @@ impl RouteTree {
     /// once per id, then cloned per match — no O(entries) re-scan.
     pub(crate) fn layout_chain_cached(&self, route_id: &str) -> Vec<RouteId> {
         if let Ok(c) = self.layout_chains.read()
-            && let Some(v) = c.get(route_id) {
-                return v.clone();
-            }
+            && let Some(v) = c.get(route_id)
+        {
+            return v.clone();
+        }
         let chain = matcher::layout_chain(&self.entries, route_id);
         if let Ok(mut c) = self.layout_chains.write() {
             c.insert(route_id.to_string(), chain.clone());
@@ -211,9 +212,10 @@ impl RouteTree {
     /// P-06: build (once) the middleware/error/not-found prefix indexes.
     fn dispatch_index(&self) -> std::sync::Arc<DispatchIndex> {
         if let Ok(c) = self.dispatch.read()
-            && let Some(idx) = c.as_ref() {
-                return std::sync::Arc::clone(idx);
-            }
+            && let Some(idx) = c.as_ref()
+        {
+            return std::sync::Arc::clone(idx);
+        }
         let mut middleware: Vec<(String, std::path::PathBuf, usize)> = Vec::new();
         let mut errors: Vec<(String, String, usize)> = Vec::new();
         let mut not_found: Option<String> = None;
@@ -325,7 +327,7 @@ impl RouteTree {
         typegen::typegen_impl(self, out_dir, None, None, None)
     }
 
-    /// §8.3 like [`typegen`](Self::typegen), but with the routes root so a
+    /// §8.3 like `typegen`, but with the routes root so a
     /// per-route `page.server.ts` `LoaderData` annotation can be read (the
     /// entry's `file` is routes-root-relative).
     pub fn typegen_with_root(&self, out_dir: &Path, routes_root: &Path) -> Result<String> {
@@ -441,7 +443,7 @@ pub struct RulesEngine {
     /// SEC-01: the per-key token buckets. `Mutex` because `evaluate` takes
     /// `&self` (rules are shared read-only; the buckets are the mutable
     /// state). The bucket map is swept opportunistically when it grows past
-    /// [`RATE_LIMITER_MAX_KEYS`] so a unique-key flood cannot grow it without
+    /// `RATE_LIMITER_MAX_KEYS` so a unique-key flood cannot grow it without
     /// bound.
     pub limiter: crate::rules::TokenBuckets,
 }
@@ -469,7 +471,7 @@ impl RulesEngine {
         rules::evaluate_impl(self, path, "", None)
     }
 
-    /// SEC-01: like [`evaluate`], but with the request's rate-limit key
+    /// SEC-01: like `evaluate`, but with the request's rate-limit key
     /// material (e.g. the client IP). A `rate_limit.key` of `ip` (or an empty
     /// key) uses `client_key`; a `:param` uses the captured route param.
     pub fn evaluate_with_key(&self, path: &str, client_key: &str) -> RuleOutcome {
