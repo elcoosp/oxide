@@ -1,11 +1,14 @@
+<div align="center">
+<img src="https://raw.githubusercontent.com/elcoosp/oxide/main/docs/logo.png" alt="Oxide logo" width="200">
+</div>
+
 # oxide-fw-dev
 
 **Development server: file watching, HMR, proxies, and the waterfall inspector.**
 
 [![Crates.io](https://crates.io/crates/oxide-fw-dev) `soon`] [![docs.rs](https://docs.rs/oxide-fw-dev/badge.svg)](https://docs.rs/oxide-fw-dev)
 
-> [!NOTE]
-> Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
+> **Note:** Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
 
 ## Overview
 
@@ -34,8 +37,7 @@ hub.publish(HmrMessage::FullReload {
 });
 ```
 
-> [!TIP]
-> The stale-guard exists to prevent a narrow race: a render started before a file edit but finishing after it. Without the guard, that render would serve output computed from pre-change source, which can confuse HMR's swap logic.
+> **Tip:** The stale-guard exists to prevent a narrow race: a render started before a file edit but finishing after it. Without the guard, that render would serve output computed from pre-change source, which can confuse HMR's swap logic.
 
 ## How it fits in Oxide
 

@@ -1,11 +1,14 @@
+<div align="center">
+<img src="https://raw.githubusercontent.com/elcoosp/oxide/main/docs/logo.png" alt="Oxide logo" width="200">
+</div>
+
 # oxide-fw-diagnostics
 
 **The framework's error type — `OxideError` and `Diagnostic`.**
 
 [![Crates.io](https://crates.io/crates/oxide-fw-diagnostics) `soon`] [![docs.rs](https://docs.rs/oxide-fw-diagnostics/badge.svg)](https://docs.rs/oxide-fw-diagnostics)
 
-> [!NOTE]
-> Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
+> **Note:** Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
 
 ## Overview
 
@@ -34,8 +37,7 @@ let err = OxideError::new("CFG-FRAMEWORK", "unknown adapter `foo`")
     .with_fix("did you mean `vue`?");
 ```
 
-> [!NOTE]
-> The `Box<Diagnostic>` inside `OxideError` is the reason the workspace-wide `clippy::result_large_err` count is zero. A `Result<(), OxideError>` return is 8 bytes, not 150+ — so every `Ok` return on every hot path pays a fixed 8-byte cost, not a 150-byte one.
+> **Note:** The `Box<Diagnostic>` inside `OxideError` is the reason the workspace-wide `clippy::result_large_err` count is zero. A `Result<(), OxideError>` return is 8 bytes, not 150+ — so every `Ok` return on every hot path pays a fixed 8-byte cost, not a 150-byte one.
 
 ## How it fits in Oxide
 

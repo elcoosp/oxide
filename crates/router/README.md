@@ -1,11 +1,14 @@
+<div align="center">
+<img src="https://raw.githubusercontent.com/elcoosp/oxide/main/docs/logo.png" alt="Oxide logo" width="200">
+</div>
+
 # oxide-fw-router
 
 **File-based routing: scan, match, layout chains, middleware.**
 
 [![Crates.io](https://img.shields.io/crates/v/oxide-fw-router.svg)](https://crates.io/crates/oxide-fw-router) [![docs.rs](https://docs.rs/oxide-fw-router/badge.svg)](https://docs.rs/oxide-fw-router)
 
-> [!NOTE]
-> Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
+> **Note:** Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
 
 ## Overview
 
@@ -37,8 +40,7 @@ if let Some(m) = tree.match_path("/blog/hello-world") {
 }
 ```
 
-> [!TIP]
-> In production, load the mmap'd archive instead of scanning: `ArchivedTree::load_archived(path)` reads the prebuilt rkyv archive. The match is a direct memory read — no allocation, no `HashMap` lookups, no per-request parsing. `oxide build` writes this archive to `.oxide/routes.manifest`.
+> **Tip:** In production, load the mmap'd archive instead of scanning: `ArchivedTree::load_archived(path)` reads the prebuilt rkyv archive. The match is a direct memory read — no allocation, no `HashMap` lookups, no per-request parsing. `oxide build` writes this archive to `.oxide/routes.manifest`.
 
 ## How it fits in Oxide
 

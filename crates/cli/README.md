@@ -1,11 +1,14 @@
+<div align="center">
+<img src="https://raw.githubusercontent.com/elcoosp/oxide/main/docs/logo.png" alt="Oxide logo" width="200">
+</div>
+
 # oxide-fw-cli
 
 **The `oxide` command-line tool.**
 
 [![Crates.io](https://img.shields.io/crates/v/oxide-fw-cli.svg)](https://crates.io/crates/oxide-fw-cli) [![docs.rs](https://docs.rs/oxide-fw-cli/badge.svg)](https://docs.rs/oxide-fw-cli)
 
-> [!NOTE]
-> Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
+> **Note:** Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
 
 ## Overview
 

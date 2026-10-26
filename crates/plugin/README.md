@@ -1,11 +1,14 @@
+<div align="center">
+<img src="https://raw.githubusercontent.com/elcoosp/oxide/main/docs/logo.png" alt="Oxide logo" width="200">
+</div>
+
 # oxide-fw-plugin
 
 **WASM and JS plugin system with a typed hook ABI.**
 
 [![Crates.io](https://img.shields.io/crates/v/oxide-fw-plugin.svg)](https://crates.io/crates/oxide-fw-plugin) [![docs.rs](https://docs.rs/oxide-fw-plugin/badge.svg)](https://docs.rs/oxide-fw-plugin)
 
-> [!NOTE]
-> Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
+> **Note:** Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
 
 ## Overview
 
@@ -39,8 +42,7 @@ let plugin = WasmPlugin::load(
 let out = plugin.call_string_hook(&Hook::Transform, source)?;
 ```
 
-> [!TIP]
-> Feature-gate the `wasm` support (which pulls `wasmtime`) so a project that only ships JS plugins builds without it. The CLI does this via a per-plugin `kind` field in `oxide.config.ts`.
+> **Tip:** Feature-gate the `wasm` support (which pulls `wasmtime`) so a project that only ships JS plugins builds without it. The CLI does this via a per-plugin `kind` field in `oxide.config.ts`.
 
 ## How it fits in Oxide
 

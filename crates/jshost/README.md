@@ -1,11 +1,14 @@
+<div align="center">
+<img src="https://raw.githubusercontent.com/elcoosp/oxide/main/docs/logo.png" alt="Oxide logo" width="200">
+</div>
+
 # oxide-fw-jshost
 
 **V8 and Node worker hosts for running user JavaScript.**
 
 [![Crates.io](https://img.shields.io/crates/v/oxide-fw-jshost.svg)](https://crates.io/crates/oxide-fw-jshost) [![docs.rs](https://docs.rs/oxide-fw-jshost/badge.svg)](https://docs.rs/oxide-fw-jshost)
 
-> [!NOTE]
-> Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
+> **Note:** Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
 
 ## Overview
 
@@ -38,8 +41,7 @@ let mut stream = pool.call(
 let bytes = stream.collect().await?;
 ```
 
-> [!IMPORTANT]
-> The V8 sandbox has no `require('stream')` or other Node built-ins. Packages that depend on them (Vue's `@vue/compiler-sfc`, `svelte/compiler`, Tailwind's `@tailwindcss/oxide`) must run on the Node pool, not the V8 pool. Oxide's `server.backend` config controls the render pool; the tooling pool is always Node.
+> **Important:** The V8 sandbox has no `require('stream')` or other Node built-ins. Packages that depend on them (Vue's `@vue/compiler-sfc`, `svelte/compiler`, Tailwind's `@tailwindcss/oxide`) must run on the Node pool, not the V8 pool. Oxide's `server.backend` config controls the render pool; the tooling pool is always Node.
 
 ## How it fits in Oxide
 

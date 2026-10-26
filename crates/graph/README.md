@@ -1,11 +1,14 @@
+<div align="center">
+<img src="https://raw.githubusercontent.com/elcoosp/oxide/main/docs/logo.png" alt="Oxide logo" width="200">
+</div>
+
 # oxide-fw-graph
 
 **Incremental-build demand graph.**
 
 [![Crates.io](https://img.shields.io/crates/v/oxide-fw-graph.svg)](https://crates.io/crates/oxide-fw-graph) [![docs.rs](https://docs.rs/oxide-fw-graph/badge.svg)](https://docs.rs/oxide-fw-graph)
 
-> [!NOTE]
-> Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
+> **Note:** Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
 
 ## Overview
 
@@ -37,8 +40,7 @@ graph.register(
 let out = graph.get(NodeKey::new("src/index.ts"), &compute).await?;
 ```
 
-> [!TIP]
-> The graph is deliberately over-built for the current pipeline (which runs to completion). Its purpose is to make the question "would an incremental build skip this?" measurable now, before the incremental build exists. `oxide analyze` reads the last build's snapshot to report node counts and recomputed counts.
+> **Tip:** The graph is deliberately over-built for the current pipeline (which runs to completion). Its purpose is to make the question "would an incremental build skip this?" measurable now, before the incremental build exists. `oxide analyze` reads the last build's snapshot to report node counts and recomputed counts.
 
 ## How it fits in Oxide
 

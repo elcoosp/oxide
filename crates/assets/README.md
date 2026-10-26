@@ -1,11 +1,14 @@
+<div align="center">
+<img src="https://raw.githubusercontent.com/elcoosp/oxide/main/docs/logo.png" alt="Oxide logo" width="200">
+</div>
+
 # oxide-fw-assets
 
 **CSS, images, fonts, i18n catalogs, and Tailwind v4 — the asset pipeline.**
 
 [![Crates.io](https://img.shields.io/crates/v/oxide-fw-assets.svg)](https://crates.io/crates/oxide-fw-assets) [![docs.rs](https://docs.rs/oxide-fw-assets/badge.svg)](https://docs.rs/oxide-fw-assets)
 
-> [!NOTE]
-> Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
+> **Note:** Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
 
 ## Overview
 
@@ -36,8 +39,7 @@ let out = LightningCssBackend.transform(&CssInput {
 println!("{}", out.code);
 ```
 
-> [!TIP]
-> Enable the `image`, `font`, or `i18n` features to keep the default build lean if you only need one of them.
+> **Tip:** Enable the `image`, `font`, or `i18n` features to keep the default build lean if you only need one of them.
 
 ## How it fits in Oxide
 

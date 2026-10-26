@@ -1,11 +1,14 @@
+<div align="center">
+<img src="https://raw.githubusercontent.com/elcoosp/oxide/main/docs/logo.png" alt="Oxide logo" width="200">
+</div>
+
 # oxide-fw-cache
 
 **Three-tier caching with single-flight coalescing and tag invalidation.**
 
 [![Crates.io](https://img.shields.io/crates/v/oxide-fw-cache.svg)](https://crates.io/crates/oxide-fw-cache) [![docs.rs](https://docs.rs/oxide-fw-cache/badge.svg)](https://docs.rs/oxide-fw-cache)
 
-> [!NOTE]
-> Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
+> **Note:** Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
 
 ## Overview
 
@@ -34,8 +37,7 @@ cache.set("route:/blog", entry).await?;
 cache.invalidate_tag("route:/blog", false).await?;
 ```
 
-> [!TIP]
-> Enable the `redis`, `s3`, or `http` features to attach a remote L2 tier. `cache.handler` in `oxide.config.ts` selects which driver to build.
+> **Tip:** Enable the `redis`, `s3`, or `http` features to attach a remote L2 tier. `cache.handler` in `oxide.config.ts` selects which driver to build.
 
 ## How it fits in Oxide
 

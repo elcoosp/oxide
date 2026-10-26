@@ -1,3 +1,7 @@
+<div align="center">
+<img src="https://raw.githubusercontent.com/elcoosp/oxide/main/docs/logo.png" alt="Oxide logo" width="200">
+</div>
+
 # oxide-fw-compiler
 
 **Oxc-based JS/TS passes for Oxide's language extensions.**

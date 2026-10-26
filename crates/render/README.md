@@ -1,11 +1,14 @@
+<div align="center">
+<img src="https://raw.githubusercontent.com/elcoosp/oxide/main/docs/logo.png" alt="Oxide logo" width="200">
+</div>
+
 # oxide-fw-render
 
 **HTML rendering pipeline: streaming, boundaries, injection.**
 
 [![Crates.io](https://img.shields.io/crates/v/oxide-fw-render.svg)](https://crates.io/crates/oxide-fw-render) [![docs.rs](https://docs.rs/oxide-fw-render/badge.svg)](https://docs.rs/oxide-fw-render)
 
-> [!NOTE]
-> Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
+> **Note:** Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
 
 ## Overview
 
@@ -44,8 +47,7 @@ println!("{}", timings.server_timing());
 // "middleware;dur=1.2, cache;dur=0, load;dur=12.5, render;dur=45.1, inject;dur=0.3"
 ```
 
-> [!IMPORTANT]
-> A response is never truncated mid-stream. If the adapter fails after the shell commits, `render_stream_with_recovery` emits a `data-ox-error` boundary with the diagnostic code and message embedded, closes the stream cleanly, and leaves the status at 200. The client's inline script (also injected here) swaps the error into the matching placeholder. A render error therefore produces a *recoverable page*, not a broken connection.
+> **Important:** A response is never truncated mid-stream. If the adapter fails after the shell commits, `render_stream_with_recovery` emits a `data-ox-error` boundary with the diagnostic code and message embedded, closes the stream cleanly, and leaves the status at 200. The client's inline script (also injected here) swaps the error into the matching placeholder. A render error therefore produces a *recoverable page*, not a broken connection.
 
 ## How it fits in Oxide
 

@@ -1,11 +1,14 @@
+<div align="center">
+<img src="https://raw.githubusercontent.com/elcoosp/oxide/main/docs/logo.png" alt="Oxide logo" width="200">
+</div>
+
 # oxide-fw-core-wasm
 
 **Minimal WASM core support.**
 
 [![Crates.io](https://crates.io/crates/oxide-fw-core-wasm) `soon`] [![docs.rs](https://docs.rs/oxide-fw-core-wasm/badge.svg)](https://docs.rs/oxide-fw-core-wasm)
 
-> [!NOTE]
-> Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
+> **Note:** Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
 
 ## Overview
 

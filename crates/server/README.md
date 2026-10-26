@@ -1,11 +1,14 @@
+<div align="center">
+<img src="https://raw.githubusercontent.com/elcoosp/oxide/main/docs/logo.png" alt="Oxide logo" width="200">
+</div>
+
 # oxide-fw-server
 
 **The HTTP pipeline: hyper transport, security, compression, TLS, HTTP/3.**
 
 [![Crates.io](https://img.shields.io/crates/v/oxide-fw-server.svg)](https://crates.io/crates/oxide-fw-server) [![docs.rs](https://docs.rs/oxide-fw-server/badge.svg)](https://docs.rs/oxide-fw-server)
 
-> [!NOTE]
-> Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
+> **Note:** Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
 
 ## Overview
 
@@ -60,8 +63,7 @@ let pipeline = Arc::new(Pipeline {
 Server::serve(addr, pipeline, dispatch, shutdown_rx).await?;
 ```
 
-> [!IMPORTANT]
-> The dispatch signature is `Fn(OxideRequest) -> BoxedResponse`, where `BoxedResponse` is a boxed `Future<Output = OxideResponse> + Send`. It is not `BoxFuture` from `futures` — this crate does not depend on `futures`, so the pipeline can be built without pulling the trait runtime into a production binary. The type is structurally identical.
+> **Important:** The dispatch signature is `Fn(OxideRequest) -> BoxedResponse`, where `BoxedResponse` is a boxed `Future<Output = OxideResponse> + Send`. It is not `BoxFuture` from `futures` — this crate does not depend on `futures`, so the pipeline can be built without pulling the trait runtime into a production binary. The type is structurally identical.
 
 ## Trait dispatch signatures
 

@@ -1,11 +1,14 @@
+<div align="center">
+<img src="https://raw.githubusercontent.com/elcoosp/oxide/main/docs/logo.png" alt="Oxide logo" width="200">
+</div>
+
 # oxide-fw-bundler
 
 **Production bundler built on Rolldown and Oxc.**
 
 [![Crates.io](https://img.shields.io/crates/v/oxide-fw-bundler.svg)](https://crates.io/crates/oxide-fw-bundler) [![docs.rs](https://docs.rs/oxide-fw-bundler/badge.svg)](https://docs.rs/oxide-fw-bundler)
 
-> [!NOTE]
-> Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
+> **Note:** Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
 
 ## Overview
 
@@ -36,8 +39,7 @@ for chunk in out.chunks {
 }
 ```
 
-> [!NOTE]
-> This crate does not depend on `oxide-fw-plugin` — that would pull `wasmtime` into every build. The CLI pre-loads plugins and hands in closures over `BundleOptions` instead.
+> **Note:** This crate does not depend on `oxide-fw-plugin` — that would pull `wasmtime` into every build. The CLI pre-loads plugins and hands in closures over `BundleOptions` instead.
 
 ## How it fits in Oxide
 

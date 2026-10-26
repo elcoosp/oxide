@@ -1,11 +1,14 @@
+<div align="center">
+<img src="https://raw.githubusercontent.com/elcoosp/oxide/main/docs/logo.png" alt="Oxide logo" width="200">
+</div>
+
 # oxide-fw-odf
 
 **Oxide Data Format — the binary encoding for hydration payloads.**
 
 [![Crates.io](https://img.shields.io/crates/v/oxide-fw-odf.svg)](https://crates.io/crates/oxide-fw-odf) [![docs.rs](https://docs.rs/oxide-fw-odf/badge.svg)](https://docs.rs/oxide-fw-odf)
 
-> [!NOTE]
-> Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
+> **Note:** Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
 
 ## Overview
 
@@ -36,8 +39,7 @@ let decoded = decode_from_bytes(&bytes)?;
 assert_eq!(decoded, v);
 ```
 
-> [!NOTE]
-> ODF is deliberately not a general-purpose serialization format — it has no extensibility model, no schema, and no forward-compat story beyond a format version byte. If you need those, use `serde_json` or `rkyv`; ODF is the format that lives inside a `<script>` tag.
+> **Note:** ODF is deliberately not a general-purpose serialization format — it has no extensibility model, no schema, and no forward-compat story beyond a format version byte. If you need those, use `serde_json` or `rkyv`; ODF is the format that lives inside a `<script>` tag.
 
 ## How it fits in Oxide
 

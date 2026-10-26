@@ -1,11 +1,14 @@
+<div align="center">
+<img src="https://raw.githubusercontent.com/elcoosp/oxide/main/docs/logo.png" alt="Oxide logo" width="200">
+</div>
+
 # oxide-fw-config
 
 **TypeScript config loading, extraction, and schema validation.**
 
 [![Crates.io](https://img.shields.io/crates/v/oxide-fw-config.svg)](https://crates.io/crates/oxide-fw-config) [![docs.rs](https://docs.rs/oxide-fw-config/badge.svg)](https://docs.rs/oxide-fw-config)
 
-> [!NOTE]
-> Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
+> **Note:** Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
 
 ## Overview
 
@@ -32,8 +35,7 @@ let loaded = load(&root, "production", BTreeMap::new())?;
 println!("framework adapter: {:?}", loaded.config.framework.adapter);
 ```
 
-> [!TIP]
-> Add `"$schema": "https://oxide.dev/config.schema.json"` to your `oxide.config.json` (or an editor setting for `.ts`) to get full autocomplete and inline docs in VS Code.
+> **Tip:** Add `"$schema": "https://oxide.dev/config.schema.json"` to your `oxide.config.json` (or an editor setting for `.ts`) to get full autocomplete and inline docs in VS Code.
 
 ## How it fits in Oxide
 
