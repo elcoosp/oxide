@@ -1806,9 +1806,14 @@ pub(crate) fn oxide_extension() -> deno_core::Extension {
     let bootstrap_src = crate::snapshot::escape_non_ascii(V8_BOOTSTRAP);
     let bootstrap =
         ExtensionFileSource::new_computed("oxide:bootstrap", Arc::from(bootstrap_src.as_str()));
+    // deno_core requires extension source be 7-bit ASCII (see the
+    // bootstrap above). escape_non_ascii makes this safe even if the
+    // polyfill is later edited to include a Unicode character in a
+    // comment or string literal.
+    let url_polyfill_src = crate::snapshot::escape_non_ascii(include_str!("init/url_polyfill.js"));
     let url_polyfill = ExtensionFileSource::new_computed(
         "oxide:url_polyfill",
-        Arc::from(include_str!("init/url_polyfill.js")),
+        Arc::from(url_polyfill_src.as_str()),
     );
     deno_core::Extension {
         name: "oxide_runtime",

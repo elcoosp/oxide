@@ -2,8 +2,15 @@
 // deno_core does not ship URL by default; middleware and user code that
 // reads `new URL(request.url)` need it. Covers the surface middleware
 // actually uses: constructor, .searchParams (get/set/has/append/delete),
-// .pathname, .search, .hash, .origin, .href. Not a byte-complete WHATWG
-// URL — enough to unblock the common patterns without pulling deno_url.
+// .pathname, .search, .hash, .origin, .href. Not byte-complete WHATWG
+// URL -- enough to unblock the common patterns without pulling deno_url.
+//
+// IMPORTANT: this file must be pure 7-bit ASCII. deno_core's
+// ExtensionFileSource::new_computed() panics on non-ASCII source, and
+// that panic surfaces as "JsRuntime::new panicked" -- which is almost
+// impossible to trace back to its actual cause at runtime. If a future
+// edit needs a Unicode character, write it as a \uXXXX escape inside a
+// JS string; do not paste the actual character.
 (function () {
   if (typeof globalThis.URL === 'function' &&
       typeof globalThis.URLSearchParams === 'function') return;
