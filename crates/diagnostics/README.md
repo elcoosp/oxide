@@ -1,13 +1,51 @@
 # oxide-fw-diagnostics
 
-**The framework's error type — OxideError and Diagnostic.**
+**The framework's error type — `OxideError` and `Diagnostic`.**
 
-[![Crates.io](https://img.shields.io/crates/v/oxide-fw-diagnostics.svg)](https://crates.io/crates/oxide-fw-diagnostics) [![docs.rs](https://docs.rs/oxide-fw-diagnostics/badge.svg)](https://docs.rs/oxide-fw-diagnostics) [![License](https://img.shields.io/crates/l/oxide-fw-diagnostics.svg)](https://github.com/elcoosp/oxide#license) [![MSRV](https://img.shields.io/badge/MSRV-1.98-blue.svg)](https://github.com/elcoosp/oxide)
+[![Crates.io](https://crates.io/crates/oxide-fw-diagnostics) `soon`] [![docs.rs](https://docs.rs/oxide-fw-diagnostics/badge.svg)](https://docs.rs/oxide-fw-diagnostics)
 
-Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
+> [!NOTE]
+> Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
 
-Full API documentation: [docs.rs/oxide-fw-diagnostics](https://docs.rs/oxide-fw-diagnostics)
+## Overview
 
-## License
+Every failed operation in Oxide returns an `OxideError`, which wraps a boxed `Diagnostic`. The diagnostic carries a stable error code (`CFG-FRAMEWORK`, `BLD-CSS`, `JSH-OVERFLOW`, …), a severity, an optional location, an optional code frame, and an optional fix. Because the diagnostic is boxed, the `Err` variant is 8 bytes — a `Result<T, OxideError>` stays cheap even when `T` is a small Copy type.
 
-Licensed under either of [Apache License, Version 2.0](https://github.com/elcoosp/oxide/blob/main/LICENSE-APACHE) or [MIT License](https://github.com/elcoosp/oxide/blob/main/LICENSE-MIT) at your option.
+The code families are stable across releases, so a downstream tool can classify a failure by prefix alone (e.g. `CFG-*` for config, `BLD-*` for build, `JSH-*` for the JS host).
+
+## What it provides
+
+- **`Diagnostic`** — the structured error shape
+- **`OxideError`** — a thin newtype used across every crate's `Result` alias
+- **`Severity`** — Error / Warning / Info
+- **`Location`** — file, line, column with span information
+- **Code-frame rendering** — for terminal and editor display
+- **`Diagnostic::error(code, message)`** — the standard constructor
+- **`.warning(...)`, `.at(loc)`, `.with_fix(...)`** — builder methods
+- **`impl From<Diagnostic> for OxideError`** and **`From<Box<Diagnostic>>`** — so a `?` conversion works in either direction
+
+## Usage
+
+```rust
+use oxide_fw_diagnostics::{Diagnostic, Location, OxideError};
+
+let err = OxideError::new("CFG-FRAMEWORK", "unknown adapter `foo`")
+    .at(Location::file("oxide.config.ts", 3, 5))
+    .with_fix("did you mean `vue`?");
+```
+
+> [!NOTE]
+> The `Box<Diagnostic>` inside `OxideError` is the reason the workspace-wide `clippy::result_large_err` count is zero. A `Result<(), OxideError>` return is 8 bytes, not 150+ — so every `Ok` return on every hot path pays a fixed 8-byte cost, not a 150-byte one.
+
+## How it fits in Oxide
+
+Every crate in the workspace depends on `oxide-fw-diagnostics`. The `Result<T>` alias is the standard signature for every fallible API. `oxide-fw-cli` collects diagnostics into `.oxide/last-build-diagnostics.json` so the editor and CI read one artifact regardless of which stage failed.
+
+## See also
+
+- Every other crate in the workspace — this is the shared error type
+- [`miette`](https://crates.io/crates/miette) — pretty-printing integration via the `fancy` feature
+
+---
+
+Full API reference: [docs.rs/oxide-fw-diagnostics](https://docs.rs/oxide-fw-diagnostics)
