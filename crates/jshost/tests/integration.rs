@@ -93,7 +93,8 @@ fn frame_unframe_roundtrip_over_all_message_kinds() {
         WorkerMsg::CallEnd { id: 4 },
         WorkerMsg::CallErr {
             id: 5,
-            diagnostic: oxide_fw_diagnostics::Diagnostic::error("JSH-TEST", "boom").with_fix("fix it"),
+            diagnostic: oxide_fw_diagnostics::Diagnostic::error("JSH-TEST", "boom")
+                .with_fix("fix it"),
         },
         WorkerMsg::OpRequest {
             id: 6,
