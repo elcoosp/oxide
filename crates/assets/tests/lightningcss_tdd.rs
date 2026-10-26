@@ -5,7 +5,12 @@
 
 use oxide_fw_assets::{CssBackend, CssInput, CssKind, LightningCssBackend};
 
-fn css(code: &str, kind: CssKind, minify: bool, targets: Vec<String>) -> oxide_fw_assets::CssOutput {
+fn css(
+    code: &str,
+    kind: CssKind,
+    minify: bool,
+    targets: Vec<String>,
+) -> oxide_fw_assets::CssOutput {
     LightningCssBackend
         .transform(&CssInput {
             code: code.into(),
