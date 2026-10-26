@@ -5,9 +5,9 @@
 
 use super::*;
 use clap::CommandFactory;
-use std::path::PathBuf;
-use oxide_fw_server::MiddlewareDispatchArgs;
 use oxide_fw_server::ActionDispatchArgs;
+use oxide_fw_server::MiddlewareDispatchArgs;
+use std::path::PathBuf;
 
 // ------------------------------------------------------------------ helpers
 
@@ -166,7 +166,10 @@ impl oxide_fw_server::PageRenderer for CountingRenderer {
     fn name(&self) -> &str {
         "counting"
     }
-    async fn render(&self, input: oxide_fw_server::PageRenderInput) -> oxide_fw_server::Result<String> {
+    async fn render(
+        &self,
+        input: oxide_fw_server::PageRenderInput,
+    ) -> oxide_fw_server::Result<String> {
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(format!(
             "<!doctype html><html><body><h1>RENDERER:{}</h1></body></html>",
@@ -183,8 +186,14 @@ impl oxide_fw_server::PageRenderer for FailingRenderer {
     fn name(&self) -> &str {
         "failing"
     }
-    async fn render(&self, _input: oxide_fw_server::PageRenderInput) -> oxide_fw_server::Result<String> {
-        Err(oxide_fw_server::err("FAKE-RENDER", "simulated render failure"))
+    async fn render(
+        &self,
+        _input: oxide_fw_server::PageRenderInput,
+    ) -> oxide_fw_server::Result<String> {
+        Err(oxide_fw_server::err(
+            "FAKE-RENDER",
+            "simulated render failure",
+        ))
     }
 }
 
@@ -198,7 +207,11 @@ fn test_request_with_trace(
     req
 }
 
-fn test_request_with_cookie(method: &str, url: &str, cookie: &str) -> oxide_fw_server::OxideRequest {
+fn test_request_with_cookie(
+    method: &str,
+    url: &str,
+    cookie: &str,
+) -> oxide_fw_server::OxideRequest {
     let headers = vec![("cookie".to_string(), cookie.to_string())];
     oxide_fw_server::OxideRequest {
         method: method.into(),
@@ -242,7 +255,10 @@ impl oxide_fw_server::PageRenderer for PprRenderer {
     fn name(&self) -> &str {
         "ppr"
     }
-    async fn render(&self, _input: oxide_fw_server::PageRenderInput) -> oxide_fw_server::Result<String> {
+    async fn render(
+        &self,
+        _input: oxide_fw_server::PageRenderInput,
+    ) -> oxide_fw_server::Result<String> {
         Ok("<!doctype html><html><body>PPR</body></html>".into())
     }
     async fn render_streaming(
@@ -409,9 +425,10 @@ async fn dispatch_routes_through_page_renderer_when_attached() {
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let tree = empty_tree();
     let metrics = Arc::new(oxide_fw_server::Metrics::new());
-    let renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> = Some(Arc::new(CountingRenderer {
-        calls: calls.clone(),
-    }));
+    let renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> =
+        Some(Arc::new(CountingRenderer {
+            calls: calls.clone(),
+        }));
 
     let dispatch = build_dispatch(
         tree,
@@ -565,7 +582,10 @@ impl oxide_fw_server::PageRenderer for DataCapturingRenderer {
     fn name(&self) -> &str {
         "data-capture"
     }
-    async fn render(&self, input: oxide_fw_server::PageRenderInput) -> oxide_fw_server::Result<String> {
+    async fn render(
+        &self,
+        input: oxide_fw_server::PageRenderInput,
+    ) -> oxide_fw_server::Result<String> {
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         *self.last_data.lock().unwrap() = input.data.clone();
         Ok(format!(
@@ -3270,7 +3290,10 @@ impl oxide_fw_server::PageRenderer for ErrorMarkerRenderer {
     fn name(&self) -> &str {
         "error-marker"
     }
-    async fn render(&self, _input: oxide_fw_server::PageRenderInput) -> oxide_fw_server::Result<String> {
+    async fn render(
+        &self,
+        _input: oxide_fw_server::PageRenderInput,
+    ) -> oxide_fw_server::Result<String> {
         Ok("<!doctype html><html><body>ERR</body></html>".into())
     }
     async fn render_streaming(
@@ -3297,7 +3320,10 @@ impl oxide_fw_server::PageRenderer for Ox500FallbackRenderer {
     fn name(&self) -> &str {
         "ox500-fallback"
     }
-    async fn render(&self, _input: oxide_fw_server::PageRenderInput) -> oxide_fw_server::Result<String> {
+    async fn render(
+        &self,
+        _input: oxide_fw_server::PageRenderInput,
+    ) -> oxide_fw_server::Result<String> {
         Ok("<!doctype html><html><body>ERR</body></html>".into())
     }
     async fn render_streaming(
@@ -3522,16 +3548,22 @@ struct ScriptedMiddleware {
 
 #[async_trait::async_trait]
 impl oxide_fw_server::MiddlewareDispatcher for ScriptedMiddleware {
-    async fn dispatch(&self, args: MiddlewareDispatchArgs<'_>) -> std::result::Result<oxide_fw_server::MiddlewareRunResult, oxide_fw_server::MiddlewareRunError> {
-    let MiddlewareDispatchArgs {
-        module_path: _,
-        method: _,
-        url: _,
-        params: _,
-        headers,
-        body,
-        locals,
-    } = args;
+    async fn dispatch(
+        &self,
+        args: MiddlewareDispatchArgs<'_>,
+    ) -> std::result::Result<
+        oxide_fw_server::MiddlewareRunResult,
+        oxide_fw_server::MiddlewareRunError,
+    > {
+        let MiddlewareDispatchArgs {
+            module_path: _,
+            method: _,
+            url: _,
+            params: _,
+            headers,
+            body,
+            locals,
+        } = args;
 
         Ok(oxide_fw_server::MiddlewareRunResult {
             short: self.short_status.is_some(),
@@ -3626,16 +3658,22 @@ struct RewriteOnceMiddleware {
 
 #[async_trait::async_trait]
 impl oxide_fw_server::MiddlewareDispatcher for RewriteOnceMiddleware {
-    async fn dispatch(&self, args: MiddlewareDispatchArgs<'_>) -> std::result::Result<oxide_fw_server::MiddlewareRunResult, oxide_fw_server::MiddlewareRunError> {
-    let MiddlewareDispatchArgs {
-        module_path,
-        method: _,
-        url: _,
-        params: _,
-        headers,
-        body: _,
-        locals: _,
-    } = args;
+    async fn dispatch(
+        &self,
+        args: MiddlewareDispatchArgs<'_>,
+    ) -> std::result::Result<
+        oxide_fw_server::MiddlewareRunResult,
+        oxide_fw_server::MiddlewareRunError,
+    > {
+        let MiddlewareDispatchArgs {
+            module_path,
+            method: _,
+            url: _,
+            params: _,
+            headers,
+            body: _,
+            locals: _,
+        } = args;
 
         let inner = module_path.ends_with("shop/middleware.ts");
         self.calls.lock().unwrap().push(module_path.to_string());
@@ -3708,16 +3746,22 @@ struct LayerMiddleware;
 
 #[async_trait::async_trait]
 impl oxide_fw_server::MiddlewareDispatcher for LayerMiddleware {
-    async fn dispatch(&self, args: MiddlewareDispatchArgs<'_>) -> std::result::Result<oxide_fw_server::MiddlewareRunResult, oxide_fw_server::MiddlewareRunError> {
-    let MiddlewareDispatchArgs {
-        module_path,
-        method: _,
-        url: _,
-        params: _,
-        headers,
-        body: _,
-        locals: _,
-    } = args;
+    async fn dispatch(
+        &self,
+        args: MiddlewareDispatchArgs<'_>,
+    ) -> std::result::Result<
+        oxide_fw_server::MiddlewareRunResult,
+        oxide_fw_server::MiddlewareRunError,
+    > {
+        let MiddlewareDispatchArgs {
+            module_path,
+            method: _,
+            url: _,
+            params: _,
+            headers,
+            body: _,
+            locals: _,
+        } = args;
 
         let inner = module_path.ends_with("shop/middleware.ts");
         let headers = if inner {
@@ -3775,7 +3819,8 @@ fn tree_with_two_middleware_layers() -> std::sync::Arc<oxide_fw_router::RouteTre
 async fn inner_middleware_header_overwrites_outer() {
     use std::sync::Arc;
     let metrics = Arc::new(oxide_fw_server::Metrics::new());
-    let mw: Option<Arc<dyn oxide_fw_server::MiddlewareDispatcher>> = Some(Arc::new(LayerMiddleware));
+    let mw: Option<Arc<dyn oxide_fw_server::MiddlewareDispatcher>> =
+        Some(Arc::new(LayerMiddleware));
     let dispatch = build_dispatch(
         tree_with_two_middleware_layers(),
         std::sync::Arc::clone(&metrics),
@@ -4301,7 +4346,10 @@ impl oxide_fw_server::PageRenderer for BufferedErrorMarkerRenderer {
     fn name(&self) -> &str {
         "buffered-error-marker"
     }
-    async fn render(&self, _input: oxide_fw_server::PageRenderInput) -> oxide_fw_server::Result<String> {
+    async fn render(
+        &self,
+        _input: oxide_fw_server::PageRenderInput,
+    ) -> oxide_fw_server::Result<String> {
         Ok(
             "<!doctype html><html><head><!--oxide-status:500--></head><body>ERR</body></html>"
                 .into(),
@@ -4318,7 +4366,10 @@ impl oxide_fw_server::PageRenderer for CleanBodyRenderer {
     fn name(&self) -> &str {
         "clean-body"
     }
-    async fn render(&self, _input: oxide_fw_server::PageRenderInput) -> oxide_fw_server::Result<String> {
+    async fn render(
+        &self,
+        _input: oxide_fw_server::PageRenderInput,
+    ) -> oxide_fw_server::Result<String> {
         Ok("<!doctype html><html><body>ok</body></html>".into())
     }
 }
@@ -4414,16 +4465,22 @@ impl ChainProbeMiddleware {
 
 #[async_trait::async_trait]
 impl oxide_fw_server::MiddlewareDispatcher for ChainProbeMiddleware {
-    async fn dispatch(&self, args: MiddlewareDispatchArgs<'_>) -> std::result::Result<oxide_fw_server::MiddlewareRunResult, oxide_fw_server::MiddlewareRunError> {
-    let MiddlewareDispatchArgs {
-        module_path,
-        method: _,
-        url: _,
-        params: _,
-        headers,
-        body,
-        locals,
-    } = args;
+    async fn dispatch(
+        &self,
+        args: MiddlewareDispatchArgs<'_>,
+    ) -> std::result::Result<
+        oxide_fw_server::MiddlewareRunResult,
+        oxide_fw_server::MiddlewareRunError,
+    > {
+        let MiddlewareDispatchArgs {
+            module_path,
+            method: _,
+            url: _,
+            params: _,
+            headers,
+            body,
+            locals,
+        } = args;
 
         self.seen
             .lock()
@@ -7672,11 +7729,13 @@ fn content_source_changed_scopes_to_collection_dirs() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let mut cfg = oxide_fw_config::OxideConfig::default();
-    cfg.content.collections.push(oxide_fw_config::CollectionDef {
-        name: "blog".to_string(),
-        dir: "content/blog".to_string(),
-        indexed_fields: Vec::new(),
-    });
+    cfg.content
+        .collections
+        .push(oxide_fw_config::CollectionDef {
+            name: "blog".to_string(),
+            dir: "content/blog".to_string(),
+            indexed_fields: Vec::new(),
+        });
     let inside = oxide_fw_dev::FileEvent::Modified(root.join("content/blog/post.md"));
     let outside = oxide_fw_dev::FileEvent::Modified(root.join("src/routes/index.tsx"));
     assert!(crate::content_source_changed(root, &cfg, &[inside]));
@@ -8036,7 +8095,8 @@ fn tree_with_layout_and_page_server_modules() -> std::sync::Arc<oxide_fw_router:
 async fn layout_ok_arm_persists_session_mutation() {
     use std::sync::Arc;
 
-    let loader: Option<Arc<dyn oxide_fw_server::LoaderRunner>> = Some(Arc::new(MutateSessionLoader));
+    let loader: Option<Arc<dyn oxide_fw_server::LoaderRunner>> =
+        Some(Arc::new(MutateSessionLoader));
     let codec = Arc::new(oxide_fw_server::SessionCodec::new(&[vec![9u8; 32]]).unwrap());
 
     let dispatch = build_dispatch(
@@ -8517,18 +8577,21 @@ async fn action_set_cookie_survives_200_rerender() {
     struct CookieDispatcher;
     #[async_trait::async_trait]
     impl oxide_fw_server::ActionDispatcher for CookieDispatcher {
-        async fn dispatch(&self, args: ActionDispatchArgs<'_>) -> Result<oxide_fw_server::ActionRunResult, oxide_fw_server::DispatchError> {
-    let ActionDispatchArgs {
-        module_path: _,
-        action: _,
-        form_json: _,
-        params: _,
-        url: _,
-        method: _,
-        headers,
-        locals: _,
-        trace: _,
-    } = args;
+        async fn dispatch(
+            &self,
+            args: ActionDispatchArgs<'_>,
+        ) -> Result<oxide_fw_server::ActionRunResult, oxide_fw_server::DispatchError> {
+            let ActionDispatchArgs {
+                module_path: _,
+                action: _,
+                form_json: _,
+                params: _,
+                url: _,
+                method: _,
+                headers,
+                locals: _,
+                trace: _,
+            } = args;
 
             Ok(oxide_fw_server::ActionRunResult {
                 status: 200,
