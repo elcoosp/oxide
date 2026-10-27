@@ -27,7 +27,7 @@ The plugin system is deliberately small. There are 19 hooks, each with a well-de
 
 ## Usage
 
-```rust
+```rust,ignore
 use oxide_fw_plugin::{WasmPlugin, WasmPluginManifest, Hook};
 
 let plugin = WasmPlugin::load(
