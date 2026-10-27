@@ -29,7 +29,7 @@ Each node is a compute unit: one per module, chunk, manifest, or typegen entry. 
 
 ## Usage
 
-```rust
+```rust,ignore
 use oxide_fw_graph::{Compute, ComputeCtx, DemandGraph, NodeKey, NodeOutput};
 use std::sync::Arc;
 
