@@ -53,6 +53,8 @@ opentelemetry_sdk = { workspace = true }
 opentelemetry = { workspace = true }
 
 futures = { workspace = true }
+ring = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 
