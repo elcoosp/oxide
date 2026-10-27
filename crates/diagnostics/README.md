@@ -30,7 +30,7 @@ The code families are stable across releases, so a downstream tool can classify 
 
 ## Usage
 
-```rust
+```rust,ignore
 use oxide_fw_diagnostics::{Diagnostic, Location, OxideError};
 
 let err = OxideError::new("CFG-FRAMEWORK", "unknown adapter `foo`")
