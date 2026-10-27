@@ -838,7 +838,6 @@ impl ModuleLoader for TranspileLoader {
     }
 }
 
-
 #[cfg(test)]
 mod node_shim_tests {
     use super::*;
@@ -848,12 +847,18 @@ mod node_shim_tests {
     #[test]
     fn crypto_shim_has_create_hash_and_fips_iv() {
         let src = node_shim("shim/crypto");
-        assert!(src.contains("export function createHash"),
-            "node:crypto arm missing createHash");
-        assert!(src.contains("0x6a09e667"),
-            "node:crypto arm missing FIPS-180-4 IV (0x6a09e667)");
-        assert!(src.contains("export default"),
-            "node:crypto arm missing default export");
+        assert!(
+            src.contains("export function createHash"),
+            "node:crypto arm missing createHash"
+        );
+        assert!(
+            src.contains("0x6a09e667"),
+            "node:crypto arm missing FIPS-180-4 IV (0x6a09e667)"
+        );
+        assert!(
+            src.contains("export default"),
+            "node:crypto arm missing default export"
+        );
     }
 
     #[test]
@@ -864,10 +869,14 @@ mod node_shim_tests {
         // produce the arm.
         let with_slash = node_shim("/shim/crypto");
         let without_slash = node_shim("shim/crypto");
-        assert!(with_slash.contains("export function createHash"),
-            "/shim/crypto must produce crypto arm (opaque path trap)");
-        assert!(without_slash.contains("export function createHash"),
-            "shim/crypto must produce crypto arm");
+        assert!(
+            with_slash.contains("export function createHash"),
+            "/shim/crypto must produce crypto arm (opaque path trap)"
+        );
+        assert!(
+            without_slash.contains("export function createHash"),
+            "shim/crypto must produce crypto arm"
+        );
     }
 
     #[test]
@@ -876,10 +885,14 @@ mod node_shim_tests {
         // The loud-throw path is present — other algorithms throw with a
         // message naming the limitation rather than silently returning
         // garbage.
-        assert!(src.contains("JSH-NODESHIM"),
-            "crypto shim missing loud-throw for unsupported algorithms");
-        assert!(src.contains("sha256"),
-            "crypto shim message must name sha256 explicitly");
+        assert!(
+            src.contains("JSH-NODESHIM"),
+            "crypto shim missing loud-throw for unsupported algorithms"
+        );
+        assert!(
+            src.contains("sha256"),
+            "crypto shim message must name sha256 explicitly"
+        );
     }
 
     // ---- fs / fs/promises ----
@@ -888,19 +901,30 @@ mod node_shim_tests {
     fn fs_promises_shim_exports_expected_names() {
         let src = node_shim("shim/fs/promises");
         for name in ["readFile", "mkdir", "readdir", "writeFile"] {
-            assert!(src.contains(name),
-                "node:fs/promises arm missing export: {}", name);
+            assert!(
+                src.contains(name),
+                "node:fs/promises arm missing export: {}",
+                name
+            );
         }
-        assert!(src.contains("JSH-NODESHIM"),
-            "node:fs/promises arm missing loud-throw");
+        assert!(
+            src.contains("JSH-NODESHIM"),
+            "node:fs/promises arm missing loud-throw"
+        );
     }
 
     #[test]
     fn fs_shim_exports_sync_names() {
         let src = node_shim("shim/fs");
-        assert!(src.contains("readFileSync"), "node:fs arm missing readFileSync");
+        assert!(
+            src.contains("readFileSync"),
+            "node:fs arm missing readFileSync"
+        );
         assert!(src.contains("mkdirSync"), "node:fs arm missing mkdirSync");
-        assert!(src.contains("JSH-NODESHIM"), "node:fs arm missing loud-throw");
+        assert!(
+            src.contains("JSH-NODESHIM"),
+            "node:fs arm missing loud-throw"
+        );
     }
 
     // ---- util ----
@@ -909,7 +933,10 @@ mod node_shim_tests {
     fn util_shim_has_parse_args() {
         let src = node_shim("shim/util");
         assert!(src.contains("parseArgs"), "node:util arm missing parseArgs");
-        assert!(src.contains("JSH-NODESHIM"), "node:util arm missing loud-throw");
+        assert!(
+            src.contains("JSH-NODESHIM"),
+            "node:util arm missing loud-throw"
+        );
     }
 
     // ---- buffer / events / stream (import-safe, call-loud) ----
@@ -918,17 +945,23 @@ mod node_shim_tests {
     fn buffer_shim_import_safe() {
         let src = node_shim("shim/buffer");
         assert!(src.contains("Buffer"), "node:buffer arm missing Buffer");
-        assert!(src.contains("JSH-NODESHIM"),
-            "node:buffer arm missing loud-throw");
+        assert!(
+            src.contains("JSH-NODESHIM"),
+            "node:buffer arm missing loud-throw"
+        );
     }
 
     #[test]
     fn events_shim_import_safe() {
         let src = node_shim("shim/events");
-        assert!(src.contains("EventEmitter"),
-            "node:events arm missing EventEmitter");
-        assert!(src.contains("JSH-NODESHIM"),
-            "node:events arm missing loud-throw");
+        assert!(
+            src.contains("EventEmitter"),
+            "node:events arm missing EventEmitter"
+        );
+        assert!(
+            src.contains("JSH-NODESHIM"),
+            "node:events arm missing loud-throw"
+        );
     }
 
     #[test]
@@ -936,7 +969,10 @@ mod node_shim_tests {
         let src = node_shim("shim/stream");
         assert!(src.contains("Readable"), "node:stream arm missing Readable");
         assert!(src.contains("Writable"), "node:stream arm missing Writable");
-        assert!(src.contains("JSH-NODESHIM"), "node:stream arm missing loud-throw");
+        assert!(
+            src.contains("JSH-NODESHIM"),
+            "node:stream arm missing loud-throw"
+        );
     }
 
     // ---- unsupported ----
@@ -944,10 +980,14 @@ mod node_shim_tests {
     #[test]
     fn unsupported_builtin_throws_loudly() {
         let src = node_shim("shim/child_process");
-        assert!(src.contains("JSH-NODESHIM"),
-            "unsupported builtin must throw JSH-NODESHIM");
-        assert!(src.contains("throw"),
-            "unsupported builtin must actually throw");
+        assert!(
+            src.contains("JSH-NODESHIM"),
+            "unsupported builtin must throw JSH-NODESHIM"
+        );
+        assert!(
+            src.contains("throw"),
+            "unsupported builtin must actually throw"
+        );
     }
 
     // ---- requires_node_backend consistency ----
@@ -955,8 +995,16 @@ mod node_shim_tests {
     #[test]
     fn requires_node_backend_lists_all_shimmed_builtins() {
         for name in [
-            "module", "path", "url", "buffer", "events", "util", "stream",
-            "crypto", "fs", "fs/promises",
+            "module",
+            "path",
+            "url",
+            "buffer",
+            "events",
+            "util",
+            "stream",
+            "crypto",
+            "fs",
+            "fs/promises",
         ] {
             assert!(
                 requires_node_backend(&format!("node:{}", name)).is_none(),
@@ -984,4 +1032,3 @@ mod node_shim_tests {
         assert!(requires_node_backend("fs").is_none());
     }
 }
-

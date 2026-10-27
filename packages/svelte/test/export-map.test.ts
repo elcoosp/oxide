@@ -20,10 +20,22 @@ const here = dirname(fileURLToPath(import.meta.url))
 const pkgRoot = join(here, '..')
 const pkg = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf8'))
 
+
+/** Packaging: exports values may be strings or objects {types, default}. */
+function exportTarget(v: unknown): string | undefined {
+  if (typeof v === 'string') return v
+  if (v && typeof v === 'object') {
+    const o = v as Record<string, unknown>
+    if (typeof o.default === 'string') return o.default
+    if (typeof o.types === 'string') return o.types
+  }
+  return undefined
+}
+
 test('every exports value points at an existing file', () => {
   const missing: string[] = []
   for (const [subpath, target] of Object.entries(pkg.exports)) {
-    const path = join(pkgRoot, target as string)
+    const path = join(pkgRoot, exportTarget(target) ?? "")
     if (!existsSync(path)) missing.push(`${subpath} -> ${target}`)
   }
   assert.deepEqual(missing, [], `exports point at missing files:\n  ${missing.join('\n  ')}`)
@@ -33,5 +45,5 @@ test('./defer is exported and resolves to a .svelte file (the <Defer> component)
   assert.ok('./defer' in pkg.exports, `./defer must be in exports (got: ${Object.keys(pkg.exports).join(', ')})`)
   const target = pkg.exports['./defer'] as string
   assert.match(target, /Defer\.svelte$/, `./defer must point at Defer.svelte (got: ${target})`)
-  assert.ok(existsSync(join(pkgRoot, target)), `./defer target does not exist: ${target}`)
+  assert.ok(existsSync(join(pkgRoot, exportTarget(target) ?? "")), `./defer target does not exist: ${target}`)
 })
