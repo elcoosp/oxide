@@ -184,10 +184,7 @@ async fn lazy_entry_renders_page_through_v8_resolver() {
         !html.contains("Something went wrong"),
         "no error-page fallback; got:\n{html}"
     );
-    assert!(
-        !html.contains("OX-500"),
-        "no OX-500 marker; got:\n{html}"
-    );
+    assert!(!html.contains("OX-500"), "no OX-500 marker; got:\n{html}");
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +253,10 @@ async fn eager_entry_still_works() {
         html.contains("<h1>Home</h1>"),
         "eager entry path must remain functional; got:\n{html}"
     );
-    assert!(!html.contains("[object Module]"), "no module leak; got:\n{html}");
+    assert!(
+        !html.contains("[object Module]"),
+        "no module leak; got:\n{html}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -309,8 +309,7 @@ async fn resolver_miss_surfaces_ox_500_not_panic() {
         "missing component is a diagnostic, not a panic; got:\n{html}"
     );
     assert!(
-        html.contains("no component resolved")
-            || html.contains("no component resolved for route"),
+        html.contains("no component resolved") || html.contains("no component resolved for route"),
         "the diagnostic must name the missing route; got:\n{html}"
     );
 }
