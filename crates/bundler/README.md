@@ -26,18 +26,48 @@ The JavaScript and TypeScript bundler Oxide uses for both client and server outp
 
 ## Usage
 
-```rust
+```rust,no_run
+# use std::collections::BTreeMap;
+# use std::path::PathBuf;
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
 use oxide_fw_bundler::{BundleEnv, BundleOptions, Bundler, RolldownBundler};
 
+// Build one client-side bundle for the index route.
 let opts = BundleOptions {
     env: BundleEnv::Client,
-    entries: /* route id -> source path */,
-    // ...
+    entries: BTreeMap::from([
+        ("routes/index".to_string(), PathBuf::from("src/routes/index/page.tsx")),
+    ]),
+    out_dir: PathBuf::from("dist/client"),
+#   minify: false,
+#   sourcemap: false,
+#   externals: Vec::new(),
+#   define: BTreeMap::new(),
+#   tsconfig_paths: BTreeMap::new(),
+#   build_secret: String::new(),
+#   precompiled: BTreeMap::new(),
+#   jsx_import_source: None,
+#   transform_hook: None,
+#   resolve_hook: None,
+#   load_hook: None,
+#   render_chunk_hook: None,
+#   generate_bundle_hook: None,
+#   transform_html_hook: None,
+#   css_transform: None,
+#   inline_dynamic_imports: false,
+#   resolve_conditions: None,
+#   virtual_modules: BTreeMap::new(),
 };
-let out = RolldownBundler::new(root).bundle(&opts)?;
-for chunk in out.chunks {
-    println!("{}  {}", chunk.file, chunk.kind_str());
+
+let out = RolldownBundler::new(".").bundle(&opts)?;
+
+// Each emitted chunk carries its path and its kind
+// (Entry, Shared, or Asset).
+for chunk in &out.chunks {
+    println!("{}  {:?}", chunk.file, chunk.kind);
 }
+# Ok(())
+# }
 ```
 
 > **Note:** This crate does not depend on `oxide-fw-plugin` — that would pull `wasmtime` into every build. The CLI pre-loads plugins and hands in closures over `BundleOptions` instead.
