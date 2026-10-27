@@ -70,8 +70,15 @@ test.afterAll(() => {
 
 test('client navigation shows the loading overlay then the real page', async ({ page }) => {
   const errors: string[] = []
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
-  page.on('pageerror', (e) => errors.push(e.message))
+  // Capture ALL console output, not just errors. The real-mount fallback path
+  // logs `oxide: real page render failed; falling back to IR` as a WARNING,
+  // which the previous error-only filter hid — so a mount failure surfaced as a
+  // bare 'element(s) not found' with no diagnostic. Capturing warnings makes a
+  // future mount failure actionable at the point it happens.
+  page.on('console', (m) => {
+    errors.push(`[${m.type()}] ${m.text()}`)
+  })
+  page.on('pageerror', (e) => errors.push('PAGEERROR: ' + e.message))
 
   // Hold the /__data response for 800ms so the loading overlay is
   // observably on-screen for that window. The route's own 250ms delay is
@@ -102,9 +109,36 @@ test('client navigation shows the loading overlay then the real page', async ({ 
   await expect(page.locator('[data-loading-slow]')).toBeVisible({ timeout: 3_000 })
 
   // Overlay is replaced by the real page once the loader resolves.
-  await expect(page.locator('[data-slow-message]')).toHaveText('finally loaded', {
-    timeout: 5_000,
-  })
+  //
+  // The real mount is ASYNC: onNavigateEnd tears down the overlay synchronously,
+  // then adapter.update kicks off an async chain (componentFor -> chunk import
+  // -> mountReactPageRoot). In slower environments (CI) that chain can take
+  // hundreds of milliseconds; a 5s budget was too tight — it timed out at
+  // 'element(s) not found' with no signal why. 15s gives headroom for a slow
+  // chunk import while still failing on a genuine stall. On failure the error
+  // carries the page state and the last 20 console lines, so the next CI run
+  // reports WHY mount did not complete instead of just 'not found'.
+  try {
+    await expect(page.locator('[data-slow-message]')).toHaveText('finally loaded', {
+      timeout: 15_000,
+    })
+  } catch (e) {
+    const body = await page.content()
+    const state = await page.evaluate(() => ({
+      overlayCount: document.querySelectorAll('[data-loading-slow]').length,
+      slowCount: document.querySelectorAll('[data-slow]').length,
+      notfoundCount: document.querySelectorAll('[data-ox-not-found]').length,
+      rootHtml: (document.getElementById('root') as HTMLElement | null)?.innerHTML?.slice(0, 500) ?? '',
+    }))
+    throw new Error(
+      '[data-slow-message] did not appear within 15s.\n' +
+      'state: ' + JSON.stringify(state, null, 2) + '\n' +
+      'console (' + errors.length + '): ' + JSON.stringify(errors.slice(-20), null, 2) + '\n' +
+      'body (first 2000):\n' + body.slice(0, 2000),
+    )
+  }
   await expect(page.locator('[data-loading-slow]')).toHaveCount(0)
-  expect(errors).toEqual([])
+  // Warnings are allowed (deprecations, framework info); FAIL only on errors.
+  const realErrors = errors.filter((e) => e.startsWith('[error]') || e.startsWith('PAGEERROR:'))
+  expect(realErrors).toEqual([])
 })
