@@ -400,6 +400,11 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
           // first; if it also throws, or none is registered, fall through to
           // the generic text.
           const msg = err instanceof Error ? err.message : String(err)
+          if (err instanceof Error && err.stack) {
+            // stderr only (lands in start.log); the OX-500 body text is
+            // asserted by core tests and must stay message-only.
+            console.error('[oxide:render-fail]', err.stack)
+          }
           const errId = input.errorRoute
           if (typeof errId === 'string' && errId.length > 0) {
             const ErrComp = resolveComponent(input, errId)

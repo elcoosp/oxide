@@ -190,18 +190,41 @@ else
         fi
     done
     # BUG-04: action parity — POST ?/greet through __oxideActionRun.
+    # §9.3 form-first contract (4eed9eb): a successful non-redirect action
+    # RE-RENDERS the page and carries the result as data.form. The old
+    # raw-JSON assertion (`{"hello":"Ada"}`) was written for the
+    # pre-4eed9eb behavior (98fa51d) and fails against the current
+    # contract even though dispatch works. Assert the current contract
+    # with both controls:
+    #   positive: the re-rendered page marker (dispatch + render ran);
+    #   negative: an unknown action still 404s with the ACT-NOT-FOUND
+    #             envelope — a render-only fall-through cannot produce it,
+    #             so this proves the registry loaded through V8.
     abody=""
     for _ in $(seq 1 20); do
         abody=$(curl -s -X POST "http://127.0.0.1:$PORT/?/greet" -d 'name=Ada' -H 'content-type: application/x-www-form-urlencoded' 2>/dev/null || true)
-        [ "$abody" = '{"hello":"Ada"}' ] && break
+        case "$abody" in *'<h1>Home</h1>'*) break ;; esac
         sleep 0.25
     done
-    if [ "$abody" = '{"hello":"Ada"}' ]; then
-        printf '%-22s %-6s %s\n' "action-post" "ok" "$abody"
-    else
-        printf '%-22s %-6s %s\n' "action-post" "FAIL" "got: $abody"
-        fail=1
-    fi
+    case "$abody" in
+        *'<h1>Home</h1>'*)
+            printf '%-22s %-6s %s\n' "action-post" "ok" "greet re-rendered page (form-first, §9.3)"
+            ;;
+        *)
+            printf '%-22s %-6s %s\n' "action-post" "FAIL" "got: ${abody:0:160}"
+            fail=1
+            ;;
+    esac
+    nbody=$(curl -s -X POST "http://127.0.0.1:$PORT/?/definitely-not-an-action" -d 'name=Ada' -H 'content-type: application/x-www-form-urlencoded' 2>/dev/null || true)
+    case "$nbody" in
+        *ACT-NOT-FOUND*)
+            printf '%-22s %-6s %s\n' "action-post" "ok" "unknown action -> ACT-NOT-FOUND"
+            ;;
+        *)
+            printf '%-22s %-6s %s\n' "action-post" "FAIL" "unknown action got: ${nbody:0:160}"
+            fail=1
+            ;;
+    esac
 fi
 
 ( kill -9 "$SRV" ) 2>/dev/null || true

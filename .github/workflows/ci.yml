@@ -159,7 +159,7 @@ jobs:
         with: { version: 9 }
       - run: pnpm install --frozen-lockfile
       - name: Build workspace packages
-        run: pnpm build
+        run: pnpm -r --filter '!./packages/oxide-website' run build
       - name: Build the CLI
         run: cargo build -p oxide-fw-cli
       - name: V8 backend fixture gate
@@ -262,7 +262,7 @@ jobs:
       - name: Install workspace deps
         run: pnpm install --frozen-lockfile || pnpm install
       - name: Build workspace packages
-        run: pnpm build
+        run: pnpm -r --filter '!./packages/oxide-website' run build
       - name: Build smoke-app-react
         run: ./target/debug/oxide build --root examples/smoke-app-react
       - name: Run HMR harness (fails if no edit reaches 200-with-marker)
@@ -282,7 +282,7 @@ jobs:
       - name: Install workspace deps (for the worker's tsx loader)
         run: pnpm install --frozen-lockfile || pnpm install
       - name: Build workspace packages
-        run: pnpm build
+        run: pnpm -r --filter '!./packages/oxide-website' run build
       - name: Run the ignored loader_host / framework_host e2e tests
         # Both are real e2e runs (spawn a Node worker, exercise the wire).
         # No `|| true` on either: if the framework host tests regress, the
@@ -328,7 +328,7 @@ jobs:
       - name: Install workspace deps
         run: pnpm install --frozen-lockfile || pnpm install
       - name: Build workspace packages
-        run: pnpm build
+        run: pnpm -r --filter '!./packages/oxide-website' run build
       - name: Install Playwright browser
         working-directory: tests/playwright
         run: pnpm exec playwright install --with-deps ${{ matrix.browser }}

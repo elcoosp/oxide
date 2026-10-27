@@ -234,7 +234,11 @@ export async function renderReactToStream(
     // the pipeline's recovery boundary (render_stream_with_recovery).
     return deps.server.renderToReadableStream(element, {
       onError: (e) => {
-        console.error?.('oxide: React streaming SSR error', e)
+        // An Error object has no enumerable fields — logging it raw prints
+        // `{}` and hides React's actual failure (this cost a full debug
+        // session). Log the stack/message so start.log carries the truth.
+        const detail = e instanceof Error ? (e.stack || e.message) : String(e)
+        console.error?.('oxide: React streaming SSR error', detail)
       },
     })
   }

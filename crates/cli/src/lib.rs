@@ -3005,7 +3005,17 @@ fn emit_config_bundle(
         out_dir: bundle_dir.clone(),
         minify: false,
         sourcemap: false,
-        externals: Vec::new(),
+        // The config bundle and the route chunks must bind the SAME module
+        // instances. `Vec::new()` inlined react + react-dom here — a
+        // pre-`e122122` workaround from the days the V8 loader had no
+        // CJS interop — which produced two React copies under V8: the
+        // renderer's hooks dispatcher was set on the inlined copy while
+        // the route chunks' `useState` read the external one
+        // ("Cannot read properties of null (reading 'useState')").
+        // The loader now externalizes CJS properly (§21), so externalize
+        // the framework runtimes here too; both resolve to the same
+        // canonical module URL at runtime.
+        externals: default_ssr_externals(),
         define: BTreeMap::new(),
         tsconfig_paths: BTreeMap::new(),
         build_secret: "config-bundle".to_string(),
