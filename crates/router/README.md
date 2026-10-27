@@ -29,7 +29,7 @@ The routing conventions follow SvelteKit: `routes/blog/[slug]/page.tsx` becomes 
 
 ## Usage
 
-```rust
+```rust,ignore
 use oxide_fw_router::RouteTree;
 use std::path::Path;
 
