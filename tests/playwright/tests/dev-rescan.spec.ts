@@ -71,6 +71,22 @@ test.afterAll(async () => {
 })
 
 test('a route added mid-session is reachable without restarting dev', async () => {
+  // Warm up before baseline. `oxide dev` returns 503 for every route during
+  // its startup archive-load / watcher-init window (stale_503 in
+  // crates/cli/src/lib.rs:6860). Without this the /rescan-me baseline sees
+  // 503 instead of 404 and fails at `expect(before.status).toBe(404)`.
+  // The comment below already accounts for the same window for `/` — this
+  // applies the same rule to the pre-add baseline.
+  let warmed = false
+  for (let i = 0; i < 40; i++) {
+    try {
+      const r = await fetch(`${baseURL}/`)
+      if (r.status === 200) { warmed = true; break }
+    } catch { /* server not up */ }
+    await sleep(500)
+  }
+  if (!warmed) throw new Error('dev server did not warm within 20s')
+
   // Baseline: new route 404s.
   const before = await fetch(`${baseURL}/rescan-me`)
   expect(before.status).toBe(404)
