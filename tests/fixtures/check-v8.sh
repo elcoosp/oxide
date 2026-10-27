@@ -142,10 +142,11 @@ if [ -f "$DIR/$CFG" ]; then
     if grep -qE 'react-dom\.development\.js|react-dom\.production\.js|react\.development\.js|react\.production\.js' "$DIR/$CFG"; then
         printf '%-22s %-6s %s\n' "config-externals" "FAIL" "config.server.js inlines react/react-dom internals — two-React regression"
         fail=1
-    elif grep -qE 'from ?"react"|from ?'"'"'react'"'"'|from ?"react-dom' "$DIR/$CFG"; then
+    elif grep -qE '(import|from)[[:space:]]*"react(-dom)?(/[^"]*)?"|(import|from)[[:space:]]*'"'"'react(-dom)?(/[^'"'"']*)?'"'"'' "$DIR/$CFG"; then
         printf '%-22s %-6s %s\n' "config-externals" "ok" "framework runtimes external"
     else
-        printf '%-22s %-6s %s\n' "config-externals" "WARN" "no react import found; inspect $CFG"
+        printf '%-22s %-6s %s\n' "config-externals" "FAIL" "no react/react-dom import in config bundle"
+        fail=1
     fi
 else
     printf '%-22s %-6s %s\n' "config-externals" "SKIP" "$CFG not found"
