@@ -4283,13 +4283,17 @@ fn build_secret(rootp: &std::path::Path) -> anyhow::Result<String> {
             key_file.display()
         );
     }
-    // Create once. `/dev/urandom` never EOFs, so `read_exact` on a fixed
-    // buffer is the bounded form (a plain `read` would block forever).
-    use std::io::Read as _;
+    // Cross-platform random: ring::rand::SystemRandom uses /dev/urandom
+    // on Linux/macOS and BCryptGenRandom on Windows. The prior code
+    // opened "/dev/urandom" directly, which does not exist on Windows —
+    // every build_secret() call failed there with
+    // "cannot read /dev/urandom for the build secret: The system cannot
+    // find the path specified. (os error 3)".
+    use ring::rand::SecureRandom as _;
     let mut rnd = [0u8; 32];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| f.read_exact(&mut rnd))
-        .map_err(|e| anyhow::anyhow!("cannot read /dev/urandom for the build secret: {e}"))?;
+    ring::rand::SystemRandom::new()
+        .fill(&mut rnd)
+        .map_err(|_| anyhow::anyhow!("cannot generate random bytes for the build secret"))?;
     let s = blake3::hash(&rnd).to_hex().to_string();
     std::fs::create_dir_all(rootp.join(".oxide"))
         .map_err(|e| anyhow::anyhow!("cannot create .oxide/: {e}"))?;
