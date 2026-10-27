@@ -52,7 +52,7 @@ The security primitives:
 
 ## Usage
 
-```rust
+```rust,ignore
 use oxide_fw_server::{Pipeline, SecuritySettings, Server};
 use std::sync::Arc;
 
@@ -70,7 +70,7 @@ Server::serve(addr, pipeline, dispatch, shutdown_rx).await?;
 
 Every trait method that takes more than a handful of parameters uses a single struct argument:
 
-```rust
+```rust,ignore
 #[async_trait::async_trait]
 pub trait EndpointDispatcher: Send + Sync {
     async fn dispatch(
