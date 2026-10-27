@@ -27,7 +27,7 @@ The format exists so the payload a client reads is decode-safe without `JSON.par
 
 ## Usage
 
-```rust
+```rust,ignore
 use oxide_fw_odf::{Value, encode_to_bytes, decode_from_bytes};
 
 let v = Value::Object(
