@@ -32,7 +32,7 @@ Two problems this crate solves that a naive pipeline cannot:
 
 ## Usage
 
-```rust
+```rust,ignore
 use oxide_fw_render::{inject_before_close, RequestTimings};
 
 let timings = RequestTimings {
