@@ -338,3 +338,103 @@ export default {
     let collected = fw.render(&config_str, json!({})).await.expect("render");
     assert_eq!(collected, "AAABBBCCC");
 }
+
+
+// ---------------------------------------------------------------------------
+// §8.4 — Node worker drift tripwire
+// ---------------------------------------------------------------------------
+//
+// Mirrors v8_lazy_entry_tdd::lazy_entry_renders_page_through_v8_resolver
+// via NodeHost instead of V8Host. Node pre-resolves () => import(...)
+// loaders before the adapter sees them (the contract bbae744 gave V8).
+// This test locks Node's correct side so a future resolver refactor can't
+// drift back without firing here.
+//
+// BUG (fixed): the first version wrote route/entry fixtures under
+// crates/jshost/tests/.tmp-e2e/, but 'import react' only resolves from
+// packages/react/.tmp-e2e/ (walk-up through the workspace's node_modules).
+// Use e2e_base() — the same location E2eConfigFile uses — not a local path.
+#[tokio::test]
+#[ignore]
+async fn resolver_normalizes_lazy_loaders() {
+    let base = e2e_base();
+    fs::create_dir_all(&base).expect("mkdir .tmp-e2e");
+    let nonce = unique_nonce();
+
+    let route_file = base.join(format!("lazy-route-{nonce}.mjs"));
+    fs::write(
+        &route_file,
+        "import { createElement } from 'react'\n\
+         const Home = () => createElement('h1', null, 'LazyHome')\n\
+         export default Home\n",
+    )
+    .expect("write route");
+
+    let entry_file = base.join(format!("lazy-entry-{nonce}.mjs"));
+    fs::write(
+        &entry_file,
+        format!(
+            "export const routes = {{\n\
+             \x20 'routes/index': () => import({route:?}),\n\
+             }}\n",
+            route = route_file.to_string_lossy()
+        ),
+    )
+    .expect("write lazy entry");
+
+    let config_file = E2eConfigFile::new();
+    fs::write(
+        config_file.path(),
+        "import { createRealAdapter } from '../src/real-adapter.ts'\n\
+         export default { framework: createRealAdapter({ ssr: 'real' }) }\n",
+    )
+    .expect("write config");
+    let config_str = config_file.path_str();
+
+    struct Cleanup(Vec<PathBuf>);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            for p in &self.0 {
+                let _ = fs::remove_file(p);
+            }
+        }
+    }
+    let _cleanup = Cleanup(vec![route_file.clone(), entry_file.clone()]);
+
+    let host = NodeHost::new(NodeHost::worker_script_default());
+    let pool = host
+        .tooling_pool(PoolConfig::default())
+        .expect("spawn node worker");
+    let fw = FrameworkHost::new(pool);
+
+    let input = serde_json::json!({
+        "route": "routes/index",
+        "url": "/",
+        "params": {},
+        "data": {},
+        "head": {
+            "title": "lazy",
+            "meta": [], "link": [], "style": [], "script": []
+        },
+        "components": { "entry": entry_file.to_string_lossy() },
+    });
+
+    let html = fw
+        .render(&config_str, input)
+        .await
+        .expect("framework:render via Node worker");
+
+    assert!(
+        html.contains("<h1>LazyHome</h1>"),
+        "Node worker must normalize lazy loaders to components; got:\n{html}"
+    );
+    assert!(
+        !html.contains("[object Module]"),
+        "no module leak to React; got:\n{html}"
+    );
+    assert!(
+        !html.contains("Something went wrong"),
+        "no error-page fallback; got:\n{html}"
+    );
+}
+
