@@ -262,8 +262,14 @@ export async function componentFor(routeRef: string): Promise<unknown> {
   if (!chunk) return undefined
   try {
     const mod = await src.loadChunk(chunkUrl(chunk))
-    return pageComponentExport(mod)
-  } catch {
+    const result = pageComponentExport(mod)
+    if (result === undefined) {
+      const modKeys = mod && typeof mod === 'object' ? Object.keys(mod) : typeof mod
+      console.warn?.('[oxide-diag] componentFor: chunk loaded but no component export (chunk=' + JSON.stringify(chunk) + ' url=' + JSON.stringify(chunkUrl(chunk)) + ' module-keys=' + JSON.stringify(modKeys) + ')')
+    }
+    return result
+  } catch (e) {
+    console.warn?.('[oxide-diag] componentFor: loadChunk threw (chunk=' + JSON.stringify(chunk) + ' url=' + JSON.stringify(chunkUrl(chunk)) + ')', e)
     // A missing/broken chunk is not fatal — the IR fallback still paints.
     return undefined
   }
