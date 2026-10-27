@@ -30,7 +30,7 @@ The tooling pool (Vue, Svelte, and Solid compilers) is **always Node** — those
 
 ## Usage
 
-```rust
+```rust,ignore
 use oxide_fw_jshost::{JsHost, NodeHost, Pool, PoolConfig, CallInput, EntryRef};
 
 let host = NodeHost::new(NodeHost::worker_script_default());
