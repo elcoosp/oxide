@@ -128,7 +128,30 @@ printf '%-22s %-6s %s\n' "build" "$code" "$(tail -1 "$WORK/build.log")"
 fail=0
 if [ -f "$DIR/.oxide/snapshot.bin" ]; then
     snap_bytes=$(stat -f '%z' "$DIR/.oxide/snapshot.bin" 2>/dev/null || echo "?")
-    printf '%-22s %-6s %s\n' "snapshot.bin" "ok" "$snap_bytes bytes"
+    
+# §8.3 config-bundle externals tripwire (bbae744 fix set, §3):
+# if `.oxide/config.server.js` inlines react-dom internals, V8 gets a
+# second React instance and every useState call throws
+# "Cannot read properties of null (reading 'useState')". The fix
+# (bded338) externalizes framework runtimes from the config bundle.
+# Assert both directions:
+#   (a) NO inline signature (react-dom.development.js / .production.js)
+#   (b) external import present (from "react" or from "react-dom")
+CFG=".oxide/config.server.js"
+if [ -f "$DIR/$CFG" ]; then
+    if grep -qE 'react-dom\.development\.js|react-dom\.production\.js|react\.development\.js|react\.production\.js' "$DIR/$CFG"; then
+        printf '%-22s %-6s %s\n' "config-externals" "FAIL" "config.server.js inlines react/react-dom internals — two-React regression"
+        fail=1
+    elif grep -qE 'from ?"react"|from ?'"'"'react'"'"'|from ?"react-dom' "$DIR/$CFG"; then
+        printf '%-22s %-6s %s\n' "config-externals" "ok" "framework runtimes external"
+    else
+        printf '%-22s %-6s %s\n' "config-externals" "WARN" "no react import found; inspect $CFG"
+    fi
+else
+    printf '%-22s %-6s %s\n' "config-externals" "SKIP" "$CFG not found"
+fi
+
+printf '%-22s %-6s %s\n' "snapshot.bin" "ok" "$snap_bytes bytes"
 else
     printf '%-22s %-6s %s\n' "snapshot.bin" "MISSING" "not emitted"
     fail=1
