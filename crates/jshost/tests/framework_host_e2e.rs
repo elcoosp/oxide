@@ -153,7 +153,7 @@ async fn end_to_end_load_and_render_real_react_config() {
 #[tokio::test]
 #[ignore]
 async fn end_to_end_resolver_supplies_components_without_component_for() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/.tmp-e2e");
+    let dir = e2e_base();
     fs::create_dir_all(&dir).expect("mkdir .tmp-e2e");
     let nonce = unique_nonce();
     let comp_a = dir.join(format!("comp-a-{nonce}.mjs"));
