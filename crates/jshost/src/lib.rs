@@ -1546,7 +1546,7 @@ globalThis.__oxideFrameworkRender = async function (configPath, renderInput, com
             const k = alias(id);
             const v = routes[k];
             if (typeof v === 'function' && v.toString().includes('import(')) {
-              try { routes[k] = await v(); } catch { /* leave loader in place */ }
+              try { routes[k] = await v(); } catch (e) { console.error('[oxide] component import failed for ' + id + ':', (e && e.message) || e); }
             }
           }
         }

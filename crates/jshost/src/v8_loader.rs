@@ -328,6 +328,30 @@ fn node_shim(specifier: &str) -> String {
         "util" => "export function parseArgs() { throw new Error('JSH-NODESHIM: node:util.parseArgs is not available in the V8 runtime; set server.backend to node (§4.6)'); }\n\
            export default { parseArgs };\n"
             .to_string(),
+        // buffer/events/stream — import-safe arms. requires_node_backend
+        // already treats these as shimmed; without arms here, a graph that
+        // imports them passes the check and then dies at link with a
+        // confusing "does not provide an export named X". Export the names
+        // the runtime reaches for; calls throw loudly (§4.6.3).
+        "buffer" => "export class Buffer extends Uint8Array {\n\
+             static from() { throw new Error('JSH-NODESHIM: node:buffer.Buffer.from is not available in the V8 runtime; set server.backend to node (§4.6)'); }\n\
+           }\n\
+           export const constants = {};\n\
+           export default { Buffer, constants };\n"
+            .to_string(),
+        "events" => "export class EventEmitter {\n\
+             on() { throw new Error('JSH-NODESHIM: node:events.EventEmitter.on is not available in the V8 runtime; set server.backend to node (§4.6)'); }\n\
+           }\n\
+           export default { EventEmitter };\n"
+            .to_string(),
+        "stream" => "export class Readable {\n\
+             constructor() { throw new Error('JSH-NODESHIM: node:stream.Readable is not available in the V8 runtime; set server.backend to node (§4.6)'); }\n\
+           }\n\
+           export class Writable {\n\
+             constructor() { throw new Error('JSH-NODESHIM: node:stream.Writable is not available in the V8 runtime; set server.backend to node (§4.6)'); }\n\
+           }\n\
+           export default { Readable, Writable };\n"
+            .to_string(),
         // SPEC-02 / §4.6.3: an unsupported Node builtin is LOUD. A silent
         // `export default {}` makes `import fs from 'node:fs'; fs.readFile(…)`
         // fail at the call site with a confusing "not a function" far from
