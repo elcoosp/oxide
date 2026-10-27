@@ -344,7 +344,7 @@ count the gate cannot reproduce.
 
 | What | Value | Source of truth |
 |---|---|---|
-| Rust tests | 1,214 | `scripts/count-tests.sh` (static attr count) |
+| Rust tests | 1,227  | `scripts/count-tests.sh` (static attr count) |
 | TypeScript tests | 445 packages + 32 conformance = 477, green | suites run + conformance run |
 | CI gates | 16 jobs | `.github/workflows/ci.yml` |
 | Browser e2e | 26 specs / 11 files × Chromium, Firefox, WebKit | `tests/playwright` |
