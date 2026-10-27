@@ -234,8 +234,15 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
    */
   function tryRealRender(seq: number, inp: ClientInput): boolean {
     const src = getRouteComponentSource()
-    if (!src) return false
-    if (routeIdFor(inp.route, src.manifest) === undefined) return false
+    if (!src) {
+      console.warn?.('[oxide-diag] real-render skipped: no manifest registered (route=' + JSON.stringify(inp.route) + ')')
+      return false
+    }
+    const key = routeIdFor(inp.route, src.manifest)
+    if (key === undefined) {
+      console.warn?.('[oxide-diag] real-render skipped: route ' + JSON.stringify(inp.route) + ' not matched in manifest (routes: ' + Object.keys(src.manifest.routes).join(',') + ')')
+      return false
+    }
     if (seq !== renderSeq) return true
     // §7.1 / §9.2: wire deferred markers BEFORE the tree paints so the
     // components receive promise-likes, not `{__deferred: id}` placeholders.
@@ -245,6 +252,7 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
       const Component = await componentFor(inp.route)
       if (disposed || seq !== renderSeq) return
       if (Component === undefined || Component === null) {
+        console.warn?.('[oxide-diag] real-render: componentFor(' + JSON.stringify(inp.route) + ') returned undefined; falling back to IR. manifest key=' + JSON.stringify(key) + ' entry_chunk=' + JSON.stringify(src.manifest.routes[key]?.entry_chunk))
         renderIr()
         return
       }
