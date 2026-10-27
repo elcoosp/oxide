@@ -26,7 +26,7 @@ The schema is also what `oxide schema` prints on stdout, so a CI step can diff i
 
 ## Usage
 
-```rust
+```rust,ignore
 use oxide_fw_schema::{schema_pretty, schema_url};
 
 println!("{}", schema_pretty()?);
