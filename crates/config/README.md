@@ -28,7 +28,7 @@ The file is loaded by a Node worker (the "framework host") that imports the modu
 
 ## Usage
 
-```rust
+```rust,ignore
 use oxide_fw_config::load;
 use std::collections::BTreeMap;
 
