@@ -1533,6 +1533,23 @@ globalThis.__oxideFrameworkRender = async function (configPath, renderInput, com
           if (Object.prototype.hasOwnProperty.call(routes, underscore)) return underscore;
           return id;
         };
+        // __oxide_pre_resolve_lazy: lazy.js exports each route value as
+        // () => import('./routes/X.js'). Node worker normalizes these
+        // before the adapter sees them; V8 must mirror. Only the routes
+        // needed for this render are resolved, so lazy.js still delivers
+        // on-demand loading for everything else.
+        {
+          const rinput = renderInput || {};
+          const wanted = [rinput.route, ...(Array.isArray(rinput.layouts) ? rinput.layouts : []), rinput.errorRoute]
+            .filter((x) => typeof x === 'string' && x.length > 0);
+          for (const id of new Set(wanted)) {
+            const k = alias(id);
+            const v = routes[k];
+            if (typeof v === 'function' && v.toString().includes('import(')) {
+              try { routes[k] = await v(); } catch { /* leave loader in place */ }
+            }
+          }
+        }
         componentResolver = (id) => {
           const k = alias(id);
           if (!Object.prototype.hasOwnProperty.call(routes, k)) return undefined;
