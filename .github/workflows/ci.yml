@@ -98,6 +98,8 @@ jobs:
         # the pnpm workspace's symlinks under node_modules. Without the
         # install, Node reports ERR_MODULE_NOT_FOUND.
         run: pnpm install --frozen-lockfile
+      - name: Build workspace packages
+        run: pnpm -r --filter '!./packages/oxide-website' run build
       - name: TS package tests (zero-dep, Node type stripping)
         run: |
           set -e
