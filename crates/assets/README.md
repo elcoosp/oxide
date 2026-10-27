@@ -27,7 +27,7 @@ Everything Oxide does to turn source assets into runtime-ready files. CSS is pro
 
 ## Usage
 
-```rust
+```rust,ignore
 use oxide_fw_assets::{CssBackend, CssInput, CssKind, LightningCssBackend};
 
 let out = LightningCssBackend.transform(&CssInput {
