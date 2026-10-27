@@ -18,30 +18,7 @@
 // system doesn't reject `ox-island` as an unknown intrinsic. Runtime
 // output is identical.
 
-import type { ReactNode } from 'react'
-import { createRequire } from 'node:module'
-
-// `react` is an optional peer. Same lazy-createElement pattern as image.ts;
-// each module owns its own require handle so bundling them together does
-// not collide.
-const requireReactIsland_ = createRequire(import.meta.url)
-type CreateElementFnI = typeof import('react').createElement
-let cachedCreateElementI: CreateElementFnI | undefined
-function resolveCreateElementI(): CreateElementFnI {
-  if (cachedCreateElementI) return cachedCreateElementI
-  cachedCreateElementI = (requireReactIsland_('react') as { createElement: CreateElementFnI }).createElement
-  return cachedCreateElementI
-}
-const createElement: CreateElementFnI = new Proxy(
-  function (..._args: unknown[]): unknown {
-    throw new Error('oxide: react not yet loaded')
-  },
-  {
-    apply(_t, thisArg, args) {
-      return (resolveCreateElementI() as (...a: unknown[]) => unknown).apply(thisArg, args)
-    },
-  },
-) as CreateElementFnI
+import { createElement, type ReactNode } from 'react'
 import { toBase64 } from '../../core/src/bytes.ts'
 import { encodePropsB64 } from '../../core/src/odf-encode.ts'
 

@@ -224,6 +224,178 @@ fn lang_of(path: &Path) -> &'static str {
     }
 }
 
+fn is_esm_statement(t: &str) -> bool {
+    for kw in ["import", "export"] {
+        if t.starts_with(kw) {
+            if let Some(c) = t[kw.len()..].chars().next() {
+                if !c.is_alphanumeric() && c != '_' { return true; }
+            }
+        }
+    }
+    false
+}
+fn looks_like_cjs(source: &str) -> bool {
+    let has_marker = source.contains("module.exports") || source.contains("exports.") || source.contains("exports[");
+    if !has_marker { return false; }
+    for line in source.lines() { if is_esm_statement(line.trim_start()) { return false; } }
+    true
+}
+fn extract_requires(source: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let bytes = source.as_bytes(); let needle = b"require("; let mut i = 0;
+    while i + needle.len() <= bytes.len() {
+        if &bytes[i..i + needle.len()] == needle {
+            let mut j = i + needle.len();
+            while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') { j += 1; }
+            if j < bytes.len() && (bytes[j] == b'"' || bytes[j] == b'\'') {
+                let quote = bytes[j]; let start = j + 1; let mut k = start;
+                while k < bytes.len() && bytes[k] != quote && bytes[k] != b'\n' { k += 1; }
+                if k < bytes.len() && bytes[k] == quote {
+                    let spec = std::str::from_utf8(&bytes[start..k]).unwrap_or("").to_string();
+                    if !spec.is_empty() && !out.contains(&spec) && !spec.starts_with("node:") { out.push(spec); }
+                    i = k + 1; continue;
+                }
+            }
+            i += needle.len();
+        } else { i += 1; }
+    }
+    out
+}
+fn extract_named_exports(source: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let bytes = source.as_bytes(); let mut i = 0;
+    let prefixes: [&[u8]; 2] = [b"exports.", b"module.exports."];
+    while i < bytes.len() {
+        let mut matched = false;
+        for pfx in &prefixes {
+            if i + pfx.len() <= bytes.len() && &bytes[i..i + pfx.len()] == *pfx {
+                if i > 0 {
+                    let prev = bytes[i - 1];
+                    if prev.is_ascii_alphanumeric() || prev == b'_' || prev == b'.' { continue; }
+                }
+                let mut j = i + pfx.len(); let ns = j;
+                while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_' || bytes[j] == b'$') { j += 1; }
+                if j == ns { continue; }
+                let mut k = j;
+                while k < bytes.len() && (bytes[k] == b' ' || bytes[k] == b'\t') { k += 1; }
+                if k < bytes.len() && bytes[k] == b'=' && (k + 1 >= bytes.len() || bytes[k + 1] != b'=') {
+                    let name = std::str::from_utf8(&bytes[ns..j]).unwrap_or("").to_string();
+                    if !name.is_empty() && !out.contains(&name) { out.push(name); }
+                    i = j; matched = true;
+                }
+            }
+        }
+        if !matched { i += 1; }
+    }
+    if let Some(start) = source.find("module.exports") {
+        let after = &source[start + "module.exports".len()..];
+        let after = after.trim_start();
+        if after.starts_with('=') {
+            let after = after[1..].trim_start();
+            if after.starts_with('{') {
+                let end = after[1..].find('}').unwrap_or(0);
+                let inner = &after[1..1+end];
+                for part in inner.split(',') {
+                    let part = part.trim();
+                    if part.is_empty() { continue; }
+                    let key = part.split(':').next().unwrap_or("").trim();
+                    if !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$') && !out.contains(&key.to_string()) {
+                        out.push(key.to_string());
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+fn extract_module_exports_requires(source: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let needle = b"module.exports";
+    let bytes = source.as_bytes(); let mut i = 0;
+    while i + needle.len() <= bytes.len() {
+        if &bytes[i..i + needle.len()] == needle {
+            if i > 0 {
+                let prev = bytes[i - 1];
+                if prev.is_ascii_alphanumeric() || prev == b'_' || prev == b'.' { i += 1; continue; }
+            }
+            let mut j = i + needle.len();
+            while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t' || bytes[j] == b'\n') { j += 1; }
+            if j >= bytes.len() || bytes[j] != b'=' || (j + 1 < bytes.len() && bytes[j + 1] == b'=') { i += 1; continue; }
+            j += 1;
+            while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t' || bytes[j] == b'\n') { j += 1; }
+            if j + 7 > bytes.len() || &bytes[j..j + 7] != b"require" { i += 1; continue; }
+            j += 7;
+            while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') { j += 1; }
+            if j >= bytes.len() || bytes[j] != b'(' { i += 1; continue; }
+            j += 1;
+            while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') { j += 1; }
+            if j >= bytes.len() || (bytes[j] != b'"' && bytes[j] != b'\'') { i += 1; continue; }
+            let quote = bytes[j]; let start = j + 1; let mut k = start;
+            while k < bytes.len() && bytes[k] != quote && bytes[k] != b'\n' { k += 1; }
+            if k < bytes.len() && bytes[k] == quote {
+                let spec = std::str::from_utf8(&bytes[start..k]).unwrap_or("").to_string();
+                if !spec.is_empty() && !out.contains(&spec) { out.push(spec); }
+                i = k + 1; continue;
+            }
+            i = j + 1;
+        } else { i += 1; }
+    }
+    out
+}
+fn resolve_relative(path: &std::path::Path, spec: &str) -> Option<std::path::PathBuf> {
+    if !(spec.starts_with("./") || spec.starts_with("../")) { return None; }
+    let parent = path.parent()?;
+    let joined = parent.join(spec);
+    if joined.is_file() { return Some(joined); }
+    if joined.extension().is_none() {
+        let with_js = joined.with_extension("js");
+        if with_js.is_file() { return Some(with_js); }
+    }
+    None
+}
+fn extract_reexport_names(source: &str, path: &std::path::Path, depth: u32) -> Vec<String> {
+    if depth > 8 { return vec![]; }
+    for spec in extract_module_exports_requires(source) {
+        if let Some(tp) = resolve_relative(path, &spec) {
+            if let Ok(content) = std::fs::read_to_string(&tp) {
+                let names = extract_named_exports(&content);
+                if !names.is_empty() { return names; }
+                let nested = extract_reexport_names(&content, &tp, depth + 1);
+                if !nested.is_empty() { return nested; }
+            }
+        }
+    }
+    vec![]
+}
+fn transform_cjs_to_esm(source: &str, path: &std::path::Path) -> Result<String, deno_error::JsErrorBox> {
+    let requires = extract_requires(source);
+    let mut named = extract_named_exports(source);
+    if named.is_empty() { named = extract_reexport_names(source, path, 0); }
+    let mut import_lines = String::new();
+    let mut require_shim = String::new();
+    for (i, spec) in requires.iter().enumerate() {
+        let local = format!("__cjs_import_{}", i);
+        import_lines.push_str(&format!("import {} from {:?};\n", local, spec));
+        require_shim.push_str(&format!("  if (spec === {:?}) return {};\n", spec, local));
+    }
+    let path_display = path.display();
+    let mut out = String::new();
+    out.push_str(&format!("// @oxide-cjs-interop: transformed ({})\n", path_display));
+    out.push_str(&import_lines);
+    out.push_str("const __cjs_module = { exports: {} };\n");
+    out.push_str("const __cjs_require = (spec) => {\n");
+    out.push_str(&require_shim);
+    out.push_str("  throw new Error(`oxide: CJS require(${spec}) not statically resolvable`);\n");
+    out.push_str("};\n");
+    out.push_str("(function(module, exports, require) {\n");
+    out.push_str(source);
+    out.push_str("\n})(__cjs_module, __cjs_module.exports, __cjs_require);\n");
+    for name in &named {
+        out.push_str(&format!("export const {} = __cjs_module.exports.{};\n", name, name));
+    }
+    out.push_str("export default __cjs_module.exports;\n");
+    Ok(out)
+}
 impl ModuleLoader for TranspileLoader {
     fn resolve(
         &self,
@@ -352,6 +524,8 @@ impl ModuleLoader for TranspileLoader {
                         path.display(), e.0.code, e.0.message
                     ))
                 })?
+            } else if path.extension().and_then(|e| e.to_str()) == Some("js") && looks_like_cjs(&src) {
+                transform_cjs_to_esm(&src, &path)?
             } else {
                 src
             };
