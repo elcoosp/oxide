@@ -339,7 +339,6 @@ export default {
     assert_eq!(collected, "AAABBBCCC");
 }
 
-
 // ---------------------------------------------------------------------------
 // §8.4 — Node worker drift tripwire
 // ---------------------------------------------------------------------------
@@ -437,4 +436,3 @@ async fn resolver_normalizes_lazy_loaders() {
         "no error-page fallback; got:\n{html}"
     );
 }
-
