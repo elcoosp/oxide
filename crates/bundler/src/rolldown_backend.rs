@@ -40,7 +40,9 @@ pub struct RolldownBundler {
 /// `//?/C:/...` by rolldown's error reporting), which rolldown's
 /// internal resolver treats as an unknown URL scheme and rejects with:
 ///
-///     Cannot resolve entry module //?/C:/.../page.tsx
+/// ```text
+/// Cannot resolve entry module //?/C:/.../page.tsx
+/// ```
 ///
 /// The verbatim prefix exists to bypass the 260-char path limit; for
 /// paths under that limit the non-verbatim form is equivalent and
