@@ -128,9 +128,24 @@ impl TranspileLoader {
         // leaves `..` segments that break a raw `join` probe on macOS, where
         // `/var` is a symlink to `/private/var` and a `..`-laden path can point
         // at a different file than its canonical form.
+        //
+        // Parse as a URL, not `strip_prefix("file://")`: on Windows the
+        // referrer is `file:///C:/x/mod.mjs`; a strip leaves `/C:/x/mod.mjs`,
+        // whose `Path::parent()` is `/C:/x` — a directory that does not
+        // exist, so every relative import resolves from the wrong base and
+        // then fails. `to_file_path()` maps the URL to the native
+        // `C:\x\mod.mjs` on every OS.
         let base_raw = referrer
             .strip_prefix("file://")
-            .map(PathBuf::from)
+            .map(|s| {
+                // Prefer the URL-aware conversion; fall back to the raw
+                // suffix only if the URL is malformed (a hand-built
+                // referrer in a test) — then let canonicalize surface it.
+                deno_core::ModuleSpecifier::parse(referrer)
+                    .ok()
+                    .and_then(|u| u.to_file_path().ok())
+                    .unwrap_or_else(|| PathBuf::from(s))
+            })
             .and_then(|p| p.parent().map(Path::to_path_buf))
             .unwrap_or_else(|| self.root.clone());
         let base_dir = strip_verbatim(std::fs::canonicalize(&base_raw).unwrap_or(base_raw));
