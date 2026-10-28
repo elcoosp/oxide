@@ -36,6 +36,7 @@
     "url": "git+https://github.com/elcoosp/oxide.git"
   },
   "scripts": {
+    "postbuild": "node ../../scripts/clean-stray-dts.mjs",
     "build": "tsdown",
     "dev": "tsdown --watch",
     "prepublishOnly": "pnpm build",

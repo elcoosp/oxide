@@ -31,6 +31,7 @@
     }
   },
   "scripts": {
+    "postbuild": "node ../../scripts/clean-stray-dts.mjs",
     "build": "tsdown",
     "dev": "tsdown --watch",
     "prepublishOnly": "pnpm build",

@@ -36,3 +36,14 @@ oxide-launch-content
 
 === STEP 3: add crates/cli/.oxide to .gitignore if not present ===
 crates/cli/.oxide/
+
+# Build artifacts must never land in src/. tsgo, invoked transitively by
+# a downstream tsdown package's dts step, reads the target package's
+# tsconfig for compilation settings and emits declarations next to
+# source if `declaration: true`. tsdown emits to dist/ on its own; the
+# tsconfig flag is vestigial. Belt-and-braces so a stray can never
+# re-enter the index even if a tool re-emits.
+packages/*/src/**/*.d.ts
+packages/*/src/**/*.d.ts.map
+# Hand-written ambient declarations are NOT strays:
+!packages/oxide-website/src/env.d.ts
