@@ -23,8 +23,8 @@
 
 use crate::{CacheHandler, Entry, Result, auth, codec, err};
 use async_trait::async_trait;
-use object_store::path::Path as ObjPath;
-use object_store::{ObjectStore, PutPayload};
+use object_store::{path::Path as ObjPath, GetOptions};
+use object_store::{ObjectStore, PutOptions, PutPayload};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -75,7 +75,7 @@ impl S3CacheHandler {
     }
 
     async fn read_tag_keys(&self, tag: &str) -> Result<Vec<String>> {
-        let got = tokio::time::timeout(L2_OP_TIMEOUT, self.store.get(&Self::tag_path(tag))).await;
+        let got = tokio::time::timeout(L2_OP_TIMEOUT, self.store.get_opts(&Self::tag_path(tag), GetOptions::default())).await;
         let bytes = match got {
             Ok(Ok(r)) => match tokio::time::timeout(L2_OP_TIMEOUT, r.bytes()).await {
                 Ok(Ok(b)) => b,
@@ -87,15 +87,35 @@ impl S3CacheHandler {
     }
 }
 
+impl S3CacheHandler {
+    /// Object-safe single-path delete.
+    ///
+    /// `ObjectStore::delete` returns `impl Future`, which is `!Sized` and so
+    /// can't be called on `Arc<dyn ObjectStore>`. `delete_stream` takes and
+    /// returns a `BoxStream`, which is dyn-safe. Wrap the single path in a
+    /// one-element stream, collect, and discard the per-path results — every
+    /// callsite here is best-effort cleanup and already ignores the error.
+    async fn delete_one(&self, path: ObjPath) -> object_store::Result<()> {
+        use futures::StreamExt;
+        let stream: futures::stream::BoxStream<'static, object_store::Result<ObjPath>> =
+            Box::pin(futures::stream::iter([Ok(path)]));
+        let mut s = self.store.delete_stream(stream);
+        while let Some(r) = s.next().await {
+            r?;
+        }
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl CacheHandler for S3CacheHandler {
     async fn get(&self, key: &str) -> Result<Option<Entry>> {
-        let got = tokio::time::timeout(L2_OP_TIMEOUT, self.store.get(&Self::entry_path(key))).await;
+        let got = tokio::time::timeout(L2_OP_TIMEOUT, self.store.get_opts(&Self::entry_path(key), GetOptions::default())).await;
         let (bytes, meta_len) = match got {
             Ok(Ok(r)) => {
                 // S-06: refuse an oversized object before buffering it.
                 let len = r.meta.size;
-                if len > crate::MAX_ENTRY_BYTES {
+                if len > crate::MAX_ENTRY_BYTES as u64 {
                     tracing::warn!(size = len, "L2 (s3) entry exceeds cap — treated as miss");
                     return Ok(None);
                 }
@@ -135,9 +155,10 @@ impl CacheHandler for S3CacheHandler {
         let payload = auth::seal_entry(&codec::encode_entry(&entry)?);
         let put = tokio::time::timeout(
             L2_OP_TIMEOUT,
-            self.store.put(
+            self.store.put_opts(
                 &Self::entry_path(key),
                 PutPayload::from(bytes::Bytes::from(payload)),
+                PutOptions::default(),
             ),
         )
         .await
@@ -154,8 +175,11 @@ impl CacheHandler for S3CacheHandler {
             let marker = ObjPath::from(format!("{PREFIX_TAGMARK}{tag}/{key}"));
             let _ = tokio::time::timeout(
                 L2_OP_TIMEOUT,
-                self.store
-                    .put(&marker, PutPayload::from(bytes::Bytes::from_static(b"1"))),
+                self.store.put_opts(
+                    &marker,
+                    PutPayload::from(bytes::Bytes::from_static(b"1")),
+                    PutOptions::default(),
+                ),
             )
             .await;
             let mut keys = self.read_tag_keys(tag).await.unwrap_or_default();
@@ -165,9 +189,10 @@ impl CacheHandler for S3CacheHandler {
                     .map_err(|e| err("CACHE-S3", format!("tag encode: {e}")))?;
                 let res = tokio::time::timeout(
                     L2_OP_TIMEOUT,
-                    self.store.put(
+                    self.store.put_opts(
                         &Self::tag_path(tag),
                         PutPayload::from(bytes::Bytes::from(json)),
+                        PutOptions::default(),
                     ),
                 )
                 .await;
@@ -177,10 +202,10 @@ impl CacheHandler for S3CacheHandler {
                     // is not the only way to reclaim it, and surface the error.
                     let _ = tokio::time::timeout(
                         L2_OP_TIMEOUT,
-                        self.store.delete(&Self::entry_path(key)),
+                        self.delete_one(Self::entry_path(key)),
                     )
                     .await;
-                    let _ = tokio::time::timeout(L2_OP_TIMEOUT, self.store.delete(&marker)).await;
+                    let _ = tokio::time::timeout(L2_OP_TIMEOUT, self.delete_one(marker)).await;
                     return Err(err(
                         "CACHE-S3",
                         format!("put tag {tag}: registration failed, entry rolled back"),
@@ -192,7 +217,7 @@ impl CacheHandler for S3CacheHandler {
     }
 
     async fn delete(&self, key: &str) -> Result<()> {
-        let _ = self.store.delete(&Self::entry_path(key)).await;
+        let _ = self.delete_one(Self::entry_path(key)).await;
         Ok(())
     }
 
@@ -231,13 +256,13 @@ impl CacheHandler for S3CacheHandler {
             return Ok(0);
         }
         for key in &keys {
-            let _ = tokio::time::timeout(L2_OP_TIMEOUT, self.store.delete(&Self::entry_path(key)))
-                .await;
+            let _ =
+                tokio::time::timeout(L2_OP_TIMEOUT, self.delete_one(Self::entry_path(key))).await;
             // B-11: drop the marker so the tag can be reused cleanly.
             let marker = ObjPath::from(format!("{PREFIX_TAGMARK}{tag}/{key}"));
-            let _ = tokio::time::timeout(L2_OP_TIMEOUT, self.store.delete(&marker)).await;
+            let _ = tokio::time::timeout(L2_OP_TIMEOUT, self.delete_one(marker)).await;
         }
-        let _ = tokio::time::timeout(L2_OP_TIMEOUT, self.store.delete(&Self::tag_path(tag))).await;
+        let _ = tokio::time::timeout(L2_OP_TIMEOUT, self.delete_one(Self::tag_path(tag))).await;
         Ok(keys.len())
     }
 

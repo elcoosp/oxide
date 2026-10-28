@@ -54,7 +54,7 @@ tokio = { version = "1.52.3", features = ["full"] }
 # §11.2 cache.handler=redis / cache.handler=s3 (optional drivers;
 # feature-gated in oxide-fw-cache so the default build stays lean)
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager", "tokio-rustls-comp"] }
-object_store = { version = "0.11", features = ["aws"] }
+object_store = { version = "0.14", features = ["aws"] }
 hyper = { version = "1.12.0", features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1.21", features = ["tokio", "server", "http1", "http2", "client-legacy"] }
 http-body-util = "0.1.5"
@@ -80,7 +80,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 rkyv = { version = "0.8.18", features = ["unaligned"] }
 redb = "4.3.0"
 blake3 = "1.8.7"
-zstd = "0.14.2"
+zstd = "0.14.3"
 memmap2 = "0.9.11"
 
 # CLI / config
@@ -158,7 +158,7 @@ tiny-skia = { version = "0.12" }
 usvg = { version = "0.48.1" }
 taffy = { version = "0.14.0" }
 parley = { version = "0.11.0" }
-wasmtime = { version = "48.0.1", features = ["component-model", "wat"] }
+wasmtime = { version = "48.0.1", default-features = false, features = ["addr2line", "async", "component-model", "coredump", "cranelift", "debug-builtins", "demangle", "gc", "gc-drc", "gc-null", "parallel-compilation", "pooling-allocator", "runtime", "std", "threads", "wat"] }
 local-ip-address = "0.5.7"
 qrcode = { version = "0.14.1", default-features = false }
 rcgen = { version = "0.14.10", default-features = false, features = ["ring", "pem"] }

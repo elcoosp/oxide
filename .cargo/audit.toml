@@ -1,0 +1,50 @@
+# cargo audit configuration (run via `cargo audit`).
+#
+# Every suppression below is documented with:
+#   1. what the advisory says
+#   2. why it doesn't apply here (reachability)
+#   3. what would unblock the fix (the parent crate bump we're waiting on)
+#
+# Adding a new suppression requires the same three-part rationale. Do not
+# suppress without a reachability analysis.
+
+[advisories]
+# -----------------------------------------------------------------------
+# rkyv 0.7.46 — RUSTSEC-2026-0235
+# "Insufficient archive validation can cause out-of-bounds reads in
+#  archives containing Rc/Arc"
+#
+# Parent that pins 0.7.46: parcel_sourcemap 2.1.1 <- lightningcss
+# 1.0.0-alpha.72. Alpha.72 is the latest published lightningcss; there is
+# no alpha.75+ to bump to. rkyv 0.8 requires a lightningcss major, and
+# lightningcss is still in alpha. This is out of our hands until
+# lightningcss ships a version whose parcel_sourcemap depends on rkyv 0.8.
+#
+# Reachability: oxide's rkyv archives (router route tree, graph artifact
+# envelopes) are built by our own `oxide build` and loaded by our own
+# `oxide start`. Neither path accepts external archive bytes. The attack
+# in RUSTSEC-2026-0235 requires `rkyv::access` on attacker-supplied bytes
+# containing `Rc`/`Arc` — we neither deserialize external archives nor
+# archive any `Rc`/`Arc` type. Not reachable.
+ignore = [
+    "RUSTSEC-2026-0235",  # rkyv 0.7.46, blocked on lightningcss alpha
+    "RUSTSEC-2026-0391",  # zstd 0.13.3, only used by wasmtime-internal-cache (unused)
+    "RUSTSEC-2026-0403",  # zstd-safe 7.3.0, same
+    "RUSTSEC-2026-0398",  # zstd-safe 7.3.0, same
+]
+
+# -----------------------------------------------------------------------
+# Unmaintained crate warnings. These are NOT CVEs — the crates work
+# correctly, they just don't have active maintainers. Each has an
+# upstream that's still publishing, so the transitive graph hasn't
+# dropped them yet.
+#
+#   bincode 1.3.3        <- syntect <- comrak / oxide-fw-assets
+#   paste                <- many crates, universal Rust ecosystem
+#   rustls-pemfile       <- rustls ecosystem, still shipping
+#   yaml-rust            <- transitive; not called directly
+#
+# None fail the build (cargo audit exits 0 with these + the CVE suppressions
+# above). Kept as documentation of the state.
+[output]
+quiet = true
