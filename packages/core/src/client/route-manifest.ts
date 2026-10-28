@@ -58,20 +58,36 @@ export interface RouteComponentSource {
   loadChunk: (chunk: string) => Promise<unknown>
 }
 
-let source: RouteComponentSource | undefined
+interface OxideGlobalSource {
+  __oxide_fw_source__?: RouteComponentSource
+}
+
+function oxideGlobal(): OxideGlobalSource {
+  return globalThis as unknown as OxideGlobalSource
+}
 
 /**
  * Register (or clear, with `undefined`) the manifest + chunk loader the
  * adapters resolve page components from. Called by `bootWithRouter` when the
  * boot entry hands it a manifest; idempotent per boot.
+ *
+ * State lives on `globalThis`, not a module-local binding, because the client
+ * bundler can emit this module more than once in one page: the boot entry and
+ * a framework adapter's chunk reach `route-manifest.ts` through different
+ * relative specifiers, so Rolldown treats them as two module instances. A
+ * module-local binding would be written by the boot copy and read (still
+ * `undefined`) by the adapter copy, leaving every navigation on the IR
+ * fallback — the client-side analogue of the SSR two-React bug. `globalThis`
+ * is per-realm, so every bundle copy shares one slot. In Node/SSR there is a
+ * single instance, so the behaviour is unchanged.
  */
 export function setRouteComponentSource(next: RouteComponentSource | undefined): void {
-  source = next
+  oxideGlobal().__oxide_fw_source__ = next
 }
 
 /** The currently registered source, or `undefined` (IR fallback territory). */
 export function getRouteComponentSource(): RouteComponentSource | undefined {
-  return source
+  return oxideGlobal().__oxide_fw_source__
 }
 
 /**
@@ -243,7 +259,7 @@ function chunkUrl(chunk: string): string {
  * "fall back to the IR renderer".
  */
 export async function componentFor(routeRef: string): Promise<unknown> {
-  const src = source
+  const src = getRouteComponentSource()
   if (!src) return undefined
   // §8.2: layouts (`routes/layout`, no `/page` suffix) live in the manifest
   // under their direct id. `routeIdFor` intentionally only normalizes PAGE
