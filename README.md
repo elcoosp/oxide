@@ -151,7 +151,7 @@ ODF (Oxide Data Format) is the only format that crosses the Rust ↔ TypeScript 
 
 | Suite | Count | How to run |
 | --- | --- | --- |
-| Rust | 1239 | `cargo test --workspace --no-fail-fast` |
+| Rust | 1239 defined (1187 run; 52 `#[ignore]`d for V8/network) | `cargo test --workspace --no-fail-fast` |
 | Framework adapters (Node) | 212 core + 67 react + 55 vue + 55 svelte + 50 solid | `node --test packages/*/test/*.test.ts` |
 | Playwright (real browser, 3 engines) | 26 scenarios × 3 engines | `cd tests/playwright && pnpm exec playwright test` |
 | Benchmarks | deterministic byte counts + wall-clock info | `./benchmarks/run.sh`, gated by `benchmarks/gate.sh` |
