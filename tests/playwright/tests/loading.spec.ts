@@ -62,6 +62,31 @@ test.beforeAll(async ({ browser }) => {
   } finally {
     await warmup.close()
   }
+
+  // ── Manifest serving probe (server-side, from Node) ──────────────────
+  // The boot module fetches '/client/client.manifest.json' and registers the
+  // result as the component source. If that fetch yields a non-JSON body or a
+  // non-200 status, the boot's .catch fires and reboots WITHOUT a manifest —
+  // every adapter.update() then falls back to the IR registry (which has no
+  // 'routes/slow' → NotFoundPage). This probe captures the exact status,
+  // content-type, and body so the next CI run names the cause.
+  try {
+    const r = await fetch('http://127.0.0.1:3103/client/client.manifest.json')
+    console.log('[diag-manifest] server status=' + r.status
+      + ' ct=' + (r.headers.get('content-type') ?? '<none>')
+      + ' cl=' + (r.headers.get('content-length') ?? '<none>'))
+    const text = await r.text()
+    console.log('[diag-manifest] body-length=' + text.length)
+    try {
+      const parsed = JSON.parse(text) as { routes?: Record<string, unknown> }
+      console.log('[diag-manifest] route-count=' + Object.keys(parsed.routes ?? {}).length)
+    } catch (e) {
+      console.log('[diag-manifest] INVALID JSON: ' + (e as Error).message)
+      console.log('[diag-manifest] body-preview=' + JSON.stringify(text.slice(0, 200)))
+    }
+  } catch (e) {
+    console.log('[diag-manifest] Node fetch FAILED: ' + (e as Error).message)
+  }
 })
 
 test.afterAll(() => {
@@ -79,6 +104,20 @@ test('client navigation shows the loading overlay then the real page', async ({ 
     errors.push(`[${m.type()}] ${m.text()}`)
   })
   page.on('pageerror', (e) => errors.push('PAGEERROR: ' + e.message))
+  // Capture every network response for the manifest / data / route chunks —
+  // the browser-side proof of what the boot fetch actually received.
+  page.on('response', (resp) => {
+    const url = resp.url()
+    if (url.includes('client.manifest') || url.includes('/__data') || url.includes('/client/routes/')) {
+      errors.push(`[diag-net] ${resp.status()} ${url.replace('http://127.0.0.1:3103', '')}`)
+    }
+  })
+  page.on('requestfailed', (req) => {
+    const url = req.url()
+    if (url.includes('client.manifest') || url.includes('/__data') || url.includes('/client/routes/')) {
+      errors.push(`[diag-net-FAIL] ${url.replace('http://127.0.0.1:3103', '')} ${req.failure()?.errorText ?? '?'}`)
+    }
+  })
 
   // Hold the /__data response for 800ms so the loading overlay is
   // observably on-screen for that window. The route's own 250ms delay is
