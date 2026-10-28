@@ -169,13 +169,14 @@ pub struct BundleOptions {
 /// `(path, source, is_module, minify)` and returns the transformed CSS plus
 /// any CSS-modules class-name map. Mirrors `TransformHook`; the newtype
 /// exists because `BundleOptions` derives `Debug`.
+/// The callback type `CssTransformHook` wraps. Named so the closure
+/// signature lives in one place; previously it was inlined in the struct
+/// field, forcing a `#[allow(clippy::type_complexity)]` that hid the shape.
+pub type CssTransformFn =
+    dyn Fn(&str, &str, bool, bool) -> Result<(String, BTreeMap<String, String>)> + Send + Sync;
+
 #[derive(Clone)]
-pub struct CssTransformHook(
-    #[allow(clippy::type_complexity)]
-    pub  std::sync::Arc<
-        dyn Fn(&str, &str, bool, bool) -> Result<(String, BTreeMap<String, String>)> + Send + Sync,
-    >,
-);
+pub struct CssTransformHook(pub std::sync::Arc<CssTransformFn>);
 
 impl CssTransformHook {
     pub fn new<F>(f: F) -> Self
@@ -210,11 +211,11 @@ impl std::fmt::Debug for CssTransformHook {
 /// `Debug` for diagnostics; a bare `Arc<dyn Fn…>` cannot, and the
 /// newtype's `Debug` prints only that a hook is present (never its
 /// internals, which are a loaded WASM component in the CLI's case).
+/// The callback type `TransformHook` wraps (see `CssTransformFn`).
+pub type TransformFn = dyn Fn(&str, &str) -> Result<String> + Send + Sync;
+
 #[derive(Clone)]
-pub struct TransformHook(
-    #[allow(clippy::type_complexity)]
-    pub  std::sync::Arc<dyn Fn(&str, &str) -> Result<String> + Send + Sync>,
-);
+pub struct TransformHook(pub std::sync::Arc<TransformFn>);
 
 impl TransformHook {
     /// Wrap a closure so `BundleOptions` can hold it.
@@ -239,10 +240,10 @@ impl TransformHook {
 /// plugin's `resolveId` in declaration order; the FIRST `Some(_)` wins
 /// (Vite convention — a plugin that resolves wins over later plugins and
 /// over the default).
-pub struct ResolveHook(
-    #[allow(clippy::type_complexity)]
-    pub  std::sync::Arc<dyn Fn(&str, &str) -> Result<Option<PathBuf>> + Send + Sync>,
-);
+/// The callback type `ResolveHook` wraps (see `CssTransformFn`).
+pub type ResolveFn = dyn Fn(&str, &str) -> Result<Option<PathBuf>> + Send + Sync;
+
+pub struct ResolveHook(pub std::sync::Arc<ResolveFn>);
 
 impl ResolveHook {
     pub fn new<F>(f: F) -> Self
@@ -263,10 +264,10 @@ impl ResolveHook {
 /// disk read (a virtual module), or `None` to let the bundler read the file.
 /// The FIRST `Some(_)` wins across the chain; a plugin that returns `None`
 /// passes to the next plugin and then to disk.
-pub struct LoadHook(
-    #[allow(clippy::type_complexity)]
-    pub  std::sync::Arc<dyn Fn(&str) -> Result<Option<String>> + Send + Sync>,
-);
+/// The callback type `LoadHook` wraps (see `CssTransformFn`).
+pub type LoadFn = dyn Fn(&str) -> Result<Option<String>> + Send + Sync;
+
+pub struct LoadHook(pub std::sync::Arc<LoadFn>);
 
 impl LoadHook {
     pub fn new<F>(f: F) -> Self
@@ -316,10 +317,10 @@ impl std::fmt::Debug for TransformHook {
 /// chunk file, receives `(file_name, source)`, returns the rewritten
 /// source. A `None` return leaves the file untouched. Multiple plugins
 /// chain in declaration order (the CLI composes them).
-pub struct RenderChunkHook(
-    #[allow(clippy::type_complexity)]
-    pub  std::sync::Arc<dyn Fn(&str, &str) -> Result<Option<String>> + Send + Sync>,
-);
+/// The callback type `RenderChunkHook` wraps (see `CssTransformFn`).
+pub type RenderChunkFn = dyn Fn(&str, &str) -> Result<Option<String>> + Send + Sync;
+
+pub struct RenderChunkHook(pub std::sync::Arc<RenderChunkFn>);
 
 impl RenderChunkHook {
     pub fn new<F>(f: F) -> Self
@@ -349,10 +350,10 @@ impl std::fmt::Debug for RenderChunkHook {
 /// is written, receives the list of emitted files (relative paths) and
 /// returns the full list to report (a plugin may drop or add files). `None`
 /// leaves the list untouched.
-pub struct GenerateBundleHook(
-    #[allow(clippy::type_complexity)]
-    pub  std::sync::Arc<dyn Fn(&[String]) -> Result<Option<Vec<String>>> + Send + Sync>,
-);
+/// The callback type `GenerateBundleHook` wraps (see `CssTransformFn`).
+pub type GenerateBundleFn = dyn Fn(&[String]) -> Result<Option<Vec<String>>> + Send + Sync;
+
+pub struct GenerateBundleHook(pub std::sync::Arc<GenerateBundleFn>);
 
 impl GenerateBundleHook {
     pub fn new<F>(f: F) -> Self
@@ -381,10 +382,10 @@ impl std::fmt::Debug for GenerateBundleHook {
 /// SPEC-15.2: a plugin's `transformHtml` hook. Runs on every HTML document
 /// the build finalizes (prerender). `(route_id, html)` in, rewritten HTML
 /// out. A `None` return leaves the document untouched.
-pub struct TransformHtmlHook(
-    #[allow(clippy::type_complexity)]
-    pub  std::sync::Arc<dyn Fn(&str, &str) -> Result<Option<String>> + Send + Sync>,
-);
+/// The callback type `TransformHtmlHook` wraps (see `CssTransformFn`).
+pub type TransformHtmlFn = dyn Fn(&str, &str) -> Result<Option<String>> + Send + Sync;
+
+pub struct TransformHtmlHook(pub std::sync::Arc<TransformHtmlFn>);
 
 impl TransformHtmlHook {
     pub fn new<F>(f: F) -> Self
