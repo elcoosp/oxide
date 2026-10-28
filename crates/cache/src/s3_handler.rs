@@ -23,7 +23,7 @@
 
 use crate::{CacheHandler, Entry, Result, auth, codec, err};
 use async_trait::async_trait;
-use object_store::{path::Path as ObjPath, GetOptions};
+use object_store::{GetOptions, path::Path as ObjPath};
 use object_store::{ObjectStore, PutOptions, PutPayload};
 use std::sync::Arc;
 use std::time::Duration;
@@ -75,7 +75,12 @@ impl S3CacheHandler {
     }
 
     async fn read_tag_keys(&self, tag: &str) -> Result<Vec<String>> {
-        let got = tokio::time::timeout(L2_OP_TIMEOUT, self.store.get_opts(&Self::tag_path(tag), GetOptions::default())).await;
+        let got = tokio::time::timeout(
+            L2_OP_TIMEOUT,
+            self.store
+                .get_opts(&Self::tag_path(tag), GetOptions::default()),
+        )
+        .await;
         let bytes = match got {
             Ok(Ok(r)) => match tokio::time::timeout(L2_OP_TIMEOUT, r.bytes()).await {
                 Ok(Ok(b)) => b,
@@ -110,7 +115,12 @@ impl S3CacheHandler {
 #[async_trait]
 impl CacheHandler for S3CacheHandler {
     async fn get(&self, key: &str) -> Result<Option<Entry>> {
-        let got = tokio::time::timeout(L2_OP_TIMEOUT, self.store.get_opts(&Self::entry_path(key), GetOptions::default())).await;
+        let got = tokio::time::timeout(
+            L2_OP_TIMEOUT,
+            self.store
+                .get_opts(&Self::entry_path(key), GetOptions::default()),
+        )
+        .await;
         let (bytes, meta_len) = match got {
             Ok(Ok(r)) => {
                 // S-06: refuse an oversized object before buffering it.
@@ -200,11 +210,9 @@ impl CacheHandler for S3CacheHandler {
                     // B-20: the entry is written but its tag registration
                     // failed — remove the orphan so a later `invalidate_tag`
                     // is not the only way to reclaim it, and surface the error.
-                    let _ = tokio::time::timeout(
-                        L2_OP_TIMEOUT,
-                        self.delete_one(Self::entry_path(key)),
-                    )
-                    .await;
+                    let _ =
+                        tokio::time::timeout(L2_OP_TIMEOUT, self.delete_one(Self::entry_path(key)))
+                            .await;
                     let _ = tokio::time::timeout(L2_OP_TIMEOUT, self.delete_one(marker)).await;
                     return Err(err(
                         "CACHE-S3",
