@@ -3403,6 +3403,14 @@ impl Pool for NodePool {
             worker.pending.lock().unwrap().remove(&id);
             worker.in_flight.fetch_sub(1, Ordering::Relaxed);
             self.counters.failed.fetch_add(1, Ordering::Relaxed);
+            // §4.3: a failed stdin write means the worker is gone (EPIPE /
+            // broken pipe on Windows when `process.exit(1)` closes the pipe
+            // before the reader's EOF path observes it). Transition `dead`
+            // and count the crash HERE — but only if we are the one
+            // transitioning; if the reader already bumped `crashed`, we skip.
+            if !worker.dead.swap(true, Ordering::AcqRel) {
+                self.counters.crashed.fetch_add(1, Ordering::SeqCst);
+            }
             return Err(err(
                 "JSH-CRASH",
                 format!("write to worker failed: {e} (§4.3 failure isolation)"),
@@ -3648,7 +3656,14 @@ fn spawn_reader(
             let (msgs, consumed) = match unframe(&buf) {
                 Ok(x) => x,
                 Err(e) => {
-                    worker.dead.store(true, Ordering::Relaxed);
+                    // Protocol error → worker is unusable. Same ordering rule
+                    // as the EOF path: transition `dead` (and count the crash
+                    // if we are the transitioner) before failing pending
+                    // calls, so a `stats()` on the unblocked thread sees the
+                    // updated counter.
+                    if !worker.dead.swap(true, Ordering::AcqRel) {
+                        counters.crashed.fetch_add(1, Ordering::SeqCst);
+                    }
                     let code = e.0.code.clone();
                     let message = e.0.message.clone();
                     fail_all(&worker, code, message);
@@ -3661,14 +3676,28 @@ fn spawn_reader(
             }
             match stdout.read(&mut chunk).await {
                 Ok(0) | Err(_) => {
-                    worker.dead.store(true, Ordering::Relaxed);
+                    // §4.3 failure isolation. Order matters: bump `crashed`
+                    // BEFORE `fail_all` unblocks the caller's oneshot.
+                    // `fail_all` sends the JSH-CRASH error to every pending
+                    // call; the caller's `rx.await` then returns and the
+                    // test / caller may call `stats()` immediately. If
+                    // `crashed.fetch_add` runs after `fail_all` there is a
+                    // window (observed on Windows, where the reader task is
+                    // preempted between the two) in which `stats()` reports
+                    // `crashed == 0` even though the failure-isolation signal
+                    // has already fired. The CAS on `worker.dead` also makes
+                    // the write-fail path below (`call` -> EPIPE) cooperate:
+                    // whichever detects the crash first is the one that
+                    // counts it, and the other silently skips.
+                    if !worker.dead.swap(true, Ordering::AcqRel) {
+                        counters.crashed.fetch_add(1, Ordering::SeqCst);
+                    }
                     fail_all(
                         &worker,
                         "JSH-CRASH".to_string(),
                         "worker process exited before responding (§4.3 failure isolation)"
                             .to_string(),
                     );
-                    counters.crashed.fetch_add(1, Ordering::Relaxed);
                     return;
                 }
                 Ok(n) => buf.extend_from_slice(&chunk[..n]),
@@ -4430,7 +4459,6 @@ mod p0_2_overflow_tests {
         let out = stream.collect().await.expect("under cap");
         assert_eq!(&out[..], b"hellohellohello");
     }
-
     #[cfg(test)]
     mod path_url_tests {
         use super::path_to_file_url;
