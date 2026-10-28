@@ -496,7 +496,7 @@ mod tests {
         // stored_at`, and `is_fresh` is `now <= stored_at` (the cache crate
         // pins this boundary), so a same-millisecond read is still fresh —
         // the test stores an entry that is unambiguously in the past.
-        use oxide_fw_cache::{CacheHandler as _, Entry, Policy};
+        use oxide_fw_cache::{Entry, Policy};
         let tier = Arc::new(TieredCache::new(1 << 20));
         let c = L0Cache::new(tier.clone(), "build-x", Duration::from_secs(60));
         let key = {
@@ -554,7 +554,7 @@ mod tests {
     /// a *stale* hit; past the window it is a miss.
     #[tokio::test]
     async fn swr_window_serves_stale_then_expires() {
-        use oxide_fw_cache::{CacheHandler as _, CacheKey, Entry, Layer, Policy};
+        use oxide_fw_cache::{CacheKey, Entry, Layer, Policy};
         let tier = Arc::new(TieredCache::new(1 << 20));
         let c = L0Cache::new(tier.clone(), "b", Duration::from_secs(1));
         let key = CacheKey {

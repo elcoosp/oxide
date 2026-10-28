@@ -3576,9 +3576,9 @@ impl oxide_fw_server::MiddlewareDispatcher for ScriptedMiddleware {
             method: _,
             url: _,
             params: _,
-            headers,
-            body,
-            locals,
+            headers: _,
+            body: _,
+            locals: _,
         } = args;
 
         Ok(oxide_fw_server::MiddlewareRunResult {
@@ -3686,7 +3686,7 @@ impl oxide_fw_server::MiddlewareDispatcher for RewriteOnceMiddleware {
             method: _,
             url: _,
             params: _,
-            headers,
+            headers: _,
             body: _,
             locals: _,
         } = args;
@@ -3774,7 +3774,7 @@ impl oxide_fw_server::MiddlewareDispatcher for LayerMiddleware {
             method: _,
             url: _,
             params: _,
-            headers,
+            headers: _,
             body: _,
             locals: _,
         } = args;
@@ -4493,8 +4493,8 @@ impl oxide_fw_server::MiddlewareDispatcher for ChainProbeMiddleware {
             method: _,
             url: _,
             params: _,
-            headers,
-            body,
+            headers: _,
+            body: _,
             locals,
         } = args;
 
@@ -8620,7 +8620,7 @@ async fn action_set_cookie_survives_200_rerender() {
                 params: _,
                 url: _,
                 method: _,
-                headers,
+                headers: _,
                 locals: _,
                 trace: _,
             } = args;

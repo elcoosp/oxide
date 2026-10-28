@@ -9,7 +9,7 @@
 //! Ignored by default (boots a V8 isolate) and requires a prior
 //! `oxide build examples/smoke-app-react`. Run with `--ignored`.
 
-use oxide_fw_jshost::{CallInput, EntryRef, JsHost, Pool, PoolConfig, V8Host};
+use oxide_fw_jshost::{CallInput, EntryRef, JsHost, PoolConfig, V8Host};
 
 fn built_route() -> Option<std::path::PathBuf> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
