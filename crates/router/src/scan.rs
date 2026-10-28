@@ -591,19 +591,35 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         put(root, "blog/[slug]/page.tsx", "p");
-        put(root, "digits/[n]{\\d+}/page.tsx", "p");
-        put(root, "legacy/[id=\\d+]/page.tsx", "p");
+        // Windows-portable regex fixtures: `\d` in a FIXTURE PATH is a path
+        // separator on Windows (Rust's `Path` accepts both `/` and `\` as
+        // separators on that platform), so `digits/[n]{\d+}/page.tsx` became
+        // three directories — `digits`, `[n]{`, `d+}` — and the scan never
+        // saw a `[param]` segment at all. The test's contract is "scan
+        // accepts `[param]{regex}` forms", not "handles the specific regex
+        // `\d`"; `[0-9]` exercises the same parser branch without the
+        // separator collision, so the test asserts its intended behaviour
+        // on every OS.
+        // `x+` instead of `\\d+`: a backslash in a fixture PATH is a path
+        // separator on Windows (Rust's `Path` accepts both on that platform),
+        // and a character class `[0-9]` collides with the scanner's own `[`
+        // token. `x+` is a valid regex that exercises the exact same parse
+        // branch (`[param]{regex}` and `[param=regex]`) with no separator or
+        // bracket ambiguity — the test's contract is "scan accepts these
+        // param-directory shapes", not "matches digits".
+        put(root, "digits/[n]{x+}/page.tsx", "p");
+        put(root, "legacy/[id=x+]/page.tsx", "p");
         put(root, "docs/[...rest]/page.tsx", "p");
         put(root, "[[...path]]/page.tsx", "p");
         let tree = RouteTree::scan(root).unwrap();
         assert_eq!(segs_of(&tree, "routes/blog/[slug]/page"), ["blog", ":slug"]);
         assert_eq!(
-            segs_of(&tree, "routes/digits/[n]{\\d+}/page"),
-            ["digits", ":n{\\d+}"]
+            segs_of(&tree, "routes/digits/[n]{x+}/page"),
+            ["digits", ":n{x+}"]
         );
         assert_eq!(
-            segs_of(&tree, "routes/legacy/[id=\\d+]/page"),
-            ["legacy", ":id{\\d+}"],
+            segs_of(&tree, "routes/legacy/[id=x+]/page"),
+            ["legacy", ":id{x+}"],
             "`=` form normalizes to `{{}}`"
         );
         assert_eq!(

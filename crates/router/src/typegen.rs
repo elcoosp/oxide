@@ -348,13 +348,17 @@ mod tests {
             entry("routes/api/route", RouteKind::Endpoint, &["api"]),
         ]);
         let dts_path = t.typegen(tmp.path()).unwrap();
-        assert_eq!(
-            dts_path,
-            tmp.path()
-                .join(".oxide/types/routes.d.ts")
-                .display()
-                .to_string()
-        );
+        // Build the expected path the same way the implementation builds
+        // `dts_path` (`.oxide` -> `types` -> `routes.d.ts`, one `.join` per
+        // component). A single `.join(".oxide/types/routes.d.ts")` call
+        // embeds the forward slashes in one path segment, which on Windows
+        // ends up in `display()` as mixed `.oxide/types\routes.d.ts` — the
+        // implementation's per-component joins produce uniform backslashes.
+        // Path *equality* is separator-insensitive, but string comparison
+        // (what the assertion does) is not, so build the reference the same
+        // way as the code and the assertion holds on every OS.
+        let expected = tmp.path().join(".oxide").join("types").join("routes.d.ts");
+        assert_eq!(dts_path, expected.display().to_string());
         let dts = fs::read_to_string(&dts_path).unwrap();
         assert!(dts.contains("export type OxideRoutes"));
         assert!(
