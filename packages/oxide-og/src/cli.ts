@@ -82,7 +82,7 @@ Options:
   const sizes: SizeKey[] =
     values.sizes === "all"
       ? ["og", "github"]
-      : (values.sizes.split(",").map((s) => s.trim()) as SizeKey[]);
+      : (values.sizes.split(",").map((s: string) => s.trim()) as SizeKey[]);
   for (const s of sizes) {
     if (!(s in SIZE_PRESETS)) throw new Error(`Unknown size "${s}" (expected og | github | all)`);
   }
