@@ -530,14 +530,8 @@ mod spec04_tests {
 #[cfg(test)]
 fn block_on<F: std::future::Future>(fut: F) -> F::Output {
     use std::pin::pin;
-    use std::sync::Arc;
-    use std::task::{Context, Poll, Wake, Waker};
-    struct NoopWake;
-    impl Wake for NoopWake {
-        fn wake(self: Arc<Self>) {}
-    }
-    let waker = Waker::from(Arc::new(NoopWake));
-    let mut cx = Context::from_waker(&waker);
+    use std::task::{Context, Poll, Waker};
+    let mut cx = Context::from_waker(Waker::noop());
     let mut fut = pin!(fut);
     loop {
         match fut.as_mut().poll(&mut cx) {

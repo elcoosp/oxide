@@ -50,6 +50,23 @@ pub struct L0Cache {
     ttl: Duration,
 }
 
+/// One `L0Cache::put` call: the response body, its metadata, and the tags
+/// to invalidate on.
+///
+/// Bundled as a struct so the seven positional arguments become named
+/// fields at every call site. Test-only (the `L0Cache` write path in
+/// production goes through the pipeline's cache tiers, not this method).
+#[cfg(test)]
+pub struct L0Put<'a> {
+    pub route: &'a str,
+    pub params: &'a str,
+    pub vary: &'a str,
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+    pub tags: Vec<String>,
+}
+
 impl L0Cache {
     pub fn new(handler: Arc<dyn CacheHandler>, build_id: impl Into<String>, ttl: Duration) -> Self {
         Self {
@@ -86,19 +103,16 @@ impl L0Cache {
 
     /// Store a response. The caller passes the body with [`NONCE_SENTINEL`] in
     /// place of the live nonce, and a header set without the CSP header.
+    ///
+    /// The argument set is bundled into [`L0Put`] so the call site reads as a
+    /// named shape rather than seven positional values — clippy's
+    /// `too_many_arguments` lint fires at 8; the struct makes the contract
+    /// visible at every call site and prevents argument-order mistakes
+    /// (`status` vs `tags` both being small integers-ish).
     #[cfg(test)]
-    pub async fn put(
-        &self,
-        route: &str,
-        params: &str,
-        vary: &str,
-        status: u16,
-        headers: Vec<(String, String)>,
-        body: Vec<u8>,
-        tags: Vec<String>,
-    ) {
-        let key = self.key(route, params, vary);
-        let entry = self.make_entry(status, headers, body, tags);
+    pub async fn put(&self, req: L0Put<'_>) {
+        let key = self.key(req.route, req.params, req.vary);
+        let entry = self.make_entry(req.status, req.headers, req.body, req.tags);
         let _ = self.handler.set(&key, entry).await;
     }
 
@@ -345,15 +359,15 @@ mod tests {
     #[tokio::test]
     async fn put_then_get_roundtrips() {
         let c = cache(60);
-        c.put(
-            "routes/index",
-            "{}",
-            "lang=",
-            200,
-            vec![("content-type".into(), "text/html".into())],
-            b"<html>body</html>".to_vec(),
-            vec![],
-        )
+        c.put(L0Put {
+            route: "routes/index",
+            params: "{}",
+            vary: "lang=",
+            status: 200,
+            headers: vec![("content-type".into(), "text/html".into())],
+            body: b"<html>body</html>".to_vec(),
+            tags: vec![],
+        })
         .await;
         let got = c.get("routes/index", "{}", "lang=").await.expect("hit");
         assert_eq!(got.status(), 200);
@@ -370,25 +384,25 @@ mod tests {
     #[tokio::test]
     async fn different_params_are_different_entries() {
         let c = cache(60);
-        c.put(
-            "routes/blog/[slug]",
-            "{\"slug\":\"a\"}",
-            "lang=",
-            200,
-            vec![],
-            b"A".to_vec(),
-            vec![],
-        )
+        c.put(L0Put {
+            route: "routes/blog/[slug]",
+            params: "{\"slug\":\"a\"}",
+            vary: "lang=",
+            status: 200,
+            headers: vec![],
+            body: b"A".to_vec(),
+            tags: vec![],
+        })
         .await;
-        c.put(
-            "routes/blog/[slug]",
-            "{\"slug\":\"b\"}",
-            "lang=",
-            200,
-            vec![],
-            b"B".to_vec(),
-            vec![],
-        )
+        c.put(L0Put {
+            route: "routes/blog/[slug]",
+            params: "{\"slug\":\"b\"}",
+            vary: "lang=",
+            status: 200,
+            headers: vec![],
+            body: b"B".to_vec(),
+            tags: vec![],
+        })
         .await;
         assert_eq!(
             c.get("routes/blog/[slug]", "{\"slug\":\"a\"}", "lang=")
@@ -411,21 +425,21 @@ mod tests {
     #[tokio::test]
     async fn csp_header_is_never_stored() {
         let c = cache(60);
-        c.put(
-            "r",
-            "",
-            "",
-            200,
-            vec![
+        c.put(L0Put {
+            route: "r",
+            params: "",
+            vary: "",
+            status: 200,
+            headers: vec![
                 ("content-type".into(), "text/html".into()),
                 (
                     "content-security-policy".into(),
                     "script-src nonce-XYZ".into(),
                 ),
             ],
-            b"x".to_vec(),
-            vec![],
-        )
+            body: b"x".to_vec(),
+            tags: vec![],
+        })
         .await;
         let got = c.get("r", "", "").await.unwrap();
         assert!(
@@ -440,8 +454,16 @@ mod tests {
     async fn nonce_sentinel_is_substituted_on_materialize() {
         let c = cache(60);
         let body = format!("<script nonce=\"{NONCE_SENTINEL}\">x</script>");
-        c.put("r", "", "", 200, vec![], body.clone().into_bytes(), vec![])
-            .await;
+        c.put(L0Put {
+            route: "r",
+            params: "",
+            vary: "",
+            status: 200,
+            headers: vec![],
+            body: body.clone().into_bytes(),
+            tags: vec![],
+        })
+        .await;
         let got = c.get("r", "", "").await.unwrap();
         assert!(got.has_sentinel());
         let served = String::from_utf8(got.materialize("REALNONCE").to_vec()).unwrap();
@@ -545,7 +567,16 @@ mod tests {
         let tier: Arc<dyn CacheHandler> = Arc::new(TieredCache::new(1 << 20));
         let a = L0Cache::new(Arc::clone(&tier), "build-A", Duration::from_secs(60));
         let b = L0Cache::new(Arc::clone(&tier), "build-B", Duration::from_secs(60));
-        a.put("r", "", "", 200, vec![], b"A".to_vec(), vec![]).await;
+        a.put(L0Put {
+            route: "r",
+            params: "",
+            vary: "",
+            status: 200,
+            headers: vec![],
+            body: b"A".to_vec(),
+            tags: vec![],
+        })
+        .await;
         // A different build id must not see build-A's entry.
         assert!(b.get("r", "", "").await.is_none());
     }
@@ -621,8 +652,16 @@ mod tests {
     #[tokio::test]
     async fn fresh_hit_exposes_etag() {
         let c = cache(60);
-        c.put("r", "", "", 200, vec![], b"BODY".to_vec(), vec![])
-            .await;
+        c.put(L0Put {
+            route: "r",
+            params: "",
+            vary: "",
+            status: 200,
+            headers: vec![],
+            body: b"BODY".to_vec(),
+            tags: vec![],
+        })
+        .await;
         let hit = c.get("r", "", "").await.unwrap();
         assert!(!hit.etag().is_empty(), "etag present");
         assert!(!hit.stale, "fresh");
@@ -697,15 +736,15 @@ mod tests {
     #[tokio::test]
     async fn invalidate_path_removes_a_path_tagged_entry() {
         let c = cache(60);
-        c.put(
-            "routes/index",
-            "",
-            "",
-            200,
-            vec![],
-            b"HOME".to_vec(),
-            vec!["routes/index".into(), "path:/".into()],
-        )
+        c.put(L0Put {
+            route: "routes/index",
+            params: "",
+            vary: "",
+            status: 200,
+            headers: vec![],
+            body: b"HOME".to_vec(),
+            tags: vec!["routes/index".into(), "path:/".into()],
+        })
         .await;
         assert!(c.get("routes/index", "", "").await.is_some(), "cached");
 
@@ -723,15 +762,15 @@ mod tests {
     #[tokio::test]
     async fn invalidate_tag_removes_a_route_tagged_entry() {
         let c = cache(60);
-        c.put(
-            "routes/index",
-            "",
-            "",
-            200,
-            vec![],
-            b"HOME".to_vec(),
-            vec!["routes/index".into(), "path:/".into()],
-        )
+        c.put(L0Put {
+            route: "routes/index",
+            params: "",
+            vary: "",
+            status: 200,
+            headers: vec![],
+            body: b"HOME".to_vec(),
+            tags: vec!["routes/index".into(), "path:/".into()],
+        })
         .await;
         let n = c.invalidate_tag("routes/index", true).await;
         assert!(
@@ -784,15 +823,15 @@ mod tests {
         // event then matched nothing. This pins that an entry *without* the
         // path tag is not swept by an unrelated invalidate_path.
         let c = cache(60);
-        c.put(
-            "routes/index",
-            "",
-            "",
-            200,
-            vec![],
-            b"H".to_vec(),
-            vec!["routes/index".into()],
-        )
+        c.put(L0Put {
+            route: "routes/index",
+            params: "",
+            vary: "",
+            status: 200,
+            headers: vec![],
+            body: b"H".to_vec(),
+            tags: vec!["routes/index".into()],
+        })
         .await;
         let _ = c.invalidate_path("/other", true).await;
         assert!(

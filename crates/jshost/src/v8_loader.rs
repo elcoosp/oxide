@@ -562,11 +562,11 @@ fn extract_named_exports(source: &str) -> Vec<String> {
     if let Some(start) = source.find("module.exports") {
         let after = &source[start + "module.exports".len()..];
         let after = after.trim_start();
-        if after.starts_with('=') {
-            let after = after[1..].trim_start();
-            if after.starts_with('{') {
-                let end = after[1..].find('}').unwrap_or(0);
-                let inner = &after[1..1 + end];
+        if let Some(rest) = after.strip_prefix('=') {
+            let after = rest.trim_start();
+            if let Some(after) = after.strip_prefix('{') {
+                let end = after.find('}').unwrap_or(0);
+                let inner = &after[..end];
                 for part in inner.split(',') {
                     let part = part.trim();
                     if part.is_empty() {

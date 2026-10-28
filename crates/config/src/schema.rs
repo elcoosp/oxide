@@ -480,7 +480,7 @@ mod tests {
                         }
                     }
                     // Detect `"key":` by lookahead for a colon after whitespace.
-                    let mut la = chars.clone();
+                    let la = chars.clone();
                     let mut is_key = false;
                     for (_, c3) in la {
                         if c3.is_whitespace() {

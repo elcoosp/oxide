@@ -6904,10 +6904,17 @@ impl SwappableRouteTree {
     }
 }
 
+/// Optional dispatch knobs for [`build_dispatch`]. Fields default to
+/// `None` / empty / false; callers override only what the test needs.
+///
+/// Bundled to keep `build_dispatch` at three positional arguments (the two
+/// required construction handles plus the options) — a `too_many_arguments`
+/// lint fires at 8, and the previous 19-argument form forced every test
+/// call site to pass `None, None, false, Vec::new(), None, None` eight
+/// times, hiding the two or three values the test actually varied.
 #[cfg(test)]
-fn build_dispatch(
-    tree: std::sync::Arc<oxide_fw_router::RouteTree>,
-    metrics: std::sync::Arc<oxide_fw_server::Metrics>,
+#[derive(Default)]
+struct DispatchOpts {
     proxy_rules: Vec<oxide_fw_dev::ProxyRule>,
     page_renderer: Option<std::sync::Arc<dyn oxide_fw_server::PageRenderer>>,
     loader_runner: Option<std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
@@ -6925,27 +6932,34 @@ fn build_dispatch(
     waterfall: Option<oxide_fw_dev::WaterfallRecorder>,
     session_codec: Option<std::sync::Arc<oxide_fw_server::SessionCodec>>,
     ppr_shells: Option<PprShells>,
+}
+
+#[cfg(test)]
+fn build_dispatch(
+    tree: std::sync::Arc<oxide_fw_router::RouteTree>,
+    metrics: std::sync::Arc<oxide_fw_server::Metrics>,
+    opts: DispatchOpts,
 ) -> std::sync::Arc<dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync> {
     build_dispatch_swappable(DispatchArgs {
         swappable: SwappableRouteTree::new(tree),
         metrics,
-        proxy_rules,
-        page_renderer,
-        loader_runner,
-        routes_root,
-        boot_script_url,
-        l0,
-        actions,
-        archived,
-        pool,
-        i18n_cfg,
-        endpoint_dispatcher,
-        middleware_dispatcher,
-        dev_hmr,
-        vary_headers,
-        waterfall,
-        session_codec,
-        ppr_shells,
+        proxy_rules: opts.proxy_rules,
+        page_renderer: opts.page_renderer,
+        loader_runner: opts.loader_runner,
+        routes_root: opts.routes_root,
+        boot_script_url: opts.boot_script_url,
+        l0: opts.l0,
+        actions: opts.actions,
+        archived: opts.archived,
+        pool: opts.pool,
+        i18n_cfg: opts.i18n_cfg,
+        endpoint_dispatcher: opts.endpoint_dispatcher,
+        middleware_dispatcher: opts.middleware_dispatcher,
+        dev_hmr: opts.dev_hmr,
+        vary_headers: opts.vary_headers,
+        waterfall: opts.waterfall,
+        session_codec: opts.session_codec,
+        ppr_shells: opts.ppr_shells,
     })
 }
 

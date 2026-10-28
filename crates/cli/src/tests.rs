@@ -74,7 +74,7 @@ fn fixture_project() -> (tempfile::TempDir, PathBuf) {
 
 /// Write `oxide.config.json`, always carrying a valid `framework.adapter` (required
 /// by config validation) so the fixture behaves like a real project.
-fn write_config(root: &PathBuf, json: &str) {
+fn write_config(root: &std::path::Path, json: &str) {
     let mut v: serde_json::Value = serde_json::from_str(json).unwrap();
     v["framework"]["adapter"] = serde_json::json!("react");
     std::fs::write(
@@ -92,7 +92,7 @@ fn manifest_fixture(routes: serde_json::Value) -> String {
 
 /// SPEC-19.1 / §19-B: process-global env-var tests take this lock so
 /// they don't race each other (nextest runs tests in parallel by default).
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[tokio::test]
 #[ignore]
@@ -303,23 +303,11 @@ async fn ppr_serves_cached_shell_and_streams_holes() {
     let dispatch = build_dispatch(
         tree,
         metrics,
-        Vec::new(),
-        renderer,
-        None,
-        std::path::PathBuf::new(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None, // no waterfall recorder in tests
-        None, // no session codec in tests
-        Some(shells),
+        DispatchOpts {
+            page_renderer: renderer,
+            ppr_shells: Some(shells),
+            ..Default::default()
+        },
     );
 
     // First request: full streamed document (tap mode); the shell is stored.
@@ -446,23 +434,10 @@ async fn dispatch_routes_through_page_renderer_when_attached() {
     let dispatch = build_dispatch(
         tree,
         metrics,
-        Vec::new(),
-        renderer,
-        None,
-        std::path::PathBuf::new(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None, // no waterfall recorder in tests
-        None, // no session codec in tests
-        None, // no PPR shells in tests
+        DispatchOpts {
+            page_renderer: renderer,
+            ..Default::default()
+        },
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -492,27 +467,7 @@ async fn dispatch_uses_ir_placeholder_when_no_renderer() {
 
     let tree = empty_tree();
     let metrics = Arc::new(oxide_fw_server::Metrics::new());
-    let dispatch = build_dispatch(
-        tree,
-        metrics,
-        Vec::new(),
-        None,
-        None,
-        std::path::PathBuf::new(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None, // no waterfall recorder in tests
-        None, // no session codec in tests
-        None, // no PPR shells in tests
-    );
+    let dispatch = build_dispatch(tree, metrics, DispatchOpts::default());
 
     let resp = dispatch(test_request("GET", "/some/page")).await;
 
@@ -543,23 +498,10 @@ async fn dispatch_propagates_renderer_error_as_500() {
     let dispatch = build_dispatch(
         tree,
         metrics,
-        Vec::new(),
-        renderer,
-        None,
-        std::path::PathBuf::new(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None, // no waterfall recorder in tests
-        None, // no session codec in tests
-        None, // no PPR shells in tests
+        DispatchOpts {
+            page_renderer: renderer,
+            ..Default::default()
+        },
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -708,23 +650,12 @@ async fn loader_feeds_data_to_renderer() {
     let dispatch = build_dispatch(
         tree,
         metrics,
-        Vec::new(),
-        page_renderer,
-        loader_runner,
-        routes_root(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None, // no waterfall recorder in tests
-        None, // no session codec in tests
-        None, // no PPR shells in tests
+        DispatchOpts {
+            page_renderer,
+            loader_runner,
+            routes_root: routes_root(),
+            ..Default::default()
+        },
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -758,23 +689,12 @@ async fn loader_404_short_circuits_render() {
     let dispatch = build_dispatch(
         tree,
         metrics,
-        Vec::new(),
-        page_renderer,
-        loader_runner,
-        routes_root(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None, // no waterfall recorder in tests
-        None, // no session codec in tests
-        None, // no PPR shells in tests
+        DispatchOpts {
+            page_renderer,
+            loader_runner,
+            routes_root: routes_root(),
+            ..Default::default()
+        },
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -808,23 +728,12 @@ async fn loader_redirect_short_circuits_with_location() {
     let dispatch = build_dispatch(
         tree,
         metrics,
-        Vec::new(),
-        page_renderer,
-        loader_runner,
-        routes_root(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None, // no waterfall recorder in tests
-        None, // no session codec in tests
-        None, // no PPR shells in tests
+        DispatchOpts {
+            page_renderer,
+            loader_runner,
+            routes_root: routes_root(),
+            ..Default::default()
+        },
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -871,23 +780,12 @@ async fn no_server_module_skips_loader() {
     let dispatch = build_dispatch(
         tree,
         metrics,
-        Vec::new(),
-        page_renderer,
-        loader_runner,
-        routes_root(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None, // no waterfall recorder in tests
-        None, // no session codec in tests
-        None, // no PPR shells in tests
+        DispatchOpts {
+            page_renderer,
+            loader_runner,
+            routes_root: routes_root(),
+            ..Default::default()
+        },
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -1900,7 +1798,7 @@ async fn doctor_all_pass_on_fixture() {
 #[tokio::test]
 async fn add_appends_module_and_dedupes() {
     let _serial_guard = TEST_SERIAL_LOCK.lock().await;
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = ENV_LOCK.lock().await;
     use std::fs;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
@@ -2606,7 +2504,7 @@ fn setup_static_project() -> tempfile::TempDir {
         "export default function Page() { return null; }",
     )
     .unwrap();
-    write_config(&dir.path().to_path_buf(), r#"{ "adapter": "static" }"#);
+    write_config(dir.path(), r#"{ "adapter": "static" }"#);
     dir
 }
 
@@ -2744,7 +2642,7 @@ async fn mcp_routes_tool_lists_routes() {
         "export default function Page() { return null; }",
     )
     .unwrap();
-    write_config(&dir.path().to_path_buf(), "{}");
+    write_config(dir.path(), "{}");
 
     let server = crate::mcp::OxideMcp::new(dir.path().to_path_buf());
     let result = server
@@ -3370,23 +3268,12 @@ async fn live_render_injects_odf_payload_script() {
     let dispatch = build_dispatch(
         tree,
         metrics,
-        Vec::new(),
-        page_renderer,
-        loader_runner,
-        routes_root(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None, // no waterfall recorder in tests
-        None, // no session codec in tests
-        None, // no PPR shells in tests
+        DispatchOpts {
+            page_renderer,
+            loader_runner,
+            routes_root: routes_root(),
+            ..Default::default()
+        },
     );
     let resp = dispatch(test_request("GET", "/")).await;
 
@@ -3458,23 +3345,11 @@ async fn error_status_marker_yields_http_500() {
         let dispatch = build_dispatch(
             tree,
             metrics,
-            Vec::new(),
-            Some(renderer),
-            None,
-            routes_root(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            false,
-            Vec::new(),
-            None, // no waterfall recorder in tests
-            None, // no session codec in tests
-            None, // no PPR shells in tests
+            DispatchOpts {
+                page_renderer: Some(renderer),
+                routes_root: routes_root(),
+                ..Default::default()
+            },
         );
         let resp = dispatch(test_request("GET", "/")).await;
         assert_eq!(resp.status, 500, "{name} → HTTP 500");
@@ -3717,23 +3592,12 @@ async fn middleware_rewrite_does_not_rerun_outer_layers() {
     let dispatch = build_dispatch(
         tree_with_two_middleware_layers(),
         Arc::new(oxide_fw_server::Metrics::new()),
-        Vec::new(),
-        Some(Arc::new(DataCapturingRenderer::new())),
-        None,
-        routes_root(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        mw,
-        false,
-        Vec::new(),
-        None,
-        None,
-        None, // no PPR shells in tests
+        DispatchOpts {
+            page_renderer: Some(Arc::new(DataCapturingRenderer::new())),
+            routes_root: routes_root(),
+            middleware_dispatcher: mw,
+            ..Default::default()
+        },
     );
     let resp = dispatch(test_request("GET", "/shop")).await;
     assert_eq!(resp.status, 200);
@@ -3839,23 +3703,12 @@ async fn inner_middleware_header_overwrites_outer() {
     let dispatch = build_dispatch(
         tree_with_two_middleware_layers(),
         std::sync::Arc::clone(&metrics),
-        Vec::new(),
-        Some(Arc::new(DataCapturingRenderer::new())),
-        None,
-        routes_root(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        mw,
-        false,
-        Vec::new(),
-        None,
-        None,
-        None, // no PPR shells in tests
+        DispatchOpts {
+            page_renderer: Some(Arc::new(DataCapturingRenderer::new())),
+            routes_root: routes_root(),
+            middleware_dispatcher: mw,
+            ..Default::default()
+        },
     );
     let resp = dispatch(test_request("GET", "/shop")).await;
     assert_eq!(resp.status, 200);
@@ -3894,23 +3747,12 @@ async fn middleware_headers_ride_page_and_data_responses() {
     let dispatch = build_dispatch(
         tree_with_page_and_middleware(),
         std::sync::Arc::clone(&metrics),
-        Vec::new(),
-        page_renderer,
-        None,
-        routes_root(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        mw.clone(),
-        false,
-        Vec::new(),
-        None, // no waterfall recorder in tests
-        None, // no session codec in tests
-        None, // no PPR shells in tests
+        DispatchOpts {
+            page_renderer,
+            routes_root: routes_root(),
+            middleware_dispatcher: mw.clone(),
+            ..Default::default()
+        },
     );
     let resp = dispatch(test_request("GET", "/")).await;
     assert_eq!(resp.status, 200);
@@ -3934,23 +3776,12 @@ async fn middleware_headers_ride_page_and_data_responses() {
     let dispatch = build_dispatch(
         tree_with_page_and_middleware(),
         metrics,
-        Vec::new(),
-        None,
-        loader_runner,
-        routes_root(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        mw,
-        false,
-        Vec::new(),
-        None, // no waterfall recorder in tests
-        None, // no session codec in tests
-        None, // no PPR shells in tests
+        DispatchOpts {
+            loader_runner,
+            routes_root: routes_root(),
+            middleware_dispatcher: mw,
+            ..Default::default()
+        },
     );
     let resp = dispatch(test_request("GET", "/__data?route=%2F")).await;
     assert_eq!(resp.status, 200, "data response for a matched route");
@@ -4087,23 +3918,13 @@ async fn middleware_headers_ride_l0_hits() {
     let dispatch = build_dispatch(
         tree_with_static_page_and_middleware(),
         metrics,
-        Vec::new(),
-        page_renderer,
-        None,
-        routes_root(),
-        None,
-        Some(Arc::clone(&l0)),
-        None,
-        None,
-        None,
-        None,
-        None,
-        mw,
-        false,
-        Vec::new(),
-        None, // no waterfall recorder in tests
-        None, // no session codec in tests
-        None, // no PPR shells in tests
+        DispatchOpts {
+            page_renderer,
+            routes_root: routes_root(),
+            l0: Some(Arc::clone(&l0)),
+            middleware_dispatcher: mw,
+            ..Default::default()
+        },
     );
 
     // First request: an L0 miss. It renders and stores the entry; the
@@ -4266,23 +4087,11 @@ async fn layout_and_page_overlap_when_page_does_not_call_parent() {
     let dispatch = build_dispatch(
         tree,
         metrics,
-        Vec::new(),
-        None,
-        loader,
-        root,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None,
-        None,
-        None, // no PPR shells in tests
+        DispatchOpts {
+            loader_runner: loader,
+            routes_root: root,
+            ..Default::default()
+        },
     );
     let resp = dispatch(test_request("GET", "/")).await;
     assert_eq!(resp.status, 200, "matched page renders");
@@ -4314,23 +4123,11 @@ async fn layout_then_page_sequential_when_page_calls_parent() {
     let dispatch = build_dispatch(
         tree,
         metrics,
-        Vec::new(),
-        None,
-        loader,
-        root,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None,
-        None,
-        None, // no PPR shells in tests
+        DispatchOpts {
+            loader_runner: loader,
+            routes_root: root,
+            ..Default::default()
+        },
     );
     let resp = dispatch(test_request("GET", "/")).await;
     assert_eq!(resp.status, 200, "matched page renders");
@@ -4466,8 +4263,13 @@ async fn write_prerender_carries_200_status_for_clean_body() {
 /// Records the `(module_path, locals_param)` each dispatch sees, and
 /// returns the module path inside its `locals` output so an inner
 /// middleware (and the test) can prove threading.
+/// Observed `(middleware path, locals passed in)` pairs. Extracted as a
+/// type alias so the field on `ChainProbeMiddleware` reads clearly and
+/// `clippy::type_complexity` is satisfied by giving the shape a name.
+type ChainProbeSeen = Vec<(String, Option<serde_json::Value>)>;
+
 struct ChainProbeMiddleware {
-    seen: std::sync::Arc<std::sync::Mutex<Vec<(String, Option<serde_json::Value>)>>>,
+    seen: std::sync::Arc<std::sync::Mutex<ChainProbeSeen>>,
 }
 
 impl ChainProbeMiddleware {
@@ -4570,23 +4372,12 @@ async fn middleware_chain_runs_outer_to_inner_and_threads_locals() {
     let dispatch = build_dispatch(
         tree_with_page_and_middleware_chain(),
         Arc::new(oxide_fw_server::Metrics::new()),
-        Vec::new(),
-        Some(Arc::new(DataCapturingRenderer::new())),
-        None,
-        routes_root(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None, // endpoint_dispatcher
-        mw,   // middleware_dispatcher
-        false,
-        Vec::new(),
-        None, // no waterfall recorder
-        None, // no session codec
-        None, // no PPR shells in tests
+        DispatchOpts {
+            page_renderer: Some(Arc::new(DataCapturingRenderer::new())),
+            routes_root: routes_root(),
+            middleware_dispatcher: mw,
+            ..Default::default()
+        },
     );
     let resp = dispatch(test_request("GET", "/blog/post")).await;
     assert_eq!(resp.status, 200, "matched page renders");
@@ -4712,23 +4503,13 @@ async fn session_codec_decodes_into_locals_session() {
     let dispatch = build_dispatch(
         tree_with_server_route(),
         Arc::new(oxide_fw_server::Metrics::new()),
-        Vec::new(),
-        Some(Arc::new(DataCapturingRenderer::new())),
-        Some(loader as Arc<dyn oxide_fw_server::LoaderRunner>),
-        routes_root(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None,
-        Some(codec),
-        None, // no PPR shells in tests
+        DispatchOpts {
+            page_renderer: Some(Arc::new(DataCapturingRenderer::new())),
+            loader_runner: Some(loader as Arc<dyn oxide_fw_server::LoaderRunner>),
+            routes_root: routes_root(),
+            session_codec: Some(codec),
+            ..Default::default()
+        },
     );
 
     // Request with the encoded cookie.
@@ -4766,23 +4547,13 @@ async fn session_change_from_middleware_sets_cookie() {
     let dispatch = build_dispatch(
         tree_with_page_and_middleware(),
         Arc::new(oxide_fw_server::Metrics::new()),
-        Vec::new(),
-        Some(Arc::new(DataCapturingRenderer::new())),
-        None,
-        routes_root(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        mw,
-        false,
-        Vec::new(),
-        None,
-        Some(Arc::clone(&codec)),
-        None, // no PPR shells in tests
+        DispatchOpts {
+            page_renderer: Some(Arc::new(DataCapturingRenderer::new())),
+            routes_root: routes_root(),
+            middleware_dispatcher: mw,
+            session_codec: Some(Arc::clone(&codec)),
+            ..Default::default()
+        },
     );
     let resp = dispatch(test_request("GET", "/")).await;
     let set_cookie = resp
@@ -4813,23 +4584,13 @@ async fn session_codec_tampered_cookie_yields_empty_session() {
     let dispatch = build_dispatch(
         tree_with_server_route(),
         Arc::new(oxide_fw_server::Metrics::new()),
-        Vec::new(),
-        Some(Arc::new(DataCapturingRenderer::new())),
-        Some(loader as Arc<dyn oxide_fw_server::LoaderRunner>),
-        routes_root(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None,
-        Some(codec),
-        None, // no PPR shells in tests
+        DispatchOpts {
+            page_renderer: Some(Arc::new(DataCapturingRenderer::new())),
+            loader_runner: Some(loader as Arc<dyn oxide_fw_server::LoaderRunner>),
+            routes_root: routes_root(),
+            session_codec: Some(codec),
+            ..Default::default()
+        },
     );
 
     let mut req = test_request("GET", "/");
@@ -4985,7 +4746,7 @@ fn extract_img_w_spec_handles_jpeg() {
 #[tokio::test]
 async fn add_records_oxide_module() {
     let _serial_guard = TEST_SERIAL_LOCK.lock().await;
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = ENV_LOCK.lock().await;
     use std::fs;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
@@ -5056,7 +4817,7 @@ async fn add_records_plain_npm_package_with_note() {
 #[tokio::test]
 async fn audit_offline_without_cache_is_a_clear_error() {
     let _serial_guard = TEST_SERIAL_LOCK.lock().await;
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = ENV_LOCK.lock().await;
     use std::fs;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
@@ -5098,7 +4859,7 @@ async fn audit_json_mode_emits_stable_schema() {
 #[tokio::test]
 async fn audit_no_lockfile_is_a_clear_error() {
     let _serial_guard = TEST_SERIAL_LOCK.lock().await;
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
     unsafe {
@@ -5190,7 +4951,7 @@ async fn second_build_recomputes_nothing() {
 #[tokio::test]
 async fn module_route_is_injected_and_built() {
     let _serial_guard = TEST_SERIAL_LOCK.lock().await;
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = ENV_LOCK.lock().await;
     use std::fs;
     let (_d, root) = fixture_project();
 
@@ -5390,7 +5151,7 @@ fn modules_loader_missing_package_is_skipped_not_fatal() {
 #[tokio::test]
 async fn add_reports_module_contributions() {
     let _serial_guard = TEST_SERIAL_LOCK.lock().await;
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = ENV_LOCK.lock().await;
     use std::fs;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
@@ -5436,7 +5197,7 @@ async fn add_reports_module_contributions() {
 #[tokio::test]
 async fn add_warns_on_adapter_mismatch() {
     let _serial_guard = TEST_SERIAL_LOCK.lock().await;
-    let _g = ENV_LOCK.lock().unwrap();
+    let _g = ENV_LOCK.lock().await;
     use std::fs;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
@@ -6514,23 +6275,12 @@ async fn l0_hit_rate_999_of_1000_dispatches() {
     let dispatch = build_dispatch(
         tree_with_static_page_and_middleware(),
         Arc::new(oxide_fw_server::Metrics::new()),
-        Vec::new(),
-        page_renderer,
-        None,
-        routes_root(),
-        None,
-        Some(Arc::clone(&l0)),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None,
-        None,
-        None,
+        DispatchOpts {
+            page_renderer,
+            routes_root: routes_root(),
+            l0: Some(Arc::clone(&l0)),
+            ..Default::default()
+        },
     );
 
     // The store happens inside a tokio::spawn that consumes the render
@@ -6612,23 +6362,11 @@ async fn prerendered_500_serves_500_on_hit() {
     let dispatch = build_dispatch(
         tree_with_static_page_and_middleware(),
         Arc::new(oxide_fw_server::Metrics::new()),
-        Vec::new(),
-        None,
-        None,
-        routes_root(),
-        None,
-        Some(Arc::clone(&l0)),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None,
-        None,
-        None,
+        DispatchOpts {
+            routes_root: routes_root(),
+            l0: Some(Arc::clone(&l0)),
+            ..Default::default()
+        },
     );
 
     let resp = dispatch(test_request("GET", "/")).await;
@@ -6666,23 +6404,10 @@ async fn rewrite_hop_guard_returns_508_after_8_hops() {
     let dispatch = build_dispatch(
         empty_tree(),
         Arc::new(oxide_fw_server::Metrics::new()),
-        Vec::new(),
-        None,
-        None,
-        routes_root(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None,
-        None,
-        None,
+        DispatchOpts {
+            routes_root: routes_root(),
+            ..Default::default()
+        },
     );
 
     // 8 hops: allowed (guard is strictly `> 8`). Falls through to the
@@ -7168,23 +6893,10 @@ async fn dispatch_without_l0_never_emits_a_cache_header() {
     let dispatch = build_dispatch(
         tree_with_static_page_and_middleware(),
         Arc::new(oxide_fw_server::Metrics::new()),
-        Vec::new(),
-        None,
-        None,
-        routes_root(),
-        None,
-        None, // l0: None — the dev-mode construction
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None,
-        None,
-        None,
+        DispatchOpts {
+            routes_root: routes_root(),
+            ..Default::default()
+        },
     );
 
     // Three dispatches; the invariant is per-request, not per-first-hit.
@@ -7261,23 +6973,13 @@ async fn parallel_arm_persists_session_mutation() {
     let dispatch = build_dispatch(
         tree_with_layout_and_parentless_page(),
         Arc::new(oxide_fw_server::Metrics::new()),
-        Vec::new(),
-        renderer,
-        loader,
-        dir.path().to_path_buf(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None,
-        Some(codec),
-        None,
+        DispatchOpts {
+            page_renderer: renderer,
+            loader_runner: loader,
+            routes_root: dir.path().to_path_buf(),
+            session_codec: Some(codec),
+            ..Default::default()
+        },
     );
 
     let resp = dispatch(test_request("GET", "/")).await;
@@ -7337,23 +7039,11 @@ async fn request_trace_reaches_the_loader() {
     let dispatch = build_dispatch(
         tree_with_layout_and_parentless_page(),
         Arc::new(oxide_fw_server::Metrics::new()),
-        Vec::new(),
-        None,
-        Some(loader as Arc<dyn oxide_fw_server::LoaderRunner>),
-        dir.path().to_path_buf(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None,
-        None,
-        None,
+        DispatchOpts {
+            loader_runner: Some(loader as Arc<dyn oxide_fw_server::LoaderRunner>),
+            routes_root: dir.path().to_path_buf(),
+            ..Default::default()
+        },
     );
 
     let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
@@ -7439,23 +7129,12 @@ async fn ppr_never_shells_a_loader_cookie_response() {
     let dispatch = build_dispatch(
         tree_with_page_and_server_module(),
         Arc::new(oxide_fw_server::Metrics::new()),
-        Vec::new(),
-        renderer,
-        loader,
-        std::path::PathBuf::new(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None,
-        None,
-        Some(Arc::clone(&shells)),
+        DispatchOpts {
+            page_renderer: renderer,
+            loader_runner: loader,
+            ppr_shells: Some(Arc::clone(&shells)),
+            ..Default::default()
+        },
     );
 
     let _ = dispatch(test_request("GET", "/")).await;
@@ -7487,23 +7166,12 @@ async fn ppr_never_shells_a_middleware_cookie_response() {
     let dispatch = build_dispatch(
         tree_with_static_page_and_middleware(),
         Arc::new(oxide_fw_server::Metrics::new()),
-        Vec::new(),
-        renderer,
-        None,
-        std::path::PathBuf::new(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        mw,
-        false,
-        Vec::new(),
-        None,
-        None,
-        Some(Arc::clone(&shells)),
+        DispatchOpts {
+            page_renderer: renderer,
+            middleware_dispatcher: mw,
+            ppr_shells: Some(Arc::clone(&shells)),
+            ..Default::default()
+        },
     );
 
     let _ = dispatch(test_request("GET", "/")).await;
@@ -7560,23 +7228,13 @@ async fn __data_untouched_session_does_not_reissue_a_cookie() {
     let dispatch = build_dispatch(
         tree_with_page_and_server_module(),
         Arc::new(oxide_fw_server::Metrics::new()),
-        Vec::new(),
-        None,
-        Some(Arc::new(UnchangedSessionLoader) as Arc<dyn oxide_fw_server::LoaderRunner>),
-        std::path::PathBuf::new(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None,
-        Some(Arc::clone(&codec)),
-        None,
+        DispatchOpts {
+            loader_runner: Some(
+                Arc::new(UnchangedSessionLoader) as Arc<dyn oxide_fw_server::LoaderRunner>
+            ),
+            session_codec: Some(Arc::clone(&codec)),
+            ..Default::default()
+        },
     );
 
     let cookie_header = format!("oxide_session={token}");
@@ -7663,30 +7321,13 @@ async fn ppr_shell_key_ignores_query_string() {
     let renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> = Some(Arc::new(PprRenderer));
 
     let dispatch = build_dispatch(
-        // empty_tree() -- the same fixture the passing PPR test uses. A
-        // *matched* static route (tree_with_static_page_and_middleware)
-        // does not reach the PPR branch with L0 = None: the static path
-        // skips render entirely. That is a separate gap, not what this
-        // test verifies.
         empty_tree(),
         Arc::new(oxide_fw_server::Metrics::new()),
-        Vec::new(),
-        renderer,
-        None,
-        std::path::PathBuf::new(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None,
-        None,
-        Some(Arc::clone(&shells)),
+        DispatchOpts {
+            page_renderer: renderer,
+            ppr_shells: Some(Arc::clone(&shells)),
+            ..Default::default()
+        },
     );
 
     // The tap runs in a tokio::spawn; draining the response body forces
@@ -8137,23 +7778,11 @@ async fn layout_ok_arm_persists_session_mutation() {
     let dispatch = build_dispatch(
         tree_with_layout_and_page_server_modules(),
         Arc::new(oxide_fw_server::Metrics::new()),
-        Vec::new(),
-        None, // no renderer — session persistence happens on the loader arm
-        loader,
-        std::path::PathBuf::new(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None,
-        Some(codec),
-        None,
+        DispatchOpts {
+            loader_runner: loader,
+            session_codec: Some(codec),
+            ..Default::default()
+        },
     );
 
     let resp = dispatch(test_request("GET", "/")).await;
@@ -8430,23 +8059,13 @@ async fn l0_never_caches_a_middleware_cookie_response() {
     let dispatch = build_dispatch(
         tree_with_static_page_and_middleware(),
         Arc::new(oxide_fw_server::Metrics::new()),
-        Vec::new(),
-        renderer,
-        None,
-        routes_root(),
-        None,
-        Some(Arc::clone(&l0)),
-        None,
-        None,
-        None,
-        None,
-        None,
-        mw,
-        false,
-        Vec::new(),
-        None,
-        None,
-        None,
+        DispatchOpts {
+            page_renderer: renderer,
+            routes_root: routes_root(),
+            l0: Some(Arc::clone(&l0)),
+            middleware_dispatcher: mw,
+            ..Default::default()
+        },
     );
 
     let first = dispatch(test_request("GET", "/")).await;
@@ -8497,23 +8116,13 @@ async fn middleware_short_circuit_persists_session_mutation() {
     let dispatch = build_dispatch(
         tree_with_page_and_middleware(),
         Arc::new(oxide_fw_server::Metrics::new()),
-        Vec::new(),
-        Some(Arc::new(DataCapturingRenderer::new())),
-        None,
-        routes_root(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        mw,
-        false,
-        Vec::new(),
-        None,
-        Some(Arc::clone(&codec)),
-        None,
+        DispatchOpts {
+            page_renderer: Some(Arc::new(DataCapturingRenderer::new())),
+            routes_root: routes_root(),
+            middleware_dispatcher: mw,
+            session_codec: Some(Arc::clone(&codec)),
+            ..Default::default()
+        },
     );
 
     let resp = dispatch(test_request("GET", "/")).await;
@@ -8666,23 +8275,11 @@ async fn action_set_cookie_survives_200_rerender() {
     let dispatch = build_dispatch(
         tree,
         metrics,
-        Vec::new(),
-        None,
-        None,
-        root.join("routes"),
-        None,
-        None,
-        Some(std::sync::Arc::new(CookieDispatcher)),
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        Vec::new(),
-        None,
-        None,
-        None,
+        DispatchOpts {
+            routes_root: root.join("routes"),
+            actions: Some(std::sync::Arc::new(CookieDispatcher)),
+            ..Default::default()
+        },
     );
 
     // The URL `?/setcookie` makes action_from_query return "setcookie".

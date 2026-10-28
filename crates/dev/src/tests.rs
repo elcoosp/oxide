@@ -289,23 +289,25 @@ fn render_inspector_html_escapes_and_lists_routes() {
 #[test]
 fn inspector_renders_waterfalls() {
     // B-17: a hit and a miss row, each with stage bars.
-    let mut state = InspectorState::default();
-    state.waterfalls = vec![
-        RequestTimingsRow {
-            request_id: "req-miss".to_string(),
-            waterfall_ms: vec![
-                ("middleware".to_string(), 1.5),
-                ("load".to_string(), 12.0),
-                ("render".to_string(), 30.0),
-            ],
-            trace_id: None,
-        },
-        RequestTimingsRow {
-            request_id: "req-hit".to_string(),
-            waterfall_ms: vec![("cache-hit".to_string(), 0.4)],
-            trace_id: None,
-        },
-    ];
+    let state = InspectorState {
+        waterfalls: vec![
+            RequestTimingsRow {
+                request_id: "req-miss".to_string(),
+                waterfall_ms: vec![
+                    ("middleware".to_string(), 1.5),
+                    ("load".to_string(), 12.0),
+                    ("render".to_string(), 30.0),
+                ],
+                trace_id: None,
+            },
+            RequestTimingsRow {
+                request_id: "req-hit".to_string(),
+                waterfall_ms: vec![("cache-hit".to_string(), 0.4)],
+                trace_id: None,
+            },
+        ],
+        ..Default::default()
+    };
     let html = render_inspector_html(&state);
     assert!(html.contains("Waterfalls (2)"), "{html}");
     assert!(html.contains("req-miss"));

@@ -137,12 +137,14 @@ mod tests {
 
     #[test]
     fn parse_skips_non_native_kinds() {
-        let mut cfg = OxideConfig::default();
-        cfg.plugins = vec![
-            serde_json::json!({"kind":"js","path":"./a.mjs"}),
-            serde_json::json!({"kind":"native","name":"images"}),
-            serde_json::json!({"kind":"wasm","path":"./b.wasm"}),
-        ];
+        let cfg = OxideConfig {
+            plugins: vec![
+                serde_json::json!({"kind":"js","path":"./a.mjs"}),
+                serde_json::json!({"kind":"native","name":"images"}),
+                serde_json::json!({"kind":"wasm","path":"./b.wasm"}),
+            ],
+            ..Default::default()
+        };
         assert_eq!(
             parse_native_plugins(&cfg).expect("parse ok"),
             vec![NativePlugin::Images]
@@ -151,8 +153,10 @@ mod tests {
 
     #[test]
     fn parse_rejects_unknown_native() {
-        let mut cfg = OxideConfig::default();
-        cfg.plugins = vec![serde_json::json!({"kind":"native","name":"bogus"})];
+        let cfg = OxideConfig {
+            plugins: vec![serde_json::json!({"kind":"native","name":"bogus"})],
+            ..Default::default()
+        };
         let e = parse_native_plugins(&cfg).unwrap_err();
         assert_eq!(e.0.code, "OX-PLUGIN");
         assert!(e.0.message.contains("unknown native plugin"));
@@ -161,8 +165,10 @@ mod tests {
 
     #[test]
     fn parse_rejects_native_without_name() {
-        let mut cfg = OxideConfig::default();
-        cfg.plugins = vec![serde_json::json!({"kind":"native"})];
+        let cfg = OxideConfig {
+            plugins: vec![serde_json::json!({"kind":"native"})],
+            ..Default::default()
+        };
         let e = parse_native_plugins(&cfg).unwrap_err();
         assert_eq!(e.0.code, "OX-PLUGIN");
         assert!(e.0.message.contains("missing a `name`"));

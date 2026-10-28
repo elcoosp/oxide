@@ -1515,8 +1515,8 @@ async fn server_from_hyper_request_enforces_body_limit() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert!(response.starts_with("HTTP/1.1 413"), "{response}");
-    let _ = server;
-    let _ = _tx;
+    drop(server);
+    drop(_tx);
 }
 
 // ------------------------------------------------------------------ ws codec (§9.6)
@@ -1591,7 +1591,7 @@ fn ws_decode_reserved_and_rsv_violations() {
     assert_eq!(ws::decode(&b).unwrap_err().0.code, "SRV-WS");
     // continuation opcode (fragmentation unsupported for now)
     let mut b = ws::encode(&Frame::Text("x".into()), true);
-    b[0] = (b[0] & 0xF0);
+    b[0] &= 0xF0;
     assert_eq!(ws::decode(&b).unwrap_err().0.code, "SRV-WS");
 }
 
@@ -1841,8 +1841,10 @@ fn csrf_token_mode_matrix() {
 #[tokio::test]
 async fn csrf_token_issued_on_get_without_cookie() {
     // SEC-04 issuer: GET in token mode without the cookie → Set-Cookie.
-    let mut sec = SecuritySettings::default();
-    sec.csrf = "token".into();
+    let sec = SecuritySettings {
+        csrf: "token".into(),
+        ..Default::default()
+    };
     let p = pipeline(RulesEngine::default(), None, Limits::default(), sec);
     let d = &echo_dispatch();
     let r = p.serve_request(req("GET", "/", &[]), d).await;
