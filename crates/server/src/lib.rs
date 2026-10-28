@@ -5473,10 +5473,7 @@ mod streaming_response_tests {
         // silently.
         let items: Vec<std::result::Result<Bytes, std::io::Error>> = vec![
             Ok(Bytes::from_static(b"partial")),
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "worker crashed",
-            )),
+            Err(std::io::Error::other("worker crashed")),
         ];
         let stream: BodyStream = Box::pin(stream::iter(items));
         let resp = OxideResponse::stream(200, stream);

@@ -844,7 +844,7 @@ fn fuzz_decode_never_panics() {
                 b
             }
         };
-        if rng.next() % 4 == 0 && buf.len() > 2 {
+        if rng.next().is_multiple_of(4) && buf.len() > 2 {
             buf.truncate((rng.next() as usize) % buf.len());
         }
         // must return Ok or Err — never panic, never hang

@@ -142,6 +142,102 @@ pub fn store(root: &Path, fp: &str) -> std::io::Result<()> {
     std::fs::write(p, fp)
 }
 
+/// A per-environment fingerprint: the transitive content of everything that
+/// env's bundle depends on, plus the options that shape it. Distinct from
+/// [`fingerprint`], which covers the whole project and decides whether to
+/// skip the *entire* build.
+///
+/// The granularity is one environment (client or ssr) — not one chunk. That
+/// is the incrementality Rolldown's API allows: it exposes no per-module
+/// incremental build, so the smallest honest unit is "this env's bundle is
+/// still valid". Editing a server-only module then skips the client bundle,
+/// which is the common case a full-rebuild-on-any-edit gets wrong.
+pub fn env_fingerprint(
+    root: &Path,
+    env: &str,
+    entries: &[(String, PathBuf)],
+    extra: &[&str],
+) -> String {
+    let mut h = blake3::Hasher::new();
+    h.update(b"oxide-env-fingerprint-v1");
+    h.update(env.as_bytes());
+    h.update(&[0]);
+    for e in extra {
+        h.update(e.as_bytes());
+        h.update(&[0]);
+    }
+    // The running binary invalidates (a compiler change changes output).
+    if let Ok(exe) = std::env::current_exe()
+        && let Ok(md) = std::fs::metadata(&exe)
+    {
+        h.update(&md.len().to_le_bytes());
+        if let Ok(t) = md.modified()
+            && let Ok(d) = t.duration_since(std::time::UNIX_EPOCH)
+        {
+            h.update(&d.as_secs().to_le_bytes());
+        }
+    }
+    h.update(&[0]);
+    // Entry set, sorted for determinism.
+    let mut sorted: Vec<&(String, PathBuf)> = entries.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    for (name, path) in sorted {
+        h.update(name.as_bytes());
+        h.update(&[0]);
+        h.update(path.to_string_lossy().as_bytes());
+        h.update(&[0]);
+    }
+    // Every file under the project that this env's bundle can reach. The
+    // one distinction the bundler itself makes: a `*.server.*` module is
+    // never in the client bundle (§6.4 guard). Editing `page.server.ts`
+    // therefore invalidates the SSR env and leaves the client env valid —
+    // which is the incrementality a whole-project fingerprint misses.
+    //
+    // A finer cut (per-module import graph) would need the bundler to expose
+    // its graph; Rolldown's API does not, so this is the tightest honest
+    // boundary.
+    let client_env = env == "client";
+    let mut files: Vec<PathBuf> = Vec::new();
+    collect_files(root, &mut files);
+    files.sort();
+    for f in &files {
+        if client_env {
+            let s = f.to_string_lossy();
+            if oxide_fw_compiler::is_server_module_path(&s) {
+                continue;
+            }
+        }
+        let rel = f.strip_prefix(root).unwrap_or(f);
+        h.update(rel.to_string_lossy().as_bytes());
+        h.update(&[0]);
+        if let Ok(bytes) = std::fs::read(f) {
+            h.update(blake3::hash(&bytes).as_bytes());
+        }
+        h.update(&[0]);
+    }
+    h.finalize().to_hex().to_string()
+}
+
+fn env_fingerprint_path(root: &Path, env: &str) -> PathBuf {
+    root.join(format!(".oxide/cache/env-{env}-fingerprint"))
+}
+
+/// True when the stored per-env fingerprint equals `fp`.
+pub fn env_is_up_to_date(root: &Path, env: &str, fp: &str) -> bool {
+    std::fs::read_to_string(env_fingerprint_path(root, env))
+        .map(|s| s.trim() == fp)
+        .unwrap_or(false)
+}
+
+/// Persist a per-env fingerprint.
+pub fn env_store(root: &Path, env: &str, fp: &str) -> std::io::Result<()> {
+    let p = env_fingerprint_path(root, env);
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(p, fp)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,100 +335,4 @@ mod tests {
         let edited = fingerprint(dir.path(), "production", false);
         assert_ne!(before, edited);
     }
-}
-
-/// A per-environment fingerprint: the transitive content of everything that
-/// env's bundle depends on, plus the options that shape it. Distinct from
-/// [`fingerprint`], which covers the whole project and decides whether to
-/// skip the *entire* build.
-///
-/// The granularity is one environment (client or ssr) — not one chunk. That
-/// is the incrementality Rolldown's API allows: it exposes no per-module
-/// incremental build, so the smallest honest unit is "this env's bundle is
-/// still valid". Editing a server-only module then skips the client bundle,
-/// which is the common case a full-rebuild-on-any-edit gets wrong.
-pub fn env_fingerprint(
-    root: &Path,
-    env: &str,
-    entries: &[(String, PathBuf)],
-    extra: &[&str],
-) -> String {
-    let mut h = blake3::Hasher::new();
-    h.update(b"oxide-env-fingerprint-v1");
-    h.update(env.as_bytes());
-    h.update(&[0]);
-    for e in extra {
-        h.update(e.as_bytes());
-        h.update(&[0]);
-    }
-    // The running binary invalidates (a compiler change changes output).
-    if let Ok(exe) = std::env::current_exe()
-        && let Ok(md) = std::fs::metadata(&exe)
-    {
-        h.update(&md.len().to_le_bytes());
-        if let Ok(t) = md.modified()
-            && let Ok(d) = t.duration_since(std::time::UNIX_EPOCH)
-        {
-            h.update(&d.as_secs().to_le_bytes());
-        }
-    }
-    h.update(&[0]);
-    // Entry set, sorted for determinism.
-    let mut sorted: Vec<&(String, PathBuf)> = entries.iter().collect();
-    sorted.sort_by(|a, b| a.0.cmp(&b.0));
-    for (name, path) in sorted {
-        h.update(name.as_bytes());
-        h.update(&[0]);
-        h.update(path.to_string_lossy().as_bytes());
-        h.update(&[0]);
-    }
-    // Every file under the project that this env's bundle can reach. The
-    // one distinction the bundler itself makes: a `*.server.*` module is
-    // never in the client bundle (§6.4 guard). Editing `page.server.ts`
-    // therefore invalidates the SSR env and leaves the client env valid —
-    // which is the incrementality a whole-project fingerprint misses.
-    //
-    // A finer cut (per-module import graph) would need the bundler to expose
-    // its graph; Rolldown's API does not, so this is the tightest honest
-    // boundary.
-    let client_env = env == "client";
-    let mut files: Vec<PathBuf> = Vec::new();
-    collect_files(root, &mut files);
-    files.sort();
-    for f in &files {
-        if client_env {
-            let s = f.to_string_lossy();
-            if oxide_fw_compiler::is_server_module_path(&s) {
-                continue;
-            }
-        }
-        let rel = f.strip_prefix(root).unwrap_or(f);
-        h.update(rel.to_string_lossy().as_bytes());
-        h.update(&[0]);
-        if let Ok(bytes) = std::fs::read(f) {
-            h.update(blake3::hash(&bytes).as_bytes());
-        }
-        h.update(&[0]);
-    }
-    h.finalize().to_hex().to_string()
-}
-
-fn env_fingerprint_path(root: &Path, env: &str) -> PathBuf {
-    root.join(format!(".oxide/cache/env-{env}-fingerprint"))
-}
-
-/// True when the stored per-env fingerprint equals `fp`.
-pub fn env_is_up_to_date(root: &Path, env: &str, fp: &str) -> bool {
-    std::fs::read_to_string(env_fingerprint_path(root, env))
-        .map(|s| s.trim() == fp)
-        .unwrap_or(false)
-}
-
-/// Persist a per-env fingerprint.
-pub fn env_store(root: &Path, env: &str, fp: &str) -> std::io::Result<()> {
-    let p = env_fingerprint_path(root, env);
-    if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(p, fp)
 }

@@ -406,7 +406,7 @@ mod tests {
     fn levenshtein_basics() {
         assert_eq!(levenshtein("servr", "server"), 1);
         assert_eq!(levenshtein("secuity", "security"), 1);
-        assert_eq!(levenshtein("xyzzy", "framework") > 2, true);
+        assert!(levenshtein("xyzzy", "framework") > 2);
         assert_eq!(levenshtein("", "abc"), 3);
     }
 

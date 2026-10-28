@@ -817,6 +817,71 @@ impl TieredCache {
     }
 }
 
+// ---------------------------------------------------------------------------
+// §11.2: `TieredCache` as a `CacheHandler`.
+//
+// The concrete tiered store already has the machinery (`get` across
+// memory → disk → remote, `set`, tag indices); this is the trait surface the
+// pipeline and the worker op dispatch against.
+// ---------------------------------------------------------------------------
+
+#[async_trait::async_trait]
+impl CacheHandler for TieredCache {
+    async fn get(&self, key: &str) -> Result<Option<Entry>> {
+        // `TieredCache::get` returns a `Hit` (fresh / stale) or a miss. The
+        // trait's `get` is "the entry if present" — the caller decides what
+        // to do with a stale one, and both fresh and stale entries are
+        // returned here so that decision stays with the caller.
+        match TieredCache::get(self, key).await? {
+            Some(Hit::Fresh(e)) | Some(Hit::Stale(e)) => Ok(Some((*e).clone())),
+            None => Ok(None),
+        }
+    }
+
+    async fn get_arc(&self, key: &str) -> Result<Option<Arc<Entry>>> {
+        // P-03: hand back the shared entry — no body copy on a hot hit.
+        match TieredCache::get(self, key).await? {
+            Some(Hit::Fresh(e)) | Some(Hit::Stale(e)) => Ok(Some(e)),
+            None => Ok(None),
+        }
+    }
+
+    async fn set(&self, key: &str, entry: Entry) -> Result<()> {
+        // `TieredCache::set` writes memory + disk and records the tags.
+        TieredCache::set(self, key, entry).await
+    }
+
+    async fn delete(&self, key: &str) -> Result<()> {
+        self.memory.remove(key);
+        if let Some(disk) = &self.disk {
+            let _ = disk.delete(key);
+        }
+        Ok(())
+    }
+
+    async fn tag_keys(&self, tag: &str) -> Result<Vec<String>> {
+        Ok(self.tags.get(tag).map(|v| v.clone()).unwrap_or_default())
+    }
+
+    async fn invalidate_tag(&self, tag: &str, _soft: bool) -> Result<usize> {
+        // The soft/hard distinction lives in the policy, not the store: a
+        // soft invalidation marks entries stale, which the render layer
+        // honours by serving stale while regenerating. This method deletes
+        // the tag's keys — the hard form — and returns the count.
+        let keys = self.tag_keys(tag).await?;
+        for k in &keys {
+            self.delete(k).await?;
+        }
+        self.tags.remove(tag);
+        Ok(keys.len())
+    }
+
+    async fn publish_invalidation(&self, _tag: &str, _soft: bool) -> Result<()> {
+        // No pub/sub on the local tiers; a remote handler does this.
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1003,70 +1068,5 @@ mod tests {
         assert_eq!(cache.stats().coalesced, 3);
         assert_eq!(path_tag("/x"), "path:/x");
         assert!(PATH_TAG_PREFIX.starts_with("path"));
-    }
-}
-
-// ---------------------------------------------------------------------------
-// §11.2: `TieredCache` as a `CacheHandler`.
-//
-// The concrete tiered store already has the machinery (`get` across
-// memory → disk → remote, `set`, tag indices); this is the trait surface the
-// pipeline and the worker op dispatch against.
-// ---------------------------------------------------------------------------
-
-#[async_trait::async_trait]
-impl CacheHandler for TieredCache {
-    async fn get(&self, key: &str) -> Result<Option<Entry>> {
-        // `TieredCache::get` returns a `Hit` (fresh / stale) or a miss. The
-        // trait's `get` is "the entry if present" — the caller decides what
-        // to do with a stale one, and both fresh and stale entries are
-        // returned here so that decision stays with the caller.
-        match TieredCache::get(self, key).await? {
-            Some(Hit::Fresh(e)) | Some(Hit::Stale(e)) => Ok(Some((*e).clone())),
-            None => Ok(None),
-        }
-    }
-
-    async fn get_arc(&self, key: &str) -> Result<Option<Arc<Entry>>> {
-        // P-03: hand back the shared entry — no body copy on a hot hit.
-        match TieredCache::get(self, key).await? {
-            Some(Hit::Fresh(e)) | Some(Hit::Stale(e)) => Ok(Some(e)),
-            None => Ok(None),
-        }
-    }
-
-    async fn set(&self, key: &str, entry: Entry) -> Result<()> {
-        // `TieredCache::set` writes memory + disk and records the tags.
-        TieredCache::set(self, key, entry).await
-    }
-
-    async fn delete(&self, key: &str) -> Result<()> {
-        self.memory.remove(key);
-        if let Some(disk) = &self.disk {
-            let _ = disk.delete(key);
-        }
-        Ok(())
-    }
-
-    async fn tag_keys(&self, tag: &str) -> Result<Vec<String>> {
-        Ok(self.tags.get(tag).map(|v| v.clone()).unwrap_or_default())
-    }
-
-    async fn invalidate_tag(&self, tag: &str, _soft: bool) -> Result<usize> {
-        // The soft/hard distinction lives in the policy, not the store: a
-        // soft invalidation marks entries stale, which the render layer
-        // honours by serving stale while regenerating. This method deletes
-        // the tag's keys — the hard form — and returns the count.
-        let keys = self.tag_keys(tag).await?;
-        for k in &keys {
-            self.delete(k).await?;
-        }
-        self.tags.remove(tag);
-        Ok(keys.len())
-    }
-
-    async fn publish_invalidation(&self, _tag: &str, _soft: bool) -> Result<()> {
-        // No pub/sub on the local tiers; a remote handler does this.
-        Ok(())
     }
 }

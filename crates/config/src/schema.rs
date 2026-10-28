@@ -482,7 +482,7 @@ mod tests {
                     // Detect `"key":` by lookahead for a colon after whitespace.
                     let mut la = chars.clone();
                     let mut is_key = false;
-                    while let Some((_, c3)) = la.next() {
+                    for (_, c3) in la {
                         if c3.is_whitespace() {
                             continue;
                         }
@@ -494,14 +494,14 @@ mod tests {
                     }
                 }
                 ':' => {
-                    if let Some(k) = key.take() {
-                        if let Some(Some((_, seen))) = stack.last_mut() {
-                            assert!(
-                                !seen.contains(&k),
-                                "duplicate schema key `{k}` (last-wins drops the first)"
-                            );
-                            seen.push(k);
-                        }
+                    if let Some(k) = key.take()
+                        && let Some(Some((_, seen))) = stack.last_mut()
+                    {
+                        assert!(
+                            !seen.contains(&k),
+                            "duplicate schema key `{k}` (last-wins drops the first)"
+                        );
+                        seen.push(k);
                     }
                 }
                 '{' => stack.push(Some((String::new(), Vec::new()))),

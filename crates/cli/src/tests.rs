@@ -4622,7 +4622,7 @@ async fn middleware_chain_runs_outer_to_inner_and_threads_locals() {
         first_locals.is_none()
             || first_locals
                 .and_then(|v| v.as_object())
-                .map_or(false, |o| o.is_empty()),
+                .is_some_and(|o| o.is_empty()),
         "outer middleware sees empty locals: {:?}",
         first_locals
     );
@@ -4846,7 +4846,7 @@ async fn session_codec_tampered_cookie_yields_empty_session() {
     // The loader saw an EMPTY session (no `session` key), never a 500.
     let s = captured.lock().unwrap();
     assert!(
-        s.is_null() || s.as_object().map_or(true, |o| o.is_empty()),
+        s.is_null() || s.as_object().is_none_or(|o| o.is_empty()),
         "tampered cookie → empty session, not error: {s:?}"
     );
 }
@@ -5135,12 +5135,9 @@ async fn build_writes_graph_snapshot() {
         .iter()
         .filter_map(|r| r["kind"].as_str())
         .collect();
-    assert!(kinds.iter().any(|k| *k == "module"), "module nodes present");
-    assert!(kinds.iter().any(|k| *k == "chunk"), "chunk nodes present");
-    assert!(
-        kinds.iter().any(|k| *k == "manifest"),
-        "manifest nodes present"
-    );
+    assert!(kinds.contains(&"module"), "module nodes present");
+    assert!(kinds.contains(&"chunk"), "chunk nodes present");
+    assert!(kinds.contains(&"manifest"), "manifest nodes present");
 }
 
 #[tokio::test]
@@ -5912,10 +5909,10 @@ async fn incremental_build_reuses_unchanged_prerenders() {
 /// when the line is absent (cold build, nothing to reuse).
 fn parse_reused(out: &str) -> usize {
     for line in out.lines() {
-        if let Some(rest) = line.strip_prefix("incremental: reused ") {
-            if let Some(n) = rest.split_whitespace().next() {
-                return n.parse().unwrap_or(0);
-            }
+        if let Some(rest) = line.strip_prefix("incremental: reused ")
+            && let Some(n) = rest.split_whitespace().next()
+        {
+            return n.parse().unwrap_or(0);
         }
     }
     0

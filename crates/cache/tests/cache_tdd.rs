@@ -144,7 +144,7 @@ async fn memory_byte_accounting_stays_under_cap() {
         mem.insert(&format!("k{i}"), e);
     }
     assert!(mem.total_bytes() <= 300, "under cap: {}", mem.total_bytes());
-    assert!(mem.len() >= 1, "at least one entry survives");
+    assert!(!mem.is_empty(), "at least one entry survives");
 }
 
 #[tokio::test]
@@ -974,7 +974,7 @@ fn tampered_sealed_entry_never_verifies() {
     use oxide_fw_cache::auth;
     let body = b"payload-under-test";
     let sealed = auth::seal_entry(body);
-    assert_eq!(auth::open_entry(&sealed).as_deref(), Some(&body[..]));
+    assert_eq!(auth::open_entry(&sealed), Some(&body[..]));
 
     let mut tampered = sealed.clone();
     let n = tampered.len();

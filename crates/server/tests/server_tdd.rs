@@ -638,9 +638,9 @@ fn host_allowed_rules() {
     let list = vec!["example.com".to_string(), ".trusted.io".to_string()];
     assert!(host_allowed("example.com", &list));
     assert!(host_allowed("EXAMPLE.com", &list));
-    assert!(host_allowed("sub.example.com", &list) == false); // bare entry is exact-only
+    assert!(!host_allowed("sub.example.com", &list)); // bare entry is exact-only
     assert!(host_allowed("a.trusted.io", &list)); // leading-dot suffix
-    assert!(host_allowed("trusted.io", &list) == false); // dot entry does not match apex
+    assert!(!host_allowed("trusted.io", &list)); // dot entry does not match apex
     assert!(host_allowed("example.com:8080", &list));
     assert!(!host_allowed("evil.com", &list));
 }
@@ -1591,7 +1591,7 @@ fn ws_decode_reserved_and_rsv_violations() {
     assert_eq!(ws::decode(&b).unwrap_err().0.code, "SRV-WS");
     // continuation opcode (fragmentation unsupported for now)
     let mut b = ws::encode(&Frame::Text("x".into()), true);
-    b[0] = (b[0] & 0xF0) | 0x00;
+    b[0] = (b[0] & 0xF0);
     assert_eq!(ws::decode(&b).unwrap_err().0.code, "SRV-WS");
 }
 

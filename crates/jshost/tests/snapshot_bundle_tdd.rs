@@ -11,10 +11,10 @@ fn collect(root: &std::path::Path, out: &mut Vec<(std::path::PathBuf, String)>) 
             let p = e.path();
             if p.is_dir() {
                 collect(&p, out);
-            } else if p.extension().is_some_and(|x| x == "js") {
-                if let Ok(s) = std::fs::read_to_string(&p) {
-                    out.push((p, s));
-                }
+            } else if p.extension().is_some_and(|x| x == "js")
+                && let Ok(s) = std::fs::read_to_string(&p)
+            {
+                out.push((p, s));
             }
         }
     }

@@ -91,15 +91,14 @@ impl TranspileLoader {
         // path — the subsequent `ModuleSpecifier::from_file_path` then fails
         // with "path is not a file URL". `to_file_path()` knows the
         // `file:///C:/...` -> `C:\...` mapping on every OS.
-        if specifier.starts_with("file://") {
-            if let Ok(url) = deno_core::ModuleSpecifier::parse(specifier) {
-                if let Ok(path) = url.to_file_path() {
-                    return Some(path);
-                }
-            }
-            // Malformed `file://` URL — fall through to the resolver rather
-            // than guessing a path from the raw string.
+        if specifier.starts_with("file://")
+            && let Ok(url) = deno_core::ModuleSpecifier::parse(specifier)
+            && let Ok(path) = url.to_file_path()
+        {
+            return Some(path);
         }
+        // Malformed `file://` URL — fall through to the resolver rather
+        // than guessing a path from the raw string.
         // A bare absolute path likewise.
         let as_path = Path::new(specifier);
         if as_path.is_absolute() {
@@ -454,12 +453,12 @@ fn lang_of(path: &Path) -> &'static str {
 
 fn is_esm_statement(t: &str) -> bool {
     for kw in ["import", "export"] {
-        if t.starts_with(kw) {
-            if let Some(c) = t[kw.len()..].chars().next() {
-                if !c.is_alphanumeric() && c != '_' {
-                    return true;
-                }
-            }
+        if t.starts_with(kw)
+            && let Some(c) = t[kw.len()..].chars().next()
+            && !c.is_alphanumeric()
+            && c != '_'
+        {
+            return true;
         }
     }
     false
@@ -680,16 +679,16 @@ fn extract_reexport_names(source: &str, path: &std::path::Path, depth: u32) -> V
         return vec![];
     }
     for spec in extract_module_exports_requires(source) {
-        if let Some(tp) = resolve_relative(path, &spec) {
-            if let Ok(content) = std::fs::read_to_string(&tp) {
-                let names = extract_named_exports(&content);
-                if !names.is_empty() {
-                    return names;
-                }
-                let nested = extract_reexport_names(&content, &tp, depth + 1);
-                if !nested.is_empty() {
-                    return nested;
-                }
+        if let Some(tp) = resolve_relative(path, &spec)
+            && let Ok(content) = std::fs::read_to_string(&tp)
+        {
+            let names = extract_named_exports(&content);
+            if !names.is_empty() {
+                return names;
+            }
+            let nested = extract_reexport_names(&content, &tp, depth + 1);
+            if !nested.is_empty() {
+                return nested;
             }
         }
     }

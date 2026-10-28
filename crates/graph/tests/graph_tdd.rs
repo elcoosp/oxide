@@ -785,7 +785,7 @@ fn cas_gc_enforces_size_cap_by_lru() {
         "most-recently-used entry survives"
     );
     assert!(store.get(&k_old).unwrap().is_none());
-    assert!(store.total_bytes().unwrap() <= total - 1);
+    assert!(store.total_bytes().unwrap() < total);
 }
 
 #[test]
