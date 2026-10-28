@@ -34,6 +34,39 @@ pub struct RolldownBundler {
     pub root: PathBuf,
 }
 
+/// Strip the Windows extended-length path prefix from `path` and return
+/// the simplified form. On Windows, `std::fs::canonicalize()` returns
+/// paths starting with `\\?\` (formatted with forward slashes as
+/// `//?/C:/...` by rolldown's error reporting), which rolldown's
+/// internal resolver treats as an unknown URL scheme and rejects with:
+///
+///     Cannot resolve entry module //?/C:/.../page.tsx
+///
+/// The verbatim prefix exists to bypass the 260-char path limit; for
+/// paths under that limit the non-verbatim form is equivalent and
+/// works everywhere. `\\?\C:\foo` -> `C:\foo`,
+/// `\\?\UNC\server\share\foo` -> `\\server\share\foo`. Also handles the
+/// forward-slash spellings (`//?/C:/foo` -> `C:/foo`). No-op on Unix.
+fn strip_windows_verbatim(path: &str) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
+    // Backslash form (native Windows separators).
+    if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+        return Cow::Owned(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = path.strip_prefix(r"\\?\") {
+        return Cow::Borrowed(rest);
+    }
+    // Forward-slash form (path.to_string_lossy of a Windows path that
+    // already used `/`, or a `//?/` URI-ish spelling from rolldown).
+    if let Some(rest) = path.strip_prefix("//?/UNC/") {
+        return Cow::Owned(format!("//{rest}"));
+    }
+    if let Some(rest) = path.strip_prefix("//?/") {
+        return Cow::Borrowed(rest);
+    }
+    Cow::Borrowed(path)
+}
+
 impl RolldownBundler {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
@@ -43,9 +76,19 @@ impl RolldownBundler {
         let input: Vec<InputItem> = options
             .entries
             .iter()
-            .map(|(name, path)| InputItem {
-                name: Some(name.clone()),
-                import: path.to_string_lossy().into_owned(),
+            .map(|(name, path)| {
+                // Windows extended-length paths (`\\?\C:\...` from
+                // `std::fs::canonicalize()`, seen by rolldown as
+                // `//?/C:/...`) are treated as an unknown URL scheme by
+                // rolldown's resolver and rejected with "Cannot resolve
+                // entry module". Strip the verbatim prefix (and its UNC
+                // variants) before handing the path to rolldown. No-op
+                // on Unix.
+                let raw = path.to_string_lossy();
+                InputItem {
+                    name: Some(name.clone()),
+                    import: strip_windows_verbatim(&raw).into_owned(),
+                }
             })
             .collect();
 
@@ -1072,3 +1115,60 @@ mod bug_solid_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod strip_windows_verbatim_tests {
+    use super::strip_windows_verbatim;
+
+    #[test]
+    fn unix_path_is_unchanged() {
+        assert_eq!(strip_windows_verbatim("/tmp/foo/bar.tsx"), "/tmp/foo/bar.tsx");
+        assert_eq!(strip_windows_verbatim("relative/path.js"), "relative/path.js");
+        assert_eq!(strip_windows_verbatim(""), "");
+    }
+
+    #[test]
+    fn strips_verbatim_windows_prefix() {
+        assert_eq!(
+            strip_windows_verbatim(r"\\?\C:\Users\foo\page.tsx"),
+            r"C:\Users\foo\page.tsx"
+        );
+    }
+
+    #[test]
+    fn strips_verbatim_unc_prefix() {
+        assert_eq!(
+            strip_windows_verbatim(r"\\?\UNC\server\share\foo\page.tsx"),
+            r"\\server\share\foo\page.tsx"
+        );
+    }
+
+    #[test]
+    fn strips_forward_slash_verbatim_prefix() {
+        // Exact form in the CI failure:
+        //   Cannot resolve entry module //?/C:/Users/runneradmin/.../page.tsx
+        assert_eq!(
+            strip_windows_verbatim("//?/C:/Users/runneradmin/AppData/Local/Temp/foo/page.tsx"),
+            "C:/Users/runneradmin/AppData/Local/Temp/foo/page.tsx"
+        );
+    }
+
+    #[test]
+    fn strips_forward_slash_unc_prefix() {
+        assert_eq!(
+            strip_windows_verbatim("//?/UNC/server/share/foo/page.tsx"),
+            "//server/share/foo/page.tsx"
+        );
+    }
+
+    #[test]
+    fn unrelated_path_with_question_mark_is_untouched() {
+        // A `?` elsewhere in the path must not be mangled — only the
+        // exact leading `\\?\` or `//?/` prefix is stripped.
+        assert_eq!(
+            strip_windows_verbatim("src/foo?bar.tsx"),
+            "src/foo?bar.tsx"
+        );
+    }
+}
+
