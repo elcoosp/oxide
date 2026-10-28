@@ -18,6 +18,22 @@ use deno_core::{
 use std::path::{Path, PathBuf};
 
 /// The specifier a bare import resolves to on disk, plus its source.
+/// Strip the Windows extended-length path prefix (`\\?\`) that
+/// `std::fs::canonicalize` adds on that platform. `ModuleSpecifier::from_file_path`
+/// rejects `\\?\C:\...` — the URL form has no representation for it, so
+/// the conversion fails with "path is not a file URL". Normalizing here
+/// keeps every path that leaves this module in the plain `C:\...` form.
+fn strip_verbatim(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        return PathBuf::from(rest.to_string());
+    }
+    p
+}
+
 pub struct TranspileLoader {
     /// Project root: bare specifiers resolve `node_modules` from here.
     root: PathBuf,
@@ -85,8 +101,21 @@ impl TranspileLoader {
         // A `file://` specifier is already absolute — return it without an
         // `is_file` gate (a concurrent build write or a pool worker racing the
         // first render made the stat flaky). `load` reports a real read error.
-        if let Some(path) = specifier.strip_prefix("file://") {
-            return Some(PathBuf::from(path));
+        //
+        // Parse as a URL then `to_file_path()`, NOT `strip_prefix("file://")`:
+        // on Windows `file:///C:/Users/x/mod.mjs` strips to `/C:/Users/x/mod.mjs`,
+        // whose leading `/` before the drive makes `Path::new(..)` a non-file
+        // path — the subsequent `ModuleSpecifier::from_file_path` then fails
+        // with "path is not a file URL". `to_file_path()` knows the
+        // `file:///C:/...` -> `C:\...` mapping on every OS.
+        if specifier.starts_with("file://") {
+            if let Ok(url) = deno_core::ModuleSpecifier::parse(specifier) {
+                if let Ok(path) = url.to_file_path() {
+                    return Some(path);
+                }
+            }
+            // Malformed `file://` URL — fall through to the resolver rather
+            // than guessing a path from the raw string.
         }
         // A bare absolute path likewise.
         let as_path = Path::new(specifier);
@@ -104,13 +133,15 @@ impl TranspileLoader {
             .map(PathBuf::from)
             .and_then(|p| p.parent().map(Path::to_path_buf))
             .unwrap_or_else(|| self.root.clone());
-        let base_dir = std::fs::canonicalize(&base_raw).unwrap_or(base_raw);
+        let base_dir = strip_verbatim(std::fs::canonicalize(&base_raw).unwrap_or(base_raw));
 
         // A relative import with an explicit extension we can probe directly.
         if Self::is_relative(specifier) {
             let joined = base_dir.join(specifier);
             if let Some(found) = probe_extensions(&joined) {
-                return Some(std::fs::canonicalize(&found).unwrap_or(found));
+                return Some(strip_verbatim(
+                    std::fs::canonicalize(&found).unwrap_or(found),
+                ));
             }
         }
 
@@ -119,7 +150,7 @@ impl TranspileLoader {
         self.resolver()
             .resolve(&base_dir, specifier)
             .ok()
-            .map(|r| r.full_path().to_path_buf())
+            .map(|r| strip_verbatim(r.full_path().to_path_buf()))
     }
 }
 

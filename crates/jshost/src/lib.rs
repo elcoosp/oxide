@@ -3021,6 +3021,51 @@ struct Worker {
     transform: Mutex<Option<Arc<dyn TransformHandler>>>,
 }
 
+/// Turn a filesystem path into a `file://` URL string that Node's CLI
+/// (`--import`, positional script) accepts on every OS. `C:\\x\\y.mjs`
+/// becomes `file:///C:/x/y.mjs`; `/tmp/x.mjs` becomes `file:///tmp/x.mjs`.
+/// This mirrors the JS-side `__oxidePathToUrl`; Node parses both args as
+/// module specifiers, and a bare `D:` prefix is otherwise read as a URL
+/// scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME).
+fn path_to_file_url(p: &Path) -> Result<String> {
+    let s = p.to_string_lossy();
+    // Already a URL — leave it.
+    if s.starts_with("file://") {
+        return Ok(s.to_string());
+    }
+    // Forward slashes are the URL separator on every platform.
+    let norm = s.replace('\\', "/");
+    // `D:` / `D:/...` — Windows drive letter: needs the extra leading slash.
+    let bytes = norm.as_bytes();
+    let has_drive = bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic();
+    if has_drive {
+        return Ok(format!("file:///{norm}"));
+    }
+    // UNC path: `//server/share/x` -> `file://server/share/x`.
+    if norm.starts_with("//") {
+        return Ok(format!("file:{norm}"));
+    }
+    // POSIX absolute: `/tmp/x` -> `file:///tmp/x`.
+    if norm.starts_with('/') {
+        return Ok(format!("file://{norm}"));
+    }
+    // Relative path: anchor against the current dir. Node's CLI would
+    // normally resolve this for us, but as a URL we must be absolute.
+    let abs = std::env::current_dir()
+        .ok()
+        .map(|d| d.join(p))
+        .unwrap_or_else(|| p.to_path_buf());
+    let abs_norm = abs.to_string_lossy().replace('\\', "/");
+    let abs_bytes = abs_norm.as_bytes();
+    let abs_has_drive =
+        abs_bytes.len() >= 2 && abs_bytes[1] == b':' && abs_bytes[0].is_ascii_alphabetic();
+    if abs_has_drive {
+        Ok(format!("file:///{abs_norm}"))
+    } else {
+        Ok(format!("file://{abs_norm}"))
+    }
+}
+
 /// Spawn `node <worker_script>` with piped stdio; returns (child, stdin, stdout).
 /// Uses `tokio::process::Command` directly (tokio 1.53 has no `Child::from(std)`);
 /// `spawn()` is sync but requires the caller to run inside a tokio runtime — pool
@@ -3050,7 +3095,18 @@ fn spawn_child(
         .parent()
         .map(|p| p.join("register-hooks.mjs"))
         .unwrap_or_else(|| std::path::PathBuf::from("register-hooks.mjs"));
-    cmd.arg("--import").arg(&register_hooks);
+    // `--import` takes a module SPECIFIER: a bare Windows path
+    // `C:\\...\\register-hooks.mjs` is parsed as URL scheme `c:` and
+    // rejected with ERR_UNSUPPORTED_ESM_URL_SCHEME. Pass it as a `file://`
+    // URL, which Node accepts on every platform.
+    //
+    // The POSITIONAL script arg is the opposite: Node treats it as a
+    // filesystem path, not a specifier — a `file://` URL there fails with
+    // `Cannot find module '.../file:/tmp/worker.mjs'`. Bare path on every
+    // OS is correct (Node's CLI resolves `C:\x\y.mjs` as a path on
+    // Windows; the scheme confusion is specific to `--import` and
+    // `import()`).
+    cmd.arg("--import").arg(path_to_file_url(&register_hooks)?);
 
     cmd.arg(worker_script)
         .stdin(std::process::Stdio::piped())
