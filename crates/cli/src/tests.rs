@@ -2510,6 +2510,7 @@ fn setup_static_project() -> tempfile::TempDir {
 
 #[tokio::test]
 async fn static_build_prerenders_page_routes() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     let dir = setup_static_project();
     let mut buf = Vec::new();
     let code = crate::run_with_writer(
@@ -2537,6 +2538,7 @@ async fn static_build_prerenders_page_routes() {
 
 #[tokio::test]
 async fn static_build_enumerates_generate_params() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     let dir = setup_static_project();
     let routes = dir.path().join("src/routes");
     std::fs::create_dir_all(routes.join("blog").join("[slug]")).unwrap();
@@ -2585,6 +2587,7 @@ async fn static_build_enumerates_generate_params() {
 
 #[tokio::test]
 async fn static_build_refuses_dynamic_without_fallback() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     let dir = setup_static_project();
     let routes = dir.path().join("src/routes");
     std::fs::create_dir_all(routes.join("dashboard")).unwrap();
@@ -2756,6 +2759,7 @@ async fn mcp_errors_tool_reads_diagnostics_file() {
 
 #[tokio::test]
 async fn schema_command_emits_valid_json_schema() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     let mut buf = Vec::new();
     let code = crate::run_with_writer(
         Cli {
@@ -2783,6 +2787,7 @@ async fn schema_command_emits_valid_json_schema() {
 
 #[tokio::test]
 async fn build_emits_content_search_index_for_collection() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
     let routes = root.join("src/routes");
@@ -4839,6 +4844,7 @@ async fn audit_offline_without_cache_is_a_clear_error() {
 
 #[tokio::test]
 async fn audit_json_mode_emits_stable_schema() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
     // No package-lock.json → read_package_lock errors; JSON mode emits a
