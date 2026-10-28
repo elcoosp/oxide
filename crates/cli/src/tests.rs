@@ -4597,14 +4597,21 @@ async fn middleware_chain_runs_outer_to_inner_and_threads_locals() {
         2,
         "both root and blog middleware ran (§8.5 full chain, not nearest only)"
     );
-    // Outer→inner order: root middleware first.
+    // Outer→inner order: root middleware first. Check the path
+    // component, not a literal `/blog/` substring — a Windows run sees
+    // `C:\\...\\routes\\blog\\middleware.ts`, where the separator is `\`.
+    let has_blog_component = |p: &str| {
+        std::path::Path::new(p)
+            .components()
+            .any(|c| c.as_os_str() == "blog")
+    };
     assert!(
-        seen[0].0.ends_with("middleware.ts") && !seen[0].0.contains("/blog/"),
+        seen[0].0.ends_with("middleware.ts") && !has_blog_component(&seen[0].0),
         "first is the root middleware: {}",
         seen[0].0
     );
     assert!(
-        seen[1].0.contains("/blog/") && seen[1].0.ends_with("middleware.ts"),
+        has_blog_component(&seen[1].0) && seen[1].0.ends_with("middleware.ts"),
         "second is the blog middleware: {}",
         seen[1].0
     );

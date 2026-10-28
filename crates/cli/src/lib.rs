@@ -11873,14 +11873,23 @@ async fn cmd_migrate(root: &str, source: &str, write: bool, w: Writer<'_>) -> an
     for c in &plan.conversions {
         match &c.to {
             Some(dst) => {
-                outln!(w, "  - {} → {}", c.from.display(), dst.display());
+                outln!(
+                    w,
+                    "  - {} → {}",
+                    crate::build_graph::slash_path(&c.from),
+                    crate::build_graph::slash_path(dst)
+                );
                 if let Some(note) = &c.note {
                     outln!(w, "      note: {note}");
                 }
             }
             None => {
                 let note = c.note.as_deref().unwrap_or("(no reason given)");
-                outln!(w, "  - {}  ✗ skipped: {note}", c.from.display());
+                outln!(
+                    w,
+                    "  - {}  ✗ skipped: {note}",
+                    crate::build_graph::slash_path(&c.from)
+                );
             }
         }
     }

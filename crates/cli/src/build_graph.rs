@@ -31,11 +31,21 @@ use std::sync::Arc;
 const SNAPSHOT_VERSION: &str = "v1";
 const SNAPSHOT_REL: &str = ".oxide/graph.json";
 
+/// Render a path with forward slashes on every OS. `module_key` /
+/// `chunk_key` embed this string in the snapshot (`graph.json`) and the
+/// content-addressed cache — a Windows run that emitted `src\\routes\\x.ts`
+/// and a Linux run that emitted `src/routes/x.ts` would otherwise miss
+/// each other's cache entries for the same file. Fixes the Windows-only
+/// `build_records_*` test failures, and the cross-platform cache hit rate.
+pub(crate) fn slash_path(p: impl AsRef<Path>) -> String {
+    p.as_ref().to_string_lossy().replace('\\', "/")
+}
+
 pub fn module_key(path: &Path) -> NodeKey {
-    NodeKey::new(format!("module:{}", path.display()))
+    NodeKey::new(format!("module:{}", slash_path(path)))
 }
 pub fn chunk_key(env: &str, path: &Path) -> NodeKey {
-    NodeKey::new(format!("chunk:{env}/{}", path.display()))
+    NodeKey::new(format!("chunk:{env}/{}", slash_path(path)))
 }
 pub fn manifest_key(env: &str) -> NodeKey {
     NodeKey::new(format!("manifest:{env}"))
