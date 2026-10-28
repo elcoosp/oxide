@@ -4407,4 +4407,68 @@ mod p0_2_overflow_tests {
         let out = stream.collect().await.expect("under cap");
         assert_eq!(&out[..], b"hellohellohello");
     }
+    #[cfg(test)]
+    mod path_url_tests {
+        use super::path_to_file_url;
+        use std::path::Path;
+
+        /// The exact shapes the Node CLI / deno_core loader get wrong when the
+        /// conversion is POSIX-only. Windows-shaped inputs are tested from any
+        /// host — the function is pure string manipulation, so a macOS/Linux
+        /// CI run catches a Windows regression before it ships.
+        #[test]
+        fn path_to_file_url_produces_portable_urls() {
+            // Windows drive, backslashes (the CI runner's actual shape).
+            assert_eq!(
+                path_to_file_url(Path::new(
+                    r"C:\Users\runneradmin\AppData\Local\Temp\worker.mjs"
+                ))
+                .unwrap(),
+                "file:///C:/Users/runneradmin/AppData/Local/Temp/worker.mjs"
+            );
+            // Windows drive, forward slashes.
+            assert_eq!(
+                path_to_file_url(Path::new("D:/a/oxide/worker.mjs")).unwrap(),
+                "file:///D:/a/oxide/worker.mjs"
+            );
+            // UNC share.
+            assert_eq!(
+                path_to_file_url(Path::new(r"\\server\share\worker.mjs")).unwrap(),
+                "file://server/share/worker.mjs"
+            );
+            // POSIX absolute — must not regress the existing behaviour.
+            assert_eq!(
+                path_to_file_url(Path::new("/tmp/worker.mjs")).unwrap(),
+                "file:///tmp/worker.mjs"
+            );
+            // Already a URL — pass through untouched.
+            assert_eq!(
+                path_to_file_url(Path::new("file:///C:/x/y.mjs")).unwrap(),
+                "file:///C:/x/y.mjs"
+            );
+        }
+
+        /// `strip_prefix("file://")` on `file:///C:/x` yields `/C:/x` — a leading
+        /// slash before the drive, which `Path::new` treats as POSIX-absolute and
+        /// `ModuleSpecifier::from_file_path` then rejects. This is exactly the
+        /// bug that produced "path is not a file URL" on every V8 import. The
+        /// `resolve_to_path` fix routes through `ModuleSpecifier::parse` +
+        /// `to_file_path`, which is exercised by the integration tests; this
+        /// unit test pins the URL-shape invariant the fix depends on.
+        #[test]
+        fn file_url_with_windows_drive_round_trips_through_url_parse() {
+            let url = deno_core::ModuleSpecifier::parse("file:///C:/Users/x/mod.mjs").unwrap();
+            assert_eq!(url.scheme(), "file");
+            assert!(url.path().starts_with("/C:/"));
+            // The stripping bug:
+            let naive = "file:///C:/Users/x/mod.mjs"
+                .strip_prefix("file://")
+                .unwrap();
+            assert_eq!(naive, "/C:/Users/x/mod.mjs");
+            assert_ne!(
+                naive, "C:/Users/x/mod.mjs",
+                "the naive strip leaves a stray leading slash — that is the bug"
+            );
+        }
+    }
 }
