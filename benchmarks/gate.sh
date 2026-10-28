@@ -69,15 +69,39 @@ printf '%-22s %-10s %12s %12s %8s\n' "-------" "------" "--------" "-----" "----
 
 while read -r fx cold warm client server pages start rss ttfb; do
     [ -z "$fx" ] && continue
+    pages_gated=$pages
     base=$(awk -v f="$fx" '$1 == f { print; exit }' "$TMP_R")
     [ -z "$base" ] && continue
-    set -- $base; b_cold=$2; b_warm=$3; b_client=$4; b_server=$5; b_start=$7; b_rss=$8; b_ttfb=$9
+    set -- $base; b_cold=$2; b_warm=$3; b_client=$4; b_server=$5; b_pages=$6; b_start=$7; b_rss=$8; b_ttfb=$9
 
+    # GATED: deterministic metrics. The Rust bundler emits identical
+    # JavaScript regardless of host OS/arch, so a >5% move here is a real
+    # code-size regression. Re-baselined when they drift legitimately
+    # (see the "Gate policy" note in report.md).
+    for pair in \
+        "client:$b_client:$client" \
+        "server:$b_server:$server" \
+        "pages:$b_pages:$pages_gated"
+    do
+        name=${pair%%:*}; rest=${pair#*:}; b=${rest%%:*}; f=${rest#*:}
+        case "$b" in ''|'-'|*[!0-9]*) continue ;; esac
+        case "$f" in ''|'-'|*[!0-9]*) continue ;; esac
+        [ "$b" -eq 0 ] && continue
+        delta=$(awk -v b="$b" -v f="$f" 'BEGIN { printf "%d\n", ((f - b) / b) * 100 }')
+        if [ "$delta" -gt "$THRESHOLD" ]; then
+            printf '%-22s %-10s %12s %12s %7s%%  REGRESSION\n' "$fx" "$name" "$b" "$f" "$delta"
+            fail=1
+        fi
+    done
+
+    # INFO ONLY: wall-clock metrics. Printed when they move >threshold so
+    # the CI log still surfaces big swings for inspection, but they never
+    # fail the gate: report.md's own 2026-10-21 note measured 30% cold
+    # variance on a SINGLE host, so 5% cross-machine is noise. Gating these
+    # requires a pinned runner class + repeated runs + p50/p99.
     for pair in \
         "cold:$b_cold:$cold" \
         "warm:$b_warm:$warm" \
-        "client:$b_client:$client" \
-        "server:$b_server:$server" \
         "start:$b_start:$start" \
         "rss:$b_rss:$rss" \
         "ttfb:$b_ttfb:$ttfb"
@@ -88,8 +112,7 @@ while read -r fx cold warm client server pages start rss ttfb; do
         [ "$b" -eq 0 ] && continue
         delta=$(awk -v b="$b" -v f="$f" 'BEGIN { printf "%d\n", ((f - b) / b) * 100 }')
         if [ "$delta" -gt "$THRESHOLD" ]; then
-            printf '%-22s %-10s %12s %12s %7s%%  REGRESSION\n' "$fx" "$name" "$b" "$f" "$delta"
-            fail=1
+            printf '%-22s %-10s %12s %12s %7s%%  (info, not gated)\n' "$fx" "$name" "$b" "$f" "$delta"
         fi
     done
 done < "$TMP_F"
