@@ -72,8 +72,8 @@ impl RedisCacheHandler {
         // S-05: bound both the connect attempt and every command response so a
         // network black-hole to Redis cannot pin a request forever.
         let config = redis::aio::ConnectionManagerConfig::new()
-            .set_response_timeout(L2_OP_TIMEOUT)
-            .set_connection_timeout(Duration::from_secs(2));
+            .set_response_timeout(Some(L2_OP_TIMEOUT))
+            .set_connection_timeout(Some(Duration::from_secs(2)));
         let conn = ConnectionManager::new_with_config(client, config)
             .await
             .map_err(|e| err("CACHE-REDIS", format!("connect {redacted}: {e}")))?;
