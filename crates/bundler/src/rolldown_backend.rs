@@ -1122,8 +1122,14 @@ mod strip_windows_verbatim_tests {
 
     #[test]
     fn unix_path_is_unchanged() {
-        assert_eq!(strip_windows_verbatim("/tmp/foo/bar.tsx"), "/tmp/foo/bar.tsx");
-        assert_eq!(strip_windows_verbatim("relative/path.js"), "relative/path.js");
+        assert_eq!(
+            strip_windows_verbatim("/tmp/foo/bar.tsx"),
+            "/tmp/foo/bar.tsx"
+        );
+        assert_eq!(
+            strip_windows_verbatim("relative/path.js"),
+            "relative/path.js"
+        );
         assert_eq!(strip_windows_verbatim(""), "");
     }
 
@@ -1165,10 +1171,6 @@ mod strip_windows_verbatim_tests {
     fn unrelated_path_with_question_mark_is_untouched() {
         // A `?` elsewhere in the path must not be mangled — only the
         // exact leading `\\?\` or `//?/` prefix is stripped.
-        assert_eq!(
-            strip_windows_verbatim("src/foo?bar.tsx"),
-            "src/foo?bar.tsx"
-        );
+        assert_eq!(strip_windows_verbatim("src/foo?bar.tsx"), "src/foo?bar.tsx");
     }
 }
-
