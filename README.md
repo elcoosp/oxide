@@ -58,7 +58,10 @@ cargo build -p oxide-fw-cli --release
 ./target/release/oxide doctor
 
 # Scaffold a new app (React, Vue, Svelte, or Solid).
-./target/release/oxide create my-app --adapter react
+# `create-oxide` is a separate npm package; it never ships inside the
+# `oxide` binary. Both invocations work (they call the same scaffolder).
+npx create-oxide@latest my-app --framework react --template blog
+# or: pnpm create oxide my-app --framework react --template blog
 
 # Start the dev server with HMR.
 cd my-app && ../target/release/oxide dev
@@ -92,6 +95,10 @@ One binary, one entry point:
 | `oxide audit` | Plugin and dependency advisories |
 | `oxide migrate` | Migrate from Next / Nuxt / SvelteKit / Vite |
 | `oxide test` | In-process test helper: boot the app and expose `fetch` |
+| `oxide mcp` | Model Context Protocol server (route/config/audit tools for agents) |
+| `oxide schema` | Print the typed config JSON Schema |
+| `oxide config` | Print the resolved config as JSON (for debugging layer merging) |
+| `oxide render` | Render one route to stdout (debug the SSR output in isolation) |
 
 ## Architecture
 
@@ -151,7 +158,7 @@ ODF (Oxide Data Format) is the only format that crosses the Rust ↔ TypeScript 
 
 | Suite | Count | How to run |
 | --- | --- | --- |
-| Rust | 1239 defined (1187 run; 52 `#[ignore]`d for V8/network) | `cargo test --workspace --no-fail-fast` |
+| Rust | 1187 pass in a default `cargo test --workspace` run (1239 test fns total; the rest `#[ignore]`d for V8/network/snapshot and run by dedicated CI jobs) | `cargo test --workspace --no-fail-fast` |
 | Framework adapters (Node) | 212 core + 67 react + 55 vue + 55 svelte + 50 solid | `node --test packages/*/test/*.test.ts` |
 | Playwright (real browser, 3 engines) | 26 scenarios × 3 engines | `cd tests/playwright && pnpm exec playwright test` |
 | Benchmarks | deterministic byte counts + wall-clock info | `./benchmarks/run.sh`, gated by `benchmarks/gate.sh` |
