@@ -1,7 +1,7 @@
 {
   "name": "@oxide-fw/core",
   "version": "0.1.0",
-  "description": "Oxide runtime package: server data APIs (\u00a79), ODF wire decoder (\u00a79.5/D11), core client router (\u00a78.4/D9), islands loader (\u00a710.3), test helper (\u00a716.6). Zero runtime dependencies; runs on Node 24 type stripping.",
+  "description": "Oxide runtime package: server data APIs (§9), ODF wire decoder (§9.5/D11), core client router (§8.4/D9), islands loader (§10.3), test helper (§16.6). Zero runtime dependencies; runs on Node 24 type stripping.",
   "type": "module",
   "exports": {
     ".": {
@@ -109,8 +109,9 @@
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "devDependencies": {
-    "tsdown": "^0.23.1",
-    "typescript": "^5.7.0"
+    "@typescript/native-preview": "7.0.0-dev.20260707.2",
+    "tsdown": "^0.23.3",
+    "typescript": "^7.0.2"
   },
   "publishConfig": {},
   "repository": {

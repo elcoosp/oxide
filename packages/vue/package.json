@@ -1,7 +1,7 @@
 {
   "name": "@oxide-fw/vue",
   "version": "0.1.0",
-  "description": "Vue adapter for Oxide: adapter manifest + render/hydrate over the neutral IR (spec \u00a77). Zero runtime dependencies; runs on Node 24 type stripping. Without @vue/server-renderer installed the adapter renders the neutral element-tree IR itself.",
+  "description": "Vue adapter for Oxide: adapter manifest + render/hydrate over the neutral IR (spec §7). Zero runtime dependencies; runs on Node 24 type stripping. Without @vue/server-renderer installed the adapter renders the neutral element-tree IR itself.",
   "type": "module",
   "exports": {
     ".": {
@@ -52,8 +52,8 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "vue": "^3.6.0-rc.11",
-    "@vue/server-renderer": "^3.6.0-rc.11"
+    "@vue/server-renderer": "^3.6.0-rc.11",
+    "vue": "^3.6.0-rc.11"
   },
   "peerDependenciesMeta": {
     "vue": {
@@ -64,9 +64,10 @@
     }
   },
   "devDependencies": {
+    "@typescript/native-preview": "7.0.0-dev.20260707.2",
     "@vue/server-renderer": "^3.6.0-rc.11",
-    "tsdown": "^0.23.1",
-    "typescript": "^5.7.0",
+    "tsdown": "^0.23.3",
+    "typescript": "^7.0.2",
     "vue": "^3.6.0-rc.11"
   },
   "sideEffects": false,

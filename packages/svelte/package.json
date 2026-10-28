@@ -1,7 +1,7 @@
 {
   "name": "@oxide-fw/svelte",
   "version": "0.1.0",
-  "description": "Svelte adapter for Oxide: adapter manifest + render/hydrate over the neutral IR (spec \u00a77). Zero runtime dependencies; runs on Node 24 type stripping. Without the Svelte SSR runtime installed the adapter renders the neutral element-tree IR itself.",
+  "description": "Svelte adapter for Oxide: adapter manifest + render/hydrate over the neutral IR (spec §7). Zero runtime dependencies; runs on Node 24 type stripping. Without the Svelte SSR runtime installed the adapter renders the neutral element-tree IR itself.",
   "type": "module",
   "exports": {
     ".": {
@@ -54,9 +54,10 @@
     }
   },
   "devDependencies": {
-    "svelte": "^5.0.0",
-    "tsdown": "^0.23.1",
-    "typescript": "^5.7.0"
+    "@typescript/native-preview": "7.0.0-dev.20260707.2",
+    "svelte": "^5.57.3",
+    "tsdown": "^0.23.3",
+    "typescript": "^7.0.2"
   },
   "sideEffects": false,
   "files": [

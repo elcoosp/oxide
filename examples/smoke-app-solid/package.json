@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Solid counterpart of examples/smoke-app: proves the CLI build pipeline is framework-neutral.",
   "dependencies": {
-    "@babel/core": "^8.0.7",
+    "@babel/core": "^8.0.9",
     "@solidjs/web": "^2.0.0-rc.14",
     "babel-preset-solid": "^1.9.16",
     "solid-js": "^2.0.0-rc.14",

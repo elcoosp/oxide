@@ -16,9 +16,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "sucrase": "^3.35.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "sucrase": "^3.35.1",
     "@oxide-fw/core": "workspace:*",
     "@oxide-fw/react": "workspace:*",
     "@oxide-fw/tailwind": "workspace:*"

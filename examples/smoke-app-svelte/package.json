@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Svelte counterpart of examples/smoke-app: proves the CLI build pipeline is framework-neutral.",
   "dependencies": {
-    "svelte": "^5.57.0",
+    "svelte": "^5.57.3",
     "@oxide-fw/svelte": "workspace:*",
     "@oxide-fw/core": "workspace:*"
   }

@@ -5,9 +5,9 @@
   "type": "module",
   "description": "Hand-rolled end-to-end fixture: a minimal app using the local workspace packages. Equivalent to what `pnpm create oxide` scaffolds.",
   "dependencies": {
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "sucrase": "^3.35.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "sucrase": "^3.35.1",
     "@oxide-fw/react": "workspace:*",
     "@oxide-fw/core": "workspace:*"
   }
