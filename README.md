@@ -15,7 +15,7 @@
     <img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/>
     <img src="https://img.shields.io/badge/Workspace-17%20crates%20%2B%207%20packages-6F4E37?style=flat-square" alt="Workspace"/>
     <img src="https://img.shields.io/badge/Code-%E2%89%88113k%20lines-9CF?style=flat-square" alt="Lines of code"/>
-    <img src="https://img.shields.io/badge/Tests-1231%20Rust%20%7C%20445%2F445%20TS-brightgreen?style=flat-square" alt="Tests"/>
+    <img src="https://img.shields.io/badge/Tests-1237%20Rust%20%7C%20445%2F445%20TS-brightgreen?style=flat-square" alt="Tests"/>
     <img src="https://img.shields.io/badge/ODF-16%20golden%20fixtures-00BFFF?style=flat-square" alt="ODF golden fixtures"/>
     <img src="https://img.shields.io/badge/TS%20runtime-zero%20npm%20deps-228B22?style=flat-square" alt="Zero dependencies"/>
   </p>
@@ -344,7 +344,7 @@ count the gate cannot reproduce.
 
 | What | Value | Source of truth |
 |---|---|---|
-| Rust tests | 1231 | `scripts/count-tests.sh` (static attr count) |
+| Rust tests | 1237 | `scripts/count-tests.sh` (static attr count) |
 | TypeScript tests | 445 packages + 32 conformance = 477, green | suites run + conformance run |
 | CI gates | 16 jobs | `.github/workflows/ci.yml` |
 | Browser e2e | 26 specs / 11 files × Chromium, Firefox, WebKit | `tests/playwright` |
