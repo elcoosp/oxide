@@ -53,7 +53,7 @@ oxide-fw-core-wasm = { path = "crates/core-wasm", version = "0.1.0" }
 tokio = { version = "1.52.3", features = ["full"] }
 # §11.2 cache.handler=redis / cache.handler=s3 (optional drivers;
 # feature-gated in oxide-fw-cache so the default build stays lean)
-redis = { version = "0.27", features = ["tokio-comp", "connection-manager", "tokio-rustls-comp"] }
+redis = { version = "1.8.0", features = ["tokio-comp", "connection-manager", "tokio-rustls-comp"] }
 object_store = { version = "0.14", features = ["aws"] }
 hyper = { version = "1.12.0", features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1.21", features = ["tokio", "server", "http1", "http2", "client-legacy"] }
