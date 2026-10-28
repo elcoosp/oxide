@@ -2856,7 +2856,18 @@ impl Pool for V8Pool {
             // `choose_worker` skips it) and spawn a warm replacement — a dead
             // worker left in the set would fail every call forever. CAS so
             // concurrent failures trigger one replacement.
+            //
+            // The CAS also gates the `crashed` bump, matching NodePool's
+            // accounting (fix(jshost) 151a70c). Before this, V8Pool's
+            // `crashed` was permanently 0 — a `stats()` call after a V8
+            // worker died reported `failed > 0, crashed == 0`. No test
+            // asserted the value, so the asymmetry survived. The bump
+            // happens inside the CAS, before the replacement task is
+            // spawned: the caller that receives the `Err` at the end of
+            // this block is guaranteed to see `crashed > 0` when it calls
+            // `stats()`.
             if !worker.dead.swap(true, Ordering::AcqRel) {
+                self.counters.crashed.fetch_add(1, Ordering::SeqCst);
                 let workers = Arc::clone(&self.workers);
                 let counters = Arc::clone(&self.counters);
                 let snapshot = self.snapshot;
