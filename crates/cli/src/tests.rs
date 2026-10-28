@@ -3250,7 +3250,6 @@ async fn smoke_app_emits_island_markup_and_boot_script() {
 /// truncated); before the shell it still aborts.
 #[tokio::test]
 async fn stream_error_recovery_after_shell_emits_boundary() {
-    use futures::StreamExt as _;
     use futures::channel::mpsc as fmpsc;
 
     // Build a RenderStream that yields one chunk then an error.
