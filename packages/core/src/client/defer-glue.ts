@@ -14,15 +14,21 @@
 export interface SwapDetail {
   id: number
   /**
-   * The **streamed HTML content** of the boundary — the `innerHTML` of the
-   * `<template data-ox-c='<id>'>` the server emitted. `render::SWAPPER_SRC`
-   * sends this as `detail.value` on every `ox:swap` (before this was
-   * `undefined`, so any `DeferredClient` awaiting a loader data slot resolved
-   * to nothing). This is HTML, not the raw data payload: a `defer()`ed value
-   * in the loader data stream is currently delivered as rendered markup, not
-   * as the structured `Value` §9.2 calls for. Carrying the ODF-encoded data
-   * alongside (so `DeferredClient` resolves to the decoded value) is a
-   * remaining gap — see WORKLOG.
+   * The **streamed HTML content** of a `suspense: 'core'` boundary — the
+   * `innerHTML` of the `<template data-ox-c='<id>'>` the server emitted.
+   * `render::SWAPPER_SRC` sends this as `detail.value` on every `ox:swap`,
+   * because the whole point of a Suspense boundary is "show this
+   * placeholder, then swap in the ready subtree." That subtree is
+   * **rendered markup**, not the raw data value.
+   *
+   * Separate mechanism, same event slot: `defer()` values in *loader data*
+   * (§9.2) arrive via `<script type="application/oxide-deferred"
+   * data-id="<id>">` tags. Those carry the **structured** JSON value
+   * (`{"label":"fast"}`) and flow through `resolveFromScripts`, not this
+   * `SwapDetail` path. That's why a `DeferredClient` awaiting a loader
+   * slot resolves to the typed value, while one awaiting a Suspense
+   * boundary resolves to the boundary's rendered HTML — two shapes, two
+   * protocols, both §7.1.
    */
   value?: string
   error?: unknown
@@ -137,37 +143,74 @@ export interface DeferGlueOptions {
   eventName?: string
 }
 
-/**
- * Listen for `ox:swap` events on the document and resolve registered
- * deferred slots. `dispose()` removes the listener; later swaps no longer
- * resolve (slots wired after dispose reject as orphaned).
- */
-/** Resolve (or reject) one slot from a settle value. A rejected defer is
- *  serialized as `{ __oxide_deferred_error: "..." }` and must reject the
- *  slot rather than resolve it to a shape the page did not expect. */
-function resolveSlot(
-  registry: Map<number, DeferredClient>,
-  id: number,
-  value: unknown,
-): void {
-  const slot = registry.get(id)
-  if (!slot) return
-  if (
-    value &&
-    typeof value === 'object' &&
-    '__oxide_deferred_error' in (value as Record<string, unknown>)
-  ) {
-    const err = (value as Record<string, unknown>).__oxide_deferred_error
-    slot.reject(new Error(String(err)))
-  } else {
-    slot.resolve(value)
-  }
-}
-
 export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
   const doc: DeferGlueDoc | undefined = options.doc ?? (globalThis as { document?: DeferGlueDoc }).document
   const eventName = options.eventName ?? 'ox:swap'
   const registry = new Map<number, DeferredClient>()
+  /**
+   * §7.1: when a slot resolves, if the page contains a
+   * `[data-deferred-value="<id>"]` marker, write the resolved value into
+   * it. This lets a page that doesn't use framework idioms (React `use()`,
+   * Vue ref, Svelte await block, Solid resource) still *see* the streamed
+   * value — the last-mile wiring that turns "the settle script landed" into
+   * "the page shows the label."
+   *
+   * Convention (matching the smoke-app `/deferred` fixture):
+   *   `value = { label: <string> }`  ->  marker.textContent = value.label
+   *   `value = <string>`             ->  marker.textContent = value
+   *   `value = anything else`        ->  marker.textContent = JSON.stringify(value)
+   * Opt-in per element: no marker, no work. Multiple markers per id (rare)
+   * all receive the same value.
+   */
+  const updateMarker = (id: number, value: unknown): void => {
+    if (typeof doc.querySelectorAll !== 'function') return
+    const els = doc.querySelectorAll(`[data-deferred-value="${id}"]`)
+    if (!els || els.length === 0) return
+    const el = els[0]
+    if (!el) return
+    if (
+      value &&
+      typeof value === 'object' &&
+      typeof (value as { label?: unknown }).label === 'string'
+    ) {
+      el.textContent = (value as { label: string }).label
+    } else if (typeof value === 'string') {
+      el.textContent = value
+    } else {
+      el.textContent = JSON.stringify(value)
+    }
+  }
+
+  /**
+   * Resolve (or reject) one slot from a settle value, and update any
+   * matching `[data-deferred-value]` marker. A rejected defer is
+   * serialized as `{ __oxide_deferred_error: "..." }` and rejects the
+   * slot rather than resolving it to a shape the page did not expect.
+   * Called from every resolution path: per-settle scripts, batched
+   * scripts, `ox:swap` events, and the programmatic `glue.resolve`/
+   * `glue.resolveAll` API.
+   */
+  const resolveSlot = (id: number, value: unknown): void => {
+    const slot = registry.get(id)
+    if (!slot) return
+    if (
+      value &&
+      typeof value === 'object' &&
+      '__oxide_deferred_error' in (value as Record<string, unknown>)
+    ) {
+      slot.reject(
+        new Error(String((value as Record<string, unknown>).__oxide_deferred_error)),
+      )
+      return
+    }
+    // Only update the marker when the slot actually transitions to resolved
+    // (a second resolve of an already-resolved slot is a no-op, and must not
+    // overwrite a marker that a user might have set to something else).
+    const wasPending = slot.status === 'pending'
+    slot.resolve(value)
+    if (wasPending) updateMarker(id, value)
+  }
+
   let dead = false
   if (!doc) throw new TypeError('attachDeferGlue: no document (pass one in non-browser tests)')
 
@@ -175,13 +218,11 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
     if (!isSwapEvent(e)) return
     const detail = e.detail
     options.onSwap?.(detail)
-    const slot = registry.get(detail.id)
-    if (!slot) return
     if (detail.error !== undefined && detail.error !== null) {
-      slot.reject(detail.error)
-    } else {
-      slot.resolve(detail.value)
+      registry.get(detail.id)?.reject(detail.error)
+      return
     }
+    resolveSlot(detail.id, detail.value)
   }
   doc.addEventListener(eventName, onSwap)
 
@@ -216,14 +257,14 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
       if (dataId) {
         const id = Number(dataId)
         if (Number.isFinite(id)) {
-          resolveSlot(registry, id, parsed)
+          resolveSlot(id, parsed)
         }
         continue
       }
       for (const [idStr, value] of Object.entries(parsed)) {
         const id = Number(idStr)
         if (!Number.isFinite(id)) continue
-        resolveSlot(registry, id, value)
+        resolveSlot(id, value)
       }
     }
   }
@@ -271,13 +312,13 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
   return {
     registry,
     resolve(id: number, value: unknown) {
-      registry.get(id)?.resolve(value)
+      resolveSlot(id, value)
     },
     resolveAll(values: Record<string, unknown>) {
       for (const [idStr, value] of Object.entries(values)) {
         const id = Number(idStr)
         if (!Number.isFinite(id)) continue
-        registry.get(id)?.resolve(value)
+        resolveSlot(id, value)
       }
     },
     reject(id: number, error: unknown) {

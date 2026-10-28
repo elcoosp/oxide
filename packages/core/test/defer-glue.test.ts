@@ -223,3 +223,46 @@ test('dispose disconnects the observer', () => {
     else Reflect.set(globalThis, 'MutationObserver', g)
   }
 })
+
+
+test('defer glue: [data-deferred-value] markers are filled when a slot resolves', () => {
+  // The glue updates `<span data-deferred-value="<id>">` markers when a
+  // slot resolves with a `{label: string}` value. This is the last-mile
+  // wiring that makes the smoke-app's `/deferred` route prove streaming
+  // end-to-end: the per-settle script's JSON reaches the DOM.
+  const marker = { textContent: 'loading' as string | null }
+  const fakeDoc: DeferGlueDoc = {
+    addEventListener() {},
+    removeEventListener() {},
+    querySelectorAll(sel: string): ArrayLike<DeferGlueElement> {
+      if (sel === '[data-deferred-value="1"]') return [marker]
+      return []
+    },
+    documentElement: undefined,
+  }
+  const glue = attachDeferGlue({ doc: fakeDoc })
+  glue.wire({ fast: { __deferred: 1 } })
+  glue.resolve(1, { label: 'fast' })
+  assert.equal(marker.textContent, 'fast')
+})
+
+test('defer glue: [data-deferred-value] marker is not overwritten on re-resolve', () => {
+  // Calling resolve twice on the same id must not clobber a marker that was
+  // set on the first resolve. The DeferredClient ignores a second resolve
+  // internally; the marker update has to mirror that (use `wasPending`).
+  const marker = { textContent: 'loading' as string | null }
+  const fakeDoc: DeferGlueDoc = {
+    addEventListener() {},
+    removeEventListener() {},
+    querySelectorAll(sel: string): ArrayLike<DeferGlueElement> {
+      if (sel === '[data-deferred-value="1"]') return [marker]
+      return []
+    },
+    documentElement: undefined,
+  }
+  const glue = attachDeferGlue({ doc: fakeDoc })
+  glue.wire({ fast: { __deferred: 1 } })
+  glue.resolve(1, { label: 'fast' })
+  glue.resolve(1, { label: 'stale-overwrite' })
+  assert.equal(marker.textContent, 'fast')
+})

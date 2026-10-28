@@ -104,4 +104,18 @@ test('per-settle scripts arrive before the document closes, then land in the DOM
     .locator('script[type="application/oxide-deferred"]')
     .evaluateAll((els) => els.map((e) => e.getAttribute('data-id')))
   expect(ids).toEqual(['1', '2'])
+
+  // §7.1 / B2 — the END-TO-END claim: the settle's structured value lands
+  // on the page. The `data-id` scripts carry `{label: 'fast'}` /
+  // `{label: 'slow'}`; the client glue resolves each `DeferredClient` and
+  // writes the label into its `[data-deferred-value="<id>"]` marker in the
+  // smoke-app's `/deferred` page. Asserting the marker (not just the
+  // script tag) is what proves the streaming pipeline is closed — before
+  // this, the scripts landed in the DOM but nothing consumed them.
+  await expect(page.locator('[data-deferred-value="1"]')).toHaveText('fast', {
+    timeout: 5_000,
+  })
+  await expect(page.locator('[data-deferred-value="2"]')).toHaveText('slow', {
+    timeout: 5_000,
+  })
 })
