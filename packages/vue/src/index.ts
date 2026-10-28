@@ -8,8 +8,8 @@
 // owns the deferred boundaries via the §7.1 protocol), islands true (§10.3
 // hydrateIsland), HMR 'component' (SFC-scoped reload, §13.2).
 
-import type { FrameworkAdapter, RenderInput, RenderCtx, HeadTags, ClientInput, Disposer } from '../../core/src/types.ts'
-import type { Plugin } from '../../core/src/types.ts'
+import type { FrameworkAdapter, RenderInput, RenderCtx, HeadTags, ClientInput, Disposer } from '@oxide-fw/core/types'
+import type { Plugin } from '@oxide-fw/core/types'
 import { render, renderToString, renderShellToString, head, mergeHead, applyTitleTemplate, islandModules, pageComponent } from './render.ts'
 import { hydrate, hydrateIsland, mount, update, type ClientOptions } from './hydrate.ts'
 import { createRealAdapter, type RealAdapterOptions } from './real-adapter.ts'

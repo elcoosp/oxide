@@ -13,7 +13,7 @@
 // islands.ts` awaits it before marking the host hydrated.
 
 import type { FunctionComponent } from 'react'
-import type { Disposer } from '../../core/src/types.ts'
+import type { Disposer } from '@oxide-fw/core/types'
 import type { OxElement, ClientOptions } from './hydrate.ts'
 
 /** Structural shape of `react-dom/client` — matches the real module. */

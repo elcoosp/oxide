@@ -17,7 +17,7 @@
 // Imports are dynamic and cached so the package keeps working (falling back
 // to the IR renderer) when react/react-dom are absent.
 
-import type { RenderInput, HeadTags } from '../../core/src/types.ts'
+import type { RenderInput, HeadTags } from '@oxide-fw/core/types'
 
 /** Return the module's `default` export when an interop wrapper provides
  * one; otherwise the module itself. React is CJS-origin, so bundlers may

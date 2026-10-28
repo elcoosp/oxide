@@ -12,9 +12,9 @@
 // swapper script dispatches `ox:swap` and this glue resolves the matching
 // DeferredClient slots.
 
-import { attachDeferGlue, type DeferGlue } from '../../core/src/client/defer-glue.ts'
-import { componentFor, getRouteComponentSource, routeIdFor } from '../../core/src/client/route-manifest.ts'
-import type { ClientInput, Disposer } from '../../core/src/types.ts'
+import { attachDeferGlue, type DeferGlue } from '@oxide-fw/core/client/defer-glue'
+import { componentFor, getRouteComponentSource, routeIdFor } from '@oxide-fw/core/client/route-manifest'
+import type { ClientInput, Disposer } from '@oxide-fw/core/types'
 import { el, type ComponentFn, type Node } from './ir.ts'
 import { renderShellToString, renderNodeToString, walkTreeForHandlers, newRenderState, pageComponent, type HandlerBinding } from './render.ts'
 import { mountReactPageRoot, type RealPageRoot } from './real-client.ts'

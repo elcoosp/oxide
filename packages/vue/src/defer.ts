@@ -17,7 +17,7 @@
 
 import type { DefineComponent, PropType } from 'vue'
 import { createRequire } from 'node:module'
-import { registerBoundary, deferredIdOf } from '../../core/src/server/boundary.ts'
+import { registerBoundary, deferredIdOf } from '@oxide-fw/core/server/boundary'
 
 const require_ = createRequire(import.meta.url)
 

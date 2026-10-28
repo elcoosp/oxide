@@ -19,8 +19,8 @@
 // output is identical.
 
 import { createElement, type ReactNode } from 'react'
-import { toBase64 } from '../../core/src/bytes.ts'
-import { encodePropsB64 } from '../../core/src/odf-encode.ts'
+import { toBase64 } from '@oxide-fw/core/bytes'
+import { encodePropsB64 } from '@oxide-fw/core/odf-encode'
 
 /** Hydration timing (§10.3): `load` (immediate), `idle`, `visible`, or
  *  `{ media: '(...)' }` for a CSS media query. */

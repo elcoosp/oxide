@@ -3,7 +3,7 @@
 // flight. Uses `react-dom/client`'s `createRoot` (real React, so hooks and
 // Suspense work). The disposer unmounts the root; the router calls it right
 // before `adapter.update` swaps the tree.
-import type { Disposer } from '../../core/src/types.ts'
+import type { Disposer } from '@oxide-fw/core/types'
 
 /** Narrow an unknown loading component to a React function component. Same
  * pattern as hydrate-island-real's helper — runtime guard in the body,

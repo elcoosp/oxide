@@ -2,7 +2,7 @@
 // overlay element while a client-side navigation's `/__data` fetch is in
 // flight. Uses Solid's `render` (client-side render, not `hydrate` — the
 // overlay is empty). Disposer disposes the reactive scope.
-import type { Disposer } from '../../core/src/types.ts'
+import type { Disposer } from '@oxide-fw/core/types'
 
 /** Runtime type guard for @solidjs/web. `await import('@solidjs/web')` in
  * ESM returns the namespace with renderer functions at top level; no

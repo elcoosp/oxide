@@ -28,7 +28,7 @@
 // byte-predictable for tests.
 
 import { createElement, type ReactNode } from 'react'
-import { deriveSizesFromSrcset } from '../../core/src/image-sizes.ts'
+import { deriveSizesFromSrcset } from '@oxide-fw/core/image-sizes'
 
 /** The shape a `?w=` import produces. All fields optional so a plain `src`
  *  plus explicit `width`/`height` also satisfies the props. */

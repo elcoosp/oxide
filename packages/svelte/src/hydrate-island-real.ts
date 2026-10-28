@@ -11,7 +11,7 @@
 // The returned value is a `Promise<Disposer>`; `packages/core/src/client/
 // islands.ts` awaits it before marking the host hydrated.
 
-import type { Disposer } from '../../core/src/types.ts'
+import type { Disposer } from '@oxide-fw/core/types'
 import type { OxElement, ClientOptions } from './hydrate.ts'
 
 /** Narrow an `OxElement` to a real DOM `Element` (runtime assertion — see

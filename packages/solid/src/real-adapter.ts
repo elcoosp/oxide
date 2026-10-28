@@ -11,8 +11,8 @@
 // the props shape (`{route,url,params,data}`) uniform with every other
 // adapter while matching Solid's API.
 
-import { makeRealAdapter, type RealAdapterOptions } from '../../core/src/server/real-ssr.ts'
-import type { RenderInput, HeadTags, RenderCtx } from '../../core/src/types.ts'
+import { makeRealAdapter, type RealAdapterOptions } from '@oxide-fw/core/server/real-ssr'
+import type { RenderInput, HeadTags, RenderCtx } from '@oxide-fw/core/types'
 import { render as irRender, head as irHead, mergeHead } from './render.ts'
 import { hydrate, hydrateIsland, mount, update } from './hydrate.ts'
 import { solidHydrateIsland } from './hydrate-island-real.ts'

@@ -9,7 +9,7 @@
 
 import type { VNode } from 'vue'
 import { createRequire } from 'node:module'
-import { deriveSizesFromSrcset } from '../../core/src/image-sizes.ts'
+import { deriveSizesFromSrcset } from '@oxide-fw/core/image-sizes'
 
 const require_ = createRequire(import.meta.url)
 type VueH = typeof import('vue').h

@@ -2,7 +2,7 @@
 // an overlay element while a client-side navigation's `/__data` fetch is in
 // flight. Uses Svelte 5's client `mount` (no hydrate — the overlay is
 // empty). Disposer unmounts.
-import type { Disposer } from '../../core/src/types.ts'
+import type { Disposer } from '@oxide-fw/core/types'
 
 interface SvelteLike {
   mount(

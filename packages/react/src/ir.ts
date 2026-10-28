@@ -180,4 +180,4 @@ export function hash6(input: string): string {
 // Base64 helpers live in the shared `oxide` package (single implementation
 // across every adapter); re-exported here so existing `from './ir.ts'`
 // imports keep working.
-export { toBase64, fromBase64 } from '../../core/src/bytes.ts'
+export { toBase64, fromBase64 } from '@oxide-fw/core/bytes'

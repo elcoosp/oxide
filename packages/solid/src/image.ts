@@ -12,7 +12,7 @@
 // it via the adapter's `head()`; documented in the compat notes.
 
 import { createRequire } from 'node:module'
-import { deriveSizesFromSrcset } from '../../core/src/image-sizes.ts'
+import { deriveSizesFromSrcset } from '@oxide-fw/core/image-sizes'
 
 export interface ImageVariantModule {
   src?: string

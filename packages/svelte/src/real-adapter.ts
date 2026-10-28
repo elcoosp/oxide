@@ -4,8 +4,8 @@
 // (./index.ts) remains the neutral-IR renderer that drives the §22
 // conformance suite; this factory is the production path.
 
-import { makeRealAdapter, type RealAdapterOptions } from '../../core/src/server/real-ssr.ts'
-import type { RenderInput, HeadTags, RenderCtx } from '../../core/src/types.ts'
+import { makeRealAdapter, type RealAdapterOptions } from '@oxide-fw/core/server/real-ssr'
+import type { RenderInput, HeadTags, RenderCtx } from '@oxide-fw/core/types'
 import { render as irRender, head as irHead, mergeHead } from './render.ts'
 import { hydrate, hydrateIsland, mount, update } from './hydrate.ts'
 import { svelteHydrateIsland } from './hydrate-island-real.ts'
