@@ -1,0 +1,10 @@
+# Per-test timeout. A test that runs >90s is terminated (SIGTERM, then SIGKILL).
+# This bounds the "hang blocks CI for 55 minutes" class observed at 2026-10-28:
+# a test binary at 0.0% CPU with one test "running for over 60 seconds".
+#
+# 90s is generous: the slowest single test in the suite finishes in ~15s
+# (snapshot-creating build tests), and the full oxide-fw-cli lib suite runs
+# in 28-34s wall clock across 229 tests. Anything over 90s is a hang, not
+# a slow test.
+[profile.default]
+slow-timeout = { period = "90s", terminate-after = 1 }
