@@ -17,23 +17,6 @@ use deno_core::{
 };
 use std::path::{Path, PathBuf};
 
-/// The specifier a bare import resolves to on disk, plus its source.
-/// Strip the Windows extended-length path prefix (`\\?\`) that
-/// `std::fs::canonicalize` adds on that platform. `ModuleSpecifier::from_file_path`
-/// rejects `\\?\C:\...` — the URL form has no representation for it, so
-/// the conversion fails with "path is not a file URL". Normalizing here
-/// keeps every path that leaves this module in the plain `C:\...` form.
-fn strip_verbatim(p: PathBuf) -> PathBuf {
-    let s = p.to_string_lossy();
-    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
-        return PathBuf::from(format!(r"\\{rest}"));
-    }
-    if let Some(rest) = s.strip_prefix(r"\\?\") {
-        return PathBuf::from(rest.to_string());
-    }
-    p
-}
-
 pub struct TranspileLoader {
     /// Project root: bare specifiers resolve `node_modules` from here.
     root: PathBuf,
@@ -148,13 +131,13 @@ impl TranspileLoader {
             })
             .and_then(|p| p.parent().map(Path::to_path_buf))
             .unwrap_or_else(|| self.root.clone());
-        let base_dir = strip_verbatim(std::fs::canonicalize(&base_raw).unwrap_or(base_raw));
+        let base_dir = crate::strip_verbatim(std::fs::canonicalize(&base_raw).unwrap_or(base_raw));
 
         // A relative import with an explicit extension we can probe directly.
         if Self::is_relative(specifier) {
             let joined = base_dir.join(specifier);
             if let Some(found) = probe_extensions(&joined) {
-                return Some(strip_verbatim(
+                return Some(crate::strip_verbatim(
                     std::fs::canonicalize(&found).unwrap_or(found),
                 ));
             }
@@ -165,7 +148,7 @@ impl TranspileLoader {
         self.resolver()
             .resolve(&base_dir, specifier)
             .ok()
-            .map(|r| strip_verbatim(r.full_path().to_path_buf()))
+            .map(|r| crate::strip_verbatim(r.full_path().to_path_buf()))
     }
 }
 

@@ -277,7 +277,11 @@ pub fn snapshot_build_bundle(
     // — collapses it. The registered specifier and the resolved one would then
     // differ and deno_core reports "was not passed as an extension module".
     let url_of = |p: &std::path::Path| -> Option<String> {
-        let canon = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        // `canonicalize` adds the Windows `\\?\` verbatim prefix, which
+        // `from_file_path` cannot represent — strip it before the URL
+        // conversion or every V8 snapshot build fails on Windows.
+        let canon =
+            crate::strip_verbatim(std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()));
         ModuleSpecifier::from_file_path(&canon)
             .ok()
             .map(|u| u.to_string())

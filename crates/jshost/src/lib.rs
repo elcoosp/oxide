@@ -2073,6 +2073,11 @@ fn v8_module_url(path: &str) -> Result<String> {
             .map_err(|e| err("JSH-V8", format!("cwd: {e}")))?
             .join(p)
     };
+    // Strip the Windows `\\?\` verbatim prefix (if any): a caller may hand
+    // us a path that came out of `canonicalize()`, which adds it on that
+    // platform. `from_file_path` cannot represent it in a URL and returns
+    // Err otherwise.
+    let abs = strip_verbatim(abs);
     deno_core::ModuleSpecifier::from_file_path(&abs)
         .map(|u| u.to_string())
         .map_err(|_| err("JSH-V8", format!("not a file path: {}", abs.display())))
@@ -3019,6 +3024,24 @@ struct Worker {
     /// op runs before the Oxc passes (so a plugin transform reaches the
     /// prerender path).
     transform: Mutex<Option<Arc<dyn TransformHandler>>>,
+}
+
+/// Strip the Windows extended-length path prefix (`\\?\`) that
+/// `std::fs::canonicalize` prepends on that platform. `ModuleSpecifier::from_file_path`
+/// rejects `\\?\C:\...` — the URL grammar has no representation for
+/// it — so any `canonicalize()` output that feeds a URL conversion must
+/// go through this first, or the conversion fails with
+/// "path is not a file URL" (the V8 snapshot + import paths in this
+/// crate both hit that).
+pub(crate) fn strip_verbatim(p: std::path::PathBuf) -> std::path::PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return std::path::PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        return std::path::PathBuf::from(rest.to_string());
+    }
+    p
 }
 
 /// Turn a filesystem path into a `file://` URL string that Node's CLI
