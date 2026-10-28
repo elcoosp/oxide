@@ -68,12 +68,26 @@ curl -s -o /dev/null "http://127.0.0.1:$PORT/" 2>/dev/null || true
 ms_vals=()
 timeouts=0
 for i in $(seq 1 "$N"); do
-    # Revert any previous edit, then set the new one: <h1>Home</h1> -> <h1>Home <i></h1>
-    # Portable in-place edit: BSD sed needs `-i ''`, GNU sed needs `-i`
-    # with no arg — `perl -i -pe` is the common denominator.
-    perl -i -pe 's|<h1>Home[^<]*</h1>|<h1>Home</h1>|' "$PAGE"
-    perl -i -pe "s|<h1>Home</h1>|<h1>Home $i</h1>|" "$PAGE"
+    # Single write per iteration. The previous version did two writes per
+    # iteration — a "revert to <h1>Home</h1>" followed by "set <h1>Home N</h1>"
+    # — which doubled the filesystem-event rate the dev server's watcher
+    # had to observe. On a loaded CI runner the two events land within the
+    # watcher's coalescing window; the second is occasionally missed, and
+    # the iteration hard-times-out at 8s despite the successful-rebuild
+    # distribution being p50=222ms / p95=227ms (a *miss*, not a slow
+    # rebuild — the bimodal signature in the failing run 40707695179:
+    # 9 iterations at ~222ms, 6 at exactly 8000ms).
+    #
+    # Also: `perl -i -pe` is a *rename-based* edit — it writes a temp file
+    # and renames it over the original path, changing the inode. Some
+    # inotify configurations follow the original inode and lose track after
+    # the rename; the classic cause of "the edit is sometimes not seen".
+    # `printf > file` truncates and rewrites the SAME inode, emitting a
+    # MODIFY event every watcher observes. Combine both: one write, same
+    # inode.
     marker="Home $i"
+    body=$(sed -E "s|<h1>Home[^<]*</h1>|<h1>${marker}</h1>|" "$PAGE")
+    printf '%s\n' "$body" > "$PAGE"
 
     t0=$(now_ms)
     ok=0
