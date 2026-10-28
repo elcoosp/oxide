@@ -19,7 +19,7 @@ base64 = { workspace = true }
 oxide-fw-odf = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true, features = ["server-auto", "server-graceful", "client", "client-legacy", "http1", "http2", "tokio"] }
-socket2 = { version = "0.5", features = ["all"] }
+socket2 = { version = "0.6.5", features = ["all"] }
 http-body-util = { workspace = true }
 tokio = { workspace = true }
 # P-15: bridge the blocking (de)compressor thread back into a BodyStream.
