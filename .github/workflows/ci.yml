@@ -44,7 +44,14 @@ jobs:
       # one cargo stops at. Without it, a single failure in a lower-numbered
       # crate masks every failure in the crates after it, and each push
       # re-reveals the next layer one binary at a time.
-      - run: cargo test --workspace --no-fail-fast
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      # `cargo nextest run` (not `cargo test`) so `.config/nextest.toml`'s
+      # per-test 90s timeout applies. A test that exceeds it is SIGTERM'd
+      # then named in the summary, instead of burning the job's
+      # `timeout-minutes` silently with a 0.0%-CPU hang and no test name.
+      - run: cargo nextest run --workspace --no-fail-fast
   wasm32-edge:
     name: wasm32 edge bundle gate (P0-1c)
     runs-on: ubuntu-latest
