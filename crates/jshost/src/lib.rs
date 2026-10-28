@@ -1195,6 +1195,23 @@ if (typeof globalThis.fetch === 'undefined') {
 // JSON envelope string: `{ok, value}` on success, `{__oxide_error}` on a
 // module-import or export-call failure. Returned as a string so the Rust
 // side reads it back without a serde_v8 dependency.
+// Path -> file:// URL, Windows-aware. A bare Windows path `D:\foo\bar.js`
+// must become `file:///D:/foo/bar.js`; the naive POSIX form
+// `'file://' + '/' + 'D:\\foo\\bar.js'` yields `file:///D:\foo\bar.js`,
+// where Node's ESM loader parses `D:` as the URL scheme and rejects with
+// `ERR_UNSUPPORTED_ESM_URL_SCHEME ... protocol 'd:'`. Backslashes are also
+// not URL path separators, so even a fixed scheme would fail to resolve.
+// Converts `\` -> `/`, and for `D:\...`/`D:/...` insert the `file:///`
+// triple-slash. POSIX paths keep the existing `file://` + leading-slash form.
+globalThis.__oxidePathToUrl = function (p) {
+  const s = String(p);
+  if (s.startsWith('file://')) return s;
+  const norm = s.replace(/\\/g, '/');
+  if (/^[A-Za-z]:/.test(norm)) return 'file:///' + norm;
+  if (norm.startsWith('//')) return 'file:' + norm; // UNC: \\server\share -> //server/share
+  return 'file://' + (norm.startsWith('/') ? '' : '/') + norm;
+};
+
 globalThis.__oxideDispatch = async function (kind, moduleUrl, exportName, payload) {
   let mod;
   try {
@@ -1272,9 +1289,7 @@ const __oxidePluginHookArgs = {
 };
 globalThis.__oxidePluginLoad = async function (path) {
   try {
-    const url = path.startsWith('file://')
-      ? path
-      : 'file://' + (path.startsWith('/') ? '' : '/') + path;
+    const url = globalThis.__oxidePathToUrl(path);
     const mod = await import(globalThis.__oxideVersioned(url));
     const plugin = mod.default ?? mod;
     const hooks = Object.keys(plugin).filter((k) => typeof plugin[k] === 'function');
@@ -1474,9 +1489,7 @@ globalThis.__oxideLoaderRun = async function (moduleUrl, input) {
 // adapter descriptor off `default.framework`. Mirrors the Node worker.
 globalThis.__oxideFrameworkLoad = async function (configPath) {
   try {
-    const url = configPath.startsWith('file://')
-      ? configPath
-      : 'file://' + (configPath.startsWith('/') ? '' : '/') + configPath;
+    const url = globalThis.__oxidePathToUrl(configPath);
     const mod = await import(globalThis.__oxideVersioned(url));
     const cfg = (mod && mod.default) || mod;
     const fw = cfg && cfg.framework;
@@ -1500,9 +1513,7 @@ globalThis.__oxideFrameworkLoad = async function (configPath) {
 // shape is what `FrameworkHost::render` returns.)
 globalThis.__oxideFrameworkRender = async function (configPath, renderInput, components) {
   try {
-    const url = configPath.startsWith('file://')
-      ? configPath
-      : 'file://' + (configPath.startsWith('/') ? '' : '/') + configPath;
+    const url = globalThis.__oxidePathToUrl(configPath);
     const mod = await import(globalThis.__oxideVersioned(url));
     const cfg = (mod && mod.default) || mod;
     const fw = cfg && cfg.framework;
@@ -1516,9 +1527,7 @@ globalThis.__oxideFrameworkRender = async function (configPath, renderInput, com
     try {
       const cs = typeof components === 'string' ? JSON.parse(components) : components;
       if (cs && typeof cs.entry === 'string' && cs.entry.length > 0) {
-        const entryUrl = cs.entry.startsWith('file://')
-          ? cs.entry
-          : 'file://' + (cs.entry.startsWith('/') ? '' : '/') + cs.entry;
+        const entryUrl = globalThis.__oxidePathToUrl(cs.entry);
         const entry = await import(globalThis.__oxideVersioned(entryUrl));
         const routes = entry.routes || {};
         // §6.4 / WP-A2: rolldown names entries after their sanitized file
@@ -1565,7 +1574,7 @@ globalThis.__oxideFrameworkRender = async function (configPath, renderInput, com
         for (const rid of new Set(wanted)) {
           const src = cs.sources[rid];
           if (typeof src !== 'string' || src.length === 0) continue;
-          const srcUrl = src.startsWith('file://') ? src : 'file://' + (src.startsWith('/') ? '' : '/') + src;
+          const srcUrl = globalThis.__oxidePathToUrl(src);
           routes[rid] = await import(globalThis.__oxideVersioned(srcUrl));
         }
         componentResolver = (id) => {

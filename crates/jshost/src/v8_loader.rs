@@ -174,10 +174,26 @@ fn node_shim(specifier: &str) -> String {
            export const sep = '/';\n\
            export default { join, resolve, dirname, basename, sep };\n"
             .to_string(),
-        "url" => "export function fileURLToPath(u) { return String(u).replace(/^file:\\/\\//, '/'); }\n\
-           export function pathToFileURL(p) { return new URL('file://' + (String(p).startsWith('/') ? '' : '/') + p); }\n\
-           export default { fileURLToPath, pathToFileURL };\n"
-            .to_string(),
+        // `pathToFileURL` must be Windows-aware: a bare `D:\foo\bar.js`
+        // has to become `file:///D:/foo/bar.js`. The naive POSIX form
+        // produces `file:///D:\foo\bar.js`, where `D:` is parsed as the
+        // URL scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME). `fileURLToPath`
+        // mirrors it: strip the scheme+slashes, and re-add the leading `/`
+        // a Windows path does not carry (`file:///D:/x` -> `D:/x`).
+        "url" => r#"export function fileURLToPath(u) {
+  let s = String(u).replace(/^file:\/\//, '');
+  if (/^\/[A-Za-z]:/.test(s)) s = s.slice(1);
+  return s;
+}
+export function pathToFileURL(p) {
+  const s = String(p);
+  if (s.startsWith('file://')) return new URL(s);
+  const norm = s.replace(/\\/g, '/');
+  if (/^[A-Za-z]:/.test(norm)) return new URL('file:///' + norm);
+  if (norm.startsWith('//')) return new URL('file:' + norm);
+  return new URL('file://' + (norm.startsWith('/') ? '' : '/') + norm);
+}
+export default { fileURLToPath, pathToFileURL };"#.to_string(),
         // node:crypto — synchronous sha256 only. `@oxide-fw/core` keys its
         // content cache on `createHash('sha256').update(raw).digest('hex')`;
         // the isolate has no async digest op, so this is a real pure-JS
