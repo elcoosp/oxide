@@ -74,7 +74,16 @@ test('per-settle scripts arrive before the document closes, then land in the DOM
   // The shell is not held for the slow settle, and the fast resolution does
   // not wait for the slow one.
   expect(firstChunkAt).toBeGreaterThan(0)
-  expect(firstChunkAt).toBeLessThan(700)
+  // The shell must arrive well before the slow settle — proving it is not
+  // buffered waiting for the slow promise. Express this as a margin
+  // (`slowAt - firstChunkAt > 300`), NOT as an absolute wall-clock bound.
+  // Under a full-suite run (26 tests sharing CPU with several `oxide start`
+  // processes on distinct ports) first-byte latency is 1-2s regardless of
+  // streaming behavior; a fixed `< 700ms` bound fails spuriously while the
+  // streaming semantics the test exists to guard (per-settle chunks, shell
+  // not held for slow) are perfectly correct. The margin is the semantic;
+  // the absolute value is not.
+  expect(slowAt - firstChunkAt).toBeGreaterThan(300)
   expect(fastAt).toBeGreaterThan(0)
   expect(slowAt).toBeGreaterThan(0)
   expect(slowAt - fastAt).toBeGreaterThan(300)
