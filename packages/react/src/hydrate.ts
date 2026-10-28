@@ -232,12 +232,21 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
    * absent React falls back to the IR paint inside the chain (sequence-
    * guarded, so a superseded navigation never paints).
    */
-  function tryRealRender(seq: number, inp: ClientInput): boolean {
+  function tryRealRender(seq: number, inp: ClientInput, allowHydrate: boolean): boolean {
     const src = getRouteComponentSource()
     if (!src) {
       console.warn?.('[oxide-diag] real-render skipped: no manifest registered (route=' + JSON.stringify(inp.route) + ')')
       return false
     }
+    // §8.4: on the INITIAL page-load, if the SSR pass already painted markup
+    // into the container, preserve it. Re-rendering with the real component
+    // would overwrite the SSR representation with different markup (SSR uses
+    // the deterministic IR atlas; the real component is its own tree), and
+    // hydrateRoot() would throw recoverable #418. Only real-render an EMPTY
+    // container (SPA mode) on initial load. Client navigation
+    // (allowHydrate=false) is unaffected — it always re-renders, because the
+    // container holds the PREVIOUS route's markup by then.
+    if (allowHydrate && (root.innerHTML ?? '') !== '') return false
     const key = routeIdFor(inp.route, src.manifest)
     if (key === undefined) {
       console.warn?.('[oxide-diag] real-render skipped: route ' + JSON.stringify(inp.route) + ' not matched in manifest (routes: ' + Object.keys(src.manifest.routes).join(',') + ')')
@@ -285,7 +294,14 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
         // custom elements (`<ox-island>`) survive so island hydration still
         // finds its hosts.
         const declaredLayouts = inp.layouts ?? []
+        // §8.4: hydrateRoot() only on the initial page-load. On a client
+        // navigation the container still holds the PREVIOUS route's markup,
+        // so hydrateRoot() would #418. (The initial-load SSR case is caught
+        // earlier — see the guard at the top of tryRealRender — so the only
+        // reachable canHydrate=true path is SPA-with-manifest, where the
+        // container is empty and hydrateRoot behaves like a fresh mount.)
         const canHydrate =
+          allowHydrate &&
           declaredLayouts.length === layoutComponents.length &&
           (root.innerHTML ?? '') !== ''
         // First real mount: hydrate when the SSR markup can be reproduced,
@@ -321,7 +337,7 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
   function update(inp: ClientInput): void {
     current = inp
     const seq = ++renderSeq
-    if (tryRealRender(seq, inp)) return
+    if (tryRealRender(seq, inp, /* allowHydrate */ false)) return
     // §7.1 / §9.2: a client navigation brings fresh loader data — re-wire it
     // so the new page's `{__deferred: id}` markers become slots. The prior
     // page's slots stay in the registry (a `dispose` clears them on unmount).
@@ -345,7 +361,7 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
   // no slots to resolve — deferred values never reached the components. On
   // every client navigation `update()` also re-wires the new input's data.
   const seq = ++renderSeq
-  if (!tryRealRender(seq, current)) {
+  if (!tryRealRender(seq, current, /* allowHydrate */ true)) {
     if (root.innerHTML === '') render(current)
     rebind()
     glue.wire(current.data)
