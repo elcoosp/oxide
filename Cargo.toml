@@ -133,18 +133,18 @@ deno_core = { version = "0.412.0" }
 deno_error = { version = "0.7.1" }
 deno_ast = { version = "0.53.3" }
 moka = { version = "0.12.16", features = ["future", "sync"] }
-oxc = { version = "0.153.0", features = ["full"] }
+oxc = { version = "0.155.0", features = ["full"] }
 oxc_resolver = { version = "11.24.3" }
-oxc_allocator = { version = "0.153.0" }
-oxc_parser = { version = "0.153.0" }
-oxc_ast = { version = "0.153.0" }
-oxc_span = { version = "0.153.0" }
-oxc_semantic = { version = "0.153.0" }
-oxc_transformer = { version = "0.153.0" }
-oxc_codegen = { version = "0.153.0" }
-rolldown = { version = "1.2.13" }
-rolldown_common = { version = "1.2.13" }
-rolldown_plugin = { version = "1.2.13" }
+oxc_allocator = { version = "0.155.0" }
+oxc_parser = { version = "0.155.0" }
+oxc_ast = { version = "0.155.0" }
+oxc_span = { version = "0.155.0" }
+oxc_semantic = { version = "0.155.0" }
+oxc_transformer = { version = "0.155.0" }
+oxc_codegen = { version = "0.155.0" }
+rolldown = { version = "1.2.15" }
+rolldown_common = { version = "1.2.15" }
+rolldown_plugin = { version = "1.2.15" }
 arcstr = "1"
 lightningcss = { version = "1.0.0-alpha.72", features = ["bundler", "sourcemap"] }
 ravif = { version = "0.13.0" }

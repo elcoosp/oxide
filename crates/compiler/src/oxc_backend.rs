@@ -292,7 +292,7 @@ fn scan_top_level_spans(program: &Program, _source: &str) -> Vec<ImportSpan> {
                 out.push(ImportSpan {
                     start: decl.span.start as usize,
                     end: decl.span.end as usize,
-                    specifier: decl.source.value.as_str().to_string(),
+                    specifier: decl.source.value.as_str().unwrap_or_default().to_string(),
                     dynamic: false,
                 });
             }
@@ -305,7 +305,7 @@ fn scan_top_level_spans(program: &Program, _source: &str) -> Vec<ImportSpan> {
                 out.push(ImportSpan {
                     start: decl.span.start as usize,
                     end: decl.span.end as usize,
-                    specifier: decl.source.value.as_str().to_string(),
+                    specifier: decl.source.value.as_str().unwrap_or_default().to_string(),
                     dynamic: false,
                 });
             }
@@ -342,7 +342,7 @@ use std::collections::BTreeMap as AstBTreeMap;
 
 /// Extract the raw text of a directive's string value (`"use cache"` → `use cache`).
 fn directive_text(d: &oxc_ast::ast::Directive<'_>) -> String {
-    d.expression.value.as_str().to_string()
+    d.expression.value.as_str().unwrap_or_default().to_string()
 }
 
 /// Find the first `'use cache'` directive in a function body.
