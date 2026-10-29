@@ -8,3 +8,31 @@
 # a slow test.
 [profile.default]
 slow-timeout = { period = "90s", terminate-after = 1 }
+
+# The only residual "leaky" test after the Worker↔reader cycle fix.
+#
+# `dev_once_prints_banner_and_ready` is the sole test on the `cmd_dev` path.
+# `cmd_dev` constructs an `oxide_fw_dev::Watcher` (crates/dev/src/lib.rs:43),
+# which holds a `notify::RecommendedWatcher`. Notify's underlying watcher
+# (FSEvents on macOS, inotify on Linux) runs a background thread that exits
+# asynchronously after the watcher drops. Nextest's leak detector observes
+# that lingering thread at test-process exit and flags the test LEAKY.
+#
+# This is not an oxide-owned leak. Verified:
+#   * pgrep -cf 'oxide-worker.mjs' = 0 after the test — no child process
+#   * the test finishes in ~0.7s with correct banner + "dev ready" output
+#   * cmd_dev contains zero explicit spawn sites (no tokio::spawn,
+#     spawn_blocking, std::thread::spawn); the only thread is notify's
+#   * no fd/socket survives; only the kernel-assisted watch thread
+#
+# The notify crate provides no way to join that thread synchronously, so
+# the honest fix is a targeted override — not a leak detector globally
+# silenced, not a `sleep(Nms)`-and-pray hack.
+# NOTE (2026-10-29): a `[[profile.default.overrides]]` with
+# `leak-ignore = true` / `leak-timeout = "5s"` was attempted and did NOT
+# suppress the display — the notify thread escapes before nextest's leak
+# check even with a 5s wait. The keys were removed rather than left as
+# misleading no-ops. The LEAK line remains visible; nextest exits 0 and
+# the test itself passes with correct output. Fixing this is blocked on
+# nextest providing a reliable per-test leak-ignore semantic, or on
+# notify exposing a synchronously-joinable watcher-thread teardown.
