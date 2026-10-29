@@ -419,3 +419,17 @@ td code, p code, li code { background: var(--panel2); border: 1px solid var(--bo
   white-space: nowrap;
   border: 0;
 }
+
+.adapter-code {
+  margin-top: 32px;
+}
+.adapter-code h3 {
+  font-size: 18px;
+  margin: 0 0 6px;
+  color: var(--text);
+}
+.adapter-code .lede {
+  color: var(--muted);
+  margin: 0 0 16px;
+  max-width: 52em;
+}

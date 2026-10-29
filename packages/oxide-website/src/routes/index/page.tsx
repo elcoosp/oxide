@@ -208,7 +208,61 @@ export default function Page(props: Props) {
             </table>
           </div>
         </div>
-      </section>
+      
+            <div className="adapter-code">
+              <h3>What a route looks like</h3>
+              <p className="lede">
+                The adapter owns rendering, hydration and HMR strategy — nothing else
+                differs. Same loader, same data shape, four component dialects.
+              </p>
+              <Island
+                component="AdapterTabs"
+                chunk="AdapterTabs"
+                strategy="visible"
+                props={{
+                  adapters: [
+                    {
+                      id: 'react',
+                      label: 'React',
+                      snippet: `// src/routes/blog/[slug]/page.tsx\nexport async function load({ params }) {\n  return { post: await getPost(params.slug) }\n}\n\nexport default function Post({ data }) {\n  return <article>{data.post.title}</article>\n}`,
+                      note: 'Server Components, Suspense and streaming SSR via react-dom/server.',
+                    },
+                    {
+                      id: 'vue',
+                      label: 'Vue',
+                      snippet: `<!-- src/routes/blog/[slug]/page.vue -->\n<script setup lang="ts">\ndefineProps<{ data: { post: { title: string } } }>()\n</script>\n\n<template>\n  <article>{{ data.post.title }}</article>\n</template>`,
+                      note: 'Suspense and streaming via @vue/server-renderer.',
+                    },
+                    {
+                      id: 'svelte',
+                      label: 'Svelte',
+                      snippet: `<!-- src/routes/blog/[slug]/page.svelte -->\n<script lang="ts">\n  export let data: { post: { title: string } }\n</script>\n\n<article>{data.post.title}</article>`,
+                      note: 'Streaming SSR via svelte/server.',
+                    },
+                    {
+                      id: 'solid',
+                      label: 'Solid',
+                      snippet: `// src/routes/blog/[slug]/page.tsx\nexport async function load({ params }) {\n  return { post: await getPost(params.slug) }\n}\n\nexport default function Post(props) {\n  return <article>{props.data.post.title}</article>\n}`,
+                      note: 'Streaming SSR via @solidjs/web, native Suspense boundaries.',
+                    },
+                  ],
+                }}
+              >
+                <div className="adapter-tabs">
+                  <div className="adapter-tablist">
+                    <button type="button" className="adapter-tab" aria-selected="true">React</button>
+                    <button type="button" className="adapter-tab">Vue</button>
+                    <button type="button" className="adapter-tab">Svelte</button>
+                    <button type="button" className="adapter-tab">Solid</button>
+                  </div>
+                  <div className="adapter-panel">
+                    <pre className="adapter-snippet"><code>{`export async function load({ params }) {\n  return { post: await getPost(params.slug) }\n}`}</code></pre>
+                    <p className="adapter-note">Server Components, Suspense and streaming SSR via react-dom/server.</p>
+                  </div>
+                </div>
+              </Island>
+            </div>
+</section>
 
       <section className="section">
         <div className="container">
