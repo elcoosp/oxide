@@ -54,7 +54,7 @@ jobs:
       # pnpm >= 10.12 required for OIDC trusted publishing.
       - uses: pnpm/action-setup@v6
         with:
-          version: 10
+          version: 12.15.0
 
       - name: Verify every package.json version matches the input
         run: |

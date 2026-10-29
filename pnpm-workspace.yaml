@@ -3,3 +3,23 @@ packages:
   - 'conformance'
   - 'examples/*'
   - 'tests/*'
+
+# --- pnpm 12 settings (migrated from .npmrc / package.json#pnpm) ---
+#
+# allowBuilds: an explicit map of dependency -> true (run) | false (deny).
+# `esbuild: false` is a REVIEWED denial: pnpm is told not to run esbuild's
+# postinstall and not to complain about skipping it. esbuild resolves its
+# platform binary through optionalDependencies (@esbuild/<platform>-<arch>),
+# not the postinstall, so denying it is correct for this workspace.
+allowBuilds:
+  esbuild: false
+
+# Belt-and-braces: the error message for ERR_PNPM_IGNORED_BUILDS itself
+# documents this as the escape hatch ("To install without failing on skipped
+# builds, set strictDepBuilds to false"). Safe here because every
+# script-bearing dependency is explicitly listed above.
+strictDepBuilds: false
+
+strictPeerDependencies: false
+autoInstallPeers: true
+pmOnFail: error
