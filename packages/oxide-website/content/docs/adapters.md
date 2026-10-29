@@ -22,30 +22,30 @@ the artifact manifest.
 Three types, all in `crates/adapters/src/lib.rs`:
 
 - `Capability` (crates/adapters/src/lib.rs:79) — what a target can or cannot do
-- `FeatureSupport` (crates/adapters/src/lib.rs:90) — `Full`, `Partial(reason)`,
+- `FeatureSupport` (crates/adapters/src/lib.rs:194) — `Full`, `Partial(reason)`,
   `None(reason)`
 - `BuildArtifact` (crates/adapters/src/lib.rs:203) — the build id, routes, assets, rules
 
 `capability_matrix` (crates/adapters/src/lib.rs:90) returns a
 `BTreeMap<Capability, FeatureSupport>` — deterministic order, so the emitted
-manifest is byte-stable. `degradation` (crates/adapters/src/lib.rs:152) returns the
+manifest is byte-stable. `degradation` (crates/adapters/src/lib.rs:154) returns the
 one-line reason a capability is unavailable on a target, which is what the
 build error quotes when a configuration is refused.
 
 `emit` (crates/adapters/src/lib.rs:222) is the entry point. It dispatches per target:
 
-| Target | Emitter | Location |
+| Target | Emitter | Definition |
 |---|---|---|
-| static | `emit_headers` | crates/adapters/src/lib.rs:326 |
+| static | `emit_headers` | crates/adapters/src/lib.rs:813 |
 | static | `emit_redirects` | crates/adapters/src/lib.rs:827 |
-| docker | `dockerfile` | crates/adapters/src/lib.rs:237 |
-| cloudflare | `cloudflare_worker_entry` | crates/adapters/src/lib.rs:345 |
-| cloudflare | `cloudflare_wrangler_toml` | crates/adapters/src/lib.rs:375 |
-| cloudflare-pages | `cloudflare_pages_wrangler_toml` | crates/adapters/src/lib.rs:423 |
-| deno | `deno_deploy_config` | crates/adapters/src/lib.rs:543 |
-| vercel-functions | `vercel_functions_json` | crates/adapters/src/lib.rs:456 |
-| node | `node_server_entry` | crates/adapters/src/lib.rs:255 |
-| edge (wasm) | `edge_handler_js` | crates/adapters/src/lib.rs:349 |
+| docker | `dockerfile` | crates/adapters/src/lib.rs:842 |
+| cloudflare | `cloudflare_worker_entry` | crates/adapters/src/lib.rs:871 |
+| cloudflare | `cloudflare_wrangler_toml` | crates/adapters/src/lib.rs:1181 |
+| cloudflare-pages | `cloudflare_pages_wrangler_toml` | crates/adapters/src/lib.rs:1163 |
+| deno | `deno_deploy_config` | crates/adapters/src/lib.rs:1152 |
+| vercel-functions | `vercel_functions_json` | crates/adapters/src/lib.rs:1132 |
+| node | `node_server_entry` | crates/adapters/src/lib.rs:1202 |
+| edge (wasm) | `edge_handler_js` | crates/adapters/src/lib.rs:903 |
 
 `emit` returns the paths it wrote, so a caller can log them or a test can
 assert the artifact shape without walking the directory.
@@ -118,5 +118,5 @@ hydrate; the adapter decides *how*.
 
 Strategies: `load`, `idle`, `visible`, or `{ media: '...' }`. Props are base64
 ODF — see [the wire format](/docs/wire-format-odf). The island wrapper is
-emitted as `<ox-island>` by the render pipeline at
-`crates/server/src/lib.rs:187` (`OxideResponse`).
+emitted as `<ox-island>` by the pipeline that builds an `OxideResponse`
+(`crates/server/src/lib.rs:187`).
