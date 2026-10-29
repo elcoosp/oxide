@@ -84,8 +84,11 @@ img { max-width: 100%; }
 .hero { padding: 88px 0 56px; }
 
 .hero h1 {
-  font-size: clamp(34px, 6vw, 58px); line-height: 1.08; letter-spacing: -1.5px;
-  margin: 0 0 18px; font-weight: 800;
+  font-size: clamp(40px, 6vw, 64px);
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  font-weight: 800;
+  margin: 0 0 20px;
 }
 
 .hero .sub { color: var(--muted); font-size: 19px; max-width: 46em; margin: 0 0 30px; }
@@ -298,15 +301,15 @@ td code, p code, li code { background: var(--panel2); border: 1px solid var(--bo
   display: none; /* Removing the previous sliding indicator to use bottom borders */
 }
 .fw-code-tab {
-  padding: 12px 16px;
+  padding: 10px 20px;
   font-size: 13px;
+  font-weight: 500;
   color: var(--muted);
-  background: none;
+  background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
   cursor: pointer;
-  margin-bottom: -1px;
-  transition: color 0.2s ease;
+  transition: color 0.15s ease, border-color 0.15s ease;
 }
 .fw-code-tab:hover {
   color: var(--text);
