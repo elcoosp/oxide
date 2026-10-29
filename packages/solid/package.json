@@ -48,7 +48,7 @@
     "ssr",
     "hydration"
   ],
-  "license": "MIT",
+  "license": "MIT OR Apache-2.0",
   "peerDependencies": {
     "@solidjs/web": "^2.0.0-rc.14",
     "solid-js": "^2.0.0-rc.14"

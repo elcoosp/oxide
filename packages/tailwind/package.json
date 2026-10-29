@@ -30,7 +30,7 @@
   "engines": {
     "node": ">=24"
   },
-  "license": "MIT",
+  "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/elcoosp/oxide.git",
@@ -46,7 +46,9 @@
   "sideEffects": false,
   "types": "./dist/index.d.ts",
   "module": "./dist/index.js",
-  "publishConfig": {},
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": [
     "oxide",
     "tailwind",

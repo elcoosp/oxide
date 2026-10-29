@@ -27,7 +27,7 @@
     "url": "git+https://github.com/elcoosp/oxide.git",
     "directory": "packages/create-oxide"
   },
-  "license": "MIT",
+  "license": "MIT OR Apache-2.0",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -43,7 +43,9 @@
     "tsdown": "^0.23.3",
     "typescript": "^7.0.2"
   },
-  "publishConfig": {},
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": [
     "oxide",
     "create",

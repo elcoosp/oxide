@@ -100,7 +100,7 @@
     "islands",
     "hydration"
   ],
-  "license": "MIT",
+  "license": "MIT OR Apache-2.0",
   "sideEffects": false,
   "files": [
     "dist",
@@ -114,7 +114,9 @@
     "tsdown": "^0.23.3",
     "typescript": "^7.0.2"
   },
-  "publishConfig": {},
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/elcoosp/oxide.git",
