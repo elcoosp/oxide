@@ -1,5 +1,5 @@
 // src/routes/docs/index/page.tsx
-import DocBody from '../doc-body.tsx'
+import DocBody from './doc-body.tsx'
 
 interface Props {
   data?: {
