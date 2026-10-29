@@ -124,7 +124,8 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 24 }
       - uses: pnpm/action-setup@v6.1.0
-        version: 12.16.1
+        with:
+          version: 12.16.1
       - name: Install workspace deps
         # Required before the package tests: several suites import from
         # sibling packages (e.g. `../../core/src/...`) which resolve via
@@ -170,7 +171,8 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 24 }
       - uses: pnpm/action-setup@v6.1.0
-        version: 12.16.1
+        with:
+          version: 12.16.1
       - name: Install workspace deps
         # The conformance suite imports from every adapter package via
         # the pnpm workspace (e.g. `import { adapter } from '../packages/
@@ -207,7 +209,8 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 24 }
       - uses: pnpm/action-setup@v6.1.0
-        version: 12.16.1
+        with:
+          version: 12.16.1
       - run: pnpm install --frozen-lockfile
       - name: Build workspace packages
         run: pnpm -r --filter '!./packages/oxide-website' run build
@@ -233,7 +236,8 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 24 }
       - uses: pnpm/action-setup@v6.1.0
-        version: 12.16.1
+        with:
+          version: 12.16.1
       - run: pnpm install --frozen-lockfile
       - name: Build the CLI
         run: cargo build -p oxide-fw-cli
@@ -310,7 +314,8 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 24 }
       - uses: pnpm/action-setup@v6.1.0
-        version: 12.16.1
+        with:
+          version: 12.16.1
       - name: Install workspace deps
         run: pnpm install --frozen-lockfile || pnpm install
       - name: Build workspace packages
@@ -330,7 +335,8 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 24 }
       - uses: pnpm/action-setup@v6.1.0
-        version: 12.16.1
+        with:
+          version: 12.16.1
       - name: Install workspace deps (for the worker's tsx loader)
         run: pnpm install --frozen-lockfile || pnpm install
       - name: Build workspace packages
@@ -374,7 +380,8 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 24 }
       - uses: pnpm/action-setup@v6.1.0
-        version: 12.16.1
+        with:
+          version: 12.16.1
       - name: Build CLI
         run: cargo build -p oxide-fw-cli
       - name: Install workspace deps
