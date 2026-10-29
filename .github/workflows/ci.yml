@@ -14,14 +14,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# 2026-10-29: actions/setup-node@v4 and pnpm/action-setup@v4 target the
-# Node 20 action runtime; the GH runner now defaults to Node 24 and warns
-# on every step. This env var acknowledges the override explicitly and
-# silences the deprecation message. Update the actions to a Node-24 line
-# when published for the clean fix.
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   rust:
     strategy:
@@ -38,7 +30,7 @@ jobs:
     # instead of a wall-clock mystery.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Install nasm (Linux/macOS only)
         if: matrix.os != 'windows-latest'
         run: |
@@ -80,7 +72,7 @@ jobs:
     name: wasm32 edge bundle gate (P0-1c)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -128,10 +120,10 @@ jobs:
   node:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 24 }
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with: { version: 9 }
       - name: Install workspace deps
         # Required before the package tests: several suites import from
@@ -152,8 +144,8 @@ jobs:
     name: plugin fixture gate (§15-F)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 24 }
       - uses: dtolnay/rust-toolchain@stable
       - name: Install NASM
@@ -174,10 +166,10 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 24 }
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with: { version: 9 }
       - name: Install workspace deps
         # The conformance suite imports from every adapter package via
@@ -206,15 +198,15 @@ jobs:
     # job. rust-cache + explicit timeout (see rust job above).
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - run: brew install nasm
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: { node-version: 24 }
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with: { version: 9 }
       - run: pnpm install --frozen-lockfile
       - name: Build workspace packages
@@ -235,12 +227,12 @@ jobs:
     # threshold is noise (report.md's own 2026-10-21 note measured 30%
     # cold variance on a single host).
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - run: brew install nasm
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: { node-version: 24 }
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with: { version: 9 }
       - run: pnpm install --frozen-lockfile
       - name: Build the CLI
@@ -265,7 +257,7 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - name: Run the #[ignore]d redis integration test
         env:
@@ -277,7 +269,7 @@ jobs:
     name: ODF decoder fuzz (§22)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - name: Property-based fuzz (1000 random inputs per case)
         run: cargo test -p oxide-fw-odf --test fuzz_decode --release
@@ -286,7 +278,7 @@ jobs:
     name: doc-rot grep gate (§23)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Stale-string grep
         run: ./scripts/check-stale-strings.sh
 
@@ -294,7 +286,7 @@ jobs:
     name: launch-content gate (WP-r9-2)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Launch-content grep
         run: ./scripts/check-launch-content.sh
 
@@ -302,7 +294,7 @@ jobs:
     name: spec-anchor gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Every cited §N must be a real heading
         run: ./scripts/check-spec-anchors.sh
 
@@ -310,14 +302,14 @@ jobs:
     name: HMR latency harness (§13.3 / §21)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - run: sudo apt-get update && sudo apt-get install -y nasm
       - uses: dtolnay/rust-toolchain@stable
       - name: Build CLI
         run: cargo build -p oxide-fw-cli
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: { node-version: 24 }
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with: { version: 9 }
       - name: Install workspace deps
         run: pnpm install --frozen-lockfile || pnpm install
@@ -332,12 +324,12 @@ jobs:
     name: loader/framework worker e2e (§9.3 / §10)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - run: sudo apt-get update && sudo apt-get install -y nasm
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: { node-version: 24 }
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with: { version: 9 }
       - name: Install workspace deps (for the worker's tsx loader)
         run: pnpm install --frozen-lockfile || pnpm install
@@ -376,12 +368,12 @@ jobs:
       matrix:
         browser: [chromium, firefox, webkit]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - run: sudo apt-get update && sudo apt-get install -y nasm
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: { node-version: 24 }
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with: { version: 9 }
       - name: Build CLI
         run: cargo build -p oxide-fw-cli
@@ -403,7 +395,7 @@ jobs:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri
