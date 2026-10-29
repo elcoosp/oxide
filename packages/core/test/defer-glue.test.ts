@@ -3,6 +3,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { attachDeferGlue, wireDeferreds, DeferredClient } from '../src/client/defer-glue.ts'
+import type { DeferGlueDoc, DeferGlueElement } from '../src/client/defer-glue.ts'
 
 
 /**

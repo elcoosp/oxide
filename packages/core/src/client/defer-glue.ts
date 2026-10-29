@@ -163,7 +163,7 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
    * all receive the same value.
    */
   const updateMarker = (id: number, value: unknown): void => {
-    if (typeof doc.querySelectorAll !== 'function') return
+    if (!doc || typeof doc.querySelectorAll !== 'function') return
     const els = doc.querySelectorAll(`[data-deferred-value="${id}"]`)
     if (!els || els.length === 0) return
     const el = els[0]
