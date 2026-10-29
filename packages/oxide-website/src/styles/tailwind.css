@@ -433,3 +433,36 @@ td code, p code, li code { background: var(--panel2); border: 1px solid var(--bo
   margin: 0 0 16px;
   max-width: 52em;
 }
+
+/* --- framework tabs -------------------------------------------------------
+   Static HTML from the markdown fence: a container with all four snippets in
+   a data attribute, plus the React sample rendered server-side so a reader
+   without JS sees real code. The bootstrap island replaces the contents with
+   the tab group.
+
+   The indicator is one element translated to the active tab's offsetLeft.
+   A background per tab that cross-fades reads as two objects; one moving
+   element reads as one. Under reduced motion the translation is instant.
+   -------------------------------------------------------------------------- */
+.fw-code { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin: 20px 0; }
+.fw-code-panel { margin: 0; padding: 16px 18px; font-size: 13px; line-height: 1.75; overflow-x: auto; background: var(--panel2); }
+.fw-code-panel code { font-family: var(--mono); color: #c8d2e4; }
+.fw-code-tabs {
+  position: relative;
+  display: flex; gap: 2px; padding: 6px;
+  background: var(--panel2); border-bottom: 1px solid var(--border);
+}
+.fw-code-indicator {
+  position: absolute; top: 6px; bottom: 6px; left: 0;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 7px;
+  pointer-events: none;
+}
+.fw-code-tab {
+  position: relative; z-index: 1; flex: 1;
+  padding: 8px 14px; font: inherit; font-size: 13px;
+  color: var(--muted); background: none; border: 0; border-radius: 7px; cursor: pointer;
+}
+.fw-code-tab[aria-selected='true'] { color: var(--text); }
+@media (prefers-reduced-motion: no-preference) {
+  .fw-code-tab { transition: color var(--dur-fast) ease; }
+}

@@ -1,24 +1,75 @@
 ---
 title: Caching
-description: Three tiers, content-addressed storage, tags, stale-while-revalidate, single-flight and MAC sealing.
+description: The CacheHandler trait, the Entry freshness window, build_id derivation, and each tier's implementation file.
 order: 5
 ---
 
 # Caching
 
-Oxide ships a three-tier cache with semantics usually reserved for CDN architectures — plus a
-content-addressed build store underneath.
+Three tiers behind one trait. A call site cannot tell which tier answered.
 
-## The tiers
+## The trait — `crates/cache/src/lib.rs:196`
 
-- **L0 — in-process response cache.** Weak-ETag 304s, stale-while-revalidate, single-flight,
-  build seeding, configurable `Vary`. Zero-copy hits over `Arc` entries.
-- **L1 — data cache.** `'use cache'` values stored **ODF-encoded**, so `Date`, `Map`, `Set` and
-  `BigInt` survive a round trip on both the Node and V8 backends.
-- **L2 — pluggable remote handler.** `memory`, `disk`, `redis`, `s3`, or `http` — one interface,
-  swap without touching call sites.
+    pub trait CacheHandler: Send + Sync {
+        async fn get(&self, key: &str) -> Result<Option<Entry>>;             // :197
+        async fn set(&self, key: &str, entry: Entry) -> Result<()>;          // :206
+        async fn delete(&self, key: &str) -> Result<()>;                     // :207
+        async fn tag_keys(&self, tag: &str) -> Result<Vec<String>>;          // :208
+        async fn invalidate_tag(&self, tag: &str, soft: bool) -> Result<usize>;  // :209
+        async fn publish_invalidation(&self, tag: &str, soft: bool) -> Result<()>;  // :211
+    }
 
-## The API surface
+`get_arc` (`:203`) is a provided method returning `Option<Arc<Entry>>` for the
+zero-copy L0 path; it calls `get` and wraps.
+
+## The freshness window — `crates/cache/src/lib.rs`
+
+    pub fn is_fresh(&self, now: u64) -> bool    // :103
+    pub fn fresh_until(&self) -> u64            // :108
+    pub fn stale_until(&self) -> u64            // :115
+
+Those three methods are the whole stale-while-revalidate policy. A response
+between `fresh_until` and `stale_until` is served immediately and revalidated
+in the background; past `stale_until` it is a miss.
+
+`canonical()` (`:135`) is the MAC-sealed wire form. `canonical_parts` (`:147`)
+returns the fields that went into it, so a test can assert the seal without
+re-implementing the encoding.
+
+## The key — `crates/cache/src/lib.rs:216`
+
+    pub fn build_id(parts: &[&[u8]]) -> String
+
+Length-prefixed and blake3-based. `["v0.1", route, params]` and
+`["v0.1", route, ""]` cannot collide, because the lengths are part of the input.
+
+## The tiers, with their files
+
+| Tier | Type | File |
+|---|---|---|
+| L0 | `L0Cache` | `crates/cache/src/tiers.rs` |
+| L1 | data cache (ODF-encoded values) | `crates/cache/src/tiers.rs`, codec at `crates/cache/src/codec.rs` |
+| L2 | `RedisCacheHandler` | `crates/cache/src/redis_handler.rs` |
+| L2 | `S3CacheHandler` | `crates/cache/src/s3_handler.rs` |
+| L2 | `HttpCacheHandler` | `crates/cache/src/http_handler.rs` |
+| compose | `TieredCache` | `crates/cache/src/tiers.rs` |
+| single-flight | coalescing | `crates/cache/src/single_flight.rs` |
+| URL redaction | log-line auth stripping | `crates/cache/src/auth.rs` |
+
+`TieredCache` composes the three. `single_flight.rs` coalesces concurrent misses
+for the same key; its regression suite locks the owner-drop cleanup so a
+failed producer cannot leave a poisoned reservation.
+
+## Invalidation
+
+`invalidate_tag(tag, soft)` is on the trait, not above it. The return value is
+the number of entries affected. `soft` marks them stale without deleting,
+which is what a deploy uses so in-flight readers still see a response.
+
+## What a page writes
+
+Framework-neutral — lives in `page.server.ts`, rewritten by the compiler
+(`crates/compiler/src/oxc_backend.rs`):
 
 ```ts
 import { cacheTag, cacheLife } from '@oxide-fw/core/server'
@@ -30,24 +81,3 @@ export const getPost = async (slug: string) => {
   return { slug, title: `Post ${slug}` }
 }
 ```
-
-The compiler rewrites the module export into a cached function with your tags and lifetime.
-Invalidation is tag-based (`invalidateTag`), and page loaders can tag their render output too —
-this very site tags blog renders with `blog` and docs with `docs`.
-
-## Correctness details that rarely ship in v0.1
-
-- **Single-flight** — concurrent misses for the same key coalesce; the regression suite locks the
-  owner-drop cleanup behavior (no poisoned reservations)
-- **Strict MAC sealing** — Redis/S3 payloads are sealed by default ( AEAD
-  message-authentication), with tampered-entry rejection as an acceptance test;
-  `OXIDE_CACHE_SEALING=legacy` opts out for one migration window
-- **Build seeding** — prerendered output seeds the L0 cache, so the first request after deploy is
-  already warm
-
-## The build store
-
-The demand-driven incremental graph has early cutoff and a `blake3` content-addressed store on
-disk (`redb` index, `zstd` blobs). Byte-stable manifests and typegen mean an unchanged project
-hashes identically — per-env client-bundle fingerprints skip rebundling an unchanged env, and
-per-route prerender reuse is backed by the persisted graph (`.oxide/graph.json`).

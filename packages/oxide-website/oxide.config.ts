@@ -28,6 +28,7 @@ export default defineConfig({
       CopyInstall: 'src/islands/copy-install.tsx',
       AdapterTabs: 'src/islands/adapter-tabs.tsx',
       RevealBootstrap: 'src/islands/reveal.tsx',
+      FrameworkTabsBootstrap: 'src/islands/framework-tabs.tsx',
     },
   }),
 

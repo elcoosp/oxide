@@ -15,6 +15,7 @@ export default function RootLayout({ children }: Props) {
   return (
     <>
       <Island component="RevealBootstrap" chunk="RevealBootstrap" strategy="visible" />
+      <Island component="FrameworkTabsBootstrap" chunk="FrameworkTabsBootstrap" strategy="visible" />
       <div className="scroll-progress" aria-hidden="true" />
       <header className="site-header">
         <div className="container">

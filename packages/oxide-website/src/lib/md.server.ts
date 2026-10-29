@@ -93,10 +93,57 @@ export function mdToHtml(md: string): string {
   while (i < lines.length) {
     const line = mustEl(lines, i)
     if (line.startsWith('```')) {
+      // The info string is everything after the backticks on the opening line.
+      const info = line.slice(3).trim()
       const buf: string[] = []
       i++
       while (i < lines.length && !mustEl(lines, i).startsWith('```')) buf.push(mustEl(lines, i++))
       i++ // closing fence
+
+      if (info === 'framework-tabs') {
+        // Sections delimited by ---react / ---vue / ---svelte / ---solid.
+        // Emit static HTML: React sample rendered server-side so a
+        // no-JS reader sees real code, all four carried as JSON in a
+        // data attribute for the bootstrap island to build the tabs from.
+        const parts: Partial<Record<'react' | 'vue' | 'svelte' | 'solid', string>> = {}
+        let cur: 'react' | 'vue' | 'svelte' | 'solid' | null = null
+        let sec: string[] = []
+        const flush = () => {
+          if (cur) parts[cur] = sec.join('\n').replace(/\s+$/, '')
+          sec = []
+        }
+        for (const l of buf) {
+          const m = /^---(react|vue|svelte|solid)\s*$/.exec(l)
+          if (m) {
+            flush()
+            cur = mustEl(m, 1) as 'react' | 'vue' | 'svelte' | 'solid'
+            continue
+          }
+          if (cur) sec.push(l)
+        }
+        flush()
+
+        const LANGS = ['react', 'vue', 'svelte', 'solid'] as const
+        const missing = LANGS.filter((k) => typeof parts[k] !== 'string' || parts[k] === '')
+        if (missing.length > 0) {
+          out.push(`<p class="fw-code-error">framework-tabs: missing section(s): ${missing.join(', ')}</p>`)
+          continue
+        }
+
+        const json = JSON.stringify(parts)
+          .replace(/&/g, '&amp;')
+          .replace(/"/g, '&quot;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+
+        out.push(
+          `<div class="fw-code" data-fw-snippets="${json}">` +
+            `<pre class="fw-code-panel"><code>${esc(parts.react ?? '')}</code></pre>` +
+          `</div>`
+        )
+        continue
+      }
+
       out.push(`<pre><code>${esc(buf.join('\n'))}</code></pre>`)
       continue
     }
