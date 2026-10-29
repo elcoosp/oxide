@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "JsHost trait, NodeHost, ops, pools (spec 4, D2)"
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 oxide-fw-diagnostics = { workspace = true }

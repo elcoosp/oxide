@@ -1,0 +1,57 @@
+name: Bug report
+description: Something in Oxide does not work as documented
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a **security** problem, do not open an issue — see
+        [SECURITY.md](../SECURITY.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The observed behaviour, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: |
+        A repo, gist, or exact commands that reproduce the problem. Include
+        the output of `oxide doctor` if the CLI is involved.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: oxide-version
+    attributes:
+      label: Oxide version
+      description: Output of `oxide --version`, or the crate/package version.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: rust-version
+    attributes:
+      label: Rust / Node versions
+      placeholder: "rustc 1.98.0, node 24.13.0, pnpm 12.16.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      render: shell

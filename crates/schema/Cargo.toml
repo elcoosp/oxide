@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "JSON Schema generation for oxide.config.ts — editor autocomplete and CI validation"
 readme = "README.md"
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 serde = { workspace = true }

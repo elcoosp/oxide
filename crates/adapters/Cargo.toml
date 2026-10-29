@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "binary, node, static, docker, cloudflare, serverless (spec 18)"
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 oxide-fw-diagnostics = { workspace = true }

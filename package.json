@@ -1,6 +1,6 @@
 {
   "name": "oxide-monorepo",
-  "packageManager": "pnpm@12.15.0",
+  "packageManager": "pnpm@12.16.1",
   "version": "0.1.0",
   "private": true,
   "description": "Oxide monorepo: Rust workspace + TS packages (adapters, runtime, conformance).",

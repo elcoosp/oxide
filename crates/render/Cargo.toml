@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Streaming pipeline, html injection, boundary protocol (spec 7.1, 10, D12)"
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 oxide-fw-diagnostics = { workspace = true }

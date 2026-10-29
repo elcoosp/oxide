@@ -27,6 +27,9 @@ edition = "2024"
 rust-version = "1.98"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/elcoosp/oxide"
+homepage = "https://github.com/elcoosp/oxide"
+keywords = ["web-framework", "fullstack", "ssr", "rust", "wasm"]
+categories = ["web-programming", "web-programming::http-server", "wasm"]
 description = "Oxide: framework-agnostic, full-stack meta-framework with a Rust core (working name, spec v0.1)"
 
 [workspace.dependencies]

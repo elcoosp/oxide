@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "ODF wire format: devalue-compatible Rust encoder/decoder (spec 9.5, D11)"
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 oxide-fw-diagnostics = { workspace = true }

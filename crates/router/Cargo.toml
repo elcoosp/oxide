@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Route tree, matcher, typegen, rules engine (spec 8, D8)"
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 oxide-fw-diagnostics = { workspace = true }
