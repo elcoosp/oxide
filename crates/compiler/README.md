@@ -11,6 +11,19 @@
 
 Part of [Oxide](https://github.com/elcoosp/oxide) — a framework-agnostic, full-stack meta-framework with a Rust core and TypeScript authoring.
 
+## Overview
+
+Oxide's route files are TypeScript and TSX with framework-specific extensions:
+`'use cache'` directives, `page.server.ts` server-function stubs, React Fast
+Refresh markers, and rewrite/redirect guards. This crate is the Oxc-based
+pass stack that turns those files into plain JavaScript for the bundler and
+emits the diagnostics that make a typo in a directive a build error rather
+than a silent no-op.
+
+Most users never depend on this crate directly — it runs inside
+`oxide build` and `oxide dev`. It is published so the compile pipeline is
+inspectable and reusable.
+
 Full API documentation: [docs.rs/oxide-fw-compiler](https://docs.rs/oxide-fw-compiler)
 
 ## License

@@ -31,7 +31,7 @@ A **framework-agnostic, full-stack meta-framework** with a Rust core. React, Vue
 The pitch is a single Rust binary that:
 - compiles and serves four different frontend frameworks through one server
 - caches at three tiers (in-process, on-disk, remote) with one wire format
-- ships to 10 deploy targets behind a build-time capability matrix
+- ships to 12 deploy targets behind a build-time capability matrix
 - refuses to silently degrade — every stub is documented in `docs/deviations.md`
 
 ## Features
