@@ -9,6 +9,8 @@
 // paragraphs, -/* and 1. lists, pipe tables, > blockquotes, ``` fences,
 // --- rules, inline `code`, **bold**, [links](https://… or /relative).
 import { getCollection, getEntry } from '@oxide-fw/core/server'
+import { createHighlighter } from 'shiki'
+
 
 export interface Frontmatter {
   [key: string]: string
@@ -86,7 +88,38 @@ function mustEl<T>(arr: readonly T[], i: number): T {
 }
 
 /** Markdown block subset → HTML string. */
-export function mdToHtml(md: string): string {
+
+// Setup Shiki once per build session
+let shikiPromise: Promise<any> | null = null
+function getHighlighter() {
+  if (!shikiPromise) {
+    shikiPromise = createHighlighter({
+      themes: [
+        {
+          name: 'oxide',
+          type: 'dark',
+          colors: {
+            'editor.background': '#09090b',
+            'editor.foreground': '#fafafa',
+          },
+          tokenColors: [
+            { scope: ['keyword', 'storage.type', 'storage.modifier', 'keyword.control'], settings: { foreground: '#e45631' } },
+            { scope: ['string', 'constant.numeric', 'constant.language'], settings: { foreground: '#a1a1aa' } },
+            { scope: ['comment'], settings: { foreground: '#52525b', fontStyle: 'italic' } },
+            { scope: ['entity.name.function', 'support.function', 'entity.name.tag'], settings: { foreground: '#fafafa' } },
+            { scope: ['variable', 'variable.parameter', 'variable.other'], settings: { foreground: '#d4d4d8' } },
+            { scope: ['entity.name.type', 'support.type', 'support.class'], settings: { foreground: '#fafafa' } },
+            { scope: ['punctuation', 'meta.brace'], settings: { foreground: '#a1a1aa' } }
+          ]
+        }
+      ],
+      langs: ['tsx', 'vue', 'svelte', 'html', 'typescript', 'bash']
+    })
+  }
+  return shikiPromise
+}
+
+export async function mdToHtml(md: string): Promise<string> {
   const lines = md.replace(/\r\n/g, '\n').split('\n')
   const out: string[] = []
   let i = 0
@@ -130,7 +163,14 @@ export function mdToHtml(md: string): string {
           continue
         }
 
-        const json = JSON.stringify(parts)
+        const highlighter = await getHighlighter()
+        const highlighted: Record<string, string> = {}
+        for (const lang of LANGS) {
+          const shikiLang = lang === 'react' ? 'tsx' : lang === 'solid' ? 'tsx' : lang
+          highlighted[lang] = highlighter.codeToHtml(parts[lang] ?? '', { lang: shikiLang, theme: 'oxide' })
+        }
+
+        const json = JSON.stringify(highlighted)
           .replace(/&/g, '&amp;')
           .replace(/"/g, '&quot;')
           .replace(/</g, '&lt;')
@@ -138,7 +178,7 @@ export function mdToHtml(md: string): string {
 
         out.push(
           `<div class="fw-code" data-fw-snippets="${json}">` +
-            `<pre class="fw-code-panel"><code>${esc(parts.react ?? '')}</code></pre>` +
+            highlighted.react +
           `</div>`
         )
         continue
@@ -249,7 +289,7 @@ export async function readPost(
       date: fmString(hit.frontmatter.date),
       tags: fmTags(hit.frontmatter.tags),
     },
-    html: mdToHtml(hit.body),
+    html: await mdToHtml(hit.body),
   }
 }
 
@@ -278,7 +318,7 @@ export async function readDoc(
       description: fmString(hit.frontmatter.description),
       order: Number(hit.frontmatter.order ?? 99),
     },
-    html: mdToHtml(hit.body),
+    html: await mdToHtml(hit.body),
   }
 }
 
