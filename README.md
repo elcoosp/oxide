@@ -8,16 +8,16 @@
     identically on all four. Built against the <em>Oxide Technical Specification v0.1</em>.
   </p>
   <p>
-    <img src="https://img.shields.io/badge/Rust-stable%20%7C%20edition%202024-000000?style=flat-square&logo=rust" alt="Rust"/>
-    <img src="https://img.shields.io/badge/License-MIT%20%7C%20Apache--2.0-blue?style=flat-square" alt="License"/>
-    <img src="https://img.shields.io/badge/Platforms-Linux%20%7C%20macOS%20%7C%20Windows-9D4EDD?style=flat-square" alt="Platforms"/>
-    <img src="https://img.shields.io/badge/Node-%E2%89%A524-339933?style=flat-square&logo=node.js" alt="Node"/>
-    <img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/>
-    <img src="https://img.shields.io/badge/Workspace-18%20crates%20%2B%209%20packages-6F4E37?style=flat-square" alt="Workspace"/>
-    <img src="https://img.shields.io/badge/Code-%E2%89%88113k%20lines-9CF?style=flat-square" alt="Lines of code"/>
-    <img src="https://img.shields.io/badge/Tests-1239%20Rust%20%7C%20445%2F445%20TS-brightgreen?style=flat-square" alt="Tests"/>
-    <img src="https://img.shields.io/badge/ODF-16%20golden%20fixtures-00BFFF?style=flat-square" alt="ODF golden fixtures"/>
-    <img src="https://img.shields.io/badge/TS%20runtime-zero%20npm%20deps-228B22?style=flat-square" alt="Zero dependencies"/>
+    <a href="#quick-start"><img src="https://img.shields.io/badge/Rust-stable%20%7C%20edition%202024-000000?style=flat-square&logo=rust" alt="Rust"/></a>
+    <a href="https://github.com/elcoosp/oxide/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT%20%7C%20Apache--2.0-blue?style=flat-square" alt="License"/></a>
+    <a href="https://github.com/elcoosp/oxide/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/Platforms-Linux%20%7C%20macOS%20%7C%20Windows-9D4EDD?style=flat-square" alt="Platforms"/></a>
+    <a href="#quick-start"><img src="https://img.shields.io/badge/Node-%E2%89%A524-339933?style=flat-square&logo=node.js" alt="Node"/></a>
+    <a href="#framework-adapters"><img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/></a>
+    <a href="https://github.com/elcoosp/oxide"><img src="https://img.shields.io/badge/Workspace-18%20crates%20%2B%209%20packages-6F4E37?style=flat-square" alt="Workspace"/></a>
+    <a href="https://github.com/elcoosp/oxide"><img src="https://img.shields.io/badge/Code-%E2%89%88113k%20lines-9CF?style=flat-square" alt="Lines of code"/></a>
+    <a href="https://github.com/elcoosp/oxide/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/Tests-1239%20Rust%20%7C%20445%2F445%20TS-brightgreen?style=flat-square" alt="Tests"/></a>
+    <a href="#one-wire-format-odf"><img src="https://img.shields.io/badge/ODF-16%20golden%20fixtures-00BFFF?style=flat-square" alt="ODF golden fixtures"/></a>
+    <a href="#features"><img src="https://img.shields.io/badge/TS%20runtime-zero%20npm%20deps-228B22?style=flat-square" alt="Zero dependencies"/></a>
   </p>
   <p>
     <strong><a href="#features">Features</a> · <a href="#quick-start">Quick start</a> · <a href="#the-cli">The CLI</a> · <a href="#architecture">Architecture</a> · <a href="#framework-adapters">Adapters</a> · <a href="#one-wire-format-odf">ODF</a> · <a href="#testing">Testing</a> · <a href="#project-status">Status</a></strong>
@@ -169,7 +169,7 @@ Run a single crate: `cargo test -p oxide-fw-<name>`. Run a single adapter: `node
 
 ## Project status
 
-Oxide is **v0.1 release-ready**. All 22 CI jobs are green (21 passed, 1 skipped — Miri, deliberately deferred):
+Oxide is **v0.1 release-ready**. CI enforces 22 jobs across Linux, macOS and Windows — 21 run on every push, plus a scheduled Miri job (nightly, not a push gate):
 
 - `rust (ubuntu / macos / windows)` — fmt + clippy + 1239 tests
 - `node` — all framework packages
