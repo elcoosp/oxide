@@ -5,13 +5,13 @@
     A framework-agnostic full-stack meta-framework with a <strong>Rust core</strong>. React, Vue,
     Svelte and Solid are first-class adapters over one shared engine that owns routing, data,
     caching, bundling, serving and deployment — so anything framework-neutral behaves
-    identically on all four. Built against the <em>Oxide Technical Specification v0.1</em>.
+    identically on all four. Built against the <em><a href="docs/spec-v0.1.md">Oxide Technical Specification v0.1</a></em>.
   </p>
   <p>
-    <a href="#quick-start"><img src="https://img.shields.io/badge/Rust-stable%20%7C%20edition%202024-000000?style=flat-square&logo=rust" alt="Rust"/></a>
+    <a href="#install"><img src="https://img.shields.io/badge/Rust-stable%20%7C%20edition%202024-000000?style=flat-square&logo=rust" alt="Rust"/></a>
     <a href="https://github.com/elcoosp/oxide/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT%20%7C%20Apache--2.0-blue?style=flat-square" alt="License"/></a>
     <a href="https://github.com/elcoosp/oxide/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/Platforms-Linux%20%7C%20macOS%20%7C%20Windows-9D4EDD?style=flat-square" alt="Platforms"/></a>
-    <a href="#quick-start"><img src="https://img.shields.io/badge/Node-%E2%89%A524-339933?style=flat-square&logo=node.js" alt="Node"/></a>
+    <a href="#install"><img src="https://img.shields.io/badge/Node-%E2%89%A524-339933?style=flat-square&logo=node.js" alt="Node"/></a>
     <a href="#framework-adapters"><img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/></a>
     <a href="https://github.com/elcoosp/oxide"><img src="https://img.shields.io/badge/Workspace-18%20crates%20%2B%209%20packages-6F4E37?style=flat-square" alt="Workspace"/></a>
     <a href="https://github.com/elcoosp/oxide"><img src="https://img.shields.io/badge/Code-%E2%89%88113k%20lines-9CF?style=flat-square" alt="Lines of code"/></a>
@@ -20,7 +20,7 @@
     <a href="#features"><img src="https://img.shields.io/badge/TS%20runtime-zero%20npm%20deps-228B22?style=flat-square" alt="Zero dependencies"/></a>
   </p>
   <p>
-    <strong><a href="#features">Features</a> · <a href="#quick-start">Quick start</a> · <a href="#the-cli">The CLI</a> · <a href="#architecture">Architecture</a> · <a href="#framework-adapters">Adapters</a> · <a href="#one-wire-format-odf">ODF</a> · <a href="#testing">Testing</a> · <a href="#project-status">Status</a></strong>
+    <strong><a href="#features">Features</a> · <a href="#install">Quick start</a> · <a href="#the-cli">The CLI</a> · <a href="#architecture">Architecture</a> · <a href="#framework-adapters">Adapters</a> · <a href="#one-wire-format-odf">ODF</a> · <a href="#testing">Testing</a> · <a href="#project-status">Status</a></strong>
   </p>
 </div>
 
@@ -32,7 +32,7 @@ The pitch is a single Rust binary that:
 - compiles and serves four different frontend frameworks through one server
 - caches at three tiers (in-process, on-disk, remote) with one wire format
 - ships to 12 deploy targets behind a build-time capability matrix
-- refuses to silently degrade — every stub is documented in `docs/deviations.md`
+- refuses to silently degrade — every stub is documented in [`docs/deviations.md`](docs/deviations.md)
 
 ## Features
 
@@ -45,33 +45,58 @@ The pitch is a single Rust binary that:
 - **Security and observability built in.** CSP and CSRF modes, SSRF allow-lists, trusted proxies, token-bucket rate limits, encrypted session cookies (ChaCha20-Poly1305 AEAD with key rotation), ODF decode hardening with prototype-pollution guards. Prometheus-format metrics, W3C trace-context propagation into outgoing fetches, actions and endpoints, stage spans and opt-in OTLP export.
 - **Conformance-gated.** One reference app (Atlas), one assertion set, all four adapters. A release is blocked the moment any adapter drifts.
 
-## Quick start
+## Install
 
-> [!NOTE]
-> Prerequisites: a **Rust stable** toolchain (edition 2024) and **Node ≥ 24**. The TypeScript packages have zero runtime npm dependencies and run on Node's native type stripping — no transpile step.
+Prerequisites: a **Rust stable** toolchain (edition 2024) and **Node ≥ 24**. The
+TypeScript packages have zero runtime npm dependencies and run on Node's native
+type stripping — no transpile step.
 
 ```bash
-# Build the single binary.
-cargo build -p oxide-fw-cli --release
+# The CLI — a single static binary.
+cargo install oxide-fw-cli
 
 # Sanity-check the environment (node, cargo, config, cache dir, build secret).
-./target/release/oxide doctor
+oxide doctor
 
-# Scaffold a new app (React, Vue, Svelte, or Solid).
-# `create-oxide` is a separate npm package; it never ships inside the
-# `oxide` binary. Both invocations work (they call the same scaffolder).
-npx create-oxide@latest my-app --framework react --template blog
-# or: pnpm create oxide my-app --framework react --template blog
+# Scaffold a project.
+pnpm create oxide my-app --framework react --template blog
+# or: npx create-oxide@latest my-app --framework react --template blog
 
-# Start the dev server with HMR.
-cd my-app && ../target/release/oxide dev
-
-# Production build + start.
-../target/release/oxide build
-../target/release/oxide start --port 3000
+cd my-app
+oxide dev          # dev server with HMR
+oxide build        # production build
+oxide start --port 3000
 ```
 
-The repo also ships four end-to-end fixtures under `examples/smoke-app-{react,vue,svelte,solid}`. `oxide build --root examples/smoke-app-react` followed by `oxide start --root examples/smoke-app-react --port 3100` is the fastest path to a running app that exercises every feature.
+`create-oxide` is a separate npm package
+([npmjs.com/package/create-oxide](https://www.npmjs.com/package/create-oxide));
+it never ships inside the `oxide` binary, and both invocations above call the
+same scaffolder.
+
+> [!NOTE]
+> **v0.1.0 is not yet published.** Until `cargo install oxide-fw-cli` resolves
+> on crates.io, build the binary from source — see
+> [Building from source](#building-from-source). Every command above works the
+> same against `./target/release/oxide`.
+
+## Building from source
+
+Contributors and anyone testing the pre-release:
+
+```bash
+git clone https://github.com/elcoosp/oxide
+cd oxide
+cargo build --release -p oxide-fw-cli
+
+# Sanity-check the environment.
+./target/release/oxide doctor
+```
+
+The repo ships four end-to-end fixtures under
+[`examples/smoke-app-{react,vue,svelte,solid}`](examples). `oxide build --root
+examples/smoke-app-react` followed by `oxide start --root
+examples/smoke-app-react --port 3100` is the fastest path to a running app that
+exercises every feature.
 
 ## The CLI
 
@@ -184,7 +209,7 @@ Oxide is **v0.1 release-ready**. CI enforces 22 jobs across Linux, macOS and Win
 
 - **`suspense: 'core'` boundaries** carry rendered HTML across `ox:swap`, not the structured value. This is by design for Suspense (the whole point is "swap in the ready subtree") but is distinct from **`defer()` in loader data**, which *does* carry structured ODF values — see `packages/core/src/client/defer-glue.ts` and the `/deferred` route in the smoke apps.
 - **Miri** is skipped in CI. Enabling it would require `#[cfg(miri)]` guards on the crates that assume a real allocator / OS; not worth it for v0.1.
-- **`docs/deviations.md`** carries 1196 item-level `///` docs deferred to v0.2.
+- **[`docs/deviations.md`](docs/deviations.md)** carries 1196 item-level `///` docs deferred to v0.2.
 
 ### What's next for v0.1
 
@@ -193,12 +218,12 @@ Oxide is **v0.1 release-ready**. CI enforces 22 jobs across Linux, macOS and Win
 
 ## Documentation
 
-- **`docs/spec-v0.1.md`** — the specification this release implements
-- **`docs/spec-v0.2-draft.md`** — the working draft for the next release
-- **`docs/deviations.md`** — every known gap between spec and code, item by item
-- **`docs/architecture.md`** — how the crates fit together
-- **`docs/plugin-compat.md`** — plugin API surface and Vite/Rollup compatibility
-- **`benchmarks/report.md`** — the current perf table with the deterministic-vs-informational split documented
+- **[`docs/spec-v0.1.md`](docs/spec-v0.1.md)** — the specification this release implements
+- **[`docs/spec-v0.2-draft.md`](docs/spec-v0.2-draft.md)** — the working draft for the next release
+- **[`docs/deviations.md`](docs/deviations.md)** — every known gap between spec and code, item by item
+- **[`docs/architecture.md`](docs/architecture.md)** — how the crates fit together
+- **[`docs/plugin-compat.md`](docs/plugin-compat.md)** — plugin API surface and Vite/Rollup compatibility
+- **[`benchmarks/report.md`](benchmarks/report.md)** — the current perf table with the deterministic-vs-informational split documented
 
 ---
 
