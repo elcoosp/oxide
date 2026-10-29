@@ -42,17 +42,17 @@ jobs:
     name: Publish npm packages
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: main
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: 'https://registry.npmjs.org'
 
       # pnpm >= 10.12 required for OIDC trusted publishing.
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10
 
@@ -78,6 +78,13 @@ jobs:
 
       - name: Install workspace deps
         run: pnpm install --frozen-lockfile
+
+      # Critical: every publishable package's "files" field is ["dist", ...].
+      # A fresh checkout has no dist/ — `pnpm pack` would include only
+      # package.json + README.md and the published tarball would be code-free.
+      # Verified failure mode: `pnpm pack --dry-run` succeeds but lists 2 files.
+      - name: Build workspace packages
+        run: pnpm -r --filter '!./packages/oxide-website' run build
 
       - name: Verify tarball contents (only src/ + auto-includes)
         run: |

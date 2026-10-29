@@ -42,7 +42,7 @@ consecutive runs across 48 hours before the tag.
 
 to print the topological sort (leaf first). The script reads
 `cargo metadata` — every crate appears after every crate it depends
-on. Current output has 17 crates; `oxide-diagnostics` is the only
+on. Current output has 17 crates; `oxide-fw-diagnostics` is the only
 true leaf.
 
 ### 3a. Local packaging check — only the true leaf works pre-publish
@@ -55,16 +55,16 @@ additionally queries the registry for name availability.
 
 What this means in practice:
 
-- **`oxide-diagnostics`** (the only true leaf) can be validated before
+- **`oxide-fw-diagnostics`** (the only true leaf) can be validated before
   any publish:
 
-      cargo package -p oxide-diagnostics --allow-dirty
+      cargo package -p oxide-fw-diagnostics --allow-dirty
 
 - **Every other crate** (16 of 17) cannot be validated before its deps
-  are published. `cargo package -p oxide-odf --no-verify --offline`
+  are published. `cargo package -p oxide-fw-odf --no-verify --offline`
   still fails at dep resolution with "no matching package named
-  oxide-diagnostics found". The `--offline` flag doesn't help because
-  oxide-diagnostics genuinely isn't on the registry.
+  oxide-fw-diagnostics found". The `--offline` flag doesn't help because
+  oxide-fw-diagnostics genuinely isn't on the registry.
 
 This is the **irreducible risk of the first publish**. The mitigation
 is:
@@ -89,12 +89,12 @@ release, commit everything first.
       sleep 30   # crates.io index propagation between publishes
     done
 
-The `sleep 30` matters: after publishing `oxide-diagnostics`, the
-index needs a moment before `oxide-odf`'s publish can resolve it.
+The `sleep 30` matters: after publishing `oxide-fw-diagnostics`, the
+index needs a moment before `oxide-fw-odf`'s publish can resolve it.
 
 ## 4. npm package publish
 
-    for p in packages/create-oxide packages/oxide packages/react \
+    for p in packages/create-oxide packages/core packages/react \
              packages/vue packages/svelte packages/solid; do
       ( cd "$p" && pnpm pack --dry-run 2>&1 | tail -10 )
     done
@@ -209,7 +209,7 @@ automatically.
 
 - **The crate publish loop**: the `scripts/publish-order.sh` script has
   been verified locally; the actual `cargo publish` loop has not been
-  run against crates.io. Only the true leaf (`oxide-diagnostics`) is
+  run against crates.io. Only the true leaf (`oxide-fw-diagnostics`) is
   fully validatable pre-publish; every other crate's manifest is
   validated only the moment it publishes (see 3a).
 - **The npm OIDC publish**: `publish-npm.yml` has never run. It will
