@@ -14,6 +14,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# 2026-10-29: actions/setup-node@v4 and pnpm/action-setup@v4 target the
+# Node 20 action runtime; the GH runner now defaults to Node 24 and warns
+# on every step. This env var acknowledges the override explicitly and
+# silences the deprecation message. Update the actions to a Node-24 line
+# when published for the clean fix.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   rust:
     strategy:
@@ -21,6 +29,14 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]  # §22 platform matrix
     runs-on: ${{ matrix.os }}
+    # 2026-10-29: rust (macos-latest) failed at exactly 15m02s on run
+    # 40771050873 with no recoverable log (GH BlobNotFound). bench-gate on
+    # the same runner passed with `cargo build -p oxide-fw-cli`, so the
+    # failure is most likely disk/time on `cargo nextest run --workspace`
+    # (builds every test binary, several GB larger than the CLI). rust-cache
+    # cuts both; the explicit timeout makes a future failure diagnosable
+    # instead of a wall-clock mystery.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - name: Install nasm (Linux/macOS only)
@@ -32,6 +48,14 @@ jobs:
             brew install nasm
           fi
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # macos-latest runner: disk-constrained on this workspace.
+          # wasmtime + oxc + rolldown + lightningcss compile to tens of GB
+          # of target/ on the cold cache; the test-binary build for
+          # `cargo nextest run --workspace` is the largest single target/
+          # consumer. Caching cuts both disk peak and wall time.
+          cache-on-failure: true
       - run: rustup target add wasm32-unknown-unknown
       - run: cargo fmt --all --check
       # Clippy at `-D warnings` — the workspace is clean of all lints and
@@ -162,16 +186,32 @@ jobs:
         # resolve through node_modules. Without this install step, Node
         # reports ERR_MODULE_NOT_FOUND on the first transitive import.
         run: pnpm install --frozen-lockfile
+      # 2026-10-29: the adapter package sources import each other via
+      # subpaths (`@oxide-fw/core/odf-encode`) which resolve to dist/
+      # outputs. `pnpm install` alone creates symlinks but not the built
+      # `dist/` files. Without this build step the conformance suite fails
+      # on ubuntu + macos with:
+      #   ERR_MODULE_NOT_FOUND: Cannot find module
+      #   '.../node_modules/@oxide-fw/core/dist/odf-encode.js'
+      # The sibling `node` job already runs this build — matching here.
+      - name: Build workspace packages
+        run: pnpm -r --filter '!./packages/oxide-website' run build
       - name: Conformance suite (all four adapters)
         run: pnpm -C conformance test
   fixtures-v8:
     name: V8 backend fixture gate (PH0-03)
     runs-on: macos-latest   # V8 host is built/tested on macOS here; ubuntu if
                             # the toolchain supports it — see WORKLOG.
+    # 2026-10-29: same 15m02s failure / missing-log signature as the rust
+    # job. rust-cache + explicit timeout (see rust job above).
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - run: brew install nasm
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
       - uses: pnpm/action-setup@v4

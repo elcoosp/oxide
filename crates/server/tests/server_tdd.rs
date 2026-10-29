@@ -2456,6 +2456,11 @@ async fn zero_downtime_reload_via_so_reuseport() {
 
 /// Wait until `addr` accepts a TCP connection. Generous budget for parallel
 /// test load; returns on the first successful connect.
+///
+/// Gated to the same platforms as its callers: `wait_for_listener` is used
+/// only from `#[cfg(all(unix, not(target_os = "solaris")))]` tests. Without
+/// this gate, windows-latest trips `-D dead-code` and fails the clippy step.
+#[cfg(all(unix, not(target_os = "solaris")))]
 async fn wait_for_listener(addr: std::net::SocketAddr) {
     for _ in 0..200 {
         if tokio::net::TcpStream::connect(addr).await.is_ok() {
