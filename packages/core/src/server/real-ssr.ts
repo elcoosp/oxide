@@ -208,6 +208,11 @@ export function makeRealAdapter(cfg: RealAdapterConfig): FrameworkAdapter {
     return unwrapModuleDefault(cfg.opts.componentFor?.(id), id)
   }
   const missing = (kind: string, id: string): void => {
+    // `__oxide_warmup__` is the synthetic route the pipeline renders to prime
+    // the worker pool and load the SSR entry (cli/src/framework_shim.rs
+    // AdapterPageRenderer::warm). The resolver miss there is deliberate and
+    // ignored by the caller; a console.error on every startup reads like a bug.
+    if (id.startsWith('__oxide_')) return
     console.error(`[oxide] ${cfg.name}: no component resolved for ${kind} \`${id}\``)
   }
   return {

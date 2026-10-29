@@ -98,6 +98,11 @@ fn tooling_pool_size() -> usize {
 /// unchanged. Errors propagate with the same `OxideError` type.
 pub struct AdapterPageRenderer {
     inner: Arc<dyn FrameworkRenderer>,
+    /// The client manifest, used to look up the stylesheet(s) a route's
+    /// chunks depend on. Populated by `with_client_manifest` at the CLI's
+    /// construction site; without it the page renders unstyled, which is
+    /// exactly the failure mode that shipped before this fix.
+    client_manifest: Option<Arc<serde_json::Value>>,
 }
 
 impl AdapterPageRenderer {
@@ -105,7 +110,81 @@ impl AdapterPageRenderer {
     /// a `LazyFrameworkRenderer` via `build_stack` that defers config
     /// evaluation to the first render; tests can substitute a fake.
     pub fn new(inner: Arc<dyn FrameworkRenderer>) -> Self {
-        Self { inner }
+        Self { inner, client_manifest: None }
+    }
+
+    /// Attach the client manifest so the renderer can emit the stylesheet
+    /// `<link>` the built chunks depend on. Without this a route with CSS in
+    /// the manifest renders unstyled: the manifest knows the CSS exists,
+    /// the render layer knows how to emit `<link rel="stylesheet">`, and
+    /// nothing connects the two.
+    pub fn with_client_manifest(mut self, manifest: Arc<serde_json::Value>) -> Self {
+        self.client_manifest = Some(manifest);
+        self
+    }
+
+    /// Append `<link rel="stylesheet">` entries for the route's CSS chunks.
+    /// `input.head` is the JSON object the JS adapter merges
+    /// (`packages/*/src/render.ts`); each entry is `{href, rel}`.
+    fn inject_route_css(&self, input: &mut oxide_fw_server::PageRenderInput) {
+        // Diagnostics routes (the warmup synthetic render) never emit a head.
+        if input.route.starts_with("__oxide_") {
+            return;
+        }
+        let Some(manifest) = self.client_manifest.as_ref() else { return };
+        let Some(routes) = manifest.get("routes").and_then(|r| r.as_object()) else {
+            return;
+        };
+        // The client manifest keys entries as `<route>/page`, and encodes a
+        // dynamic segment `[param]` as `_param_` (the bundler's sanitized
+        // chunk name). `input.route` is the canonical form with brackets.
+        // Try three shapes, in order of specificity:
+        //   1. `<route>`             (canonical, no suffix)
+        //   2. `<route>/page`        (static route)
+        //   3. `<route-with-_param_>/page` (dynamic route)
+        let normalized: String = input
+            .route
+            .split('/')
+            .map(|seg| {
+                if seg.len() >= 2 && seg.starts_with('[') && seg.ends_with(']') {
+                    format!("_{}_", &seg[1..seg.len() - 1])
+                } else {
+                    seg.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+        let key = if routes.contains_key(&input.route) {
+            input.route.clone()
+        } else if routes.contains_key(&format!("{}/page", input.route)) {
+            format!("{}/page", input.route)
+        } else if routes.contains_key(&format!("{}/page", normalized)) {
+            format!("{}/page", normalized)
+        } else {
+            return;
+        };
+        let Some(css) = routes
+            .get(&key)
+            .and_then(|r| r.get("css"))
+            .and_then(|c| c.as_array())
+        else {
+            return;
+        };
+        let Some(link) = input.head.get_mut("link").and_then(|v| v.as_array_mut()) else {
+            return;
+        };
+        for entry in css {
+            let Some(name) = entry.as_str() else { continue };
+            let href = format!("/client/{name}");
+            // Dedupe: a second render for the same route must not double-link.
+            if link
+                .iter()
+                .any(|v| v.get("href").and_then(|h| h.as_str()) == Some(href.as_str()))
+            {
+                continue;
+            }
+            link.push(serde_json::json!({ "href": href, "rel": "stylesheet" }));
+        }
     }
 }
 
@@ -166,6 +245,8 @@ impl PageRenderer for AdapterPageRenderer {
     }
 
     async fn render(&self, input: PageRenderInput) -> oxide_fw_server::Result<String> {
+        let mut input = input.clone();
+        self.inject_route_css(&mut input);
         self.inner.render(to_fw_input(input)).await
     }
 
@@ -177,6 +258,8 @@ impl PageRenderer for AdapterPageRenderer {
         &self,
         input: PageRenderInput,
     ) -> oxide_fw_server::Result<oxide_fw_server::RenderStream> {
+        let mut input = input.clone();
+        self.inject_route_css(&mut input);
         self.inner.render_streaming(to_fw_input(input)).await
     }
 }
@@ -363,6 +446,13 @@ pub async fn build_framework_stack(
     // config. `None` keeps the memory/disk-only tier (tests, defaults).
     cache_handler: Option<&oxide_fw_config::CacheHandlerConfig>,
 ) -> FrameworkStack {
+    // Captured before any local `config_path = ...` shadows the parameter,
+    // so the renderer construction at the bottom of this function can find
+    // dist/client/client.manifest.json relative to the project root.
+    let project_root: Option<std::path::PathBuf> = config_path
+        .and_then(|p| p.parent())
+        .map(|p| p.to_path_buf());
+
     use oxide_fw_jshost::{JsHost, NodeHost, PoolConfig, V8Host};
 
     // §6.3: which framework's JSX the worker's `tsx-loader.mjs` should
@@ -593,7 +683,22 @@ pub async fn build_framework_stack(
                 components: Arc::clone(&component_source),
                 inner: tokio::sync::OnceCell::new(),
             };
-            Some(Arc::new(AdapterPageRenderer::new(Arc::new(lazy))))
+            Some(Arc::new({
+                let mut renderer = AdapterPageRenderer::new(Arc::new(lazy));
+                // The client manifest names the CSS chunk each route's
+                // entries depend on. Best-effort: dev has no dist/ until the
+                // first build, and a stylesheet-less project legitimately
+                // has an empty routes[].css.
+                if let Some(root) = project_root.as_deref()
+                    && let Ok(bytes) =
+                        std::fs::read(root.join("dist/client/client.manifest.json"))
+                    && let Ok(manifest) =
+                        serde_json::from_slice::<serde_json::Value>(&bytes)
+                {
+                    renderer = renderer.with_client_manifest(Arc::new(manifest));
+                }
+                renderer
+            }))
         }
         None => None,
     };

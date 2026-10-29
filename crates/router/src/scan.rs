@@ -21,6 +21,17 @@ const CONVENTION_BASES: &[&str] = &[
 /// Filename segments that disqualify a conventional-looking file (tests, CSS modules…).
 const DENYLIST_EXTS: &[&str] = &["test", "spec", "stories", "module", "d", "snap", "mock"];
 
+/// Extensions the framework can actually load a route from. Every adapter
+/// declares one of these (`@oxide-fw/react` and `@oxide-fw/solid`: `.tsx`;
+/// `@oxide-fw/vue`: `.vue`; `@oxide-fw/svelte`: `.svelte`), and the compiler
+/// lowers `.ts` / `.js` / `.jsx` for endpoints and middleware.
+///
+/// The *final* dot-segment of a route file must be one of these. Without
+/// that check a stray editor backup (`page.tsx.bak`, `page.tsx~`,
+/// `page.tsx.orig`) is classified as a route, added to the tree, and then
+/// handed to the compiler — which fails with `CMP-PARSE`.
+const SOURCE_EXTS: &[&str] = &["tsx", "jsx", "ts", "js", "vue", "svelte"];
+
 pub(crate) fn scan_impl(dir: &Path) -> Result<RouteTree> {
     let root = resolve_root(dir);
     if !root.is_dir() {
@@ -234,7 +245,12 @@ enum FileRole {
     Socket,
 }
 
-/// Classify a conventional file name (extension-agnostic, lowercase, §8.1).
+/// Classify a conventional file name (lowercase, §8.1).
+///
+/// The final dot-segment must be a loadable source extension (see
+/// `SOURCE_EXTS`); anything else is not a route file. The denylist is still
+/// consulted for semantic suffixes that *do* end in a real extension:
+/// `page.test.ts` and `page.d.ts` both have `ts` last.
 /// Test/spec/module/declaration files never become routes.
 fn file_role(name: &str) -> Option<FileRole> {
     let parts: Vec<&str> = name.split('.').collect();
@@ -242,6 +258,10 @@ fn file_role(name: &str) -> Option<FileRole> {
         return None;
     }
     let (base, exts) = (parts[0], &parts[1..]);
+    match exts.last() {
+        Some(last) if SOURCE_EXTS.contains(last) => {}
+        _ => return None,
+    }
     if exts.iter().any(|e| DENYLIST_EXTS.contains(e)) {
         return None;
     }
@@ -272,6 +292,7 @@ fn is_server_module(name: &str, base: &str) -> bool {
     parts.len() >= 3
         && parts[0] == base
         && parts[1] == "server"
+        && parts.last().is_some_and(|e| SOURCE_EXTS.contains(e))
         && !parts[2..].iter().any(|e| DENYLIST_EXTS.contains(e))
 }
 
@@ -550,6 +571,32 @@ mod tests {
             tree2.entries.len(),
             8,
             "denylisted/unconventional files are ignored"
+        );
+
+        // Editor backups end in a non-source extension and must not become
+        // routes: .bak splits to last segment "bak", page.tsx~ to "tsx~",
+        // .orig to "orig". None of those is loadable.
+        put(root, "backup-bak/page.tsx.bak", "garbage (");
+        put(root, "backup-tilde/page.tsx~", "garbage (");
+        put(root, "backup-orig/page.tsx.orig", "garbage (");
+        put(root, "backup-save/page.save", "garbage (");
+        // A backed-up server module must not mark its page's has_server_module.
+        put(root, "backup-server/page.tsx", "export default null;");
+        put(root, "backup-server/page.server.ts.bak", "garbage (");
+        let tree3 = RouteTree::scan(root).unwrap();
+        assert_eq!(
+            tree3.entries.len(),
+            9,
+            "editor backups are ignored; only backup-server/page.tsx is a route"
+        );
+        let backup_page = tree3
+            .entries
+            .iter()
+            .find(|e| e.id.0 == "routes/backup-server/page")
+            .expect("backup-server/page.tsx is a real page");
+        assert!(
+            !backup_page.has_server_module,
+            "page.server.ts.bak must not mark has_server_module"
         );
     }
 
