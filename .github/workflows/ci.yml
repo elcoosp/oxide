@@ -121,6 +121,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - uses: actions/setup-node@v7
         with: { node-version: 24 }
       - uses: pnpm/action-setup@v6.1.0
@@ -132,8 +136,18 @@ jobs:
         # the pnpm workspace's symlinks under node_modules. Without the
         # install, Node reports ERR_MODULE_NOT_FOUND.
         run: pnpm install --frozen-lockfile
+      # The website package's build script is `oxide build`, so the CLI has to
+      # exist and be on PATH before `pnpm -r run build` reaches it. Without
+      # this, removing the `!./packages/oxide-website` filter from the build
+      # makes the job fail with `oxide: command not found` inside the site's
+      # own build.
+      - name: Build the CLI
+        run: |
+          set -euo pipefail
+          cargo build -p oxide-fw-cli
+          echo "$GITHUB_WORKSPACE/target/debug" >> "$GITHUB_PATH"
       - name: Build workspace packages
-        run: pnpm -r --filter '!./packages/oxide-website' run build
+        run: pnpm -r run build
       - name: TS package tests (zero-dep, Node type stripping)
         run: |
           set -e
