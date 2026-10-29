@@ -16,15 +16,16 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "react": "^19.3.1",
-    "react-dom": "^19.3.1",
-    "sucrase": "^3.35.1",
     "@oxide-fw/core": "workspace:*",
     "@oxide-fw/react": "workspace:*",
-    "@oxide-fw/tailwind": "workspace:*"
+    "@oxide-fw/tailwind": "workspace:*",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "sucrase": "^3.35.1"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0"
+    "@types/react-dom": "^19.3.0",
+    "shiki": "^4.5.0"
   }
 }

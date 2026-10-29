@@ -46,11 +46,10 @@ export default function Page(props: Props) {
     <main>
       <section className="hero">
         <div className="container">
-          <span className="kicker">v0.1 · pre-alpha, audited in public</span>
           <h1>
             One Rust core.
             <br />
-            <span className="grad">Every framework.</span>
+            Every framework.
           </h1>
           <p className="sub">{site.description}</p>
           <div className="cta">

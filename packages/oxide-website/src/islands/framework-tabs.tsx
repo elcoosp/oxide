@@ -89,7 +89,7 @@ function build(el: HTMLElement, snippets: Record<Lang, string>, active: Lang, re
       btn.setAttribute('aria-selected', on ? 'true' : 'false')
       btn.tabIndex = on ? 0 : -1
     }
-    code.textContent = snippets[active]
+    code.innerHTML = snippets[active]
     panel.setAttribute('aria-labelledby', 'fw-tab-' + active)
     moveIndicator()
     if (persist) {

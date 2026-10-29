@@ -1,18 +1,18 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg: #0b0e14;
-  --color-bg2: #10141d;
-  --color-panel: #131926;
-  --color-panel2: #0d1117;
-  --color-border: #212c3d;
-  --color-text: #e8ecf4;
-  --color-muted: #97a0b5;
-  --color-faint: #6b7488;
-  --color-accent: #e8734a;
-  --color-accent-soft: rgba(232, 115, 74, 0.12);
-  --color-teal: #46c8b2;
-  --color-teal-soft: rgba(70, 200, 178, 0.1);
+  --color-bg: #09090b;
+  --color-bg2: #18181b;
+  --color-panel: #18181b;
+  --color-panel2: #09090b;
+  --color-border: #27272a;
+  --color-text: #fafafa;
+  --color-muted: #a1a1aa;
+  --color-faint: #52525b;
+  --color-accent: #e45631;
+  --color-accent-soft: rgba(228, 86, 49, 0.15);
+  --color-teal: #e45631;
+  --color-teal-soft: rgba(228, 86, 49, 0.1);
   --radius-base: 10px;
   --font-mono: ui-monospace, "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Inter, "Helvetica Neue", sans-serif;
@@ -22,18 +22,18 @@
    into every page's <head>. Dark, terminal-flavoured, dependency-free. */
 
 :root {
-  --bg: #0b0e14;
-  --bg2: #10141d;
-  --panel: #131926;
-  --panel2: #0d1117;
-  --border: #212c3d;
-  --text: #e8ecf4;
-  --muted: #97a0b5;
-  --faint: #6b7488;
-  --accent: #e8734a;
-  --accent-soft: rgba(232, 115, 74, 0.12);
-  --teal: #46c8b2;
-  --teal-soft: rgba(70, 200, 178, 0.1);
+  --bg: #09090b;
+  --bg2: #18181b;
+  --panel: #18181b;
+  --panel2: #09090b;
+  --border: #27272a;
+  --text: #fafafa;
+  --muted: #a1a1aa;
+  --faint: #52525b;
+  --accent: #e45631;
+  --accent-soft: rgba(228, 86, 49, 0.15);
+  --teal: #e45631;
+  --teal-soft: rgba(228, 86, 49, 0.1);
   --radius: 10px;
   --mono: ui-monospace, "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Inter, "Helvetica Neue", sans-serif;
@@ -82,20 +82,12 @@ img { max-width: 100%; }
 
 /* ---------- hero ---------- */
 .hero { padding: 88px 0 56px; }
-.hero .kicker {
-  display: inline-block; font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.08em;
-  text-transform: uppercase; color: var(--accent);
-  border: 1px solid rgba(232, 115, 74, 0.35); background: var(--accent-soft);
-  border-radius: 999px; padding: 4px 12px; margin-bottom: 22px;
-}
+
 .hero h1 {
   font-size: clamp(34px, 6vw, 58px); line-height: 1.08; letter-spacing: -1.5px;
   margin: 0 0 18px; font-weight: 800;
 }
-.hero h1 .grad {
-  background: linear-gradient(92deg, var(--accent) 10%, var(--teal) 90%);
-  -webkit-background-clip: text; background-clip: text; color: transparent;
-}
+
 .hero .sub { color: var(--muted); font-size: 19px; max-width: 46em; margin: 0 0 30px; }
 .hero .cta { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 34px; }
 
@@ -281,6 +273,63 @@ td code, p code, li code { background: var(--panel2); border: 1px solid var(--bo
     transform: none;
     will-change: auto;
   }
+}
+
+
+/* --- framework tabs -------------------------------------------------------
+   Sleek, borderless tabs with a bottom accent line. No chunky borders.
+   -------------------------------------------------------------------------- */
+.fw-code {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin: 32px 0;
+  background: var(--panel2);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+}
+.fw-code-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  padding: 0 16px;
+}
+.fw-code-indicator {
+  display: none; /* Removing the previous sliding indicator to use bottom borders */
+}
+.fw-code-tab {
+  padding: 12px 16px;
+  font-size: 13px;
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  margin-bottom: -1px;
+  transition: color 0.2s ease;
+}
+.fw-code-tab:hover {
+  color: var(--text);
+}
+.fw-code-tab[aria-selected='true'] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.fw-code-panel {
+  padding: 24px;
+  margin: 0;
+  overflow-x: auto;
+  font-size: 13.5px;
+  line-height: 1.6;
+  background: var(--panel2) !important; /* override shiki bg */
+}
+.fw-code-panel code {
+  font-family: var(--mono);
+  background: none !important; /* override shiki code bg */
+}
+.fw-code-panel pre {
+  margin: 0 !important;
+  background: none !important;
 }
 
 /* --- copy-install ----------------------------------------------------------
