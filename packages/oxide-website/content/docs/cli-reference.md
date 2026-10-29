@@ -1,6 +1,6 @@
 ---
 title: CLI reference
-description: One binary, twenty subcommands — dev, build, start, introspection, authoring and operations.
+description: One binary with subcommands for dev, build, start, introspection, authoring and operations.
 order: 6
 ---
 

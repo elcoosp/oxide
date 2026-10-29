@@ -15,7 +15,12 @@ const docLinks = [
   { href: '/docs/adapters', label: 'Framework adapters' },
   { href: '/docs/caching', label: 'Caching' },
   { href: '/docs/cli-reference', label: 'CLI reference' },
-]
+
+  { href: '/docs/development', label: 'Local development' },
+  { href: '/docs/ci', label: 'CI' },
+  { href: '/docs/release', label: 'Release process' },
+  { href: '/docs/security', label: 'Security' },
+  ]
 
 export default function DocsLayout({ children }: Props) {
   return (

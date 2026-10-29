@@ -6,8 +6,8 @@ order: 2
 
 # Architecture
 
-Oxide is a workspace of **17 Rust crates (~60k lines)** plus **6 zero-dependency TypeScript
-packages**. The design rule: the request pipeline is ordered so the hot path completes **without
+Oxide is a workspace of **18 Rust crates** plus **7 published TypeScript packages**
+(and 2 private ones: this website and the OG image service). The design rule: the request pipeline is ordered so the hot path completes **without
 entering JavaScript** whenever the answer is cached, redirected, rewritten or static.
 
 ## The pipeline
