@@ -1,14 +1,15 @@
 [package]
+description = "Oxc-backed compile passes for Oxide: directives, server-function stubs, React refresh and route guards."
+keywords = ["compiler", "oxc", "javascript", "typescript", "jsx"]
+categories = ["compilers", "development-tools::build-utils", "web-programming"]
+authors.workspace = true
 name = "oxide-fw-compiler"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Oxc passes: directives, server-fn stubs, refresh, guards (spec 6.2, 6.3, 9.3, 9.4, D4)"
 homepage.workspace = true
-keywords.workspace = true
-categories.workspace = true
 
 [dependencies]
 oxide-fw-diagnostics = { workspace = true }

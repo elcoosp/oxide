@@ -1,14 +1,15 @@
 [package]
+description = "The Oxide rendering pipeline that turns route data and a page module into an HTML stream."
+keywords = ["ssr", "server-rendering", "streaming", "html", "web-framework"]
+categories = ["web-programming", "template-engine"]
+authors.workspace = true
 name = "oxide-fw-render"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Streaming pipeline, html injection, boundary protocol (spec 7.1, 10, D12)"
 homepage.workspace = true
-keywords.workspace = true
-categories.workspace = true
 
 [dependencies]
 oxide-fw-diagnostics = { workspace = true }

@@ -1,7 +1,7 @@
 {
   "name": "@oxide-fw/core",
   "version": "0.1.0",
-  "description": "Oxide runtime package: server data APIs (§9), ODF wire decoder (§9.5/D11), core client router (§8.4/D9), islands loader (§10.3), test helper (§16.6). Zero runtime dependencies; runs on Node 24 type stripping.",
+  "description": "Framework-agnostic runtime primitives for Oxide: routing types, ODF encoding, islands and hydration helpers.",
   "type": "module",
   "exports": {
     ".": {
@@ -95,10 +95,10 @@
   },
   "keywords": [
     "oxide",
-    "meta-framework",
-    "odf",
-    "router",
-    "islands"
+    "web-framework",
+    "ssr",
+    "islands",
+    "hydration"
   ],
   "license": "MIT",
   "sideEffects": false,
@@ -119,5 +119,10 @@
     "type": "git",
     "url": "git+https://github.com/elcoosp/oxide.git",
     "directory": "packages/core"
-  }
+  },
+  "homepage": "https://github.com/elcoosp/oxide/tree/main/packages/core#readme",
+  "bugs": {
+    "url": "https://github.com/elcoosp/oxide/issues"
+  },
+  "author": "elcoosp <elcoosp@gmail.com>"
 }

@@ -1,14 +1,15 @@
 [package]
+description = "Deploy-target adapters for Oxide: binary, static, Node and Cloudflare, with a capability matrix and a refusal rule."
+keywords = ["deployment", "adapters", "serverless", "cloudflare", "web-framework"]
+categories = ["web-programming", "development-tools"]
+authors.workspace = true
 name = "oxide-fw-adapters"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "binary, node, static, docker, cloudflare, serverless (spec 18)"
 homepage.workspace = true
-keywords.workspace = true
-categories.workspace = true
 
 [dependencies]
 oxide-fw-diagnostics = { workspace = true }

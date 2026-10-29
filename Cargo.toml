@@ -28,10 +28,8 @@ rust-version = "1.98"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/elcoosp/oxide"
 homepage = "https://github.com/elcoosp/oxide"
-keywords = ["web-framework", "fullstack", "ssr", "rust", "wasm"]
-categories = ["web-programming", "web-programming::http-server", "wasm"]
 description = "Oxide: framework-agnostic, full-stack meta-framework with a Rust core (working name, spec v0.1)"
-
+authors = ["elcoosp <elcoosp@gmail.com>"]
 [workspace.dependencies]
 # Internal crates (spec §23)
 oxide-fw-diagnostics = { path = "crates/diagnostics", version = "0.1.0" }

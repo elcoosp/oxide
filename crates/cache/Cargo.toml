@@ -1,14 +1,15 @@
 [package]
+description = "Three-tier caching for Oxide (memory, disk, remote) with tag invalidation and Redis, S3 and HTTP handlers."
+keywords = ["cache", "redis", "s3", "tiered-cache", "http-cache"]
+categories = ["caching", "web-programming"]
+authors.workspace = true
 name = "oxide-fw-cache"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "L0/L1/L2 tiers, tags, handlers (spec 11)"
 homepage.workspace = true
-keywords.workspace = true
-categories.workspace = true
 
 [dependencies]
 redis = { workspace = true, optional = true }

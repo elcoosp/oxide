@@ -1,14 +1,15 @@
 [package]
+description = "The Oxide demand graph and incremental build engine: content-addressed nodes and per-route reuse."
+keywords = ["incremental-build", "build-graph", "caching", "content-addressed", "web-framework"]
+categories = ["development-tools::build-utils", "caching"]
+authors.workspace = true
 name = "oxide-fw-graph"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Demand graph, CAS, remote cache trait (spec 5, D6)"
 homepage.workspace = true
-keywords.workspace = true
-categories.workspace = true
 
 [dependencies]
 object_store = { workspace = true, optional = true }

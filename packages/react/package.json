@@ -1,7 +1,7 @@
 {
   "name": "@oxide-fw/react",
   "version": "0.1.0",
-  "description": "React adapter for Oxide: manifest + render/hydrate per spec §7. Zero runtime dependencies; runs on Node 24 type stripping. Without framework deps installed the adapter renders the neutral element-tree IR itself (the real react-dom/server replaces the renderer when deps exist).",
+  "description": "React adapter for Oxide: SSR renderer, hydration and the island runtime.",
   "type": "module",
   "exports": {
     ".": {
@@ -44,8 +44,9 @@
   "keywords": [
     "oxide",
     "react",
-    "adapter",
-    "ssr"
+    "ssr",
+    "hydration",
+    "web-framework"
   ],
   "license": "MIT",
   "peerDependencies": {
@@ -87,5 +88,10 @@
   },
   "types": "./dist/index.d.ts",
   "main": "./dist/index.js",
-  "module": "./dist/index.js"
+  "module": "./dist/index.js",
+  "homepage": "https://github.com/elcoosp/oxide/tree/main/packages/react#readme",
+  "bugs": {
+    "url": "https://github.com/elcoosp/oxide/issues"
+  },
+  "author": "elcoosp <elcoosp@gmail.com>"
 }

@@ -1,14 +1,15 @@
 [package]
+description = "Rolldown integration for Oxide: client and server environments, manifests and chunking."
+keywords = ["bundler", "rolldown", "javascript", "code-splitting", "web-framework"]
+categories = ["development-tools::build-utils", "web-programming"]
+authors.workspace = true
 name = "oxide-fw-bundler"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Rolldown integration point, environments, manifests (spec 6.4, D3)"
 homepage.workspace = true
-keywords.workspace = true
-categories.workspace = true
 
 [dependencies]
 oxide-fw-diagnostics = { workspace = true }

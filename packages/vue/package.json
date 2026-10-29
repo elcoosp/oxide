@@ -1,7 +1,7 @@
 {
   "name": "@oxide-fw/vue",
   "version": "0.1.0",
-  "description": "Vue adapter for Oxide: adapter manifest + render/hydrate over the neutral IR (spec §7). Zero runtime dependencies; runs on Node 24 type stripping. Without @vue/server-renderer installed the adapter renders the neutral element-tree IR itself.",
+  "description": "Vue adapter for Oxide: SSR renderer, hydration and deferred streaming.",
   "type": "module",
   "exports": {
     ".": {
@@ -48,8 +48,9 @@
   "keywords": [
     "oxide",
     "vue",
-    "adapter",
-    "ssr"
+    "ssr",
+    "hydration",
+    "web-framework"
   ],
   "license": "MIT",
   "peerDependencies": {
@@ -89,5 +90,10 @@
   },
   "types": "./dist/index.d.ts",
   "main": "./dist/index.js",
-  "module": "./dist/index.js"
+  "module": "./dist/index.js",
+  "homepage": "https://github.com/elcoosp/oxide/tree/main/packages/vue#readme",
+  "bugs": {
+    "url": "https://github.com/elcoosp/oxide/issues"
+  },
+  "author": "elcoosp <elcoosp@gmail.com>"
 }

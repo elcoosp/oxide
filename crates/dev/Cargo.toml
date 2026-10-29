@@ -1,14 +1,15 @@
 [package]
+description = "Development server support for Oxide: file watching, the HMR generation counter and the plugin registry."
+keywords = ["dev-server", "hmr", "file-watcher", "hot-reload", "web-framework"]
+categories = ["development-tools", "web-programming"]
+authors.workspace = true
 name = "oxide-fw-dev"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Watcher, HMR, overlay, inspector (spec 13)"
 homepage.workspace = true
-keywords.workspace = true
-categories.workspace = true
 
 [dependencies]
 oxide-fw-diagnostics = { workspace = true }

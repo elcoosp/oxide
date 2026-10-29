@@ -1,14 +1,15 @@
 [package]
+description = "The Oxide asset pipeline: CSS bundling, image optimisation, font subsetting, OpenGraph images and content collections."
+keywords = ["assets", "css", "images", "fonts", "opengraph"]
+categories = ["web-programming", "multimedia::images"]
+authors.workspace = true
 name = "oxide-fw-assets"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Lightning-CSS-shaped pipeline, images, fonts, og, content (spec 16, D5, D19)"
 homepage.workspace = true
-keywords.workspace = true
-categories.workspace = true
 
 [dependencies]
 oxide-fw-diagnostics = { workspace = true }

@@ -1,14 +1,15 @@
 [package]
+description = "The Oxide WebAssembly plugin host: component-model loading, host functions and the transform ABI."
+keywords = ["wasm", "plugins", "wasmtime", "component-model", "extensibility"]
+categories = ["wasm", "development-tools::build-utils"]
+authors.workspace = true
 name = "oxide-fw-plugin"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Plugin host, JS bridge, WASM host (spec 15)"
 homepage.workspace = true
-keywords.workspace = true
-categories.workspace = true
 
 [dependencies]
 oxide-fw-diagnostics = { workspace = true }

@@ -1,14 +1,15 @@
 [package]
+description = "Typed configuration model, static extractor and environment loader for oxide.config.{ts,js,mjs}."
+keywords = ["configuration", "config", "typescript", "web-framework", "schema"]
+categories = ["config", "web-programming"]
+authors.workspace = true
 name = "oxide-fw-config"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Static extractor, schema, layering, env (spec 14, D14)"
 homepage.workspace = true
-keywords.workspace = true
-categories.workspace = true
 
 [dependencies]
 oxide-fw-diagnostics = { workspace = true }

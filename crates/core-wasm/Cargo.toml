@@ -1,14 +1,15 @@
 [package]
+description = "The Oxide wasm32 edge bundle: a small Rust core compiled to WebAssembly for edge runtimes."
+keywords = ["wasm", "edge-computing", "webassembly", "web-framework", "wasm32"]
+categories = ["wasm", "web-programming"]
+authors.workspace = true
 name = "oxide-fw-core-wasm"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Edge subset: router, odf, head, cache keys (spec 2 D18, 18)"
 homepage.workspace = true
-keywords.workspace = true
-categories.workspace = true
 
 # B-01: `cdylib` is what makes `cargo build --target wasm32-unknown-unknown`
 # emit a `.wasm`; `rlib` keeps the crate usable from `cargo test` and the CLI.

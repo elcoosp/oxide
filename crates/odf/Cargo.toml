@@ -1,14 +1,15 @@
 [package]
+description = "ODF, the Oxide Data Format: a compact, typed wire encoding used for hydration payloads and route data."
+keywords = ["serialization", "binary-format", "hydration", "wire-format", "odf"]
+categories = ["encoding", "parser-implementations"]
+authors.workspace = true
 name = "oxide-fw-odf"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "ODF wire format: devalue-compatible Rust encoder/decoder (spec 9.5, D11)"
 homepage.workspace = true
-keywords.workspace = true
-categories.workspace = true
 
 [dependencies]
 oxide-fw-diagnostics = { workspace = true }

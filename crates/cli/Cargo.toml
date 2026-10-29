@@ -1,14 +1,15 @@
 [package]
+description = "The `oxide` command-line interface: build, dev server, static export, route inspection and diagnostics."
+keywords = ["cli", "build-tool", "dev-server", "web-framework", "bundler"]
+categories = ["command-line-utilities", "development-tools::build-utils", "web-programming"]
+authors.workspace = true
 name = "oxide-fw-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "clap entry, commands (spec 19)"
 homepage.workspace = true
-keywords.workspace = true
-categories.workspace = true
 
 [[bin]]
 name = "oxide"

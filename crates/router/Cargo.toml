@@ -1,14 +1,15 @@
 [package]
+description = "File-system routing for Oxide: route tree scanning, pattern matching and type generation."
+keywords = ["router", "file-based-routing", "ssr", "typegen", "web-framework"]
+categories = ["web-programming::http-server", "web-programming"]
+authors.workspace = true
 name = "oxide-fw-router"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Route tree, matcher, typegen, rules engine (spec 8, D8)"
 homepage.workspace = true
-keywords.workspace = true
-categories.workspace = true
 
 [dependencies]
 oxide-fw-diagnostics = { workspace = true }

@@ -1,7 +1,7 @@
 {
   "name": "@oxide-fw/solid",
   "version": "0.1.0",
-  "description": "Solid adapter for Oxide: adapter manifest + render/hydrate over the neutral IR (spec §7). Zero runtime dependencies; runs on Node 24 type stripping. Without @solidjs/web installed the adapter renders the neutral element-tree IR itself.",
+  "description": "Solid adapter for Oxide: SSR renderer and hydration.",
   "type": "module",
   "exports": {
     ".": {
@@ -44,8 +44,9 @@
   "keywords": [
     "oxide",
     "solid",
-    "adapter",
-    "ssr"
+    "solidjs",
+    "ssr",
+    "hydration"
   ],
   "license": "MIT",
   "peerDependencies": {
@@ -85,5 +86,10 @@
   },
   "types": "./dist/index.d.ts",
   "main": "./dist/index.js",
-  "module": "./dist/index.js"
+  "module": "./dist/index.js",
+  "homepage": "https://github.com/elcoosp/oxide/tree/main/packages/solid#readme",
+  "bugs": {
+    "url": "https://github.com/elcoosp/oxide/issues"
+  },
+  "author": "elcoosp <elcoosp@gmail.com>"
 }
