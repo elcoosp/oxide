@@ -3156,6 +3156,7 @@ fn spawn_child(
     // on C's reactor, which has its own thread and is never blocked.
     let handle = reader_runtime_handle();
     let _enter = handle.enter();
+    cmd.kill_on_drop(true);
     let mut child = cmd.spawn().map_err(|e| {
         err(
             "JSH-NODE",
@@ -3300,7 +3301,7 @@ impl NodePool {
             fetch: Mutex::new(None),
             transform: Mutex::new(None),
         });
-        let reader = spawn_reader(stdout, Arc::clone(&worker), counters);
+        let reader = spawn_reader(stdout, Arc::downgrade(&worker), counters);
         *worker.reader_handle.lock().unwrap() = Some(reader);
         Ok(worker)
     }
@@ -3343,7 +3344,7 @@ impl NodePool {
         worker.served.store(0, Ordering::Relaxed);
         worker.dead.store(false, Ordering::Relaxed);
         *worker.pid.lock().unwrap() = None;
-        let reader = spawn_reader(stdout, Arc::clone(worker), Arc::clone(&self.counters));
+        let reader = spawn_reader(stdout, Arc::downgrade(worker), Arc::clone(&self.counters));
         *worker.reader_handle.lock().unwrap() = Some(reader);
         if !crashed {
             self.counters.recycles.fetch_add(1, Ordering::Relaxed);
@@ -3368,6 +3369,30 @@ impl NodePool {
             self.replace_worker(worker, false).await?;
         }
         Ok(())
+    }
+}
+
+/// Belt-and-braces cleanup alongside the `Weak<Worker>` reader ref.
+///
+/// The primary fix is in `spawn_reader`: the reader task now takes a
+/// `Weak<Worker>` instead of an `Arc<Worker>`, so when `NodePool`'s
+/// `Vec<Arc<Worker>>` drops each `Worker` drops synchronously, which drops
+/// `Mutex<Child>`, which fires `kill_on_drop(true)` set on the tokio
+/// `Command` — the node child receives SIGKILL and no orphan survives.
+///
+/// This `Drop` impl is defense-in-depth: it aborts lingering reader tasks
+/// (releasing any potential Worker strong refs immediately) and nudges the
+/// child directly via sync `start_kill()`.
+impl Drop for NodePool {
+    fn drop(&mut self) {
+        for w in &self.workers {
+            if let Some(h) = w.reader_handle.lock().unwrap().take() {
+                h.abort();
+            }
+            if let Ok(mut c) = w.child.try_lock() {
+                let _ = c.start_kill();
+            }
+        }
     }
 }
 
@@ -3657,7 +3682,7 @@ fn reader_runtime_handle() -> tokio::runtime::Handle {
 
 fn spawn_reader(
     mut stdout: ChildStdout,
-    worker: Arc<Worker>,
+    worker: std::sync::Weak<Worker>,
     counters: Arc<PoolCounters>,
 ) -> JoinHandle<()> {
     reader_runtime_handle().spawn(async move {
@@ -3672,18 +3697,24 @@ fn spawn_reader(
                     // if we are the transitioner) before failing pending
                     // calls, so a `stats()` on the unblocked thread sees the
                     // updated counter.
-                    if !worker.dead.swap(true, Ordering::AcqRel) {
+                    let Some(w) = worker.upgrade() else {
+                        return;
+                    };
+                    if !w.dead.swap(true, Ordering::AcqRel) {
                         counters.crashed.fetch_add(1, Ordering::SeqCst);
                     }
                     let code = e.0.code.clone();
                     let message = e.0.message.clone();
-                    fail_all(&worker, code, message);
+                    fail_all(&w, code, message);
                     return;
                 }
             };
             buf.drain(..consumed);
             for m in msgs {
-                handle_worker_msg(m, &worker);
+                let Some(w) = worker.upgrade() else {
+                    return;
+                };
+                handle_worker_msg(m, &w);
             }
             match stdout.read(&mut chunk).await {
                 Ok(0) | Err(_) => {
@@ -3700,11 +3731,14 @@ fn spawn_reader(
                     // the write-fail path below (`call` -> EPIPE) cooperate:
                     // whichever detects the crash first is the one that
                     // counts it, and the other silently skips.
-                    if !worker.dead.swap(true, Ordering::AcqRel) {
+                    let Some(w) = worker.upgrade() else {
+                        return;
+                    };
+                    if !w.dead.swap(true, Ordering::AcqRel) {
                         counters.crashed.fetch_add(1, Ordering::SeqCst);
                     }
                     fail_all(
-                        &worker,
+                        &w,
                         "JSH-CRASH".to_string(),
                         "worker process exited before responding (§4.3 failure isolation)"
                             .to_string(),
