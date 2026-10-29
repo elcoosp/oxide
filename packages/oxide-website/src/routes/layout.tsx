@@ -4,6 +4,7 @@
 // Lightning CSS and the injector streams the <link> into every page's head.
 import type { ReactNode } from 'react'
 import '../styles/tailwind.css'
+import { Island } from '@oxide-fw/react'
 import { site, nav, footerLinks } from '../lib/site.ts'
 
 interface Props {
@@ -13,6 +14,8 @@ interface Props {
 export default function RootLayout({ children }: Props) {
   return (
     <>
+      <Island component="RevealBootstrap" chunk="RevealBootstrap" strategy="visible" />
+      <div className="scroll-progress" aria-hidden="true" />
       <header className="site-header">
         <div className="container">
           <a className="logo" href="/">

@@ -25,6 +25,9 @@ export default defineConfig({
     // chunk="Stats">` on a page resolves through this map.
     islands: {
       Stats: 'src/islands/stats.tsx',
+      CopyInstall: 'src/islands/copy-install.tsx',
+      AdapterTabs: 'src/islands/adapter-tabs.tsx',
+      RevealBootstrap: 'src/islands/reveal.tsx',
     },
   }),
 

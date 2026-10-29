@@ -11,7 +11,7 @@ const features = [
   {
     ix: '01',
     h: 'One engine, four frameworks',
-    p: 'React, Vue, Svelte and Solid are first-class adapters over one shared engine — routing, data, caching, bundling, serving and deployment behave identically on all four. One 24-assertion conformance suite gates releases: an adapter drifts, the release blocks.',
+    p: 'React, Vue, Svelte and Solid are first-class adapters over one shared engine — routing, data, caching, bundling, serving and deployment behave identically on all four. One conformance suite gates releases: an adapter drifts, the release blocks.',
   },
   {
     ix: '02',
@@ -31,7 +31,7 @@ const features = [
   {
     ix: '05',
     h: 'Deploy anywhere',
-    p: 'Twelve deploy targets — Binary, Node, Static, Docker, Cloudflare, Lambda, Vercel, Netlify, Deno, Bun and more — behind a capability matrix that refuses at build time any configuration the target cannot honor.',
+    p: 'Twelve deploy targets — Binary, Node, Static, Docker, Cloudflare, Cloudflare Pages, Lambda, Vercel, Vercel Functions, Netlify, Deno, Bun — behind a capability matrix that refuses at build time any configuration the target cannot honor.',
   },
   {
     ix: '06',
@@ -61,22 +61,31 @@ export default function Page(props: Props) {
               View source ↗
             </a>
           </div>
-          <div className="install">
-            <div>
-              <span className="c"># build the single binary and scaffold an app</span>
-            </div>
-            <div>
-              <span className="p">$</span> git clone https://github.com/elcoosp/oxide && cd oxide
-            </div>
-            <div>
-              <span className="p">$</span> cargo build --release -p oxide-fw-cli
-            </div>
-            <div>
-              <span className="p">$</span> node packages/create-oxide/src/cli.ts blog react my-app
+          <div className="install-wrap">
+              <Island
+                component="CopyInstall"
+                chunk="CopyInstall"
+                strategy="visible"
+                props={{ command: 'pnpm create oxide my-app' }}
+              >
+                <div className="copy-install" data-status="idle">
+                  <code className="copy-install-cmd">pnpm create oxide my-app</code>
+                  <button type="button" className="copy-install-btn">
+                    <span className="copy-install-label">
+                      <span data-state="idle">Copy</span>
+                      <span data-state="copied" data-hidden>Copied</span>
+                      <span data-state="failed" data-hidden>Select</span>
+                    </span>
+                  </button>
+                </div>
+              </Island>
+              <p className="install-note">
+                Or from source: <code>git clone https://github.com/elcoosp/oxide</code>{' '}
+                then <code>cargo build --release -p oxide-fw-cli</code>
+              </p>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
 
       <section className="stats">
         <div className="container">
@@ -116,12 +125,11 @@ export default function Page(props: Props) {
         <div className="container">
           <h2>Features</h2>
           <p className="lede">
-            Everything below ships today behind tests — 1,215 Rust test functions, 445 TypeScript
-            cases, and a 96-check conformance gate run on every release.
+            Everything below ships today behind tests — over a thousand Rust test functions, a full TypeScript suite, and and a conformance gate that runs on all three platforms on every release
           </p>
-          <div className="features">
+          <div className="features" data-reveal>
             {features.map((f) => (
-              <div className="feature" key={f.ix}>
+              <div className="feature" data-reveal key={f.ix}>
                 <h3>
                   <span className="ix">{f.ix}</span>
                   {f.h}
@@ -155,7 +163,7 @@ export default function Page(props: Props) {
                 <tr>
                   <td>React</td>
                   <td>
-                    <code>@oxide/react</code>
+                    <code>@oxide-fw/react</code>
                   </td>
                   <td>
                     <code>.tsx</code>
@@ -166,7 +174,7 @@ export default function Page(props: Props) {
                 <tr>
                   <td>Vue</td>
                   <td>
-                    <code>@oxide/vue</code>
+                    <code>@oxide-fw/vue</code>
                   </td>
                   <td>
                     <code>.vue</code>
@@ -177,7 +185,7 @@ export default function Page(props: Props) {
                 <tr>
                   <td>Svelte</td>
                   <td>
-                    <code>@oxide/svelte</code>
+                    <code>@oxide-fw/svelte</code>
                   </td>
                   <td>
                     <code>.svelte</code>
@@ -188,7 +196,7 @@ export default function Page(props: Props) {
                 <tr>
                   <td>Solid</td>
                   <td>
-                    <code>@oxide/solid</code>
+                    <code>@oxide-fw/solid</code>
                   </td>
                   <td>
                     <code>.tsx</code>
@@ -214,7 +222,7 @@ export default function Page(props: Props) {
               framework grow with its test suite open, welcome.
             </p>
             <p style={{ marginTop: 10 }}>
-              <a href="/blog/auditing-our-own-framework-91-of-100">Read the audit post →</a>
+              <a href="/blog/auditing-our-own-framework">Read the audit post →</a>
             </p>
           </div>
         </div>

@@ -16,10 +16,10 @@ export const site = {
 
 /** Verified proof points — keep in lockstep with the repo README badges. */
 export const stats = [
-  { value: 1116, label: 'Rust test functions' },
-  { value: 349, label: 'TypeScript tests, all green' },
+  { value: 1251, label: 'Rust test functions' },
   { value: 4, label: 'framework adapters' },
-  { value: 96, label: 'conformance checks per release' },
+  { value: 22, label: 'CI jobs, all platforms' },
+  { value: 12, label: 'deploy targets' },
 ] as const
 
 export const nav = [
