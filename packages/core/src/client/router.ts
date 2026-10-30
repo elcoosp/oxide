@@ -452,20 +452,20 @@ export function createRouter(opts: RouterOptions): Router {
 
   function onPopstate(e: unknown): void {
     if (!isPopEvent(e)) return
-    const state = e.state as Partial<OxideHistoryState> | null
-    if (state && state.__oxide && state.input) {
-      opts.adapter.update(state.input)
-      if (state.scroll) scrollTo(state.scroll.x, state.scroll.y)
-      return
+    // [wr210] Popstate fires AFTER the URL has already changed. Force a
+    // full page reload so SSR handles the destination — same policy as
+    // data-ox-reload links. Without this, back button calls
+    // adapter.update(state.input) which renders without a layout chain
+    // (PAGES is empty; tryRealRender resolves NotFoundPage), leaving
+    // the user stuck with no header/nav.
+    //
+    // Popstate's `state` is the cached snapshot from when the entry was
+    // pushed, so it also carries stale data. Refetch via reload is
+    // simpler and always correct.
+    const win = doc.defaultView
+    if (win && typeof win.location.reload === 'function') {
+      win.location.reload()
     }
-    // Unknown state (e.g. initial entry): fetch data for the current location.
-    const path = location.pathname + location.search
-    const navId = ++navSeq
-    fetchRouteData(path)
-      .then((decoded) => {
-        if (navId === navSeq) opts.adapter.update(normalizeInput(decoded, path))
-      })
-      .catch(() => {})
   }
 
   function attach(): () => void {
