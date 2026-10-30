@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap');
 @import "tailwindcss";
 
 @theme {
@@ -169,60 +170,47 @@ h3 { font-size: clamp(1.25rem, 2vw, 1.5rem); font-weight: 500; line-height: 1.3;
   background: transparent !important;
 }
 
-/* [wr168] Native scroll-driven spring */
-/* Uses CSS animation-timeline: view() — no JS, no observer, no data attributes.
-   Supported: Chrome 115+, Edge 115+, Safari 26+, Firefox 132+.
-   Falls back to static (no animation) on older browsers — content always visible. */
 
-@keyframes slide-up-spring {
-  from { opacity: 0; transform: translateY(30px) scale(0.98); }
-  to   { opacity: 1; transform: translateY(0)   scale(1); }
+
+/* [wr169] Heavy spring & font enforcement */
+
+/* Highly bouncy spring keyframe */
+@keyframes heavy-spring {
+  0%   { opacity: 0; transform: translateY(40px) scale(0.95); }
+  50%  { opacity: 1; transform: translateY(-6px) scale(1.02); }
+  75%  { transform: translateY(3px) scale(0.99); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 @supports (animation-timeline: view()) {
-  section.section,
-  section[data-reveal],
-  .pipeline,
-  .post-card,
-  article {
-    animation: slide-up-spring linear both;
+  /* Target the Features articles and Pipeline steps specifically */
+  article[data-reveal],
+  .pipeline-step {
+    animation: heavy-spring linear both;
     animation-timeline: view();
+    /* Entry 0% to 60% of the element entering viewport */
     animation-range: entry 0% entry 60%;
   }
 
-  /* Stagger cards in the blog grid */
-  .grid > .post-card:nth-child(1) { animation-range: entry 0% entry 50%; }
-  .grid > .post-card:nth-child(2) { animation-range: entry 5% entry 55%; }
-  .grid > .post-card:nth-child(3) { animation-range: entry 10% entry 60%; }
+  /* Stagger Feature articles slightly so they cascade */
+  article[data-reveal]:nth-child(1) { animation-range: entry 0% entry 50%; }
+  article[data-reveal]:nth-child(2) { animation-range: entry 5% entry 55%; }
+  article[data-reveal]:nth-child(3) { animation-range: entry 10% entry 60%; }
+  article[data-reveal]:nth-child(4) { animation-range: entry 15% entry 65%; }
+  article[data-reveal]:nth-child(5) { animation-range: entry 20% entry 70%; }
+  article[data-reveal]:nth-child(6) { animation-range: entry 25% entry 75%; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; }
-  section.section,
-  section[data-reveal],
-  .pipeline,
-  .post-card,
-  article {
-    opacity: 1 !important;
-    transform: none !important;
-  }
+  article[data-reveal], .pipeline-step { opacity: 1 !important; transform: none !important; }
 }
 
-/* Strip any residual inline styles on shiki blocks (belt-and-suspenders) */
-.adapter-shiki pre {
-  margin: 0 !important;
-  padding: 1.25rem 1.5rem !important;
-  background: transparent !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  font-family: var(--font-mono) !important;
-  font-size: 13px !important;
-  line-height: 1.6 !important;
-  color-scheme: dark !important;
+/* Global font hard-lock */
+*, ::before, ::after {
+  --tw-font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
-.adapter-shiki pre code,
-.adapter-shiki pre code span {
-  font-family: var(--font-mono) !important;
-  background: transparent !important;
-  text-shadow: none !important;
+
+code, pre, kbd, samp, .font-mono {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
 }
