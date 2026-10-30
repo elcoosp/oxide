@@ -34,13 +34,11 @@ export default function RootLayout({ children }: Props) {
       <div className="scroll-progress" aria-hidden="true" />
       <header className="sticky top-0 z-50 w-full border-b border-zinc-800 bg-[#09090b]/80 backdrop-blur-md">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <a href="/" className="flex items-center gap-2.5 group">
-            <span className="flex items-center justify-center w-8 h-8 rounded-full bg-zinc-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)]">
-              <span className="flex items-center justify-center w-8 h-8 rounded-full bg-zinc-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)]">
-                  <img src="/logo.png" alt="Oxide" className="w-6 h-6 object-contain" />
-                </span>
+          <a href="/" className="flex items-center gap-3 group">
+            <span className="flex items-center justify-center w-10 h-10 rounded-full bg-zinc-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.6),0_0_0_1px_rgba(250,250,250,0.08),0_2px_8px_rgba(0,0,0,0.4)] group-hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_0_0_1px_rgba(228,86,49,0.4),0_2px_12px_rgba(228,86,49,0.3)] transition-all duration-300">
+              <img src="/logo.png" alt="Oxide" className="w-8 h-8 object-contain" />
             </span>
-            <span className="font-bold tracking-tight text-lg text-zinc-50">
+            <span className="font-bold tracking-tight text-xl text-zinc-50">
               oxide<span className="text-[#e45631]">_</span>
             </span>
           </a>
@@ -65,12 +63,14 @@ export default function RootLayout({ children }: Props) {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-12 mb-16">
 
             <div className="col-span-1 md:col-span-1">
-              <a href="/" className="flex items-center gap-2 mb-4 group">
-                <img src="/logo.png" alt="Oxide" className="w-8 h-8 object-contain opacity-80 group-hover:opacity-100 transition-opacity" />
-                <span className="font-semibold tracking-tight text-xl text-zinc-50">
-                  oxide<span className="text-[#e45631]">_</span>
-                </span>
-              </a>
+              <a href="/" className="flex items-center gap-3 group">
+            <span className="flex items-center justify-center w-10 h-10 rounded-full bg-zinc-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.6),0_0_0_1px_rgba(250,250,250,0.08),0_2px_8px_rgba(0,0,0,0.4)] group-hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_0_0_1px_rgba(228,86,49,0.4),0_2px_12px_rgba(228,86,49,0.3)] transition-all duration-300">
+              <img src="/logo.png" alt="Oxide" className="w-8 h-8 object-contain" />
+            </span>
+            <span className="font-bold tracking-tight text-xl text-zinc-50">
+              oxide<span className="text-[#e45631]">_</span>
+            </span>
+          </a>
               <p className="text-sm text-zinc-500 leading-relaxed max-w-xs">
                 A full-stack meta-framework with a Rust core. One engine, every framework.
               </p>
