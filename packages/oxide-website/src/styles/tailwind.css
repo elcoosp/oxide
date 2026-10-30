@@ -234,41 +234,37 @@ code, pre, kbd, samp, .font-mono,
   overflow-x: auto !important;
 }
 
-/* [wr179] Absolute font & margin control */
-/* Force JetBrains Mono via the @fontsource CSS variables */
-:root {
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
-}
 
-/* Apply to every single text element inside code blocks */
-code, pre, kbd, samp, .font-mono,
-.adapter-shiki, .adapter-shiki *,
-.adapter-shiki pre, .adapter-shiki pre *,
-.adapter-shiki code, .adapter-shiki code *,
-pre.shiki, pre.shiki *,
-pre.shiki code, pre.shiki code * {
-  font-family: var(--font-mono) !important;
-  font-size: 13px !important;
-  line-height: 1.6 !important;
-  font-variant-ligatures: none !important;
-}
 
-/*
- * Nuke ALL inline margins/paddings from rangi.
- * We will control the spacing on the parent wrapper.
- */
-.adapter-shiki pre,
-.adapter-shiki pre * {
-  margin: 0 !important;
+/* [wr180] Correct code block padding */
+.adapter-shiki {
+  background: var(--color-panel);
+  /* The wrapper itself has NO padding */
   padding: 0 !important;
+  overflow: hidden;
+}
+
+.adapter-shiki > div {
+  /* The intermediate div also has no padding */
+  padding: 0 !important;
+}
+
+.adapter-shiki pre,
+.adapter-shiki pre.shiki {
+  /* The <pre> gets the padding so the text is inset */
+  margin: 0 !important;
+  padding: 1.5rem !important;
   background: transparent !important;
   border-radius: 0 !important;
-  box-shadow: none !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 13px !important;
+  line-height: 1.6 !important;
+  overflow-x: auto !important;
 }
 
-/* Re-apply padding to the outer container */
-.adapter-shiki {
-  padding: 1.25rem 1.5rem !important;
-  background: var(--color-panel) !important;
-  overflow-x: auto !important;
+/* Ensure no inner spans override the font */
+.adapter-shiki pre *,
+.adapter-shiki pre code,
+.adapter-shiki pre code * {
+  font-family: 'JetBrains Mono', monospace !important;
 }
