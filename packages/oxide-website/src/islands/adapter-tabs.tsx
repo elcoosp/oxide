@@ -29,6 +29,10 @@ export default function AdapterTabs({ adapters }: Props) {
              : current.id === 'svelte' ? 'svelte'
              : 'tsx';
 
+  // Note: rangi is a shiki-compatible highlighter. It emits the same
+  // `.shiki` class names and inline `style="color:..."` attributes on tokens,
+  // so any existing shiki CSS keeps working. The `.shiki` class in the DOM
+  // is intentional — that's how rangi ships.
   const highlightedHtml = codeToHtml(current.snippet, {
     lang,
     theme: githubDark,
