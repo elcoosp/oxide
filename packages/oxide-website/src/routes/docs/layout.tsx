@@ -28,7 +28,7 @@ export default function DocsLayout({ children }: Props) {
       <aside className="docs-sidebar">
         <div className="cap">Docs</div>
         {docLinks.map((l) => (
-          <a href={l.href} key={l.href}>
+          <a data-ox-reload href={l.href} key={l.href}>
             {l.label}
           </a>
         ))}
@@ -36,17 +36,17 @@ export default function DocsLayout({ children }: Props) {
           Site
         </div>
         {nav.map((n) => (
-          <a href={n.href} key={n.href}>
+          <a data-ox-reload href={n.href} key={n.href}>
             {n.label}
           </a>
         ))}
         <div className="cap" style={{ marginTop: 22 }}>
           Project
         </div>
-        <a href="https://github.com/elcoosp/oxide" rel="noopener">
+        <a data-ox-reload href="https://github.com/elcoosp/oxide" rel="noopener">
           GitHub ↗
         </a>
-        <a href="/rss">RSS</a>
+        <a data-ox-reload href="/rss">RSS</a>
       </aside>
       <div className="docs-body">{children}</div>
     </div>
