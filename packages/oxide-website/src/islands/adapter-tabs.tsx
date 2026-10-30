@@ -18,13 +18,16 @@ interface Props {
   adapters: Adapter[];
 }
 
+
+
 function stripShikiStyle(html: string): string {
-  // rangi emits <div class="shiki ..." style="..."> with layout baked in.
-  // Strip the style attr so CSS rules apply cleanly. Keep inner <span style="color:...">
-  // tokens — those carry the syntax colors we want to keep.
-  return html.replace(/<(div|pre)\b([^>]*)>/g, (match, tag, attrs) => {
-    if (/class="[^"]*shiki/.test(attrs)) {
-      return `<${tag}${attrs.replace(/\s+style="[^"]*"/, '')}>`;
+  // rangi v2.2.0 emits <div class="shj-lang-tsx shj-multiline" style="...">
+  // with layout baked in (margin:10px 0; padding:30px 20px; font:18px Consolas).
+  // Strip style="" from any <div> that carries a shj-* class. Inner <span style="color:...">
+  // tokens keep their colors — those are what we want.
+  return html.replace(/<div\b([^>]*)>/g, (match, attrs) => {
+    if (/class="[^"]*shj-/.test(attrs)) {
+      return `<div${attrs.replace(/\s+style="[^"]*"/, '')}>`;
     }
     return match;
   });
