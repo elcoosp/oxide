@@ -262,3 +262,279 @@ code, pre, kbd, samp, textarea, input[type="text"], input[type="search"],
 .adapter-shiki .shj-multiline {
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
+
+/* [wr198] Docs layout (docs-shell, sidebar, prose) */
+
+/* Two-column shell: sidebar (240px) + content, centered */
+.docs-shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 4rem;
+  max-width: 1200px;
+  margin-inline: auto;
+  padding: 4rem 24px 6rem;
+}
+
+@media (max-width: 900px) {
+  .docs-shell {
+    grid-template-columns: 1fr;
+    gap: 2rem;
+    padding-block: 2rem 4rem;
+  }
+}
+
+/* Sidebar: sticky, scrolls independently, hairline on the right */
+.docs-sidebar {
+  position: sticky;
+  top: 5rem;
+  align-self: start;
+  height: calc(100vh - 6rem);
+  overflow-y: auto;
+  padding-right: 1rem;
+  border-right: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+@media (max-width: 900px) {
+  .docs-sidebar {
+    position: relative;
+    top: 0;
+    height: auto;
+    max-height: 260px;
+    border-right: none;
+    border-bottom: 1px solid var(--color-border);
+    padding-right: 0;
+    padding-bottom: 1.5rem;
+  }
+}
+
+/* Sidebar links */
+.docs-sidebar a {
+  display: block;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  color: var(--color-muted);
+  border-radius: 4px;
+  text-decoration: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.docs-sidebar a:hover {
+  color: var(--color-text);
+  background-color: var(--color-panel);
+}
+
+/* Section caps (Docs / Site / Project) */
+.docs-sidebar .cap {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--color-faint);
+  padding: 0.75rem 0.75rem 0.25rem;
+  font-weight: 500;
+}
+
+.docs-sidebar .cap:first-child {
+  padding-top: 0;
+}
+
+/* Main content column */
+.docs-body {
+  min-width: 0;
+  max-width: 780px;
+}
+
+/* Breadcrumb */
+.breadcrumb {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.1em;
+  text-transform: lowercase;
+  color: var(--color-faint);
+  margin-bottom: 1rem;
+}
+
+/* ═══════════════ Prose (markdown content) ═══════════════ */
+.prose {
+  color: var(--color-text);
+  font-size: 1rem;
+  line-height: 1.7;
+  max-width: 68ch;
+}
+
+.prose > *:first-child { margin-top: 0; }
+.prose > *:last-child  { margin-bottom: 0; }
+
+.prose h1, .prose h2, .prose h3, .prose h4 {
+  color: var(--color-text);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  margin: 2.5rem 0 1rem;
+}
+
+.prose h1 { font-size: 2.25rem; }
+.prose h2 {
+  font-size: 1.625rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--color-border);
+  margin-top: 3rem;
+}
+.prose h3 { font-size: 1.25rem; margin-top: 2rem; }
+.prose h4 {
+  font-size: 0.875rem;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-muted);
+  margin-top: 1.75rem;
+}
+
+.prose p {
+  margin: 0 0 1.1rem;
+}
+
+.prose strong {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.prose ul, .prose ol {
+  margin: 0 0 1.1rem;
+  padding-left: 1.5rem;
+}
+
+.prose li {
+  margin: 0.35rem 0;
+}
+
+.prose li > p {
+  margin: 0;
+}
+
+.prose a {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  transition: color 0.15s ease;
+}
+
+.prose a:hover {
+  color: color-mix(in oklab, var(--color-accent) 80%, white);
+}
+
+/* Inline code */
+.prose code:not(pre code) {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  padding: 0.1em 0.4em;
+  border-radius: 4px;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+/* Fenced code blocks (non-shiki fallback) */
+.prose pre {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  background: var(--color-panel);
+  padding: 1rem 1.25rem;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  overflow-x: auto;
+  margin: 0 0 1.5rem;
+  white-space: pre;
+}
+
+.prose pre code {
+  font-family: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+/* Shiki blocks inside prose */
+.prose [class*="shj-lang-"] {
+  margin: 0 0 1.5rem;
+  padding: 1rem 1.25rem;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-x: auto;
+}
+
+.prose [class*="shj-lang-"] span {
+  font-family: inherit;
+}
+
+/* Blockquotes */
+.prose blockquote {
+  border-left: 2px solid var(--color-accent);
+  padding: 0.25rem 0 0.25rem 1rem;
+  margin: 1.5rem 0;
+  color: var(--color-muted);
+  font-style: italic;
+}
+
+/* Horizontal rule */
+.prose hr {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 2.5rem 0;
+}
+
+/* Tables */
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+  font-size: 0.9375rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.prose th, .prose td {
+  padding: 0.625rem 0.875rem;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.prose th {
+  background: var(--color-panel);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-muted);
+  font-weight: 500;
+}
+
+.prose tr:last-child td {
+  border-bottom: none;
+}
+
+.prose td code {
+  white-space: nowrap;
+}
+
+/* Images */
+.prose img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  margin: 1rem 0;
+  border: 1px solid var(--color-border);
+}
