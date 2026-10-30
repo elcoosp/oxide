@@ -9,7 +9,7 @@
 // paragraphs, -/* and 1. lists, pipe tables, > blockquotes, ``` fences,
 // --- rules, inline `code`, **bold**, [links](https://… or /relative).
 import { getCollection, getEntry } from '@oxide-fw/core/server'
-import { createHighlighter } from 'shiki'
+import { createHighlighter } from 'rangi'
 
 
 export interface Frontmatter {
