@@ -27,7 +27,7 @@ export default function CopyInstall({ command }: Props) {
     <div className="flex items-center justify-between w-full bg-[#09090b] border border-zinc-800 rounded-lg p-2 pl-4">
       <div className="flex items-center gap-3 font-mono text-sm min-w-0">
         <span className="text-[#e45631] select-none shrink-0">$</span>
-        <code className="text-zinc-300 truncate">{command}</code>
+        <code className="text-zinc-300 truncate font-mono">{command}</code>
       </div>
       <button
         type="button"
