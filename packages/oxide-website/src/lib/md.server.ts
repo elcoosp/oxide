@@ -90,34 +90,7 @@ function mustEl<T>(arr: readonly T[], i: number): T {
 /** Markdown block subset → HTML string. */
 
 // Setup Shiki once per build session
-let shikiPromise: Promise<any> | null = null
-function getHighlighter() {
-  if (!shikiPromise) {
-    shikiPromise = createHighlighter({
-      themes: [
-        {
-          name: 'oxide',
-          type: 'dark',
-          colors: {
-            'editor.background': '#09090b',
-            'editor.foreground': '#fafafa',
-          },
-          tokenColors: [
-            { scope: ['keyword', 'storage.type', 'storage.modifier', 'keyword.control'], settings: { foreground: '#e45631' } },
-            { scope: ['string', 'constant.numeric', 'constant.language'], settings: { foreground: '#a1a1aa' } },
-            { scope: ['comment'], settings: { foreground: '#52525b', fontStyle: 'italic' } },
-            { scope: ['entity.name.function', 'support.function', 'entity.name.tag'], settings: { foreground: '#fafafa' } },
-            { scope: ['variable', 'variable.parameter', 'variable.other'], settings: { foreground: '#d4d4d8' } },
-            { scope: ['entity.name.type', 'support.type', 'support.class'], settings: { foreground: '#fafafa' } },
-            { scope: ['punctuation', 'meta.brace'], settings: { foreground: '#a1a1aa' } }
-          ]
-        }
-      ],
-      langs: ['tsx', 'vue', 'svelte', 'html', 'typescript', 'bash']
-    })
-  }
-  return shikiPromise
-}
+
 
 export async function mdToHtml(md: string): Promise<string> {
   const lines = md.replace(/\r\n/g, '\n').split('\n')
@@ -163,11 +136,10 @@ export async function mdToHtml(md: string): Promise<string> {
           continue
         }
 
-        const highlighter = await getHighlighter()
-        const highlighted: Record<string, string> = {}
+                const highlighted: Record<string, string> = {}
         for (const lang of LANGS) {
           const shikiLang = lang === 'react' ? 'tsx' : lang === 'solid' ? 'tsx' : lang
-          highlighted[lang] = highlighter.codeToHtml(parts[lang] ?? '', { lang: shikiLang, theme: 'oxide' })
+          highlighted[lang] = codeToHtml(parts[lang] ?? '', { lang: shikiLang, theme: oxideTheme })
         }
 
         const json = JSON.stringify(highlighted)
