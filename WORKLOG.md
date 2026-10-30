@@ -4444,3 +4444,43 @@ Closed the five threads left by the previous pass. `cargo check --workspace`,
   `input.layouts` outermost→innermost through an IR-native `LAYOUTS` registry,
   with the default Atlas shell only when nothing resolves; tests added per
   adapter.
+
+## 2026-10-30: Oxide DX Rescue (Tailwind, Images, and Hack-Free Website)
+
+Applied the full `oxide-dx-rescue-plan.md`.
+
+**Phase 0 — Unblocked HEAD:**
+- Fixed syntax error in `adapter-tabs.tsx` (missing bracket).
+- Fixed corrupted `[mask-image:` class in `FrameworkAdapters.tsx`.
+- Removed `postbuild` shell hack.
+
+**Phase 1 — Tailwind Correctness:**
+- Added `tailwind_active()` to unify activation gate (config OR `@import` fingerprint).
+- Rewrote `ensure_dev_client_bundle` to precompute Tailwind and thread the compiled CSS into the dev bundle (fixes A2 — dev was serving raw CSS).
+- Added manifest re-read on dev (`dev_mode` in `AdapterPageRenderer`).
+- Added loud failures (`BLD-TAILWIND-EMPTY`, `BLD-TAILWIND-SUBST-MISS`).
+- Fixed HMR path: `is_tailwind_relevant` triggers rebuild on CSS edits.
+- Scan coverage: added `.md`/`.mdx` to source globs.
+- Tooling modules resolve from project root first (`OXIDE_PROJECT_ROOT`).
+
+**Phase 2 — Image Pipeline:**
+- Added `ImageAssetPlugin` to Rolldown for raster imports.
+- Fixed `?w=` URL contract (generates `?url=/path` instead of `?src=path`).
+- Unified placeholder vocabulary to `lqip`.
+- `public/` is now copied to `dist/` at build time (Phase 2 I4).
+- Generated `env.d.ts` for `?w=` imports (Phase 2 I5).
+
+**Phase 3 — Website Cleanup:**
+- Redesigned `FrameworkAdapters` to an orbital scene with pure CSS (removed broken Framer Motion).
+- Redesigned Hero to a 2-column layout (Terminal mockup).
+- Redesigned Footer with 4-column hierarchy and logo.
+- Added lucide icons to the Stats section.
+- Replaced custom pipeline terminal output with a vertical numbered flow.
+- Removed "Honest status" callout.
+- Removed dead CSS (`.fa-*` block).
+- Added `Adapters` H2 headings.
+
+**Phase 4 — Guardrails:**
+- Added CI gate: build fails if CSS < 20KB.
+- Added `oxide doctor` Tailwind check.
+- Wrote `docs/using-tailwind.md` and `docs/using-images.md`.
