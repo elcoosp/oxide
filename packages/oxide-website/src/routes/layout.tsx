@@ -35,7 +35,11 @@ export default function RootLayout({ children }: Props) {
       <header className="sticky top-0 z-50 w-full border-b border-zinc-800 bg-[#09090b]/80 backdrop-blur-md">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
           <a href="/" className="flex items-center gap-2.5 group">
-            <img src="/logo.png" alt="Oxide" className="w-7 h-7 object-contain opacity-90 group-hover:opacity-100 transition-opacity" />
+            <span className="flex items-center justify-center w-8 h-8 rounded-full bg-zinc-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)]">
+              <span className="flex items-center justify-center w-8 h-8 rounded-full bg-zinc-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)]">
+                  <img src="/logo.png" alt="Oxide" className="w-6 h-6 object-contain" />
+                </span>
+            </span>
             <span className="font-bold tracking-tight text-lg text-zinc-50">
               oxide<span className="text-[#e45631]">_</span>
             </span>
