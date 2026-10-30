@@ -147,124 +147,47 @@ h3 { font-size: clamp(1.25rem, 2vw, 1.5rem); font-weight: 500; line-height: 1.3;
 
 
 
-/* [wr172] Safe animations + copy spacing */
-@keyframes fade-in-up {
-  from { opacity: 0; transform: translateY(20px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
-/*
- * Elements are VISIBLE by default.
- * The animation only plays when data-revealed="true" is set by the client.
- */
-[data-reveal][data-revealed="true"] {
-  animation: fade-in-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-
-/*
- * Fallback: If we are using scroll-driven animations (Chrome 115+),
- * apply it only if the feature is supported. It handles the reveal natively.
- */
-@supports (animation-timeline: view()) {
-  section.section,
-  .post-card,
-  .pipeline-step {
-    animation: fade-in-up linear both;
-    animation-timeline: view();
-    animation-range: entry 0% entry 40%;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  [data-reveal] { opacity: 1 !important; transform: none !important; animation: none !important; }
-  section.section, .post-card, .pipeline-step { animation: none !important; }
-}
-
-/*
- * Fix the CopyInstall inline layout so the button has space before it
- */
 
 
-
-
-/* rangi injects inline styles AND an inline `<style>` block. We must override everything. */
-.adapter-shiki pre,
-.adapter-shiki pre *,
-.adapter-shiki code,
-.adapter-shiki code *,
-pre.shiki,
-pre.shiki *,
-pre.shiki code,
-pre.shiki code * {
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
-  font-size: 13px !important;
-  line-height: 1.6 !important;
-  font-variant-ligatures: none !important;
-}
-
-/* Remove any remaining inline margins/paddings from rangi */
-.adapter-shiki pre {
-  margin: 0 !important;
-  padding: 1.25rem 1.5rem !important;
-  background: transparent !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  width: 100% !important;
-  max-width: 100% !important;
-  overflow-x: auto !important;
-}
-
-/* Force on all code/pre/monospace */
-code, pre, kbd, samp, .font-mono,
-.shiki, .shiki *, .shiki code, .shiki code *,
-.adapter-shiki, .adapter-shiki *, .adapter-shiki pre, .adapter-shiki pre * {
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
-}
-
-.adapter-shiki pre {
-  margin: 0 !important;
-  padding: 1.25rem 1.5rem !important;
-  background: transparent !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  font-size: 13px !important;
-  line-height: 1.6 !important;
-  width: 100% !important;
-  max-width: 100% !important;
-  overflow-x: auto !important;
-}
-
-
-
-/* [wr180] Correct code block padding */
+/* [wr181] Clean shiki styling (no !important) */
 .adapter-shiki {
   background: var(--color-panel);
-  /* The wrapper itself has NO padding */
-  padding: 0 !important;
-  overflow: hidden;
 }
 
-.adapter-shiki > div {
-  /* The intermediate div also has no padding */
-  padding: 0 !important;
+/* rangi's inline style is stripped at the string level, so this
+   plain rule is enough — no !important needed. */
+.adapter-shiki pre {
+  margin: 0;
+  padding: 1.5rem;
+  background: transparent;
+  border-radius: 0;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-x: auto;
+  tab-size: 2;
 }
 
-.adapter-shiki pre,
-.adapter-shiki pre.shiki {
-  /* The <pre> gets the padding so the text is inset */
-  margin: 0 !important;
-  padding: 1.5rem !important;
-  background: transparent !important;
-  border-radius: 0 !important;
-  font-family: 'JetBrains Mono', monospace !important;
-  font-size: 13px !important;
-  line-height: 1.6 !important;
-  overflow-x: auto !important;
-}
-
-/* Ensure no inner spans override the font */
-.adapter-shiki pre *,
 .adapter-shiki pre code,
-.adapter-shiki pre code * {
-  font-family: 'JetBrains Mono', monospace !important;
+.adapter-shiki pre span {
+  font-family: inherit;
+  background: transparent;
 }
+
+/* Force JetBrains Mono on the terminal command prompt */
+.copy-install code {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+/* Global mono enforce */
+code, pre, kbd, samp {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Scrollbar */
+.adapter-shiki pre::-webkit-scrollbar { height: 8px; }
+.adapter-shiki pre::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+.adapter-shiki pre::-webkit-scrollbar-track { background: transparent; }
