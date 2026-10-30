@@ -14,10 +14,10 @@ interface Props {
 export default function RootLayout({ children }: Props) {
   return (
     <>
-      <link rel="icon" type="image/png" href="/logo.png" />
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
       <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+      <link rel="icon" type="image/png" href="/logo.png" />
 
 
       
