@@ -1984,6 +1984,17 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // if the manifest is missing. A `dev` after `build` finds it and skips.
     ensure_dev_client_bundle(&rootp, &cfg, &tree, stack.tooling_pool.as_ref(), w).await?;
 
+    // [wr205] Enrich manifest with layout chains — was only done in cmd_build.
+    // Without layout_chain, client-side navigation can't compose the layout tree
+    // (e.g. docs-shell wrapper for /docs/* routes), and falls to the IR fallback
+    // which returns NotFoundPage for any route not in PAGES.
+    {
+        let manifest_path = rootp.join("dist/client/client.manifest.json");
+        if manifest_path.is_file() {
+            let _ = enrich_manifest_layout_chains(&manifest_path, &tree);
+        }
+    }
+
     // [wr200] Consolidate tailwind CSS files + sync manifest.
     // Prevents stale-hash manifest entries from breaking CSR navigation
     // after a source change produces a new CSS hash.
