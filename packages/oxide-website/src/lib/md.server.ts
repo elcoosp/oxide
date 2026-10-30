@@ -13,10 +13,12 @@ import { codeToHtml } from 'rangi'
 import { githubDark as oxideTheme } from 'rangi/themes'
 
 
+
+
 function stripShikiStyle(html: string): string {
-  return html.replace(/<(div|pre)\b([^>]*)>/g, (match, tag, attrs) => {
-    if (/class="[^"]*shiki/.test(attrs)) {
-      return `<${tag}${attrs.replace(/\s+style="[^"]*"/, '')}>`;
+  return html.replace(/<div\b([^>]*)>/g, (match, attrs) => {
+    if (/class="[^"]*shj-/.test(attrs)) {
+      return `<div${attrs.replace(/\s+style="[^"]*"/, '')}>`;
     }
     return match;
   });
