@@ -1,0 +1,4 @@
+@import "tailwindcss";
+@theme static {
+  --color-brand: #ff0000;
+}
