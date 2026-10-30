@@ -147,39 +147,6 @@ h3 { font-size: clamp(1.25rem, 2vw, 1.5rem); font-weight: 500; line-height: 1.3;
 
 
 
-/* [wr166] Spring animation — safe default */
-@keyframes subtle-spring {
-  0%   { opacity: 0; transform: translateY(24px) scale(0.98); }
-  100% { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-/* Elements are VISIBLE by default. The animation only plays when a
-   reveal signal is present — so if the observer never fires, content
-   stays visible instead of going black. */
-[data-reveal][data-revealed="true"],
-[data-reveal].revealed,
-[data-reveal][data-inview="true"],
-.spring-enter {
-  animation: subtle-spring 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.1) both;
-}
-
-/* Stagger for cards */
-.post-card:nth-child(1) { animation-delay: 0.1s; }
-.post-card:nth-child(2) { animation-delay: 0.2s; }
-.post-card:nth-child(3) { animation-delay: 0.3s; }
-
-@media (prefers-reduced-motion: reduce) {
-  [data-reveal],
-  [data-reveal][data-revealed="true"],
-  [data-reveal].revealed,
-  [data-reveal][data-inview="true"],
-  .spring-enter {
-    animation: none !important;
-    opacity: 1 !important;
-    transform: none !important;
-  }
-}
-
 /* [wr167] Force rangi overrides */
 .adapter-shiki pre {
   margin: 0 !important;
@@ -200,4 +167,62 @@ h3 { font-size: clamp(1.25rem, 2vw, 1.5rem); font-weight: 500; line-height: 1.3;
 .adapter-shiki pre span {
   font-family: var(--font-mono) !important;
   background: transparent !important;
+}
+
+/* [wr168] Native scroll-driven spring */
+/* Uses CSS animation-timeline: view() — no JS, no observer, no data attributes.
+   Supported: Chrome 115+, Edge 115+, Safari 26+, Firefox 132+.
+   Falls back to static (no animation) on older browsers — content always visible. */
+
+@keyframes slide-up-spring {
+  from { opacity: 0; transform: translateY(30px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)   scale(1); }
+}
+
+@supports (animation-timeline: view()) {
+  section.section,
+  section[data-reveal],
+  .pipeline,
+  .post-card,
+  article {
+    animation: slide-up-spring linear both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 60%;
+  }
+
+  /* Stagger cards in the blog grid */
+  .grid > .post-card:nth-child(1) { animation-range: entry 0% entry 50%; }
+  .grid > .post-card:nth-child(2) { animation-range: entry 5% entry 55%; }
+  .grid > .post-card:nth-child(3) { animation-range: entry 10% entry 60%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; }
+  section.section,
+  section[data-reveal],
+  .pipeline,
+  .post-card,
+  article {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+
+/* Strip any residual inline styles on shiki blocks (belt-and-suspenders) */
+.adapter-shiki pre {
+  margin: 0 !important;
+  padding: 1.25rem 1.5rem !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  font-family: var(--font-mono) !important;
+  font-size: 13px !important;
+  line-height: 1.6 !important;
+  color-scheme: dark !important;
+}
+.adapter-shiki pre code,
+.adapter-shiki pre code span {
+  font-family: var(--font-mono) !important;
+  background: transparent !important;
+  text-shadow: none !important;
 }
