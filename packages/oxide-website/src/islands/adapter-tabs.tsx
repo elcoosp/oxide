@@ -7,9 +7,9 @@ import { githubDark } from 'rangi/themes';
 // Inline styles beat every class rule. Strip the style attr in the HTML
 // string so our CSS owns layout completely.
 function stripRangiStyles(html: string): string {
-  return html
-    .replace(/<pre([^>]*?)\sstyle="[^"]*"/g, '<pre$1')
-    .replace(/<code([^>]*?)\sstyle="[^"]*"/g, '<code$1');
+  // rangi emits <pre ... style="margin:10px 0;padding:30px 20px;font:Consolas...">
+  // which hard-codes layout. Strip every style="" attribute so our CSS owns layout.
+  return html.replace(/\sstyle="[^"]*"/g, '');
 }
 
 interface Adapter {
