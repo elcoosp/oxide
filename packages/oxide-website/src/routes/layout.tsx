@@ -14,7 +14,7 @@ interface Props {
 export default function RootLayout({ children }: Props) {
   return (
     <>
-      <link rel="icon" type="image/png" href="/favicon.png" />
+      <link rel="icon" type="image/png" href="/logo.png" />
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
       <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
@@ -31,19 +31,21 @@ export default function RootLayout({ children }: Props) {
       
 
       <div className="scroll-progress" aria-hidden="true" />
-      <header className="site-header">
-        <div className="container">
-          <a className="logo flex items-center gap-2.5" href="/">
-            <img src="/logo.png" alt="Oxide" className="h-7 w-7 object-contain" />
-            <span className="font-semibold tracking-tight text-lg">oxide<span className="cursor text-[#e45631]">_</span></span>
+      <header className="sticky top-0 z-50 w-full border-b border-zinc-800 bg-[#09090b]/80 backdrop-blur-md">
+        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+          <a href="/" className="flex items-center gap-2.5 group">
+            <img src="/logo.png" alt="Oxide" className="w-7 h-7 object-contain opacity-90 group-hover:opacity-100 transition-opacity" />
+            <span className="font-bold tracking-tight text-lg text-zinc-50">
+              oxide<span className="text-[#e45631]">_</span>
+            </span>
           </a>
-          <nav className="site-nav">
-            {nav.map((n) => (
-              <a key={n.href} href={n.href}>
-                {n.label}
-              </a>
-            ))}
-            <a className="gh" href={site.repo} rel="noopener">
+
+          <nav className="flex items-center gap-8">
+            <div className="hidden md:flex items-center gap-6">
+              <a href="/docs" className="text-sm font-medium text-zinc-400 hover:text-zinc-50 transition-colors">Docs</a>
+              <a href="/blog" className="text-sm font-medium text-zinc-400 hover:text-zinc-50 transition-colors">Blog</a>
+            </div>
+            <a href={site.repo} target="_blank" rel="noopener" className="text-sm font-medium text-zinc-300 bg-zinc-800/50 hover:bg-zinc-800 border border-zinc-700/50 hover:border-zinc-600 px-4 py-1.5 rounded-lg transition-all">
               GitHub ↗
             </a>
           </nav>
