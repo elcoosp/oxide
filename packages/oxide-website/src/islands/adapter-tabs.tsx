@@ -6,12 +6,6 @@ import { githubDark } from 'rangi/themes';
 // rangi emits <pre style="margin:10px 0; padding:30px 20px; background:#0d1117; ...">
 // Inline styles beat every class rule. Strip the style attr in the HTML
 // string so our CSS owns layout completely.
-function stripRangiStyles(html: string): string {
-  // rangi emits <pre ... style="margin:10px 0;padding:30px 20px;font:Consolas...">
-  // which hard-codes layout. Strip every style="" attribute so our CSS owns layout.
-  return html.replace(/\sstyle="[^"]*"/g, '');
-}
-
 interface Adapter {
   id: string;
   label: string;
@@ -35,10 +29,11 @@ export default function AdapterTabs({ adapters }: Props) {
              : current.id === 'svelte' ? 'svelte'
              : 'tsx';
 
-  const highlightedHtml = stripRangiStyles(codeToHtml(current.snippet, {
+  const highlightedHtml = codeToHtml(current.snippet, {
     lang,
     theme: githubDark,
-  }));
+    lineNumbers: false,
+  });
 
   return (
     <div className="max-w-[1080px] mx-auto border border-zinc-800 rounded-[10px] overflow-hidden">
