@@ -1,4 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap');
 @import "tailwindcss";
 
 @theme {
@@ -188,7 +187,6 @@ h3 { font-size: clamp(1.25rem, 2vw, 1.5rem); font-weight: 500; line-height: 1.3;
 
 
 
-/* [wr174] Absolute JetBrains Mono override */
 /* rangi injects inline styles AND an inline `<style>` block. We must override everything. */
 .adapter-shiki pre,
 .adapter-shiki pre *,
@@ -211,6 +209,42 @@ pre.shiki code * {
   background: transparent !important;
   border-radius: 0 !important;
   box-shadow: none !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow-x: auto !important;
+}
+
+/* [wr175] JetBrains Mono @font-face (direct woff2) */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxjPVmUsaaDhw.woff2) format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxTPn4.woff2) format('woff2');
+}
+
+/* Force on all code/pre/monospace */
+code, pre, kbd, samp, .font-mono,
+.shiki, .shiki *, .shiki code, .shiki code *,
+.adapter-shiki, .adapter-shiki *, .adapter-shiki pre, .adapter-shiki pre * {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+}
+
+.adapter-shiki pre {
+  margin: 0 !important;
+  padding: 1.25rem 1.5rem !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  font-size: 13px !important;
+  line-height: 1.6 !important;
   width: 100% !important;
   max-width: 100% !important;
   overflow-x: auto !important;
