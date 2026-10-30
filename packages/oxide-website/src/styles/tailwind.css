@@ -212,15 +212,6 @@ h3 { font-size: clamp(1.25rem, 2vw, 1.5rem); font-weight: 500; line-height: 1.3;
 /*
  * Fix the CopyInstall inline layout so the button has space before it
  */
-.copy-install {
-  display: flex !important;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-}
-.copy-install-cmd {
-  margin-right: 1rem;
-}
-.copy-install-btn {
-  flex-shrink: 0;
-}
+
+
+
