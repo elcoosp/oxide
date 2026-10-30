@@ -1765,6 +1765,42 @@ fn consolidate_tailwind_css_and_manifest(rootp: &std::path::Path) {
     }
 }
 
+
+/// [wr208] Rebuild local workspace packages whose `dist/` is older than `src/`.
+/// Without this, edits to `packages/core/src/*.ts` never reach the client
+/// bundle — `oxide dev` reads from `node_modules/@oxide-fw/core/dist/`,
+/// not from source. Diagnostics that blamed the site's own code wasted
+/// hours chasing changes that were already correct.
+fn rebuild_stale_workspace_packages(rootp: &std::path::Path) {
+    let packages_dir = rootp.parent().and_then(|p| p.parent()).map(|p| p.join("packages"));
+    let Some(packages_dir) = packages_dir else { return };
+    let Ok(entries) = std::fs::read_dir(&packages_dir) else { return };
+    let mut to_rebuild = Vec::new();
+    for entry in entries.flatten() {
+        let pkg = entry.path();
+        if !pkg.is_dir() { continue; }
+        let dist = pkg.join("dist");
+        let src = pkg.join("src");
+        if !src.is_dir() { continue; }
+        let dist_time = dist.metadata().and_then(|m| m.modified()).ok();
+        let src_time = src.metadata().and_then(|m| m.modified()).ok();
+        let (Some(dt), Some(st)) = (dist_time, src_time) else { continue };
+        if st > dt {
+            to_rebuild.push(pkg);
+        }
+    }
+    if to_rebuild.is_empty() { return; }
+    eprintln!("oxide: rebuilding {} stale workspace package(s)...", to_rebuild.len());
+    for pkg in &to_rebuild {
+        let name = pkg.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+        eprintln!("  · packages/{}", name);
+        let _ = std::process::Command::new("pnpm")
+            .args(["build"])
+            .current_dir(pkg)
+            .status();
+    }
+}
+
 async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
     let mut cfg = load_config_or_default(&rootp, "development");
@@ -1983,6 +2019,9 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // would hydrate, navigate, or load a route's JS. Build it once (unminified)
     // if the manifest is missing. A `dev` after `build` finds it and skips.
     ensure_dev_client_bundle(&rootp, &cfg, &tree, stack.tooling_pool.as_ref(), w).await?;
+
+    // [wr208] Rebuild stale workspace packages before bundling
+    rebuild_stale_workspace_packages(&rootp);
 
     // [wr205] Enrich manifest with layout chains — was only done in cmd_build.
     // Without layout_chain, client-side navigation can't compose the layout tree
