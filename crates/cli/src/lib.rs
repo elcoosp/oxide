@@ -1586,6 +1586,51 @@ async fn ensure_dev_client_bundle(
     let rb = oxide_fw_bundler::RolldownBundler::new(rootp);
     match rb.bundle(&client_opts) {
         Ok(outcome) => {
+
+            // [wr115] Write compiled Tailwind CSS directly + patch manifest.
+            if let Some(p) = pool {
+                if let Ok(Some(tw)) = crate::tailwind::precompute(p.clone(), cfg, rootp).await {
+                    let client_dir = rootp.join("dist/client");
+                    let _ = std::fs::create_dir_all(&client_dir);
+                    let hash = oxide_fw_bundler::ChunkBundler::content_hash(&[tw.css.as_bytes()]);
+                    let filename = format!("tailwind-{hash}.css");
+                    let _ = std::fs::write(client_dir.join(&filename), &tw.css);
+                    outln!(w, "tailwind: {} ({} bytes, {} utilities)", filename, tw.css.len(),
+                        tw.css.matches('.').count());
+
+                    // Update the manifest: point every route's css at the
+                    // compiled file, delete any other tailwind-*.css.
+                    let manifest_path = client_dir.join("client.manifest.json");
+                    if let Ok(raw) = std::fs::read_to_string(&manifest_path) {
+                        if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                            if let Some(routes) = v.get_mut("routes").and_then(|r| r.as_object_mut()) {
+                                for (_k, route) in routes.iter_mut() {
+                                    if let Some(css) = route.get_mut("css").and_then(|c| c.as_array_mut()) {
+                                        *css = vec![serde_json::Value::String(filename.clone())];
+                                    }
+                                }
+                            }
+                            if let Some(assets) = v.get_mut("assets").and_then(|a| a.as_object_mut()) {
+                                for (_k, val) in assets.iter_mut() {
+                                    *val = serde_json::Value::String(filename.clone());
+                                }
+                            }
+                            let _ = std::fs::write(&manifest_path,
+                                serde_json::to_string_pretty(&v).unwrap_or_default());
+                        }
+                    }
+                    // Delete superseded CSS so exactly one exists
+                    if let Ok(entries) = std::fs::read_dir(&client_dir) {
+                        for e in entries.flatten() {
+                            let n = e.file_name().to_string_lossy().to_string();
+                            if n.starts_with("tailwind-") && n.ends_with(".css") && n != filename {
+                                let _ = std::fs::remove_file(e.path());
+                            }
+                        }
+                    }
+                }
+            }
+        
             outln!(
                 w,
                 "dev: client bundle ready ({} chunks)",
@@ -4822,7 +4867,14 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         Some(pool) => tailwind::precompute(pool, &cfg, &rootp).await?,
         None => None,
     };
-    let css_transform = build_css_transform_hook(&cfg, tw_output.map(std::sync::Arc::new));
+    
+    // [Phase 2 I4] Copy public/ → dist/ so `oxide build` is standalone deployable.
+    let public_dir = rootp.join("public");
+    if public_dir.is_dir() {
+        let _ = copy_tree(&public_dir, &rootp.join("dist"));
+    }
+
+let css_transform = build_css_transform_hook(&cfg, tw_output.map(std::sync::Arc::new));
 
     let client_opts = bundle_env_options(BundleEnvArgs {
         env: oxide_fw_bundler::BundleEnv::Client,
@@ -4970,7 +5022,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     let rel_url = spec.split('?').next().unwrap_or(spec);
                     // Strip leading `./` from the relative URL.
                     let rel_url = rel_url.strip_prefix("./").unwrap_or(rel_url);
-                    let url_base = format!("/_oxide/image?src={rel_url}");
+                    let url_base = format!("/_oxide/image?url=/{rel_url}");
                     let srcset = oxide_fw_assets::srcset(&widths, &url_base);
                     let max_w = widths.iter().copied().max().unwrap_or(w0);
                     let src = format!("{url_base}&w={max_w}");
