@@ -36,6 +36,10 @@ pub fn has_tailwind(cfg: &OxideConfig) -> bool {
 /// Excludes .server.ts/.server.tsx (server-only, no client classes),
 /// oxide.config.* (the config file itself), and .css/.scss/.sass
 /// (those go through HmrBehavior::StyleSwap).
+pub fn is_tailwind_relevant(path: &str) -> bool {
+    is_source_file(path) || (path.contains("/src/styles/") && path.to_ascii_lowercase().ends_with(".css"))
+}
+
 pub fn is_source_file(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     if lower.ends_with(".server.ts") || lower.ends_with(".server.tsx") {
@@ -72,7 +76,7 @@ async fn compute_css(
     // [wr104] Pass source globs so Scanner.scan() walks src/ directly.
     let sources = vec![serde_json::json!({
         "base": src_dir.to_string_lossy(),
-        "pattern": "**/*.{ts,tsx,js,jsx,vue,svelte,html}",
+        "pattern": "**/*.{ts,tsx,js,jsx,vue,svelte,html,md,mdx}",
         "negated": false
     })];
 
@@ -85,6 +89,9 @@ async fn compute_css(
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
     let tailwind_css = tooling.tailwind_build(&css_src, &base, &candidates).await?;
+    if candidates.len() >= 8 && tailwind_css.trim().len() < 64 {
+        return Err(bld_err("BLD-TAILWIND-EMPTY: Tailwind compile produced empty/near-empty CSS. The entry stylesheet is likely corrupt."));
+    }
 
     let input = CssInput {
         code: tailwind_css,
