@@ -7,6 +7,7 @@ import '../styles/tailwind.css'
 import { Island } from '@oxide-fw/react'
 import { site, nav, footerLinks } from '../lib/site.ts'
 
+import { Github } from 'lucide-react';
 interface Props {
   children?: ReactNode
 }
@@ -45,8 +46,9 @@ export default function RootLayout({ children }: Props) {
               <a href="/docs" className="text-sm font-medium text-zinc-400 hover:text-zinc-50 transition-colors">Docs</a>
               <a href="/blog" className="text-sm font-medium text-zinc-400 hover:text-zinc-50 transition-colors">Blog</a>
             </div>
-            <a href={site.repo} target="_blank" rel="noopener" className="text-sm font-medium text-zinc-300 bg-zinc-800/50 hover:bg-zinc-800 border border-zinc-700/50 hover:border-zinc-600 px-4 py-1.5 rounded-lg transition-all">
-              GitHub ↗
+            <a href={site.repo} target="_blank" rel="noopener" className="flex items-center gap-2 text-sm font-medium text-zinc-300 bg-zinc-800/50 hover:bg-zinc-800 border border-zinc-700/50 hover:border-zinc-600 px-4 py-1.5 rounded-lg transition-all">
+              <Github size={16} />
+              <span>GitHub</span>
             </a>
           </nav>
         </div>
@@ -82,7 +84,7 @@ export default function RootLayout({ children }: Props) {
             <div>
               <h4 className="font-mono text-xs tracking-widest uppercase text-zinc-300 mb-4 font-semibold">Community</h4>
               <ul className="space-y-3 text-sm text-zinc-500">
-                <li><a href={site.repo} className="hover:text-[#e45631] transition-colors">GitHub</a></li>
+                <li><a href={site.repo} className="flex items-center gap-2 hover:text-[#e45631] transition-colors"><Github size={16} /> GitHub</a></li>
                 <li><a href="/rss" className="hover:text-[#e45631] transition-colors">RSS Feed</a></li>
                 <li><a href={`${site.repo}/blob/main/LICENSE-MIT`} className="hover:text-[#e45631] transition-colors">MIT License</a></li>
                 <li><a href={`${site.repo}/blob/main/LICENSE-APACHE`} className="hover:text-[#e45631] transition-colors">Apache-2.0 License</a></li>
