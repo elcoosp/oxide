@@ -194,10 +194,10 @@ export default function Page(props: Props) {
       <section className="section pb-32">
         <div className="container">
           <h2>From the blog</h2>
-          <p className="lede"><a data-ox-reload href="/blog">All posts →</a></p>
+          <p className="lede"><a href="/blog">All posts →</a></p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {latest.map((post) => (
-              <a key={post.slug} data-ox-reload href={`/blog/${post.slug}`} className="group flex flex-col justify-between p-6 bg-zinc-900/30 border border-zinc-800 rounded-xl hover:bg-zinc-900/60 hover:border-zinc-700 hover:-translate-y-1 hover:shadow-lg transition-all duration-300">
+              <a key={post.slug} href={`/blog/${post.slug}`} className="group flex flex-col justify-between p-6 bg-zinc-900/30 border border-zinc-800 rounded-xl hover:bg-zinc-900/60 hover:border-zinc-700 hover:-translate-y-1 hover:shadow-lg transition-all duration-300">
                 <div>
                   <div className="font-mono text-xs text-zinc-500 mb-3">{post.date}</div>
                   <h3 className="text-lg font-medium text-zinc-200 mb-2 group-hover:text-[#e45631] transition-colors leading-snug">{post.title}</h3>
