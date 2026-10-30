@@ -79,7 +79,7 @@ export default function Page(props: Props) {
       <FrameworkAdapters />
 
       {/* PIPELINE */}
-      <section className="section">
+      <section className="section" data-reveal >
         <div className="container">
           <h2>What the hot path does without JavaScript</h2>
           <p className="lede">
@@ -117,7 +117,7 @@ export default function Page(props: Props) {
       </section>
 
       {/* FEATURES */}
-      <section className="section">
+      <section className="section" data-reveal >
         <div className="container">
           <h2>Features</h2>
           <p className="lede">
@@ -138,7 +138,7 @@ export default function Page(props: Props) {
       </section>
 
       {/* ADAPTERS + CODE */}
-      <section className="section">
+      <section className="section" data-reveal >
         <div className="container">
           <h2>Adapters</h2>
           <p className="lede">
