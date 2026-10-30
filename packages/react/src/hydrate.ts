@@ -277,11 +277,34 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
         // §8.2: resolve the layout chain first — SSR rendered
         // `<RootLayout><Page/></RootLayout>`; the client must hydrate the
         // same tree or React reports mismatch #418.
+        // [wr214] Fall back to manifest layout_chain when inp.layouts is empty.
+        // CSR fetch may lose the layouts field (SSR's ODF payload carries it,
+        // but normalizeInput drops it in some paths). The manifest always has
+        // layout_chain — trust it so client nav composes the same tree SSR does.
+        let declaredLayouts = inp.layouts ?? []
+        if (declaredLayouts.length === 0) {
+          const manifestEntry = src.manifest.routes[key]
+          if (manifestEntry && Array.isArray(manifestEntry.layout_chain)) {
+            declaredLayouts = manifestEntry.layout_chain
+            console.log(
+              '[oxide-diag] tryRealRender: inp.layouts empty — using manifest layout_chain',
+              { route: inp.route, chain: declaredLayouts, manifestKey: key }
+            )
+          }
+        }
         const layoutComponents: Array<{ id: string; Component: unknown }> = []
-        for (const lid of inp.layouts ?? []) {
+        for (const lid of declaredLayouts) {
           const lc = await componentFor(lid)
           if (lc) layoutComponents.push({ id: lid, Component: lc })
         }
+        console.log(
+          '[oxide-diag] tryRealRender: layout resolution',
+          {
+            route: inp.route,
+            declaredLayouts,
+            resolved: layoutComponents.map(l => l.id),
+          }
+        )
         if (disposed || seq !== renderSeq) return
         // Whether we can `hydrateRoot` depends on whether we can rebuild the
         // EXACT server tree. That needs every layout's client component;
@@ -293,7 +316,6 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
         // ends up correct (client tree wins), there is no mismatch, and
         // custom elements (`<ox-island>`) survive so island hydration still
         // finds its hosts.
-        const declaredLayouts = inp.layouts ?? []
         // §8.4: hydrateRoot() only on the initial page-load. On a client
         // navigation the container still holds the PREVIOUS route's markup,
         // so hydrateRoot() would #418. (The initial-load SSR case is caught
