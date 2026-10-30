@@ -149,45 +149,74 @@ h3 { font-size: clamp(1.25rem, 2vw, 1.5rem); font-weight: 500; line-height: 1.3;
 
 
 
-/* [wr181] Clean shiki styling (no !important) */
+
+
+/* [wr182] rangi: target the actual .shiki div */
+/* rangi outputs: <div class="shiki language-tsx" style="...">
+   The style attr has margin:10px 0; padding:30px 20px; font:Consolas...
+   We override with !important on the div directly. */
+
 .adapter-shiki {
   background: var(--color-panel);
+  overflow: hidden;
 }
 
-/* rangi's inline style is stripped at the string level, so this
-   plain rule is enough — no !important needed. */
+/* Override the outer rangi div (the one with .shiki class) */
+.adapter-shiki > div > .shiki,
+.adapter-shiki .shiki {
+  margin: 0 !important;
+  padding: 1.5rem !important;
+  background: var(--color-panel) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace !important;
+  font-size: 13px !important;
+  line-height: 1.6 !important;
+  white-space: pre !important;
+  overflow-x: auto !important;
+  color-scheme: dark !important;
+  text-shadow: none !important;
+}
+
+/* Inner code/pre also mono */
+.adapter-shiki .shiki code,
+.adapter-shiki .shiki pre,
+.adapter-shiki .shiki span {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace !important;
+  background: transparent !important;
+}
+
+/* If rangi uses pre/code directly */
+.adapter-shiki pre.shiki,
 .adapter-shiki pre {
-  margin: 0;
-  padding: 1.5rem;
-  background: transparent;
-  border-radius: 0;
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
-  line-height: 1.6;
-  overflow-x: auto;
-  tab-size: 2;
+  margin: 0 !important;
+  padding: 1.5rem !important;
+  background: var(--color-panel) !important;
+  border-radius: 0 !important;
+  font-family: 'JetBrains Mono', ui-monospace, monospace !important;
+  font-size: 13px !important;
+  line-height: 1.6 !important;
+  white-space: pre !important;
+  overflow-x: auto !important;
 }
 
-.adapter-shiki pre code,
-.adapter-shiki pre span {
-  font-family: inherit;
-  background: transparent;
+.adapter-shiki pre code {
+  font-family: inherit !important;
+  background: transparent !important;
 }
 
-/* Force JetBrains Mono on the terminal command prompt */
+/* Terminal command prompt */
 .copy-install code {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-}
-
-/* Global mono enforce */
-code, pre, kbd, samp {
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: 'JetBrains Mono', ui-monospace, monospace !important;
 }
 
 /* Scrollbar */
-.adapter-shiki pre::-webkit-scrollbar { height: 8px; }
-.adapter-shiki pre::-webkit-scrollbar-thumb {
+.adapter-shiki pre::-webkit-scrollbar,
+.adapter-shiki .shiki::-webkit-scrollbar {
+  height: 8px;
+}
+.adapter-shiki pre::-webkit-scrollbar-thumb,
+.adapter-shiki .shiki::-webkit-scrollbar-thumb {
   background: var(--color-border);
   border-radius: 4px;
 }
-.adapter-shiki pre::-webkit-scrollbar-track { background: transparent; }
