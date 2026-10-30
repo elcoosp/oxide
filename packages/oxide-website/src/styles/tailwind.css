@@ -214,22 +214,6 @@ pre.shiki code * {
   overflow-x: auto !important;
 }
 
-/* [wr175] JetBrains Mono @font-face (direct woff2) */
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxjPVmUsaaDhw.woff2) format('woff2');
-}
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxTPn4.woff2) format('woff2');
-}
-
 /* Force on all code/pre/monospace */
 code, pre, kbd, samp, .font-mono,
 .shiki, .shiki *, .shiki code, .shiki code *,
@@ -247,5 +231,44 @@ code, pre, kbd, samp, .font-mono,
   line-height: 1.6 !important;
   width: 100% !important;
   max-width: 100% !important;
+  overflow-x: auto !important;
+}
+
+/* [wr179] Absolute font & margin control */
+/* Force JetBrains Mono via the @fontsource CSS variables */
+:root {
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+}
+
+/* Apply to every single text element inside code blocks */
+code, pre, kbd, samp, .font-mono,
+.adapter-shiki, .adapter-shiki *,
+.adapter-shiki pre, .adapter-shiki pre *,
+.adapter-shiki code, .adapter-shiki code *,
+pre.shiki, pre.shiki *,
+pre.shiki code, pre.shiki code * {
+  font-family: var(--font-mono) !important;
+  font-size: 13px !important;
+  line-height: 1.6 !important;
+  font-variant-ligatures: none !important;
+}
+
+/*
+ * Nuke ALL inline margins/paddings from rangi.
+ * We will control the spacing on the parent wrapper.
+ */
+.adapter-shiki pre,
+.adapter-shiki pre * {
+  margin: 0 !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* Re-apply padding to the outer container */
+.adapter-shiki {
+  padding: 1.25rem 1.5rem !important;
+  background: var(--color-panel) !important;
   overflow-x: auto !important;
 }
