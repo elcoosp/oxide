@@ -1676,6 +1676,95 @@ fn content_source_changed(
     })
 }
 
+
+/// [wr200] Dev-mode fix (plan T5): keep exactly ONE `tailwind-*.css` in
+/// `dist/client/` and rewrite `client.manifest.json` to point every route's
+/// `css` array at it. Without this, HMR rebuilds leave the manifest pointing
+/// at a stale hash, so client-side navigation swaps to the old CSS and loses
+/// new styles (e.g. docs-shell after a wr198-style source change).
+fn consolidate_tailwind_css_and_manifest(rootp: &std::path::Path) {
+    let client_dir = rootp.join("dist/client");
+    let Ok(entries) = std::fs::read_dir(&client_dir) else { return };
+
+    // Find all tailwind-*.css files, newest last
+    let mut css_files: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("tailwind-") && n.ends_with(".css"))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    if css_files.is_empty() {
+        return;
+    }
+
+    // Sort by mtime ascending (oldest first, newest last)
+    css_files.sort_by_key(|p| {
+        p.metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+    });
+
+    let newest = match css_files.pop() {
+        Some(p) => p,
+        None => return,
+    };
+    let newest_name = newest
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.to_string())
+        .unwrap_or_default();
+
+    // Delete all older tailwind CSS files
+    for old in &css_files {
+        let _ = std::fs::remove_file(old);
+    }
+
+    // Rewrite the manifest's css arrays to point at the newest file
+    let manifest_path = client_dir.join("client.manifest.json");
+    let Ok(raw) = std::fs::read_to_string(&manifest_path) else { return };
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&raw) else { return };
+
+    let mut changed = false;
+    if let Some(routes) = v.get_mut("routes").and_then(|r| r.as_object_mut()) {
+        for (_route_id, route) in routes.iter_mut() {
+            if let Some(css) = route.get_mut("css").and_then(|c| c.as_array_mut()) {
+                // Replace any tailwind-*.css entries with the newest
+                let mut new_css: Vec<serde_json::Value> = Vec::new();
+                let mut had_tailwind = false;
+                for entry in css.iter() {
+                    if let Some(name) = entry.as_str() {
+                        if name.starts_with("tailwind-") && name.ends_with(".css") {
+                            had_tailwind = true;
+                            new_css.push(serde_json::Value::String(newest_name.clone()));
+                        } else {
+                            new_css.push(entry.clone());
+                        }
+                    }
+                }
+                if had_tailwind && new_css.iter().any(|e| e.as_str() == Some(newest_name.as_str())) {
+                    if css.len() != new_css.len() || css.first() != new_css.first() {
+                        *css = new_css;
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+
+    if changed {
+        if let Ok(pretty) = serde_json::to_string_pretty(&v) {
+            let _ = std::fs::write(&manifest_path, pretty);
+        }
+    }
+}
+
 async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
     let mut cfg = load_config_or_default(&rootp, "development");
@@ -1894,6 +1983,11 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // would hydrate, navigate, or load a route's JS. Build it once (unminified)
     // if the manifest is missing. A `dev` after `build` finds it and skips.
     ensure_dev_client_bundle(&rootp, &cfg, &tree, stack.tooling_pool.as_ref(), w).await?;
+
+    // [wr200] Consolidate tailwind CSS files + sync manifest.
+    // Prevents stale-hash manifest entries from breaking CSR navigation
+    // after a source change produces a new CSS hash.
+    consolidate_tailwind_css_and_manifest(&rootp);
 
     // [wr101] Force dev mode for React dev build
     // SAFETY: called before worker threads spawn; env vars are process-global.
