@@ -148,34 +148,6 @@ h3 { font-size: clamp(1.25rem, 2vw, 1.5rem); font-weight: 500; line-height: 1.3;
 
 
 
-/* [wr167] Force rangi overrides */
-.adapter-shiki pre {
-  margin: 0 !important;
-  padding: 1.25rem 1.5rem !important;
-  background: transparent !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  font-family: var(--font-mono) !important;
-  font-size: 13px !important;
-  line-height: 1.6 !important;
-  color: var(--color-text) !important;
-  width: 100% !important;
-  max-width: 100% !important;
-  overflow-x: auto !important;
-}
-
-.adapter-shiki pre code,
-.adapter-shiki pre span {
-  font-family: var(--font-mono) !important;
-  background: transparent !important;
-}
-
-
-
-
-
-
-
 /* [wr172] Safe animations + copy spacing */
 @keyframes fade-in-up {
   from { opacity: 0; transform: translateY(20px); }
@@ -215,3 +187,31 @@ h3 { font-size: clamp(1.25rem, 2vw, 1.5rem); font-weight: 500; line-height: 1.3;
 
 
 
+
+/* [wr174] Absolute JetBrains Mono override */
+/* rangi injects inline styles AND an inline `<style>` block. We must override everything. */
+.adapter-shiki pre,
+.adapter-shiki pre *,
+.adapter-shiki code,
+.adapter-shiki code *,
+pre.shiki,
+pre.shiki *,
+pre.shiki code,
+pre.shiki code * {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+  font-size: 13px !important;
+  line-height: 1.6 !important;
+  font-variant-ligatures: none !important;
+}
+
+/* Remove any remaining inline margins/paddings from rangi */
+.adapter-shiki pre {
+  margin: 0 !important;
+  padding: 1.25rem 1.5rem !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow-x: auto !important;
+}
