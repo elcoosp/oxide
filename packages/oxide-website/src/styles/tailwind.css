@@ -151,24 +151,17 @@ h3 { font-size: clamp(1.25rem, 2vw, 1.5rem); font-weight: 500; line-height: 1.3;
 
 
 
-/* [wr182] rangi: target the actual .shiki div */
-/* rangi outputs: <div class="shiki language-tsx" style="...">
-   The style attr has margin:10px 0; padding:30px 20px; font:Consolas...
-   We override with !important on the div directly. */
 
-.adapter-shiki {
-  background: var(--color-panel);
-  overflow: hidden;
-}
 
-/* Override the outer rangi div (the one with .shiki class) */
-.adapter-shiki > div > .shiki,
+/* [wr183] rangi .shiki final */
+/* rangi emits <div class="shiki" style="white-space:pre;margin:10px 0;padding:30px 20px;...">
+   Our CSS must beat that inline style. !important wins over inline styles. */
+
 .adapter-shiki .shiki {
   margin: 0 !important;
   padding: 1.5rem !important;
   background: var(--color-panel) !important;
   border-radius: 0 !important;
-  box-shadow: none !important;
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace !important;
   font-size: 13px !important;
   line-height: 1.6 !important;
@@ -178,7 +171,6 @@ h3 { font-size: clamp(1.25rem, 2vw, 1.5rem); font-weight: 500; line-height: 1.3;
   text-shadow: none !important;
 }
 
-/* Inner code/pre also mono */
 .adapter-shiki .shiki code,
 .adapter-shiki .shiki pre,
 .adapter-shiki .shiki span {
@@ -186,7 +178,7 @@ h3 { font-size: clamp(1.25rem, 2vw, 1.5rem); font-weight: 500; line-height: 1.3;
   background: transparent !important;
 }
 
-/* If rangi uses pre/code directly */
+/* Also target pre.shiki in case rangi changes output */
 .adapter-shiki pre.shiki,
 .adapter-shiki pre {
   margin: 0 !important;
@@ -205,18 +197,16 @@ h3 { font-size: clamp(1.25rem, 2vw, 1.5rem); font-weight: 500; line-height: 1.3;
   background: transparent !important;
 }
 
-/* Terminal command prompt */
 .copy-install code {
   font-family: 'JetBrains Mono', ui-monospace, monospace !important;
 }
 
-/* Scrollbar */
-.adapter-shiki pre::-webkit-scrollbar,
-.adapter-shiki .shiki::-webkit-scrollbar {
+.adapter-shiki .shiki::-webkit-scrollbar,
+.adapter-shiki pre::-webkit-scrollbar {
   height: 8px;
 }
-.adapter-shiki pre::-webkit-scrollbar-thumb,
-.adapter-shiki .shiki::-webkit-scrollbar-thumb {
+.adapter-shiki .shiki::-webkit-scrollbar-thumb,
+.adapter-shiki pre::-webkit-scrollbar-thumb {
   background: var(--color-border);
   border-radius: 4px;
 }
