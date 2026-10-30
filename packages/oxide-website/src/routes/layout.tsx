@@ -34,7 +34,7 @@ export default function RootLayout({ children }: Props) {
       <div className="scroll-progress" aria-hidden="true" />
       <header className="sticky top-0 z-50 w-full border-b border-zinc-800 bg-[#09090b]/80 backdrop-blur-md">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <a href="/" className="flex items-center gap-2.5 group">
+          <a data-ox-reload href="/" className="flex items-center gap-2.5 group">
             <span className="flex items-center justify-center w-10 h-10 rounded-full bg-zinc-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.6),0_0_0_1px_rgba(250,250,250,0.08),0_2px_8px_rgba(0,0,0,0.4)] group-hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_0_0_1px_rgba(228,86,49,0.4),0_2px_12px_rgba(228,86,49,0.3)] transition-all duration-300">
               <img src="/logo.png" alt="Oxide" className="w-8 h-8 object-contain" />
             </span>
@@ -45,8 +45,8 @@ export default function RootLayout({ children }: Props) {
 
           <nav className="flex items-center gap-8">
             <div className="hidden md:flex items-center gap-6">
-              <a href="/docs" className="text-sm font-medium text-zinc-400 hover:text-zinc-50 transition-colors">Docs</a>
-              <a href="/blog" className="text-sm font-medium text-zinc-400 hover:text-zinc-50 transition-colors">Blog</a>
+              <a data-ox-reload href="/docs" className="text-sm font-medium text-zinc-400 hover:text-zinc-50 transition-colors">Docs</a>
+              <a data-ox-reload href="/blog" className="text-sm font-medium text-zinc-400 hover:text-zinc-50 transition-colors">Blog</a>
             </div>
             <a href={site.repo} target="_blank" rel="noopener" className="flex items-center gap-2 text-sm font-medium text-zinc-300 bg-zinc-800/50 hover:bg-zinc-800 border border-zinc-700/50 hover:border-zinc-600 px-4 py-1.5 rounded-lg transition-all">
               <Github size={16} />
@@ -63,7 +63,7 @@ export default function RootLayout({ children }: Props) {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-12 mb-16">
 
             <div className="col-span-1 md:col-span-1">
-              <a href="/" className="flex items-center gap-2.5 group">
+              <a data-ox-reload href="/" className="flex items-center gap-2.5 group">
             <span className="flex items-center justify-center w-10 h-10 rounded-full bg-zinc-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.6),0_0_0_1px_rgba(250,250,250,0.08),0_2px_8px_rgba(0,0,0,0.4)] group-hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_0_0_1px_rgba(228,86,49,0.4),0_2px_12px_rgba(228,86,49,0.3)] transition-all duration-300">
               <img src="/logo.png" alt="Oxide" className="w-8 h-8 object-contain" />
             </span>
@@ -79,9 +79,9 @@ export default function RootLayout({ children }: Props) {
             <div>
               <h4 className="font-mono text-xs tracking-widest uppercase text-zinc-300 mb-4 font-semibold">Product</h4>
               <ul className="space-y-3 text-sm text-zinc-500">
-                <li><a href="/docs" className="hover:text-[#e45631] transition-colors">Documentation</a></li>
-                <li><a href="/docs/getting-started" className="hover:text-[#e45631] transition-colors">Getting Started</a></li>
-                <li><a href="/blog" className="hover:text-[#e45631] transition-colors">Blog</a></li>
+                <li><a data-ox-reload href="/docs" className="hover:text-[#e45631] transition-colors">Documentation</a></li>
+                <li><a data-ox-reload href="/docs/getting-started" className="hover:text-[#e45631] transition-colors">Getting Started</a></li>
+                <li><a data-ox-reload href="/blog" className="hover:text-[#e45631] transition-colors">Blog</a></li>
               </ul>
             </div>
 
@@ -89,7 +89,7 @@ export default function RootLayout({ children }: Props) {
               <h4 className="font-mono text-xs tracking-widest uppercase text-zinc-300 mb-4 font-semibold">Community</h4>
               <ul className="space-y-3 text-sm text-zinc-500">
                 <li><a href={site.repo} className="flex items-center gap-2 hover:text-[#e45631] transition-colors"><Github size={16} /> GitHub</a></li>
-                <li><a href="/rss" className="hover:text-[#e45631] transition-colors">RSS Feed</a></li>
+                <li><a data-ox-reload href="/rss" className="hover:text-[#e45631] transition-colors">RSS Feed</a></li>
                 <li><a href={`${site.repo}/blob/main/LICENSE-MIT`} className="hover:text-[#e45631] transition-colors">MIT License</a></li>
                 <li><a href={`${site.repo}/blob/main/LICENSE-APACHE`} className="hover:text-[#e45631] transition-colors">Apache-2.0 License</a></li>
               </ul>
