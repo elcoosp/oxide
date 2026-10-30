@@ -18,6 +18,18 @@ interface Props {
   adapters: Adapter[];
 }
 
+function stripShikiStyle(html: string): string {
+  // rangi emits <div class="shiki ..." style="..."> with layout baked in.
+  // Strip the style attr so CSS rules apply cleanly. Keep inner <span style="color:...">
+  // tokens — those carry the syntax colors we want to keep.
+  return html.replace(/<(div|pre)\b([^>]*)>/g, (match, tag, attrs) => {
+    if (/class="[^"]*shiki/.test(attrs)) {
+      return `<${tag}${attrs.replace(/\s+style="[^"]*"/, '')}>`;
+    }
+    return match;
+  });
+}
+
 export default function AdapterTabs({ adapters }: Props) {
   const [activeId, setActiveId] = useState(adapters[0]?.id);
   const current = adapters.find(a => a.id === activeId) ?? adapters[0];
@@ -33,11 +45,11 @@ export default function AdapterTabs({ adapters }: Props) {
   // `.shiki` class names and inline `style="color:..."` attributes on tokens,
   // so any existing shiki CSS keeps working. The `.shiki` class in the DOM
   // is intentional — that's how rangi ships.
-  const highlightedHtml = codeToHtml(current.snippet, {
+  const highlightedHtml = stripShikiStyle(codeToHtml(current.snippet, {
     lang,
     theme: githubDark,
     lineNumbers: false,
-  });
+  }));
 
   return (
     <div className="max-w-[1080px] mx-auto border border-zinc-800 rounded-[10px] overflow-hidden">
