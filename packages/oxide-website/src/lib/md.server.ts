@@ -9,7 +9,8 @@
 // paragraphs, -/* and 1. lists, pipe tables, > blockquotes, ``` fences,
 // --- rules, inline `code`, **bold**, [links](https://… or /relative).
 import { getCollection, getEntry } from '@oxide-fw/core/server'
-import { createHighlighter } from 'rangi'
+import { codeToHtml } from 'rangi'
+import { githubDark as oxideTheme } from 'rangi/themes'
 
 
 export interface Frontmatter {
