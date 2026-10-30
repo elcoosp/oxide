@@ -1,6 +1,3 @@
-import '@fontsource/jetbrains-mono/400.css';
-import '@fontsource/jetbrains-mono/500.css';
-import '@fontsource/jetbrains-mono/700.css';
 // src/routes/layout.tsx — root layout (§8.2). The adapter shell owns the
 // <html>/<body> document; layouts compose the app chrome around pages.
 // Importing the stylesheet here is enough: the bundler hashes it through
