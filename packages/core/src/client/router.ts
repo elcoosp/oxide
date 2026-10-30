@@ -197,6 +197,9 @@ export function createRouter(opts: RouterOptions): Router {
     if (target && target !== '_self') return false
     const href = a.getAttribute('href')
     if (!href) return false
+    // [wr203] data-ox-reload forces a full-page navigation (SSR is more
+    // reliable than CSR right now). Same effect as Ctrl+Click on a link.
+    if (a.hasAttribute('data-ox-reload')) return false // forced full reload
     if (a.hasAttribute('data-ox-link')) return true // forced interception
     try {
       return new URL(href, location.href).origin === new URL(location.href).origin
