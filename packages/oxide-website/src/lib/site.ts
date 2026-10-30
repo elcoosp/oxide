@@ -29,6 +29,5 @@ export const nav = [
 
 export const footerLinks = [
   { href: site.repo, label: 'GitHub' },
-  { href: site.repo + '/blob/main/HANDOFF.md', label: 'HANDOFF' },
   { href: '/rss', label: 'RSS' },
 ] as const

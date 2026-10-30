@@ -103,6 +103,7 @@ pub struct AdapterPageRenderer {
     /// construction site; without it the page renders unstyled, which is
     /// exactly the failure mode that shipped before this fix.
     client_manifest: Option<Arc<serde_json::Value>>,
+    manifest_path: Option<std::path::PathBuf>,
 }
 
 impl AdapterPageRenderer {
@@ -110,7 +111,7 @@ impl AdapterPageRenderer {
     /// a `LazyFrameworkRenderer` via `build_stack` that defers config
     /// evaluation to the first render; tests can substitute a fake.
     pub fn new(inner: Arc<dyn FrameworkRenderer>) -> Self {
-        Self { inner, client_manifest: None }
+        Self { inner, client_manifest: None, manifest_path: None }
     }
 
     /// Attach the client manifest so the renderer can emit the stylesheet
@@ -123,6 +124,11 @@ impl AdapterPageRenderer {
         self
     }
 
+    pub fn with_manifest_path(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.manifest_path = Some(path.into());
+        self
+    }
+
     /// Append `<link rel="stylesheet">` entries for the route's CSS chunks.
     /// `input.head` is the JSON object the JS adapter merges
     /// (`packages/*/src/render.ts`); each entry is `{href, rel}`.
@@ -131,7 +137,37 @@ impl AdapterPageRenderer {
         if input.route.starts_with("__oxide_") {
             return;
         }
-        let Some(manifest) = self.client_manifest.as_ref() else { return };
+        // [wr101] Fallback: when manifest is absent, scan dist/client/*.css
+        // (this is the dev case — the bundler-written manifest has no css entry).
+        let manifest_owned: Option<Arc<serde_json::Value>> = match self.client_manifest.as_ref() {
+            Some(m) => Some(Arc::clone(m)),
+            None => self.manifest_path.as_ref().and_then(|p| {
+                std::fs::read_to_string(p).ok()
+                    .and_then(|txt| serde_json::from_str::<serde_json::Value>(&txt).ok())
+                    .map(Arc::new)
+            }),
+        };
+
+        let use_disk_scan = manifest_owned.as_ref().and_then(|m| m.get("routes")).is_none();
+
+        if use_disk_scan {
+            let Some(path) = self.manifest_path.as_ref() else { return };
+            let Some(dir) = path.parent() else { return };
+            let Ok(entries) = std::fs::read_dir(dir) else { return };
+            let Some(link) = input.head.get_mut("link").and_then(|v| v.as_array_mut()) else { return };
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("tailwind-") && name.ends_with(".css") {
+                    let href = format!("/client/{}", name);
+                    if !link.iter().any(|v| v.get("href").and_then(|h| h.as_str()) == Some(href.as_str())) {
+                        link.push(serde_json::json!({ "href": href, "rel": "stylesheet" }));
+                    }
+                }
+            }
+            return;
+        }
+
+        let Some(manifest) = manifest_owned.as_ref() else { return };
         let Some(routes) = manifest.get("routes").and_then(|r| r.as_object()) else {
             return;
         };
@@ -685,6 +721,9 @@ pub async fn build_framework_stack(
             };
             Some(Arc::new({
                 let mut renderer = AdapterPageRenderer::new(Arc::new(lazy));
+            if let Some(root) = project_root.as_ref() {
+                renderer = renderer.with_manifest_path(root.join("dist/client/client.manifest.json"));
+            }
                 // The client manifest names the CSS chunk each route's
                 // entries depend on. Best-effort: dev has no dist/ until the
                 // first build, and a stylesheet-less project legitimately

@@ -854,9 +854,9 @@ fn alt_svc_for(port: u16) -> &'static str {
 pub fn csp_header(mode: &str, nonce: &str) -> String {
     match mode {
         "strict" => format!(
-            "default-src 'self'; script-src 'self' 'nonce-{nonce}' 'strict-dynamic'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'"
+            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'nonce-{nonce}' 'strict-dynamic'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'"
         ),
-        "hash" => "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'".into(),
+        "hash" => "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'".into(),
         _ => String::new(),
     }
 }

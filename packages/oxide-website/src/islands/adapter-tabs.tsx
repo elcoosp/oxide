@@ -1,100 +1,84 @@
-// src/islands/adapter-tabs.tsx — one engine, four frameworks.
-//
-// Switching tabs is a same-document navigation in miniature. Where the View
-// Transitions API exists (Baseline since Oct 2025) the panel crossfades from
-// its old geometry to its new one; elsewhere the switch is instant, which is
-// the correct fallback — a missing transition is invisible, a broken one is
-// not.
-//
-// Reduced motion collapses both paths to the instant switch, per W3C C39:
-// the information (which adapter is selected) still arrives, only the trip is
-// skipped.
+import { useState, useEffect } from 'react';
+import type { Highlighter } from 'shiki';
 
-import { useCallback, useMemo, useState } from 'react'
-import { supportsViewTransitions, useReducedMotion } from '../lib/motion.ts'
+interface Adapter { id: string; label: string; note: string; snippet: string; }
+interface Props { adapters: Adapter[]; }
 
-export interface Adapter {
-  id: string
-  label: string
-  snippet: string
-  note: string
+let highlighterPromise: Promise<Highlighter> | null = null;
+function getHighlighter() {
+  if (!highlighterPromise) {
+    highlighterPromise = import('shiki').then(m =>
+      m.createHighlighter({
+        themes: ['github-dark-dimmed'],
+        langs: ['tsx', 'vue', 'svelte', 'js']
+      })
+    );
+  }
+  return highlighterPromise;
 }
 
-interface Props {
-  adapters: Adapter[]
+function escapeHtml(s: string) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }
 
 export default function AdapterTabs({ adapters }: Props) {
-  const firstId = adapters[0]?.id ?? ''
-  const [active, setActive] = useState<string>(firstId)
-  const reduced = useReducedMotion()
+  const [activeId, setActiveId] = useState(adapters[0]?.id);
+  const [html, setHtml] = useState('');
 
-  const current = useMemo<Adapter | undefined>(
-    () => adapters.find((a) => a.id === active) ?? adapters[0],
-    [adapters, active],
-  )
+  const current = adapters.find(a => a.id === activeId) ?? adapters[0];
 
-  const select = useCallback((id: string) => {
-    if (id === active) return
-    if (!reduced && supportsViewTransitions()) {
-      const doc = document as Document & {
-        startViewTransition?: (cb: () => void) => unknown
-      }
-      if (typeof doc.startViewTransition === 'function') {
-        doc.startViewTransition(() => setActive(id))
-        return
-      }
-    }
-    setActive(id)
-  }, [active, reduced])
+  useEffect(() => {
+    let cancelled = false;
+    if (!current) return;
 
-  const onKeyDown = useCallback((e: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (adapters.length === 0) return
-    const i = adapters.findIndex((x) => x.id === active)
-    const at = i < 0 ? 0 : i
-    if (e.key === 'ArrowRight') {
-      e.preventDefault()
-      const next = adapters[(at + 1) % adapters.length]
-      if (next) select(next.id)
-    } else if (e.key === 'ArrowLeft') {
-      e.preventDefault()
-      const prev = adapters[(at - 1 + adapters.length) % adapters.length]
-      if (prev) select(prev.id)
-    }
-  }, [adapters, active, select])
+    // 1. Initial fallback (Tailwind classes)
+    setHtml(`<pre class="m-0 p-5 bg-[#22272e] rounded-[10px] overflow-x-auto font-mono text-[13px] leading-relaxed"><code class="bg-transparent">${escapeHtml(current.snippet)}</code></pre>`);
 
-  if (!current) return null
+    // 2. Shiki with Tailwind classes injected
+    getHighlighter().then(h => {
+      if (cancelled) return;
+      const lang = current.id === 'solid' ? 'tsx' : current.id;
+      const safeLang = ['tsx', 'vue', 'svelte', 'js'].includes(lang) ? lang : 'tsx';
+      const out = h.codeToHtml(current.snippet, { lang: safeLang, theme: 'github-dark-dimmed' });
+
+      const patched = out.replace(
+        /<pre class="shiki"/,
+        `<pre class="shiki m-0 p-5 rounded-[10px] overflow-x-auto font-mono text-[13px] leading-relaxed"`
+      );
+      setHtml(patched);
+    }).catch(e => console.warn('Shiki failed:', e));
+
+    return () => { cancelled = true; };
+  }, [current]);
+
+  if (!current) return null;
 
   return (
-    <div className="adapter-tabs">
-      <div className="adapter-tablist" role="tablist" aria-label="Framework adapter">
-        {adapters.map((a) => (
+    <div className="max-w-[1080px] mx-auto border border-zinc-800 rounded-[10px] overflow-hidden">
+      <div role="tablist" aria-label="Framework adapter" className="flex gap-0 p-1.5 bg-[#09090b] border-b border-zinc-800">
+        {adapters.map(a => (
           <button
             key={a.id}
             type="button"
             role="tab"
-            id={`tab-${a.id}`}
-            aria-selected={a.id === active}
+            aria-selected={activeId === a.id}
             aria-controls={`panel-${a.id}`}
-            tabIndex={a.id === active ? 0 : -1}
-            className="adapter-tab"
-            onClick={() => select(a.id)}
-            onKeyDown={onKeyDown}
+            tabIndex={activeId === a.id ? 0 : -1}
+            onClick={() => setActiveId(a.id)}
+            className={`flex-none w-max px-3.5 py-2 font-mono text-[13.5px] cursor-pointer border border-transparent rounded-[7px] transition-colors ${
+              activeId === a.id ? 'bg-zinc-900 text-zinc-50' : 'bg-transparent text-zinc-400 hover:text-zinc-200'
+            }`}
           >
             {a.label}
           </button>
         ))}
       </div>
-      <div
-        className="adapter-panel"
-        role="tabpanel"
-        id={`panel-${current.id}`}
-        aria-labelledby={`tab-${current.id}`}
-        style={{ viewTransitionName: 'adapter-panel' }}
-      >
-        <pre className="adapter-snippet"><code>{current.snippet}</code></pre>
-        <p className="adapter-note">{current.note}</p>
+
+      <div className="p-4 sm:p-5">
+        <div dangerouslySetInnerHTML={{ __html: html }} />
+        <p className="mt-4 mb-0 text-zinc-400 text-sm font-mono">{current.note}</p>
       </div>
     </div>
-  )
+  );
 }

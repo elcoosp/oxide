@@ -69,18 +69,15 @@ async fn compute_css(
     };
 
     let src_dir = root.join("src");
-    let mut files: Vec<serde_json::Value> = Vec::new();
-    collect_sources(&src_dir, &mut files).map_err(|e| bld_err(format!("walk src: {e}")))?;
-    if files.is_empty() {
-        eprintln!(
-            "oxide: tailwind plugin active but no source files found under {} — skipping",
-            src_dir.display()
-        );
-        return Ok(None);
-    }
+    // [wr104] Pass source globs so Scanner.scan() walks src/ directly.
+    let sources = vec![serde_json::json!({
+        "base": src_dir.to_string_lossy(),
+        "pattern": "**/*.{ts,tsx,js,jsx,vue,svelte,html}",
+        "negated": false
+    })];
 
     let tooling = ToolingModules::new(pool);
-    let candidates = tooling.tailwind_scan(files).await?;
+    let candidates = tooling.tailwind_scan(sources, Vec::new()).await?;
     let css_src = std::fs::read_to_string(&entry)
         .map_err(|e| bld_err(format!("read {}: {e}", entry.display())))?;
     let base = entry
@@ -103,12 +100,38 @@ async fn compute_css(
     Ok(Some((entry, out.code)))
 }
 
+/// [wr104] Fallback: if src/styles/*.css has `@import "tailwindcss"`,
+/// Tailwind is active. Catches `plugins: [tailwind()]` when the static
+/// config extractor fails on zero-arg factory calls.
+fn css_has_tailwind_import(root: &Path) -> bool {
+    // Walk src/styles recursively (future-proof) and src/styles itself.
+    fn scan_dir(dir: &Path) -> bool {
+        let Ok(entries) = std::fs::read_dir(dir) else { return false };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if scan_dir(&path) { return true; }
+                continue;
+            }
+            if !path.extension().map(|e| e == "css").unwrap_or(false) { continue; }
+            let Ok(content) = std::fs::read_to_string(&path) else { continue };
+            if content.contains("@import \"tailwindcss\"")
+                || content.contains("@import 'tailwindcss'")
+            {
+                return true;
+            }
+        }
+        false
+    }
+    scan_dir(&root.join("src/styles"))
+}
+
 pub async fn precompute(
     pool: Arc<dyn Pool>,
     cfg: &OxideConfig,
     root: &Path,
 ) -> Result<Option<TailwindOutput>, OxideError> {
-    if !has_tailwind(cfg) {
+    if !has_tailwind(cfg) && !css_has_tailwind_import(root) {
         return Ok(None);
     }
     match compute_css(pool, cfg, root).await? {

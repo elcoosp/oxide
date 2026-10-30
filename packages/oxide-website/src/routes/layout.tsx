@@ -14,8 +14,16 @@ interface Props {
 export default function RootLayout({ children }: Props) {
   return (
     <>
+      
+
       <Island component="RevealBootstrap" chunk="RevealBootstrap" strategy="visible" />
       <Island component="FrameworkTabsBootstrap" chunk="FrameworkTabsBootstrap" strategy="visible" />
+      
+      
+      
+{/* ═══ FrameworkAdapters CSS (inlined by wr14) ═══ */}
+      
+
       <div className="scroll-progress" aria-hidden="true" />
       <header className="site-header">
         <div className="container">
@@ -39,6 +47,14 @@ export default function RootLayout({ children }: Props) {
 
       <footer className="site-footer">
         <div className="container">
+        <div className="footer-close">
+          <p className="footer-close-eyebrow">Ready to ship?</p>
+          <div className="footer-close-ctas">
+            <a className="btn btn-primary" href="/docs">Get started</a>
+            <a className="btn btn-ghost" href={site.repo} rel="noopener">View source ↗</a>
+          </div>
+        </div>
+        
           <span>
             {site.name} {site.version} · {site.license}
           </span>

@@ -13,7 +13,8 @@
     "check": "oxide check",
     "analyze": "oxide analyze",
     "why": "oxide why",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "postbuild": "mkdir -p dist/client/frameworks && cp -R src/assets/frameworks/* dist/client/frameworks/"
   },
   "dependencies": {
     "@oxide-fw/core": "workspace:*",

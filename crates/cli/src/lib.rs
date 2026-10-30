@@ -1103,12 +1103,17 @@ fn bundle_env_options(args: BundleEnvArgs) -> oxide_fw_bundler::BundleOptions {
     // bundler) keeps the bundler agnostic of a project's framework — the
     // CLI is what decides a build is a production build. Without this,
     // React ships the dev build (~1 MB) into every island chunk.
+    let is_dev = std::env::var("OXIDE_DEV_MODE").is_ok();
     let mut define: BTreeMap<String, String> = BTreeMap::new();
     match env {
         oxide_fw_bundler::BundleEnv::Client => {
+            // [wr102] NODE_ENV must match dev/prod, not be hardcoded to
+            // production. Otherwise `oxide dev` ships React's minified
+            // production build and #418 becomes unreadable.
+            let env_val = if minify && !is_dev { "production" } else { "development" };
             define.insert(
                 "process.env.NODE_ENV".to_string(),
-                "\"production\"".to_string(),
+                format!("\"{env_val}\""),
             );
         }
         oxide_fw_bundler::BundleEnv::Ssr => {
@@ -1844,6 +1849,31 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // would hydrate, navigate, or load a route's JS. Build it once (unminified)
     // if the manifest is missing. A `dev` after `build` finds it and skips.
     ensure_dev_client_bundle(&rootp, &cfg, &tree, stack.tooling_pool.as_ref(), w).await?;
+
+    // [wr101] Force dev mode for React dev build
+    // SAFETY: called before worker threads spawn; env vars are process-global.
+    unsafe { std::env::set_var("OXIDE_DEV_MODE", "1"); }
+
+    // [wr106] Call precompute UNCONDITIONALLY. It self-checks:
+    //   `!has_tailwind(&cfg) && !css_has_tailwind_import(&rootp)` -> Ok(None)
+    // The old `if has_tailwind(&cfg) { ... }` guard was a bug: config
+    // extraction fails on `plugins: [tailwind()]` (extract_minimal_framework
+    // doesn't collect plugins), so has_tailwind returned false and precompute
+    // never ran — hence 19KB CSS without utilities.
+    if let Some(pool) = stack.tooling_pool.clone() {
+        match crate::tailwind::precompute(pool, &cfg, &rootp).await {
+            Ok(Some(out)) => {
+                let client_dir = rootp.join("dist/client");
+                let _ = std::fs::create_dir_all(&client_dir);
+                let hash = blake3::hash(out.css.as_bytes()).to_hex().to_string();
+                let filename = format!("tailwind-{}.css", &hash[..12]);
+                let _ = std::fs::write(client_dir.join(&filename), &out.css);
+                outln!(w, "tailwind: {} ({} bytes)", filename, out.css.len());
+            }
+            Ok(None) => {}
+            Err(e) => eprintln!("warn: tailwind precompute failed: {} {}", e.0.code, e.0.message),
+        }
+    }
     // §16.4: tell the client whether this project has message
     // catalogs, so it does not fetch one that cannot exist.
     stamp_i18n_locales(&rootp, &cfg);
@@ -10109,11 +10139,24 @@ fn stamp_i18n_locales(root: &Path, cfg: &oxide_fw_config::OxideConfig) {
     }
 }
 
+fn copy_tree(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    if !src.is_dir() { return Ok(()); }
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() { copy_tree(&src_path, &dst_path)?; }
+        else if src_path.is_file() { std::fs::copy(&src_path, &dst_path)?; }
+    }
+    Ok(())
+}
+
 fn load_client_assets(rootp: &Path) -> Option<oxide_fw_server::StaticAssets> {
     let dist = rootp.join("dist");
-    if !dist.is_dir() {
-        return None;
-    }
+    let public = rootp.join("public");
+    if public.is_dir() { let _ = copy_tree(&public, &dist); }
+    if !dist.is_dir() { return None; }
     oxide_fw_server::StaticAssets::scan(dist).ok()
 }
 

@@ -44,11 +44,10 @@ export async function ping() {
  * Returns the deduplicated sorted candidate list.
  */
 export async function scan({ sources, files }) {
-  const scanner = new Scanner({ sources: sources ?? [] })
-  if (Array.isArray(files) && files.length > 0) {
-    return scanner.scanFiles(files)
-  }
-  return scanner.scan()
+  const scanner = new Scanner({ sources: sources ?? [] });
+  // [wr104] scanner.scanFiles(content-only) returns [] in this version of
+  // @tailwindcss/oxide. scanner.scan() walks the sources globs Rust passes.
+  return scanner.scan();
 }
 
 /**
