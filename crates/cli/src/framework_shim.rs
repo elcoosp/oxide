@@ -98,6 +98,7 @@ fn tooling_pool_size() -> usize {
 /// unchanged. Errors propagate with the same `OxideError` type.
 pub struct AdapterPageRenderer {
     inner: Arc<dyn FrameworkRenderer>,
+    dev_mode: bool,
     /// The client manifest, used to look up the stylesheet(s) a route's
     /// chunks depend on. Populated by `with_client_manifest` at the CLI's
     /// construction site; without it the page renders unstyled, which is
@@ -111,7 +112,7 @@ impl AdapterPageRenderer {
     /// a `LazyFrameworkRenderer` via `build_stack` that defers config
     /// evaluation to the first render; tests can substitute a fake.
     pub fn new(inner: Arc<dyn FrameworkRenderer>) -> Self {
-        Self { inner, client_manifest: None, manifest_path: None }
+        Self { inner, client_manifest: None, manifest_path: None, dev_mode: false }
     }
 
     /// Attach the client manifest so the renderer can emit the stylesheet
@@ -137,16 +138,19 @@ impl AdapterPageRenderer {
         if input.route.starts_with("__oxide_") {
             return;
         }
+        let manifest_owned = if self.dev_mode {
+            self.manifest_path.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|txt| serde_json::from_str(&txt).ok()).map(std::sync::Arc::new)
+        } else { None };
         // [wr101] Fallback: when manifest is absent, scan dist/client/*.css
         // (this is the dev case — the bundler-written manifest has no css entry).
-        let manifest_owned: Option<Arc<serde_json::Value>> = match self.client_manifest.as_ref() {
+        let manifest_owned: Option<Arc<serde_json::Value>> = if manifest_owned.is_some() { manifest_owned } else { match self.client_manifest.as_ref() {
             Some(m) => Some(Arc::clone(m)),
             None => self.manifest_path.as_ref().and_then(|p| {
                 std::fs::read_to_string(p).ok()
                     .and_then(|txt| serde_json::from_str::<serde_json::Value>(&txt).ok())
                     .map(Arc::new)
             }),
-        };
+        } };
 
         let use_disk_scan = manifest_owned.as_ref().and_then(|m| m.get("routes")).is_none();
 
@@ -721,6 +725,8 @@ pub async fn build_framework_stack(
             };
             Some(Arc::new({
                 let mut renderer = AdapterPageRenderer::new(Arc::new(lazy));
+            let is_dev = std::env::var("OXIDE_DEV_MODE").is_ok();
+            renderer = AdapterPageRenderer { dev_mode: is_dev, ..renderer };
             if let Some(root) = project_root.as_ref() {
                 renderer = renderer.with_manifest_path(root.join("dist/client/client.manifest.json"));
             }
