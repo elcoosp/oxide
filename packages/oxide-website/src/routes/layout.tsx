@@ -71,7 +71,7 @@ export default function RootLayout({ children }: Props) {
               oxide<span className="text-[#e45631]">_</span>
             </span>
           </a>
-              <p className="text-sm text-zinc-500 leading-relaxed max-w-xs mt-0">
+              <p className="text-sm text-zinc-500 leading-relaxed max-w-xs mt-4">
                 A full-stack meta-framework with a Rust core. One engine, every framework.
               </p>
             </div>
