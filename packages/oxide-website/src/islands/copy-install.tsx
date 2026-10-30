@@ -27,11 +27,15 @@ export default function CopyInstall({ command }: Props) {
   }, [command])
 
   return (
-    <div className="flex items-center justify-between w-full mt-4 bg-[#09090b] border border-zinc-800 rounded-lg p-1.5 pl-4">
-      <code className="font-mono text-sm text-zinc-300">
-        {command}
-      </code>
+    <div className="flex items-center justify-between w-full bg-[#09090b] border border-zinc-800 rounded-lg p-2 pl-4">
 
+      {/* Command side with $ */}
+      <div className="flex items-center gap-3 font-mono text-sm">
+        <span className="text-[#e45631] select-none">$</span>
+        <code className="text-zinc-300">{command}</code>
+      </div>
+
+      {/* Copy Button */}
       <button
         type="button"
         onClick={onClick}
