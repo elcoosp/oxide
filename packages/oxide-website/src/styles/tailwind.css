@@ -155,9 +155,11 @@ h3 { font-size: clamp(1.25rem, 2vw, 1.5rem); font-weight: 500; line-height: 1.3;
 
 
 
-/* [wr188] Clean shiki styling + self-hosted font */
 
-/* Self-hosted JetBrains Mono — files served from /fonts/*.woff2 (in public/) */
+
+/* [wr189] rangi shj-* final */
+
+/* Self-hosted JetBrains Mono */
 @font-face {
   font-family: 'JetBrains Mono';
   font-style: normal;
@@ -180,32 +182,48 @@ h3 { font-size: clamp(1.25rem, 2vw, 1.5rem); font-weight: 500; line-height: 1.3;
   src: url('/fonts/jetbrains-mono-latin-700-normal.woff2') format('woff2');
 }
 
-/* Global mono — wins over Tailwind preflight's ui-monospace */
-code, pre, kbd, samp {
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+/* Global mono */
+code, pre, kbd, samp, .font-mono {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-/* Shiki block — inline style is stripped in JS, so plain CSS applies */
+/* Adapter shiki wrapper */
 .adapter-shiki {
   background: var(--color-panel);
-  border-radius: 0;
 }
 
-.adapter-shiki .shiki {
+/* The actual rangi output div — class is shj-lang-tsx, shj-lang-vue, etc.
+   Style attr is stripped in JS, so plain CSS wins. */
+.adapter-shiki [class*="shj-lang-"],
+.adapter-shiki .shj-multiline {
   margin: 0;
   padding: 1.5rem;
   background: transparent;
   border-radius: 0;
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  box-shadow: none;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px;
+  font-weight: 400;
   line-height: 1.6;
   white-space: pre;
   overflow-x: auto;
   color-scheme: dark;
+  text-shadow: none;
 }
 
-.adapter-shiki .shiki code,
-.adapter-shiki .shiki span {
+/* Inner wrappers rangi adds (also had inline styles, also stripped) */
+.adapter-shiki [class*="shj-lang-"] > div,
+.adapter-shiki [class*="shj-lang-"] > div > div {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  background: transparent;
+  overflow-x: auto;
+}
+
+/* Every span token */
+.adapter-shiki [class*="shj-lang-"] span,
+.adapter-shiki [class*="shj-lang-"] * {
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   background: transparent;
 }
@@ -216,12 +234,10 @@ code, pre, kbd, samp {
 }
 
 /* Scrollbar */
-.adapter-shiki .shiki::-webkit-scrollbar,
-.adapter-shiki pre::-webkit-scrollbar {
+.adapter-shiki [class*="shj-lang-"]::-webkit-scrollbar {
   height: 8px;
 }
-.adapter-shiki .shiki::-webkit-scrollbar-thumb,
-.adapter-shiki pre::-webkit-scrollbar-thumb {
+.adapter-shiki [class*="shj-lang-"]::-webkit-scrollbar-thumb {
   background: var(--color-border);
   border-radius: 4px;
 }
