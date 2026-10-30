@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-@theme {
+@theme static {
   --color-bg: #09090b;
   --color-bg2: #18181b;
   --color-panel: #18181b;
@@ -47,12 +47,12 @@ h3 { font-size: clamp(1.25rem, 2vw, 1.5rem); font-weight: 500; line-height: 1.3;
 
 /* Buttons */
 .btn {
-  display: inline-flex; align-items: center; justify-content: center;
-  font-family: var(--font-mono); font-size: 0.8125rem; font-weight: 600;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 0.8125rem; font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.05em;
   padding: 0.75rem 1.5rem; border-radius: 4px;
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   border: 1px solid transparent; text-decoration: none; cursor: pointer;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .btn-primary { background-color: var(--color-accent); color: #ffffff !important; box-shadow: inset 0 1px 0 rgba(255,255,255,0.2); }
 .btn-primary:hover { background-color: color-mix(in oklab, var(--color-accent) 85%, black); transform: translateY(-1px); box-shadow: 0 4px 12px color-mix(in oklab, var(--color-accent) 30%, transparent), inset 0 1px 0 rgba(255,255,255,0.2); }
@@ -240,4 +240,25 @@ code, pre, kbd, samp, .font-mono {
 .adapter-shiki [class*="shj-lang-"]::-webkit-scrollbar-thumb {
   background: var(--color-border);
   border-radius: 4px;
+}
+
+/* [wr195] Force JetBrains Mono on every mono element */
+.font-mono,
+code, pre, kbd, samp, textarea, input[type="text"], input[type="search"],
+.btn,
+.copy-install code,
+.pipeline-num,
+.pipeline-title,
+.pipeline-detail,
+.fa-eyebrow,
+.fa-title,
+.fa-caps,
+.fa-label,
+.fa-num,
+.orbit-label,
+.adapter-shiki,
+.adapter-shiki *,
+.adapter-shiki .shj-lang-tsx,
+.adapter-shiki .shj-multiline {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
