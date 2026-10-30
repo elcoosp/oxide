@@ -172,45 +172,66 @@ h3 { font-size: clamp(1.25rem, 2vw, 1.5rem); font-weight: 500; line-height: 1.3;
 
 
 
-/* [wr169] Heavy spring & font enforcement */
 
-/* Highly bouncy spring keyframe */
-@keyframes heavy-spring {
-  0%   { opacity: 0; transform: translateY(40px) scale(0.95); }
-  50%  { opacity: 1; transform: translateY(-6px) scale(1.02); }
-  75%  { transform: translateY(3px) scale(0.99); }
-  100% { opacity: 1; transform: translateY(0) scale(1); }
+
+/* [wr170] Reliable scroll fade-in */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-@supports (animation-timeline: view()) {
-  /* Target the Features articles and Pipeline steps specifically */
-  article[data-reveal],
-  .pipeline-step {
-    animation: heavy-spring linear both;
-    animation-timeline: view();
-    /* Entry 0% to 60% of the element entering viewport */
-    animation-range: entry 0% entry 60%;
-  }
+/* Base state: hidden only if the browser hasn't revealed it yet */
+[data-reveal] {
+  opacity: 0;
+}
 
-  /* Stagger Feature articles slightly so they cascade */
-  article[data-reveal]:nth-child(1) { animation-range: entry 0% entry 50%; }
-  article[data-reveal]:nth-child(2) { animation-range: entry 5% entry 55%; }
-  article[data-reveal]:nth-child(3) { animation-range: entry 10% entry 60%; }
-  article[data-reveal]:nth-child(4) { animation-range: entry 15% entry 65%; }
-  article[data-reveal]:nth-child(5) { animation-range: entry 20% entry 70%; }
-  article[data-reveal]:nth-child(6) { animation-range: entry 25% entry 75%; }
+/* Animation triggers when RevealBootstrap sets data-revealed="true" */
+[data-reveal][data-revealed="true"] {
+  animation: fade-in-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Stagger grid items */
+.post-card:nth-child(1) { animation-delay: 0.1s; }
+.post-card:nth-child(2) { animation-delay: 0.2s; }
+.post-card:nth-child(3) { animation-delay: 0.3s; }
+
+/* Style the CopyInstall button inside the terminal */
+.copy-install {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+.copy-install-cmd {
+  color: var(--color-text);
+  font-family: var(--font-mono);
+}
+.copy-install-btn {
+  background: var(--color-bg2);
+  border: 1px solid var(--color-border);
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.copy-install-btn:hover {
+  background: var(--color-panel);
+  color: var(--color-text);
+  border-color: var(--color-muted);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * { animation: none !important; }
-  article[data-reveal], .pipeline-step { opacity: 1 !important; transform: none !important; }
-}
-
-/* Global font hard-lock */
-*, ::before, ::after {
-  --tw-font-mono: "JetBrains Mono", ui-monospace, monospace;
-}
-
-code, pre, kbd, samp, .font-mono {
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+  [data-reveal] { opacity: 1 !important; transform: none !important; animation: none !important; }
 }
