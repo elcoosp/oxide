@@ -56,19 +56,16 @@ export default function Page(props: Props) {
                 <span className="ml-4 text-xs font-mono text-zinc-500">bash</span>
               </div>
               <div className="p-5 font-mono text-sm">
-                <div className="flex items-center mb-4">
-                  <span className="text-[#e45631] mr-2">$</span>
-                  <span className="text-zinc-200">pnpm create oxide my-app</span>
+                <div className="flex items-center text-zinc-200 mb-6">
+                  <span className="text-[#e45631] mr-3">$</span>
+                  <Island component="CopyInstall" chunk="CopyInstall" strategy="visible" props={{ command: 'pnpm create oxide my-app' }}>
+                    <CopyInstall command="pnpm create oxide my-app" />
+                  </Island>
                 </div>
-                <div className="text-zinc-500 mb-4 text-xs">
+                <div className="text-zinc-500 text-xs leading-relaxed">
                   Or from source: <br/>
-                  <span className="text-zinc-300">git clone https://github.com/elcoosp/oxide</span> <br/>
-                  <span className="text-zinc-300">cargo build --release -p oxide-fw-cli</span>
-                </div>
-                <div className="mt-4">
-                   <Island component="CopyInstall" chunk="CopyInstall" strategy="visible" props={{ command: 'pnpm create oxide my-app' }}>
-                      <CopyInstall command="pnpm create oxide my-app" />
-                   </Island>
+                  <span className="text-zinc-400 select-all">git clone https://github.com/elcoosp/oxide</span> <br/>
+                  <span className="text-zinc-400 select-all">cargo build --release -p oxide-fw-cli</span>
                 </div>
               </div>
             </div>
