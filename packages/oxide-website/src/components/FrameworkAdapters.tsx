@@ -17,15 +17,6 @@ export const FrameworkAdapters: FC = () => {
 
       <div className="relative max-w-5xl mx-auto px-6 flex flex-col items-center">
 
-        <div className="text-center mb-16 relative z-20">
-          <span className="font-mono text-[10px] tracking-[0.3em] uppercase text-[#e45631] mb-2 block">
-            Shared Engine
-          </span>
-          <h2 className="font-mono text-3xl sm:text-4xl font-medium tracking-tight text-white">
-            One Core. Every Framework.
-          </h2>
-        </div>
-
         {/* ORBITAL SCENE */}
         <div className="orbit-container relative w-[300px] h-[300px] sm:w-[500px] sm:h-[500px] flex items-center justify-center my-4 cursor-crosshair">
 
