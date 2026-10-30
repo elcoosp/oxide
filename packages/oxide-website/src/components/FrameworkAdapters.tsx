@@ -1,6 +1,5 @@
 import type { FC } from 'react';
 
-const CAPABILITIES = ['routing', 'data', 'caching', 'bundling', 'serving', 'deployment'] as const;
 const ADAPTERS = [
   { id: 'react',  label: 'React',  src: '/frameworks/react.png'  },
   { id: 'vue',    label: 'Vue',    src: '/frameworks/vue.png'    },
@@ -8,40 +7,75 @@ const ADAPTERS = [
   { id: 'solid',  label: 'Solid',  src: '/frameworks/solid.png'  },
 ];
 
-export const FrameworkAdapters: FC = () => (
-  <section className="py-24 bg-[radial-gradient(circle,rgba(250,250,250,0.05)_1px,transparent_1px)] bg-[size:24px_24px] [mask-image:radial-gradient(ellipse_78%_62%_at_50%_50%,#000_25%,transparent_92%)]">
-    <div className="max-w-4xl mx-auto grid gap-12 px-4">
-
-      <div className="relative grid justify-items-center gap-4 p-8 sm:p-12 border border-zinc-800 rounded-xl bg-gradient-to-b from-zinc-500/10 to-transparent overflow-hidden">
-        <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-zinc-400/30 to-transparent" />
-        <span className="font-mono text-[10px] tracking-[0.28em] uppercase text-zinc-400">SHARED ENGINE</span>
-        <h2 className="m-0 font-mono text-5xl font-medium tracking-tight text-zinc-50 leading-none">Rust Core</h2>
-        <ul className="flex flex-wrap justify-center gap-x-3 gap-y-1 mt-4 p-0 list-none font-mono text-[11px] tracking-widest uppercase text-zinc-400">
-          {CAPABILITIES.map((c, i) => (
-            <li key={c} className="inline-flex items-baseline gap-3">
-              {c}
-              {i < CAPABILITIES.length - 1 && <span className="text-zinc-600">·</span>}
-            </li>
-          ))}
-        </ul>
+export const FrameworkAdapters: FC = () => {
+  return (
+    <section className="relative py-32 overflow-hidden bg-[#09090b]">
+      {/* Background ambient glow */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div className="w-[600px] h-[600px] bg-[#e45631] rounded-full blur-[150px] opacity-[0.04] mix-blend-screen" />
       </div>
 
-      <ul className="grid grid-cols-2 sm:grid-cols-4 gap-6 list-none p-0 m-0">
-        {ADAPTERS.map(a => (
-          <li key={a.id} className="group grid justify-items-center gap-4">
-            <span className="relative grid place-items-center w-[4.25rem] h-[4.25rem] rounded-full bg-zinc-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.55),0_0_0_1px_rgba(250,250,250,0.1),0_0_24px_-6px_rgba(228,86,49,0.22),0_6px_18px_-8px_rgba(0,0,0,0.55)] transition-all duration-300 group-hover:-translate-y-1 group-hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_0_0_1px_rgba(228,86,49,0.55),0_0_32px_-4px_rgba(228,86,49,0.45),0_10px_24px_-8px_rgba(0,0,0,0.7)]">
-              <img src={a.src} alt="" width={36} height={36} loading="lazy" className="relative z-10 w-9 h-9 object-contain transition-transform duration-300 group-hover:scale-105" />
-            </span>
-            <span className="font-mono text-xs tracking-wider text-zinc-400 transition-colors group-hover:text-zinc-50">{a.label}</span>
-          </li>
-        ))}
-      </ul>
+      <div className="relative max-w-5xl mx-auto px-6 flex flex-col items-center">
 
-      <p className="inline-flex items-baseline gap-4 justify-self-start m-0 font-mono text-[11px] tracking-widest uppercase text-zinc-400">
-        <span className="text-zinc-600 tracking-[0.22em]">FIG. 01</span>
-        <span>One engine. Four adapters. Identical by design.</span>
-      </p>
+        <div className="text-center mb-16 relative z-20">
+          <span className="font-mono text-[10px] tracking-[0.3em] uppercase text-[#e45631] mb-2 block">
+            Shared Engine
+          </span>
+          <h2 className="font-mono text-3xl sm:text-4xl font-medium tracking-tight text-white">
+            One Core. Every Framework.
+          </h2>
+        </div>
 
-    </div>
-  </section>
-);
+        {/* ORBITAL SCENE */}
+        <div className="orbit-container relative w-[300px] h-[300px] sm:w-[500px] sm:h-[500px] flex items-center justify-center my-4 cursor-crosshair">
+
+          {/* CENTRAL REACTOR CORE */}
+          <div className="absolute z-10 flex items-center justify-center w-24 h-24 sm:w-32 sm:h-32 rounded-full bg-zinc-900 border border-zinc-700 shadow-[0_0_80px_rgba(228,86,49,0.3)]">
+            <div className="absolute inset-0 rounded-full bg-[#e45631]/20 animate-ping-slow" />
+            <div className="relative z-10 w-16 h-16 sm:w-20 sm:h-20 bg-white rounded-full flex items-center justify-center shadow-[inset_0_-5px_15px_rgba(0,0,0,0.3)] border border-white/50">
+              <img src="/logo.png" alt="Oxide Core" className="w-10 h-10 sm:w-14 sm:h-14 object-contain contrast-125" />
+            </div>
+          </div>
+
+          {/* INNER ORBIT (React, Svelte) */}
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[180px] h-[180px] sm:w-[260px] sm:h-[260px] rounded-full border border-zinc-800 animate-spin-slow">
+
+            {/* React (Top) */}
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-spin-slow-reverse flex flex-col items-center gap-2 group">
+              <div className="orbit-logo-tile"><img src={ADAPTERS[0].src} alt="React" /></div>
+              <span className="orbit-label">{ADAPTERS[0].label}</span>
+            </div>
+
+            {/* Svelte (Bottom) */}
+            <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 animate-spin-slow-reverse flex flex-col items-center gap-2 group">
+              <div className="orbit-logo-tile"><img src={ADAPTERS[2].src} alt="Svelte" /></div>
+              <span className="orbit-label">{ADAPTERS[2].label}</span>
+            </div>
+          </div>
+
+          {/* OUTER ORBIT (Vue, Solid) */}
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[280px] h-[280px] sm:w-[420px] sm:h-[420px] rounded-full border border-zinc-800 border-dashed animate-spin-slow-reverse">
+
+            {/* Vue (Left) */}
+            <div className="absolute top-1/2 left-0 -translate-x-1/2 -translate-y-1/2 animate-spin-slow flex flex-col items-center gap-2 group">
+              <div className="orbit-logo-tile"><img src={ADAPTERS[1].src} alt="Vue" /></div>
+              <span className="orbit-label">{ADAPTERS[1].label}</span>
+            </div>
+
+            {/* Solid (Right) */}
+            <div className="absolute top-1/2 right-0 translate-x-1/2 -translate-y-1/2 animate-spin-slow flex flex-col items-center gap-2 group">
+              <div className="orbit-logo-tile"><img src={ADAPTERS[3].src} alt="Solid" /></div>
+              <span className="orbit-label">{ADAPTERS[3].label}</span>
+            </div>
+          </div>
+
+        </div>
+
+        <p className="mt-12 font-mono text-[11px] tracking-[0.2em] uppercase text-zinc-500 flex items-center gap-4 relative z-20">
+          <span className="text-[#e45631]">◉</span>
+          Identical by design.
+        </p>
+      </div>
+    </section>
+  );
+};
