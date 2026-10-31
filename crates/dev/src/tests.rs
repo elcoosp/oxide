@@ -155,9 +155,7 @@ fn hmr_messages_roundtrip_through_json_all_variants() {
         .at(Location::file("app.tsx", 3, 5))
         .with_fix("fix it");
     let msgs = vec![
-        HmrMessage::ModuleUpdate {
-            path: "app.tsx".into(),
-        },
+        HmrMessage::ModuleUpdate { path: "app.tsx".into(), url: String::new() },
         HmrMessage::CssUpdate {
             path: "a.css".into(),
             code: ".a{color:red}".into(),

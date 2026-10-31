@@ -210,6 +210,12 @@ pub enum HmrMessage {
     /// module-swap HMR) is a post-v0.1 track.
     ModuleUpdate {
         path: String,
+        /// Dev-ESM mode: the URL the browser fetched (`/src/...`) so the
+        /// client's HMR runtime can reload the module (Phase 2) or perform
+        /// an in-place React Refresh (Phase 3). Absent in the bundler mode
+        /// (legacy messages deserialize with an empty string).
+        #[serde(default)]
+        url: String,
     },
     CssUpdate {
         path: String,
@@ -826,3 +832,34 @@ pub use dev_server::{
 
 #[cfg(test)]
 mod tests;
+
+
+#[cfg(test)]
+mod esm_module_update_tests {
+    use super::*;
+
+    #[test]
+    fn module_update_url_deserializes_default() {
+        // A legacy message (no `url`) must still parse — the URL is optional.
+        let raw = r#"{"type":"module-update","path":"src/routes/foo/page.tsx"}"#;
+        let m: HmrMessage = serde_json::from_str(raw).unwrap();
+        match m {
+            HmrMessage::ModuleUpdate { path, url } => {
+                assert_eq!(path, "src/routes/foo/page.tsx");
+                assert_eq!(url, "");
+            }
+            _ => panic!("expected ModuleUpdate"),
+        }
+    }
+
+    #[test]
+    fn module_update_roundtrips_with_url() {
+        let m = HmrMessage::ModuleUpdate {
+            path: "src/routes/foo/page.tsx".to_string(),
+            url: "/src/routes/foo/page.tsx".to_string(),
+        };
+        let j = m.to_json();
+        let back = HmrMessage::from_json(&j).unwrap();
+        assert_eq!(m, back);
+    }
+}

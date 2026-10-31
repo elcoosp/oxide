@@ -197,7 +197,23 @@ export function applyHmrMessage(msg: HmrMessage, opts: HmrOptions = {}): boolean
       return true
     }
     case 'module-update': {
-      opts.onModuleUpdate?.(String(msg.path ?? ''))
+      const path = String(msg.path ?? '')
+      const url = typeof msg.url === 'string' ? msg.url : ''
+      // ESM dev: `url` is the source URL the browser fetched, so route the
+      // reload through the HMR runtime's `reloadModule`. Phase 2 does a full
+      // page reload; Phase 3 upgrades that to React Refresh in place.
+      const hmr = (globalThis as { __oxide_hmr__?: { reloadModule?: (u: string) => Promise<void> } }).__oxide_hmr__
+      if (url && typeof hmr?.reloadModule === 'function') {
+        void hmr.reloadModule(url)
+        return true
+      }
+      if (opts.onModuleUpdate) {
+        opts.onModuleUpdate(path)
+        return true
+      }
+      // No URL and no callback: fall back to a full reload.
+      const reload = opts.reload ?? (() => (globalThis as { location?: { reload(): void } }).location?.reload())
+      reload?.()
       return true
     }
     case 'server-module-swap':

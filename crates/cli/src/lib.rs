@@ -2535,7 +2535,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 tracing::info!("lockfile change — resolver epoch bump");
             }
             invalidate_framework_modules(&hmr_pool, &rootp).await;
-            let needs_client_rebuild = events.iter().any(|e| {
+            let needs_client_rebuild = !cfg.dev.esm && events.iter().any(|e| {
                 let p = match e {
                     oxide_fw_dev::FileEvent::Modified(p)
                     | oxide_fw_dev::FileEvent::Created(p)
@@ -2718,6 +2718,26 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                 format!("rebuild failed for {pstr}: {err_msg}"),
                             );
                             hub.publish(HmrMessage::Error { diagnostic: diag });
+                        } else if cfg.dev.esm {
+                            // Native ESM mode: no bundle to rebuild. Publish a
+                            // URL the browser fetched. Phase 2 routes this
+                            // through `__oxide_hmr__.reloadModule`, which does
+                            // a full page reload; Phase 3 upgrades to an
+                            // in-place React Refresh.
+                            let root_str = rootp.to_string_lossy();
+                            let rel = pstr.strip_prefix(root_str.as_ref()).unwrap_or(&pstr);
+                            let rel_slash = rel.replace('\\', "/");
+                            let trimmed = rel_slash.trim_start_matches('/');
+                            if trimmed.starts_with("src/") {
+                                hub.publish(HmrMessage::ModuleUpdate {
+                                    path: pstr,
+                                    url: format!("/{trimmed}"),
+                                });
+                            } else {
+                                hub.publish(HmrMessage::FullReload {
+                                    reason: format!("rebuild skipped for non-src file {pstr}"),
+                                });
+                            }
                         } else if client_rebuilt {
                             hub.publish(HmrMessage::FullReload {
                                 reason: format!("rebuilt client bundle after {pstr}"),

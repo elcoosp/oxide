@@ -17,6 +17,11 @@ import { setRouteComponentSource, isParamSegment, type ClientManifestLike } from
 import { attachDeferGlue, type DeferGlue } from './defer-glue.ts'
 import type { FrameworkAdapter } from '../types.ts'
 import { loadMessages, setMessageLocales } from './messages.ts'
+// Side-effect import: installs `globalThis.__oxide_hmr__` in
+// the browser so any module that reads `import.meta.hot` (including
+// files served by the native ESM dev server) sees a live handle. A
+// no-op in Node (SSR / config loader).
+import './hot.ts'
 
 interface BootState {
   adapter?: FrameworkAdapter
