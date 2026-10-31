@@ -1474,10 +1474,43 @@ async fn ensure_dev_client_bundle(
 ) -> anyhow::Result<()> {
     let dist = rootp.join("dist");
     let client_out = dist.join("client");
-    if client_out.join("client.manifest.json").is_file() {
-        return Ok(());
+    let manifest_path = client_out.join("client.manifest.json");
+
+    let mut needs_build = !manifest_path.is_file();
+    if !needs_build {
+        // Check if any source file is newer than the manifest
+        let manifest_mtime = manifest_path.metadata().and_then(|m| m.modified()).unwrap_or_else(|_| std::time::SystemTime::now());
+        let src_dir = rootp.join(&cfg.routes.dir);
+        let mut stack = vec![src_dir];
+        while let Some(dir) = stack.pop() {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    if let Ok(ft) = entry.file_type() {
+                        if ft.is_dir() {
+                            stack.push(entry.path());
+                        } else if ft.is_file() {
+                            if let Ok(m) = entry.metadata() {
+                                if let Ok(t) = m.modified() {
+                                    if t > manifest_mtime {
+                                        needs_build = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if needs_build { break; }
+        }
     }
-    build_client_bundle(rootp, cfg, tree, pool, w).await
+
+    if needs_build {
+        tracing::info!("ensure_dev_client_bundle: source is newer than manifest or missing — rebuilding");
+        build_client_bundle(rootp, cfg, tree, pool, w).await
+    } else {
+        Ok(())
+    }
 }
 
 async fn build_client_bundle(
@@ -1487,6 +1520,7 @@ async fn build_client_bundle(
     pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
     w: Writer<'_>,
 ) -> anyhow::Result<()> {
+    tracing::info!("DIAG build_client_bundle ENTRY");
     let dist = rootp.join("dist");
     let client_out = dist.join("client");
 
@@ -1678,11 +1712,30 @@ async fn build_client_bundle(
 /// then re-reads by content hash, so no worker restart or cache clear is
 /// needed.
 fn is_client_source(path: &Path, rootp: &Path) -> bool {
-    let s = path.to_string_lossy().to_ascii_lowercase();
-    if s.ends_with(".server.ts") || s.ends_with(".server.tsx") { return false; }
+    let lower = path.to_string_lossy().to_ascii_lowercase();
+    let result;
+    if lower.ends_with(".server.ts") || lower.ends_with(".server.tsx") {
+        result = false;
+        tracing::info!(path = %path.display(), reason = "server-ext", "DIAG is_client_source");
+        return result;
+    }
     if !matches!(path.extension().and_then(|e| e.to_str()),
-                 Some("ts") | Some("tsx") | Some("js") | Some("jsx") | Some("vue") | Some("svelte") | Some("mjs") | Some("cjs")) { return false; }
-    path.starts_with(rootp.join("src"))
+                 Some("ts") | Some("tsx") | Some("js") | Some("jsx") | Some("vue") | Some("svelte") | Some("mjs") | Some("cjs")) {
+        result = false;
+        tracing::info!(path = %path.display(), ext = ?path.extension(), reason = "bad-ext", "DIAG is_client_source");
+        return result;
+    }
+    let canon_root = std::fs::canonicalize(rootp).unwrap_or_else(|_| rootp.to_path_buf());
+    let canon_src = canon_root.join("src");
+    let canon_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    result = canon_path.starts_with(&canon_src);
+    tracing::info!(
+        path = %canon_path.display(),
+        src = %canon_src.display(),
+        result = result,
+        "DIAG is_client_source"
+    );
+    result
 }
 
 fn content_source_changed(
@@ -2463,6 +2516,11 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 };
                 is_client_source(p, &rootp) && !matches!(oxide_fw_dev::hmr_behavior(oxide_fw_dev::classify_path(&p.to_string_lossy())), oxide_fw_dev::HmrBehavior::RestartSubsystems)
             });
+            tracing::info!(
+                n_events = events.len(),
+                needs_client_rebuild = needs_client_rebuild,
+                "DIAG watcher decision"
+            );
             if needs_client_rebuild {
                 let live_tree = started.swappable_tree.load();
                 match build_client_bundle(&rootp, &cfg, &live_tree, hmr_tooling_pool.as_ref(), w).await {
