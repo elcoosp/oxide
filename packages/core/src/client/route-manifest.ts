@@ -110,6 +110,31 @@ function segmentsOf(path: string): string[] {
 }
 
 /**
+ * Normalize a single dynamic-segment token to the manifest's spelling.
+ *
+ * The scanner keeps `[name]` / `[...name]` verbatim in route IDs
+ * (`routes/blog/[slug]`), but the client manifest normalizes them to
+ * `_name_` (`routes/blog/_slug_/page`) — see the basename normalization in
+ * `crates/jshost/src/lib.rs`. SSR's ODF payload and `window.__oxide` still
+ * carry the source spelling, so {@link routeIdFor} receives the label form
+ * and must normalize before matching manifest keys. Otherwise a label like
+ * `routes/docs/[page]` never resolves against the manifest's
+ * `routes/docs/_page_/page`, `tryRealRender` logs "route not matched in
+ * manifest", and client navigation falls back to the IR renderer — the
+ * symptom is a 404 page on CSR while a hard reload (SSR path) works.
+ *
+ * Idempotent on already-normalized / non-dynamic segments.
+ */
+function normalizeDynamicSegment(seg: string): string {
+  if (seg.startsWith('[') && seg.endsWith(']') && seg.length > 2) {
+    const inner = seg.slice(1, -1)
+    const name = inner.startsWith('...') ? inner.slice(3) : inner
+    if (name.length > 0) return `_${name}_`
+  }
+  return seg
+}
+
+/**
  * Does a manifest key's segment list match a URL's segment list?
  *
  * Matching rules (§8.4, the same contract the CLI's loading-map keys use):
@@ -167,12 +192,30 @@ export function routeIdFor(routeRef: unknown, manifest: ClientManifestLike): str
   const isPageKey = (k: string): boolean => k === 'routes/index/page' || /^routes\/.+\/page$/.test(k)
   // (1) Exact key.
   if (routes[ref] !== undefined && isPageKey(ref)) return ref
-  // (2) Label form: manifest key minus `/page`.
-  if (!ref.endsWith('/page') && isPageKey(`${ref}/page`) && routes[`${ref}/page`] !== undefined) {
-    return `${ref}/page`
+  // Normalize dynamic segments to the manifest spelling so the label form
+  // (`routes/docs/[page]`, what /__data and window.__oxide carry) resolves
+  // against the manifest key (`routes/docs/_page_/page`). Without this, the
+  // label form never matched a manifest key and every client-side navigation
+  // fell back to the IR renderer — the 404 a hard reload (SSR) didn't show.
+  const normalizedRef = segmentsOf(ref).map(normalizeDynamicSegment).join('/')
+  // (2) Label form: manifest key minus `/page`. Prefer the normalized
+  // spelling (manifest's canonical form), fall back to the literal ref for
+  // older manifests that kept `[name]` verbatim.
+  if (!ref.endsWith('/page') && normalizedRef.length > 0) {
+    const canonical = `${normalizedRef}/page`
+    if (routes[canonical] !== undefined && isPageKey(canonical)) return canonical
+    if (normalizedRef !== ref) {
+      const literal = `${ref}/page`
+      if (routes[literal] !== undefined && isPageKey(literal)) return literal
+    }
   }
-  // (3) URL path segment-match against `routes/<…>/page` keys.
+  // (3) URL path segment-match against `routes/<…>/page` keys. Strip the
+  // `routes/` prefix from the label form (manifest key bodies never include
+  // it) and normalize any remaining dynamic segments.
   let urlSegs = segmentsOf(ref.replace(/^\/+/, ''))
+  if (urlSegs.length > 0 && urlSegs[0] === 'routes') {
+    urlSegs = urlSegs.slice(1).map(normalizeDynamicSegment)
+  }
   // The root URL `/` (and the bare `routes/index` label) map to the
   // scanner's root page id `routes/index/page`.
   if (ref === '/' || ref === '' || ref === 'routes/index' || ref === 'index') urlSegs = []
