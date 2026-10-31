@@ -24,7 +24,6 @@ export default function RootLayout({ children }: Props) {
       
 
       <Island component="RevealBootstrap" chunk="RevealBootstrap" strategy="visible" />
-      <Island component="FrameworkTabsBootstrap" chunk="FrameworkTabsBootstrap" strategy="visible" />
       
       
       

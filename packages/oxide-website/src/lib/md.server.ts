@@ -28,6 +28,8 @@ export interface PostMeta {
   tags: string[]
 }
 
+export type DocBlock = MdBlock
+
 export interface DocMeta {
   slug: string
   title: string
@@ -96,9 +98,11 @@ function mustEl<T>(arr: readonly T[], i: number): T {
 // Setup Shiki once per build session
 
 
-export async function mdToHtml(md: string): Promise<string> {
+export type MdBlock = string | { type: 'framework-tabs'; data: Record<string, string> }
+
+export async function mdToHtml(md: string): Promise<MdBlock[]> {
   const lines = md.replace(/\r\n/g, '\n').split('\n')
-  const out: string[] = []
+  const out: MdBlock[] = []
   let i = 0
   while (i < lines.length) {
     const line = mustEl(lines, i)
@@ -223,7 +227,7 @@ export async function mdToHtml(md: string): Promise<string> {
     }
     out.push(`<p>${para.map(inline).join(' ')}</p>`)
   }
-  return out.join('\n')
+  return out
 }
 
 function fmString(v: unknown, fallback = ''): string {
@@ -253,7 +257,7 @@ export async function listPosts(): Promise<PostMeta[]> {
 
 export async function readPost(
   slug: string,
-): Promise<{ meta: PostMeta; html: string } | null> {
+): Promise<{ meta: PostMeta; html: MdBlock[] } | null> {
   if (!SLUG_RE.test(slug)) return null
   const hit = await getEntry('blog', slug)
   if (!hit) return null
@@ -283,7 +287,7 @@ export async function listDocs(): Promise<DocMeta[]> {
 
 export async function readDoc(
   slug: string,
-): Promise<{ meta: DocMeta; html: string } | null> {
+): Promise<{ meta: DocMeta; html: MdBlock[] } | null> {
   if (!SLUG_RE.test(slug)) return null
   const hit = await getEntry('docs', slug)
   if (!hit) return null
