@@ -268,8 +268,26 @@ pub fn classify_path(path: &str) -> ChangeKind {
         } else {
             ChangeKind::ServerModule
         }
-    } else if lower.contains("oxide.config") || lower.contains("routes/") {
+    } else if lower.contains("oxide.config") {
         ChangeKind::ConfigOrRoutes
+    } else if lower.contains("routes/") {
+        // Only route-structural files change the tree. A CONTENT edit to
+        // `page.tsx` / `layout.tsx` / etc. is a component change: the route
+        // still exists, only the module body changed. Files like
+        // `doc-body.tsx` under `routes/` are shared components and were
+        // previously (incorrectly) triggering a full route-tree rescan.
+        let fname = lower.rsplit('/').next().unwrap_or("");
+        let is_structural = [
+            "page.", "layout.", "error.", "not-found.", "loading.",
+            "template.", "route.", "socket.",
+        ]
+        .iter()
+        .any(|p| fname.starts_with(p));
+        if is_structural {
+            ChangeKind::ConfigOrRoutes
+        } else {
+            ChangeKind::Component
+        }
     } else {
         ChangeKind::Component
     }

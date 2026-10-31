@@ -1653,16 +1653,22 @@ async fn build_client_bundle(
         }
         Err(e) => {
             // A failed dev bundle is reported but not fatal: the SSR-only
-            // page still serves (no client hydration), and the error overlay
-            // surfaces the diagnostic. A hard failure here would stop `dev`
-            // on a project that only has a syntax error in one component.
+            // page still serves (no client hydration). But the caller MUST
+            // know it failed — publishing `FullReload` after a failed
+            // rebuild is what causes "flash of change then revert": the
+            // browser reloads, gets fresh SSR HTML, then hydrates with the
+            // OLD client bundle that was never overwritten.
             outln!(
                 w,
-                "dev: client bundle failed ({} {}); pages serve without hydration",
+                "dev: client bundle failed ({} {}); NOT publishing FullReload",
                 e.0.code,
                 e.0.message
             );
-            Ok(())
+            Err(anyhow::anyhow!(
+                "dev client bundle failed: {} {}",
+                e.0.code,
+                e.0.message
+            ))
         }
     }
 }
