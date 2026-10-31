@@ -575,3 +575,119 @@ mod tests {
         assert_eq!(lang_for("a.mjs"), "js");
     }
 }
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+
+    fn state(tmp: &Path) -> EsmDevState {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "@oxide-fw/core/client/hot".to_string(),
+            "/@prebundle/@oxide-fw/core/dist/client-hot.js".to_string(),
+        );
+        map.insert("react".to_string(), "/@prebundle/react.js".to_string());
+        EsmDevState {
+            root: tmp.to_path_buf(),
+            jsx_import_source: None,
+            rewrite_map: Arc::new(map),
+        }
+    }
+
+    #[test]
+    fn refuses_server_module_with_403() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = state(tmp.path());
+        let resp = serve_source_file(&s, "routes/page.server.ts");
+        assert_eq!(resp.status, 403);
+    }
+
+    #[test]
+    fn missing_source_is_404() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = state(tmp.path());
+        let resp = serve_source_file(&s, "routes/page.tsx");
+        assert_eq!(resp.status, 404);
+    }
+
+    #[test]
+    fn css_is_404() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = state(tmp.path());
+        let resp = serve_source_file(&s, "styles/global.css");
+        assert_eq!(resp.status, 404);
+    }
+
+    #[test]
+    fn tsx_is_transformed_and_react_rewritten() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src/routes");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(
+            src.join("page.tsx"),
+            "import React from 'react';\nexport default function Page() {\n  return <div>hi</div>;\n}\n",
+        )
+        .unwrap();
+        let s = state(tmp.path());
+        let resp = serve_source_file(&s, "routes/page.tsx");
+        assert_eq!(resp.status, 200, "expected 200, got {}", resp.status);
+        let body = String::from_utf8_lossy(&resp.body[..]).into_owned();
+        assert!(
+            body.contains("/@prebundle/react.js"),
+            "react import not rewritten: {body}"
+        );
+        assert!(
+            !body.contains("from 'react'"),
+            "bare react import survived: {body}"
+        );
+        assert!(
+            body.contains("import.meta.hot"),
+            "missing HMR preamble or accept call: {body}"
+        );
+    }
+
+    #[test]
+    fn prebundle_missing_is_404() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = state(tmp.path());
+        let resp = serve_prebundle(&s, "react.js");
+        assert_eq!(resp.status, 404);
+    }
+
+    #[test]
+    fn esm_error_returns_throwing_module() {
+        let resp = serve_esm_error("some%20failed%20module");
+        assert_eq!(resp.status, 200);
+        let body = String::from_utf8_lossy(&resp.body[..]).into_owned();
+        assert!(
+            body.starts_with("throw new Error("),
+            "expected throwing module, got: {body}"
+        );
+        assert!(body.contains("some failed module"));
+    }
+
+    #[test]
+    fn build_manifest_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut components = BTreeMap::new();
+        components.insert(
+            "routes/index".to_string(),
+            "/src/routes/page.tsx".to_string(),
+        );
+        build_esm_manifest(tmp.path(), &components).unwrap();
+        let raw = std::fs::read_to_string(tmp.path().join(MANIFEST_PATH)).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(v["build_id"], "dev-esm");
+        assert_eq!(
+            v["routes"]["routes/index"]["component"],
+            "/src/routes/page.tsx"
+        );
+    }
+
+    #[test]
+    fn prebundle_empty_packages_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        prebundle_cjs_deps(tmp.path(), &[]).unwrap();
+        assert!(tmp.path().join(PREBUNDLE_DIR).is_dir());
+    }
+}
