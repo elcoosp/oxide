@@ -1,5 +1,7 @@
 import { useEffect } from 'react'
 import { useReducedMotion } from '../lib/motion.ts'
+import { codeToHtml } from 'rangi'
+import { githubDark } from 'rangi/themes'
 
 const STORAGE_KEY = 'oxide:framework'
 const SYNC_EVENT = 'oxide:framework-change'
@@ -22,19 +24,6 @@ function parseSnippets(el: HTMLElement): Record<Lang, string> | null {
     if (!parsed || LANGS.some((l) => typeof parsed[l] !== 'string')) return null
     return parsed as Record<Lang, string>
   } catch { return null }
-}
-
-let highlighterPromise: Promise<any> | null = null
-function getHighlighter() {
-  if (!highlighterPromise) {
-    highlighterPromise = import('shiki').then(m =>
-      m.createHighlighter({
-        themes: ['github-dark-dimmed'],
-        langs: ['tsx', 'vue', 'svelte', 'js', 'bash']
-      })
-    )
-  }
-  return highlighterPromise
 }
 
 function build(el: HTMLElement, snippets: Record<Lang, string>, active: Lang, reduced: boolean) {
@@ -78,21 +67,16 @@ function build(el: HTMLElement, snippets: Record<Lang, string>, active: Lang, re
     moveIndicator()
 
     try {
-      const h = await getHighlighter()
-      if (active !== next) return
       const lang = next === 'solid' ? 'tsx' : next
-      const html = h.codeToHtml(snippets[active], { lang, theme: 'github-dark-dimmed' })
+      const html = codeToHtml(snippets[active], { lang, theme: githubDark })
       const parsed = new DOMParser().parseFromString(html, 'text/html')
-      const newCode = parsed.querySelector('code')
-      if (newCode && active === next) {
-        code.innerHTML = newCode.innerHTML
-        // Apply the background color from Shiki to the panel
-        const newPre = parsed.querySelector('pre')
-        if (newPre && newPre.style.backgroundColor) {
-          panel.style.backgroundColor = newPre.style.backgroundColor
-        }
+      const shj = parsed.querySelector('[class*="shj-lang-"]')
+      if (shj && active === next) {
+        code.innerHTML = shj.innerHTML
+        const bg = (shj as HTMLElement).style.backgroundColor
+        if (bg) panel.style.backgroundColor = bg
       }
-    } catch (e) { console.warn('Shiki failed', e) }
+    } catch (e) { console.warn('rangi failed', e) }
 
     if (persist) {
       try { localStorage.setItem(STORAGE_KEY, active) } catch {}
