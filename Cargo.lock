@@ -4849,6 +4849,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "oxc_resolver",
  "oxide-fw-adapters",
  "oxide-fw-assets",
  "oxide-fw-bundler",

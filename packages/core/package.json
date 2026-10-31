@@ -80,6 +80,10 @@
       "types": "./dist/test.d.ts",
       "default": "./dist/test.js"
     },
+    "./client/hot": {
+      "types": "./dist/client-hot.d.ts",
+      "default": "./dist/client-hot.js"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {

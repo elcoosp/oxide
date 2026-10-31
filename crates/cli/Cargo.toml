@@ -17,6 +17,7 @@ path = "src/main.rs"
 
 [dependencies]
 chrono = { workspace = true }
+oxc_resolver = { workspace = true }
 reqwest = { workspace = true }
 image = { workspace = true }
 mimalloc = { workspace = true }

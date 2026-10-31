@@ -21,3 +21,9 @@ export {
   type ClientManifestLike, type RouteComponentSource, type RouteManifestEntry,
 } from './route-manifest.ts'
 export * from './search.ts'
+
+// Phase 1 (Native ESM dev server): re-export the HMR runtime's public type.
+// The `hot.ts` module side-effect (`install()`) is guarded so importing it
+// is a no-op outside a browser. Type-only re-export means `client.js`
+// never imports `client-hot.js` at runtime.
+export { type HotContext } from './hot.ts'

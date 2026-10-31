@@ -26,7 +26,8 @@ export default defineConfig({
     "image-sizes": "./src/image-sizes.ts",
     "odf-encode": "./src/odf-encode.ts",
     "types": "./src/types.ts",
-    "test": "./src/test.ts"
+    "test": "./src/test.ts",
+    "client-hot": "./src/client/hot.ts"
   },
   format: ['esm'],
   external: [/^node:/],

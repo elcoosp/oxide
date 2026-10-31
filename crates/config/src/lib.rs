@@ -612,12 +612,51 @@ impl Default for BuildConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct DevConfig {
     pub bundle: bool,
     pub https: bool,
     pub proxy: BTreeMap<String, String>,
+    /// Native ESM dev server (Phase 1 of the HMR design in
+    /// `docs/ideas/hmr.md`). When `true`, `oxide dev` skips the client
+    /// bundler and serves `.tsx`/`.ts` source files directly as transformed
+    /// ESM (Oxc, ~8ms per file). The client manifest points
+    /// `componentFor` at `/src/*.tsx` URLs, which the existing client
+    /// runtime already handles via `import(url)`.
+    ///
+    /// Default `false` through Phases 1-2 (opt-in for testing).
+    /// Flips to `true` in Phase 4 once React Refresh is proven.
+    ///
+    /// Rollback: `dev: { esm: false }` in `oxide.config.ts`, or set
+    /// `OXIDE_ESM=0` in the environment.
+    pub esm: bool,
+    /// Packages to bundle once at dev startup from CJS to ESM. Each entry
+    /// is served from `.oxide/esm-prebundle/<name>.js` and referenced by
+    /// the importmap. `react`, `react-dom/client` and `react/jsx-runtime`
+    /// must be prebundled because their published entries are CJS and the
+    /// browser cannot execute them natively.
+    pub prebundle: Vec<String>,
+}
+
+impl Default for DevConfig {
+    fn default() -> Self {
+        Self {
+            bundle: false,
+            https: false,
+            proxy: BTreeMap::new(),
+            // Phase 1-2: opt-in. Phase 4 flips this to `true`.
+            esm: false,
+            prebundle: vec![
+                "react".into(),
+                "react-dom/client".into(),
+                "react/jsx-runtime".into(),
+                "lucide-react".into(),
+                "rangi".into(),
+                "rangi/themes".into(),
+            ],
+        }
+    }
 }
 
 /// SPEC-16 / §14.2: detect the nearest monorepo workspace root above `dir`.

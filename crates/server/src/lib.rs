@@ -3820,7 +3820,16 @@ impl Pipeline {
         // for the dispatch path; a static hit returns before rules run.
         let mut rule_headers: Vec<(String, String)> = Vec::new();
         let is_get_head = matches!(req.method.to_ascii_uppercase().as_str(), "GET" | "HEAD");
+        // Native ESM dev server: `/src/*` and `/@*` are served by the CLI's
+        // dispatch intercept (see `crates/cli/src/esm_dev.rs`), never by the
+        // static-asset store. Without this guard, `StaticAssets::serve`
+        // would fall through to the disk (dev fallback) and try to read
+        // `<root>/src/foo.tsx` — the raw TSX, not the transformed ESM.
+        let is_dev = std::env::var("OXIDE_DEV").is_ok()
+            || std::env::var("OXIDE_DEV_MODE").is_ok();
+        let is_esm_path = is_dev && (path.starts_with("/src/") || path.starts_with("/@"));
         if is_get_head
+            && !is_esm_path
             && (path_has_extension(&path) || path.starts_with("/_oxide/static"))
             && let Some(assets) = &self.assets
             && let Some(resp) = assets.serve(req, &path)

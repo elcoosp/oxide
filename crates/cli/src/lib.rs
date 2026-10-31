@@ -1869,8 +1869,18 @@ fn rebuild_stale_workspace_packages(rootp: &std::path::Path) {
         if !src.is_dir() { continue; }
         let dist_time = dist.metadata().and_then(|m| m.modified()).ok();
         let src_time = src.metadata().and_then(|m| m.modified()).ok();
-        let (Some(dt), Some(st)) = (dist_time, src_time) else { continue };
-        if st > dt {
+        // Three-way match: a package whose `dist/` doesn't exist at all
+        // (fresh clone, `.gitignore`d build artifacts) but whose `src/` does
+        // is a workspace package that has never been built. The previous
+        // two-way match skipped it silently, so `oxide dev` served a stale
+        // (or missing) `dist/client-hot.js` and hot.ts imports failed with
+        // ERR_MODULE_NOT_FOUND.
+        let needs = match (dist_time, src_time) {
+            (None, Some(_)) => true,
+            (Some(dt), Some(st)) => st > dt,
+            _ => false,
+        };
+        if needs {
             to_rebuild.push(pkg);
         }
     }
