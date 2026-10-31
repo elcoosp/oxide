@@ -497,6 +497,20 @@ pub struct ServerRoute {
 /// The bundler trait (D3 isolation point; Rolldown slots in here).
 pub trait Bundler: Send + Sync {
     fn bundle(&self, options: &BundleOptions) -> Result<BundleOutput>;
+
+    /// Incremental rebuild when the caller knows which files changed.
+    /// `changed = None` means "do a full rebuild" (initial call or a
+    /// change whose scope is unknown). The default impl falls back to
+    /// `bundle` so a non-incremental backend (`ChunkBundler`) still
+    /// compiles and behaves correctly.
+    fn bundle_incremental(
+        &self,
+        options: &BundleOptions,
+        changed: Option<&[std::path::PathBuf]>,
+    ) -> Result<BundleOutput> {
+        let _ = changed;
+        self.bundle(options)
+    }
 }
 
 #[derive(Debug, Clone, Default)]
