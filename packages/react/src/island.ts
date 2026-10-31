@@ -69,6 +69,7 @@ export function Island({
   return createElement(
     'ox-island',
     {
+      suppressHydrationWarning: true,
       'data-ox-island': component,
       'data-ox-chunk': chunk,
       'data-ox-strategy': strategyAttr(strategy),

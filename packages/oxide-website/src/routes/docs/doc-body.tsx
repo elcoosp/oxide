@@ -22,6 +22,7 @@ export default function DocBody({ doc }: { doc?: Doc }) {
       <div className="breadcrumb">docs / {doc.meta.title.toLowerCase()}</div>
       <h1 style={{ fontSize: 34, letterSpacing: '-1px', margin: '0 0 10px' }}>{doc.meta.title}</h1>
       <p style={{ color: 'var(--muted)', margin: '0 0 8px' }}>{doc.meta.description}</p>
+
       <div className="prose">
         {doc.html.map((block, i) => {
           if (typeof block === 'string') {
@@ -35,7 +36,11 @@ export default function DocBody({ doc }: { doc?: Doc }) {
               note: META[id].note,
               snippet: block.data[id] || ''
             }))
-            return <AdapterTabs key={i} adapters={adapters} />
+            return (
+              <div key={i} className="not-prose my-8">
+                <AdapterTabs adapters={adapters} />
+              </div>
+            )
           }
           return null
         })}

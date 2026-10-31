@@ -2,10 +2,6 @@ import { useState } from 'react';
 import { codeToHtml } from 'rangi';
 import { githubDark } from 'rangi/themes';
 
-
-// rangi emits <pre style="margin:10px 0; padding:30px 20px; background:#0d1117; ...">
-// Inline styles beat every class rule. Strip the style attr in the HTML
-// string so our CSS owns layout completely.
 interface Adapter {
   id: string;
   label: string;
@@ -18,13 +14,7 @@ interface Props {
   adapters: Adapter[];
 }
 
-
-
 function stripShikiStyle(html: string): string {
-  // rangi v2.2.0 emits <div class="shj-lang-tsx shj-multiline" style="...">
-  // with layout baked in (margin:10px 0; padding:30px 20px; font:18px Consolas).
-  // Strip style="" from any <div> that carries a shj-* class. Inner <span style="color:...">
-  // tokens keep their colors — those are what we want.
   return html.replace(/<div\b([^>]*)>/g, (match, attrs) => {
     if (/class="[^"]*shj-/.test(attrs)) {
       return `<div${attrs.replace(/\s+style="[^"]*"/, '')}>`;
@@ -39,20 +29,24 @@ export default function AdapterTabs({ adapters }: Props) {
 
   if (!current) return null;
 
+  // rangi does not natively support 'vue' or 'svelte', map them to 'html' to prevent crashes.
   const lang = current.id === 'solid' ? 'tsx'
-             : current.id === 'vue' ? 'vue'
-             : current.id === 'svelte' ? 'svelte'
+             : current.id === 'vue' ? 'html'
+             : current.id === 'svelte' ? 'html'
              : 'tsx';
 
-  // Note: rangi is a shiki-compatible highlighter. It emits the same
-  // `.shiki` class names and inline `style="color:..."` attributes on tokens,
-  // so any existing shiki CSS keeps working. The `.shiki` class in the DOM
-  // is intentional — that's how rangi ships.
-  const highlightedHtml = stripShikiStyle(codeToHtml(current.snippet, {
-    lang,
-    theme: githubDark,
-    lineNumbers: false,
-  }));
+  let highlightedHtml = '';
+  try {
+    highlightedHtml = stripShikiStyle(codeToHtml(current.snippet, {
+      lang,
+      theme: githubDark,
+      lineNumbers: false,
+    }));
+  } catch (e) {
+    console.error('rangi highlight failed:', e);
+    const escaped = current.snippet.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    highlightedHtml = `<pre><code>${escaped}</code></pre>`;
+  }
 
   return (
     <div className="max-w-[1080px] mx-auto border border-zinc-800 rounded-[10px] overflow-hidden">
@@ -63,7 +57,7 @@ export default function AdapterTabs({ adapters }: Props) {
             type="button"
             role="tab"
             aria-selected={activeId === a.id}
-            onClick={() => { console.log("tab click", a.id); setActiveId(a.id); }}
+            onClick={() => setActiveId(a.id)}
             className={`inline-flex items-center gap-2 px-3 py-2 font-mono text-[13px] cursor-pointer border border-transparent rounded-[7px] transition-colors ${
               activeId === a.id
                 ? 'bg-zinc-900 text-zinc-50'
@@ -71,11 +65,11 @@ export default function AdapterTabs({ adapters }: Props) {
             }`}
           >
             {a.logo && (
-              <span className="flex items-center justify-center w-[18px] h-[18px] rounded-full overflow-hidden shrink-0"
-                style={{ backgroundColor: '#ffffff', padding: '2px' }}>
+              <span className="flex items-center justify-center w-[18px] h-[18px] rounded-full bg-zinc-200 overflow-hidden shrink-0">
                 <img
                   src={a.logo}
                   alt=""
+                  className="tab-logo"
                   width={12}
                   height={12}
                   style={{ width: '12px', height: '12px', objectFit: 'contain' }}

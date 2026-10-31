@@ -261,8 +261,14 @@ export function bootWithRouter(
   //     `window.__oxide` (pure SPA, or non-SSR HTML) still gets island
   //     hydration here.
   try {
-    hydrateIslands({ doc, adapter, loadChunk })
-    loadScripts({ doc })
+    // Defer island hydration to the next microtask so React's hydrateRoot()
+    // runs first. hydrateIslands() injects `data-ox-hydrated="done"` into the
+    // DOM, which causes React to throw a hydration mismatch if it runs before
+    // the root has finished hydrating.
+    Promise.resolve().then(() => {
+      hydrateIslands({ doc, adapter, loadChunk })
+      loadScripts({ doc })
+    })
   } catch (e) {
     console.error?.('oxide: island hydration failed', e)
   }
