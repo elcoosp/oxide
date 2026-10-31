@@ -2207,45 +2207,21 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     ) {
         if let Some(pool) = pool.as_ref() {
             let host = oxide_fw_jshost::FrameworkHost::new(std::sync::Arc::clone(pool));
-            // BUG: `invalidate()` dispatches to ONE worker (round-robin via
-            // pool.call). With N>1 workers, N-1 keep serving stale modules
-            // after every source edit. The SSR HTML then renders pre-edit
-            // content while the client bundle is rebuilt — a hydration
-            // mismatch: the user sees the change flash, then revert.
-            //
-            // Loop `invalidate()` N times (N = worker count). The pool's
-            // least-loaded dispatch will hit every worker in turn (the
-            // first call bumps worker 0's in_flight, the second picks
-            // worker 1, etc.).
-            let n_workers = pool.stats().workers.max(1) as usize;
-            let mut max_generation = 0u64;
-            let mut failed = 0usize;
-            for _ in 0..n_workers {
-                match host.invalidate().await {
-                    Ok(generation) => max_generation = max_generation.max(generation),
-                    Err(e) => {
-                        failed += 1;
-                        tracing::warn!(
-                            code = %e.0.code,
-                            error = %e.0.message,
-                            "invalidate failed for a worker",
-                        );
+            match host.invalidate_all().await {
+                Ok(generation) => {
+                    let gen_path = root.join(".oxide").join("hmr-generation");
+                    if let Some(parent) = gen_path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
                     }
+                    let _ = std::fs::write(&gen_path, generation.to_string());
+                    tracing::debug!(generation, "framework modules invalidated on ALL workers");
                 }
+                Err(e) => tracing::warn!(
+                    code = %e.0.code,
+                    error = %e.0.message,
+                    "framework invalidate_all failed",
+                ),
             }
-            if max_generation > 0 {
-                let gen_path = root.join(".oxide").join("hmr-generation");
-                if let Some(parent) = gen_path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let _ = std::fs::write(&gen_path, max_generation.to_string());
-            }
-            tracing::info!(
-                workers = n_workers,
-                failed,
-                generation = max_generation,
-                "framework modules invalidated on all workers",
-            );
         }
     }
 

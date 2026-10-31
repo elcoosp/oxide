@@ -2818,8 +2818,22 @@ impl Pool for V8Pool {
                     }
                 })
                 .collect();
-            let affinity = route_affinity(req.route.as_deref(), loads.len());
-            let idx = choose_worker(&loads, affinity);
+            // §DX-broadcast: if `route` starts with `__oxide_broadcast_worker_N`,
+            // dispatch directly to worker N. This is how broadcast invalidation
+            // reaches every isolate — otherwise all loop calls hit the same
+            // least-loaded worker and leave the others stale (the root cause of
+            // the SSR/CSR hydration flash after a component edit).
+            let forced_worker = req
+                .route
+                .as_deref()
+                .and_then(|r| r.strip_prefix("__oxide_broadcast_worker_"))
+                .and_then(|s| s.parse::<usize>().ok());
+            let idx = forced_worker
+                .filter(|&i| i < loads.len())
+                .unwrap_or_else(|| {
+                    let affinity = route_affinity(req.route.as_deref(), loads.len());
+                    choose_worker(&loads, affinity)
+                });
             if loads[idx] == u64::MAX {
                 // BUG-03: every worker is retiring or dead; a warm
                 // replacement is in flight. Fail this call honestly rather
@@ -3451,8 +3465,18 @@ impl Pool for NodePool {
             .iter()
             .map(|w| w.in_flight.load(Ordering::Relaxed))
             .collect();
-        let affinity = route_affinity(req.route.as_deref(), loads.len());
-        let worker = Arc::clone(&self.workers[choose_worker(&loads, affinity)]);
+        let forced_worker = req
+            .route
+            .as_deref()
+            .and_then(|r| r.strip_prefix("__oxide_broadcast_worker_"))
+            .and_then(|s| s.parse::<usize>().ok());
+        let idx = forced_worker
+            .filter(|&i| i < loads.len())
+            .unwrap_or_else(|| {
+                let affinity = route_affinity(req.route.as_deref(), loads.len());
+                choose_worker(&loads, affinity)
+            });
+        let worker = Arc::clone(&self.workers[idx]);
         self.ensure_ready(&worker).await?;
 
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);

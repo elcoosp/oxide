@@ -240,38 +240,54 @@ impl FrameworkHost {
         })
     }
 
-    pub async fn invalidate_all(&self) -> Result<u64> {
-        let input = CallInput {
-            payload: serde_json::json!({}),
-            headers: Default::default(),
-            has_body: false,
-            request_id: "framework:invalidate".to_string(),
-            route: None,
-        };
-        let entry = EntryRef {
-            kind: "framework:invalidate".into(),
-            module: String::new(),
-            export: String::new(),
-        };
-        let results = self.pool.call_all(entry, input).await;
-        let mut max_gen = 0;
-        let mut any = false;
-        for res in results {
-            if let Ok(mut stream) = res {
-                if let Ok(bytes) = stream.collect().await {
-                    if let Ok(v) = serde_json::from_slice::<Value>(&bytes) {
-                        if let Some(gen_val) = v.get("generation").and_then(|x| x.as_u64()) {
-                            max_gen = max_gen.max(gen_val);
-                            any = true;
+        pub async fn invalidate_all(&self) -> Result<u64> {
+        // §DX-broadcast: bump __oxideGeneration on EVERY worker.
+        // A plain loop of `invalidate()` hits the same worker repeatedly
+        // (choose_worker picks the same least-loaded one), leaving the
+        // others with stale module caches. When a render lands on a stale
+        // worker it serves pre-edit HTML while the rebuilt client chunk
+        // serves post-edit JS — a hydration mismatch: the "flash of change
+        // then revert". Route hints force per-worker dispatch so every
+        // isolate actually re-imports `?v=N`.
+        let n_workers = self.pool.stats().workers.max(1);
+        let mut max_gen = 0u64;
+        let mut any_ok = false;
+        let mut failed = 0usize;
+        for i in 0..n_workers {
+            let input = CallInput {
+                payload: serde_json::json!({}),
+                headers: Default::default(),
+                has_body: false,
+                request_id: format!("framework:invalidate:{}", i),
+                route: Some(format!("__oxide_broadcast_worker_{}", i)),
+            };
+            let entry = EntryRef {
+                kind: "framework:invalidate".into(),
+                module: String::new(),
+                export: String::new(),
+            };
+            match self.pool.call(entry, input).await {
+                Ok(mut stream) => {
+                    if let Ok(bytes) = stream.collect().await {
+                        if let Ok(v) = serde_json::from_slice::<Value>(&bytes) {
+                            if let Some(g) = v.get("generation").and_then(|x| x.as_u64()) {
+                                max_gen = max_gen.max(g);
+                                any_ok = true;
+                            }
                         }
                     }
                 }
+                Err(e) => {
+                    failed += 1;
+                    tracing::warn!(worker = i, code = %e.0.code, error = %e.0.message, "invalidate failed for worker");
+                }
             }
         }
-        if any {
+        if any_ok {
+            tracing::info!(workers = n_workers, failed, generation = max_gen, "framework:invalidate_all");
             Ok(max_gen)
         } else {
-            Err(crate::err("JSH-FRAMEWORK", "invalidate_all failed for all workers"))
+            Err(crate::err("JSH-FRAMEWORK", format!("invalidate_all: all {} workers failed", n_workers)))
         }
     }
 }
