@@ -1636,3 +1636,6 @@ mod sec08_tests {
         assert!(!is_secret_like("APP_NAME"));
     }
 }
+
+pub mod prebundle;
+pub use prebundle::{prebundle_cjs_to_esm, PrebundleResult};

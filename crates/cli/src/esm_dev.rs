@@ -205,15 +205,23 @@ pub fn prebundle_cjs_deps(root: &Path, packages: &[String]) -> anyhow::Result<()
     let out_dir = root.join(PREBUNDLE_DIR);
     std::fs::create_dir_all(&out_dir)?;
     copy_framework_dist(root, &out_dir)?;
-    for pkg in packages {
-        let dst = out_dir.join(sanitized_filename(pkg));
-        if !dst.exists() {
-            eprintln!(
-                "oxide dev (esm): prebundle of `{pkg}` pending (Phase 1b) — request \
-                 to /@prebundle/{} will 404",
-                sanitized_filename(pkg)
-            );
-        }
+
+    if packages.is_empty() {
+        return Ok(());
+    }
+
+    // rolldown lives in the bundler crate; cli is just the caller. A
+    // per-package failure is logged but does not abort — a missing optional
+    // dep must not break the dev server for a project that has the rest.
+    let result = oxide_fw_bundler::prebundle_cjs_to_esm(root, packages, &out_dir)?;
+    for (name, err) in result.failures {
+        eprintln!(
+            "oxide dev (esm): cannot prebundle `{name}` — /@prebundle/{} will 404 ({err})",
+            sanitized_filename(&name)
+        );
+    }
+    for name in result.bundled {
+        tracing::debug!(package = %name, "esm prebundle ok");
     }
     Ok(())
 }
