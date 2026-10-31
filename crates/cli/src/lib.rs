@@ -1515,6 +1515,62 @@ async fn ensure_dev_client_bundle(
     }
 }
 
+/// Populate `stack.component_source` with route → source-file mappings so the
+/// dev render path can resolve components without a build-emitted
+/// `dist/server/ssr/index.js`. Called from:
+///
+/// - `cmd_dev` (all modes) — one-time at boot.
+/// - `start_server_inner_full` (ESM mode only) — covers the smoke test and
+///   any other direct caller of `start_dev_server_full` that bypasses
+///   `cmd_dev`. Without this, the ESM path (which skips
+///   `ensure_dev_client_bundle` and therefore never writes an SSR entry)
+///   has an empty `component_source` and every render 500s with
+///   "no component resolved".
+///
+/// Idempotent: each call writes the same `sources` map.
+async fn populate_dev_component_source(
+    rootp: &Path,
+    cfg: &oxide_fw_config::OxideConfig,
+    tree: &oxide_fw_router::RouteTree,
+    stack: &crate::framework_shim::FrameworkStack,
+) {
+    use oxide_fw_router::RouteKind;
+    let routes_root = rootp.join(&cfg.routes.dir);
+    let entries: std::collections::BTreeMap<String, std::path::PathBuf> = tree
+        .entries
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.kind,
+                RouteKind::Page
+                    | RouteKind::Layout
+                    | RouteKind::Error
+                    | RouteKind::NotFound
+                    | RouteKind::Template
+            )
+        })
+        .map(|e| (canonical_route_id(&e.id.0), routes_root.join(&e.file)))
+        .collect();
+    if entries.is_empty() {
+        return;
+    }
+    let framework = cfg
+        .framework
+        .adapter
+        .as_deref()
+        .or(cfg.framework.name.as_deref());
+    let sources = crate::framework_shim::dev_component_sources(
+        rootp,
+        framework,
+        entries,
+        stack.tooling_pool.as_ref(),
+    )
+    .await;
+    if let Ok(mut src) = stack.component_source.write() {
+        src.sources = sources;
+    }
+}
+
 async fn build_client_bundle(
     rootp: &Path,
     cfg: &oxide_fw_config::OxideConfig,
@@ -2055,42 +2111,10 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // route-table → source-file map. TS/JS/JSX go through the worker's
     // loader; SFCs are precompiled once here (and recompiled on watcher
     // invalidation, which re-imports through the bumped generation).
-    {
-        use oxide_fw_router::RouteKind;
-        let routes_root = rootp.join(&cfg.routes.dir);
-        let entries: BTreeMap<String, PathBuf> = tree
-            .entries
-            .iter()
-            .filter(|e| {
-                matches!(
-                    e.kind,
-                    RouteKind::Page
-                        | RouteKind::Layout
-                        | RouteKind::Error
-                        | RouteKind::NotFound
-                        | RouteKind::Template
-                )
-            })
-            .map(|e| (canonical_route_id(&e.id.0), routes_root.join(&e.file)))
-            .collect();
-        if !entries.is_empty() {
-            let framework = cfg
-                .framework
-                .adapter
-                .as_deref()
-                .or(cfg.framework.name.as_deref());
-            let sources = framework_shim::dev_component_sources(
-                &rootp,
-                framework,
-                entries,
-                stack.tooling_pool.as_ref(),
-            )
-            .await;
-            if let Ok(mut src) = stack.component_source.write() {
-                src.sources = sources;
-            }
-        }
-    }
+    // Extracted into a helper so `start_server_inner_full` (which the smoke
+    // test calls directly, bypassing this function) can populate the same
+    // map in ESM mode.
+    populate_dev_component_source(&rootp, &cfg, &tree, &stack).await;
     if let Some(name) = stack.renderer_name() {
         outln!(w, "framework renderer: {}", name);
     }
@@ -2120,12 +2144,31 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // behavior) forces a cold rebuild every save — 1.5s regardless of how
     // few modules changed.
     let client_bundler = oxide_fw_bundler::RolldownBundler::new(&rootp);
-    let t0 = std::time::Instant::now();
-    ensure_dev_client_bundle(&rootp, &cfg, &tree, stack.tooling_pool.as_ref(), &client_bundler, w).await?;
-    tracing::info!(
-        elapsed_ms = t0.elapsed().as_millis() as u64,
-        "dev: initial client bundle (cold worker)"
-    );
+    if cfg.dev.esm {
+        // Phase 5: native ESM mode has no client bundle to build — the boot
+        // entry imports source modules directly. CSS is unaffected: it flows
+        // through two paths that run below regardless of this branch:
+        //
+        // 1. `tailwind::precompute` writes `dist/client/tailwind-<hash>.css`
+        //    (runs later in this function, independent of the bundle).
+        // 2. `AdapterPageRenderer::inject_route_css`'s disk-scan fallback
+        //    (wr101) emits `<link rel="stylesheet">` for any `tailwind-*.css`
+        //    it finds — `with_manifest_path` is set unconditionally in
+        //    `build_framework_stack`, so the disk scan fires even when no
+        //    `client.manifest.json` exists.
+        //
+        // A project with raw CSS imports inside a route component would
+        // 404 on `/src/**/*.css` — that was already true in ESM mode and is
+        // tracked as Phase 5b (deferred).
+        tracing::info!("dev: ESM mode — skipping cold-start client bundle");
+    } else {
+        let t0 = std::time::Instant::now();
+        ensure_dev_client_bundle(&rootp, &cfg, &tree, stack.tooling_pool.as_ref(), &client_bundler, w).await?;
+        tracing::info!(
+            elapsed_ms = t0.elapsed().as_millis() as u64,
+            "dev: initial client bundle (cold worker)"
+        );
+    }
 
     // [wr208] Rebuild stale workspace packages before bundling
     rebuild_stale_workspace_packages(&rootp);
@@ -10750,6 +10793,20 @@ async fn start_server_inner_full(
         }
         if let Err(e) = crate::esm_dev::generate_esm_boot_entry(&rootp, &components) {
             tracing::warn!(error = %e, "esm dev: boot entry write failed");
+        }
+        // §6.4 / WP-C1 (ESM path): `ensure_dev_client_bundle` is skipped in
+        // ESM mode, so no `dist/server/ssr/index.js` is produced by the
+        // dev server. Populate the worker's component-source map here
+        // instead, so the render path can resolve routes without a build
+        // entry. Guarded by emptiness because `cmd_dev` already populated
+        // this map on the CLI path (and we'd rather not precompile twice).
+        let already_populated = stack
+            .component_source
+            .read()
+            .map(|s| !s.sources.is_empty())
+            .unwrap_or(false);
+        if !already_populated {
+            populate_dev_component_source(&rootp, &cfg, &tree, &stack).await;
         }
         let rewrite_map = crate::esm_dev::build_rewrite_map(&rootp, &cfg.dev.prebundle);
         tracing::info!(

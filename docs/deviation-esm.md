@@ -70,20 +70,35 @@ The transform is **idempotent** (sources that already contain
 Either way it publishes a `FullReload` — the boot entry has a new set of
 imports, and the client has to re-fetch it.
 
-## CSS gap (Phase 5 work, not a Phase 4 regression)
+## Cold start (Phase 5 — closed)
 
-**The dev server still runs `ensure_dev_client_bundle` at cold start** so
-the CSS chunk exists at `/client/index-<hash>.css` for `<link>` tags. This
-means:
+**Phase 5 skips `ensure_dev_client_bundle` in ESM mode.** The boot entry
+imports source modules directly and nothing in the browser fetches a
+bundled chunk, so the Rolldown pass produced artifacts nothing consumed.
 
-- Cold start is still ~2s (the Rolldown bundle pass), not the ~1.2s the
-  plan's table projected — that figure assumed a pure-ESM cold path.
-- Saves are still ~25ms when React Refresh succeeds (Phase 3 gain), and
-  ~500ms (full reload) when the component doesn't register cleanly.
+CSS continues to work through two paths that run on every cold start
+regardless of the bundle:
 
-Closing the CSS gap (serving per-route CSS directly from `/src/**/*.css`
-without an initial bundle) is Phase 5. It is intentionally out of scope
-here so the ESM path can ship without regressing any current app.
+1. **`tailwind::precompute`** writes `dist/client/tailwind-<hash>.css` for
+   projects with a Tailwind plugin (the website). It uses the tooling pool
+   + LightningCSS, not Rolldown.
+2. **`AdapterPageRenderer::inject_route_css`**'s disk-scan fallback
+   (wr101) emits `<link rel="stylesheet">` for any `tailwind-*.css` it
+   finds in `dist/client/`. `with_manifest_path` is set unconditionally
+   by `build_framework_stack`, so the scan fires even without a
+   `client.manifest.json`.
+
+Cold-start numbers are not asserted in CI (they depend on
+`node_modules` cache state and tooling-pool warmup); the change removes
+the Rolldown pass, which was the largest single contributor.
+
+## Phase 5b (deferred)
+
+A project that `import './styles.css'` inside a route component requests
+`/src/styles.css` and gets a 404. This is not a Phase 5 regression — the
+ESM path served the same 404 in Phase 1. The fix is a `/@css/**` URL
+family piped through LightningCSS; tracked for a follow-up if a real user
+hits it.
 
 ## Behaviour changes users will notice
 
