@@ -1218,8 +1218,17 @@ mod strip_windows_verbatim_tests {
 //
 // A dedicated OS thread owns a Rolldown `Bundler` + a Tokio runtime. The
 // `Bundler` keeps a snapshot of the last build, so subsequent calls to
-// `incremental_write` with `ScanMode::Partial(changed_files)` re-scan only
-// the changed modules and their dependents — 10x faster than a cold rebuild.
+// `incremental_write` with `ScanMode::Partial(changed_files)` skip
+// re-parsing unchanged modules.
+//
+// KNOWN CEILING: rolldown's `incremental_write` still runs `bundle_write`
+// (tree-shake + chunk + codegen + sourcemap) on the WHOLE graph, regardless
+// of `scan_mode`. On the oxide-website project this delivers ~30% faster
+// rebuilds (2000ms cold → ~1450ms warm) — not the 5-10x we hoped. To go
+// below ~1.4s requires rolldown's `hmr_stage` API (fetch partial modules,
+// re-emit only affected chunks), which is a different interface than
+// `incremental_write` and a separate future project. See
+// internal-docs if/when we tackle it.
 //
 // The worker is created lazily on the first `bundle_incremental` call. Its
 // lifetime is tied to the owning `RolldownBundler`. When that bundler drops,
@@ -1329,14 +1338,24 @@ impl IncrementalWorker {
                 };
                 while let Ok(WorkerMsg::Write { changed, out_dir, env, entries, resp_tx }) = rx.recv() {
                     let scan_mode: ScanMode<arcstr::ArcStr> = match changed {
-                        Some(files) if !files.is_empty() => ScanMode::Partial(files),
-                        _ => ScanMode::Full,
+                        Some(files) if !files.is_empty() => {
+                            tracing::info!(n_files = files.len(), files = ?files, "worker: ScanMode::Partial");
+                            ScanMode::Partial(files)
+                        }
+                        _ => {
+                            tracing::info!("worker: ScanMode::Full");
+                            ScanMode::Full
+                        }
                     };
-                    // `incremental_write` returns rolldown's `BuildResult<BundleOutput>`.
-                    // `convert` maps that to Oxide's `crate::Result<BundleOutput>` (a Result).
-                    // So chain with `.and_then` — one flatten, no double wrap.
-                    let converted: crate::Result<crate::BundleOutput> = rt
-                        .block_on(async { bundler.incremental_write(scan_mode).await })
+                    let t0 = std::time::Instant::now();
+                    let result = rt.block_on(async { bundler.incremental_write(scan_mode).await });
+                    let elapsed = t0.elapsed();
+                    tracing::info!(
+                        elapsed_ms = elapsed.as_millis() as u64,
+                        ok = result.is_ok(),
+                        "worker: incremental_write returned"
+                    );
+                    let converted: crate::Result<crate::BundleOutput> = result
                         .map_err(|e| {
                             err("BLD-ROLLDOWN", format!("incremental write: {e}"))
                         })
