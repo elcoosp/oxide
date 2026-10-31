@@ -1487,7 +1487,6 @@ async fn build_client_bundle(
     pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
     w: Writer<'_>,
 ) -> anyhow::Result<()> {
-    let start = std::time::Instant::now();
     let dist = rootp.join("dist");
     let client_out = dist.join("client");
 
@@ -1595,10 +1594,9 @@ async fn build_client_bundle(
     client_opts.load_hook = build_js_plugin_load_hook(rootp, cfg, pool);
     client_opts.render_chunk_hook = build_js_plugin_render_chunk_hook(rootp, cfg, pool);
     client_opts.generate_bundle_hook = build_js_plugin_generate_bundle_hook(rootp, cfg, pool);
-    tracing::info!(elapsed = ?start.elapsed(), "build_client_bundle: options prepared, starting rolldown");
+    outln!(w, "dev: rebuilding client bundle...");
     use oxide_fw_bundler::Bundler as _;
     let rb = oxide_fw_bundler::RolldownBundler::new(rootp);
-    let rolldown_start = std::time::Instant::now();
     match rb.bundle(&client_opts) {
         Ok(outcome) => {
 
@@ -1646,10 +1644,9 @@ async fn build_client_bundle(
                 }
             }
         
-            tracing::info!(rolldown_elapsed = ?rolldown_start.elapsed(), total_elapsed = ?start.elapsed(), "build_client_bundle: rolldown finished");
             outln!(
                 w,
-                "dev: client bundle ready ({} chunks)",
+                "dev: client bundle rebuilt ({} chunks)",
                 outcome.chunks.len()
             );
             Ok(())
