@@ -1,25 +1,29 @@
 //! Native ESM dev server (Phase 1 of the HMR design in `docs/ideas/hmr.md`).
 //!
 //! When `dev.esm = true` in `oxide.config.ts`, `oxide dev` skips the client
-//! bundler and serves source files as transformed ESM. Four URL families
-//! are served by [`handle_esm_request`], called from the dispatch closure
-//! before route resolution:
+//! bundler and serves source files as transformed ESM. Four URL families are
+//! served by [`handle_esm_request`]:
 //!
-//! - `/src/**/*.tsx` — the raw source, lowered to ESM by Oxc, prefixed with
-//!   a small preamble that installs `import.meta.hot` from
-//!   `globalThis.__oxide_hmr__` (the HMR runtime auto-installs via
-//!   `@oxide-fw/core/client/hot`; the preamble wires the per-module handle).
-//! - `/@prebundle/<name>.js` — CJS deps (react, etc.) bundled to ESM at
-//!   startup (Phase 1b), plus framework (`@oxide-fw/*`) dist files.
-//!   Referenced by the importmap.
-//! - `/@boot/boot.mjs` — the boot entry that imports
-//!   `@oxide-fw/core/client/hot` first, then each route's component module.
-//! - `/@esm-error/<encoded>` — Vite's pattern: a dynamic import that failed
-//!   resolves to a module whose evaluation throws a helpful error.
+//! - `/src/**/*.tsx` — raw source, lowered to ESM by Oxc, prefixed with a
+//!   small preamble that installs `import.meta.hot` from
+//!   `globalThis.__oxide_hmr__`.
+//! - `/@prebundle/<name>.js` — prebundled deps (React etc.; Phase 1b) plus
+//!   the framework dist files copied from `packages/core/dist/` (Phase 1a.5).
+//! - `/@boot/boot.mjs` — the boot entry that imports `@oxide-fw/core/client/hot`
+//!   first (side-effect installs the HMR runtime) then each route component.
+//! - `/@esm-error/<encoded>` — Vite's pattern for a failed dynamic import.
 //!
-//! The dispatch filter for `/src/` and `/@` already exists at
-//! `crates/server/src/lib.rs:3826-3832` — the pipeline skips the StaticAssets
-//! pass for those paths in dev, so the CLI owns them.
+//! ## Import rewriting
+//!
+//! No importmap: the browser's native ESM resolver cannot see `node_modules`
+//! specifiers. Instead, every served JavaScript file has its bare specifiers
+//! (`react`, `react-dom/client`, `@oxide-fw/core/client/...`) rewritten to
+//! absolute `/@prebundle/...` URLs before it leaves the dev server. Relative
+//! imports (`./foo.js`) resolve naturally and are left alone.
+//!
+//! The rewriting uses [`oxide_fw_compiler::scan_import_spans`], which tokenizes
+//! the source (skipping strings, templates, comments), then splices the
+//! specifier strings from the back to keep byte offsets stable.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -28,11 +32,10 @@ use std::sync::Arc;
 use oxide_fw_compiler::{inject_hmr_boundary, lower_to_js};
 use oxide_fw_server::{OxideRequest, OxideResponse};
 
-/// Directory (project-relative) where prebundled CJS deps and copied
-/// framework dist files live. URL-mapped to `/@prebundle/`.
+/// Directory (project-relative) where prebundled deps and copied framework
+/// dist files live. URL-mapped to `/@prebundle/`.
 pub const PREBUNDLE_DIR: &str = ".oxide/esm-prebundle";
-/// The ESM manifest. Mirrors `dist/client/client.manifest.json`'s shape so
-/// the client's hydration bootstrap reads the same fields.
+/// The ESM manifest. Mirrors `dist/client/client.manifest.json`'s shape.
 pub const MANIFEST_PATH: &str = ".oxide/esm-manifest.json";
 /// The boot entry, URL-served at `/@boot/boot.mjs`.
 pub const BOOT_ENTRY_PATH: &str = ".oxide/esm-boot.mjs";
@@ -44,15 +47,15 @@ pub const BOOT_SCRIPT_URL: &str = "/@boot/boot.mjs";
 pub struct EsmDevState {
     pub root: PathBuf,
     pub jsx_import_source: Option<String>,
-    /// Importmap JSON, injected as `<script type="importmap">` in `<head>`.
-    pub importmap_json: Arc<String>,
+    /// Bare specifier → `/@prebundle/...` URL. Used both to rewrite the
+    /// imports of served files and to compose the boot entry.
+    pub rewrite_map: Arc<BTreeMap<String, String>>,
 }
 
 // --- Manifest ------------------------------------------------------------
 
 /// Write `.oxide/esm-manifest.json`. Shape mirrors `client.manifest.json`:
 /// `{ "routes": { "<id>": { "component": "/src/<path>" } }, "build_id": "dev-esm" }`.
-/// The caller (cmd_dev) supplies `components` after route scan.
 pub fn build_esm_manifest(
     root: &Path,
     components: &BTreeMap<String, String>,
@@ -78,12 +81,9 @@ pub fn build_esm_manifest(
     Ok(())
 }
 
-/// Write `.oxide/esm-boot.mjs`: the entry the browser loads. It imports
-/// `@oxide-fw/core/client/hot` FIRST (module side-effect installs the HMR
-/// runtime before any component module is evaluated), then the core client
-/// (its own boot.ts pulls in the router/ODF glue), then each route's
-/// component module — so React Refresh sees every module that has a
-/// `$RefreshReg$`.
+/// Write `.oxide/esm-boot.mjs`: the entry the browser loads. Import order
+/// matters — the hot runtime must install **before** any component module is
+/// evaluated (its `import.meta.hot` is read at module top-level).
 pub fn generate_esm_boot_entry(
     root: &Path,
     components: &BTreeMap<String, String>,
@@ -92,40 +92,56 @@ pub fn generate_esm_boot_entry(
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    let exports = read_framework_exports(root).unwrap_or_default();
+    let lookup: BTreeMap<&str, &str> = exports
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+
+    let hot_url = lookup
+        .get("@oxide-fw/core/client/hot")
+        .copied()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "packages/core/package.json is missing the `./client/hot` export"
+            )
+        })?;
+
     let mut src = String::new();
     src.push_str("// Generated by `oxide dev` (native ESM mode). Do not edit.\n");
-    src.push_str("import '@oxide-fw/core/client/hot';\n");
-    src.push_str("import '@oxide-fw/core/client';\n");
+    src.push_str("import ");
+    src.push_str(&format!("{hot_url:?}"));
+    src.push_str(";\n");
+    // The main client barrel is best-effort: it pulls in React via hydration
+    // glue, which is only available once Phase 1b's prebundle lands. When it's
+    // missing the HMR runtime still installs (from the hot.ts import above).
+    if let Some(client_url) = lookup.get("@oxide-fw/core/client") {
+        src.push_str("import ");
+        src.push_str(&format!("{client_url:?}"));
+        src.push_str(";\n");
+    }
     for url in components.values() {
         src.push_str("import ");
-        src.push('"');
-        src.push_str(url);
-        src.push_str("\";\n");
+        src.push_str(&format!("{url:?}"));
+        src.push_str(";\n");
     }
     std::fs::write(&out, src)?;
     Ok(out)
 }
 
-// --- Importmap -----------------------------------------------------------
+// --- Rewrite map ---------------------------------------------------------
 
-/// Build the importmap from the prebundled deps plus the framework packages.
-///
-/// Keys are bare specifiers the client modules write in `import`; values are
-/// the absolute URLs the browser fetches. For Phase 1:
-///
-/// - Every entry in `prebundle` (from `DevConfig::prebundle`) maps to
-///   `/@prebundle/<name>.js`. `prebundle_cjs_deps` must populate the
-///   files (Phase 1b) — for Phase 1a a missing file is a 404 with a clear
-///   message, which surfaces the missing step.
-/// - Framework packages (`@oxide-fw/*`) are enumerated from
-///   `node_modules/@oxide-fw/core/package.json` (or, in the workspace,
-///   `packages/core/package.json`)'s `exports` map. Each subpath maps to
-///   `/@prebundle/@oxide-fw/core/<dist-file>`, which `prebundle_cjs_deps`
-///   must copy (Phase 1b).
-pub fn build_importmap(root: &Path, prebundle: &[String]) -> BTreeMap<String, String> {
+/// Bare specifier → URL. Built from the prebundle list (Phase 1b stub: files
+/// missing until rolldown lands; the map is still correct so importing code
+/// produces a clear 404 instead of a bare-specifier error) and the framework
+/// package's `exports`.
+pub fn build_rewrite_map(
+    root: &Path,
+    prebundle: &[String],
+) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
     for name in prebundle {
-        map.insert(name.clone(), format!("/@prebundle/{name}.js"));
+        map.insert(name.clone(), format!("/@prebundle/{}", sanitized_filename(name)));
     }
     if let Some(exports) = read_framework_exports(root) {
         for (specifier, url) in exports {
@@ -175,32 +191,131 @@ fn read_exports_at(pkg_json: &Path) -> Option<Vec<(String, String)>> {
 
 // --- Prebundle -----------------------------------------------------------
 
-/// Prebundle CJS dependencies to ESM in `.oxide/esm-prebundle/`, and copy the
-/// framework packages (`@oxide-fw/*`) dist files into the same tree so they
-/// resolve through the importmap without a `node_modules` URL.
+/// Populate `.oxide/esm-prebundle/`.
 ///
-/// **Phase 1a (this function as written)**: creates the directory and logs a
-/// diagnostic — the actual rolldown call lands in the immediately-following
-/// patch (Phase 1b). Until then, an opt-in `dev.esm = true` will fail to load
-/// `react` in the browser (a clear 404 at `/@prebundle/react.js`), which is
-/// the expected Phase 1a behaviour. `dev.esm` defaults to `false`, so no
+/// **Phase 1a.5 (this function)**: copies the framework dist tree so
+/// `@oxide-fw/*` imports resolve. React and other userland CJS deps are still
+/// pending — requests to `/@prebundle/react.js` will 404, which surfaces the
+/// missing Phase 1b step honestly. `dev.esm` defaults to `false`, so no
 /// default user is affected.
+///
+/// **Phase 1b (next)**: bundle each `prebundle` entry from CJS to ESM using
+/// `rolldown::Bundler`, writing one file per package name.
 pub fn prebundle_cjs_deps(root: &Path, packages: &[String]) -> anyhow::Result<()> {
     let out_dir = root.join(PREBUNDLE_DIR);
     std::fs::create_dir_all(&out_dir)?;
-    eprintln!(
-        "oxide dev (esm): prebundle is stubbed (Phase 1a) — {} entries not yet bundled into {}",
-        packages.len(),
-        out_dir.display()
-    );
+    copy_framework_dist(root, &out_dir)?;
+    for pkg in packages {
+        let dst = out_dir.join(sanitized_filename(pkg));
+        if !dst.exists() {
+            eprintln!(
+                "oxide dev (esm): prebundle of `{pkg}` pending (Phase 1b) — request \
+                 to /@prebundle/{} will 404",
+                sanitized_filename(pkg)
+            );
+        }
+    }
     Ok(())
+}
+
+fn copy_framework_dist(root: &Path, out_dir: &Path) -> anyhow::Result<()> {
+    let candidates = [
+        root.join("node_modules/@oxide-fw/core/dist"),
+        root.join("packages/core/dist"),
+    ];
+    let Some(src) = candidates.iter().find(|p| p.is_dir()) else {
+        eprintln!(
+            "oxide dev (esm): no `packages/core/dist/` found — @oxide-fw/* imports \
+             will 404. Run `pnpm --filter @oxide-fw/core build` first."
+        );
+        return Ok(());
+    };
+    let dst = out_dir.join("@oxide-fw/core/dist");
+    if dst.exists() {
+        let _ = std::fs::remove_dir_all(&dst);
+    }
+    copy_dir_recursive(src, &dst)?;
+    Ok(())
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let target = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_recursive(&path, &target)?;
+        } else if path.is_file() {
+            std::fs::copy(&path, &target)?;
+        }
+    }
+    Ok(())
+}
+
+fn sanitized_filename(name: &str) -> String {
+    // "react-dom/client" → "react-dom-client.js"
+    // "react/jsx-runtime" → "react-jsx-runtime.js"
+    // "lucide-react" → "lucide-react.js"
+    let mut s: String = name.replace('/', "-").replace('@', "");
+    s.push_str(".js");
+    s
+}
+
+// --- Import rewriting ----------------------------------------------------
+
+/// Rewrite every bare specifier in `code` that appears in `map` to its
+/// `/@prebundle/...` URL. Relative and absolute specifiers are left alone
+/// (relative imports resolve naturally in the browser; absolute URLs are
+/// already correct).
+fn rewrite_imports(code: &str, map: &BTreeMap<String, String>) -> String {
+    let spans = oxide_fw_compiler::scan_import_spans(code);
+    if spans.is_empty() {
+        return code.to_string();
+    }
+    let mut out = code.to_string();
+    // Reverse order so earlier offsets stay valid as we splice.
+    for span in spans.iter().rev() {
+        let Some(replacement) = map.get(&span.specifier) else {
+            continue;
+        };
+        // A relative specifier (./, ../) or absolute (/@...) is not rewritten
+        // — the map lookup above already filtered out unknown specifiers, but
+        // a userland package could name itself with a slash, so guard too.
+        if span.specifier.starts_with("./")
+            || span.specifier.starts_with("../")
+            || span.specifier.starts_with('/')
+        {
+            continue;
+        }
+        let slice_end = span.end.min(out.len());
+        if span.start >= slice_end {
+            continue;
+        }
+        let slice = &out[span.start..slice_end];
+        // The scanner normalizes to the specifier text without quotes; try
+        // both quote styles and backtick (dynamic import with a static string
+        // is unusual but legal).
+        for quote in ['\'', '"', '`'] {
+            let needle = format!("{quote}{}{quote}", span.specifier);
+            if let Some(pos) = slice.find(&needle) {
+                let abs_start = span.start + pos + 1; // past the opening quote
+                let abs_end = abs_start + span.specifier.len();
+                if abs_end <= out.len() {
+                    out.replace_range(abs_start..abs_end, replacement);
+                }
+                break;
+            }
+        }
+    }
+    out
 }
 
 // --- Request handler -----------------------------------------------------
 
-/// Serve a request under `/src/`, `/@prebundle/`, `/@boot/`, `/@esm-error/`,
-/// or `/@importmap.json`. Returns `None` for anything else so the caller
-/// falls through to the normal pipeline (which will 404 it honestly).
+/// Serve a request under `/src/`, `/@prebundle/`, `/@boot/`, or
+/// `/@esm-error/`. Returns `None` for anything else so the caller falls
+/// through to the normal pipeline.
 pub fn handle_esm_request(
     state: &EsmDevState,
     req: &OxideRequest,
@@ -218,56 +333,46 @@ pub fn handle_esm_request(
     if let Some(encoded) = path.strip_prefix("/@esm-error/") {
         return Some(serve_esm_error(encoded));
     }
-    if path == "/@importmap.json" {
-        return Some(
-            OxideResponse::new(200, state.importmap_json.as_bytes().to_vec())
-                .with_header("content-type", "application/importmap+json")
-                .with_header("cache-control", "no-cache"),
-        );
-    }
     None
 }
 
 fn path_of(url: &str) -> &str {
+    let url = if let Some(rest) = url.strip_prefix("http://") {
+        rest.find('/').map(|i| &rest[i..]).unwrap_or("/")
+    } else if let Some(rest) = url.strip_prefix("https://") {
+        rest.find('/').map(|i| &rest[i..]).unwrap_or("/")
+    } else {
+        url
+    };
     let p = url.split_once('?').map(|(p, _)| p).unwrap_or(url);
     p.split_once('#').map(|(p, _)| p).unwrap_or(p)
 }
 
 fn serve_source_file(state: &EsmDevState, rel_path: &str) -> OxideResponse {
-    // Rule 1: refuse `.server.*`. Those import `node:*` modules that cannot
-    // run in the browser; serving them would hand arbitrary code the ability
-    // to read the filesystem from a user's browser.
+    // Refuse `.server.*`: those import `node:*` builtins that cannot run in a
+    // browser. Serving them would hand arbitrary code filesystem access.
     if rel_path.contains(".server.") {
-        return OxideResponse::new(
-            403,
-            "server module cannot be served to the client",
-        )
-        .with_header("content-type", "text/plain; charset=utf-8")
-        .with_header("cache-control", "no-cache");
+        return OxideResponse::new(403, "server module cannot be served to the client")
+            .with_header("content-type", "text/plain; charset=utf-8")
+            .with_header("cache-control", "no-cache");
     }
-    // Rule 2: CSS/SCSS is served by the existing asset pipeline in dev (an
-    // `<link>` tag in `<head>`), never as ESM. A `import './x.css'` inside a
-    // component is handled in Phase 3 by rewriting it to `/@esm-error/...`
-    // so a bare CSS import in a `.tsx` file surfaces a clear message.
+    // CSS/SCSS is handled by the asset pipeline (`<link>` in `<head>`). A
+    // component's bare CSS import is handled in Phase 3 by rewriting it to a
+    // throwing module; for now reject with a clear message.
     if rel_path.ends_with(".css")
         || rel_path.ends_with(".scss")
         || rel_path.ends_with(".sass")
     {
         return OxideResponse::new(404, "css asset cannot be served as esm")
-            .with_header("content-type", "text/plain; charset=utf-8");
+            .with_header("content-type", "text/plain; charset=utf-8")
+            .with_header("cache-control", "no-cache");
     }
-    // Rule 3: only source extensions are transformed. Anything else is
-    // passed through unmodified (the client doesn't import it, but a
-    // `?raw`-less direct hit should not be silently OK either — reject).
     let abs = state.root.join("src").join(rel_path);
     let src = match std::fs::read_to_string(&abs) {
         Ok(s) => s,
         Err(_) => {
-            return OxideResponse::new(
-                404,
-                format!("source not found: src/{rel_path}"),
-            )
-            .with_header("content-type", "text/plain; charset=utf-8");
+            return OxideResponse::new(404, format!("source not found: src/{rel_path}"))
+                .with_header("content-type", "text/plain; charset=utf-8");
         }
     };
     let lang = lang_for(rel_path);
@@ -291,25 +396,29 @@ fn serve_source_file(state: &EsmDevState, rel_path: &str) -> OxideResponse {
         }
     };
     // `inject_hmr_boundary` no-ops when the source already contains
-    // `import.meta.hot`; otherwise it appends the accept call. It must run
-    // BEFORE our preamble prepend so its check sees the unmodified source.
+    // `import.meta.hot`; otherwise it appends the accept call. Runs before
+    // rewriting so its `__oxide_refresh` call survives intact.
     let with_hmr = inject_hmr_boundary(&lowered, &path_for_compiler, lang)
         .unwrap_or(lowered);
+    let rewritten = rewrite_imports(&with_hmr, &state.rewrite_map);
     // Preamble: hot.ts auto-installs `globalThis.__oxide_hmr__` as a module
     // side-effect. The per-module `import.meta.hot` handle must be assigned
-    // BEFORE the module body — including the accept call appended by
-    // `inject_hmr_boundary` — runs. The preamble does that, guarded so it is
-    // a no-op when the runtime already installed a handle (e.g. via a
-    // previous import of this same URL, or in a browser where hot.ts was
-    // already loaded).
+    // BEFORE the module body runs (the injected accept call reads it at top
+    // level). ESM hoists imports, so the hot.ts import evaluates first, then
+    // this file's top-level statements run.
+    let hot_url = state
+        .rewrite_map
+        .get("@oxide-fw/core/client/hot")
+        .cloned()
+        .unwrap_or_else(|| "@oxide-fw/core/client/hot".to_string());
     let url_literal = format!("{:?}", format!("/src/{rel_path}"));
     let preamble = format!(
-        "import '@oxide-fw/core/client/hot';\n\
+        "import {hot_url:?};\n\
          if (!import.meta.hot && globalThis.__oxide_hmr__) {{\n\
            import.meta.hot = globalThis.__oxide_hmr__.createHotContext({url_literal});\n\
          }}\n"
     );
-    let out = format!("{preamble}{with_hmr}");
+    let out = format!("{preamble}{rewritten}");
     OxideResponse::new(200, out)
         .with_header("content-type", "text/javascript; charset=utf-8")
         .with_header("cache-control", "no-cache")
@@ -318,14 +427,24 @@ fn serve_source_file(state: &EsmDevState, rel_path: &str) -> OxideResponse {
 fn serve_prebundle(state: &EsmDevState, rel_path: &str) -> OxideResponse {
     let abs = state.root.join(PREBUNDLE_DIR).join(rel_path);
     match std::fs::read(&abs) {
-        Ok(bytes) => OxideResponse::new(200, bytes)
-            .with_header("content-type", "text/javascript; charset=utf-8")
-            .with_header("cache-control", "no-cache"),
-        Err(_) => OxideResponse::new(
-            404,
-            format!("prebundle not found: {rel_path}"),
-        )
-        .with_header("content-type", "text/plain; charset=utf-8"),
+        Ok(bytes) => {
+            // JS/MJS: rewrite bare specifiers. Non-JS: serve as-is (the
+            // prebundle tree should only contain JS today, but be tolerant).
+            let is_js = rel_path.ends_with(".js") || rel_path.ends_with(".mjs");
+            let body = if is_js {
+                match String::from_utf8(bytes) {
+                    Ok(code) => rewrite_imports(&code, &state.rewrite_map).into_bytes(),
+                    Err(e) => e.into_bytes(),
+                }
+            } else {
+                bytes
+            };
+            OxideResponse::new(200, body)
+                .with_header("content-type", "text/javascript; charset=utf-8")
+                .with_header("cache-control", "no-cache")
+        }
+        Err(_) => OxideResponse::new(404, format!("prebundle not found: {rel_path}"))
+            .with_header("content-type", "text/plain; charset=utf-8"),
     }
 }
 
@@ -335,11 +454,8 @@ fn serve_boot_entry(state: &EsmDevState) -> OxideResponse {
         Ok(bytes) => OxideResponse::new(200, bytes)
             .with_header("content-type", "text/javascript; charset=utf-8")
             .with_header("cache-control", "no-cache"),
-        Err(e) => OxideResponse::new(
-            500,
-            format!("boot entry missing: {e}"),
-        )
-        .with_header("content-type", "text/plain; charset=utf-8"),
+        Err(e) => OxideResponse::new(500, format!("boot entry missing: {e}"))
+            .with_header("content-type", "text/plain; charset=utf-8"),
     }
 }
 
@@ -363,8 +479,6 @@ fn lang_for(path: &str) -> &'static str {
         "jsx" => "jsx",
         "ts" | "mts" | "cts" => "ts",
         "js" | "mjs" | "cjs" => "js",
-        // Anything else falls through to `ts` — `lower_to_js` will produce a
-        // parse error if the source isn't TypeScript. Not silently OK.
         _ => "ts",
     }
 }
@@ -391,5 +505,65 @@ fn hex(c: u8) -> Option<u8> {
         b'a'..=b'f' => Some(c - b'a' + 10),
         b'A'..=b'F' => Some(c - b'A' + 10),
         _ => None,
+    }
+}
+
+// --- Tests ---------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_react() {
+        assert_eq!(sanitized_filename("react"), "react.js");
+        assert_eq!(sanitized_filename("react-dom/client"), "react-dom-client.js");
+        assert_eq!(sanitized_filename("react/jsx-runtime"), "react-jsx-runtime.js");
+        assert_eq!(sanitized_filename("@scope/pkg"), "scope-pkg.js");
+    }
+
+    #[test]
+    fn rewrite_single_import() {
+        let mut map = BTreeMap::new();
+        map.insert("react".to_string(), "/@prebundle/react.js".to_string());
+        let code = "import React from 'react';\nconsole.log(React);\n";
+        let out = rewrite_imports(code, &map);
+        assert!(out.contains("\"/@prebundle/react.js\"") || out.contains("'/@prebundle/react.js'"));
+        assert!(!out.contains("from 'react'"));
+    }
+
+    #[test]
+    fn rewrite_relative_untouched() {
+        let mut map = BTreeMap::new();
+        map.insert("./foo".to_string(), "/wrong".to_string());
+        let code = "import x from './foo';\n";
+        let out = rewrite_imports(code, &map);
+        assert!(out.contains("from './foo'"));
+    }
+
+    #[test]
+    fn rewrite_dynamic_import() {
+        let mut map = BTreeMap::new();
+        map.insert("react".to_string(), "/@prebundle/react.js".to_string());
+        let code = "const r = await import('react');\n";
+        let out = rewrite_imports(code, &map);
+        assert!(out.contains("/@prebundle/react.js"));
+        assert!(!out.contains("'react'"));
+    }
+
+    #[test]
+    fn path_strips_query_and_fragment() {
+        assert_eq!(path_of("/src/foo.tsx?v=1"), "/src/foo.tsx");
+        assert_eq!(path_of("/src/foo.tsx#bar"), "/src/foo.tsx");
+        assert_eq!(path_of("http://localhost:3000/src/foo.tsx"), "/src/foo.tsx");
+        assert_eq!(path_of("/"), "/");
+    }
+
+    #[test]
+    fn lang_mapping() {
+        assert_eq!(lang_for("a.tsx"), "tsx");
+        assert_eq!(lang_for("a.jsx"), "jsx");
+        assert_eq!(lang_for("a.ts"), "ts");
+        assert_eq!(lang_for("a.mjs"), "js");
     }
 }
