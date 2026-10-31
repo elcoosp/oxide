@@ -15,14 +15,6 @@ import { githubDark as oxideTheme } from 'rangi/themes'
 
 
 
-function stripShikiStyle(html: string): string {
-  return html.replace(/<div\b([^>]*)>/g, (match, attrs) => {
-    if (/class="[^"]*shj-/.test(attrs)) {
-      return `<div${attrs.replace(/\s+style="[^"]*"/, '')}>`;
-    }
-    return match;
-  });
-}
 
 export interface Frontmatter {
   [key: string]: string
@@ -151,10 +143,10 @@ export async function mdToHtml(md: string): Promise<string> {
                 const highlighted: Record<string, string> = {}
         for (const lang of LANGS) {
           const shikiLang = lang === 'react' ? 'tsx' : lang === 'solid' ? 'tsx' : lang
-          highlighted[lang] = stripShikiStyle(codeToHtml(parts[lang] ?? '', { lang: shikiLang, theme: oxideTheme }))
+          highlighted[lang] = codeToHtml(parts[lang] ?? '', { lang: shikiLang, theme: oxideTheme })
         }
 
-        const json = JSON.stringify(highlighted)
+        const json = JSON.stringify(parts)
           .replace(/&/g, '&amp;')
           .replace(/"/g, '&quot;')
           .replace(/</g, '&lt;')
