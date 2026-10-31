@@ -170,6 +170,7 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
   // navigations racing on the same container mount one after the other,
   // never concurrently).
   let realRoot: RealPageRoot | undefined
+  let currentLayoutChainKey = ""
   let renderSeq = 0
   let realChain: Promise<void> = Promise.resolve()
   const bound: Array<{ el: OxElement; type: string; fn: (ev: unknown) => void }> = []
@@ -266,13 +267,28 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
         return
       }
       try {
+        // [wr215] Compare layout chain BEFORE deciding update-vs-remount.
+        // realRoot was mounted with the FIRST route's layout chain. If the
+        // new route needs a different chain (e.g. [RootLayout] → [RootLayout,
+        // DocsLayout]), calling realRoot.update() keeps the OLD wrappers and
+        // drops the new one — which is why docs pages were "bare content, no
+        // sidebar" while SSR (fresh mount) worked. Dispose + remount when the
+        // chain actually changes; only reuse the root when it doesn't.
+        const newChainKey = declaredLayouts.join('|')
         if (realRoot) {
-          // §7 / §8.4: client navigation to a DIFFERENT route needs a
-          // different Component. The previous signature took props only,
-          // so realRoot.update re-rendered the ORIGINAL page — the URL
-          // changed but the DOM stayed on the old route.
-          realRoot.update(Component, realProps(inp))
-          return
+          if (newChainKey === currentLayoutChainKey) {
+            // Same chain — safe to update in place
+            realRoot.update(Component, realProps(inp))
+            return
+          }
+          // Chain changed — dispose the old tree so the new mount composes
+          // the correct layout wrappers
+          console.log(
+            '[oxide-diag] tryRealRender: layout chain changed — remount',
+            { from: currentLayoutChainKey, to: newChainKey, route: inp.route }
+          )
+          realRoot.dispose()
+          realRoot = undefined
         }
         // §8.2: resolve the layout chain first — SSR rendered
         // `<RootLayout><Page/></RootLayout>`; the client must hydrate the
@@ -348,6 +364,7 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
           return
         }
         realRoot = mounted
+        currentLayoutChainKey = newChainKey
       } catch (e) {
         console.warn?.('oxide: real page render failed; falling back to IR', e)
         if (!disposed && seq === renderSeq) renderIr()
