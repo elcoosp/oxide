@@ -8419,3 +8419,65 @@ async fn dev_server_serves_esm_urls_over_http() {
         server_ts.lines().next().unwrap_or("")
     );
 }
+
+
+/// Proves `react-refresh/runtime` is prebundled to
+/// `/@prebundle/react-refresh-runtime.js` when the project installs the
+/// package. That file is what `hot.ts` lazy-imports to upgrade
+/// `__oxide_refresh` from a full reload to an in-place update.
+///
+/// `#[ignore]` — node_modules + binds a port, same as the other E2E
+/// dev-server tests.
+#[tokio::test]
+#[ignore]
+async fn dev_server_serves_react_refresh_prebundle() {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest.parent().and_then(|p| p.parent()).expect("workspace root");
+    let smoke = workspace.join("examples/smoke-app-react");
+    let config_path = smoke.join("oxide.config.ts");
+    assert!(
+        config_path.is_file(),
+        "smoke-app fixture missing at {}",
+        smoke.display()
+    );
+    assert!(
+        smoke.join("node_modules/react-refresh").exists(),
+        "react-refresh must be installed for this test"
+    );
+
+    let stack = crate::framework_shim::build_framework_stack(
+        Some(&config_path),
+        oxide_fw_config::JsBackend::Node,
+        None,
+        None,
+    )
+    .await;
+
+    let started = crate::start_dev_server_full(
+        smoke.to_str().expect("smoke path utf-8"),
+        Some(0),
+        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        None,
+        Vec::new(),
+        stack,
+        None,
+    )
+    .await
+    .expect("start_dev_server_full");
+    let addr = started.addr;
+
+    let resp = http_get(addr, "/@prebundle/react-refresh-runtime.js").await;
+    assert!(
+        resp.starts_with("HTTP/1.1 200"),
+        "react-refresh prebundle status: {}",
+        resp.lines().next().unwrap_or("")
+    );
+    assert!(
+        resp.contains("performReactRefresh"),
+        "runtime should export performReactRefresh"
+    );
+    assert!(
+        resp.contains("injectIntoGlobalHook"),
+        "runtime should export injectIntoGlobalHook"
+    );
+}
