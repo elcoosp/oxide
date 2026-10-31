@@ -451,8 +451,13 @@ fn security_headers_defaults_and_tls() {
 #[test]
 fn csp_header_modes() {
     let strict = csp_header("strict", "abc");
+    // The production CSP allows `'wasm-unsafe-eval'` so that the
+    // oxide-fw-core-wasm edge helpers (§22) can instantiate modules
+    // without an eval-based fallback. The assertion here must match
+    // the source at `csp_header` — an outdated string is what broke
+    // this test the first time the CSP gained the directive.
     assert!(
-        strict.contains("script-src 'self' 'nonce-abc' 'strict-dynamic'"),
+        strict.contains("script-src 'self' 'wasm-unsafe-eval' 'nonce-abc' 'strict-dynamic'"),
         "{strict}"
     );
     assert!(strict.starts_with("default-src 'self'; "), "{strict}");
@@ -460,7 +465,10 @@ fn csp_header_modes() {
     assert!(strict.contains("object-src 'none'"));
     assert!(strict.contains("base-uri 'self'"));
     let hash = csp_header("hash", "abc");
-    assert!(hash.contains("script-src 'self';"), "{hash}");
+    assert!(
+        hash.contains("script-src 'self' 'wasm-unsafe-eval';"),
+        "{hash}"
+    );
     assert!(!hash.contains("nonce"), "{hash}");
     assert_eq!(csp_header("off", "abc"), "");
     assert_eq!(csp_header("wat", "abc"), "");
