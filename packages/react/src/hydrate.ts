@@ -247,7 +247,7 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
     // container (SPA mode) on initial load. Client navigation
     // (allowHydrate=false) is unaffected — it always re-renders, because the
     // container holds the PREVIOUS route's markup by then.
-    if (allowHydrate && (root.innerHTML ?? '') !== '') return false
+    // Allow hydration on initial load for real SSR pages.
     const key = routeIdFor(inp.route, src.manifest)
     if (key === undefined) {
       console.warn?.('[oxide-diag] real-render skipped: route ' + JSON.stringify(inp.route) + ' not matched in manifest (routes: ' + Object.keys(src.manifest.routes).join(',') + ')')

@@ -63,7 +63,7 @@ export default function AdapterTabs({ adapters }: Props) {
             type="button"
             role="tab"
             aria-selected={activeId === a.id}
-            onClick={() => setActiveId(a.id)}
+            onClick={() => { console.log("tab click", a.id); setActiveId(a.id); }}
             className={`inline-flex items-center gap-2 px-3 py-2 font-mono text-[13px] cursor-pointer border border-transparent rounded-[7px] transition-colors ${
               activeId === a.id
                 ? 'bg-zinc-900 text-zinc-50'
@@ -71,7 +71,8 @@ export default function AdapterTabs({ adapters }: Props) {
             }`}
           >
             {a.logo && (
-              <span className="flex items-center justify-center w-[18px] h-[18px] rounded-full bg-zinc-200 overflow-hidden shrink-0">
+              <span className="flex items-center justify-center w-[18px] h-[18px] rounded-full overflow-hidden shrink-0"
+                style={{ backgroundColor: '#ffffff', padding: '2px' }}>
                 <img
                   src={a.logo}
                   alt=""
