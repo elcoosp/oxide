@@ -1,13 +1,19 @@
 import { useEffect } from 'react'
-import { useReducedMotion } from '../lib/motion.ts'
 import { codeToHtml } from 'rangi'
 import { githubDark } from 'rangi/themes'
 
 const STORAGE_KEY = 'oxide:framework'
 const SYNC_EVENT = 'oxide:framework-change'
+
+const META = {
+  react: { label: 'React', logo: '/frameworks/react.png', note: 'React 19 adapter — streaming SSR + concurrent features.' },
+  vue: { label: 'Vue', logo: '/frameworks/vue.png', note: 'Vue 3 adapter — SFC support + Vapor runtime.' },
+  svelte: { label: 'Svelte', logo: '/frameworks/svelte.png', note: 'Svelte 5 adapter — runes + server components.' },
+  solid: { label: 'Solid', logo: '/frameworks/solid.png', note: 'Solid adapter — fine-grained reactivity.' }
+} as const
+
+type Lang = keyof typeof META
 const LANGS = ['react', 'vue', 'svelte', 'solid'] as const
-type Lang = (typeof LANGS)[number]
-const LABEL: Record<Lang, string> = { react: 'React', vue: 'Vue', svelte: 'Svelte', solid: 'Solid' }
 
 function readStored(): Lang | null {
   try {
@@ -26,57 +32,46 @@ function parseSnippets(el: HTMLElement): Record<Lang, string> | null {
   } catch { return null }
 }
 
-function build(el: HTMLElement, snippets: Record<Lang, string>, active: Lang, reduced: boolean) {
-  el.textContent = ''
-  el.className = 'max-w-4xl mx-auto w-full'
+function stripShikiStyle(html: string): string {
+  return html.replace(/<div\b([^>]*)>/g, (match, attrs) => {
+    if (/class="[^"]*shj-/.test(attrs)) {
+      return `<div${attrs.replace(/\s+style="[^"]*"/, '')}>`;
+    }
+    return match;
+  });
+}
+
+function build(el: HTMLElement, snippets: Record<Lang, string>, active: Lang) {
+  el.innerHTML = ''
+  el.className = 'max-w-[1080px] mx-auto border border-zinc-800 rounded-[10px] overflow-hidden'
 
   const tabs = document.createElement('div')
-  tabs.className = 'flex border-b border-zinc-800 relative w-full justify-start'
+  tabs.className = 'flex flex-wrap gap-1 p-1.5 bg-[#09090b] border-b border-zinc-800'
   tabs.setAttribute('role', 'tablist')
 
-  const indicator = document.createElement('span')
-  indicator.className = 'absolute bottom-[-1px] h-[2px] bg-orange-600 transition-all duration-300'
-  tabs.appendChild(indicator)
+  const panel = document.createElement('div')
+  panel.className = 'adapter-shiki bg-zinc-900'
 
-  const panel = document.createElement('pre')
-  panel.className = 'm-0 p-6 bg-zinc-900 border border-zinc-800 border-t-0 rounded-b-xl overflow-x-auto'
-  panel.setAttribute('role', 'tabpanel')
-
-  const code = document.createElement('code')
-  code.className = 'block font-mono text-sm leading-relaxed text-zinc-50 whitespace-pre min-w-0'
-  panel.appendChild(code)
+  const note = document.createElement('p')
+  note.className = 'm-0 px-5 py-4 bg-[#09090b] text-zinc-400 text-sm font-mono border-t border-zinc-800'
 
   const buttons = new Map<Lang, HTMLButtonElement>()
 
-  const moveIndicator = () => {
-    const btn = buttons.get(active)
-    if (!btn) return
-    indicator.style.width = btn.offsetWidth + 'px'
-    indicator.style.transform = 'translateX(' + btn.offsetLeft + 'px)'
-  }
-
-  const apply = async (next: Lang, persist: boolean) => {
+  const apply = (next: Lang, persist: boolean) => {
     active = next
     for (const [lang, btn] of buttons) {
       const on = lang === active
       btn.setAttribute('aria-selected', on ? 'true' : 'false')
-      btn.className = `flex-none! w-max! px-4 py-3 font-mono text-xs tracking-wider transition-colors cursor-pointer border-none bg-transparent ${on ? 'text-zinc-50' : 'text-zinc-400 hover:text-zinc-200'}`
+      btn.className = `inline-flex items-center gap-2 px-3 py-2 font-mono text-[13px] cursor-pointer border border-transparent rounded-[7px] transition-colors ${
+        on ? 'bg-zinc-900 text-zinc-50' : 'bg-transparent text-zinc-400 hover:text-zinc-200'
+      }`
     }
 
-    code.textContent = snippets[active]
-    moveIndicator()
+    note.textContent = META[active].note
 
-    try {
-      const lang = next === 'solid' ? 'tsx' : next
-      const html = codeToHtml(snippets[active], { lang, theme: githubDark })
-      const parsed = new DOMParser().parseFromString(html, 'text/html')
-      const shj = parsed.querySelector('[class*="shj-lang-"]')
-      if (shj && active === next) {
-        code.innerHTML = shj.innerHTML
-        const bg = (shj as HTMLElement).style.backgroundColor
-        if (bg) panel.style.backgroundColor = bg
-      }
-    } catch (e) { console.warn('rangi failed', e) }
+    const lang = next === 'solid' ? 'tsx' : next
+    const html = codeToHtml(snippets[active], { lang, theme: githubDark, lineNumbers: false })
+    panel.innerHTML = stripShikiStyle(html)
 
     if (persist) {
       try { localStorage.setItem(STORAGE_KEY, active) } catch {}
@@ -88,27 +83,44 @@ function build(el: HTMLElement, snippets: Record<Lang, string>, active: Lang, re
     const btn = document.createElement('button')
     btn.type = 'button'
     btn.id = 'fw-tab-' + lang
-    btn.className = 'flex-none! w-max! px-4 py-3 font-mono text-xs tracking-wider text-zinc-400 transition-colors cursor-pointer border-none bg-transparent'
-    btn.textContent = LABEL[lang]
     btn.addEventListener('click', () => apply(lang, true))
+
+    const logoWrap = document.createElement('span')
+    logoWrap.className = 'flex items-center justify-center w-[18px] h-[18px] rounded-full bg-zinc-200 overflow-hidden shrink-0'
+    const img = document.createElement('img')
+    img.src = META[lang].logo
+    img.alt = ''
+    img.width = 12
+    img.height = 12
+    img.style.width = '12px'
+    img.style.height = '12px'
+    img.style.objectFit = 'contain'
+    logoWrap.appendChild(img)
+
+    btn.appendChild(logoWrap)
+    btn.appendChild(document.createTextNode(META[lang].label))
+
     buttons.set(lang, btn)
     tabs.appendChild(btn)
   }
 
   el.appendChild(tabs)
   el.appendChild(panel)
+  el.appendChild(note)
   apply(active, false)
 }
 
 export default function FrameworkTabsBootstrap() {
-  const reduced = useReducedMotion()
   useEffect(() => {
     const blocks = document.querySelectorAll<HTMLElement>('[data-fw-snippets]')
     blocks.forEach((el) => {
       if (el.classList.contains('fw-code-ready')) return
       const snippets = parseSnippets(el)
-      if (snippets) build(el, snippets, readStored() ?? 'react', !!reduced)
+      if (snippets) {
+        el.classList.add('fw-code-ready')
+        build(el, snippets, readStored() ?? 'react')
+      }
     })
-  }, [reduced])
+  }, [])
   return null
 }
