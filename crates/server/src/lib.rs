@@ -328,9 +328,76 @@ impl StaticAssets {
     /// *compressed* variant serves the full negotiated representation with 200 —
     /// no partial decode. `HEAD` returns headers only.
     pub fn serve(&self, req: &OxideRequest, path: &str) -> Option<OxideResponse> {
-        let entry = self.index.get(path)?;
         let is_dev_pre = std::env::var("OXIDE_DEV").is_ok()
             || std::env::var("OXIDE_DEV_MODE").is_ok();
+        // Dev: fall back to disk on index miss. `StaticAssets::scan` runs
+        // once at startup and is designed for immutable prod assets. Rolldown
+        // rebuilds emit NEW chunk names (e.g. `doc-body-<hash>.js`) that
+        // weren't in the index, so they'd 404 forever. A 404 on a chunk makes
+        // the browser's dynamic import fail, `componentFor` returns
+        // undefined, and the page falls back to IR — the "flash of new then
+        // revert to old" symptom.
+        let disk_entry_owned: Option<AssetEntry> = if is_dev_pre
+            && !self.index.contains_key(path)
+        {
+            let rel = path.trim_start_matches('/');
+            // Reject path traversal defensively even though the caller
+            // (dispatch) already normalizes the URL.
+            if rel.contains("..") || rel.is_empty() {
+                None
+            } else {
+                let disk = self.root.join(rel);
+                if disk.is_file() {
+                    std::fs::read(&disk).ok().map(|content| {
+                        let etag = blake3::hash(&content).to_hex()[..16].to_string();
+                        let md = std::fs::metadata(&disk).ok();
+                        let mtime = md
+                            .as_ref()
+                            .and_then(|m| m.modified().ok())
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let mut precompressed = BTreeMap::new();
+                        for (ext, enc) in [("zst", "zstd"), ("br", "br"), ("gz", "gzip")] {
+                            let mut sibling = disk.clone().into_os_string();
+                            sibling.push(format!(".{ext}"));
+                            let sibling = std::path::PathBuf::from(sibling);
+                            if sibling.is_file() {
+                                precompressed.insert(enc.to_string(), sibling);
+                            }
+                        }
+                        let filename = disk
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("")
+                            .to_string();
+                        tracing::info!(
+                            path = path,
+                            disk = %disk.display(),
+                            "asset: fresh chunk from disk (dev index miss)"
+                        );
+                        AssetEntry {
+                            path: disk,
+                            etag,
+                            size: content.len() as u64,
+                            mtime,
+                            content_type: content_type_for(&filename),
+                            precompressed,
+                        }
+                    })
+                } else {
+                    tracing::warn!(
+                        path = path,
+                        disk = %disk.display(),
+                        "asset: index miss AND disk miss — genuine 404"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let entry = self.index.get(path).or(disk_entry_owned.as_ref())?;
         // Dev: recompute the etag from the FRESH file so a rebuilt chunk
         // gets a new etag AND the moka-body-cache and index-etag both
         // serve the current bytes. In prod, entry.etag is correct (assets
