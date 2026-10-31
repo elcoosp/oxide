@@ -2816,7 +2816,47 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                         "dev: route tree + component sources rebuilt after {pstr} change"
                                     );
                                     let live_tree = started.swappable_tree.load();
-                                    if build_client_bundle(&rootp, &cfg, &live_tree, hmr_tooling_pool.as_ref(), &client_bundler, None, w).await.is_ok() {
+                                    if cfg.dev.esm {
+                                        // Native ESM mode: no client bundle to
+                                        // rebuild. The boot entry imports each
+                                        // route's source module directly, so
+                                        // regenerate `.oxide/esm-manifest.json`
+                                        // and `.oxide/esm-boot.mjs` from the
+                                        // fresh tree. `EsmDevState` itself is
+                                        // immutable across a route add — the
+                                        // rewrite map only depends on the
+                                        // framework exports + the prebundle
+                                        // list, both fixed at dev-start.
+                                        let mut components: std::collections::BTreeMap<String, String> =
+                                            std::collections::BTreeMap::new();
+                                        let routes_root = rootp.join(&cfg.routes.dir);
+                                        for entry in &live_tree.entries {
+                                            let rel_from_routes = entry
+                                                .file
+                                                .to_string_lossy()
+                                                .to_string();
+                                            let id_str = entry.id.0.as_str().to_string();
+                                            components.insert(
+                                                id_str,
+                                                format!(
+                                                    "/src/{}/{rel_from_routes}",
+                                                    cfg.routes.dir.trim_start_matches("src/").trim_end_matches('/')
+                                                ),
+                                            );
+                                        }
+                                        if let Err(e) =
+                                            crate::esm_dev::build_esm_manifest(&rootp, &components)
+                                        {
+                                            tracing::warn!(error = %e, "esm dev: manifest regen failed");
+                                        }
+                                        if let Err(e) = crate::esm_dev::generate_esm_boot_entry(
+                                            &rootp,
+                                            &components,
+                                        ) {
+                                            tracing::warn!(error = %e, "esm dev: boot entry regen failed");
+                                        }
+                                        let _ = &routes_root;
+                                    } else if build_client_bundle(&rootp, &cfg, &live_tree, hmr_tooling_pool.as_ref(), &client_bundler, None, w).await.is_ok() {
                                         let manifest_path = rootp.join("dist/client/client.manifest.json");
                                         let _ = enrich_manifest_layout_chains(&manifest_path, &live_tree);
                                         consolidate_tailwind_css_and_manifest(&rootp);

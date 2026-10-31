@@ -625,11 +625,10 @@ pub struct DevConfig {
     /// `componentFor` at `/src/*.tsx` URLs, which the existing client
     /// runtime already handles via `import(url)`.
     ///
-    /// Default `false` through Phases 1-2 (opt-in for testing).
-    /// Flips to `true` in Phase 4 once React Refresh is proven.
-    ///
-    /// Rollback: `dev: { esm: false }` in `oxide.config.ts`, or set
-    /// `OXIDE_ESM=0` in the environment.
+    /// Default `true` since Phase 4 (React Refresh proven, see
+    /// `docs/deviation-esm.md`). Opt out per project with
+    /// `dev: { esm: false }` in `oxide.config.ts` to fall back to the
+    /// Rolldown bundle + full-reload HMR path.
     pub esm: bool,
     /// Packages to bundle once at dev startup from CJS to ESM. Each entry
     /// is served from `.oxide/esm-prebundle/<name>.js` and referenced by
@@ -645,8 +644,10 @@ impl Default for DevConfig {
             bundle: false,
             https: false,
             proxy: BTreeMap::new(),
-            // Phase 1-2: opt-in. Phase 4 flips this to `true`.
-            esm: false,
+            // Phase 4: React Refresh is proven (Phase 3 tests green), so the
+            // native ESM dev server is the default. Rollback:
+            // `dev: { esm: false }` in `oxide.config.ts`.
+            esm: true,
             prebundle: vec![
                 "react".into(),
                 "react-dom/client".into(),
