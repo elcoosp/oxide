@@ -36,6 +36,12 @@ function install(): void {
   const g = window as unknown as {
     __oxide_hmr__?: unknown
     __oxide_refresh?: unknown
+    __oxide_refresh_reg?: (t: unknown, id: string, url?: string) => void
+    $RefreshRuntime$?: {
+      performReactRefresh?: () => void
+      injectIntoGlobalHook?: (w: unknown) => void
+      register?: (t: unknown, id: string) => void
+    }
   }
   if (g.__oxide_hmr__) return // idempotent
 
@@ -83,7 +89,72 @@ function install(): void {
   // react-refresh's performReactRefresh (loaded lazily).
   if (typeof g.__oxide_refresh === 'undefined') {
     g.__oxide_refresh = (_mod: unknown): void => {
+      // Prefer React Refresh's in-place update when the runtime is loaded.
+      const rt = g.$RefreshRuntime$
+      if (rt && typeof rt.performReactRefresh === 'function') {
+        try {
+          rt.performReactRefresh()
+          return
+        } catch {
+          // Fall through to a full reload — a runtime that throws is worse
+          // than a flash.
+        }
+      }
       if (typeof location !== 'undefined') location.reload()
+    }
+  }
+
+  // The per-module `$RefreshReg$` shim (injected by the Rust compiler's
+  // `inject_react_refresh` pass) routes through `__oxide_refresh_reg` when
+  // the runtime is available; otherwise it is a no-op (a production build
+  // strips the shim, so this branch only runs in dev).
+  if (typeof g.__oxide_refresh_reg === 'undefined') {
+    g.__oxide_refresh_reg = (t: unknown, id: string, url?: string): void => {
+      const rt = g.$RefreshRuntime$
+      if (rt && typeof rt.register === 'function') {
+        try {
+          rt.register(t, `${url ?? ''} ${id}`)
+        } catch {
+          // Registration failing must not break the module evaluation.
+        }
+      }
+    }
+  }
+
+  // Best-effort: pull in React Refresh's runtime from the prebundle when the
+  // project has installed `react-refresh`. A 404 (project has not installed
+  // it) leaves `$RefreshRuntime$` undefined; `__oxide_refresh` then falls
+  // back to a full reload. A dynamic import so the small reload path does not
+  // pay a network round-trip on the happy path.
+  if (typeof g.$RefreshRuntime$ === 'undefined') {
+    const nav = (typeof window !== 'undefined' ? window : globalThis) as unknown as {
+      location?: { protocol: string }
+    }
+    const scheme = nav.location?.protocol ?? ''
+    if (scheme === 'http:' || scheme === 'https:') {
+      // Deferred: a non-awaited dynamic import. The `@prebundle` path is only
+      // valid in dev (the dev server owns `/@`), so a 404 there is expected
+      // outside `oxide dev`.
+      void (import(/* @vite-ignore */ '/@prebundle/react-refresh-runtime.js') as Promise<{
+        default?: unknown
+        performReactRefresh?: () => void
+        injectIntoGlobalHook?: (w: unknown) => void
+        register?: (t: unknown, id: string) => void
+      }>)
+        .then((mod) => {
+          const rt = (mod.default ?? mod) as NonNullable<typeof g.$RefreshRuntime$>
+          if (typeof rt.injectIntoGlobalHook === 'function') {
+            try {
+              rt.injectIntoGlobalHook(window)
+            } catch {
+              // Ignore: the runtime is optional.
+            }
+          }
+          g.$RefreshRuntime$ = rt
+        })
+        .catch(() => {
+          // Not installed — a full reload is the fallback, no user-visible error.
+        })
     }
   }
 }

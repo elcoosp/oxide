@@ -36,7 +36,7 @@ pub use framework::{
     ToolingDispatcher, compiler_for,
 };
 pub use generate_params::{GenerateParamsResult, extract_generate_params};
-pub use oxc_backend::{OxcTransformer, lower_to_js};
+pub use oxc_backend::{OxcTransformer, inject_react_refresh, lower_to_js, lower_to_js_with_refresh};
 
 pub type Result<T> = std::result::Result<T, OxideError>;
 

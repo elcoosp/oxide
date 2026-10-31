@@ -29,7 +29,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use oxide_fw_compiler::{inject_hmr_boundary, lower_to_js};
+use oxide_fw_compiler::{inject_hmr_boundary, lower_to_js_with_refresh};
 use oxide_fw_server::{OxideRequest, OxideResponse};
 
 /// Directory (project-relative) where prebundled deps and copied framework
@@ -385,7 +385,9 @@ fn serve_source_file(state: &EsmDevState, rel_path: &str) -> OxideResponse {
     };
     let lang = lang_for(rel_path);
     let path_for_compiler = format!("src/{rel_path}");
-    let lowered = match lower_to_js(
+    // `lower_to_js_with_refresh` lowers JSX then injects `$RefreshReg$` calls
+    // for every top-level component (a no-op on non-tsx/jsx sources).
+    let lowered = match lower_to_js_with_refresh(
         &src,
         lang,
         &path_for_compiler,

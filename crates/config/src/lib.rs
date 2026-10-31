@@ -651,6 +651,12 @@ impl Default for DevConfig {
                 "react".into(),
                 "react-dom/client".into(),
                 "react/jsx-runtime".into(),
+                // Phase 3: React Refresh runtime. When the project installs
+                // `react-refresh`, `hot.ts` upgrades `__oxide_refresh` to an
+                // in-place component update. If the package is absent,
+                // `prebundle_cjs_deps` logs it and skips; `hot.ts` falls back
+                // to a full page reload — no user-visible error.
+                "react-refresh/runtime".into(),
                 "lucide-react".into(),
                 "rangi".into(),
                 "rangi/themes".into(),

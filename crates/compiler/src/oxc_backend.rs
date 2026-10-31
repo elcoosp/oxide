@@ -15,7 +15,10 @@ use crate::{
     Transformer, inject_hmr_boundary, is_server_module_path, scan_import_spans,
 };
 use oxc_allocator::Allocator;
-use oxc_ast::ast::{Program, Statement};
+use oxc_ast::ast::{
+    BindingPattern, Declaration, ExportDefaultDeclarationKind, Expression, Program, Statement,
+    VariableDeclaration,
+};
 use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType};
 use oxide_fw_diagnostics::Diagnostic;
@@ -194,6 +197,155 @@ pub fn lower_to_js(
     let map = ret.map.map(|m| m.into_owned_sourcemap());
     Ok((code, map))
 }
+
+/// Inject React Refresh's `$RefreshReg$` calls for every top-level component
+/// (function declaration, class declaration, or arrow/function/class bound to
+/// `const`/`let`/`var`), plus the `$RefreshReg$`/`$RefreshSig$` shim at the
+/// top of the module. Wrapped in `export` declarations too.
+///
+/// Returns the input unchanged for:
+/// - Non-tsx/jsx languages (React Refresh only matters for React components).
+/// - Sources that already declare `$RefreshReg$` (idempotent — a caller that
+///   re-transforms an already-injected source keeps one shim and one set of
+///   registration calls).
+/// - Sources that fail to parse (best-effort; the caller will get the parse
+///   diagnostic from `lower_to_js` first).
+/// - Sources with no top-level components.
+///
+/// The `$RefreshSig$` chain for custom hooks is intentionally **not**
+/// generated — React Refresh treats an unhinted component as "always
+/// invalidated when its module changes," which is a safe default and what the
+/// official Babel plugin does in the absence of a stable hook signature. A
+/// later phase can add the signature chain.
+pub fn inject_react_refresh(code: &str, lang: &str, path: &str) -> Result<String> {
+    if !matches!(lang, "tsx" | "jsx") {
+        return Ok(code.to_string());
+    }
+    if code.contains("$RefreshReg$") {
+        return Ok(code.to_string());
+    }
+    let allocator = Allocator::default();
+    let source_type = source_type_for(lang);
+    let parsed = Parser::new(&allocator, code, source_type).parse();
+    if !parsed.diagnostics.is_empty() {
+        return Ok(code.to_string());
+    }
+    let mut regs: Vec<String> = Vec::new();
+    for stmt in &parsed.program.body {
+        regs.extend(top_level_component_names(stmt));
+    }
+    if regs.is_empty() {
+        return Ok(code.to_string());
+    }
+    let mut out = String::with_capacity(code.len() + 200 + regs.len() * 40);
+    out.push_str("// oxide: React Refresh (dev only)\n");
+    out.push_str(
+        "const $RefreshReg$ = (t, id) => { const r = globalThis.__oxide_refresh_reg; if (typeof r === 'function') { try { r(t, id, import.meta.url); } catch {} } };\n",
+    );
+    out.push_str("const $RefreshSig$ = () => (t) => t;\n");
+    out.push_str(code);
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    for name in &regs {
+        out.push_str("$RefreshReg$(");
+        out.push_str(name);
+        out.push_str(", ");
+        out.push_str(&format!("{:?}", name));
+        out.push_str(");\n");
+    }
+    let _ = path;
+    Ok(out)
+}
+
+fn top_level_component_names(stmt: &Statement<'_>) -> Vec<String> {
+    match stmt {
+        Statement::FunctionDeclaration(f) => f
+            .id
+            .as_ref()
+            .map(|id| vec![id.name.to_string()])
+            .unwrap_or_default(),
+        Statement::ClassDeclaration(c) => c
+            .id
+            .as_ref()
+            .map(|id| vec![id.name.to_string()])
+            .unwrap_or_default(),
+        Statement::ExportDeclaration(e) => match &e.declaration {
+            Declaration::FunctionDeclaration(f) => f
+                .id
+                .as_ref()
+                .map(|id| vec![id.name.to_string()])
+                .unwrap_or_default(),
+            Declaration::ClassDeclaration(cl) => cl
+                .id
+                .as_ref()
+                .map(|id| vec![id.name.to_string()])
+                .unwrap_or_default(),
+            Declaration::VariableDeclaration(v) => {
+                var_declarator_component_names(v.as_ref())
+            }
+            _ => Vec::new(),
+        },
+        Statement::VariableDeclaration(v) => var_declarator_component_names(v.as_ref()),
+        Statement::ExportDefaultDeclaration(e) => match &e.declaration {
+            ExportDefaultDeclarationKind::FunctionDeclaration(f) => f
+                .id
+                .as_ref()
+                .map(|id| vec![id.name.to_string()])
+                .unwrap_or_default(),
+            ExportDefaultDeclarationKind::ClassDeclaration(cl) => cl
+                .id
+                .as_ref()
+                .map(|id| vec![id.name.to_string()])
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
+fn var_declarator_component_names(v: &VariableDeclaration<'_>) -> Vec<String> {
+    v.declarations
+        .iter()
+        .filter_map(|decl| {
+            let init = decl.init.as_ref()?;
+            if !matches!(
+                init,
+                Expression::ArrowFunctionExpression(_)
+                    | Expression::FunctionExpression(_)
+                    | Expression::ClassExpression(_)
+            ) {
+                return None;
+            }
+            if let BindingPattern::BindingIdentifier(id) = &decl.id {
+                Some(id.name.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// `lower_to_js` with React Refresh registration calls injected for `.tsx`
+/// and `.jsx` sources. The transform ordering matches the JSX-lowering path:
+/// parse once, lower to JS, then walk the **original** source for component
+/// names (the lowered output still contains the same top-level bindings). If
+/// either pass fails, the JS-lowered code is still returned — a
+/// Refresh-registration failure must never break rendering.
+pub fn lower_to_js_with_refresh(
+    code: &str,
+    lang: &'static str,
+    path: &str,
+    jsx_import_source: Option<&str>,
+) -> Result<(String, Option<oxc_sourcemap::OwnedSourceMap>)> {
+    let (lowered, srcmap) = lower_to_js(code, lang, path, jsx_import_source)?;
+    if !matches!(lang, "tsx" | "jsx") {
+        return Ok((lowered, srcmap));
+    }
+    let with_refresh = inject_react_refresh(&lowered, lang, path).unwrap_or(lowered);
+    Ok((with_refresh, srcmap))
+}
+
 
 impl OxcTransformer {
     /// Run only the AST-driven passes — `'use cache'` rewriting, server-fn
@@ -887,4 +1039,103 @@ type _UnusedAstMap = AstBTreeMap<String, String>;
 /// Build a `Location` for a 1-based (line, column) in `path`.
 fn oxidation_location(path: &str, line: usize, col: usize) -> oxide_fw_diagnostics::Location {
     oxide_fw_diagnostics::Location::file(path, line as u32, col as u32)
+}
+
+
+#[cfg(test)]
+mod react_refresh_tests {
+    use super::*;
+
+    #[test]
+    fn tsx_function_declaration_gets_reg() {
+        let out = inject_react_refresh(
+            "export default function Page() { return null; }\n",
+            "tsx",
+            "src/routes/page.tsx",
+        )
+        .unwrap();
+        assert!(out.contains("$RefreshReg$(Page"), "missing reg call: {out}");
+        assert!(out.contains("const $RefreshReg$"), "missing shim: {out}");
+    }
+
+    #[test]
+    fn tsx_named_export_arrow_gets_reg() {
+        let out = inject_react_refresh(
+            "export const Widget = () => null;\n",
+            "tsx",
+            "src/routes/widget.tsx",
+        )
+        .unwrap();
+        assert!(out.contains("$RefreshReg$(Widget"), "missing reg call: {out}");
+    }
+
+    #[test]
+    fn tsx_class_gets_reg() {
+        let out = inject_react_refresh(
+            "export class K extends React.Component {}\n",
+            "tsx",
+            "src/comp.tsx",
+        )
+        .unwrap();
+        assert!(out.contains("$RefreshReg$(K"), "missing reg call: {out}");
+    }
+
+    #[test]
+    fn tsx_multiple_components_get_regs() {
+        let out = inject_react_refresh(
+            "function A() { return null; }\nfunction B() { return null; }\n",
+            "tsx",
+            "src/x.tsx",
+        )
+        .unwrap();
+        assert!(out.contains("$RefreshReg$(A"));
+        assert!(out.contains("$RefreshReg$(B"));
+    }
+
+    #[test]
+    fn non_component_gets_no_reg() {
+        let out =
+            inject_react_refresh("export const FOO = 42;\n", "tsx", "src/x.tsx").unwrap();
+        assert!(!out.contains("$RefreshReg$("), "should not inject: {out}");
+    }
+
+    #[test]
+    fn non_tsx_passthrough() {
+        let out = inject_react_refresh("const x = 1;\n", "ts", "src/x.ts").unwrap();
+        assert!(!out.contains("$RefreshReg$"));
+    }
+
+    #[test]
+    fn parser_hoists_exported_components_into_bare_statements() {
+        // The current transform relies on the parser producing bare
+        // `Statement::VariableDeclaration` / `FunctionDeclaration` for
+        // `export const X = () => ...` / `export function F() {}`. If a
+        // future oxc reverses that (puts `declaration` back on
+        // `ExportNamedDeclaration`), this test fails loudly, prompting
+        // the `top_level_component_names` match to add the arm back.
+        let out = inject_react_refresh(
+            "export const Foo = () => null;\nexport function Bar() { return null; }\n",
+            "tsx",
+            "src/x.tsx",
+        )
+        .unwrap();
+        assert!(out.contains("$RefreshReg$(Foo"), "exported const not registered: {out}");
+        assert!(out.contains("$RefreshReg$(Bar"), "exported fn not registered: {out}");
+    }
+
+    #[test]
+    fn idempotent() {
+        let src = "export default function Page() { return null; }\n";
+        let once = inject_react_refresh(src, "tsx", "src/x.tsx").unwrap();
+        let twice = inject_react_refresh(&once, "tsx", "src/x.tsx").unwrap();
+        assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn lower_to_js_with_refresh_emits_reg_for_tsx() {
+        let src = "import React from 'react';\nexport default function Page() {\n  return <div>hi</div>;\n}\n";
+        let (out, _) = lower_to_js_with_refresh(src, "tsx", "src/page.tsx", None).unwrap();
+        assert!(out.contains("$RefreshReg$(Page"), "missing reg: {out}");
+        assert!(!out.contains("<div>hi</div>"), "jsx not lowered: {out}");
+    }
 }
