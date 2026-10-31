@@ -8310,3 +8310,112 @@ async fn action_set_cookie_survives_200_rerender() {
         resp.headers,
     );
 }
+
+
+/// Phase 4b E2E: proves the native ESM dev server is wired end-to-end — the
+/// page HTML points at `/@boot/boot.mjs`, that file imports the prebundle
+/// `hot` URL, `.tsx` sources are served as transformed ESM, and `.server.*`
+/// sources are refused with 403.
+///
+/// `#[ignore]` for the same reasons as `dev_server_serves_smoke_app_over_http`:
+/// needs `pnpm install` + `pnpm --filter @oxide-fw/core build` so
+/// `packages/core/dist/` exists and `ensure_dev_client_bundle` can populate
+/// `dist/client/`. Run with:
+///     cargo test -p oxide-fw-cli -- --ignored dev_server_serves_esm_urls_over_http
+#[tokio::test]
+#[ignore]
+async fn dev_server_serves_esm_urls_over_http() {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root");
+    let smoke = workspace.join("examples/smoke-app-react");
+    let config_path = smoke.join("oxide.config.ts");
+    assert!(
+        config_path.is_file(),
+        "smoke-app fixture missing at {}; run `pnpm install`",
+        smoke.display()
+    );
+
+    let stack = crate::framework_shim::build_framework_stack(
+        Some(&config_path),
+        oxide_fw_config::JsBackend::Node,
+        None,
+        None,
+    )
+    .await;
+
+    let started = crate::start_dev_server_full(
+        smoke.to_str().expect("smoke path utf-8"),
+        Some(0),
+        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        None,
+        Vec::new(),
+        stack,
+        None,
+    )
+    .await
+    .expect("start_dev_server_full");
+    let addr = started.addr;
+
+    // --- Home page HTML: boot script URL is the ESM entry ---
+    let home = http_get(addr, "/").await;
+    assert!(
+        home.starts_with("HTTP/1.1 200"),
+        "home status line: {}",
+        home.lines().next().unwrap_or("")
+    );
+    assert!(
+        home.contains("/@boot/boot.mjs"),
+        "home HTML should reference /@boot/boot.mjs: {home}"
+    );
+    assert!(
+        !home.contains("/client/index-"),
+        "home HTML should not reference a chunk file in ESM mode: {home}"
+    );
+
+    // --- Boot entry: imports the prebundle hot runtime + page module ---
+    let boot = http_get(addr, "/@boot/boot.mjs").await;
+    assert!(
+        boot.starts_with("HTTP/1.1 200"),
+        "boot entry status line: {}",
+        boot.lines().next().unwrap_or("")
+    );
+    assert!(
+        boot.contains("/@prebundle/@oxide-fw/core/dist/client-hot.js"),
+        "boot entry should import the prebundle hot URL: {boot}"
+    );
+    assert!(
+        boot.contains("/src/routes/index/page.tsx"),
+        "boot entry should import the page: {boot}"
+    );
+
+    // --- Source .tsx: lowered to ESM with refresh registration ---
+    let page_tsx = http_get(addr, "/src/routes/index/page.tsx").await;
+    assert!(
+        page_tsx.starts_with("HTTP/1.1 200"),
+        "page.tsx status: {}",
+        page_tsx.lines().next().unwrap_or("")
+    );
+    assert!(
+        page_tsx.contains("text/javascript"),
+        "page.tsx should be served as JS: {page_tsx}"
+    );
+    assert!(
+        page_tsx.contains("$RefreshReg$(Page"),
+        "page.tsx should carry the refresh registration: {page_tsx}"
+    );
+    assert!(
+        !page_tsx.contains("<main data-greeting-fn"),
+        "page.tsx should be lowered to JS, not raw TSX: {page_tsx}"
+    );
+
+    // --- Server module: refused with 403 ---
+    let server_ts = http_get(addr, "/src/routes/greeting.server.ts").await;
+    assert!(
+        server_ts.starts_with("HTTP/1.1 403"),
+        "server module should be refused with 403: {}",
+        server_ts.lines().next().unwrap_or("")
+    );
+}

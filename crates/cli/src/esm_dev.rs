@@ -646,6 +646,15 @@ mod integration_tests {
             body.contains("import.meta.hot"),
             "missing HMR preamble or accept call: {body}"
         );
+        // Phase 3: React Refresh registration is injected for the component.
+        assert!(
+            body.contains("$RefreshReg$(Page"),
+            "missing $RefreshReg$ for Page: {body}"
+        );
+        assert!(
+            body.contains("const $RefreshReg$"),
+            "missing $RefreshReg$ shim: {body}"
+        );
     }
 
     #[test]
@@ -691,5 +700,49 @@ mod integration_tests {
         let tmp = tempfile::tempdir().unwrap();
         prebundle_cjs_deps(tmp.path(), &[]).unwrap();
         assert!(tmp.path().join(PREBUNDLE_DIR).is_dir());
+    }
+
+    #[test]
+    fn boot_entry_references_prebundle_hot_url() {
+        // Pure Rust — no server, no node_modules. `read_framework_exports`
+        // falls back to `packages/core/package.json` relative to the temp
+        // root; we write a minimal one carrying the `./client/hot` export
+        // the boot entry depends on.
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg = tmp.path().join("packages/core");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(
+            pkg.join("package.json"),
+            r#"{
+                "name": "@oxide-fw/core",
+                "exports": {
+                    "./client/hot": { "default": "./dist/client-hot.js" },
+                    "./client": { "default": "./dist/client.js" }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let mut components = BTreeMap::new();
+        components.insert(
+            "routes/index".to_string(),
+            "/src/routes/page.tsx".to_string(),
+        );
+        let boot_path = generate_esm_boot_entry(tmp.path(), &components).unwrap();
+        let body = std::fs::read_to_string(&boot_path).unwrap();
+        // The boot file must import the prebundle URL, not the bare specifier
+        // — the browser's native resolver cannot see node_modules.
+        assert!(
+            body.contains("/@prebundle/@oxide-fw/core/dist/client-hot.js"),
+            "boot entry should reference the prebundle hot URL: {body}"
+        );
+        assert!(
+            !body.contains("from \"@oxide-fw/core/client/hot\""),
+            "bare specifier survived in boot entry: {body}"
+        );
+        assert!(
+            body.contains("/src/routes/page.tsx"),
+            "boot entry should import the page: {body}"
+        );
     }
 }
