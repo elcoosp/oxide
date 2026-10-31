@@ -972,6 +972,106 @@ pub async fn dev_component_sources(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- Phase 5 CSS injection tests -------------------------------------
+    //
+    // The disk-scan fallback in `inject_route_css` is what makes CSS reach
+    // the browser in ESM mode (no client manifest exists). These tests
+    // pin that contract: given a `dist/client/` directory containing a
+    // `tailwind-*.css` file, every rendered route gets a `<link
+    // rel="stylesheet">` for it — no `client.manifest.json` required.
+
+    fn make_adapter_with_css_dir(css_filename: Option<&str>) -> (AdapterPageRenderer, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let client = dir.path().join("dist/client");
+        std::fs::create_dir_all(&client).unwrap();
+        if let Some(name) = css_filename {
+            std::fs::write(client.join(name), "/* test */").unwrap();
+        }
+        // Intentionally do NOT write client.manifest.json — the disk-scan
+        // fallback must fire when the manifest is absent.
+        let renderer = AdapterPageRenderer::new(Arc::new(EchoFramework))
+            .with_manifest_path(client.join("client.manifest.json"));
+        (renderer, dir)
+    }
+
+    fn empty_render_input(route: &str) -> oxide_fw_server::PageRenderInput {
+        oxide_fw_server::PageRenderInput {
+            route: route.into(),
+            url: format!("/{}", route.trim_start_matches("routes/")),
+            params: Default::default(),
+            data: serde_json::json!({}),
+            head: serde_json::json!({ "meta": [], "link": [], "style": [], "script": [] }),
+            layouts: Vec::new(),
+            error_route_id: None,
+            locale: None,
+            deferred: Default::default(),
+            nonce: None,
+        }
+    }
+
+    #[test]
+    fn disk_scan_emits_link_for_tailwind_css() {
+        let (renderer, _dir) = make_adapter_with_css_dir(Some("tailwind-abcdef.css"));
+        let mut input = empty_render_input("routes/index");
+        renderer.inject_route_css(&mut input);
+        let links = input
+            .head
+            .get("link")
+            .and_then(|v| v.as_array())
+            .expect("link array present");
+        assert_eq!(links.len(), 1, "one stylesheet link: {links:?}");
+        assert_eq!(
+            links[0].get("href").and_then(|h| h.as_str()),
+            Some("/client/tailwind-abcdef.css")
+        );
+        assert_eq!(links[0].get("rel").and_then(|r| r.as_str()), Some("stylesheet"));
+    }
+
+    #[test]
+    fn disk_scan_noop_without_tailwind_css() {
+        let (renderer, _dir) = make_adapter_with_css_dir(None);
+        let mut input = empty_render_input("routes/index");
+        renderer.inject_route_css(&mut input);
+        let links = input
+            .head
+            .get("link")
+            .and_then(|v| v.as_array())
+            .expect("link array present");
+        assert!(links.is_empty(), "no CSS to inject: {links:?}");
+    }
+
+    #[test]
+    fn disk_scan_skips_warmup_route() {
+        let (renderer, _dir) = make_adapter_with_css_dir(Some("tailwind-abc.css"));
+        let mut input = empty_render_input("__oxide_warmup__");
+        renderer.inject_route_css(&mut input);
+        let links = input
+            .head
+            .get("link")
+            .and_then(|v| v.as_array())
+            .expect("link array present");
+        assert!(links.is_empty(), "warmup route emits no head: {links:?}");
+    }
+
+    #[test]
+    fn disk_scan_dedupes_repeat_render() {
+        let (renderer, _dir) = make_adapter_with_css_dir(Some("tailwind-abc.css"));
+        let mut input = empty_render_input("routes/index");
+        renderer.inject_route_css(&mut input);
+        // Simulate a second render of the same route: a fresh input, no
+        // carried-over link. Ensures we don't double-emit from an already-
+        // populated head.
+        let mut input2 = empty_render_input("routes/index");
+        renderer.inject_route_css(&mut input2);
+        let links = input2
+            .head
+            .get("link")
+            .and_then(|v| v.as_array())
+            .expect("link array present");
+        assert_eq!(links.len(), 1);
+    }
+
     use oxide_fw_jshost::FrameworkRenderInput;
 
     /// A framework renderer that echoes what it received — lets tests assert
