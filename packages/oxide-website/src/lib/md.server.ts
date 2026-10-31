@@ -115,11 +115,7 @@ export async function mdToHtml(md: string): Promise<MdBlock[]> {
       i++ // closing fence
 
       if (info === 'framework-tabs') {
-        // Sections delimited by ---react / ---vue / ---svelte / ---solid.
-        // Emit static HTML: React sample rendered server-side so a
-        // no-JS reader sees real code, all four carried as JSON in a
-        // data attribute for the bootstrap island to build the tabs from.
-        const parts: Partial<Record<'react' | 'vue' | 'svelte' | 'solid', string>> = {}
+        const parts: Record<'react' | 'vue' | 'svelte' | 'solid', string> = { react: '', vue: '', svelte: '', solid: '' }
         let cur: 'react' | 'vue' | 'svelte' | 'solid' | null = null
         let sec: string[] = []
         const flush = () => {
@@ -130,37 +126,14 @@ export async function mdToHtml(md: string): Promise<MdBlock[]> {
           const m = /^---(react|vue|svelte|solid)\s*$/.exec(l)
           if (m) {
             flush()
-            cur = mustEl(m, 1) as 'react' | 'vue' | 'svelte' | 'solid'
+            cur = m[1] as 'react' | 'vue' | 'svelte' | 'solid'
             continue
           }
           if (cur) sec.push(l)
         }
         flush()
 
-        const LANGS = ['react', 'vue', 'svelte', 'solid'] as const
-        const missing = LANGS.filter((k) => typeof parts[k] !== 'string' || parts[k] === '')
-        if (missing.length > 0) {
-          out.push(`<p class="fw-code-error">framework-tabs: missing section(s): ${missing.join(', ')}</p>`)
-          continue
-        }
-
-                const highlighted: Record<string, string> = {}
-        for (const lang of LANGS) {
-          const shikiLang = lang === 'react' ? 'tsx' : lang === 'solid' ? 'tsx' : lang
-          highlighted[lang] = codeToHtml(parts[lang] ?? '', { lang: shikiLang, theme: oxideTheme, lineNumbers: false })
-        }
-
-        const json = JSON.stringify(parts)
-          .replace(/&/g, '&amp;')
-          .replace(/"/g, '&quot;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-
-        out.push(
-          `<div class="fw-code" data-fw-snippets="${json}">` +
-            highlighted.react +
-          `</div>`
-        )
+        out.push({ type: 'framework-tabs', data: parts })
         continue
       }
 
