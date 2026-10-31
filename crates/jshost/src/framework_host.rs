@@ -239,6 +239,41 @@ impl FrameworkHost {
             )
         })
     }
+
+    pub async fn invalidate_all(&self) -> Result<u64> {
+        let input = CallInput {
+            payload: serde_json::json!({}),
+            headers: Default::default(),
+            has_body: false,
+            request_id: "framework:invalidate".to_string(),
+            route: None,
+        };
+        let entry = EntryRef {
+            kind: "framework:invalidate".into(),
+            module: String::new(),
+            export: String::new(),
+        };
+        let results = self.pool.call_all(entry, input).await;
+        let mut max_gen = 0;
+        let mut any = false;
+        for res in results {
+            if let Ok(mut stream) = res {
+                if let Ok(bytes) = stream.collect().await {
+                    if let Ok(v) = serde_json::from_slice::<Value>(&bytes) {
+                        if let Some(gen_val) = v.get("generation").and_then(|x| x.as_u64()) {
+                            max_gen = max_gen.max(gen_val);
+                            any = true;
+                        }
+                    }
+                }
+            }
+        }
+        if any {
+            Ok(max_gen)
+        } else {
+            Err(crate::err("JSH-FRAMEWORK", "invalidate_all failed for all workers"))
+        }
+    }
 }
 
 #[cfg(test)]

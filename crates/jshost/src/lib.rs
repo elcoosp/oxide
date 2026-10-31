@@ -200,6 +200,9 @@ pub struct PoolStats {
 #[async_trait]
 pub trait Pool: Send + Sync {
     async fn call(&self, entry: EntryRef, req: CallInput) -> Result<CallStream>;
+    async fn call_all(&self, entry: EntryRef, req: CallInput) -> Vec<Result<CallStream>> {
+        vec![self.call(entry, req).await]
+    }
     fn stats(&self) -> PoolStats;
     /// Abort all in-flight calls belonging to a request id (client disconnect, §9.6).
     fn abort_request(&self, request_id: &str);
@@ -2941,6 +2944,39 @@ impl Pool for V8Pool {
         }
     }
 
+    async fn call_all(&self, entry: EntryRef, req: CallInput) -> Vec<Result<CallStream>> {
+        let workers = {
+            let guard = self.workers.read().unwrap_or_else(|p| p.into_inner());
+            guard.clone()
+        };
+        let mut out = Vec::new();
+        for worker in workers {
+            if worker.retiring.load(Ordering::Acquire) || worker.dead.load(Ordering::Acquire) {
+                out.push(Err(err("JSH-POOL", "worker is retiring/dead")));
+                continue;
+            }
+            let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+            let (tx, rx) = oneshot::channel();
+            worker.pending.lock().unwrap().insert(id, Pending { tx, request_id: req.request_id.clone() });
+            worker.in_flight.fetch_add(1, Ordering::Relaxed);
+            worker.served.fetch_add(1, Ordering::Relaxed);
+            if let Err(e) = worker.tx.send(V8Msg::Call { id, entry: entry.clone(), input: Box::new(req.clone()) }).await {
+                worker.pending.lock().unwrap().remove(&id);
+                worker.in_flight.fetch_sub(1, Ordering::Relaxed);
+                out.push(Err(err("JSH-CRASH", format!("worker send failed: {e}"))));
+                continue;
+            }
+            let res = tokio::time::timeout(CALL_TIMEOUT, rx).await;
+            worker.in_flight.fetch_sub(1, Ordering::Relaxed);
+            match res {
+                Ok(Ok(r)) => out.push(r),
+                Ok(Err(_)) => out.push(Err(err("JSH-POOL", "worker canceled"))),
+                Err(_) => out.push(Err(err("JSH-TIMEOUT", "worker timed out"))),
+            }
+        }
+        out
+    }
+
     fn stats(&self) -> PoolStats {
         let waits = sorted_copy(&self.queue_waits);
         PoolStats {
@@ -3488,6 +3524,35 @@ impl Pool for NodePool {
                 Ok(stream)
             }
         }
+    }
+
+    async fn call_all(&self, entry: EntryRef, req: CallInput) -> Vec<Result<CallStream>> {
+        let mut out = Vec::new();
+        for worker in &self.workers {
+            let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+            let (tx, rx) = oneshot::channel();
+            worker.pending.lock().unwrap().insert(id, Pending { tx, request_id: req.request_id.clone() });
+            worker.in_flight.fetch_add(1, Ordering::Relaxed);
+            worker.served.fetch_add(1, Ordering::Relaxed);
+            let framed = match frame(&WorkerMsg::Call { id, entry: entry.clone(), input: req.clone() }) {
+                Ok(f) => f,
+                Err(e) => { out.push(Err(err("JSH-NODE", format!("frame error: {e}")))); continue; }
+            };
+            if let Err(e) = worker.stdin.lock().await.write_all(&framed).await {
+                worker.pending.lock().unwrap().remove(&id);
+                worker.in_flight.fetch_sub(1, Ordering::Relaxed);
+                out.push(Err(err("JSH-CRASH", format!("write failed: {e}"))));
+                continue;
+            }
+            let res = tokio::time::timeout(CALL_TIMEOUT, rx).await;
+            worker.in_flight.fetch_sub(1, Ordering::Relaxed);
+            match res {
+                Ok(Ok(r)) => out.push(r),
+                Ok(Err(_)) => out.push(Err(err("JSH-POOL", "worker canceled"))),
+                Err(_) => out.push(Err(err("JSH-TIMEOUT", "worker timed out"))),
+            }
+        }
+        out
     }
 
     fn stats(&self) -> PoolStats {

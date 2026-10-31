@@ -1477,6 +1477,18 @@ async fn ensure_dev_client_bundle(
     if client_out.join("client.manifest.json").is_file() {
         return Ok(());
     }
+    build_client_bundle(rootp, cfg, tree, pool, w).await
+}
+
+async fn build_client_bundle(
+    rootp: &Path,
+    cfg: &oxide_fw_config::OxideConfig,
+    tree: &oxide_fw_router::RouteTree,
+    pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
+    w: Writer<'_>,
+) -> anyhow::Result<()> {
+    let dist = rootp.join("dist");
+    let client_out = dist.join("client");
 
     // Entries: pages + endpoints + loading boundaries (mirrors cmd_build).
     let mut entries: BTreeMap<String, PathBuf> = BTreeMap::new();
@@ -1658,6 +1670,14 @@ async fn ensure_dev_client_bundle(
 /// The dev loop rewrites `dist/content` when this is true; `getCollection`
 /// then re-reads by content hash, so no worker restart or cache clear is
 /// needed.
+fn is_client_source(path: &Path, rootp: &Path) -> bool {
+    let s = path.to_string_lossy().to_ascii_lowercase();
+    if s.ends_with(".server.ts") || s.ends_with(".server.tsx") { return false; }
+    if !matches!(path.extension().and_then(|e| e.to_str()),
+                 Some("ts") | Some("tsx") | Some("js") | Some("jsx") | Some("vue") | Some("svelte") | Some("mjs") | Some("cjs")) { return false; }
+    path.starts_with(rootp.join("src"))
+}
+
 fn content_source_changed(
     root: &Path,
     cfg: &oxide_fw_config::OxideConfig,
@@ -2180,7 +2200,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     ) {
         if let Some(pool) = pool.as_ref() {
             let host = oxide_fw_jshost::FrameworkHost::new(std::sync::Arc::clone(pool));
-            match host.invalidate().await {
+            match host.invalidate_all().await {
                 Ok(generation) => {
                     // SPEC-14: publish the new generation to disk so the
                     // loader's `resolve()` hook (`tsx-loader.mjs`) can
@@ -2389,6 +2409,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                     && !p.starts_with(rootp.join("dist"))
             })
             .collect();
+        let mut client_rebuilt = false;
         if !events.is_empty() {
             // §10.8: PPR shells are keyed by build id; dev's id is stable, so
             // a source edit must clear the store explicitly or the next
@@ -2432,6 +2453,23 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 tracing::info!("lockfile change — resolver epoch bump");
             }
             invalidate_framework_modules(&hmr_pool, &rootp).await;
+            let needs_client_rebuild = events.iter().any(|e| {
+                let p = match e {
+                    oxide_fw_dev::FileEvent::Modified(p)
+                    | oxide_fw_dev::FileEvent::Created(p)
+                    | oxide_fw_dev::FileEvent::Removed(p) => p,
+                };
+                is_client_source(p, &rootp) && !matches!(oxide_fw_dev::hmr_behavior(oxide_fw_dev::classify_path(&p.to_string_lossy())), oxide_fw_dev::HmrBehavior::RestartSubsystems)
+            });
+            if needs_client_rebuild {
+                let live_tree = started.swappable_tree.load();
+                if build_client_bundle(&rootp, &cfg, &live_tree, hmr_tooling_pool.as_ref(), w).await.is_ok() {
+                    let manifest_path = rootp.join("dist/client/client.manifest.json");
+                    let _ = enrich_manifest_layout_chains(&manifest_path, &live_tree);
+                    consolidate_tailwind_css_and_manifest(&rootp);
+                    client_rebuilt = true;
+                }
+            }
             // §5.6: bump the stale generation BEFORE releasing the loop,
             // so any in-flight dev dispatch's `select!` (see
             // `wrap_dispatch_with_stale_guard` below) aborts and returns
@@ -2567,7 +2605,13 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                             });
                         }
                     }
-                    HmrBehavior::AdapterHmr => hub.publish(HmrMessage::ModuleUpdate { path: pstr }),
+                    HmrBehavior::AdapterHmr => {
+                        if client_rebuilt {
+                            hub.publish(HmrMessage::FullReload { reason: format!("rebuilt client bundle after {pstr}") });
+                        } else {
+                            hub.publish(HmrMessage::ModuleUpdate { path: pstr });
+                        }
+                    }
                     HmrBehavior::ServerSwap => {
                         hub.publish(HmrMessage::ServerModuleSwap { path: pstr })
                     }
@@ -2639,6 +2683,12 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                     tracing::info!(
                                         "dev: route tree + component sources rebuilt after {pstr} change"
                                     );
+                                    let live_tree = started.swappable_tree.load();
+                                    if build_client_bundle(&rootp, &cfg, &live_tree, hmr_tooling_pool.as_ref(), w).await.is_ok() {
+                                        let manifest_path = rootp.join("dist/client/client.manifest.json");
+                                        let _ = enrich_manifest_layout_chains(&manifest_path, &live_tree);
+                                        consolidate_tailwind_css_and_manifest(&rootp);
+                                    }
                                     hub.publish(HmrMessage::FullReload {
                                         reason: "route tree rebuilt".to_string(),
                                     });
