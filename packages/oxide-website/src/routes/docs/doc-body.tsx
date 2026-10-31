@@ -20,7 +20,7 @@ export default function DocBody({ doc }: { doc?: Doc }) {
   return (
     <article>
       <div className="breadcrumb">docs / {doc.meta.title.toLowerCase()}</div>
-      <h1 style={{ fontSize: 55, letterSpacing: '-1px', margin: '0 0 10px' }}>{doc.meta.title}</h1>
+      <h1 style={{ fontSize: 33, letterSpacing: '-1px', margin: '0 0 10px' }}>{doc.meta.title}</h1>
       <p style={{ color: 'var(--muted)', margin: '0 0 8px' }}>{doc.meta.description}</p>
 
       <div className="prose">

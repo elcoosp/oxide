@@ -1470,6 +1470,7 @@ async fn ensure_dev_client_bundle(
     cfg: &oxide_fw_config::OxideConfig,
     tree: &oxide_fw_router::RouteTree,
     pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
+    bundler: &oxide_fw_bundler::RolldownBundler,
     w: Writer<'_>,
 ) -> anyhow::Result<()> {
     let dist = rootp.join("dist");
@@ -1507,7 +1508,7 @@ async fn ensure_dev_client_bundle(
 
     if needs_build {
         tracing::info!("ensure_dev_client_bundle: source is newer than manifest or missing — rebuilding");
-        build_client_bundle(rootp, cfg, tree, pool, w).await
+        build_client_bundle(rootp, cfg, tree, pool, bundler, None, w).await
     } else {
         Ok(())
     }
@@ -1518,9 +1519,14 @@ async fn build_client_bundle(
     cfg: &oxide_fw_config::OxideConfig,
     tree: &oxide_fw_router::RouteTree,
     pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
+    bundler: &oxide_fw_bundler::RolldownBundler,
+    changed: Option<&[std::path::PathBuf]>,
     w: Writer<'_>,
 ) -> anyhow::Result<()> {
-    tracing::info!("DIAG build_client_bundle ENTRY");
+    tracing::info!(
+        changed = changed.map(|c| c.len()).unwrap_or(0),
+        "build_client_bundle ENTRY"
+    );
     let dist = rootp.join("dist");
     let client_out = dist.join("client");
 
@@ -1630,8 +1636,7 @@ async fn build_client_bundle(
     client_opts.generate_bundle_hook = build_js_plugin_generate_bundle_hook(rootp, cfg, pool);
     outln!(w, "dev: rebuilding client bundle...");
     use oxide_fw_bundler::Bundler as _;
-    let rb = oxide_fw_bundler::RolldownBundler::new(rootp);
-    match rb.bundle(&client_opts) {
+    match bundler.bundle_incremental(&client_opts, changed) {
         Ok(outcome) => {
 
             // [wr115] Write compiled Tailwind CSS directly + patch manifest.
@@ -2098,7 +2103,18 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // §13.1 / P0-7: a fresh `oxide dev` has no client bundle, so nothing
     // would hydrate, navigate, or load a route's JS. Build it once (unminified)
     // if the manifest is missing. A `dev` after `build` finds it and skips.
-    ensure_dev_client_bundle(&rootp, &cfg, &tree, stack.tooling_pool.as_ref(), w).await?;
+    // Path A: one RolldownBundler for the whole dev session, so the
+    // incremental worker (and Rolldown's internal module snapshot) survives
+    // across rebuilds. Creating a fresh bundler per call (the previous
+    // behavior) forces a cold rebuild every save — 1.5s regardless of how
+    // few modules changed.
+    let client_bundler = oxide_fw_bundler::RolldownBundler::new(&rootp);
+    let t0 = std::time::Instant::now();
+    ensure_dev_client_bundle(&rootp, &cfg, &tree, stack.tooling_pool.as_ref(), &client_bundler, w).await?;
+    tracing::info!(
+        elapsed_ms = t0.elapsed().as_millis() as u64,
+        "dev: initial client bundle (cold worker)"
+    );
 
     // [wr208] Rebuild stale workspace packages before bundling
     rebuild_stale_workspace_packages(&rootp);
@@ -2523,8 +2539,21 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             );
             if needs_client_rebuild {
                 let live_tree = started.swappable_tree.load();
-                match build_client_bundle(&rootp, &cfg, &live_tree, hmr_tooling_pool.as_ref(), w).await {
+                let changed_paths: Vec<std::path::PathBuf> = events.iter().filter_map(|e| match e {
+                    oxide_fw_dev::FileEvent::Modified(p)
+                    | oxide_fw_dev::FileEvent::Created(p)
+                    | oxide_fw_dev::FileEvent::Removed(p) => {
+                        if is_client_source(p, &rootp) { Some(p.clone()) } else { None }
+                    }
+                }).collect();
+                let t0 = std::time::Instant::now();
+                match build_client_bundle(&rootp, &cfg, &live_tree, hmr_tooling_pool.as_ref(), &client_bundler, Some(&changed_paths), w).await {
                     Ok(()) => {
+                        tracing::info!(
+                            changed = changed_paths.len(),
+                            elapsed_ms = t0.elapsed().as_millis() as u64,
+                            "watcher: incremental client bundle OK"
+                        );
                         let manifest_path = rootp.join("dist/client/client.manifest.json");
                         let _ = enrich_manifest_layout_chains(&manifest_path, &live_tree);
                         consolidate_tailwind_css_and_manifest(&rootp);
@@ -2756,7 +2785,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                         "dev: route tree + component sources rebuilt after {pstr} change"
                                     );
                                     let live_tree = started.swappable_tree.load();
-                                    if build_client_bundle(&rootp, &cfg, &live_tree, hmr_tooling_pool.as_ref(), w).await.is_ok() {
+                                    if build_client_bundle(&rootp, &cfg, &live_tree, hmr_tooling_pool.as_ref(), &client_bundler, None, w).await.is_ok() {
                                         let manifest_path = rootp.join("dist/client/client.manifest.json");
                                         let _ = enrich_manifest_layout_chains(&manifest_path, &live_tree);
                                         consolidate_tailwind_css_and_manifest(&rootp);
