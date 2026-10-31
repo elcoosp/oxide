@@ -143,7 +143,7 @@ export async function mdToHtml(md: string): Promise<string> {
                 const highlighted: Record<string, string> = {}
         for (const lang of LANGS) {
           const shikiLang = lang === 'react' ? 'tsx' : lang === 'solid' ? 'tsx' : lang
-          highlighted[lang] = codeToHtml(parts[lang] ?? '', { lang: shikiLang, theme: oxideTheme })
+          highlighted[lang] = codeToHtml(parts[lang] ?? '', { lang: shikiLang, theme: oxideTheme, lineNumbers: false })
         }
 
         const json = JSON.stringify(parts)

@@ -112,15 +112,28 @@ function build(el: HTMLElement, snippets: Record<Lang, string>, active: Lang) {
 
 export default function FrameworkTabsBootstrap() {
   useEffect(() => {
-    const blocks = document.querySelectorAll<HTMLElement>('[data-fw-snippets]')
-    blocks.forEach((el) => {
-      if (el.classList.contains('fw-code-ready')) return
-      const snippets = parseSnippets(el)
-      if (snippets) {
-        el.classList.add('fw-code-ready')
-        build(el, snippets, readStored() ?? 'react')
-      }
+    const process = () => {
+      const blocks = document.querySelectorAll<HTMLElement>('[data-fw-snippets]')
+      blocks.forEach((el) => {
+        if (el.classList.contains('fw-code-ready')) return
+        const snippets = parseSnippets(el)
+        if (snippets) {
+          el.classList.add('fw-code-ready')
+          build(el, snippets, readStored() ?? 'react')
+        }
+      })
+    }
+
+    // Initial scan
+    process()
+
+    // Watch for client-side navigation (SPA swaps)
+    const obs = new MutationObserver(() => {
+      process()
     })
+    obs.observe(document.body, { childList: true, subtree: true })
+
+    return () => obs.disconnect()
   }, [])
   return null
 }
