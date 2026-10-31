@@ -1037,6 +1037,52 @@ async fn http_get(addr: std::net::SocketAddr, path: &str) -> String {
     String::from_utf8_lossy(&buf).into_owned()
 }
 
+/// Extract the body from an HTTP/1.1 response and de-chunk it if the
+/// transport used `transfer-encoding: chunked`. Header assertions must
+/// stay on the raw response (`http_get`), because decoding strips the
+/// `content-length`/`transfer-encoding` markers. Body-content assertions
+/// use this so a substring that happens to straddle a chunk boundary
+/// (e.g. `<div id="root" data-reactroot="">` split at `data-reactro|ot`)
+/// is still found.
+#[allow(dead_code)]
+fn body_of(raw: &str) -> String {
+    let body = match raw.split_once("\r\n\r\n") {
+        Some((_, b)) => b,
+        None => return String::new(),
+    };
+    if raw.to_lowercase().contains("transfer-encoding: chunked") {
+        decode_chunked(body)
+    } else {
+        body.to_string()
+    }
+}
+
+#[allow(dead_code)]
+fn decode_chunked(mut s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    loop {
+        let Some((sz_line, rest)) = s.split_once("\r\n") else {
+            break;
+        };
+        let Ok(sz) = usize::from_str_radix(sz_line.trim(), 16) else {
+            break;
+        };
+        if sz == 0 {
+            break;
+        }
+        if rest.len() < sz {
+            out.push_str(rest);
+            break;
+        }
+        out.push_str(&rest[..sz]);
+        s = rest[sz..].trim_start_matches("\r\n");
+        if s.is_empty() {
+            break;
+        }
+    }
+    out
+}
+
 /// Start the real dev server against `examples/smoke-app-react` and issue HTTP
 /// requests. This closes the loop between the CLI subcommands (already
 /// E2E-tested in `smoke_app_renders_through_real_config`) and the
@@ -1138,16 +1184,17 @@ async fn dev_server_serves_smoke_app_over_http() {
     // assertion is on the *framework* shape — the React root marker — not on
     // the fixture's page markup: that coupling is covered by
     // `cli_render_resolves_components_from_the_built_entry`.
+    let home_body = body_of(&resp_home);
     assert!(
-        resp_home.contains("data-reactroot"),
+        home_body.contains("data-reactroot"),
         "home body should carry the framework root marker:\n{}",
-        resp_home
+        home_body
     );
     assert!(
-        !resp_home.contains("data-ox-not-found"),
+        !home_body.contains("data-ox-not-found"),
         "home must NOT be the not-found boundary — the route id must \
          match the adapter's expected key:\n{}",
-        resp_home
+        home_body
     );
     // Health probe: the pipeline's built-in health path answers before
     // dispatch (spec §12.1). Cheap second request confirms the server
@@ -1189,15 +1236,16 @@ async fn dev_server_serves_smoke_app_over_http() {
     //       IR fallback (BlogPage in the Atlas registry) renders the slug
     //       as part of its byline, so this proves the param threaded through
     //       router → dispatch → PageRenderInput → renderer.
+    let blog_body = body_of(&resp_blog);
     assert!(
-        !resp_blog.contains("data-ox-not-found"),
+        !blog_body.contains("data-ox-not-found"),
         "blog route must not hit the not-found boundary:\n{}",
-        resp_blog
+        blog_body
     );
     assert!(
-        resp_blog.contains("hello-smoke"),
+        blog_body.contains("hello-smoke"),
         "blog body should carry the URL param slug (rendered by the smoke-app's own page.tsx):\n{}",
-        resp_blog
+        blog_body
     );
 
     // Clean shutdown; the accept loop notices and the listener drops.
