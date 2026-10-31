@@ -2207,27 +2207,45 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     ) {
         if let Some(pool) = pool.as_ref() {
             let host = oxide_fw_jshost::FrameworkHost::new(std::sync::Arc::clone(pool));
-            match host.invalidate_all().await {
-                Ok(generation) => {
-                    // SPEC-14: publish the new generation to disk so the
-                    // loader's `resolve()` hook (`tsx-loader.mjs`) can
-                    // version the config's transitive component imports
-                    // with `?v=<generation>`. The generation number matches
-                    // the worker's in-memory counter, so versioned imports
-                    // hit the correct eval graph on every edit.
-                    let gen_path = root.join(".oxide").join("hmr-generation");
-                    if let Some(parent) = gen_path.parent() {
-                        let _ = std::fs::create_dir_all(parent);
+            // BUG: `invalidate()` dispatches to ONE worker (round-robin via
+            // pool.call). With N>1 workers, N-1 keep serving stale modules
+            // after every source edit. The SSR HTML then renders pre-edit
+            // content while the client bundle is rebuilt — a hydration
+            // mismatch: the user sees the change flash, then revert.
+            //
+            // Loop `invalidate()` N times (N = worker count). The pool's
+            // least-loaded dispatch will hit every worker in turn (the
+            // first call bumps worker 0's in_flight, the second picks
+            // worker 1, etc.).
+            let n_workers = pool.stats().workers.max(1) as usize;
+            let mut max_generation = 0u64;
+            let mut failed = 0usize;
+            for _ in 0..n_workers {
+                match host.invalidate().await {
+                    Ok(generation) => max_generation = max_generation.max(generation),
+                    Err(e) => {
+                        failed += 1;
+                        tracing::warn!(
+                            code = %e.0.code,
+                            error = %e.0.message,
+                            "invalidate failed for a worker",
+                        );
                     }
-                    let _ = std::fs::write(&gen_path, generation.to_string());
-                    tracing::debug!(generation, "framework modules invalidated")
                 }
-                Err(e) => tracing::warn!(
-                    code = %e.0.code,
-                    error = %e.0.message,
-                    "framework invalidate failed",
-                ),
             }
+            if max_generation > 0 {
+                let gen_path = root.join(".oxide").join("hmr-generation");
+                if let Some(parent) = gen_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(&gen_path, max_generation.to_string());
+            }
+            tracing::info!(
+                workers = n_workers,
+                failed,
+                generation = max_generation,
+                "framework modules invalidated on all workers",
+            );
         }
     }
 
@@ -2417,6 +2435,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             })
             .collect();
         let mut client_rebuilt = false;
+        let mut client_rebuild_error: Option<String> = None;
         if !events.is_empty() {
             // §10.8: PPR shells are keyed by build id; dev's id is stable, so
             // a source edit must clear the store explicitly or the next
@@ -2470,11 +2489,17 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             });
             if needs_client_rebuild {
                 let live_tree = started.swappable_tree.load();
-                if build_client_bundle(&rootp, &cfg, &live_tree, hmr_tooling_pool.as_ref(), w).await.is_ok() {
-                    let manifest_path = rootp.join("dist/client/client.manifest.json");
-                    let _ = enrich_manifest_layout_chains(&manifest_path, &live_tree);
-                    consolidate_tailwind_css_and_manifest(&rootp);
-                    client_rebuilt = true;
+                match build_client_bundle(&rootp, &cfg, &live_tree, hmr_tooling_pool.as_ref(), w).await {
+                    Ok(()) => {
+                        let manifest_path = rootp.join("dist/client/client.manifest.json");
+                        let _ = enrich_manifest_layout_chains(&manifest_path, &live_tree);
+                        consolidate_tailwind_css_and_manifest(&rootp);
+                        client_rebuilt = true;
+                    }
+                    Err(e) => {
+                        client_rebuild_error = Some(format!("{e}"));
+                        tracing::error!(error = %e, "watcher: rebuild FAILED");
+                    }
                 }
             }
             // §5.6: bump the stale generation BEFORE releasing the loop,
@@ -2613,10 +2638,16 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                         }
                     }
                     HmrBehavior::AdapterHmr => {
-                        if client_rebuilt {
-                            hub.publish(HmrMessage::FullReload { reason: format!("rebuilt client bundle after {pstr}") });
-                        } else {
-                            hub.publish(HmrMessage::ModuleUpdate { path: pstr });
+                        if let Some(err_msg) = client_rebuild_error.as_ref() {
+                            let diag = oxide_fw_diagnostics::Diagnostic::error(
+                                "DEV-BUNDLE",
+                                format!("rebuild failed for {pstr}: {err_msg}"),
+                            );
+                            hub.publish(HmrMessage::Error { diagnostic: diag });
+                        } else if client_rebuilt {
+                            hub.publish(HmrMessage::FullReload {
+                                reason: format!("rebuilt client bundle after {pstr}"),
+                            });
                         }
                     }
                     HmrBehavior::ServerSwap => {
@@ -9011,7 +9042,7 @@ fn build_dispatch_swappable(
                                     r#"if(m.type==='css-update'){{var p=(m.path||'').split('?')[0];var ls=document.querySelectorAll('link[rel=stylesheet]');"#,
                                     r#"for(var i=0;i<ls.length;i++){{var h=(ls[i].getAttribute('href')||'').split('?')[0];"#,
                                     r#"if(h===p||h.slice(-p.length)===p){{ls[i].setAttribute('href',p+'?t='+Date.now());break;}}}}}}"#,
-                                    r#"else if(m.type==='module-update'||m.type==='server-module-swap'||m.type==='full-reload'){{location.reload();}}"#,
+                                    r#"else if(m.type==='server-module-swap'||m.type==='full-reload'){{location.reload();}}"#,
                                     r#"else if(m.type==='route-data-update'){{var ad=function(b64){{try{{if(window.__oxide)window.__oxide.data=b64;}}catch(e){{}}"#,
                                     r#"document.dispatchEvent(new CustomEvent('ox:data',{{detail:{{route:m.route||location.pathname,odf:b64}}}}));}};"#,
                                     r#"fetch('/__data?route='+encodeURIComponent(location.pathname),{{headers:{{accept:'application/oxide+odf'}}}})"#,
