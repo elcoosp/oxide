@@ -28,7 +28,14 @@ function linkEl(href: string, attrs: Record<string, string> = {}): RouterLink & 
 }
 
 function fakeDoc(els: Array<RouterLink & { matches(sel: string): boolean }> = []) {
+  // Listeners are split: the router attaches `popstate` to
+  // `doc.defaultView` (a real browser fires popstate on the window, not
+  // the document — commit 1704b538) and `click` / `mouseover` / etc to
+  // the document. Keeping the maps separate prevents a future change
+  // from accidentally double-firing an event the router listens for in
+  // both places.
   const listeners = new Map<string, Array<(e: unknown) => void>>()
+  const winListeners = new Map<string, Array<(e: unknown) => void>>()
   const vtCalls: Array<() => void> = []
   const doc = {
     addEventListener(type: string, fn: (e: unknown) => void) {
@@ -47,11 +54,26 @@ function fakeDoc(els: Array<RouterLink & { matches(sel: string): boolean }> = []
       cb()
       return { finished: Promise.resolve() }
     },
+    defaultView: {
+      addEventListener(type: string, fn: (e: unknown) => void) {
+        const list = winListeners.get(type) ?? []
+        list.push(fn)
+        winListeners.set(type, list)
+      },
+      removeEventListener(type: string, fn: (e: unknown) => void) {
+        winListeners.set(type, (winListeners.get(type) ?? []).filter((f) => f !== fn))
+      },
+    },
     dispatch(type: string, event: unknown) {
+      // Fire on the document first, then the window — mirrors the
+      // browser's event order closely enough for these tests, and lets
+      // `dispatch('popstate', …)` reach the router's popstate handler
+      // (which now lives on `defaultView`).
       for (const fn of listeners.get(type) ?? []) fn(event)
+      for (const fn of winListeners.get(type) ?? []) fn(event)
     },
   }
-  return { doc, listeners, vtCalls, dispatch: doc.dispatch }
+  return { doc, listeners, winListeners, vtCalls, dispatch: doc.dispatch }
 }
 
 class FakeHistory {
