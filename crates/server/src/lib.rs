@@ -347,11 +347,19 @@ impl StaticAssets {
             || path == "/pwa-register.js"
             || path == "/client/search-index.json"
             || path == "/search-index.json";
-        let cache_ctl: &str = if is_service_worker {
-            SW_CACHE_CTL
-        } else {
-            CACHE_CTL
-        };
+            // [wr217] In dev (OXIDE_DEV or OXIDE_DEV_MODE env var), serve /client/*
+    // with no-cache so every rebuild reaches the browser. Without this the
+    // `immutable` header pins every JS/CSS asset for a year and the browser
+    // never sees updates — dev works against the first-loaded bundle forever.
+    let is_dev = std::env::var("OXIDE_DEV").is_ok()
+        || std::env::var("OXIDE_DEV_MODE").is_ok();
+    let cache_ctl: &str = if is_service_worker {
+        SW_CACHE_CTL
+    } else if is_dev && path.starts_with("/client/") {
+        "no-cache, no-store, must-revalidate"
+    } else {
+        CACHE_CTL
+    };
 
         if let Some(inm) = req.header("if-none-match") {
             let matches = inm.split(',').map(|c| c.trim()).any(|cand| {
