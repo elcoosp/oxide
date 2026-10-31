@@ -41,6 +41,7 @@ mod native_plugins;
 
 mod build_cache;
 mod build_graph;
+mod esm_dev;
 mod framework_shim;
 mod l0_cache;
 pub mod loader_shim;
@@ -7347,6 +7348,7 @@ fn build_dispatch(
         waterfall: opts.waterfall,
         session_codec: opts.session_codec,
         ppr_shells: opts.ppr_shells,
+        esm_state: None,
     })
 }
 
@@ -7391,6 +7393,7 @@ pub(crate) struct DispatchArgs {
     pub waterfall: Option<oxide_fw_dev::WaterfallRecorder>,
     pub session_codec: Option<std::sync::Arc<oxide_fw_server::SessionCodec>>,
     pub ppr_shells: Option<PprShells>,
+    pub esm_state: Option<std::sync::Arc<crate::esm_dev::EsmDevState>>,
 }
 
 fn build_dispatch_swappable(
@@ -7416,6 +7419,7 @@ fn build_dispatch_swappable(
         waterfall,
         session_codec,
         ppr_shells,
+        esm_state,
     } = args;
 
     let boot_script_url_for_render = boot_script_url.clone();
@@ -7465,6 +7469,15 @@ fn build_dispatch_swappable(
                     "middleware rewrite loop detected (too many hops)",
                 )
             });
+        }
+        // Native ESM dev server (Phase 1): the dispatch intercept owns
+        // `/src/*` (transformed ESM) and `/@*` (prebundle / boot / error
+        // shim). The pipeline's StaticAssets pass already skips those
+        // prefixes in dev; this is the actual handler.
+        if let Some(esm) = esm_state.as_ref() {
+            if let Some(resp) = crate::esm_dev::handle_esm_request(esm, &req) {
+                return Box::pin(async move { resp });
+            }
         }
         // PERF-02: surface the pool's live gauges into the metrics registry.
         if let Some(p) = pool.as_ref() {
@@ -10641,6 +10654,56 @@ async fn start_server_inner_full(
         &cfg,
         scan_routes(&rootp, &cfg, stack.tooling_pool.as_ref()).await?,
     ));
+
+    // Native ESM dev server (Phase 1): build the shared state the dispatch
+    // intercept uses to serve `/src/*` and `/@*` as transformed ESM. Opt-in
+    // via `dev.esm = true` in `oxide.config.ts`; only in dev
+    // (`with_inspector`), so prod never builds it.
+    let dev_esm = with_inspector && cfg.dev.esm;
+    let esm_state: Option<std::sync::Arc<crate::esm_dev::EsmDevState>> = if dev_esm {
+        let mut components: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for entry in &tree.entries {
+            let id_str: &str = entry.id.0.as_str();
+            let rel = id_str.strip_prefix("routes/").unwrap_or(id_str);
+            let mut candidates: Vec<String> = Vec::new();
+            for ext in [".tsx", ".ts", ".jsx", ".js"] {
+                candidates.push(format!("src/routes/{rel}{ext}"));
+                candidates.push(format!("src/routes/{rel}/page{ext}"));
+            }
+            if rel == "index" || rel.is_empty() {
+                for ext in [".tsx", ".ts", ".jsx", ".js"] {
+                    candidates.push(format!("src/routes/page{ext}"));
+                    candidates.push(format!("src/routes/index{ext}"));
+                }
+            }
+            for cand in &candidates {
+                if rootp.join(cand).is_file() {
+                    components.insert(id_str.to_string(), format!("/{cand}"));
+                    break;
+                }
+            }
+        }
+        let _ = crate::esm_dev::prebundle_cjs_deps(&rootp, &cfg.dev.prebundle);
+        if let Err(e) = crate::esm_dev::build_esm_manifest(&rootp, &components) {
+            tracing::warn!(error = %e, "esm dev: manifest write failed");
+        }
+        if let Err(e) = crate::esm_dev::generate_esm_boot_entry(&rootp, &components) {
+            tracing::warn!(error = %e, "esm dev: boot entry write failed");
+        }
+        let rewrite_map = crate::esm_dev::build_rewrite_map(&rootp, &cfg.dev.prebundle);
+        tracing::info!(
+            routes_with_component = components.len(),
+            "esm dev: state ready"
+        );
+        Some(std::sync::Arc::new(crate::esm_dev::EsmDevState {
+            root: rootp.clone(),
+            jsx_import_source: None,
+            rewrite_map: std::sync::Arc::new(rewrite_map),
+        }))
+    } else {
+        None
+    };
     let (bind_ip, requested_port) = match bind {
         // A caller-supplied port is honoured verbatim — including 0, which
         // means "ephemeral, OS chooses" (the test and CI convention).
@@ -10700,13 +10763,20 @@ async fn start_server_inner_full(
             .ok()
             .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
     };
-    let boot_script_url: Option<String> = client_manifest_json.as_ref().and_then(|v| {
-        v.get("routes")
-            .and_then(|r| r.get("__boot__"))
-            .and_then(|r| r.get("entry_chunk"))
-            .and_then(|e| e.as_str())
-            .map(|f| format!("client/{f}"))
-    });
+    let boot_script_url: Option<String> = if esm_state.is_some() {
+        // ESM mode has no `client.manifest.json` — the boot entry is a
+        // generated module that imports `@oxide-fw/core/client/hot` first
+        // (installs the HMR runtime) then each route component.
+        Some(crate::esm_dev::BOOT_SCRIPT_URL.to_string())
+    } else {
+        client_manifest_json.as_ref().and_then(|v| {
+            v.get("routes")
+                .and_then(|r| r.get("__boot__"))
+                .and_then(|r| r.get("entry_chunk"))
+                .and_then(|e| e.as_str())
+                .map(|f| format!("client/{f}"))
+        })
+    };
     // §11 L0: a response cache for static/isr routes. The build id scopes
     // entries to this deployment, so a rebuild invalidates them; it comes from
     // the client manifest, falling back to a source-derived hash when no build
@@ -11073,6 +11143,7 @@ async fn start_server_inner_full(
         waterfall: waterfall_recorder.clone(),
         session_codec,
         ppr_shells: ppr_shells.clone(),
+        esm_state: esm_state.clone(),
     });
     // §5.6: dev-mode stale guard. When a HMR hub is wired, wrap the
     // dispatch so a mid-flight file change aborts the render (no serving

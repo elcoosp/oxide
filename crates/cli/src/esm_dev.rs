@@ -388,7 +388,7 @@ fn serve_source_file(state: &EsmDevState, rel_path: &str) -> OxideResponse {
             let body = format!(
                 "// oxide dev: lower_to_js failed for src/{rel_path}\n\
                  throw new Error({:?});\n",
-                format!("{} {}", e.code, e.message),
+                format!("{} {}", e.0.code, e.0.message),
             );
             return OxideResponse::new(500, body)
                 .with_header("content-type", "text/javascript; charset=utf-8")
