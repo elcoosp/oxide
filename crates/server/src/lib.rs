@@ -329,7 +329,24 @@ impl StaticAssets {
     /// no partial decode. `HEAD` returns headers only.
     pub fn serve(&self, req: &OxideRequest, path: &str) -> Option<OxideResponse> {
         let entry = self.index.get(path)?;
-        let etag_raw = entry.etag.as_str();
+        let is_dev_pre = std::env::var("OXIDE_DEV").is_ok()
+            || std::env::var("OXIDE_DEV_MODE").is_ok();
+        // Dev: recompute the etag from the FRESH file so a rebuilt chunk
+        // gets a new etag AND the moka-body-cache and index-etag both
+        // serve the current bytes. In prod, entry.etag is correct (assets
+        // are hashed and immutable).
+        let fresh_etag_owned: String;
+        let etag_raw: &str = if is_dev_pre {
+            match std::fs::read(&entry.path) {
+                Ok(bytes) => {
+                    fresh_etag_owned = blake3::hash(&bytes).to_hex().to_string()[..16].to_string();
+                    &fresh_etag_owned
+                }
+                Err(_) => entry.etag.as_str(),
+            }
+        } else {
+            entry.etag.as_str()
+        };
         let etag_h = format!("\"{etag_raw}\"");
         // §16.6: a service worker script must REVALIDATE on every fetch. A
         // year-long immutable `sw.js` keeps serving the old precache list —
@@ -361,18 +378,24 @@ impl StaticAssets {
         CACHE_CTL
     };
 
-        if let Some(inm) = req.header("if-none-match") {
-            let matches = inm.split(',').map(|c| c.trim()).any(|cand| {
-                let cand = cand.strip_prefix("W/").unwrap_or(cand);
-                cand == "*" || cand.trim_matches('"') == etag_raw
-            });
-            if matches {
-                return Some(
-                    OxideResponse::new(304, Bytes::new())
-                        .with_header("ETag", etag_h)
-                        .with_header("Cache-Control", cache_ctl)
-                        .with_header("Vary", "Accept-Encoding"),
-                );
+        // In dev, skip the 304 short-circuit: even if the etag matches,
+        // the body on disk may have changed since the client got that etag.
+        // Serve fresh bytes every time; the `no-cache` header prevents the
+        // browser from caching them long enough for this to matter.
+        if !is_dev_pre {
+            if let Some(inm) = req.header("if-none-match") {
+                let matches = inm.split(',').map(|c| c.trim()).any(|cand| {
+                    let cand = cand.strip_prefix("W/").unwrap_or(cand);
+                    cand == "*" || cand.trim_matches('"') == etag_raw
+                });
+                if matches {
+                    return Some(
+                        OxideResponse::new(304, Bytes::new())
+                            .with_header("ETag", etag_h)
+                            .with_header("Cache-Control", cache_ctl)
+                            .with_header("Vary", "Accept-Encoding"),
+                    );
+                }
             }
         }
 
@@ -459,7 +482,21 @@ fn asset_body_cache() -> &'static moka::sync::Cache<std::path::PathBuf, Bytes> {
 }
 
 /// P-12: return the asset body from the cache, reading it once on a miss.
+///
+/// **Dev bypass**: in dev (`OXIDE_DEV`/`OXIDE_DEV_MODE`), ALWAYS read from
+/// disk. The moka cache is keyed by file path and lives for 300s; HMR
+/// rewrites `dist/client/*.js` in place with the same path, so the cache
+/// serves the first-build bytes forever. That was the "flash of change
+/// then revert" — SSR was fresh (fresh V8 modules) but the browser chunk
+/// was the first-build version, hydration mismatched, React re-rendered
+/// with the stale client.
 fn cached_asset_body(path: &std::path::Path) -> Option<Bytes> {
+    let is_dev = std::env::var("OXIDE_DEV").is_ok()
+        || std::env::var("OXIDE_DEV_MODE").is_ok();
+    if is_dev {
+        // Bypass the moka body cache entirely in dev.
+        return std::fs::read(path).ok().map(Bytes::from);
+    }
     let cache = asset_body_cache();
     if let Some(b) = cache.get(path) {
         return Some(b);
