@@ -517,6 +517,21 @@ pub async fn build_framework_stack(
         .and_then(|p| p.parent())
         .map(|p| p.to_path_buf());
 
+    // §16.5 / WP-r9-1: the worker resolves `dist/content` against
+    // `process.env.OXIDE_ROOT ?? process.cwd()`. The env var must be set
+    // BEFORE the pool spawns — a worker inherits the parent's env at spawn
+    // time, and this is the earliest point any pool code runs. Setting it
+    // here makes the API self-contained: a caller (test, embedded server)
+    // that never goes through `cmd_dev` still gets content resolution
+    // rooted at the project, not at whatever cwd happens to be.
+    if let Some(root) = project_root.as_ref() {
+        // SAFETY: pool threads spawn below in this function; nothing else
+        // reads OXIDE_ROOT concurrently from another thread at this point.
+        unsafe {
+            std::env::set_var("OXIDE_ROOT", root.to_string_lossy().as_ref());
+        }
+    }
+
     use oxide_fw_jshost::{JsHost, NodeHost, PoolConfig, V8Host};
 
     // §6.3: which framework's JSX the worker's `tsx-loader.mjs` should

@@ -8529,3 +8529,136 @@ async fn dev_server_serves_react_refresh_prebundle() {
         "runtime should export injectIntoGlobalHook"
     );
 }
+
+
+/// Website E2E: proves the whole CSS pipeline wires up for a real project
+/// with a Tailwind plugin — precompute → disk-scan fallback → served CSS.
+///
+/// The website has a real `plugins: [tailwind()]` config, its homepage
+/// renders through the real React adapter, and its `dist/client/` carries a
+/// `tailwind-<hash>.css` from a prior build. This test starts the dev server
+/// in-process (same `start_dev_server_full` the smoke test uses) and asserts:
+///
+///   1. GET `/` returns 200.
+///   2. The body carries a `<link rel="stylesheet">` for a
+///      `tailwind-<hash>.css` — that's the disk-scan fallback in
+///      `AdapterPageRenderer::inject_route_css` firing, exactly the path
+///      that makes CSS reach the browser in ESM mode with no manifest.
+///   3. The body references `/@boot/boot.mjs`, not `/client/__boot__.js` —
+///      the ESM dispatch intercept owns the boot entry, not the bundle.
+///   4. GET the extracted tailwind URL returns 200 with real generated CSS.
+///
+/// ## Prerequisites
+///
+/// The test requires a prior `pnpm --filter @oxide-fw/website build` (or a
+/// prior `oxide dev` run) so `packages/oxide-website/dist/client/` contains
+/// a `tailwind-<hash>.css`. `tailwind::precompute` runs in `cmd_dev`, but
+/// this test calls `start_dev_server_full` directly — the same prerequisite
+/// class as Phase 5a's `component_source` gap. A guard skips the test with a
+/// clear message instead of failing on a fresh checkout.
+///
+/// Run with:
+///     cargo test -p oxide-fw-cli -- --ignored dev_server_serves_website_with_tailwind_css
+#[tokio::test]
+#[ignore]
+async fn dev_server_serves_website_with_tailwind_css() {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root");
+    let website = workspace.join("packages/oxide-website");
+    let config_path = website.join("oxide.config.ts");
+    assert!(
+        config_path.is_file(),
+        "website fixture missing at {}",
+        website.display()
+    );
+
+    // Guard on the build artifact the test depends on. `tailwind::precompute`
+    // lives in `cmd_dev`, which this test bypasses — see the doc comment.
+    let client_dir = website.join("dist/client");
+    let has_tailwind = std::fs::read_dir(&client_dir)
+        .ok()
+        .map(|entries| {
+            entries.flatten().any(|e| {
+                let n = e.file_name().to_string_lossy().to_string();
+                n.starts_with("tailwind-") && n.ends_with(".css")
+            })
+        })
+        .unwrap_or(false);
+    assert!(
+        has_tailwind,
+        "requires a prior `pnpm --filter @oxide-fw/website build`; \
+         dist/client/tailwind-*.css not found at {}",
+        client_dir.display()
+    );
+
+    let stack = crate::framework_shim::build_framework_stack(
+        Some(&config_path),
+        oxide_fw_config::JsBackend::Node,
+        None,
+        None,
+    )
+    .await;
+
+    let started = crate::start_dev_server_full(
+        website.to_str().expect("website path utf-8"),
+        Some(0),
+        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        None,
+        Vec::new(),
+        stack,
+        None,
+    )
+    .await
+    .expect("start_dev_server_full");
+    let addr = started.addr;
+
+    // ---- GET / ----
+    let resp = http_get(addr, "/").await;
+    assert!(
+        resp.starts_with("HTTP/1.1 200"),
+        "website home status: {}\nbody: {}",
+        resp.lines().next().unwrap_or(""),
+        body_of(&resp)
+    );
+    let body = body_of(&resp);
+
+    assert!(
+        body.contains("/@boot/boot.mjs"),
+        "website home should reference ESM boot entry: {body}"
+    );
+    assert!(
+        !body.contains("/client/__boot__.js"),
+        "website home must not reference the bundled boot chunk in ESM mode: {body}"
+    );
+    assert!(
+        body.contains("rel=\"stylesheet\""),
+        "website home should carry a stylesheet <link>: {body}"
+    );
+    assert!(
+        body.contains("/client/tailwind-"),
+        "website home should reference a tailwind CSS file: {body}"
+    );
+
+    // ---- Extract + fetch the CSS URL itself ----
+    let css_name = body
+        .split("/client/tailwind-")
+        .nth(1)
+        .and_then(|s| s.split('"').next())
+        .map(|s| format!("/client/tailwind-{s}"))
+        .expect("could not extract tailwind CSS href from body");
+    let css_resp = http_get(addr, &css_name).await;
+    assert!(
+        css_resp.starts_with("HTTP/1.1 200"),
+        "tailwind CSS at {} should be served: {}",
+        css_name,
+        css_resp.lines().next().unwrap_or("")
+    );
+    assert!(
+        css_resp.contains(".flex") || css_resp.contains("@layer") || css_resp.len() > 1000,
+        "served CSS should contain real generated tailwind rules (length {}):",
+        css_resp.len()
+    );
+}
