@@ -267,6 +267,33 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
         return
       }
       try {
+        // §8.2: resolve the layout chain first — SSR rendered
+        // `<RootLayout><Page/></RootLayout>`; the client must hydrate the
+        // same tree or React reports mismatch #418.
+        // [wr214] Fall back to manifest layout_chain when inp.layouts is empty.
+        // CSR fetch may lose the layouts field (SSR's ODF payload carries it,
+        // but normalizeInput drops it in some paths). The manifest always has
+        // layout_chain — trust it so client nav composes the same tree SSR does.
+        //
+        // [wr217b] MUST be computed before the wr215 chain-key comparison
+        // below. When this declaration trailed the comparison, the read
+        // `declaredLayouts.join('|')` in the chain-key line hit the TDZ
+        // (ReferenceError: Cannot access 'declaredLayouts' before
+        // initialization). The surrounding catch called renderIr(), which
+        // paints NotFoundPage — the symptom was a 404 on every client-side
+        // navigation to a route with a layout while SSR (which never enters
+        // this function) worked fine.
+        let declaredLayouts = inp.layouts ?? []
+        if (declaredLayouts.length === 0) {
+          const manifestEntry = src.manifest.routes[key]
+          if (manifestEntry && Array.isArray(manifestEntry.layout_chain)) {
+            declaredLayouts = manifestEntry.layout_chain
+            console.log(
+              '[oxide-diag] tryRealRender: inp.layouts empty — using manifest layout_chain',
+              { route: inp.route, chain: declaredLayouts, manifestKey: key }
+            )
+          }
+        }
         // [wr215] Compare layout chain BEFORE deciding update-vs-remount.
         // realRoot was mounted with the FIRST route's layout chain. If the
         // new route needs a different chain (e.g. [RootLayout] → [RootLayout,
@@ -289,24 +316,6 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
           )
           realRoot.dispose()
           realRoot = undefined
-        }
-        // §8.2: resolve the layout chain first — SSR rendered
-        // `<RootLayout><Page/></RootLayout>`; the client must hydrate the
-        // same tree or React reports mismatch #418.
-        // [wr214] Fall back to manifest layout_chain when inp.layouts is empty.
-        // CSR fetch may lose the layouts field (SSR's ODF payload carries it,
-        // but normalizeInput drops it in some paths). The manifest always has
-        // layout_chain — trust it so client nav composes the same tree SSR does.
-        let declaredLayouts = inp.layouts ?? []
-        if (declaredLayouts.length === 0) {
-          const manifestEntry = src.manifest.routes[key]
-          if (manifestEntry && Array.isArray(manifestEntry.layout_chain)) {
-            declaredLayouts = manifestEntry.layout_chain
-            console.log(
-              '[oxide-diag] tryRealRender: inp.layouts empty — using manifest layout_chain',
-              { route: inp.route, chain: declaredLayouts, manifestKey: key }
-            )
-          }
         }
         const layoutComponents: Array<{ id: string; Component: unknown }> = []
         for (const lid of declaredLayouts) {
