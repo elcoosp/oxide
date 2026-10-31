@@ -20,7 +20,7 @@ export default function DocBody({ doc }: { doc?: Doc }) {
   return (
     <article>
       <div className="breadcrumb">docs / {doc.meta.title.toLowerCase()}</div>
-      <h1 style={{ fontSize: 34, letterSpacing: '-1px', margin: '0 0 10px' }}>{doc.meta.title}fff</h1>
+      <h1 style={{ fontSize: 34, letterSpacing: '-1px', margin: '0 0 10px' }}>{doc.meta.title}fez</h1>
       <p style={{ color: 'var(--muted)', margin: '0 0 8px' }}>{doc.meta.description}</p>
 
       <div className="prose">
@@ -50,3 +50,4 @@ export default function DocBody({ doc }: { doc?: Doc }) {
 }
 // touch 1793459638426574000
 // touch 1793459893515450000
+// touch 1793460510036586000

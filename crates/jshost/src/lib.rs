@@ -1638,11 +1638,13 @@ globalThis.__oxideFrameworkRender = async function (configPath, renderInput, com
 globalThis.__oxideGeneration = 0;
 globalThis.__oxideVersioned = function (url) {
   const g = globalThis.__oxideGeneration | 0;
-  if (!g) return url;
-  return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'v=' + g;
+  const out = g ? (url + (url.indexOf('?') >= 0 ? '&' : '?') + 'v=' + g) : url;
+  console.log('[oxide-v8-trace] __oxideVersioned gen=' + g + ' in=' + JSON.stringify(url) + ' out=' + JSON.stringify(out));
+  return out;
 };
 globalThis.__oxideFrameworkInvalidate = async function () {
   globalThis.__oxideGeneration = (globalThis.__oxideGeneration | 0) + 1;
+  console.log('[oxide-v8-trace] __oxideFrameworkInvalidate new_gen=' + globalThis.__oxideGeneration);
   return JSON.stringify({ generation: globalThis.__oxideGeneration });
 };
 
