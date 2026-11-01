@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/logo.png" alt="Oxide" width="120"/>
+  <img src="docs/logo.png" alt="Oxide" width="300"/>
   <h1>Oxide</h1>
   <p><strong>One Rust core. Every framework.</strong></p>
   <p>
