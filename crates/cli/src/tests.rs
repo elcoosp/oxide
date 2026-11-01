@@ -8442,6 +8442,28 @@ async fn dev_server_serves_esm_urls_over_http() {
         boot.contains("/src/routes/index/page.tsx"),
         "boot entry should import the page: {boot}"
     );
+    // REGRESSION GUARD: the boot entry must never import a server-only
+    // route file. If it does, the browser fetches the file, the handler
+    // correctly returns 403 on a transitive `.server.` import, and the
+    // whole module graph halts — no boot, no HMR, no hydration. Symptom:
+    // editing a file does nothing in the browser.
+    for bad in [
+        ".server.ts",
+        ".server.tsx",
+        ".server.js",
+        ".server.jsx",
+        "/route.ts",
+        "/route.js",
+        "/socket.ts",
+        "/socket.js",
+        "/middleware.ts",
+        "/middleware.js",
+    ] {
+        assert!(
+            !boot.contains(bad),
+            "boot entry must not import server-only files ({bad}): {boot}"
+        );
+    }
 
     // --- Source .tsx: lowered to ESM with refresh registration ---
     let page_tsx = http_get(addr, "/src/routes/index/page.tsx").await;
