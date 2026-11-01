@@ -331,3 +331,88 @@ test('defer-glue: marker re-applied on next animation frame after React clobbers
   }
 })
 
+// Simulates React error #418's DOM-replacement response: the marker element
+// is swapped out entirely (React remounts the subtree), not just had its
+// text reverted. The retry loop must re-query and write to the *new*
+// element.
+test('defer-glue: marker reconciles when the element is replaced during hydration', () => {
+  const written: Array<() => void> = []
+  const fakeRaf = (cb: () => void): number => {
+    written.push(cb)
+    return written.length
+  }
+  type El = { textContent: string; getAttribute(name: string): string | null }
+
+  // Mutable DOM: marker 1 starts as a 'loading' element, but a simulated
+  // hydration replacement swaps the reference (like React remounting the
+  // subtree would).
+  let marker1: El = { textContent: 'loading', getAttribute: () => null }
+
+  const scripts: El[] = [
+    {
+      textContent: JSON.stringify({ label: 'fast' }),
+      getAttribute: (n) => (n === 'data-id' ? '1' : null),
+    },
+  ]
+  const doc = {
+    readyState: 'complete',
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    documentElement: {},
+    querySelectorAll(sel: string): ArrayLike<El> | undefined {
+      if (sel.startsWith('[data-deferred-value="')) {
+        return sel.includes('"1"') ? [marker1] : []
+      }
+      if (sel.startsWith('script[type="application/oxide-deferred"]')) return scripts
+      return []
+    },
+  }
+  const g = globalThis as { requestAnimationFrame?: (cb: () => void) => number }
+  const orig = g.requestAnimationFrame
+  g.requestAnimationFrame = fakeRaf
+
+  // Run exactly one queued rAF callback (not a full flush) so we can observe
+  // the retry loop between frames — the whole point of this test is what
+  // happens *during* the retry window.
+  const runOneTick = (): void => {
+    const cbs = written.splice(0, written.length)
+    if (cbs.length === 0) throw new Error('runOneTick: no tick queued')
+    for (const cb of cbs) cb()
+  }
+
+  try {
+    const glue = attachDeferGlue({ doc: doc as unknown as Document })
+    glue.wire({ fast: { __deferred: 1 } })
+    // The wire call did a sync write (marker is 'fast') and scheduled the
+    // first retry tick.
+    if (marker1.textContent !== 'fast') {
+      throw new Error(`sync write should have landed, got '${marker1.textContent}'`)
+    }
+    // Simulate React #418's remount: replace the element reference. The new
+    // element carries the server-rendered 'loading' text.
+    marker1 = { textContent: 'loading', getAttribute: () => null }
+    // Run the next retry tick. It must re-query the marker (finding the new
+    // reference), see 'loading' != 'fast', and write 'fast'.
+    runOneTick()
+    if (marker1.textContent !== 'fast') {
+      throw new Error(
+        `retry tick should have reconciled the replacement marker to 'fast', got '${marker1.textContent}'`,
+      )
+    }
+    // The loop should keep ticking for the full window (no early exit).
+    // Every subsequent tick must be a no-op (marker already correct).
+    for (let i = 0; i < 5; i++) {
+      runOneTick()
+      if (marker1.textContent !== 'fast') {
+        throw new Error(
+          `tick ${i + 2}: marker should stay 'fast', got '${marker1.textContent}'`,
+        )
+      }
+    }
+    glue.dispose()
+  } finally {
+    if (orig === undefined) delete g.requestAnimationFrame
+    else g.requestAnimationFrame = orig
+  }
+})
+
