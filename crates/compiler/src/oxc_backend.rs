@@ -247,14 +247,21 @@ pub fn inject_react_refresh(code: &str, lang: &str, path: &str) -> Result<String
     if !out.ends_with('\n') {
         out.push('\n');
     }
+    // Emit `path:name` as the id. React Refresh keys families by the
+    // id passed to `$RefreshReg$`: if the id changes, the old and new
+    // module versions are treated as different components and
+    // `performReactRefresh()` has nothing to correlate against (the
+    // screen doesn't update). Building the id from `import.meta.url`
+    // breaks this because the HMR re-import URL carries `?t=<ms>`. The
+    // source path is stable across reloads, so use it directly.
     for name in &regs {
+        let stable_id = format!("{path}:{name}");
         out.push_str("$RefreshReg$(");
         out.push_str(name);
         out.push_str(", ");
-        out.push_str(&format!("{:?}", name));
+        out.push_str(&format!("{:?}", stable_id));
         out.push_str(");\n");
     }
-    let _ = path;
     Ok(out)
 }
 
