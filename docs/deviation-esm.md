@@ -152,3 +152,169 @@ cost.
 Set `dev: { esm: false }` in `oxide.config.ts`. The Rolldown bundle path
 takes over on the next `oxide dev` restart; nothing else in the project
 needs to change. The `.oxide/esm-*` files are ignored when `dev.esm=false`.
+
+## Test coverage and known gaps
+
+### What `tests/playwright/tests/hmr.spec.ts` pins
+
+Every regression hit while building the native ESM dev server is caught by
+an assertion in that file. The mapping:
+
+| Regression | Assertion |
+|---|---|
+| `//@boot/boot.mjs` doubled slash → `ERR_NAME_NOT_RESOLVED` | `boot script URL has exactly one leading slash` |
+| Boot entry imports server-only routes (`route.ts`, `socket.ts`, `middleware.ts`, `*.server.*`) → 403 halts graph | `boot entry never imports server-only route files` |
+| Islands imported as named (`{ __island_X }`) instead of default | `boot entry uses default-import for islands` |
+| `bootWithRouter` / `clientAdapter` missing from boot → no hydration | `boot entry imports boot runtime + adapter + islands` |
+| `componentFor` only reads `entry_chunk` → client falls back to IR | `ESM manifest: every entry has a component URL` |
+| CJS IIFE-wrapped exports not extracted by Rolldown → `export const useState` missing | `prebundle: react.js has ≥10 named exports` |
+| CJS wrapper (`module.exports = require('./cjs/…')`) hides exports from Rolldown | `prebundle: react-jsx-runtime.js has named JSX factories` |
+| `external` ignored → React inlined 3× → "Invalid hook call" | `prebundle: react-dom-client.js externalizes react` |
+| `require('react')` left as `__require` shim → "Calling require" | same |
+| Lost first `$RefreshReg$` registration (runtime not yet loaded) | `prebundle: client-hot.js buffers refresh registrations` |
+| `$RefreshReg$` id prefixed with `import.meta.url` → `?t=` makes every reload a new component | `prebundle: client-hot.js buffers refresh registrations` + `served page.tsx has stable $RefreshReg$ id` |
+| Server-only imports (`import type { X } from './x.server.ts'`) leak into served ESM | `served page.tsx does not leak .server. imports` |
+| Any of the above (or a new failure) preventing module-graph load | `page hydrates without module-load errors` (asserts the exact console patterns absent) |
+| HMR WebSocket never opens | `HMR WebSocket connects to /_oxide/hmr` |
+| Save doesn't update the DOM | `HMR: editing a component updates the DOM without reloading` |
+| Save works once but triggers a full reload on later edits (registration drift) | `HMR: 3 consecutive edits each update the DOM, never reload` |
+
+The "no reload" assertion is `performance.timeOrigin` — the epoch of the
+document's navigation start. Any `location.reload()` resets it; HMR does
+not. A `window`-attached session marker is the second, redundant signal.
+
+### What is NOT covered (and why)
+
+1. **Firefox and WebKit.** `playwright.config.ts` declares three projects,
+   but the CI matrix runs them individually and only chromium is exercised
+   in this session. A Gecko- or WebKit-only regression (e.g. a
+   `performance.timeOrigin` semantics change, `import.meta.hot` inside a
+   worker on Safari) would not be caught by the chromium-only run.
+
+2. **Cold-start time bound.** The "IT'S FAST" claim (≈25 ms for a component
+   save) is not asserted as a numeric bound — CI machines vary by
+   10–100×. Playwright's default 15 s assertion timeout acts as a
+   pathological-failure gate. A real timing regression (say 25 ms → 800 ms)
+   would not trip the test. Asserting it requires a benchmark
+   environment with fixed CPU and warm page cache that this repo does
+   not have.
+
+3. **`react-refresh` absent.** HMR falls back to `location.reload()` when
+   the project does not install `react-refresh`. The test suite skips the
+   HMR tests in that case (documented behaviour, not a bug), so a project
+   that removes `react-refresh` won't fail CI — it silently loses HMR.
+
+4. **CSS HMR.** The `/@css/**` module self-accept path is exercised by
+   `packages/core/test/hot.test.ts` at the unit level, but no browser
+   test edits a `.css` file and confirms a `<style>` tag updated in
+   place. A project that imports CSS from a component and relies on the
+   `<style>` swap is not verified end-to-end.
+
+5. **`import.meta.hot` in workers.** The dev server installs
+   `import.meta.hot` for the main thread only. Any HMR inside a `new
+   Worker(...)` will see `import.meta.hot === undefined` and the
+   `if (import.meta.hot) { … }` guard will silently no-op. Not a
+   regression from this implementation, but worth naming.
+
+6. **Multi-worker dev servers.** The HMR hub uses an in-process
+   `tokio::sync::broadcast`. Two dev servers on the same project (a
+   restart race) have separate hubs; a WebSocket connected to one will
+   not see file changes from the other. `SO_REUSEPORT` zero-downtime
+   reload is tested for the "old drains, new accepts" flow only.
+
+7. **`oxide build` regression.** Every regression in this session was in
+   `oxide dev`. The production build uses `RolldownBundler` and never
+   touches `prebundle.rs`, `cjs_exports.rs`, or `esm_dev.rs`. There is
+   no test asserting "the production build output is unchanged" — a
+   future refactor of `prebundle.rs` that also touches a shared helper
+   could theoretically affect `oxide build`.
+
+8. **Playwright is not part of `cargo nextest run --workspace`.** The
+   Rust suite (1213 tests) is the primary gate. Playwright
+   (`pnpm --filter @oxide/playwright test`) is a separate manual step
+   that needs `node_modules` + a built `oxide` binary. A CI pipeline
+   that only runs `cargo nextest` will not catch a browser regression
+   even though the tests exist.
+
+## Test coverage and known gaps
+
+### What `tests/playwright/tests/hmr.spec.ts` pins
+
+Every regression hit while building the native ESM dev server is caught by
+an assertion in that file. The mapping:
+
+| Regression | Assertion |
+|---|---|
+| `//@boot/boot.mjs` doubled slash → `ERR_NAME_NOT_RESOLVED` | `boot script URL has exactly one leading slash` |
+| Boot entry imports server-only routes (`route.ts`, `socket.ts`, `middleware.ts`, `*.server.*`) → 403 halts graph | `boot entry never imports server-only route files` |
+| Islands imported as named (`{ __island_X }`) instead of default | `boot entry uses default-import for islands` |
+| `bootWithRouter` / `clientAdapter` missing from boot → no hydration | `boot entry imports boot runtime + adapter + islands` |
+| `componentFor` only reads `entry_chunk` → client falls back to IR | `ESM manifest: every entry has a component URL` |
+| CJS IIFE-wrapped exports not extracted by Rolldown → `export const useState` missing | `prebundle: react.js has ≥10 named exports` |
+| CJS wrapper (`module.exports = require('./cjs/…')`) hides exports from Rolldown | `prebundle: react-jsx-runtime.js has named JSX factories` |
+| `external` ignored → React inlined 3× → "Invalid hook call" | `prebundle: react-dom-client.js externalizes react` |
+| `require('react')` left as `__require` shim → "Calling require" | same |
+| Lost first `$RefreshReg$` registration (runtime not yet loaded) | `prebundle: client-hot.js buffers refresh registrations` |
+| `$RefreshReg$` id prefixed with `import.meta.url` → `?t=` makes every reload a new component | `prebundle: client-hot.js buffers refresh registrations` + `served page.tsx has stable $RefreshReg$ id` |
+| Server-only imports (`import type { X } from './x.server.ts'`) leak into served ESM | `served page.tsx does not leak .server. imports` |
+| Any of the above (or a new failure) preventing module-graph load | `page hydrates without module-load errors` (asserts the exact console patterns absent) |
+| HMR WebSocket never opens | `HMR WebSocket connects to /_oxide/hmr` |
+| Save doesn't update the DOM | `HMR: editing a component updates the DOM without reloading` |
+| Save works once but triggers a full reload on later edits (registration drift) | `HMR: 3 consecutive edits each update the DOM, never reload` |
+
+The "no reload" assertion is `performance.timeOrigin` — the epoch of the
+document's navigation start. Any `location.reload()` resets it; HMR does
+not. A `window`-attached session marker is the second, redundant signal.
+
+### What is NOT covered (and why)
+
+1. **Firefox and WebKit.** `playwright.config.ts` declares three projects,
+   but the CI matrix runs them individually and only chromium is exercised
+   in this session. A Gecko- or WebKit-only regression (e.g. a
+   `performance.timeOrigin` semantics change, `import.meta.hot` inside a
+   worker on Safari) would not be caught by the chromium-only run.
+
+2. **Cold-start time bound.** The "IT'S FAST" claim (≈25 ms for a component
+   save) is not asserted as a numeric bound — CI machines vary by
+   10–100×. Playwright's default 15 s assertion timeout acts as a
+   pathological-failure gate. A real timing regression (say 25 ms → 800 ms)
+   would not trip the test. Asserting it requires a benchmark
+   environment with fixed CPU and warm page cache that this repo does
+   not have.
+
+3. **`react-refresh` absent.** HMR falls back to `location.reload()` when
+   the project does not install `react-refresh`. The test suite skips the
+   HMR tests in that case (documented behaviour, not a bug), so a project
+   that removes `react-refresh` won't fail CI — it silently loses HMR.
+
+4. **CSS HMR.** The `/@css/**` module self-accept path is exercised by
+   `packages/core/test/hot.test.ts` at the unit level, but no browser
+   test edits a `.css` file and confirms a `<style>` tag updated in
+   place. A project that imports CSS from a component and relies on the
+   `<style>` swap is not verified end-to-end.
+
+5. **`import.meta.hot` in workers.** The dev server installs
+   `import.meta.hot` for the main thread only. Any HMR inside a `new
+   Worker(...)` will see `import.meta.hot === undefined` and the
+   `if (import.meta.hot) { … }` guard will silently no-op. Not a
+   regression from this implementation, but worth naming.
+
+6. **Multi-worker dev servers.** The HMR hub uses an in-process
+   `tokio::sync::broadcast`. Two dev servers on the same project (a
+   restart race) have separate hubs; a WebSocket connected to one will
+   not see file changes from the other. `SO_REUSEPORT` zero-downtime
+   reload is tested for the "old drains, new accepts" flow only.
+
+7. **`oxide build` regression.** Every regression in this session was in
+   `oxide dev`. The production build uses `RolldownBundler` and never
+   touches `prebundle.rs`, `cjs_exports.rs`, or `esm_dev.rs`. There is
+   no test asserting "the production build output is unchanged" — a
+   future refactor of `prebundle.rs` that also touches a shared helper
+   could theoretically affect `oxide build`.
+
+8. **Playwright is not part of `cargo nextest run --workspace`.** The
+   Rust suite (1213 tests) is the primary gate. Playwright
+   (`pnpm --filter @oxide/playwright test`) is a separate manual step
+   that needs `node_modules` + a built `oxide` binary. A CI pipeline
+   that only runs `cargo nextest` will not catch a browser regression
+   even though the tests exist.
