@@ -546,8 +546,26 @@ fn serve_css_module(state: &EsmDevState, rel_path: &str) -> OxideResponse {
     // no tag-break is possible.
     let css_literal = serde_json::to_string(&css_body).unwrap_or_else(|_| "\"\"".into());
     let id_literal = serde_json::to_string(&id).unwrap_or_else(|_| "\"\"".into());
+    // Preamble: install `import.meta.hot` for THIS module (same pattern as
+    // `serve_source_file`). Without it the `accept()` below is a no-op, the
+    // module never enters `modules`, and `reloadModule("/@css/...")` cannot
+    // find it to fire dispose/accept — CSS updates would be invisible until
+    // a full page reload.
+    let hot_url = state
+        .rewrite_map
+        .get("@oxide-fw/core/client/hot")
+        .cloned()
+        .unwrap_or_else(|| "@oxide-fw/core/client/hot".to_string());
+    let self_url_literal = format!("{:?}", format!("{CSS_URL_PREFIX}{rel_path}"));
+    let preamble = format!(
+        "import {hot_url:?};\n\
+         if (!import.meta.hot && globalThis.__oxide_hmr__) {{\n\
+           import.meta.hot = globalThis.__oxide_hmr__.createHotContext({self_url_literal});\n\
+         }}\n"
+    );
     let body = format!(
-        "// oxide-css: {rel_path}\n\
+        "{preamble}\
+         // oxide-css: {rel_path}\n\
          if (import.meta.hot) import.meta.hot.accept();\n\
          const id = {id_literal};\n\
          const css = {css_literal};\n\
@@ -878,6 +896,13 @@ mod integration_tests {
         assert!(body.contains("import.meta.hot.accept"), "must self-accept: {body}");
         assert!(body.contains("body { margin: 0; }"), "css text must be inlined: {body}");
         assert!(body.contains("createElement('style')"), "must inject a style tag: {body}");
+        // The preamble must install import.meta.hot with the module's own URL
+        // so reloadModule can find it after a save.
+        assert!(body.contains("createHotContext"), "must install import.meta.hot: {body}");
+        assert!(
+            body.contains("/@css/styles/plain.css"),
+            "hot context URL must match the module: {body}"
+        );
     }
 
     #[test]

@@ -77,10 +77,47 @@ function install(): void {
     },
 
     async reloadModule(url: string): Promise<void> {
-      // Phase 1: no-op — nothing calls this yet.
-      // Phase 2: full reload (WebSocket module-update handler).
-      // Phase 3: dispose + reimport + performReactRefresh.
-      if (typeof location !== 'undefined') location.reload()
+      // Phase 3 implementation (delivered in Phase 5b.2): dispose + re-import
+      // + accept. `url` is what the browser fetched (`/src/routes/...` or
+      // `/@css/...`). The re-import busts the ESM cache with `?t=<ms>` so
+      // the module body runs fresh. Then every accept callback registered
+      // during that fresh evaluation fires — for JSX that means
+      // `__oxide_refresh(mod)` which calls React Refresh's
+      // `performReactRefresh()` for in-place state-preserving updates; for
+      // CSS the side-effect already ran (the `<style>` was replaced in
+      // place) so the accept callback is a no-op.
+      const mod = modules.get(url)
+      if (mod) {
+        for (const cb of mod.disposeCallbacks) {
+          try { cb() } catch { /* a dispose throwing must not block the reload */ }
+        }
+        mod.disposeCallbacks.length = 0
+        // Accept callbacks are re-pushed during the fresh evaluation below.
+        // Clearing prevents an edit-storm from stacking accepts that fire
+        // repeatedly on a later reload.
+        mod.acceptCallbacks.length = 0
+        mod.invalidated = false
+      }
+      const sep = url.includes('?') ? '&' : '?'
+      const freshUrl = `${url}${sep}t=${Date.now()}`
+      let fresh: unknown
+      try {
+        fresh = await import(/* @vite-ignore */ freshUrl)
+      } catch (err) {
+        // A transform/parse error after save should surface to the user —
+        // fall through to a full reload so the diagnostic overlay (which the
+        // dev server publishes) can render.
+        console.error('[oxide] module reload failed:', url, err)
+        if (typeof location !== 'undefined') location.reload()
+        return
+      }
+      const freshMod = modules.get(url)
+      if (freshMod) {
+        for (const cb of freshMod.acceptCallbacks) {
+          try { cb(fresh) } catch { /* one throwing accept must not block the rest */ }
+        }
+        freshMod.acceptCallbacks.length = 0
+      }
     },
   }
 

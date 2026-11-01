@@ -2713,10 +2713,43 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 }
                 let kind = oxide_fw_dev::classify_path(&pstr);
                 match oxide_fw_dev::hmr_behavior(kind) {
-                    HmrBehavior::StyleSwap => hub.publish(HmrMessage::CssUpdate {
-                        path: pstr,
-                        code: String::new(),
-                    }),
+                    HmrBehavior::StyleSwap => {
+                        // ESM mode: a CSS file in `src/` is imported through a
+                        // `/@css/<rel>` module (see `serve_css_module`) that
+                        // self-accepts and replaces its `<style>` in place.
+                        // Publishing a `ModuleUpdate` with the module URL lets
+                        // the client's `reloadModule` re-import it, which
+                        // re-executes the module body and swaps the style tag.
+                        //
+                        // Non-`src/` CSS (or bundler mode) keeps the legacy
+                        // `CssUpdate` — a `<link>` href swap for the bundler-
+                        // emitted stylesheet.
+                        let src_dir = rootp.join("src");
+                        let in_src = path.starts_with(&src_dir);
+                        let is_esm = cfg.dev.esm;
+                        if in_src && is_esm {
+                            let root_str = rootp.to_string_lossy();
+                            let rel = pstr.strip_prefix(root_str.as_ref()).unwrap_or(&pstr);
+                            let rel_slash = rel.replace('\\', "/");
+                            let trimmed = rel_slash.trim_start_matches('/');
+                            if let Some(inner) = trimmed.strip_prefix("src/") {
+                                hub.publish(HmrMessage::ModuleUpdate {
+                                    path: pstr,
+                                    url: format!("/@css/{inner}"),
+                                });
+                            } else {
+                                hub.publish(HmrMessage::CssUpdate {
+                                    path: pstr,
+                                    code: String::new(),
+                                });
+                            }
+                        } else {
+                            hub.publish(HmrMessage::CssUpdate {
+                                path: pstr,
+                                code: String::new(),
+                            });
+                        }
+                    }
                     HmrBehavior::ReloadData => {
                         // §13.3: a `page.server.ts` change re-runs the route's
                         // loader and publishes the route's URL PATH PATTERN
