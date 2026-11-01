@@ -649,14 +649,18 @@ impl Default for DevConfig {
             // `dev: { esm: false }` in `oxide.config.ts`.
             esm: true,
             prebundle: vec![
+                // React 19 ships CJS-only. `prebundle_cjs_to_esm` bundles
+                // each entry with Rolldown's CJS interop (entry-point mode),
+                // which scans `exports.useState = ...` and emits real named
+                // ESM exports. `react` must be a separate entry from
+                // `react-dom/client` so that each has its own file, and
+                // `react-dom-client.js` externalizes `react` (resolved by
+                // the import map to `/@prebundle/react.js`) so the browser
+                // has exactly one React instance with one dispatcher.
                 "react".into(),
+                "react-dom".into(),
                 "react-dom/client".into(),
                 "react/jsx-runtime".into(),
-                // Phase 3: React Refresh runtime. When the project installs
-                // `react-refresh`, `hot.ts` upgrades `__oxide_refresh` to an
-                // in-place component update. If the package is absent,
-                // `prebundle_cjs_deps` logs it and skips; `hot.ts` falls back
-                // to a full page reload — no user-visible error.
                 "react-refresh/runtime".into(),
                 "lucide-react".into(),
                 "rangi".into(),
