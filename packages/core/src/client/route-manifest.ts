@@ -22,6 +22,10 @@
 export interface RouteManifestEntry {
   /** The route's entry JS chunk (preload order §10.2 step 4). */
   entry_chunk?: string
+  /** ESM-dev manifest entry: the source URL of the route's component.
+   *  Set by `oxide dev` in `.oxide/esm-manifest.json`; absent in bundler mode.
+   *  `componentFor` checks this before `entry_chunk` so a dev manifest resolves correctly. */
+  component?: string
   /** Extra chunks to preload, entry first. */
   preload?: string[]
   /** Legacy/alias field for chunk lists (kept for older manifests). */
@@ -262,7 +266,10 @@ export function layoutChunksFor(
   for (const layoutId of entry.layout_chain) {
     const layout = manifest.routes[layoutId]
     if (!layout) continue
-    if (layout.entry_chunk) out.push(layout.entry_chunk)
+    // ESM dev: layouts have `component` (full URL) instead of `entry_chunk`.
+    // Push whichever exists so the layout chunk is preloaded in dev too.
+    const layoutRef = layout.component ?? layout.entry_chunk
+    if (layoutRef) out.push(layoutRef)
     if (layout.preload) out.push(...layout.preload)
   }
   return out
@@ -317,7 +324,11 @@ export async function componentFor(routeRef: string): Promise<unknown> {
   if (key === undefined) return undefined
   const entry = src.manifest.routes[key]
   if (!entry) return undefined
-  const chunk = entry.entry_chunk ?? entry.preload?.[0] ?? entry.chunks?.[0]
+  // ESM dev manifest entries set `component` (a full `/src/...` URL).
+  // Bundler entries set `entry_chunk` (a bare filename prefixed with
+  // `/client/`). Try `component` first so the ESM path resolves.
+  const chunk =
+    entry.component ?? entry.entry_chunk ?? entry.preload?.[0] ?? entry.chunks?.[0]
   if (!chunk) return undefined
   try {
     const mod = await src.loadChunk(chunkUrl(chunk))
