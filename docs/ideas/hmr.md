@@ -99,7 +99,7 @@ Phase 2's HMR = `location.reload()` = ~500ms per save. That's 3× faster than th
 
 **Phase 4 — Structural + tests + docs.**
 - `RestartSubsystems` ESM branch: regenerate manifest, skip bundle
-- Full test suite, `docs/deviation-esm.md`, flag stays `true`
+- Full test suite, `docs/plan-esm-hmr.md`, flag stays `true`
 
 Each phase commits independently. `cargo nextest run --workspace` + `pnpm --recursive test` must pass at each phase boundary.
 

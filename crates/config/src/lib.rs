@@ -626,7 +626,7 @@ pub struct DevConfig {
     /// runtime already handles via `import(url)`.
     ///
     /// Default `true` since Phase 4 (React Refresh proven, see
-    /// `docs/deviation-esm.md`). Opt out per project with
+    /// `docs/plan-esm-hmr.md`). Opt out per project with
     /// `dev: { esm: false }` in `oxide.config.ts` to fall back to the
     /// Rolldown bundle + full-reload HMR path.
     pub esm: bool,
