@@ -39,12 +39,24 @@ const modules = new Map<string, HotModule>()
 // reload (or a test) hits it immediately.
 let reloadSeq = 0
 
+// Coalesce rapid HMR messages. macOS fires 3-8 watcher events per file
+// write (IN_MODIFY + IN_CLOSE_WRITE + atime bump from our own reads of
+// the same file). Without coalescing, one save triggers N imports in
+// <1s and thrashes React Refresh — the concurrent scheduler coalesces
+// performReactRefresh() calls, and the DOM ends up reconciled against a
+// stale family. Leading + trailing: first message executes, rapid
+// followers collapse into one trailing call that reflects the latest
+// content.
+const lastReloadAt = new Map<string, number>()
+const trailingTimers = new Map<string, number>()
+const COALESCE_MS = 100
+
 function install(): void {
   if (typeof window === 'undefined') return
   const g = window as unknown as {
     __oxide_hmr__?: unknown
     __oxide_refresh?: unknown
-    __oxide_refresh_reg?: (t: unknown, id: string, url?: string) => void
+    __oxide_refresh_reg?: (t: unknown, id: string) => void
     $RefreshRuntime$?: {
       performReactRefresh?: () => void
       injectIntoGlobalHook?: (w: unknown) => void
@@ -85,6 +97,20 @@ function install(): void {
     },
 
     async reloadModule(url: string): Promise<void> {
+      // __coalesce: leading edge + trailing
+      const __now = Date.now()
+      const __last = lastReloadAt.get(url) ?? 0
+      if (__now - __last < COALESCE_MS) {
+        if (!trailingTimers.has(url)) {
+          const t = setTimeout(() => {
+            trailingTimers.delete(url)
+            void (globalThis as { __oxide_hmr__?: { reloadModule?: (u: string) => Promise<void> } }).__oxide_hmr__?.reloadModule?.(url)
+          }, COALESCE_MS + 20) as unknown as number
+          trailingTimers.set(url, t)
+        }
+        return
+      }
+      lastReloadAt.set(url, __now)
       // Phase 3 implementation (delivered in Phase 5b.2): dispose + re-import
       // + accept. `url` is what the browser fetched (`/src/routes/...` or
       // `/@css/...`). The re-import busts the ESM cache with `?t=<ms>` so
@@ -134,15 +160,13 @@ function install(): void {
   // react-refresh's performReactRefresh (loaded lazily).
   if (typeof g.__oxide_refresh === 'undefined') {
     g.__oxide_refresh = (_mod: unknown): void => {
-      // Prefer React Refresh's in-place update when the runtime is loaded.
       const rt = g.$RefreshRuntime$
       if (rt && typeof rt.performReactRefresh === 'function') {
         try {
           rt.performReactRefresh()
           return
-        } catch {
-          // Fall through to a full reload — a runtime that throws is worse
-          // than a flash.
+        } catch (e) {
+          console.error('[hot] performReactRefresh() threw:', e)
         }
       }
       if (typeof location !== 'undefined') location.reload()
@@ -153,15 +177,31 @@ function install(): void {
   // `inject_react_refresh` pass) routes through `__oxide_refresh_reg` when
   // the runtime is available; otherwise it is a no-op (a production build
   // strips the shim, so this branch only runs in dev).
+  // Registrations that arrived before `$RefreshRuntime$` finished loading.
+  // React Refresh needs the INITIAL registration of a component to
+  // establish the "family" it later compares against. Without buffering,
+  // the very first render (before the async runtime import resolves) would
+  // silently drop every registration, and every HMR reload afterward would
+  // re-register but find no baseline to compare to — `performReactRefresh()`
+  // "succeeds" but nothing on screen updates.
+  const pendingRegistrations: Array<{ t: unknown; id: string }> = []
   if (typeof g.__oxide_refresh_reg === 'undefined') {
-    g.__oxide_refresh_reg = (t: unknown, id: string, url?: string): void => {
+    g.__oxide_refresh_reg = (t: unknown, id: string): void => {
+      // `id` is now `path:Name` — a stable identifier baked into the module
+      // by the compiler (`$RefreshReg$(DocBody, "src/routes/…/doc-body.tsx:DocBody")`).
+      // The previous code prefixed it with `import.meta.url`, which after
+      // HMR carried `?t=<ms>` and produced a DIFFERENT id every reload, so
+      // React Refresh treated each reload as a brand-new component and
+      // never correlated the old and new versions.
       const rt = g.$RefreshRuntime$
       if (rt && typeof rt.register === 'function') {
         try {
-          rt.register(t, `${url ?? ''} ${id}`)
+          rt.register(t, id)
         } catch {
           // Registration failing must not break the module evaluation.
         }
+      } else {
+        pendingRegistrations.push({ t, id })
       }
     }
   }
@@ -206,14 +246,32 @@ function install(): void {
             register?: (t: unknown, id: string) => void
           }
           const rt = (mod.default ?? mod) as RuntimeShape
+          // `injectIntoGlobalHook` MUST run before any `register()` call,
+          // so React's dispatcher hook is installed before Refresh begins
+          // tracking components.
           if (typeof rt.injectIntoGlobalHook === 'function') {
             try {
               rt.injectIntoGlobalHook(window)
-            } catch {
+            } catch (e) {
               // Ignore: the runtime is optional.
             }
           }
           g.$RefreshRuntime$ = rt
+          // Replay registrations that arrived during the async import.
+          // Without this, the very first render (which happens synchronously
+          // before this `.then` runs) registers components to a null runtime;
+          // they're buffered and replayed here so React Refresh has a
+          // baseline family to compare on the FIRST HMR reload.
+          if (typeof rt.register === 'function') {
+            for (const { t, id } of pendingRegistrations) {
+              try {
+                rt.register(t, id)
+              } catch {
+                // Ignore: a bad registration must not break the runtime load.
+              }
+            }
+          }
+          pendingRegistrations.length = 0
         })
         .catch(() => {
           // Not installed — a full reload is the fallback, no user-visible error.
