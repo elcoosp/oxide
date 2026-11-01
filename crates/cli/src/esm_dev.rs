@@ -49,6 +49,18 @@ pub const BOOT_SCRIPT_URL: &str = "/@boot/boot.mjs";
 /// SSR renderer's disk-scan `<link>` (see `inject_route_css`), not through
 /// this handler.
 pub const CSS_URL_PREFIX: &str = "/@css/";
+/// URL prefix for imports of server-only modules (`*.server.ts`) from a
+/// client component. Vite's equivalent is `vite:import-analysis`'s
+/// server-reference rewrite; Next.js uses `server-reference-manifest`.
+/// The specifier is rewritten at serve time to `/@server-fn/<path>`, and the
+/// handler runs the same `transform_server_fn_stubs` pass the production
+/// build uses (`Env::Client`) to produce `__oxide_call_fn` proxies.
+///
+/// Without this: `import { greet } from "./greeting.server.ts"` is served
+/// verbatim. The browser fetches the file, the `.server.` guard returns 403
+/// (correct), and the whole module graph halts — no hydration, no HMR, no
+/// error on the page. That was the last regression.
+pub const SERVER_FN_URL_PREFIX: &str = "/@server-fn/";
 
 /// Everything the ESM request handler needs. Built once at dev startup,
 /// shared through `Arc` with the dispatch closure.
@@ -95,6 +107,7 @@ pub fn build_esm_manifest(
 pub fn generate_esm_boot_entry(
     root: &Path,
     components: &BTreeMap<String, String>,
+    islands: &BTreeMap<String, String>,
 ) -> anyhow::Result<PathBuf> {
     let out = root.join(BOOT_ENTRY_PATH);
     if let Some(parent) = out.parent() {
@@ -133,6 +146,58 @@ pub fn generate_esm_boot_entry(
         src.push_str(&format!("{url:?}"));
         src.push_str(";\n");
     }
+    // Actually boot the client. The static imports above only register the
+    // modules; hydration, router attach, and the HMR WebSocket all live in
+    // `bootWithRouter`. Without this call the page renders SSR-only and no
+    // `connectHmr()` runs — symptoms: islands don't hydrate, edits don't
+    // reach the page, and the ONLY WebSocket is the server's broken inline
+    // fallback (which checks `m.type` on a MessageEvent that carries
+    // `m.data`).
+    if let Some(adapter_url) = lookup.get("@oxide-fw/react") {
+        src.push_str(&format!(
+            "import {{ clientAdapter }} from {adapter_url:?};\n"
+        ));
+    }
+    let boot_fn_url = lookup
+        .get("@oxide-fw/core/client/boot")
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "@oxide-fw/core/client/boot".to_string());
+    src.push_str(&format!(
+        "import {{ bootWithRouter }} from {boot_fn_url:?};\n"
+    ));
+    // Island imports must come BEFORE the map — `import` at statement
+    // position only. Emitting them inside the object literal is a syntax
+    // error ("Unexpected token '{'" at the first island line).
+    //
+    // Island modules export `default` (standard React/Vue/Svelte component
+    // convention), not a named `__island_Name` binding. Use the *default*
+    // import form: `import __island_Name from "..."`. The previous named
+    // form produced `import { __island_Name } from "..."` which the
+    // browser rejects with "does not provide an export named
+    // '__island_Name'" — the exact error a user sees on first page load.
+    for (name, path) in islands {
+        let sym = format!("__island_{name}");
+        src.push_str(&format!("import {sym} from {path:?};\n"));
+    }
+    src.push_str("const __modules = {\n");
+    for (name, _) in islands {
+        let sym = format!("__island_{name}");
+        src.push_str(&format!("  {name:?}: {sym},\n"));
+    }
+    src.push_str("};\n");
+
+    src.push_str("if (typeof window !== 'undefined') {\n");
+    src.push_str("  const __adapter = typeof clientAdapter !== 'undefined' ? clientAdapter : undefined;\n");
+    src.push_str("  if (__adapter) {\n");
+    src.push_str("    window.__oxideRegisterAdapter(__adapter, async (chunk) => {\n");
+    src.push_str("      return __modules[chunk] ?? (await import(chunk));\n");
+    src.push_str("    });\n");
+    src.push_str("    fetch('/@esm-manifest.json')\n");
+    src.push_str("      .then(r => r.ok ? r.json() : undefined)\n");
+    src.push_str("      .then(m => bootWithRouter(__adapter, { manifest: m, clientBase: '/' }))\n");
+    src.push_str("      .catch(() => bootWithRouter(__adapter, { clientBase: '/' }));\n");
+    src.push_str("  }\n");
+    src.push_str("}\n");
     std::fs::write(&out, src)?;
     Ok(out)
 }
@@ -148,9 +213,25 @@ pub fn build_rewrite_map(
     prebundle: &[String],
 ) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
+    // One entry per package: the map is a straight 1:1 (bare specifier ->
+    // its own prebundle URL). `react-dom/client` becomes
+    // `/@prebundle/react-dom-client.js`, `react` becomes
+    // `/@prebundle/react.js`, and so on. Cross-package imports inside the
+    // prebundle files (e.g. `react-dom-client.js` -> `import React from
+    // "react"`) are also rewritten to their canonical `/@prebundle/...` URL
+    // by `rewrite_imports` when the file is served.
     for name in prebundle {
         map.insert(name.clone(), format!("/@prebundle/{}", sanitized_filename(name)));
     }
+    // `react/jsx-dev-runtime` is imported by development-mode JSX lowering;
+    // it ships in the same file as react/jsx-runtime (React's package.json
+    // exports them to the same underlying implementation). Point it at the
+    // same URL.
+    if let Some(jsx_rt) = map.get("react/jsx-runtime").cloned() {
+        map.entry("react/jsx-dev-runtime".to_string()).or_insert(jsx_rt);
+    }
+    // @oxide-fw/* packages use the framework exports scan (unchanged from
+    // the prior version — those packages have real ESM dist files).
     if let Some(exports) = read_framework_exports(root) {
         for (specifier, url) in exports {
             map.insert(specifier, url);
@@ -160,38 +241,62 @@ pub fn build_rewrite_map(
 }
 
 fn read_framework_exports(root: &Path) -> Option<Vec<(String, String)>> {
-    let candidates = [
-        root.join("node_modules/@oxide-fw/core/package.json"),
-        root.join("packages/core/package.json"),
-    ];
-    for pkg in &candidates {
-        if let Some(exports) = read_exports_at(pkg) {
-            return Some(exports);
+    let mut out = Vec::new();
+
+    // 1. Scan node_modules/@oxide-fw/*
+    let nm = root.join("node_modules/@oxide-fw");
+    if nm.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&nm) {
+            for entry in entries.flatten() {
+                let pkg_json = entry.path().join("package.json");
+                if let Some(mut exports) = read_exports_at(&pkg_json) {
+                    out.append(&mut exports);
+                }
+            }
         }
     }
-    None
+
+    // 2. Scan workspace packages/*/package.json
+    let ws = root.join("packages");
+    if ws.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&ws) {
+            for entry in entries.flatten() {
+                let pkg_json = entry.path().join("package.json");
+                if let Some(mut exports) = read_exports_at(&pkg_json) {
+                    out.append(&mut exports);
+                }
+            }
+        }
+    }
+
+    if out.is_empty() { None } else { Some(out) }
 }
 
 fn read_exports_at(pkg_json: &Path) -> Option<Vec<(String, String)>> {
     let raw = std::fs::read_to_string(pkg_json).ok()?;
     let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let name = json.get("name")?.as_str()?;
+    if !name.starts_with("@oxide-fw/") { return None; }
+
     let exports = json.get("exports")?.as_object()?;
     let mut out = Vec::new();
     for (sub, entry) in exports {
         let sub_path = sub.trim_start_matches("./");
         let specifier = if sub_path.is_empty() || sub_path == "." {
-            "@oxide-fw/core".to_string()
+            name.to_string()
         } else {
-            format!("@oxide-fw/core/{sub_path}")
+            format!("{name}/{sub_path}")
         };
         let target = entry
             .as_str()
             .or_else(|| entry.get("default").and_then(|v| v.as_str()));
         let Some(t) = target else { continue };
         let dist = t.trim_start_matches("./");
+        // Map to the package's specific folder in the prebundle
+        let pkg_dir = name.strip_prefix("@oxide-fw/").unwrap_or(name);
         out.push((
             specifier,
-            format!("/@prebundle/@oxide-fw/core/{dist}"),
+            format!("/@prebundle/@oxide-fw/{pkg_dir}/{dist}"),
         ));
     }
     Some(out)
@@ -235,22 +340,53 @@ pub fn prebundle_cjs_deps(root: &Path, packages: &[String]) -> anyhow::Result<()
 }
 
 fn copy_framework_dist(root: &Path, out_dir: &Path) -> anyhow::Result<()> {
-    let candidates = [
-        root.join("node_modules/@oxide-fw/core/dist"),
-        root.join("packages/core/dist"),
-    ];
-    let Some(src) = candidates.iter().find(|p| p.is_dir()) else {
+    let mut copied_any = false;
+
+    let mut copy_pkg = |src: &Path, name: &str| -> anyhow::Result<()> {
+        let dst = out_dir.join("@oxide-fw").join(name).join("dist");
+        if dst.exists() {
+            let _ = std::fs::remove_dir_all(&dst);
+        }
+        copy_dir_recursive(src, &dst)?;
+        copied_any = true;
+        Ok(())
+    };
+
+    if let Ok(entries) = std::fs::read_dir(root.join("node_modules/@oxide-fw")) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let dist = entry.path().join("dist");
+            if dist.is_dir() {
+                let _ = copy_pkg(&dist, &name);
+            }
+        }
+    }
+
+    if let Ok(entries) = std::fs::read_dir(root.join("packages")) {
+        for entry in entries.flatten() {
+            let pkg_json = entry.path().join("package.json");
+            if let Ok(raw) = std::fs::read_to_string(&pkg_json) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                    if let Some(name) = v.get("name").and_then(|n| n.as_str()) {
+                        if name.starts_with("@oxide-fw/") {
+                            let dist = entry.path().join("dist");
+                            if dist.is_dir() {
+                                let short = name.strip_prefix("@oxide-fw/").unwrap_or(name);
+                                let _ = copy_pkg(&dist, short);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !copied_any {
         eprintln!(
-            "oxide dev (esm): no `packages/core/dist/` found — @oxide-fw/* imports \
+            "oxide dev (esm): no @oxide-fw/* dist/ found — framework imports \
              will 404. Run `pnpm --filter @oxide-fw/core build` first."
         );
-        return Ok(());
-    };
-    let dst = out_dir.join("@oxide-fw/core/dist");
-    if dst.exists() {
-        let _ = std::fs::remove_dir_all(&dst);
     }
-    copy_dir_recursive(src, &dst)?;
     Ok(())
 }
 
@@ -310,6 +446,9 @@ fn rewrite_imports(
             } else {
                 Some(pre.clone())
             }
+        } else if is_server_specifier(&span.specifier) {
+            from_src_rel
+                .and_then(|from| resolve_server_url(from, &span.specifier))
         } else if is_css_specifier(&span.specifier) {
             from_src_rel
                 .and_then(|from| resolve_css_url(from, &span.specifier))
@@ -357,12 +496,26 @@ fn is_css_specifier(spec: &str) -> bool {
 /// rejected — that import cannot be served and a full URL fallback would
 /// leak host paths.
 fn resolve_css_url(from_src_rel: &str, spec: &str) -> Option<String> {
+    resolve_relative_url(from_src_rel, spec, CSS_URL_PREFIX)
+}
+
+/// Resolve a `.server.*` specifier imported from `from_src_rel` to a
+/// `/@server-fn/<rel>` URL. Same path normalization as
+/// [`resolve_css_url`] — a `../..` chain that escapes `src/` is rejected,
+/// so a hostile import cannot probe outside the project source tree.
+fn resolve_server_url(from_src_rel: &str, spec: &str) -> Option<String> {
+    resolve_relative_url(from_src_rel, spec, SERVER_FN_URL_PREFIX)
+}
+
+/// Shared path normalization. Given a source-relative path and a relative
+/// specifier, resolve one against the other and produce `<prefix><rel>`.
+/// Rejects escapes past `src/`.
+fn resolve_relative_url(from_src_rel: &str, spec: &str, prefix: &str) -> Option<String> {
     use std::path::Component;
     let from_dir = std::path::Path::new(from_src_rel)
         .parent()
         .unwrap_or_else(|| std::path::Path::new(""));
     let joined = from_dir.join(spec);
-    // Normalize: drop `.` and pop `..`, rejecting anything that escapes.
     let mut segments: Vec<std::ffi::OsString> = Vec::new();
     for comp in joined.components() {
         match comp {
@@ -370,7 +523,7 @@ fn resolve_css_url(from_src_rel: &str, spec: &str) -> Option<String> {
             Component::CurDir => {}
             Component::ParentDir => {
                 if segments.pop().is_none() {
-                    return None; // escaped src/
+                    return None;
                 }
             }
             Component::RootDir | Component::Prefix(_) => return None,
@@ -381,7 +534,21 @@ fn resolve_css_url(from_src_rel: &str, spec: &str) -> Option<String> {
         .map(|s| s.to_string_lossy())
         .collect::<Vec<_>>()
         .join("/");
-    Some(format!("{CSS_URL_PREFIX}{rel}"))
+    Some(format!("{prefix}{rel}"))
+}
+
+/// True when the specifier names a server-only module (`.server.ts`,
+/// `.server.tsx`, `.server.js`, `.server.jsx`, `.server.mjs`). Used by
+/// `rewrite_imports` to route the import through `/@server-fn/` instead of
+/// serving the raw file.
+fn is_server_specifier(spec: &str) -> bool {
+    let lower = spec.to_ascii_lowercase();
+    lower.contains(".server.")
+        && (lower.ends_with(".ts")
+            || lower.ends_with(".tsx")
+            || lower.ends_with(".js")
+            || lower.ends_with(".jsx")
+            || lower.ends_with(".mjs"))
 }
 
 // --- Request handler -----------------------------------------------------
@@ -400,11 +567,25 @@ pub fn handle_esm_request(
     if let Some(rest) = path.strip_prefix("/@prebundle/") {
         return Some(serve_prebundle(state, rest));
     }
+    if let Some(rest) = path.strip_prefix(SERVER_FN_URL_PREFIX) {
+        return Some(serve_server_fn_module(state, rest));
+    }
     if let Some(rest) = path.strip_prefix(CSS_URL_PREFIX) {
         return Some(serve_css_module(state, rest));
     }
     if path == BOOT_SCRIPT_URL {
         return Some(serve_boot_entry(state));
+    }
+    if path == "/@esm-manifest.json" {
+        let manifest_path = state.root.join(MANIFEST_PATH);
+        if let Ok(bytes) = std::fs::read(&manifest_path) {
+            return Some(
+                OxideResponse::new(200, bytes)
+                    .with_header("content-type", "application/json")
+                    .with_header("cache-control", "no-cache"),
+            );
+        }
+        return Some(OxideResponse::new(404, "esm manifest not generated"));
     }
     if let Some(encoded) = path.strip_prefix("/@esm-error/") {
         return Some(serve_esm_error(encoded));
@@ -453,8 +634,16 @@ fn serve_source_file(state: &EsmDevState, rel_path: &str) -> OxideResponse {
     };
     let lang = lang_for(rel_path);
     let path_for_compiler = format!("src/{rel_path}");
+
     // `lower_to_js_with_refresh` lowers JSX then injects `$RefreshReg$` calls
     // for every top-level component (a no-op on non-tsx/jsx sources).
+    //
+    // Note: server-fn stubbing (`transform_server_fn_stubs` with
+    // `Env::Client`) runs in the `/@server-fn/` handler, not here. A page
+    // that imports `.server.ts` has its import specifier rewritten by
+    // `rewrite_imports` (below) to `/@server-fn/<rel>`, and that handler
+    // produces the client stub. Running the transform here would be a
+    // no-op (this file has no `serverFn(...)` definitions of its own).
     let lowered = match lower_to_js_with_refresh(
         &src,
         lang,
@@ -521,6 +710,68 @@ fn serve_source_file(state: &EsmDevState, rel_path: &str) -> OxideResponse {
 /// renderer's disk-scan `<link>` (`inject_route_css`), which is what makes the
 /// tailwind precompute output reach the page. Returning the raw `@import` would
 /// leave the browser trying to fetch a package name it cannot resolve.
+/// Serve a `*.server.ts` module imported from a client component as a
+/// `__oxide_call_fn` proxy.
+///
+/// This runs the **same** `transform_server_fn_stubs` pass that the
+/// production build uses (`Env::Client`), so client-side behaviour in dev
+/// matches production exactly:
+///
+/// ```ts
+/// // src/routes/greeting.server.ts
+/// export const greet = serverFn(async (n) => `hi ${n}`)
+///
+/// // becomes (served at /@server-fn/routes/greeting.server.ts)
+/// import { __oxide_call_fn } from "@oxide-fw/core/fn"
+/// export const greet = (async (...args) => __oxide_call_fn("<id>", args))
+/// greet.id = "<id>"
+/// ```
+///
+/// The `@oxide-fw/core/fn` import is then rewritten by `rewrite_imports`
+/// to `/@prebundle/@oxide-fw/core/dist/fn.js`, which resolves to the
+/// prebundled `__oxide_call_fn` that POSTs to `/_oxide/fn/<id>`.
+///
+/// This is Vite's server-reference pattern, not a "stub". The server
+/// function's *body* never reaches the browser — only a network proxy.
+fn serve_server_fn_module(state: &EsmDevState, rel_path: &str) -> OxideResponse {
+    let abs = state.root.join("src").join(rel_path);
+    let src = match std::fs::read_to_string(&abs) {
+        Ok(s) => s,
+        Err(_) => {
+            return OxideResponse::new(404, format!("server module not found: src/{rel_path}"))
+                .with_header("content-type", "text/plain; charset=utf-8")
+                .with_header("cache-control", "no-cache");
+        }
+    };
+    // Same secret the prod build uses — so the client stub's `.id` matches
+    // the SSR-side `.id` and hydration sees no mismatch. The dev server
+    // exposes a dev secret via OXIDE_ROOT/.oxide/secret, but a stable
+    // literal here is enough for dev: both server and client go through
+    // the same transform in dev, so both see the same id.
+    let (stubbed, _fns) = match oxide_fw_compiler::transform_server_fn_stubs(
+        &src,
+        &format!("src/{rel_path}"),
+        oxide_fw_compiler::Env::Client,
+        "dev-esm-stub-secret",
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            let body = format!(
+                "throw new Error({:?});",
+                format!("server-fn transform: {} {}", e.0.code, e.0.message),
+            );
+            return OxideResponse::new(500, body)
+                .with_header("content-type", "text/javascript; charset=utf-8")
+                .with_header("cache-control", "no-cache");
+        }
+    };
+    // Rewrite `@oxide-fw/core/fn` → its prebundle URL.
+    let rewritten = rewrite_imports(&stubbed, &state.rewrite_map, Some(rel_path));
+    OxideResponse::new(200, rewritten)
+        .with_header("content-type", "text/javascript; charset=utf-8")
+        .with_header("cache-control", "no-cache")
+}
+
 fn serve_css_module(state: &EsmDevState, rel_path: &str) -> OxideResponse {
     let abs = state.root.join("src").join(rel_path);
     let source = match std::fs::read_to_string(&abs) {
@@ -955,7 +1206,8 @@ mod integration_tests {
             "routes/index".to_string(),
             "/src/routes/page.tsx".to_string(),
         );
-        let boot_path = generate_esm_boot_entry(tmp.path(), &components).unwrap();
+        let islands = BTreeMap::new();
+        let boot_path = generate_esm_boot_entry(tmp.path(), &components, &islands).unwrap();
         let body = std::fs::read_to_string(&boot_path).unwrap();
         // The boot file must import the prebundle URL, not the bare specifier
         // — the browser's native resolver cannot see node_modules.
