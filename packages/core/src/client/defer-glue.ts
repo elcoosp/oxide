@@ -233,7 +233,7 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
       attempts++
       if (dead) return
       if (attempts > MAX_ATTEMPTS) return
-      if (typeof doc.querySelectorAll !== 'function') return
+      if (!doc || typeof doc.querySelectorAll !== 'function') return
       const els = doc.querySelectorAll(`[data-deferred-value="${id}"]`)
       const el = els && els.length > 0 ? els[0] : undefined
       if (el && el.textContent !== desired) {
@@ -346,7 +346,7 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
   // A streamed settle appends its script after the document has loaded, so
   // `resolveFromScripts` has already run. Watch for the insertions and
   // resolve each new one. The observer disconnects in `dispose`.
-  let observer: { disconnect(): void; observe(target: unknown, options?: { childList?: boolean; subtree?: boolean }): void } | null = null
+  let observer: { disconnect(): void; observe(target: unknown, options?: { childList?: boolean; subtree?: boolean; characterData?: boolean }): void } | null = null
   const MO = (globalThis as { MutationObserver?: new (cb: (m: unknown[]) => void) => {
     observe(t: unknown, o: unknown): void
     disconnect(): void
@@ -359,7 +359,7 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
       // batch — `reconciled` is bounded by the number of resolved deferred
       // slots, so this is O(resolved). The 30-frame rAF retry above is the
       // primary mechanism; this catches clobbers that land after that window.
-      if (!dead && typeof doc.querySelectorAll === 'function') {
+      if (!dead && doc && typeof doc.querySelectorAll === 'function') {
         for (const [id, desired] of reconciled) {
           const els = doc.querySelectorAll(`[data-deferred-value="${id}"]`)
           const el = els && els.length > 0 ? els[0] : undefined

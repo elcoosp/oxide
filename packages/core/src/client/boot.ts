@@ -15,6 +15,7 @@ import { fromBase64 } from '../bytes.ts'
 import { loadScripts } from './scripts.ts'
 import { setRouteComponentSource, isParamSegment, type ClientManifestLike } from './route-manifest.ts'
 import { attachDeferGlue, type DeferGlue } from './defer-glue.ts'
+import { connectHmr } from './hmr.ts'
 import type { FrameworkAdapter } from '../types.ts'
 import { loadMessages, setMessageLocales } from './messages.ts'
 // Side-effect import: installs `globalThis.__oxide_hmr__` in
@@ -295,6 +296,34 @@ export function bootWithRouter(
   //       `<script type="application/oxide-deferred">`. Attach the core
   //       glue here so deferred boundaries resolve without islands or a
   //       page root.
+  // §13.3: wire the dev-server HMR WebSocket when this module was served
+  // by `oxide dev` in ESM mode. Detection is structural: only the ESM dev
+  // path serves a module script from `/@boot/` or `/@prebundle/` — a
+  // production build's boot chunk comes from `/client/`. In non-dev, no
+  // WebSocket is opened.
+  {
+    const w = maybeWindow()
+    const doc = w?.document
+    if (doc) {
+      const scripts = doc.querySelectorAll('script[type="module"]')
+      let isEsmDev = false
+      for (let i = 0; i < scripts.length; i++) {
+        const src = scripts[i]?.getAttribute?.('src') ?? ''
+        if (src.includes('/@boot/') || src.includes('/@prebundle/')) {
+          isEsmDev = true
+          break
+        }
+      }
+      if (isEsmDev) {
+        try {
+          connectHmr()
+        } catch (e) {
+          console.warn?.('oxide: HMR websocket failed to open', e)
+        }
+      }
+    }
+  }
+
   let bootGlue: DeferGlue | undefined
   if (routerOnly) {
     try {

@@ -3900,7 +3900,18 @@ fn inject_island_boot_script(shell: &str, boot_url: &str, nonce: &str) -> String
     // script tag — `'self'` alone is not enough. The prerender pass has the
     // build-time nonce (derived from build_id) in scope; the live server
     // path derives a per-request nonce and stamps it the same way.
-    let tag = format!(r#"<script type="module" src="/{boot_url}" nonce="{nonce}"></script>"#);
+    // Normalize the leading slash: the bundler path passes
+    // `client/__boot__.js` (no leading slash) and the native-ESM dev
+    // path passes `/@boot/boot.mjs` (already leading-slashed). A blind
+    // format!("/{boot_url}") produced `//@boot/boot.mjs`, which the
+    // browser parses as a protocol-relative URL (`//user:pass@host/path`)
+    // → `http://boot/boot.mjs` → ERR_NAME_NOT_RESOLVED.
+    let src = if boot_url.starts_with('/') {
+        boot_url.to_string()
+    } else {
+        format!("/{boot_url}")
+    };
+    let tag = format!(r#"<script type="module" src="{src}" nonce="{nonce}"></script>"#);
     if let Some(idx) = shell.rfind("</body>") {
         let mut out = String::with_capacity(shell.len() + tag.len() + 1);
         out.push_str(&shell[..idx]);
@@ -9284,8 +9295,22 @@ fn build_dispatch_swappable(
                         };
                         let body = match boot_script_url_for_render.as_deref() {
                             Some(url) => {
+                                // Normalize the leading slash. The bundler
+                                // path passes `client/__boot__.js` and the
+                                // native-ESM dev path passes
+                                // `/@boot/boot.mjs`; a blind format!("/{url}")
+                                // produced `//@boot/boot.mjs` on the ESM
+                                // path, which the browser parses as
+                                // `//user:pass@host/path` → `http://boot/…`
+                                // → ERR_NAME_NOT_RESOLVED. The boot script
+                                // never loaded, hydration/HMR never ran.
+                                let boot_src = if url.starts_with('/') {
+                                    url.to_string()
+                                } else {
+                                    format!("/{url}")
+                                };
                                 let tag = format!(
-                                    r#"{odf_tag}{deferred_tag}{hmr_tag}<script type="module" src="/{url}" nonce="{nonce}"></script>"#,
+                                    r#"{odf_tag}{deferred_tag}{hmr_tag}<script type="module" src="{boot_src}" nonce="{nonce}"></script>"#,
                                 );
                                 oxide_fw_server::inject_before_close(
                                     bridged,

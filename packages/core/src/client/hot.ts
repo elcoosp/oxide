@@ -180,14 +180,32 @@ function install(): void {
       // Deferred: a non-awaited dynamic import. The `@prebundle` path is only
       // valid in dev (the dev server owns `/@`), so a 404 there is expected
       // outside `oxide dev`.
-      void (import(/* @vite-ignore */ '/@prebundle/react-refresh-runtime.js') as Promise<{
+      // The prebundle path is a runtime URL — TypeScript cannot resolve
+      // it, so suppress the module-not-found and cast the resolved value.
+      // (The path only exists when `oxide dev` is running; the `.catch`
+      // below handles the 404 that a production host returns.)
+      // Dynamic import via a variable path so TypeScript cannot
+      // resolve the module at type-check time (`import('/@prebundle/...')`
+      // fails with Cannot find module). A direct `import()` is
+      // CSP-safe; the previous `new Function` workaround was blocked by
+      // the page's Content-Security-Policy (which allows 'strict-dynamic'
+      // but not 'unsafe-eval') and threw at module-evaluation time,
+      // breaking the entire boot graph (boot.mjs failed → DOMContentLoaded
+      // blocked → page hung).
+      const runtimeUrl: string = '/@prebundle/react-refresh-runtime.js'
+      void (import(/* @vite-ignore */ runtimeUrl) as Promise<{
         default?: unknown
         performReactRefresh?: () => void
         injectIntoGlobalHook?: (w: unknown) => void
         register?: (t: unknown, id: string) => void
       }>)
         .then((mod) => {
-          const rt = (mod.default ?? mod) as NonNullable<typeof g.$RefreshRuntime$>
+          type RuntimeShape = {
+            performReactRefresh?: () => void
+            injectIntoGlobalHook?: (w: unknown) => void
+            register?: (t: unknown, id: string) => void
+          }
+          const rt = (mod.default ?? mod) as RuntimeShape
           if (typeof rt.injectIntoGlobalHook === 'function') {
             try {
               rt.injectIntoGlobalHook(window)

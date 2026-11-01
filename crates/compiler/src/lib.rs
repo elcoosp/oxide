@@ -240,6 +240,7 @@ pub fn scan_import_spans(code: &str) -> Vec<ImportSpan> {
                     }
                 }
                 let mut k = j;
+                let mut advanced = false;
                 while k < n {
                     if is_punct(toks.get(k), ';') {
                         break;
@@ -254,11 +255,20 @@ pub fn scan_import_spans(code: &str) -> Vec<ImportSpan> {
                                 dynamic: false,
                             });
                             i = end_idx;
+                            advanced = true;
                             break;
                         }
                         break;
                     }
                     k += 1;
+                }
+                // LOCAL re-export (`export { a, b };`) or `export *;` has
+                // no `from` clause. Without an explicit advance the outer
+                // `while i < n` would re-enter this branch on the same
+                // `export` token forever. `j` is guaranteed > i (past the
+                // `{...}` or `*`/`* as X`), so `i = j` always advances.
+                if !advanced {
+                    i = j;
                 }
                 continue;
             }

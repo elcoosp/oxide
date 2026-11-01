@@ -8415,8 +8415,12 @@ async fn dev_server_serves_esm_urls_over_http() {
         home.lines().next().unwrap_or("")
     );
     assert!(
-        home.contains("/@boot/boot.mjs"),
-        "home HTML should reference /@boot/boot.mjs: {home}"
+        home.contains("src=\"/@boot/boot.mjs\""),
+        "home HTML should reference /@boot/boot.mjs with a single leading slash: {home}"
+    );
+    assert!(
+        !home.contains("//@boot/boot.mjs"),
+        "boot script URL must not have a doubled leading slash (ERR_NAME_NOT_RESOLVED): {home}"
     );
     assert!(
         !home.contains("/client/index-"),

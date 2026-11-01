@@ -585,8 +585,6 @@ fn serve_prebundle(state: &EsmDevState, rel_path: &str) -> OxideResponse {
     let abs = state.root.join(PREBUNDLE_DIR).join(rel_path);
     match std::fs::read(&abs) {
         Ok(bytes) => {
-            // JS/MJS: rewrite bare specifiers. Non-JS: serve as-is (the
-            // prebundle tree should only contain JS today, but be tolerant).
             let is_js = rel_path.ends_with(".js") || rel_path.ends_with(".mjs");
             let body = if is_js {
                 match String::from_utf8(bytes) {

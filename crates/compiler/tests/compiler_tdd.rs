@@ -933,3 +933,40 @@ fn infer_dynamic_for_function_expression_with_request_param() {
     assert_eq!(m.mode, "dynamic");
     assert_eq!(m.trigger, Some("searchParams"));
 }
+
+#[test]
+fn scan_local_reexport_does_not_hang() {
+    // `export { foo };` has no `from` clause. The scanner must advance past
+    // the clause or it loops forever on the same `export` token. Regression
+    // for a real hang (the client.js prebundle contained exactly this
+    // pattern, causing `oxide dev` to hang on first load).
+    let code = "export { foo };\nexport { a, b as c };\nexport const x = 1;\n";
+    let spans = scan_import_spans(code);
+    assert!(spans.is_empty(), "local re-exports are not imports: {spans:?}");
+}
+
+#[test]
+fn scan_star_without_from_does_not_hang() {
+    // `export *` alone is invalid JS, but the scanner must not hang on it.
+    let code = "export *;\n";
+    let spans = scan_import_spans(code);
+    assert!(spans.is_empty());
+}
+
+#[test]
+fn scan_reexport_with_from_still_works() {
+    // The valid case must still extract the specifier.
+    let code = "export { foo } from './foo.js';\nexport * from './bar.js';\nexport * as ns from './baz.js';\n";
+    let spans = scan_import_spans(code);
+    let specs: Vec<&str> = spans.iter().map(|s| s.specifier.as_str()).collect();
+    assert!(specs.contains(&"./foo.js"), "from-reexport missing: {spans:?}");
+    assert!(specs.contains(&"./bar.js"), "star-reexport missing: {spans:?}");
+    assert!(specs.contains(&"./baz.js"), "star-as-reexport missing: {spans:?}");
+}
+
+#[test]
+fn scan_export_default_does_not_hang() {
+    let code = "export default function F() {}\n";
+    let spans = scan_import_spans(code);
+    assert!(spans.is_empty());
+}
