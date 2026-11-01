@@ -2795,11 +2795,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                             );
                             hub.publish(HmrMessage::Error { diagnostic: diag });
                         } else if cfg.dev.esm {
-                            // Native ESM mode: no bundle to rebuild. Publish a
-                            // URL the browser fetched. Phase 2 routes this
-                            // through `__oxide_hmr__.reloadModule`, which does
-                            // a full page reload; Phase 3 upgrades to an
-                            // in-place React Refresh.
+                            tracing::info!("HMR: publishing ModuleUpdate for ESM file");
                             let root_str = rootp.to_string_lossy();
                             let rel = pstr.strip_prefix(root_str.as_ref()).unwrap_or(&pstr);
                             let rel_slash = rel.replace('\\', "/");
@@ -2925,9 +2921,23 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                         {
                                             tracing::warn!(error = %e, "esm dev: manifest regen failed");
                                         }
+                                        // Rebuild the island map from config
+                                        // (identical to the boot-time path
+                                        // above). Cheap — it's a BTreeMap
+                                        // walk over the config's already-
+                                        // parsed registry.
+                                        let mut islands: std::collections::BTreeMap<String, String> =
+                                            std::collections::BTreeMap::new();
+                                        for (name, rel_path) in &cfg.framework.islands {
+                                            let full_path = rootp.join(rel_path);
+                                            if full_path.is_file() {
+                                                islands.insert(name.clone(), format!("/{rel_path}"));
+                                            }
+                                        }
                                         if let Err(e) = crate::esm_dev::generate_esm_boot_entry(
                                             &rootp,
                                             &components,
+                                            &islands,
                                         ) {
                                             tracing::warn!(error = %e, "esm dev: boot entry regen failed");
                                         }
@@ -7571,7 +7581,6 @@ fn build_dispatch_swappable(
 
     let boot_script_url_for_render = boot_script_url.clone();
     let ppr_for_render = ppr_shells.clone();
-    let dev_hmr_for_render = dev_hmr;
     let actions_for_dispatch = actions.clone();
     let endpoint_for_dispatch = endpoint_dispatcher.clone();
     let middleware_for_dispatch = middleware_dispatcher.clone();
@@ -9263,36 +9272,7 @@ fn build_dispatch_swappable(
                         // <link> on a CSS update, and reloads the page on
                         // a module/server update. Inlined (not a bundled
                         // module) so it works in dev without a build step.
-                        let hmr_tag = if dev_hmr_for_render {
-                            format!(
-                                concat!(
-                                    r#"<script nonce="{n}">(function(){{"#,
-                                    r#"try{{var ws=new WebSocket((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/_oxide/hmr');"#,
-                                    r#"ws.onmessage=function(ev){{try{{var m=JSON.parse(ev.data);"#,
-                                    // B-21: a tab open across a server restart holds
-                                    // assets from the old build_id — hard reload.
-                                    r#"if(m.type==='connected'){{if(window.__oxideBuildId&&window.__oxideBuildId!==m.build_id){{location.reload();return;}}window.__oxideBuildId=m.build_id;}}"#,
-                                    r#"if(m.type==='css-update'){{var p=(m.path||'').split('?')[0];var ls=document.querySelectorAll('link[rel=stylesheet]');"#,
-                                    r#"for(var i=0;i<ls.length;i++){{var h=(ls[i].getAttribute('href')||'').split('?')[0];"#,
-                                    r#"if(h===p||h.slice(-p.length)===p){{ls[i].setAttribute('href',p+'?t='+Date.now());break;}}}}}}"#,
-                                    r#"else if(m.type==='server-module-swap'||m.type==='full-reload'){{location.reload();}}"#,
-                                    r#"else if(m.type==='route-data-update'){{var ad=function(b64){{try{{if(window.__oxide)window.__oxide.data=b64;}}catch(e){{}}"#,
-                                    r#"document.dispatchEvent(new CustomEvent('ox:data',{{detail:{{route:m.route||location.pathname,odf:b64}}}}));}};"#,
-                                    r#"fetch('/__data?route='+encodeURIComponent(location.pathname),{{headers:{{accept:'application/oxide+odf'}}}})"#,
-                                    r#".then(function(r){{return r.ok?r.arrayBuffer():Promise.reject(0)}})"#,
-                                    r#".then(function(buf){{var u=new Uint8Array(buf);var s='';for(var i=0;i<u.length;i++)s+=String.fromCharCode(u[i]);var b64=btoa(s);ad(b64);}})"#,
-                                    r#".catch(function(){{ad(m.odf_b64||'');}});}}"#,
-                                    r#"else if(m.type==='error'){{var d=document.createElement('div');"#,
-                                    r#"d.setAttribute('data-oxide-error','');d.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);color:#fff;font:14px/1.4 monospace;padding:2rem;z-index:2147483647;overflow:auto';"#,
-                                    r#"d.textContent=(m.diagnostic&&(m.diagnostic.code+': '+m.diagnostic.message))||'Oxide error';document.body.appendChild(d);"#,
-                                    r#"d.addEventListener('click',function(){{d.remove();}});}}}}catch(e){{}}}};"#,
-                                    r#"ws.onclose=function(){{setTimeout(function(){{location.reload();}},2000);}};}}catch(e){{}}}})();</script>"#,
-                                ),
-                                n = nonce,
-                            )
-                        } else {
-                            String::new()
-                        };
+                        let hmr_tag = String::new(); // HMR is handled by bootWithRouter via connectHmr();
                         let body = match boot_script_url_for_render.as_deref() {
                             Some(url) => {
                                 // Normalize the leading slash. The bundler
@@ -10839,17 +10819,55 @@ async fn start_server_inner_full(
                 }
             }
             for cand in &candidates {
-                if rootp.join(cand).is_file() {
-                    components.insert(id_str.to_string(), format!("/{cand}"));
-                    break;
+                if !rootp.join(cand).is_file() {
+                    continue;
                 }
+                // REJECT server-only route files. These exist on disk under
+                // `src/routes/` but must NEVER reach the browser: an API
+                // route (route.ts), websocket (socket.ts), or route-level
+                // middleware (middleware.ts) is server-executed and imports
+                // server-only modules (e.g. `md.server.ts`) the browser
+                // cannot fetch (our handler returns 403). Shipping one of
+                // these into the boot entry broke the ENTIRE module graph:
+                // the browser fetches it, hits a 403 on a transitive
+                // `.server.` import, and never reaches the boot script that
+                // opens the HMR WebSocket. Symptom: edit a file, nothing
+                // happens, no console error, no HMR message.
+                let file_name = cand.rsplit('/').next().unwrap_or(cand);
+                let server_only = file_name.ends_with(".server.ts")
+                    || file_name.ends_with(".server.tsx")
+                    || file_name.ends_with(".server.js")
+                    || file_name.ends_with(".server.jsx")
+                    || file_name == "route.ts"
+                    || file_name == "route.js"
+                    || file_name == "socket.ts"
+                    || file_name == "socket.js"
+                    || file_name == "middleware.ts"
+                    || file_name == "middleware.js";
+                if server_only {
+                    continue;
+                }
+                components.insert(id_str.to_string(), format!("/{cand}"));
+                break;
             }
         }
         let _ = crate::esm_dev::prebundle_cjs_deps(&rootp, &cfg.dev.prebundle);
         if let Err(e) = crate::esm_dev::build_esm_manifest(&rootp, &components) {
             tracing::warn!(error = %e, "esm dev: manifest write failed");
         }
-        if let Err(e) = crate::esm_dev::generate_esm_boot_entry(&rootp, &components) {
+        // `cfg.framework.islands` is the typed island registry
+        // (component name → source path relative to project root).
+        // Filter to entries that actually exist on disk so a stale config
+        // doesn't produce a boot entry with a missing import.
+        let mut islands: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for (name, rel_path) in &cfg.framework.islands {
+            let full_path = rootp.join(rel_path);
+            if full_path.is_file() {
+                islands.insert(name.clone(), format!("/{rel_path}"));
+            }
+        }
+        if let Err(e) = crate::esm_dev::generate_esm_boot_entry(&rootp, &components, &islands) {
             tracing::warn!(error = %e, "esm dev: boot entry write failed");
         }
         // §6.4 / WP-C1 (ESM path): `ensure_dev_client_bundle` is skipped in
