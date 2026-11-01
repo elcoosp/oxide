@@ -9,11 +9,13 @@ import { greet } from '../../greeting.server.ts'
 // Referenced so the tree-shaker keeps the stub; a real app would call it.
 const greetingFnId = greet.id
 import Counter from '../../islands/counter.tsx'
+import HmrTarget from '../../components/hmr-target.tsx'
 
 export default function Page() {
   return (
     <main data-greeting-fn={greetingFnId}>
       <h1>Home</h1>
+      <HmrTarget />
       <Island component="Counter" chunk="Counter" props={{ initial: 3 }}>
         <Counter initial={3} />
       </Island>
