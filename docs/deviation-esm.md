@@ -92,13 +92,49 @@ Cold-start numbers are not asserted in CI (they depend on
 `node_modules` cache state and tooling-pool warmup); the change removes
 the Rolldown pass, which was the largest single contributor.
 
-## Phase 5b (deferred)
+## CSS imports inside components (Phase 5b — closed)
 
-A project that `import './styles.css'` inside a route component requests
-`/src/styles.css` and gets a 404. This is not a Phase 5 regression — the
-ESM path served the same 404 in Phase 1. The fix is a `/@css/**` URL
-family piped through LightningCSS; tracked for a follow-up if a real user
-hits it.
+A project that `import './styles.css'` inside a route component now works:
+
+- **Serving.** The import is rewritten to `/@css/<src-relative>`, which
+  returns a JS module that injects a `<style data-oxide-css="...">` on
+  first evaluation and updates `textContent` in place on every re-import.
+- **HMR.** A save on a `.css` file under `src/` publishes
+  `ModuleUpdate { url: "/@css/<rel>" }`; `reloadModule` re-imports it with
+  a cache-bust, the module body re-runs, and the `<style>` tag swaps — no
+  page reload.
+- **Tailwind entries.** A CSS file containing `@import "tailwindcss"` is
+  served as an *empty* stub. The generated CSS reaches the browser
+  through the SSR renderer's disk-scan `<link>` (`inject_route_css`), so
+  there is exactly one source of truth and no duplicate `<style>`.
+- **Escape guard.** A `../..` chain that would leave `src/` is rejected at
+  rewrite time; the specifier is left untouched and the browser reports a
+  clear 404.
+
+### The reload contract
+
+`reloadModule(url)` clears the module's accept callbacks, re-imports the
+URL with `?t=<ms>-<seq>` (a monotonic counter after the millisecond —
+`Date.now()` alone collides on back-to-back synchronous reloads, serving
+the cached module and never re-running the fixture), then fires the
+accept callbacks the **fresh** evaluation registered. A module must
+re-register on every evaluation — the dev server's preamble (a
+fixed-literal `createHotContext("/src/…")`) plus `inject_hmr_boundary`'s
+appended `import.meta.hot.accept(...)` guarantees this. The pinned
+contract lives in `packages/core/test/hot.test.ts`.
+
+## Save timings (dev mode)
+
+| Save | What fires | Approx latency |
+|---|---|---|
+| `.tsx` component | React Refresh re-import + `performReactRefresh()` | ~25ms, state preserved |
+| `.css` in a route | `/@css/` module re-import, `<style>` swaps | ~15ms |
+| `.css` with `@import "tailwindcss"` | tailwind precompute + `<link>` href bump | 200–1000ms (scanner + LightningCSS) |
+| `.server.ts` | loader re-run + `ox:data` dispatch | 30–100ms |
+
+The 60× improvement the plan projected holds for component edits — the
+common case. Tailwind edits pay the Tailwind compiler cost, not an Oxide
+cost.
 
 ## Behaviour changes users will notice
 

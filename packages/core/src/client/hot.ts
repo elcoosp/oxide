@@ -31,6 +31,14 @@ interface HotContext {
 
 const modules = new Map<string, HotModule>()
 
+// Monotonic counter for cache-busting. `Date.now()` alone is not enough —
+// two `reloadModule` calls in the same tick would produce identical URLs,
+// Node's ESM cache would serve the same module, and the fresh accept
+// callbacks (registered during evaluation) would never fire. In production
+// HMR saves are seconds apart so this would not surface, but a scripted
+// reload (or a test) hits it immediately.
+let reloadSeq = 0
+
 function install(): void {
   if (typeof window === 'undefined') return
   const g = window as unknown as {
@@ -99,7 +107,7 @@ function install(): void {
         mod.invalidated = false
       }
       const sep = url.includes('?') ? '&' : '?'
-      const freshUrl = `${url}${sep}t=${Date.now()}`
+      const freshUrl = `${url}${sep}t=${Date.now()}-${++reloadSeq}`
       let fresh: unknown
       try {
         fresh = await import(/* @vite-ignore */ freshUrl)
