@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 pub mod framework;
+pub mod cjs_exports;
 pub mod generate_params;
 pub mod lexer;
 mod oxc_backend;
@@ -36,6 +37,7 @@ pub use framework::{
     ToolingDispatcher, compiler_for,
 };
 pub use generate_params::{GenerateParamsResult, extract_generate_params};
+pub use cjs_exports::extract_cjs_export_names;
 pub use oxc_backend::{OxcTransformer, inject_react_refresh, lower_to_js, lower_to_js_with_refresh};
 
 pub type Result<T> = std::result::Result<T, OxideError>;
@@ -604,6 +606,16 @@ pub fn transform_server_fn_stubs(
         out.replace_range(s..e, &t);
     }
     if !client_stub_ids.is_empty() {
+        // Strip the `serverFn` (and only `serverFn`) import. After the
+        // stub replacement above, every `serverFn(...)` call has become a
+        // `__oxide_call_fn(...)` call — so the import is dead. Leaving it
+        // in would make the client-side stub import
+        // `@oxide-fw/core/server` (which transitively imports `node:fs`,
+        // `node:crypto`, `node:path`) and the browser would reject the
+        // module graph on CORS. This is the same tree-shaking the
+        // production bundler does automatically; in dev (native ESM, no
+        // bundler) we do it here.
+        out = strip_server_fn_imports(&out);
         // One import regardless of how many stubs were emitted. Placed at
         // the top so it sits before any code the transform left in place.
         let import = "import { __oxide_call_fn } from \"@oxide-fw/core/fn\";\n";
@@ -629,6 +641,66 @@ pub fn transform_server_fn_stubs(
 /// Forbidden-import guard (§6.4): a compile-time check that no `*.server.ts` module
 /// is reachable from the client entry except via the server-fn stub transform.
 /// Returns diagnostics naming the full import chain (§19.4).
+/// Strip every `serverFn` binding from `out`'s import statements. Called
+/// by [`transform_server_fn_stubs`] after the stub replacement pass: every
+/// `serverFn(...)` call has become a `__oxide_call_fn(...)` call, so any
+/// remaining reference to `serverFn` is dead code that (in native ESM dev
+/// mode) causes the browser to try importing `node:fs`, `node:crypto`, etc.
+///
+/// Only the *name* `serverFn` is removed. If an import line also brings in
+/// other names (`import { serverFn, defineLoad } from …`), the line is
+/// rewritten to `import { defineLoad } from …` — the other helpers are
+/// legitimate client-side code (a loader does `defineLoad(fn)` and needs it
+/// to create the wrapper).
+///
+/// A line becomes `import {} from …` after stripping → drop the whole line
+/// (an empty import has no side effects we can rely on — the module it
+/// imported from is `@oxide-fw/core/server`, whose side effects are all
+/// server-only anyway).
+fn strip_server_fn_imports(out: &str) -> String {
+    let mut result = String::with_capacity(out.len());
+    for line in out.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        // Match `import { … } from "…";` — the two forms the project uses.
+        // `import { A, B, C } from "x"` — capture the brace contents.
+        if let Some(rest) = trimmed.strip_prefix("import {") {
+            if let Some(close) = rest.find('}') {
+                let names_blob = &rest[..close];
+                let after = &rest[close + 1..].trim_start();
+                // Only rewrite when this is a plain `from "…"` import.
+                if after.starts_with("from") {
+                    let had_server_fn = names_blob
+                        .split(',')
+                        .any(|n| n.trim() == "serverFn");
+                    if had_server_fn {
+                        let remaining: Vec<&str> = names_blob
+                            .split(',')
+                            .map(|n| n.trim())
+                            .filter(|n| !n.is_empty() && *n != "serverFn")
+                            .collect();
+                        if remaining.is_empty() {
+                            // Whole line gone — no side effects to preserve.
+                            continue;
+                        }
+                        let leading_ws = &line[..line.len() - trimmed.len()];
+                        result.push_str(leading_ws);
+                        result.push_str("import { ");
+                        result.push_str(&remaining.join(", "));
+                        result.push(' ');
+                        result.push_str(&rest[close + 1..]);
+                        if !line.ends_with('\n') {
+                            result.push('\n');
+                        }
+                        continue;
+                    }
+                }
+            }
+        }
+        result.push_str(line);
+    }
+    result
+}
+
 pub fn guard_server_only(
     client_graph: &BTreeMap<String, Vec<String>>,
     server_modules: &BTreeMap<String, bool>,
