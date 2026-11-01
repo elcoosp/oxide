@@ -182,6 +182,26 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
   }
 
   /**
+   * Reconcile a marker write on the next animation frame. Purpose: React
+   * (and any framework that owns the DOM around a marker) will overwrite a
+   * synchronous marker update if it happens *during* the framework's
+   * hydration pass — React specifically treats the mismatch as error #418
+   * and "fixes" it by re-rendering the component's static output, which
+   * clobbers the resolved value. Scheduling a second write for the next
+   * frame lets hydration finish; the second write then sticks. A no-op
+   * when the marker already shows the resolved value (non-React pages).
+   */
+  const scheduleMarkerReapply = (id: number, value: unknown): void => {
+    const apply = (): void => updateMarker(id, value)
+    const g = globalThis as { requestAnimationFrame?: (cb: () => void) => unknown }
+    if (typeof g.requestAnimationFrame === 'function') {
+      g.requestAnimationFrame(apply)
+    } else {
+      setTimeout(apply, 0)
+    }
+  }
+
+  /**
    * Resolve (or reject) one slot from a settle value, and update any
    * matching `[data-deferred-value]` marker. A rejected defer is
    * serialized as `{ __oxide_deferred_error: "..." }` and rejects the
@@ -208,7 +228,16 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
     // overwrite a marker that a user might have set to something else).
     const wasPending = slot.status === 'pending'
     slot.resolve(value)
-    if (wasPending) updateMarker(id, value)
+    if (wasPending) {
+      // Best-effort synchronous write: non-React pages see the value
+      // immediately, and the reapply below is a no-op.
+      updateMarker(id, value)
+      // Reconcile on the next frame: React hydration (synchronous within
+      // this task) will overwrite the marker with the component's
+      // server-rendered text and trigger error #418. The second write
+      // (post-hydration) sticks.
+      scheduleMarkerReapply(id, value)
+    }
   }
 
   let dead = false
@@ -234,7 +263,6 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
   // the slot instead of resolving it to a shape the page did not expect.
   const resolveFromScripts = (): void => {
     if (typeof doc.querySelectorAll !== 'function') return
-    // Method call — `this` is `doc`. No detach dance.
     const scripts = doc.querySelectorAll('script[type="application/oxide-deferred"]')
     for (let i = 0; i < scripts.length; i++) {
       const script = scripts[i]

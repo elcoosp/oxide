@@ -267,3 +267,67 @@ test('defer glue: [data-deferred-value] marker is not overwritten on re-resolve'
   glue.resolve(1, { label: 'stale-overwrite' })
   assert.equal(marker.textContent, 'fast')
 })
+
+// Simulates the React hydration clobber: the glue resolves synchronously,
+// a "React" step overwrites the marker back to the original text, then the
+// next animation frame reconciles. This pins the exact bug Playwright
+// caught (React error #418 clobbering a deferred marker during hydration).
+test('defer-glue: marker re-applied on next animation frame after React clobbers', async () => {
+  const written: Array<() => void> = []
+  const fakeRaf = (cb: () => void): number => {
+    written.push(cb)
+    return written.length
+  }
+  // A minimal DOM: one marker, one script
+  type El = { textContent: string; getAttribute(name: string): string | null }
+  const markers: Record<string, El> = {}
+  const scripts: El[] = [
+    { textContent: JSON.stringify({ label: 'fast' }), getAttribute: (n) => (n === 'data-id' ? '1' : null) },
+  ]
+  const marker1: El = { textContent: 'loading', getAttribute: () => null }
+  markers['1'] = marker1
+  const doc = {
+    readyState: 'complete',
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    documentElement: {},
+    querySelectorAll(sel: string): ArrayLike<El> | undefined {
+      if (sel.startsWith('[data-deferred-value="')) {
+        const id = sel.match(/data-deferred-value="(\d+)"/)?.[1]
+        const m = id ? markers[id] : undefined
+        return m ? [m] : []
+      }
+      if (sel.startsWith('script[type="application/oxide-deferred"]')) return scripts
+      return []
+    },
+  }
+  // Save original RAF
+  const g = globalThis as { requestAnimationFrame?: (cb: () => void) => number }
+  const orig = g.requestAnimationFrame
+  g.requestAnimationFrame = fakeRaf
+
+  try {
+    const glue = attachDeferGlue({ doc: doc as unknown as Document })
+    // wire registers slot 1; the glue's internal resolveFromScripts fires
+    glue.wire({ fast: { __deferred: 1 } })
+    // Sync write happens during wire → marker should now be 'fast'
+    // (best-effort; React would overwrite it after this point)
+    // Simulate React clobbering back to 'loading'
+    marker1.textContent = 'loading'
+    // Flush the queued rAF callbacks
+    const callbacks = written.slice()
+    written.length = 0
+    for (const cb of callbacks) cb()
+    // Marker should now reflect the resolved value again
+    if (marker1.textContent !== 'fast') {
+      throw new Error(
+        `expected marker re-applied to 'fast', got '${marker1.textContent}'`,
+      )
+    }
+    glue.dispose()
+  } finally {
+    if (orig === undefined) delete g.requestAnimationFrame
+    else g.requestAnimationFrame = orig
+  }
+})
+
