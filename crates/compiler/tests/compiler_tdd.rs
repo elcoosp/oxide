@@ -247,10 +247,10 @@ fn stubs_client_emit_fetch_stub_per_export() {
         assert!(out.contains(&needle), "missing {needle}");
     }
     assert!(
-        out.contains("import { __oxide_call_fn } from \"oxide/fn\";"),
+        out.contains("import { __oxide_call_fn } from \"@oxide-fw/core/fn\";"),
         "the client stub must import the runtime caller exactly once"
     );
-    // The fetch + wire format live in `oxide/fn` now; the emitted stub only
+    // The fetch + wire format live in `@oxide-fw/core/fn` now; the emitted stub only
     // names the id. Assert that shape instead of the old inline fetch.
     for stub in &stubs {
         assert!(
@@ -289,7 +289,7 @@ fn stubs_schema_first_arg_supported() {
     assert_eq!(stubs.len(), 1);
     assert_eq!(stubs[0].export_name, "create");
     assert!(out.contains("__oxide_call_fn("));
-    assert!(out.contains("import { __oxide_call_fn } from \"oxide/fn\";"));
+    assert!(out.contains("import { __oxide_call_fn } from \"@oxide-fw/core/fn\";"));
     assert_eq!(out.matches("export const create").count(), 1);
 }
 

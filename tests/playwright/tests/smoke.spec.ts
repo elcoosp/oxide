@@ -69,10 +69,24 @@ test('GET /_oxide/health returns 200 with a small JSON body', async ({ request }
 
 test('browser renders the same HTML the server sent', async ({ page }) => {
   const consoleErrors: string[] = []
+  const consoleAll: Array<{ type: string; text: string }> = []
   page.on('console', (m) => {
+    consoleAll.push({ type: m.type(), text: m.text() })
     if (m.type() === 'error') consoleErrors.push(m.text())
   })
-  page.on('pageerror', (e) => consoleErrors.push(e.message))
+  page.on('pageerror', (e) => {
+    consoleAll.push({ type: 'pageerror', text: e.message })
+    consoleErrors.push(e.message)
+  })
+  // Add a request failure listener — a 404 on a route chunk would be silent
+  page.on('requestfailed', (r) => {
+    consoleAll.push({ type: 'requestfailed', text: `${r.url()} ${r.failure()?.errorText ?? ''}` })
+  })
+  page.on('response', (r) => {
+    if (r.status() >= 400) {
+      consoleAll.push({ type: 'response', text: `${r.status()} ${r.url()}` })
+    }
+  })
 
   const r = await page.goto('/')
   expect(r?.status()).toBe(200)
@@ -83,6 +97,7 @@ test('browser renders the same HTML the server sent', async ({ page }) => {
   } catch (e) {
     const dump = await page.content().catch(() => '<dump failed>')
     console.error('[browser h1 FAILED] url =', page.url())
+    console.error('[browser h1 FAILED] consoleAll =', JSON.stringify(consoleAll, null, 2))
     console.error('[browser h1 FAILED] html =', dump.slice(0, 2000))
     console.error('[browser h1 FAILED] consoleErrors =', consoleErrors)
     throw e

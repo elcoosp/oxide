@@ -566,7 +566,7 @@ pub fn transform_server_fn_stubs(
         });
         match env {
             Env::Client => {
-                // The stub calls `__oxide_call_fn` from `oxide/fn` rather
+                // The stub calls `__oxide_call_fn` from `@oxide-fw/core/fn` rather
                 // than inlining the fetch. The previous form referenced
                 // bare `__oxide_encode`/`__oxide_decode` globals that no
                 // module defined; emitting an import makes the stub
@@ -596,7 +596,7 @@ pub fn transform_server_fn_stubs(
     if !client_stub_ids.is_empty() {
         // One import regardless of how many stubs were emitted. Placed at
         // the top so it sits before any code the transform left in place.
-        let import = "import { __oxide_call_fn } from \"oxide/fn\";\n";
+        let import = "import { __oxide_call_fn } from \"@oxide-fw/core/fn\";\n";
         out = format!("{import}{out}");
     }
     if !ssr_lines.is_empty() {

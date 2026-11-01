@@ -845,7 +845,7 @@ fn ast_server_fn_stubs(
 
             let repl = match env {
                 // §9.4: the client stub delegates to `__oxide_call_fn` from
-                // `oxide/fn`, which owns the fetch + wire format. Previously
+                // `@oxide-fw/core/fn`, which owns the fetch + wire format. Previously
                 // this inlined a fetch calling bare `__oxide_encode` /
                 // `__oxide_decode` globals that no module defines.
                 Env::Client => {
@@ -888,7 +888,7 @@ fn ast_server_fn_stubs(
     }
 
     if !client_stub_ids.is_empty() {
-        let import = "import { __oxide_call_fn } from \"oxide/fn\";\n";
+        let import = "import { __oxide_call_fn } from \"@oxide-fw/core/fn\";\n";
         out = format!("{import}{out}");
     }
     if !ssr_lines.is_empty() {
