@@ -165,6 +165,7 @@ export function bootWithRouter(
      * renders the route's REAL page component instead of the IR registry.
      * Absent → data-only prefetch and the IR fallback.
      */
+    clientBase?: string
     manifest?: ClientManifestLike & {
       /**
        * §16.4: the locales this build emitted catalogs for. Absent when the
@@ -484,6 +485,7 @@ export function bootWithRouter(
   doc.addEventListener('ox:data', onData as EventListener)
 
   const router = createRouter({
+    clientBase: opts.clientBase,
     adapter,
     onNavigateStart,
     onNavigateEnd,
