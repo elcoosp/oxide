@@ -41,6 +41,14 @@ pub const MANIFEST_PATH: &str = ".oxide/esm-manifest.json";
 pub const BOOT_ENTRY_PATH: &str = ".oxide/esm-boot.mjs";
 /// The boot entry's URL (server-relative). Threaded to the injector.
 pub const BOOT_SCRIPT_URL: &str = "/@boot/boot.mjs";
+/// URL prefix for CSS modules imported from a route component. Vite-style:
+/// `import './styles.css'` in a `.tsx` file becomes `import '/@css/<path>'`,
+/// which returns a JS module that injects a `<style>` tag and self-accepts
+/// for HMR. A CSS file whose content contains `@import "tailwindcss"` is
+/// served as an empty stub — the actual CSS reaches the browser through the
+/// SSR renderer's disk-scan `<link>` (see `inject_route_css`), not through
+/// this handler.
+pub const CSS_URL_PREFIX: &str = "/@css/";
 
 /// Everything the ESM request handler needs. Built once at dev startup,
 /// shared through `Arc` with the dispatch closure.
@@ -276,7 +284,11 @@ fn sanitized_filename(name: &str) -> String {
 /// `/@prebundle/...` URL. Relative and absolute specifiers are left alone
 /// (relative imports resolve naturally in the browser; absolute URLs are
 /// already correct).
-fn rewrite_imports(code: &str, map: &BTreeMap<String, String>) -> String {
+fn rewrite_imports(
+    code: &str,
+    map: &BTreeMap<String, String>,
+    from_src_rel: Option<&str>,
+) -> String {
     let spans = oxide_fw_compiler::scan_import_spans(code);
     if spans.is_empty() {
         return code.to_string();
@@ -284,39 +296,92 @@ fn rewrite_imports(code: &str, map: &BTreeMap<String, String>) -> String {
     let mut out = code.to_string();
     // Reverse order so earlier offsets stay valid as we splice.
     for span in spans.iter().rev() {
-        let Some(replacement) = map.get(&span.specifier) else {
-            continue;
+        // Resolve the specifier to a replacement URL, in precedence order:
+        //   1. bare specifier in the map → its prebundle URL
+        //   2. relative CSS specifier when we know the importing file → /@css/
+        let replacement: Option<String> = if let Some(pre) = map.get(&span.specifier) {
+            // A relative specifier is never in the map (the map only holds
+            // bare names). Keep the guard as a cheap invariant.
+            if span.specifier.starts_with("./")
+                || span.specifier.starts_with("../")
+                || span.specifier.starts_with('/')
+            {
+                None
+            } else {
+                Some(pre.clone())
+            }
+        } else if is_css_specifier(&span.specifier) {
+            from_src_rel
+                .and_then(|from| resolve_css_url(from, &span.specifier))
+        } else {
+            None
         };
-        // A relative specifier (./, ../) or absolute (/@...) is not rewritten
-        // — the map lookup above already filtered out unknown specifiers, but
-        // a userland package could name itself with a slash, so guard too.
-        if span.specifier.starts_with("./")
-            || span.specifier.starts_with("../")
-            || span.specifier.starts_with('/')
-        {
-            continue;
-        }
+        let Some(replacement) = replacement else { continue };
+
         let slice_end = span.end.min(out.len());
         if span.start >= slice_end {
             continue;
         }
         let slice = &out[span.start..slice_end];
-        // The scanner normalizes to the specifier text without quotes; try
-        // both quote styles and backtick (dynamic import with a static string
-        // is unusual but legal).
         for quote in ['\'', '"', '`'] {
             let needle = format!("{quote}{}{quote}", span.specifier);
             if let Some(pos) = slice.find(&needle) {
-                let abs_start = span.start + pos + 1; // past the opening quote
+                let abs_start = span.start + pos + 1;
                 let abs_end = abs_start + span.specifier.len();
                 if abs_end <= out.len() {
-                    out.replace_range(abs_start..abs_end, replacement);
+                    out.replace_range(abs_start..abs_end, &replacement);
                 }
                 break;
             }
         }
     }
     out
+}
+
+/// True when a specifier points at a stylesheet. `.module.css` counts too —
+/// plain-CSS modules are the current scope; `.scss`/`.sass` are accepted for
+/// the same reason (a component that imports them gets the same treatment
+/// until an actual preprocessor is wired).
+fn is_css_specifier(spec: &str) -> bool {
+    let lower = spec.to_ascii_lowercase();
+    lower.ends_with(".css")
+        || lower.ends_with(".scss")
+        || lower.ends_with(".sass")
+}
+
+/// Turn a CSS specifier imported from `from_src_rel` (e.g.
+/// `routes/layout.tsx`) into a `/@css/<src-relative-path>` URL. The
+/// resolution is path-only: no filesystem canonicalize (the dev server has
+/// no assumption about the file actually existing at that exact case on a
+/// case-sensitive filesystem). A `../..` escape that would leave `src/` is
+/// rejected — that import cannot be served and a full URL fallback would
+/// leak host paths.
+fn resolve_css_url(from_src_rel: &str, spec: &str) -> Option<String> {
+    use std::path::Component;
+    let from_dir = std::path::Path::new(from_src_rel)
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new(""));
+    let joined = from_dir.join(spec);
+    // Normalize: drop `.` and pop `..`, rejecting anything that escapes.
+    let mut segments: Vec<std::ffi::OsString> = Vec::new();
+    for comp in joined.components() {
+        match comp {
+            Component::Normal(s) => segments.push(s.to_os_string()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if segments.pop().is_none() {
+                    return None; // escaped src/
+                }
+            }
+            Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    let rel = segments
+        .iter()
+        .map(|s| s.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/");
+    Some(format!("{CSS_URL_PREFIX}{rel}"))
 }
 
 // --- Request handler -----------------------------------------------------
@@ -334,6 +399,9 @@ pub fn handle_esm_request(
     }
     if let Some(rest) = path.strip_prefix("/@prebundle/") {
         return Some(serve_prebundle(state, rest));
+    }
+    if let Some(rest) = path.strip_prefix(CSS_URL_PREFIX) {
+        return Some(serve_css_module(state, rest));
     }
     if path == BOOT_SCRIPT_URL {
         return Some(serve_boot_entry(state));
@@ -410,7 +478,7 @@ fn serve_source_file(state: &EsmDevState, rel_path: &str) -> OxideResponse {
     // rewriting so its `__oxide_refresh` call survives intact.
     let with_hmr = inject_hmr_boundary(&lowered, &path_for_compiler, lang)
         .unwrap_or(lowered);
-    let rewritten = rewrite_imports(&with_hmr, &state.rewrite_map);
+    let rewritten = rewrite_imports(&with_hmr, &state.rewrite_map, Some(rel_path));
     // Preamble: hot.ts auto-installs `globalThis.__oxide_hmr__` as a module
     // side-effect. The per-module `import.meta.hot` handle must be assigned
     // BEFORE the module body runs (the injected accept call reads it at top
@@ -434,6 +502,67 @@ fn serve_source_file(state: &EsmDevState, rel_path: &str) -> OxideResponse {
         .with_header("cache-control", "no-cache")
 }
 
+/// Serve a CSS file imported from a route component as a JS module the
+/// browser can load as an ESM. Shape:
+///
+/// ```js
+/// // oxide-hmr: self-accept; re-import on change replaces the <style> tag
+/// if (import.meta.hot) import.meta.hot.accept();
+/// const id = "styles/tailwind.css";
+/// const css = "<inlined text>";
+/// let el = document.querySelector('style[data-oxide-css="' + id + '"]');
+/// if (!el) { el = document.createElement("style"); el.dataset.oxideCss = id; document.head.appendChild(el); }
+/// el.textContent = css;
+/// export default css;
+/// ```
+///
+/// When the CSS contains `@import "tailwindcss"` (or its single-quoted form),
+/// the response is an empty stub — the actual CSS is delivered through the SSR
+/// renderer's disk-scan `<link>` (`inject_route_css`), which is what makes the
+/// tailwind precompute output reach the page. Returning the raw `@import` would
+/// leave the browser trying to fetch a package name it cannot resolve.
+fn serve_css_module(state: &EsmDevState, rel_path: &str) -> OxideResponse {
+    let abs = state.root.join("src").join(rel_path);
+    let source = match std::fs::read_to_string(&abs) {
+        Ok(s) => s,
+        Err(_) => {
+            return OxideResponse::new(404, format!("css not found: src/{rel_path}"))
+                .with_header("content-type", "text/plain; charset=utf-8");
+        }
+    };
+    // Tailwind entry: SSR-side disk-scan already emits the full generated
+    // CSS via a <link>. The module itself is a no-op so the browser does not
+    // try to fetch a bare `@import "tailwindcss"` specifier.
+    let lower = source.to_ascii_lowercase();
+    let has_tailwind_import = lower.contains("@import \"tailwindcss\"")
+        || lower.contains("@import 'tailwindcss'");
+    let (id, css_body) = if has_tailwind_import {
+        (rel_path.to_string(), String::new())
+    } else {
+        (rel_path.to_string(), source)
+    };
+    // `serde_json::to_string` produces a JS-safe string literal (escaping
+    // `"`, `\`, control chars); the CSS becomes a string, not raw code, so
+    // no tag-break is possible.
+    let css_literal = serde_json::to_string(&css_body).unwrap_or_else(|_| "\"\"".into());
+    let id_literal = serde_json::to_string(&id).unwrap_or_else(|_| "\"\"".into());
+    let body = format!(
+        "// oxide-css: {rel_path}\n\
+         if (import.meta.hot) import.meta.hot.accept();\n\
+         const id = {id_literal};\n\
+         const css = {css_literal};\n\
+         if (css.length > 0 && typeof document !== 'undefined') {{\n\
+           let el = document.querySelector('style[data-oxide-css=\"' + id + '\"]');\n\
+           if (!el) {{ el = document.createElement('style'); el.dataset.oxideCss = id; document.head.appendChild(el); }}\n\
+           el.textContent = css;\n\
+         }}\n\
+         export default css;\n"
+    );
+    OxideResponse::new(200, body)
+        .with_header("content-type", "text/javascript; charset=utf-8")
+        .with_header("cache-control", "no-cache")
+}
+
 fn serve_prebundle(state: &EsmDevState, rel_path: &str) -> OxideResponse {
     let abs = state.root.join(PREBUNDLE_DIR).join(rel_path);
     match std::fs::read(&abs) {
@@ -443,7 +572,7 @@ fn serve_prebundle(state: &EsmDevState, rel_path: &str) -> OxideResponse {
             let is_js = rel_path.ends_with(".js") || rel_path.ends_with(".mjs");
             let body = if is_js {
                 match String::from_utf8(bytes) {
-                    Ok(code) => rewrite_imports(&code, &state.rewrite_map).into_bytes(),
+                    Ok(code) => rewrite_imports(&code, &state.rewrite_map, None).into_bytes(),
                     Err(e) => e.into_bytes(),
                 }
             } else {
@@ -537,7 +666,7 @@ mod tests {
         let mut map = BTreeMap::new();
         map.insert("react".to_string(), "/@prebundle/react.js".to_string());
         let code = "import React from 'react';\nconsole.log(React);\n";
-        let out = rewrite_imports(code, &map);
+        let out = rewrite_imports(code, &map, None);
         assert!(out.contains("\"/@prebundle/react.js\"") || out.contains("'/@prebundle/react.js'"));
         assert!(!out.contains("from 'react'"));
     }
@@ -547,7 +676,7 @@ mod tests {
         let mut map = BTreeMap::new();
         map.insert("./foo".to_string(), "/wrong".to_string());
         let code = "import x from './foo';\n";
-        let out = rewrite_imports(code, &map);
+        let out = rewrite_imports(code, &map, None);
         assert!(out.contains("from './foo'"));
     }
 
@@ -556,7 +685,7 @@ mod tests {
         let mut map = BTreeMap::new();
         map.insert("react".to_string(), "/@prebundle/react.js".to_string());
         let code = "const r = await import('react');\n";
-        let out = rewrite_imports(code, &map);
+        let out = rewrite_imports(code, &map, None);
         assert!(out.contains("/@prebundle/react.js"));
         assert!(!out.contains("'react'"));
     }
@@ -700,6 +829,81 @@ mod integration_tests {
         let tmp = tempfile::tempdir().unwrap();
         prebundle_cjs_deps(tmp.path(), &[]).unwrap();
         assert!(tmp.path().join(PREBUNDLE_DIR).is_dir());
+    }
+
+    #[test]
+    fn css_import_resolves_to_at_css_url() {
+        let mut map = BTreeMap::new();
+        map.insert("react".into(), "/@prebundle/react.js".into());
+        let code = "import React from 'react';\nimport './styles.css';\n";
+        // from_src_rel is `routes/layout.tsx`; `./styles.css` resolves to
+        // `routes/styles.css`.
+        let out = rewrite_imports(code, &map, Some("routes/layout.tsx"));
+        assert!(out.contains("/@css/routes/styles.css"), "css not rewritten: {out}");
+        assert!(out.contains("/@prebundle/react.js"), "react not rewritten: {out}");
+    }
+
+    #[test]
+    fn css_parent_escape_is_rejected() {
+        let map = BTreeMap::new();
+        // From src/page.tsx, `./x.css` → `x.css` (still under src/) → allowed.
+        let code = "import './x.css';\n";
+        let out = rewrite_imports(code, &map, Some("page.tsx"));
+        assert!(out.contains("/@css/x.css"), "top-of-src import must resolve: {out}");
+
+        // From src/a/b/c.tsx, `../../x.css` pops twice to src/x.css — allowed.
+        let mid = "import '../../x.css';\n";
+        let out_mid = rewrite_imports(mid, &map, Some("a/b/c.tsx"));
+        assert!(out_mid.contains("/@css/x.css"), "mid-level pop should resolve: {out_mid}");
+
+        // From src/a/b/c.tsx, `../../../x.css` pops three times → escapes src/
+        // → rejected (specifier left untouched).
+        let deep = "import '../../../x.css';\n";
+        let out2 = rewrite_imports(deep, &map, Some("a/b/c.tsx"));
+        assert!(
+            out2.contains("../../../x.css"),
+            "escape must not be rewritten: {out2}"
+        );
+    }
+
+    #[test]
+    fn css_module_serves_injectable_js() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = state(tmp.path());
+        std::fs::create_dir_all(tmp.path().join("src/styles")).unwrap();
+        std::fs::write(tmp.path().join("src/styles/plain.css"), "body { margin: 0; }").unwrap();
+        let resp = serve_css_module(&s, "styles/plain.css");
+        assert_eq!(resp.status, 200);
+        let body = String::from_utf8_lossy(&resp.body[..]).into_owned();
+        assert!(body.contains("import.meta.hot.accept"), "must self-accept: {body}");
+        assert!(body.contains("body { margin: 0; }"), "css text must be inlined: {body}");
+        assert!(body.contains("createElement('style')"), "must inject a style tag: {body}");
+    }
+
+    #[test]
+    fn css_module_stubs_tailwind_import() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = state(tmp.path());
+        std::fs::create_dir_all(tmp.path().join("src/styles")).unwrap();
+        std::fs::write(
+            tmp.path().join("src/styles/tailwind.css"),
+            "@import \"tailwindcss\";\nbody { margin: 0; }\n",
+        )
+        .unwrap();
+        let resp = serve_css_module(&s, "styles/tailwind.css");
+        assert_eq!(resp.status, 200);
+        let body = String::from_utf8_lossy(&resp.body[..]).into_owned();
+        // The tailwind import is NOT inlined — the disk-scan <link> covers it.
+        assert!(!body.contains("@import \"tailwindcss\""), "tailwind import must not survive: {body}");
+        assert!(body.contains("import.meta.hot.accept"));
+    }
+
+    #[test]
+    fn css_module_404_when_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = state(tmp.path());
+        let resp = serve_css_module(&s, "styles/missing.css");
+        assert_eq!(resp.status, 404);
     }
 
     #[test]
