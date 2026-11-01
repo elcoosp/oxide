@@ -13,7 +13,7 @@ export function GET(): Response {
         }
         controller.enqueue(enc.encode(`data: tick ${n}\n\n`))
         n += 1
-        setTimeout(send, 30)
+        setTimeout(send, 100)
       }
       send()
     },
