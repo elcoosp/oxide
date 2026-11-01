@@ -143,6 +143,10 @@ oxc_span = { version = "0.155.0" }
 oxc_semantic = { version = "0.155.0" }
 oxc_transformer = { version = "0.155.0" }
 oxc_codegen = { version = "0.155.0" }
+# `experimental` feature pulls rolldown_plugin_lazy_compilation, whose
+# Cargo.toml pins `oxc_allocator = "=0.156"` while the workspace uses 0.155 —
+# a version split that fails to compile. We do not use any experimental
+# rolldown APIs; disable the feature.
 rolldown = { version = "1.2.15", features = ["experimental"] }
 rolldown_common = { version = "1.2.15" }
 rolldown_plugin = { version = "1.2.15" }
