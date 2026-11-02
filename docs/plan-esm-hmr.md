@@ -95,6 +95,7 @@ Each item is a Playwright test to add (and where relevant, a small fix to make i
 
 #### 2.2 — Layout HMR
 - Edit `src/routes/layout.tsx` header text; assert the page updates; `timeOrigin` unchanged. **3h.**
+- **STATUS (recon 2026-11-02): NOT a test-only item.** `classify_path` treats `layout.tsx` as structural → `RestartSubsystems` → `HmrMessage::FullReload { reason: "route tree rebuilt" }`. Current behavior: the page RELOADS; `timeOrigin` changes. The in-place path requires `classify_path(&str)` to become `classify_event(&FileEvent)` so `Modified` on an existing layout routes to `AdapterHmr` while `Created`/`Removed` still triggers a rescan. That is §3.9 work. A pinning test (`HMR: layout edit reloads the page`) lands in `tests/playwright/tests/hmr.spec.ts` and will correctly fail when §3.9 lands, prompting the acceptance-criteria update.
 
 #### 2.3 — Route loader (`page.server.ts`) HMR
 - Edit a loader; assert the returned data is reflected in the DOM via `ox:data`. **4h.**

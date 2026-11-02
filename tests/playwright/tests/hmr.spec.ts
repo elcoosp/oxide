@@ -373,11 +373,14 @@ test.describe('HMR runtime (browser)', () => {
   const ISLAND_PRISTINE = readFileSync(ISLAND_PATH, 'utf8')
   const LOADER_PATH = join(smokeRoot, 'src', 'routes', 'greeting', 'page.server.ts')
   const LOADER_PRISTINE = readFileSync(LOADER_PATH, 'utf8')
+  const LAYOUT_PATH = join(smokeRoot, 'src', 'routes', 'layout.tsx')
+  const LAYOUT_PRISTINE = readFileSync(LAYOUT_PATH, 'utf8')
 
   const FIXTURES: ReadonlyArray<{ path: string; pristine: string }> = [
     { path: HM_FIXTURE, pristine: HM_PRISTINE },
     { path: ISLAND_PATH, pristine: ISLAND_PRISTINE },
     { path: LOADER_PATH, pristine: LOADER_PRISTINE },
+    { path: LAYOUT_PATH, pristine: LAYOUT_PRISTINE },
   ]
 
   const restoreFixtures = (): boolean => {
@@ -825,6 +828,79 @@ test.describe('HMR runtime (browser)', () => {
       // races the next test's beforeEach if the contexts stay open.
       await ctxA.close()
       await ctxB.close()
+      await new Promise((r) => setTimeout(r, 1500))
+    }
+  })
+  test('HMR: layout edit reloads the page (Tier 2.2 — current behavior, see plan note)', async ({ page }) => {
+    test.setTimeout(60_000)
+    test.skip(!HMR_AVAILABLE, 'react-refresh not installed in smoke-app')
+
+    // This test PINS THE CURRENT BEHAVIOR: a content edit to
+    // `routes/layout.tsx` goes through `ChangeKind::ConfigOrRoutes ->
+    // HmrBehavior::RestartSubsystems`, which publishes
+    // `HmrMessage::FullReload { reason: "route tree rebuilt" }`. The page
+    // reloads. `performance.timeOrigin` therefore CHANGES.
+    //
+    // docs/plan-esm-hmr.md §2.2 specifies the opposite ("timeOrigin
+    // unchanged"). That assertion is aspirational: it would only hold if
+    // `classify_path` distinguished content edits from structural changes
+    // (see `crates/dev/src/lib.rs:classify_path` — the code comment there
+    // already describes in-place layout edits as intended behavior, but
+    // the `is_structural` list still lumps `layout.` in with `route.`).
+    //
+    // That fix is §3.9 work: `classify_path(path: &str)` would need to
+    // become `classify_event(&FileEvent)` so `Modified` on an existing
+    // layout can route to `AdapterHmr` while `Created`/`Removed` still
+    // triggers a tree rescan. When §3.9 lands, this test's
+    // `timeOrigin` assertion will flip, which is the correct signal to
+    // update §2.2's acceptance criteria and rename this test.
+    //
+    // Why keep the test today rather than skip it? Because if anyone
+    // changes the watcher's layout path *without* addressing the tree-
+    // rescan logic, this test catches the resulting DOM/reload mismatch
+    // immediately. When §3.9 makes layout content edits in-place, the
+    // test fails loudly and prompts the re-tick of §2.2.
+    const targetFile = LAYOUT_PATH
+    const original = LAYOUT_PRISTINE
+    const marker = `Smoke-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+    try {
+      await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 })
+      await page.waitForFunction(
+        () => typeof (window as { __oxideBoot?: unknown }).__oxideBoot !== 'undefined',
+        { timeout: 20_000 },
+      )
+      await new Promise((r) => setTimeout(r, 500))
+
+      const timeOriginBefore = await page.evaluate(() => performance.timeOrigin)
+      const header = page.locator('header[data-layout-header] a')
+      await expect(header).toHaveText('Smoke')
+
+      // Edit the layout's link text. A full-reload publishes FullReload →
+      // page reloads → SSR re-renders → new text is in the initial HTML.
+      const patched = original.replace('>Smoke</a>', `>${marker}</a>`)
+      if (patched === original) {
+        throw new Error('layout.tsx: header anchor text anchor not found (>Smoke</a>)')
+      }
+      writeFileSync(targetFile, patched, 'utf8')
+
+      // DOM reflects the new text (either via reload+SSR or in-place — the
+      // assertion below discriminates which, and this one will fail once
+      // the in-place path lands).
+      await expect(page.locator('header[data-layout-header] a')).toHaveText(marker, {
+        timeout: 15_000,
+      })
+
+      const timeOriginAfter = await page.evaluate(() => performance.timeOrigin)
+      expect(
+        timeOriginAfter,
+        'Current behavior: layout edits publish FullReload (RestartSubsystems). ' +
+        'When this assertion starts failing because timeOrigin is UNCHANGED, that is ' +
+        'the signal that §3.9 (event-aware classify_path) has landed — update ' +
+        '§2.2 acceptance criteria and rename this test accordingly.',
+      ).not.toBe(timeOriginBefore)
+    } finally {
+      writeFileSync(targetFile, original, 'utf8')
       await new Promise((r) => setTimeout(r, 1500))
     }
   })
