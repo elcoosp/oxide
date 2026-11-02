@@ -464,18 +464,58 @@ test.describe('HMR runtime (browser)', () => {
   })
 
   test('HMR WebSocket connects to /_oxide/hmr', async ({ page }) => {
-    // Set up the wait BEFORE navigation so a fast WS open isn't missed.
-    const wsPromise = page.waitForEvent('websocket', { timeout: 20_000 })
+    // Firefox and WebKit both drop the `{"type":"connected"}` frame from a
+    // `ws.waitForEvent('framereceived')` attached AFTER `page.waitForEvent('websocket')`
+    // resolves — the frame arrives between the socket's creation and the
+    // listener attachment. Chromium happens to win the race; the other two
+    // engines lose it deterministically (measured: same test fails 12.x s
+    // on both, passes on chromium).
+    //
+    // Correct pattern (same as §3.1/§3.2 frame capture): attach the
+    // `framereceived` listener inside `page.on('websocket')`, which fires the
+    // instant the socket is created — before any frame can be delivered.
+    // Then poll for the accumulated evidence. No awaits-on-events after the
+    // fact, no race window.
+    const wsUrls: string[] = []
+    const frames: string[] = []
+    page.on('websocket', (ws) => {
+      wsUrls.push(ws.url())
+      ws.on('framereceived', (eventOrPayload: unknown) => {
+        const raw =
+          eventOrPayload && typeof eventOrPayload === 'object'
+          && 'payload' in (eventOrPayload as object)
+            ? (eventOrPayload as { payload: unknown }).payload
+            : eventOrPayload
+        let text: string
+        if (typeof raw === 'string') text = raw
+        else if (raw instanceof ArrayBuffer || ArrayBuffer.isView(raw))
+          text = new TextDecoder().decode(raw as ArrayBuffer | ArrayBufferView)
+        else if (raw && typeof (raw as { toString?: unknown }).toString === 'function')
+          text = (raw as { toString(enc: string): string }).toString('utf8')
+        else text = String(raw)
+        frames.push(text)
+      })
+    })
+
     await page.goto('/')
 
-    // If the client never booted, the WS test failure would be a phantom
-    // (no WS is expected if boot.mjs didn't run `connectHmr`). Diagnose
-    // with a bounded wait + a dump of `window.__oxideBoot` status.
+    // 1. A WS to /_oxide/hmr opened during boot.
+    await expect
+      .poll(() => wsUrls.find((u) => u.includes('/_oxide/hmr')) ?? null, { timeout: 20_000 })
+      .not.toBeNull()
+
+    // 2. The server's `{"type":"connected",...}` greeting frame arrived.
+    //    If this times out with wsUrls populated, boot.mjs ran
+    //    `connectHmr` (so the socket opened) but the server closed/errored
+    //    before sending the greeting — a real server-side regression, not a
+    //    client-side boot failure.
     try {
-      const ws = await wsPromise
-      expect(ws.url()).toContain('/_oxide/hmr')
-      // Wait for the server's `{"type":"connected",...}` frame.
-      await ws.waitForEvent('framereceived', { timeout: 10_000 })
+      await expect
+        .poll(
+          () => frames.find((f) => f.includes('"type":"connected"')) ?? null,
+          { timeout: 10_000 },
+        )
+        .not.toBeNull()
     } catch (err) {
       const bootState = await page.evaluate(() => {
         const w = window as unknown as {
@@ -490,15 +530,15 @@ test.describe('HMR runtime (browser)', () => {
         }
       })
       throw new Error(
-        `WebSocket to /_oxide/hmr never opened. ` +
-        `page boot state: ${JSON.stringify(bootState)}. ` +
-        `If hasBoot=false, bootWithRouter never ran; check that ` +
-        `clientAdapter resolves and boot.mjs doesn't throw. ` +
+        `WS to /_oxide/hmr opened (${JSON.stringify(wsUrls)}) but never received the ` +
+        `{"type":"connected"} greeting. Page boot state: ${JSON.stringify(bootState)}. ` +
+        `If hasBoot=false, boot.mjs didn't run. If hasBoot=true and the socket opened, ` +
+        `the CLIENT did its job — suspect the server's HMR greeting path. ` +
+        `Frames received: ${JSON.stringify(frames.slice(0, 5))}. ` +
         `Original error: ${err instanceof Error ? err.message : String(err)}`,
       )
     }
   })
-
   test('HMR: editing a component updates the DOM without reloading', async ({ page }) => {
     test.setTimeout(60_000)
     test.skip(!HMR_AVAILABLE, 'react-refresh not installed in smoke-app')
