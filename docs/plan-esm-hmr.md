@@ -226,9 +226,9 @@ A tier is **done** when every item in it:
 - [ ] 1.3 Transitive dependency propagation
 - [ ] 1.4 CSS Modules
 - [ ] 1.5 Server function hot-swap
-- [ ] 2.1 Island HMR
+- [x] 2.1 Island HMR
 - [ ] 2.2 Layout HMR
-- [ ] 2.3 Route loader (`page.server.ts`) HMR
+- [x] 2.3 Route loader (`page.server.ts`) HMR
 - [x] 2.4 State preservation
 - [x] 2.5 Error overlay + recovery
 - [ ] 2.6 Multi-client broadcast

@@ -354,20 +354,53 @@ test.describe('HMR runtime (browser)', () => {
   //    boot.mjs otherwise races hydration and `__oxideBoot` never sets.
   //    Scoped to this describe block so the fast structural tests aren't
   //    slowed.
+  // Fixture guards for the HMR runtime describe block.
+  //
+  // 1. `hmr-target.tsx` is NOT git-tracked (per the earlier handoff), so its
+  //    pristine bytes are hardcoded — capturing from disk at module load
+  //    would capture any pollution from a prior SIGKILLed run.
+  // 2. `counter.tsx` and `greeting/page.server.ts` ARE git-tracked, so they
+  //    are captured from disk at module load. A clean working tree (asserted
+  //    by the batch script before commit) means disk == pristine.
+  //
+  // Every test that edits one of these files restores it in `finally`, but
+  // SIGKILL bypasses `finally`. The beforeEach/afterEach pair is the actual
+  // safety net — the same fix that cfb8e18f applied for hmr-target.tsx,
+  // extended to the fixtures 2.1 and 2.3 introduce.
   const HM_FIXTURE = join(smokeRoot, 'src', 'components', 'hmr-target.tsx')
   const HM_PRISTINE = `import { useState } from 'react'\n\nexport default function HmrTarget() {\n  const [count, setCount] = useState(0)\n  return (\n    <>\n      <h1 data-hmr-target="">HMR-TARGET-ORIGINAL</h1>\n      <button data-hmr-counter="" onClick={() => setCount(count + 1)}>{count}</button>\n    </>\n  )\n}\n`
-  test.beforeEach(async () => {
-    let cur = ''
-    try { cur = readFileSync(HM_FIXTURE, 'utf8') } catch { cur = '' }
-    if (cur !== HM_PRISTINE) {
-      writeFileSync(HM_FIXTURE, HM_PRISTINE, 'utf8')
-      await new Promise((r) => setTimeout(r, 300))
+  const ISLAND_PATH = join(smokeRoot, 'src', 'islands', 'counter.tsx')
+  const ISLAND_PRISTINE = readFileSync(ISLAND_PATH, 'utf8')
+  const LOADER_PATH = join(smokeRoot, 'src', 'routes', 'greeting', 'page.server.ts')
+  const LOADER_PRISTINE = readFileSync(LOADER_PATH, 'utf8')
+
+  const FIXTURES: ReadonlyArray<{ path: string; pristine: string }> = [
+    { path: HM_FIXTURE, pristine: HM_PRISTINE },
+    { path: ISLAND_PATH, pristine: ISLAND_PRISTINE },
+    { path: LOADER_PATH, pristine: LOADER_PRISTINE },
+  ]
+
+  const restoreFixtures = (): boolean => {
+    let changed = false
+    for (const { path, pristine } of FIXTURES) {
+      let cur = ''
+      try { cur = readFileSync(path, 'utf8') } catch { cur = '' }
+      if (cur !== pristine) {
+        writeFileSync(path, pristine, 'utf8')
+        changed = true
+      }
     }
+    return changed
+  }
+
+  test.beforeEach(async () => {
+    if (restoreFixtures()) await new Promise((r) => setTimeout(r, 300))
   })
   test.afterEach(async () => {
-    let cur = ''
-    try { cur = readFileSync(HM_FIXTURE, 'utf8') } catch { cur = '' }
-    if (cur !== HM_PRISTINE) writeFileSync(HM_FIXTURE, HM_PRISTINE, 'utf8')
+    restoreFixtures()
+    // Settle: the dev server's watcher emits 3-8 events per write on macOS;
+    // 2000ms lets the burst finish before the next `goto('/')`. Same value
+    // the pre-refactor guard used; only the file set has changed.
     await new Promise((r) => setTimeout(r, 2000))
   })
 
@@ -618,6 +651,105 @@ test.describe('HMR runtime (browser)', () => {
       ).toBe(timeOrigin)
     } finally {
       writeFileSync(targetFile, original, 'utf8')
+      await new Promise((r) => setTimeout(r, 1500))
+    }
+  })
+  test('HMR: island edit updates DOM without reload, preserves click state (Tier 2.1)', async ({ page }) => {
+    test.setTimeout(60_000)
+    test.skip(!HMR_AVAILABLE, 'react-refresh not installed in smoke-app')
+
+    const original = ISLAND_PRISTINE
+    const marker = `ISLAND-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+    try {
+      await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 })
+      await page.waitForFunction(
+        () => typeof (window as { __oxideBoot?: unknown }).__oxideBoot !== 'undefined',
+        { timeout: 20_000 },
+      )
+      // Give the island scan a beat to hydrate the <ox-island> host.
+      await page.waitForFunction(
+        () => document.querySelector('ox-island[data-ox-island="Counter"]')?.getAttribute('data-ox-hydrated') !== null,
+        { timeout: 15_000 },
+      ).catch(() => { /* older boot may not set data-ox-hydrated; click below is the real probe */ })
+
+      const timeOrigin = await page.evaluate(() => performance.timeOrigin)
+      const btn = page.locator('ox-island[data-ox-island="Counter"] button')
+      await expect(btn).toBeVisible({ timeout: 10_000 })
+      // Props { initial: 3 } → starts at 3; two clicks → 5.
+      await expect(btn).toContainText('3')
+      await btn.click()
+      await btn.click()
+      await expect(btn).toContainText('5')
+
+      // Edit the island file: add a sibling marker span inside the button.
+      // Hook chain (useState first) is untouched, so React Refresh should
+      // apply the new render in place — including state preservation.
+      const patched = original.replace(
+        '<span>{n}</span>',
+        `<span data-island-marker="">${marker}</span><span>{n}</span>`,
+      )
+      if (patched === original) throw new Error('counter.tsx lost the <span>{n}</span> marker')
+      writeFileSync(ISLAND_PATH, patched, 'utf8')
+
+      await expect(page.locator('span[data-island-marker]')).toHaveText(marker, { timeout: 15_000 })
+      await expect(btn).toContainText('5')
+      expect(
+        await page.evaluate(() => performance.timeOrigin),
+        'island HMR must not reload the page',
+      ).toBe(timeOrigin)
+    } finally {
+      writeFileSync(ISLAND_PATH, original, 'utf8')
+      await new Promise((r) => setTimeout(r, 1500))
+    }
+  })
+
+  test('HMR: loader edit updates DOM without reload (Tier 2.3)', async ({ page }) => {
+    test.setTimeout(60_000)
+    test.skip(!HMR_AVAILABLE, 'react-refresh not installed in smoke-app')
+
+    const original = LOADER_PRISTINE
+    const marker = `greeting-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+    try {
+      await page.goto('/greeting', { waitUntil: 'domcontentloaded', timeout: 30_000 })
+      await page.waitForFunction(
+        () => typeof (window as { __oxideBoot?: unknown }).__oxideBoot !== 'undefined',
+        { timeout: 20_000 },
+      )
+      await new Promise((r) => setTimeout(r, 500))
+
+      const timeOrigin = await page.evaluate(() => performance.timeOrigin)
+      const textEl = page.locator('p[data-greeting-text]')
+      await expect(textEl).toBeVisible({ timeout: 10_000 })
+      const initialText = await textEl.textContent()
+      expect(initialText).toMatch(/^hello,/)
+
+      // Change only the `greeting` field; leave `role` derivation as-is so a
+      // failure isolates the loader rerun (not a shape mismatch).
+      const patched = original.replace(
+        /return \{ greeting: `[^`]*`, role: [^}]*\}/,
+        `return { greeting: '${marker}', role: locals?.role ?? 'anon' }`,
+      )
+      if (patched === original) {
+        // Fallback anchor: the loader's return object as written today.
+        const fallback = original.replace(
+          /greeting: `hello, \$\{locals\?\.user \?\? 'guest'\}`/,
+          `greeting: '${marker}'`,
+        )
+        if (fallback === original) throw new Error('page.server.ts: loader return-shape anchor not found')
+        writeFileSync(LOADER_PATH, fallback, 'utf8')
+      } else {
+        writeFileSync(LOADER_PATH, patched, 'utf8')
+      }
+
+      await expect(textEl).toHaveText(marker, { timeout: 15_000 })
+      expect(
+        await page.evaluate(() => performance.timeOrigin),
+        'loader HMR must not reload the page',
+      ).toBe(timeOrigin)
+    } finally {
+      writeFileSync(LOADER_PATH, original, 'utf8')
       await new Promise((r) => setTimeout(r, 1500))
     }
   })
