@@ -295,6 +295,7 @@ A tier is **done** when every item in it:
 - [x] 3.8 Cache-buster memory bound
 - [x] 3.9 Route edits hot-swap
 - [x] 3.10 Client survives transient dev-server outages
+- [x] 3.11 bundler-dev gap closure (--no-esm)
 - [x] 4.1 Playwright in CI
 - [x] 4.2 Spec dead-code cleanup
 - [ ] 4.3 This file maintenance (ongoing)
