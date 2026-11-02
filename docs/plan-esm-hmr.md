@@ -266,7 +266,7 @@ A tier is **done** when every item in it:
 - [ ] 2.12 `react-refresh` absent path
 - [x] 2.13 Cold-start race
 - [x] 2.14 Firefox / WebKit
-- [ ] 2.15 Cold-start bound
+- [x] 2.15 Cold-start bound
 - [x] 3.1 Server-side watcher debounce
 - [ ] 3.2 Batch change detection
 - [ ] 3.3 Prebundle invalidation

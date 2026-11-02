@@ -207,4 +207,66 @@ test('HMR: cold-start edit within 500ms of __oxideBoot applies without reload (T
     writeFileSync(HMR_FIXTURE, original, 'utf8')
     await new Promise((r) => setTimeout(r, 1500))
   }
+  })
+
+test('cold-start: first page render within budget (Tier 2.15)', async ({ page }) => {
+  test.setTimeout(30_000)
+
+  // §2.15: cold-start bound — sanity ceiling on how long a user waits for a
+  // fresh page in `oxide dev`. The plan says "<5s on local hardware". Two
+  // measurements, both useful:
+  //
+  //   1. Wall-clock from `page.goto('/')` to `window.__oxideBoot` being set.
+  //      What a real user perceives between typing the URL and the page
+  //      being interactive enough to run client code.
+  //   2. Browser-native DOMContentLoaded, from
+  //      `PerformanceNavigationTiming` (NOT the deprecated
+  //      `performance.timing` the plan mentions). Independent of
+  //      Playwright's polling overhead — catches a regression that lands
+  //      between DCL and `__oxideBoot` (e.g. a slow prebundle import).
+  //
+  // Budget: 5s on local hardware, 15s on CI (shared runners are slower and
+  // the plan explicitly scopes to local hardware). Normal runs land at
+  // 1-3s. A hit here means something is badly wrong, not slightly slow.
+  //
+  // No fixture mutation — this test only reads. Runs on all three engines
+  // (§2.14's invariant).
+  const budgetMs = process.env.CI ? 15_000 : 5_000
+
+  const startedAt = Date.now()
+  await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 15_000 })
+  await page.waitForFunction(
+    () => typeof (window as { __oxideBoot?: unknown }).__oxideBoot !== 'undefined',
+    { timeout: 10_000, polling: 50 },
+  )
+  const wallClock = Date.now() - startedAt
+
+  const nav = await page.evaluate(() => {
+    const entries = performance.getEntriesByType('navigation')
+    const n = entries[0] as PerformanceNavigationTiming | undefined
+    if (!n) return null
+    return {
+      dcl: n.domContentLoadedEventEnd - n.fetchStart,
+      load: n.loadEventEnd > 0 ? n.loadEventEnd - n.fetchStart : null,
+    }
+  })
+
+  // Log to test output — useful when reviewing a passing run's timings.
+  // eslint-disable-next-line no-console
+  console.log(`[2.15] wallClock=${wallClock}ms dcl=${nav?.dcl?.toFixed(0) ?? '?'}ms budget=${budgetMs}ms`)
+
+  expect(
+    wallClock,
+    `cold-start wall-clock ${wallClock}ms exceeded budget ${budgetMs}ms. ` +
+    `Regression class: slow route scan, prebundle not cached, or SSR that ` +
+    `blocks DCL. Browser nav timing: ${JSON.stringify(nav)}`,
+  ).toBeLessThan(budgetMs)
+
+  if (nav && nav.dcl > 0) {
+    expect(
+      nav.dcl,
+      `DOMContentLoaded ${nav.dcl.toFixed(0)}ms exceeded budget ${budgetMs}ms`,
+    ).toBeLessThan(budgetMs)
+  }
 })
+
