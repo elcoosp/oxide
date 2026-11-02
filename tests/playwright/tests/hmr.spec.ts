@@ -688,11 +688,19 @@ test.describe('HMR runtime (browser)', () => {
         () => typeof (window as { __oxideBoot?: unknown }).__oxideBoot !== 'undefined',
         { timeout: 20_000 },
       )
-      // Give the island scan a beat to hydrate the <ox-island> host.
+      // Wait for the ISLAND to be fully hydrated before clicking. The
+      // attribute transitions SSR-HTML -> "pending" (set on entry) ->
+      // "done" (set after the adapter attaches the click handler) ->
+      // "error" (adapter threw). Waiting for `!== null` matches "pending"
+      // too, which races the click: the first click lands before React
+      // attached, state stays at 3, the intermediate toContainText('4')
+      // fails. Wait for `=== 'done'` specifically, and do not swallow the
+      // timeout — a hydration failure must fail the test at this line, not
+      // as a downstream "click didn't work" symptom.
       await page.waitForFunction(
-        () => document.querySelector('ox-island[data-ox-island="Counter"]')?.getAttribute('data-ox-hydrated') !== null,
+        () => document.querySelector('ox-island[data-ox-island="Counter"]')?.getAttribute('data-ox-hydrated') === 'done',
         { timeout: 15_000 },
-      ).catch(() => { /* older boot may not set data-ox-hydrated; click below is the real probe */ })
+      )
 
       const timeOrigin = await page.evaluate(() => performance.timeOrigin)
       const btn = page.locator('ox-island[data-ox-island="Counter"] button')
@@ -857,35 +865,29 @@ test.describe('HMR runtime (browser)', () => {
       await new Promise((r) => setTimeout(r, 1500))
     }
   })
-  test('HMR: layout edit reloads the page (Tier 2.2 — current behavior, see plan note)', async ({ page }) => {
+  test('HMR: layout edit updates DOM in place, no reload (Tier 2.2)', async ({ page }) => {
     test.setTimeout(60_000)
     test.skip(!HMR_AVAILABLE, 'react-refresh not installed in smoke-app')
 
-    // This test PINS THE CURRENT BEHAVIOR: a content edit to
-    // `routes/layout.tsx` goes through `ChangeKind::ConfigOrRoutes ->
-    // HmrBehavior::RestartSubsystems`, which publishes
-    // `HmrMessage::FullReload { reason: "route tree rebuilt" }`. The page
-    // reloads. `performance.timeOrigin` therefore CHANGES.
+    // §2.2 acceptance criterion, now achievable: §3.9's event-aware
+    // `classify_event` distinguishes a `Modified` (content) edit from a
+    // `Created`/`Removed` (structural) edit, so a content edit to
+    // `routes/layout.tsx` routes to `ChangeKind::Component` ->
+    // `HmrBehavior::AdapterHmr` -> `HmrMessage::ModuleUpdate`. The client
+    // re-imports the layout module, `$RefreshReg$` fires with the same
+    // stable `path:RootLayout` id, `performReactRefresh()` walks the tree
+    // and updates in place. `timeOrigin` stays unchanged.
     //
-    // docs/plan-esm-hmr.md §2.2 specifies the opposite ("timeOrigin
-    // unchanged"). That assertion is aspirational: it would only hold if
-    // `classify_path` distinguished content edits from structural changes
-    // (see `crates/dev/src/lib.rs:classify_path` — the code comment there
-    // already describes in-place layout edits as intended behavior, but
-    // the `is_structural` list still lumps `layout.` in with `route.`).
+    // Before §3.9 this test was a PINNING test asserting the opposite
+    // (`timeOrigin` changed because layout edits went through
+    // `ConfigOrRoutes` -> `RestartSubsystems` -> `HmrMessage::FullReload`).
+    // The pinning assertion existed specifically so that when §3.9 landed
+    // it would flip and prompt this rewrite. That is now.
     //
-    // That fix is §3.9 work: `classify_path(path: &str)` would need to
-    // become `classify_event(&FileEvent)` so `Modified` on an existing
-    // layout can route to `AdapterHmr` while `Created`/`Removed` still
-    // triggers a tree rescan. When §3.9 lands, this test's
-    // `timeOrigin` assertion will flip, which is the correct signal to
-    // update §2.2's acceptance criteria and rename this test.
-    //
-    // Why keep the test today rather than skip it? Because if anyone
-    // changes the watcher's layout path *without* addressing the tree-
-    // rescan logic, this test catches the resulting DOM/reload mismatch
-    // immediately. When §3.9 makes layout content edits in-place, the
-    // test fails loudly and prompts the re-tick of §2.2.
+    // Future regression path: if a content edit to layout re-enters the
+    // rescan path (via a `classify_event` regression that loses the
+    // `Modified` signal), `timeOrigin` will change and this assertion will
+    // fail with the message below.
     const targetFile = LAYOUT_PATH
     const original = LAYOUT_PRISTINE
     const marker = `Smoke-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -902,29 +904,28 @@ test.describe('HMR runtime (browser)', () => {
       const header = page.locator('header[data-layout-header] a')
       await expect(header).toHaveText('Smoke')
 
-      // Edit the layout's link text. A full-reload publishes FullReload →
-      // page reloads → SSR re-renders → new text is in the initial HTML.
+      // Content edit: change the layout's link text. Same component shape
+      // (a single <a> child, no hook change), so React Refresh updates in
+      // place.
       const patched = original.replace('>Smoke</a>', `>${marker}</a>`)
       if (patched === original) {
         throw new Error('layout.tsx: header anchor text anchor not found (>Smoke</a>)')
       }
       writeFileSync(targetFile, patched, 'utf8')
 
-      // DOM reflects the new text (either via reload+SSR or in-place — the
-      // assertion below discriminates which, and this one will fail once
-      // the in-place path lands).
+      // DOM reflects the new text — via in-place Refresh, not a reload.
       await expect(page.locator('header[data-layout-header] a')).toHaveText(marker, {
         timeout: 15_000,
       })
 
-      const timeOriginAfter = await page.evaluate(() => performance.timeOrigin)
+      // §2.2 assertion: no reload. A FullReload would reset timeOrigin.
       expect(
-        timeOriginAfter,
-        'Current behavior: layout edits publish FullReload (RestartSubsystems). ' +
-        'When this assertion starts failing because timeOrigin is UNCHANGED, that is ' +
-        'the signal that §3.9 (event-aware classify_path) has landed — update ' +
-        '§2.2 acceptance criteria and rename this test accordingly.',
-      ).not.toBe(timeOriginBefore)
+        await page.evaluate(() => performance.timeOrigin),
+        'layout content edit must apply in place — §3.9 classify_event should route ' +
+        'Modified(routes/layout.tsx) to AdapterHmr, not RestartSubsystems. ' +
+        'If this fails because timeOrigin CHANGED, §3.9 regressed (event kind lost) ' +
+        'or classify_event stopped treating Modified layout as Component.',
+      ).toBe(timeOriginBefore)
     } finally {
       writeFileSync(targetFile, original, 'utf8')
       await new Promise((r) => setTimeout(r, 1500))

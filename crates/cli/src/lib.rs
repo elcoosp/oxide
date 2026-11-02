@@ -2584,7 +2584,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                     | oxide_fw_dev::FileEvent::Created(p)
                     | oxide_fw_dev::FileEvent::Removed(p) => p,
                 };
-                is_client_source(p, &rootp) && !matches!(oxide_fw_dev::hmr_behavior(oxide_fw_dev::classify_path(&p.to_string_lossy())), oxide_fw_dev::HmrBehavior::RestartSubsystems)
+                is_client_source(p, &rootp) && !matches!(oxide_fw_dev::hmr_behavior(oxide_fw_dev::classify_event(e)), oxide_fw_dev::HmrBehavior::RestartSubsystems)
             });
             tracing::info!(
                 n_events = events.len(),
@@ -2673,6 +2673,33 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             idle_since = std::time::Instant::now();
             warmed = false;
         }
+        // §3.9: FSEvents on macOS (and any watcher that reports directory-level
+        // diffs) can deliver Created + Modified for the same path when a
+        // writeFileSync changes an already-existing file. The Created would route
+        // to ConfigOrRoutes -> RestartSubsystems -> FullReload, racing the
+        // Modified's AdapterHmr -> ModuleUpdate. Drop a Created event when a
+        // Modified for the same path is in the same batch: the file existed
+        // before the batch, so it was not actually created.
+        let events = {
+            use std::collections::HashSet;
+            let mut evs = events;
+            let modded: HashSet<std::path::PathBuf> = evs
+                .iter()
+                .filter_map(|e| match e {
+                    oxide_fw_dev::FileEvent::Modified(p) => Some(p.clone()),
+                    _ => None,
+                })
+                .collect();
+            let before = evs.len();
+            evs.retain(|e| !matches!(e, oxide_fw_dev::FileEvent::Created(p) if modded.contains(p)));
+            if evs.len() != before {
+                tracing::info!(
+                    dropped = before - evs.len(),
+                    "§3.9: dropped Created events shadowed by Modified in same batch"
+                );
+            }
+            evs
+        };
         for ev in events {
             tracing::info!(?ev, "file change");
             outln!(w, "change: {ev:?}");
@@ -2718,7 +2745,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                         }
                     }
                 }
-                let kind = oxide_fw_dev::classify_path(&pstr);
+                let kind = oxide_fw_dev::classify_event(&ev);
                 match oxide_fw_dev::hmr_behavior(kind) {
                     HmrBehavior::StyleSwap => {
                         // ESM mode: a CSS file in `src/` is imported through a

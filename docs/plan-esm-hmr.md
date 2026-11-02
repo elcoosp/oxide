@@ -97,6 +97,7 @@ Each item is a Playwright test to add (and where relevant, a small fix to make i
 - Edit `src/routes/layout.tsx` header text; assert the page updates; `timeOrigin` unchanged. **3h.**
 - **STATUS (recon 2026-11-02): NOT a test-only item.** `classify_path` treats `layout.tsx` as structural → `RestartSubsystems` → `HmrMessage::FullReload { reason: "route tree rebuilt" }`. Current behavior: the page RELOADS; `timeOrigin` changes. The in-place path requires `classify_path(&str)` to become `classify_event(&FileEvent)` so `Modified` on an existing layout routes to `AdapterHmr` while `Created`/`Removed` still triggers a rescan. That is §3.9 work. A pinning test (`HMR: layout edit reloads the page`) lands in `tests/playwright/tests/hmr.spec.ts` and will correctly fail when §3.9 lands, prompting the acceptance-criteria update.
 
+- **STATUS (recon 2026-11-02): DONE via §3.9.** `classify_event` routes `Modified(routes/layout.tsx)` to `ChangeKind::Component` -> `AdapterHmr` -> `ModuleUpdate`, so the layout updates in place. The pinning test was rewritten as `HMR: layout edit updates DOM in place, no reload (Tier 2.2)`, which asserts `timeOrigin` UNCHANGED and now passes. The spurious-`Created`-on-existing-file case that FSEvents emits is handled by a birthtime check inside `classify_event`.
 #### 2.3 — Route loader (`page.server.ts`) HMR
 - Edit a loader; assert the returned data is reflected in the DOM via `ox:data`. **4h.**
 
@@ -245,7 +246,7 @@ A tier is **done** when every item in it:
 - [ ] 1.4 CSS Modules
 - [ ] 1.5 Server function hot-swap
 - [x] 2.1 Island HMR
-- [ ] 2.2 Layout HMR
+- [x] 2.2 Layout HMR
 - [x] 2.3 Route loader (`page.server.ts`) HMR
 - [x] 2.4 State preservation
 - [x] 2.5 Error overlay + recovery
@@ -267,7 +268,7 @@ A tier is **done** when every item in it:
 - [ ] 3.6 Multi-worker hub isolation
 - [ ] 3.7 Perf benchmarks
 - [ ] 3.8 Cache-buster memory bound
-- [ ] 3.9 Route edits hot-swap
+- [x] 3.9 Route edits hot-swap
 - [ ] 3.10 Client survives transient dev-server outages
 - [x] 4.1 Playwright in CI
 - [x] 4.2 Spec dead-code cleanup

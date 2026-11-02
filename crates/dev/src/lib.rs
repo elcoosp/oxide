@@ -299,6 +299,105 @@ pub fn classify_path(path: &str) -> ChangeKind {
     }
 }
 
+/// Event-aware classification (§3.9). Where [`classify_path`] sees only a
+/// path string, this sees the [`FileEvent`] kind, which distinguishes a
+/// CONTENT edit to an existing route file from a CREATE/DELETE of one.
+///
+/// The distinction matters for HMR: a `Modified` edit to
+/// `routes/layout.tsx` (or `page.tsx`, `error.tsx`, etc.) only changed the
+/// module body — the route still exists, so the client can re-import the
+/// module and let React Refresh apply it in place. A `Created` or
+/// `Removed` edit changed the route TREE and requires a rescan.
+///
+/// Prefer this over [`classify_path`] whenever the event kind is in scope.
+/// `classify_path` remains for callers that only have a path string
+/// (a path alone cannot distinguish the two cases, so it conservatively
+/// treats route-file edits as structural).
+///
+/// `route.*` and `socket.*` are always structural even on `Modified`:
+/// those files define endpoints/dispatch tables whose identity, not just
+/// body, is semantically load-bearing.
+pub fn classify_event(ev: &FileEvent) -> ChangeKind {
+    // §3.9: notify (especially FSEvents on macOS) reports some in-place
+    // writes as Created, because the write path can go through temp+rename
+    // and the kernel delivers a rename-create for a file that already
+    // existed. A content edit to `routes/layout.tsx` therefore arrives as
+    // either Created (spurious) or Modified (correct) depending on the
+    // FS write pattern and the debounce window.
+    //
+    // Distinguish "actually new" from "spurious Created" via the file's
+    // birth time: a file born >1s ago is not new — the event is a body
+    // edit for an existing file. Rewrite to Modified before classifying.
+    //
+    // The 1s threshold is generous by design. A genuine new file has
+    // birthtime within the last few ms; anything older is definitionally
+    // an existing file being edited.
+    let effective_ev: FileEvent = if let FileEvent::Created(path) = ev {
+        let is_old = std::fs::metadata(path)
+            .and_then(|m| m.created())
+            .ok()
+            .and_then(|born| std::time::SystemTime::now().duration_since(born).ok())
+            .map(|d| d > std::time::Duration::from_millis(1000));
+        if is_old.unwrap_or(false) {
+            FileEvent::Modified(path.clone())
+        } else {
+            ev.clone()
+        }
+    } else {
+        ev.clone()
+    };
+    let ev = &effective_ev;
+    let path = match ev {
+        FileEvent::Modified(p) | FileEvent::Created(p) | FileEvent::Removed(p) => p,
+    };
+    let pstr = path.to_string_lossy();
+    let lower = pstr.to_ascii_lowercase();
+
+    // Anything `classify_path` already handles unambiguously — CSS,
+    // `.server.*` (loader vs. swap depends on the file name only), config
+    // — delegates. The event kind is irrelevant for those.
+    if lower.ends_with(".css")
+        || lower.ends_with(".scss")
+        || lower.ends_with(".sass")
+        || lower.ends_with(".server.ts")
+        || lower.ends_with(".server.tsx")
+        || lower.contains("oxide.config")
+    {
+        return classify_path(&pstr);
+    }
+
+    if lower.contains("routes/") {
+        let fname = lower.rsplit('/').next().unwrap_or("");
+
+        // Endpoint / dispatch definitions: identity is structural even when
+        // only the body was modified.
+        let always_structural = ["route.", "socket."];
+        if always_structural.iter().any(|p| fname.starts_with(p)) {
+            return ChangeKind::ConfigOrRoutes;
+        }
+
+        // Route-component files: Modified means in-place, Created/Removed
+        // means the tree changed.
+        let content_prefix = [
+            "page.", "layout.", "error.", "not-found.", "loading.", "template.",
+        ];
+        if content_prefix.iter().any(|p| fname.starts_with(p)) {
+            return match ev {
+                FileEvent::Modified(_) => ChangeKind::Component,
+                FileEvent::Created(_) | FileEvent::Removed(_) => ChangeKind::ConfigOrRoutes,
+            };
+        }
+
+        // Other files under `routes/` (e.g. shared components like
+        // `doc-body.tsx`) are pure modules; the event kind does not affect
+        // classification.
+        return ChangeKind::Component;
+    }
+
+    // Everything outside `routes/`: identical to classify_path.
+    classify_path(&pstr)
+}
+
 pub fn hmr_behavior(kind: ChangeKind) -> HmrBehavior {
     match kind {
         ChangeKind::Component => HmrBehavior::AdapterHmr,
