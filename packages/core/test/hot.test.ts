@@ -143,9 +143,21 @@ export const v = 1
   ;(globalThis as { __reload_test_fires?: number }).__reload_test_fires = 0
   await h.reloadModule(url)
   await h.reloadModule(url)
+  // COALESCE_MS=100 in hot.ts: the first call executes, the second (within
+  // the window) schedules a trailing call 100+20ms out. So immediately after
+  // both promises resolve, only ONE fire has happened — the second arrives
+  // via the trailing timer. This test predates 971e9831 (the commit that
+  // added coalescing) and had been failing since. The contract this test is
+  // *really* pinning — "no stacking, one fire per reload" — still holds;
+  // it just resolves asynchronously now.
+  const beforeTrailing =
+    (globalThis as { __reload_test_fires?: number }).__reload_test_fires ?? 0
+  assert.equal(beforeTrailing, 1, `before trailing timer: only the leading call has fired, got ${beforeTrailing}`)
+  // Wait past the trailing window (COALESCE_MS + 20 = 120ms) plus slack.
+  await new Promise((r) => setTimeout(r, 200))
   const fires =
     (globalThis as { __reload_test_fires?: number }).__reload_test_fires ?? 0
-  assert.equal(fires, 2, `each reload must fire exactly once, got ${fires}`)
+  assert.equal(fires, 2, `after trailing timer: each reload must fire exactly once, got ${fires}`)
 })
 
 test('data payload survives reloads for the same key', async () => {
