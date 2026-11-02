@@ -126,6 +126,7 @@ Each item is a Playwright test to add (and where relevant, a small fix to make i
 #### 2.10 — `oxide build` regression
 - `oxide build --root examples/smoke-app-react`; boot the built output; smoke-test islands. **3h.**
 
+- **STATUS (recon 2026-11-02): ALREADY COVERED.** The plan's recipe (`oxide build` → boot built output → smoke-test islands) is exactly what the whole Playwright suite does. `global-setup.ts` runs `oxide build --root examples/smoke-app-react` before any spec starts; `oxide start` serves the resulting `dist/`; `smoke.spec.ts` asserts SSR HTML, health endpoint, and browser-server equivalence; `island.spec.ts` asserts island markup + hydration + click state; and 8 sibling specs (`deferred`, `loading`, `middleware`, `no-js`, `og`, `socket`, `sse`, `sw`) exercise the built output as their runtime. No new test is warranted — §2.10's acceptance is met by the existing suite. One caveat: `global-setup.ts` caches on `dist/client/client.manifest.json` presence, so a source edit between runs serves the stale build. That is a dev-convenience trade-off, not a build-regression gap; a fresh clone or a `rm -rf examples/smoke-app-react/dist` exercises the full build path. If the cache ever masks a real build regression, delete it in `global-setup.ts` — but that costs 5-10s per `pnpm test` run and isn't warranted today.
 #### 2.11 — CSS HMR end-to-end
 - Edit `src/routes/*/page.css`; assert `<style data-oxide-css>` textContent changed. **3h.**
 
@@ -263,7 +264,7 @@ A tier is **done** when every item in it:
 - [x] 2.7 WebSocket reconnect
 - [x] 2.8 Malformed-file mid-edit
 - [ ] 2.9 `dev.esm: false` rollback
-- [ ] 2.10 `oxide build` regression
+- [x] 2.10 `oxide build` regression
 - [ ] 2.11 CSS HMR end-to-end
 - [ ] 2.12 `react-refresh` absent path
 - [x] 2.13 Cold-start race
