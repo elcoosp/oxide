@@ -221,7 +221,7 @@ A tier is **done** when every item in it:
 
 ## Tracking
 
-- [ ] 1.1 `strip_server_fn_imports` multi-name
+- [x] 1.1 `strip_server_fn_imports` multi-name
 - [ ] 1.2 `$RefreshSig$` real implementation
 - [ ] 1.3 Transitive dependency propagation
 - [ ] 1.4 CSS Modules
@@ -229,11 +229,11 @@ A tier is **done** when every item in it:
 - [ ] 2.1 Island HMR
 - [ ] 2.2 Layout HMR
 - [ ] 2.3 Route loader (`page.server.ts`) HMR
-- [ ] 2.4 State preservation
-- [ ] 2.5 Error overlay + recovery
+- [x] 2.4 State preservation
+- [x] 2.5 Error overlay + recovery
 - [ ] 2.6 Multi-client broadcast
 - [ ] 2.7 WebSocket reconnect
-- [ ] 2.8 Malformed-file mid-edit
+- [x] 2.8 Malformed-file mid-edit
 - [ ] 2.9 `dev.esm: false` rollback
 - [ ] 2.10 `oxide build` regression
 - [ ] 2.11 CSS HMR end-to-end
@@ -251,7 +251,7 @@ A tier is **done** when every item in it:
 - [ ] 3.8 Cache-buster memory bound
 - [ ] 3.9 Route edits hot-swap
 - [ ] 4.1 Playwright in CI
-- [ ] 4.2 Spec dead-code cleanup
+- [x] 4.2 Spec dead-code cleanup
 - [ ] 4.3 This file maintenance (ongoing)
 
 ## Total effort
