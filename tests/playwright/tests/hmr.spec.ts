@@ -120,8 +120,26 @@ test.beforeAll(async () => {
   )
 })
 
-test.afterAll(() => {
-  server?.kill('SIGTERM')
+test.afterAll(async () => {
+  // Await real process exit (see hmr-cold-start.spec.ts for the full
+  // rationale). Without it, a subsequent spec's `beforeAll` may spawn a
+  // dev server while this one is still draining — two watchers on the
+  // same source tree write the same .oxide/ cache and publish competing
+  // HMR events to whichever page happens to still be connected.
+  if (!server) return
+  const exited = new Promise<void>((resolve) => {
+    if (server!.exitCode !== null || server!.signalCode !== null) {
+      resolve()
+      return
+    }
+    server!.once('exit', () => resolve())
+  })
+  server.kill('SIGTERM')
+  const forceKill = setTimeout(() => {
+    try { server!.kill('SIGKILL') } catch { /* already gone */ }
+  }, 5000)
+  await exited
+  clearTimeout(forceKill)
 })
 
 // ---------------------------------------------------------------------------
@@ -682,8 +700,16 @@ test.describe('HMR runtime (browser)', () => {
       // Props { initial: 3 } → starts at 3; two clicks → 5.
       await expect(btn).toContainText('3')
       await btn.click()
+      // Intermediate assertion: ensures the first click's state has
+      // propagated before the second click. Two back-to-back clicks with
+      // no intermediate check race React's re-render + any in-flight HMR
+      // that fires between them; the fix is not to slow the clicks down
+      // but to VERIFY state between them, so a Refresh that remounts the
+      // island (state resets to initial=3) fails at a precise step rather
+      // than as an ambiguous "click lost" five seconds later.
+      await expect(btn).toContainText('4', { timeout: 5000 })
       await btn.click()
-      await expect(btn).toContainText('5')
+      await expect(btn).toContainText('5', { timeout: 5000 })
 
       // Edit the island file: add a sibling marker span inside the button.
       // Hook chain (useState first) is untouched, so React Refresh should

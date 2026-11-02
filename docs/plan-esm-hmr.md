@@ -241,7 +241,7 @@ A tier is **done** when every item in it:
 - [ ] 2.10 `oxide build` regression
 - [ ] 2.11 CSS HMR end-to-end
 - [ ] 2.12 `react-refresh` absent path
-- [ ] 2.13 Cold-start race
+- [x] 2.13 Cold-start race
 - [ ] 2.14 Firefox / WebKit
 - [ ] 2.15 Cold-start bound
 - [ ] 3.1 Server-side watcher debounce
