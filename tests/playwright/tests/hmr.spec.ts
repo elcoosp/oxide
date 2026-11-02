@@ -1013,4 +1013,89 @@ test.describe('HMR runtime (browser)', () => {
       await new Promise((r) => setTimeout(r, 1500))
     }
   })
+
+  test('HMR: burst touching N distinct files yields <= N module-update frames (Tier 3.2 diag)', async ({ page }) => {
+    test.setTimeout(90_000)
+    test.skip(!HMR_AVAILABLE, 'react-refresh not installed in smoke-app')
+
+    // §3.2 DIAGNOSTIC. Scenario: "git checkout <branch>" touches ~50 DISTINCT
+    // files. This test touches N=5 distinct component files in one burst and
+    // measures:
+    //   - delta == 1  -> §3.2 already satisfied (some path coalesces)
+    //   - delta == N  -> per-event dispatch, plan's batch fix warranted
+    //   - 2..N-1      -> partial coalescing
+    // The previous attempt wrote N times to the SAME file and got delta=1 —
+    // vacuous, because per-path content-hash dedup collapses same-file writes
+    // regardless of §3.2. This version is the real scenario.
+    const N = 5
+    const FILES: Array<{ path: string; pristine: string; marker: string }> = []
+    const candidates = [
+      { path: join(smokeRoot, 'src', 'components', 'hmr-target.tsx'), tag: 'hmr-target' },
+      { path: join(smokeRoot, 'src', 'islands', 'counter.tsx'), tag: 'counter' },
+      { path: join(smokeRoot, 'src', 'routes', 'index', 'page.tsx'), tag: 'page-index' },
+      { path: join(smokeRoot, 'src', 'routes', 'greeting', 'page.tsx'), tag: 'page-greeting' },
+      { path: join(smokeRoot, 'src', 'routes', 'nested', 'page.tsx'), tag: 'page-nested' },
+    ]
+    for (const c of candidates) {
+      const pristine = readFileSync(c.path, 'utf8')
+      // Append a harmless marker comment; content-hash differs per file, so
+      // each is a real Modified event. Comment style varies per file, so use
+      // a `/* ... */`-free single-line comment only when possible; fall back
+      // to appending a newline-anchored comment that TSX/TS both accept:
+      //   `// oxide-§3.2-diag-<tag>-<ts>`
+      const marker = `\n// oxide-§3.2-diag-${c.tag}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}\n`
+      FILES.push({ path: c.path, pristine, marker })
+    }
+
+    const hmrFrames: string[] = []
+    page.on('websocket', (ws) => {
+      if (ws.url().includes('/_oxide/hmr')) {
+        ws.on('framereceived', (eventOrPayload: unknown) => {
+          const raw =
+            eventOrPayload && typeof eventOrPayload === 'object'
+            && 'payload' in (eventOrPayload as object)
+              ? (eventOrPayload as { payload: unknown }).payload
+              : eventOrPayload
+          let text: string
+          if (typeof raw === 'string') text = raw
+          else if (raw instanceof ArrayBuffer || ArrayBuffer.isView(raw))
+            text = new TextDecoder().decode(raw as ArrayBuffer | ArrayBufferView)
+          else if (raw && typeof (raw as { toString?: unknown }).toString === 'function')
+            text = (raw as { toString(enc: string): string }).toString('utf8')
+          else text = String(raw)
+          hmrFrames.push(text)
+        })
+      }
+    })
+    const count = () => hmrFrames.filter((f) => f.includes('"type":"module-update"')).length
+
+    try {
+      await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 })
+      await page.waitForFunction(
+        () => typeof (window as { __oxideBoot?: unknown }).__oxideBoot !== 'undefined',
+        { timeout: 20_000 },
+      )
+      await new Promise((r) => setTimeout(r, 800))
+
+      const before = count()
+      // Burst: touch all N distinct files in one tight loop (no sleeps).
+      for (const f of FILES) {
+        writeFileSync(f.path, f.pristine + f.marker, 'utf8')
+      }
+
+      // Settle: wait for the burst to fully drain (each file's update lands
+      // as its own ModuleUpdate under the current dispatch; the final one
+      // is enough to prove dispatch completed).
+      await new Promise((r) => setTimeout(r, 3000))
+
+      const delta = count() - before
+      console.log(`[DIAG-3.2] distinct-files delta=${delta} (N=${N}, before=${before})`)
+
+      expect(delta, `§3.2 diag: ${delta} frames for ${N} DISTINCT file writes`).toBeGreaterThanOrEqual(1)
+      expect(delta, `§3.2 diag: ${delta} frames for ${N} DISTINCT file writes (per-event expected)`).toBeLessThanOrEqual(N)
+    } finally {
+      for (const f of FILES) writeFileSync(f.path, f.pristine, 'utf8')
+      await new Promise((r) => setTimeout(r, 2000))
+    }
+  })
 })
