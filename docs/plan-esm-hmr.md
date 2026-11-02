@@ -231,7 +231,7 @@ A tier is **done** when every item in it:
 - [x] 2.3 Route loader (`page.server.ts`) HMR
 - [x] 2.4 State preservation
 - [x] 2.5 Error overlay + recovery
-- [ ] 2.6 Multi-client broadcast
+- [x] 2.6 Multi-client broadcast
 - [ ] 2.7 WebSocket reconnect
 - [x] 2.8 Malformed-file mid-edit
 - [ ] 2.9 `dev.esm: false` rollback

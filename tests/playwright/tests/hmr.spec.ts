@@ -753,4 +753,79 @@ test.describe('HMR runtime (browser)', () => {
       await new Promise((r) => setTimeout(r, 1500))
     }
   })
+  test('HMR: two independent clients receive the same edit (Tier 2.6)', async ({ browser }) => {
+    test.setTimeout(90_000)
+    test.skip(!HMR_AVAILABLE, 'react-refresh not installed in smoke-app')
+
+    // Two browser contexts in the same worker. Each gets its own page, its
+    // own WS to /_oxide/hmr (opened by the per-page `connectHmr()` call in
+    // boot.ts), its own module cache, its own `performance.timeOrigin`.
+    // The dev server's HmrHub publishes over a `tokio::sync::broadcast`
+    // channel, so one edit reaches every subscriber — this test asserts
+    // that end-to-end from the client's side.
+    //
+    // Distinct from test 14 (`editing a component updates the DOM`), which
+    // proves ONE client receives an edit. This proves N.
+    const targetFile = join(smokeRoot, 'src', 'components', 'hmr-target.tsx')
+    const original = readFileSync(targetFile, 'utf8')
+    const marker = `MULTI-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+    const ctxA = await browser.newContext()
+    const ctxB = await browser.newContext()
+    const pageA = await ctxA.newPage()
+    const pageB = await ctxB.newPage()
+
+    try {
+      // Parallel navigation so both pages open their WS around the same tick.
+      // Base URL comes from `test.use({ baseURL })` at the top of this file.
+      await Promise.all([pageA.goto('/'), pageB.goto('/')])
+      await Promise.all([
+        pageA.waitForFunction(
+          () => typeof (window as { __oxideBoot?: unknown }).__oxideBoot !== 'undefined',
+          { timeout: 20_000 },
+        ),
+        pageB.waitForFunction(
+          () => typeof (window as { __oxideBoot?: unknown }).__oxideBoot !== 'undefined',
+          { timeout: 20_000 },
+        ),
+      ])
+      // Settle: a WS that opens a tick after __oxideBoot still has time to
+      // land before the edit fires.
+      await new Promise((r) => setTimeout(r, 500))
+
+      const originA = await pageA.evaluate(() => performance.timeOrigin)
+      const originB = await pageB.evaluate(() => performance.timeOrigin)
+
+      // One edit.
+      const patched = original.replace(/HMR-TARGET-ORIGINAL/, marker)
+      if (patched === original) throw new Error('hmr-target.tsx lost the HMR-TARGET-ORIGINAL marker')
+      writeFileSync(targetFile, patched, 'utf8')
+
+      // Both clients see it, in parallel.
+      await Promise.all([
+        expect(pageA.locator('h1[data-hmr-target]')).toHaveText(marker, { timeout: 15_000 }),
+        expect(pageB.locator('h1[data-hmr-target]')).toHaveText(marker, { timeout: 15_000 }),
+      ])
+
+      // Neither reloaded. This is the failure signature of a per-connection
+      // handler that fires on only one socket and forces the other to
+      // reload (e.g. a broadcast bug that drops the second subscriber).
+      expect(
+        await pageA.evaluate(() => performance.timeOrigin),
+        'client A must not reload on a broadcast edit',
+      ).toBe(originA)
+      expect(
+        await pageB.evaluate(() => performance.timeOrigin),
+        'client B must not reload on a broadcast edit',
+      ).toBe(originB)
+    } finally {
+      writeFileSync(targetFile, original, 'utf8')
+      // Close both contexts BEFORE the afterEach 2s settle: a live WS on
+      // close fires its `onclose` -> `setTimeout(open, reconnectMs)`, which
+      // races the next test's beforeEach if the contexts stay open.
+      await ctxA.close()
+      await ctxB.close()
+      await new Promise((r) => setTimeout(r, 1500))
+    }
+  })
 })
