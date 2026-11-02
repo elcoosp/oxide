@@ -355,7 +355,7 @@ test.describe('HMR runtime (browser)', () => {
   //    Scoped to this describe block so the fast structural tests aren't
   //    slowed.
   const HM_FIXTURE = join(smokeRoot, 'src', 'components', 'hmr-target.tsx')
-  const HM_PRISTINE = `export default function HmrTarget() {\n  return <h1 data-hmr-target="">HMR-TARGET-ORIGINAL</h1>\n}\n`
+  const HM_PRISTINE = `import { useState } from 'react'\n\nexport default function HmrTarget() {\n  const [count, setCount] = useState(0)\n  return (\n    <>\n      <h1 data-hmr-target="">HMR-TARGET-ORIGINAL</h1>\n      <button data-hmr-counter="" onClick={() => setCount(count + 1)}>{count}</button>\n    </>\n  )\n}\n`
   test.beforeEach(async () => {
     let cur = ''
     try { cur = readFileSync(HM_FIXTURE, 'utf8') } catch { cur = '' }
@@ -524,6 +524,56 @@ test.describe('HMR runtime (browser)', () => {
           await page.evaluate(() => (window as unknown as { __hmrSession?: string }).__hmrSession),
         ).toBe(sessionMarker)
       }
+    } finally {
+      writeFileSync(targetFile, original, 'utf8')
+      await new Promise((r) => setTimeout(r, 1500))
+    }
+  })
+  test('HMR: state preservation across edit (Tier 2.4)', async ({ page }) => {
+    test.setTimeout(60_000)
+    test.skip(!HMR_AVAILABLE, 'react-refresh not installed in smoke-app')
+
+    const targetFile = join(smokeRoot, 'src', 'components', 'hmr-target.tsx')
+    const original = readFileSync(targetFile, 'utf8')
+    const marker = `HMR-STATE-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+    try {
+      await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 })
+      await page.waitForFunction(
+        () => typeof (window as { __oxideBoot?: unknown }).__oxideBoot !== 'undefined',
+        { timeout: 20_000 },
+      )
+      await new Promise((r) => setTimeout(r, 500))
+
+      const timeOrigin = await page.evaluate(() => performance.timeOrigin)
+
+      // Bump state to a non-zero value. If HMR remounts (Refresh fallback)
+      // or reloads (no Refresh), this resets to 0 — the failure signature.
+      const counter = page.locator('button[data-hmr-counter]')
+      await counter.click()
+      await counter.click()
+      await counter.click()
+      await expect(counter).toHaveText('3')
+
+      // Edit: change marker text, preserve hook chain (useState still first).
+      // React Refresh must apply the new render in place.
+      const patched = original.replace(/HMR-TARGET-ORIGINAL/, marker)
+      if (patched === original) {
+        throw new Error('hmr-target.tsx lost the HMR-TARGET-ORIGINAL marker')
+      }
+      writeFileSync(targetFile, patched, 'utf8')
+
+      // 1. Edit applied (marker updated).
+      await expect(page.locator('h1[data-hmr-target]')).toHaveText(marker, {
+        timeout: 12_000,
+      })
+      // 2. State preserved (count still 3, not 0).
+      await expect(counter).toHaveText('3')
+      // 3. No page reload.
+      expect(
+        await page.evaluate(() => performance.timeOrigin),
+        'HMR must not reload when state is preserved',
+      ).toBe(timeOrigin)
     } finally {
       writeFileSync(targetFile, original, 'utf8')
       await new Promise((r) => setTimeout(r, 1500))
