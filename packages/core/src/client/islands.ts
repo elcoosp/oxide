@@ -210,5 +210,11 @@ export function hydrateIslands(opts: IslandsOptions): () => void {
 function defaultLoadChunk(chunk: string): Promise<unknown> {
   // Dynamic import with a variable specifier; bundlers mark it external via
   // the /* oxide:island */ comment (each island is its own chunk, §10.3).
-  return import(/* oxide:island */ chunk)
+  // §3.10: catch here so a transient dev-server outage leaves an unhandled
+  // rejection only at the caller's log, not at the page — the island is
+  // skipped, its SSR markup stays, hydration resumes on a later scan.
+  return import(/* oxide:island */ chunk).catch((e: unknown) => {
+    console.error?.('[oxide] island chunk fetch failed; island deferred', chunk, e)
+    return undefined
+  })
 }

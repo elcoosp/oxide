@@ -50,7 +50,13 @@ function ensureInstalled(w: BootWindow): void {
   if (w.__oxideRegisterAdapter) return
   w.__oxideBoot = {
     loadChunk: async (chunk) => {
-      return await import(/* @vite-ignore */ chunk)
+      // §3.10: catch so an outage leaves a log, not a page-level rejection.
+      try {
+        return await import(/* @vite-ignore */ chunk)
+      } catch (e) {
+        console.error?.('[oxide] chunk load failed; deferred', chunk, e)
+        return undefined
+      }
     },
   }
   w.__oxideRegisterAdapter = (adapter, loadChunk) => {
@@ -197,7 +203,14 @@ export function bootWithRouter(
   }
 
   const loadChunk =
-    w.__oxideBoot?.loadChunk ?? (async (c: string) => import(/* @vite-ignore */ c))
+    w.__oxideBoot?.loadChunk ?? (async (c: string) => {
+      try {
+        return await import(/* @vite-ignore */ c)
+      } catch (e) {
+        console.error?.('[oxide] chunk load failed (fallback); deferred', c, e)
+        return undefined
+      }
+    })
 
   // §6.4 + §8.4/§10.3: register the manifest + chunk loader BEFORE the root
   // hydrates so every adapter's hydrate()/mount()/update() resolves REAL
