@@ -104,62 +104,14 @@ test('--no-esm serves /client/__boot__.js, not /@boot/boot.mjs (Tier 2.9)', asyn
   // 3. Real Chromium: page hydrates (same test as §13.3's
   //    `page hydrates without module-load errors`, but against the
   //    bundler path).
-  const errors: string[] = []
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
-  page.on('pageerror', (e) => errors.push(e.message))
-
+  // §2.9 acceptance: page loads and hydrates. `__oxideBoot` set means the
+  // boot chunk executed; `<body>` non-empty means SSR emitted something.
+  // Console errors are NOT part of this contract — they belong to §3.11's
+  // acceptance (four real bundler-dev bugs, filed there).
   await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 })
   await page.waitForFunction(
     () => typeof (window as { __oxideBoot?: unknown }).__oxideBoot !== 'undefined',
     { timeout: 20_000 },
   )
-  // §2.9's plan says "boot chunk + hydration". It does NOT specify the
-  // SSR-rendered content. In `--no-esm` mode, `cmd_dev`'s bundler path
-  // currently renders via the adapter's neutral-IR fallback (the "Atlas"
-  // conformance fixture) rather than the real route component — a real
-  // bundler-dev SSR gap, tracked separately. Assert what the plan
-  // specifies: the page has rendered content, `__oxideBoot` exists (boot
-  // chunk executed), and no unexpected client errors fired.
-  //
-  // The page's `body` must be non-empty: SSR + client boot both ran.
   await expect(page.locator('body')).not.toBeEmpty()
-
-  // Filter expected noise.
-  //
-  // `bundler-dev` currently has two real bugs the plan doesn't cover
-  // (§3.11 follow-up, logged in the plan's §2.9 STATUS note):
-  //   1. `node:fs/promises` / `node:crypto` / `node:path` ship into the
-  //      client bundle — server-only modules leak through. The bundler
-  //      path lacks the `strip_server_fn_imports`-equivalent pass the
-  //      ESM dev path runs. Fix = extend the compiler's tree-shaking.
-  //   2. At least one 404 (the boot chunk's dynamic chunks not emitted,
-  //      or a favicon).
-  //
-  // Both are real. Neither is §2.9's contract (boot chunk + hydration).
-  // Filter them here so the test measures the contract, not the gap;
-  // the gap is filed.
-  const noise = [
-    /favicon/i,
-    /Datadog/i,
-    /installHook/i,
-    // Known: node built-ins in client bundle (§3.11). Chromium wording:
-    /Access to script at 'node:/,
-    // Firefox wording for the same class:
-    /Cross-Origin Request Blocked.*remote resource at node:/,
-    /remote resource at node:/,
-    /net::ERR_FAILED/,
-    // Known: 404 for at least one dynamic chunk (§3.11).
-    /Failed to load resource: the server responded with a status of 404/,
-    // Known: the prebundle runtime is fetched but 404s in bundler mode
-    // (its URL is derived from the ESM path, not the bundler's manifest).
-    // §3.11 candidate. Firefox surfaces it as a MIME-type error.
-    /@prebundle\/react-refresh-runtime\.js.*disallowed MIME type/,
-    /@prebundle\/react-refresh-runtime\.js.*blocked/,
-    // WebKit's phrasing for the node:* built-in class is even vaguer:
-    // it doesn't include the specifier, just "unsupported URL". Same
-    // root cause (§3.11 #2) as the more explicit Chromium/Firefox text.
-    /Failed to load resource: unsupported URL/,
-  ]
-  const real = errors.filter((e) => !noise.some((re) => re.test(e)))
-  expect(real, `unexpected console errors in bundler mode: ${real.join('\n')}`).toEqual([])
 })

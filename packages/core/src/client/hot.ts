@@ -255,9 +255,33 @@ function install(): void {
   if (typeof g.$RefreshRuntime$ === 'undefined') {
     const nav = (typeof window !== 'undefined' ? window : globalThis) as unknown as {
       location?: { protocol: string }
+      document?: { querySelectorAll(s: string): ArrayLike<{ getAttribute?(a: string): string | null }> }
     }
     const scheme = nav.location?.protocol ?? ''
+    // §3.11 / BUG 3: fetch the /@prebundle/ runtime ONLY in the native-ESM
+    // dev server. The URL exists nowhere else — not in `oxide build` output,
+    // not in `--no-esm` bundler mode. Unconditionally fetching it (the
+    // previous behaviour) 404s on every bundler-mode page load (Chromium
+    // logs `Failed to load resource`, Firefox a MIME-type block because the
+    // 404 body is HTML, WebKit `unsupported URL`).
+    //
+    // Same detection boot.ts uses (boot.ts:323-330): scan
+    // `<script type=module>` tags for `/@boot/` or `/@prebundle/`. Both
+    // exist only in ESM mode.
+    let isEsmDev = false
     if (scheme === 'http:' || scheme === 'https:') {
+      const scripts = nav.document?.querySelectorAll('script[type="module"]')
+      if (scripts) {
+        for (let i = 0; i < scripts.length; i++) {
+          const src = scripts[i]?.getAttribute?.('src') ?? ''
+          if (src.includes('/@boot/') || src.includes('/@prebundle/')) {
+            isEsmDev = true
+            break
+          }
+        }
+      }
+    }
+    if (isEsmDev) {
       // Deferred: a non-awaited dynamic import. The `@prebundle` path is only
       // valid in dev (the dev server owns `/@`), so a 404 there is expected
       // outside `oxide dev`.
