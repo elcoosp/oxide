@@ -579,4 +579,46 @@ test.describe('HMR runtime (browser)', () => {
       await new Promise((r) => setTimeout(r, 1500))
     }
   })
+  test('HMR: broken edit shows overlay without reload, fix clears it (Tier 2.5 + 2.8)', async ({ page }) => {
+    test.setTimeout(60_000)
+    test.skip(!HMR_AVAILABLE, 'react-refresh not installed in smoke-app')
+
+    const targetFile = join(smokeRoot, 'src', 'components', 'hmr-target.tsx')
+    const original = readFileSync(targetFile, 'utf8')
+    const fixedMarker = `HMR-FIXED-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+    try {
+      await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 })
+      await page.waitForFunction(
+        () => typeof (window as { __oxideBoot?: unknown }).__oxideBoot !== 'undefined',
+        { timeout: 20_000 },
+      )
+      await new Promise((r) => setTimeout(r, 500))
+
+      const timeOrigin = await page.evaluate(() => performance.timeOrigin)
+
+      // Syntactically broken TSX → Oxc rejects → import() throws → overlay.
+      writeFileSync(targetFile, 'export default function HmrTarget() {\n  return <h1>BROKEN\n', 'utf8')
+      await expect(page.locator('#ox-hmr-overlay')).toBeVisible({ timeout: 12_000 })
+      expect(
+        await page.evaluate(() => performance.timeOrigin),
+        'broken edit must show the overlay WITHOUT reloading',
+      ).toBe(timeOrigin)
+
+      // Fix → module-update clears overlay → in-place React Refresh.
+      const fixed = original.replace(/HMR-TARGET-ORIGINAL/, fixedMarker)
+      if (fixed === original) throw new Error('hmr-target.tsx lost the HMR-TARGET-ORIGINAL marker')
+      writeFileSync(targetFile, fixed, 'utf8')
+
+      await expect(page.locator('#ox-hmr-overlay')).toHaveCount(0, { timeout: 15_000 })
+      await expect(page.locator('h1[data-hmr-target]')).toHaveText(fixedMarker, { timeout: 12_000 })
+      expect(
+        await page.evaluate(() => performance.timeOrigin),
+        'fixing a broken edit must not reload either',
+      ).toBe(timeOrigin)
+    } finally {
+      writeFileSync(targetFile, original, 'utf8')
+      await new Promise((r) => setTimeout(r, 1500))
+    }
+  })
 })

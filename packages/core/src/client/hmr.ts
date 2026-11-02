@@ -175,6 +175,19 @@ async function refreshRouteData(odfB64: string): Promise<void> {
   }
 }
 
+/**
+ * Remove the diagnostic overlay if present. Called when a subsequent
+ * `module-update` (or successful re-import) proves the earlier diagnostic is
+ * stale — the user fixed the file and the next edit applied cleanly.
+ */
+export function clearOverlay(parent?: HTMLElement): void {
+  const doc = (globalThis as { document?: Document }).document
+  if (!doc) return
+  const root = parent ?? doc.body
+  const el = root?.querySelector?.('#ox-hmr-overlay') ?? doc.getElementById('ox-hmr-overlay')
+  if (el) el.remove()
+}
+
 /** Apply one HMR message. Returns true when handled. */
 export function applyHmrMessage(msg: HmrMessage, opts: HmrOptions = {}): boolean {
   const doc = (globalThis as { document?: Document }).document
@@ -199,6 +212,9 @@ export function applyHmrMessage(msg: HmrMessage, opts: HmrOptions = {}): boolean
     case 'module-update': {
       const path = String(msg.path ?? '')
       const url = typeof msg.url === 'string' ? msg.url : ''
+      // A fresh module update supersedes any earlier diagnostic; the user
+      // fixed the file, the rebuild succeeded, the overlay is stale.
+      clearOverlay(opts.overlayParent)
       // ESM dev: `url` is the source URL the browser fetched, so route the
       // reload through the HMR runtime's `reloadModule`. Phase 2 does a full
       // page reload; Phase 3 upgrades that to React Refresh in place.

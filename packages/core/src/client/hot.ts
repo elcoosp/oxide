@@ -1,3 +1,4 @@
+import { showOverlay } from './hmr.ts'
 // HMR runtime for the Native ESM dev server (Phase 1).
 //
 // Auto-installs on first import (module side-effect) so any module imported
@@ -138,11 +139,17 @@ function install(): void {
       try {
         fresh = await import(/* @vite-ignore */ freshUrl)
       } catch (err) {
-        // A transform/parse error after save should surface to the user —
-        // fall through to a full reload so the diagnostic overlay (which the
-        // dev server publishes) can render.
+        // Tier 2.5 + 2.8: a transform/parse error must surface WITHOUT
+        // discarding the current page state. Show the diagnostic overlay
+        // and keep the previous DOM; the next successful save fires
+        // `clearOverlay()` in `applyHmrMessage`'s `module-update` case and
+        // the fresh import applies the edit in place.
         console.error('[oxide] module reload failed:', url, err)
-        if (typeof location !== 'undefined') location.reload()
+        showOverlay({
+          code: 'HMR-IMPORT',
+          message: err instanceof Error ? err.message : String(err),
+          fix: 'fix the file and save again — no reload needed',
+        })
         return
       }
       const freshMod = modules.get(url)

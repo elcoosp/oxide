@@ -2612,6 +2612,13 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                         let _ = enrich_manifest_layout_chains(&manifest_path, &live_tree);
                         consolidate_tailwind_css_and_manifest(&rootp);
                         client_rebuilt = true;
+                        // A successful rebuild supersedes any previous
+                        // failure. Without this reset, once a rebuild failed,
+                        // `client_rebuild_error` stayed `Some` for the rest of
+                        // the dev session and every subsequent AdapterHmr
+                        // event re-published `HmrMessage::Error` — the
+                        // overlay could never clear.
+                        client_rebuild_error = None;
                     }
                     Err(e) => {
                         client_rebuild_error = Some(format!("{e}"));
