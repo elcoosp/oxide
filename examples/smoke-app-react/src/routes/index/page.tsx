@@ -10,6 +10,7 @@ import { greet } from '../../greeting.server.ts'
 const greetingFnId = greet.id
 import Counter from '../../islands/counter.tsx'
 import HmrTarget from '../../components/hmr-target.tsx'
+import './page.css'
 
 export default function Page() {
   return (

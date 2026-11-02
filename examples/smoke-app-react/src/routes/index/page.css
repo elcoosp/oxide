@@ -1,0 +1,10 @@
+/* §2.11 CSS HMR fixture. The dev server rewrites
+   `import './page.css'` → `import '/@css/routes/index/page.css'` and
+   serves a self-accepting module that injects
+   `<style data-oxide-css="routes/index/page.css">` into <head>. Editing
+   this file publishes a ModuleUpdate for the /@css/ URL; the client's
+   reloadModule re-imports it, the module body re-runs, finds the existing
+   <style>, and replaces its textContent. No React refresh, no reload. */
+h1[data-hmr-target] {
+  color: rgb(10, 20, 30);
+}

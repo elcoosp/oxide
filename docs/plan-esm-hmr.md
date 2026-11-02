@@ -265,7 +265,7 @@ A tier is **done** when every item in it:
 - [x] 2.8 Malformed-file mid-edit
 - [ ] 2.9 `dev.esm: false` rollback
 - [x] 2.10 `oxide build` regression
-- [ ] 2.11 CSS HMR end-to-end
+- [x] 2.11 CSS HMR end-to-end
 - [ ] 2.12 `react-refresh` absent path
 - [x] 2.13 Cold-start race
 - [x] 2.14 Firefox / WebKit

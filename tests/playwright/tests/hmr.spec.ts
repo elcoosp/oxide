@@ -393,12 +393,15 @@ test.describe('HMR runtime (browser)', () => {
   const LOADER_PRISTINE = readFileSync(LOADER_PATH, 'utf8')
   const LAYOUT_PATH = join(smokeRoot, 'src', 'routes', 'layout.tsx')
   const LAYOUT_PRISTINE = readFileSync(LAYOUT_PATH, 'utf8')
+  const PAGE_CSS_PATH = join(smokeRoot, 'src', 'routes', 'index', 'page.css')
+  const PAGE_CSS_PRISTINE = readFileSync(PAGE_CSS_PATH, 'utf8')
 
   const FIXTURES: ReadonlyArray<{ path: string; pristine: string }> = [
     { path: HM_FIXTURE, pristine: HM_PRISTINE },
     { path: ISLAND_PATH, pristine: ISLAND_PRISTINE },
     { path: LOADER_PATH, pristine: LOADER_PRISTINE },
     { path: LAYOUT_PATH, pristine: LAYOUT_PRISTINE },
+    { path: PAGE_CSS_PATH, pristine: PAGE_CSS_PRISTINE },
   ]
 
   const restoreFixtures = (): boolean => {
@@ -1136,6 +1139,94 @@ test.describe('HMR runtime (browser)', () => {
     } finally {
       for (const f of FILES) writeFileSync(f.path, f.pristine, 'utf8')
       await new Promise((r) => setTimeout(r, 2000))
+    }
+  })
+
+  test('HMR: CSS edit updates the injected <style> without reload (Tier 2.11)', async ({ page }) => {
+    test.setTimeout(60_000)
+
+    // §2.11 CSS HMR end-to-end. Path (verified by recon):
+    //   1. `routes/index/page.tsx` imports './page.css'
+    //   2. dev rewrites it to `import '/@css/routes/index/page.css'`
+    //   3. the /@css/ module self-accepts and injects
+    //      `<style data-oxide-css="routes/index/page.css">` into <head>
+    //   4. editing page.css publishes
+    //      `ModuleUpdate { url: '/@css/routes/index/page.css' }`
+    //   5. reloadModule re-imports the module; the module body re-runs,
+    //      finds the existing <style>, replaces its textContent
+    //   6. no React refresh, no reload
+    //
+    // The `<style>` element is injected CLIENT-SIDE — the SSR HTML never
+    // contains it. So the wait is for the attribute to appear on document.head,
+    // not for anything in the initial response.
+    //
+    // `data-oxide-css` holds the id the /@css/ module chose, which is the
+    // path relative to `src/` (see `resolve_css_url`): "routes/index/page.css".
+    const STYLE_SELECTOR = 'style[data-oxide-css="routes/index/page.css"]'
+
+    const original = PAGE_CSS_PRISTINE
+    const initialColor = 'rgb(10, 20, 30)'
+    const editedColor = 'rgb(40, 50, 60)'
+    if (!original.includes(initialColor)) {
+      throw new Error(`page.css pristine missing ${initialColor}; got: ${original.slice(0, 120)}`)
+    }
+
+    try {
+      await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 })
+      await page.waitForFunction(
+        () => typeof (window as { __oxideBoot?: unknown }).__oxideBoot !== 'undefined',
+        { timeout: 20_000 },
+      )
+      // Wait for the /@css/ module to run and inject the <style>. The module
+      // is a side-effect import in the boot graph; it can run a beat after
+      // __oxideBoot on a loaded machine.
+      await page.waitForFunction(
+        (sel: string) => document.head?.querySelector(sel) !== null,
+        STYLE_SELECTOR,
+        { timeout: 15_000 },
+      )
+      // Confirm the initial textContent before editing — if it's already the
+      // edited value (fixture guard failed to restore), the test would pass
+      // vacuously.
+      const initialText = await page.evaluate(
+        (sel: string) => document.head?.querySelector(sel)?.textContent ?? '',
+        STYLE_SELECTOR,
+      )
+      expect(initialText, 'pristine <style> textContent must include the initial color').toContain(initialColor)
+
+      const timeOrigin = await page.evaluate(() => performance.timeOrigin)
+
+      // ONE edit. Swap the color literal — the rest of the file (comments,
+      // selector) stays identical, so the diff is minimal and the served
+      // module's CSS string is guaranteed to change.
+      const patched = original.replace(initialColor, editedColor)
+      if (patched === original) throw new Error('page.css: color swap no-op')
+      writeFileSync(PAGE_CSS_PATH, patched, 'utf8')
+
+      // The <style> textContent must reflect the new color. Failure here
+      // means the /@css/ module was re-imported but the style was not
+      // updated (bug in the module body or in reloadModule's accept flow),
+      // OR the ModuleUpdate never fired (bug in the watcher's StyleSwap
+      // branch or the ESM-mode detection).
+      await expect
+        .poll(
+          () =>
+            page.evaluate(
+              (sel: string) => document.head?.querySelector(sel)?.textContent ?? '',
+              STYLE_SELECTOR,
+            ),
+          { timeout: 15_000 },
+        )
+        .toContain(editedColor)
+
+      // No reload: the CSS update is an in-place textContent swap.
+      expect(
+        await page.evaluate(() => performance.timeOrigin),
+        'CSS HMR must not reload the page',
+      ).toBe(timeOrigin)
+    } finally {
+      writeFileSync(PAGE_CSS_PATH, original, 'utf8')
+      await new Promise((r) => setTimeout(r, 1500))
     }
   })
 })
