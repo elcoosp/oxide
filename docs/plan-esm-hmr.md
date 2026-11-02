@@ -199,6 +199,11 @@ Each item is a Playwright test to add (and where relevant, a small fix to make i
 - **Fix:** in-process broadcast across workers, or a shared file/redis channel.
 - **Effort:** 3h.
 
+- **STATUS (recon 2026-11-02): DONE, but the plan's premise was wrong.** The plan said "each process has its own broadcast; a WS to server A does not see edits on server B" — implying this is a limitation to fix with "in-process broadcast across workers, or a shared file/redis channel." **That is CORRECT behaviour, not a bug.** Two independent apps (e.g. `smoke-app-react` on port 3102, `smoke-app-solid` on 3197) run separate dev servers watching separate source trees; cross-delivering HMR messages would be a REGRESSION — a React fixture edit forcing a reload in an unrelated Solid app on a different port. The correct design is what `HmrHub` already provides: one process, one broadcast channel, one WS endpoint per app.
+- **The other reading** — "two `oxide dev` instances watching the SAME project" — also resolves correctly: both processes watch the same filesystem events independently, each publishes its own ModuleUpdates to its own WS clients. Nothing is shared, nothing is missing.
+- **Test** (`tests/playwright/tests/hmr-isolation.spec.ts`): spawns BOTH `smoke-app-react` (port 3116) and `smoke-app-solid` (port 3117), opens a browser tab against each, opens a WS per tab (via `page.on('websocket')`). Edits ONLY the React fixture. Asserts: (a) React's WS receives the ModuleUpdate; (b) Solid's WS receives ZERO new frames in a 3-second window. A cross-process broadcast (the plan's "fix") would fail this test at (b) — pinning isolation as the CORRECT contract, not a gap.
+- **Test-side fixture guard:** `hmr-target.tsx` (React) is NOT git-tracked, pristine bytes hardcoded (same pattern as §2.4/§2.13). Restored in `afterEach`. Both servers awaited-exit in `afterAll` (same SIGTERM + 5s SIGKILL pattern as every other isolated spec).
+- **What remains a real gap (NOT this item):** running two `oxide dev` instances against the SAME project races on `.oxide/` and `dist/client/` — a build-artifact-lock problem, not a hub-broadcast problem. That's a different Tier-3 item if it ever matters (an unusual dev setup; most users run one dev server per app). Not filing it because the failure mode is loud (files overwrite each other, one server's build is stale) not silent.
 #### 3.7 — Perf benchmarks
 - **What:** no measurement of "write → DOM update" latency. Regression from 25ms → 800ms would not trip any test.
 - **Fix:** small corpus + assert `<100ms` on local hardware.
@@ -302,7 +307,7 @@ A tier is **done** when every item in it:
 - [x] 3.3 Prebundle invalidation
 - [x] 3.4 `import.meta.env.X` HMR
 - [x] 3.5 Worker thread `import.meta.hot`
-- [ ] 3.6 Multi-worker hub isolation
+- [x] 3.6 Multi-worker hub isolation
 - [ ] 3.7 Perf benchmarks
 - [x] 3.8 Cache-buster memory bound
 - [x] 3.9 Route edits hot-swap
