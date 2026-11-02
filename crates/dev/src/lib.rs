@@ -156,15 +156,26 @@ impl Watcher {
         backend: &NotifyBackend,
         seen: &mut BTreeSet<(PathBuf, String)>,
     ) -> Result<Vec<FileEvent>> {
-        // Debounce: give the filesystem a moment to settle, then drain
-        // everything queued (editors write in bursts — save, temp, rename).
-        std::thread::sleep(self.debounce);
+        // §3.7 latency fix: debounce ONLY when events are queued. Before
+        // this, every poll cycle slept `self.debounce` (30ms) even on an
+        // idle filesystem — which meant (a) every write paid 30ms on top of
+        // the outer poll interval, and (b) every outer cycle blocked the
+        // tokio runtime for 30ms regardless of whether anything had
+        // happened. Peek first; only sleep when there is something to
+        // settle.
         let mut touched: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
         while let Ok(p) = backend.rx.try_recv() {
             touched.insert(p);
         }
         if touched.is_empty() {
             return Ok(Vec::new());
+        }
+        // There ARE events — give the filesystem a moment to settle
+        // (editors write in bursts: save, temp, rename), then drain
+        // everything queued during the settle.
+        std::thread::sleep(self.debounce);
+        while let Ok(p) = backend.rx.try_recv() {
+            touched.insert(p);
         }
         let mut events = Vec::new();
         for path in touched {
