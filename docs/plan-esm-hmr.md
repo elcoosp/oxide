@@ -260,7 +260,7 @@ A tier is **done** when every item in it:
 - [x] 2.13 Cold-start race
 - [ ] 2.14 Firefox / WebKit
 - [ ] 2.15 Cold-start bound
-- [ ] 3.1 Server-side watcher debounce
+- [x] 3.1 Server-side watcher debounce
 - [ ] 3.2 Batch change detection
 - [ ] 3.3 Prebundle invalidation
 - [ ] 3.4 `import.meta.env.X` HMR

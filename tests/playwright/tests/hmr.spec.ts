@@ -931,4 +931,86 @@ test.describe('HMR runtime (browser)', () => {
       await new Promise((r) => setTimeout(r, 1500))
     }
   })
+
+  test('HMR: one save yields exactly one module-update frame (Tier 3.1)', async ({ page }) => {
+    test.setTimeout(60_000)
+    test.skip(!HMR_AVAILABLE, 'react-refresh not installed in smoke-app')
+
+    // §3.1 acceptance criterion: the SERVER must publish one ModuleUpdate per
+    // save, not one per notify event. macOS FSEvents emits 3-8 raw events per
+    // writeFileSync; the watcher's 30ms `poll_notify` debounce collapses them
+    // today. If that debounce regressed, or if the CLI per-event dispatch
+    // produced extra publishes from a stale buffer drain, this catches it.
+    //
+    // Pure client-side measurement: capture the HMR WebSocket, count
+    // `"type":"module-update"` frames received across the save. The client
+    // COALESCE_MS collapses `reloadModule` calls, not wire frames, so it does
+    // not affect this count.
+    const targetFile = join(smokeRoot, 'src', 'components', 'hmr-target.tsx')
+    const original = readFileSync(targetFile, 'utf8')
+    const marker = `ONE-SAVE-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+    const hmrFrames: string[] = []
+    page.on('websocket', (ws) => {
+      if (ws.url().includes('/_oxide/hmr')) {
+        ws.on('framereceived', (eventOrPayload: unknown) => {
+          // Playwright's framereceived handler receives an EVENT OBJECT whose
+          // `.payload` is the actual data (string | Buffer). Older versions
+          // passed the payload directly. Handle both shapes; then decode the
+          // Buffer-like form via TextDecoder.
+          const raw =
+            eventOrPayload
+            && typeof eventOrPayload === 'object'
+            && 'payload' in (eventOrPayload as object)
+              ? (eventOrPayload as { payload: unknown }).payload
+              : eventOrPayload
+          let text: string
+          if (typeof raw === 'string') {
+            text = raw
+          } else if (raw instanceof ArrayBuffer || ArrayBuffer.isView(raw)) {
+            text = new TextDecoder().decode(raw as ArrayBuffer | ArrayBufferView)
+          } else if (raw && typeof (raw as { toString?: unknown }).toString === 'function') {
+            text = (raw as { toString(enc: string): string }).toString('utf8')
+          } else {
+            text = String(raw)
+          }
+          hmrFrames.push(text)
+        })
+      }
+    })
+
+    try {
+      await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 })
+      await page.waitForFunction(
+        () => typeof (window as { __oxideBoot?: unknown }).__oxideBoot !== 'undefined',
+        { timeout: 20_000 },
+      )
+      await new Promise((r) => setTimeout(r, 800))
+
+      const countModUpdates = () =>
+        hmrFrames.filter((f) => f.includes('"type":"module-update"')).length
+      const modUpdatesBefore = countModUpdates()
+
+      const patched = original.replace(/HMR-TARGET-ORIGINAL/, marker)
+      if (patched === original) throw new Error('hmr-target.tsx lost the marker')
+      writeFileSync(targetFile, patched, 'utf8')
+
+      await expect(page.locator('h1[data-hmr-target]')).toHaveText(marker, { timeout: 15_000 })
+      await new Promise((r) => setTimeout(r, 800))
+
+      const modUpdatesAfter = countModUpdates()
+      const delta = modUpdatesAfter - modUpdatesBefore
+      expect(
+        delta,
+        `§3.1: one writeFileSync must yield exactly one ModuleUpdate on the wire. ` +
+        `Observed ${delta} (${modUpdatesBefore} before, ${modUpdatesAfter} after). ` +
+        `If >1, the server-side debounce regressed (dev/src/lib.rs poll_notify 30ms settle), ` +
+        `or the CLI per-batch dedup at cli/src/lib.rs:~2680 stopped coalescing. ` +
+        `Frames: ${JSON.stringify(hmrFrames)}`,
+      ).toBe(1)
+    } finally {
+      writeFileSync(targetFile, original, 'utf8')
+      await new Promise((r) => setTimeout(r, 1500))
+    }
+  })
 })
