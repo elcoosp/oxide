@@ -111,6 +111,9 @@ Each item is a Playwright test to add (and where relevant, a small fix to make i
 
 #### 2.7 — WebSocket reconnect
 - Kill server mid-session; restart; edit applies to the still-open page. **3h.**
+- **STATUS (recon 2026-11-02): BLOCKED by §3.10.** Reconnect loop works (client retries every ~1s). But the page does not SURVIVE the outage: a lazy `import('/@prebundle/react-dom-client.js')` fails with `ERR_CONNECTION_REFUSED`, escapes uncaught, and React unmounts the whole tree (body 875 to 747 bytes, `<h1 data-hmr-target>` gone). Nothing left for the reconnected socket to update.
+- Test-design lesson: Playwright `page.on('websocket')` fires on ATTEMPT, not success. A future test needs a success signal (a `connected` HMR frame, or `__oxideBoot` still an object, or a `WebSocket.prototype` open counter).
+- When §3.10 lands this becomes a ~3h test again, the reconnect loop is already correct.
 
 #### 2.8 — Malformed-file mid-edit (reload fallback)
 - Save a syntax-broken file; assert `timeOrigin` **does** change (reload is correct here). **2h.**
@@ -185,6 +188,18 @@ Each item is a Playwright test to add (and where relevant, a small fix to make i
 - **Fix:** `classify_path` distinguishes "new route file" from "existing route body edit"; the latter routes to `AdapterHmr`.
 - **Effort:** 1 day, blocked on 1.3.
 
+
+#### 3.10 — Client survives transient dev-server outages (page must not unmount)
+- **Why:** discovered while writing §2.7 (2026-11-02). A transient `ERR_CONNECTION_REFUSED` on a lazy boot-graph import (e.g. `import('/@prebundle/react-dom-client.js')`) throws uncaught and React unmounts the whole SSR tree; body shrinks 875 to 747 bytes, the HMR target `<h1>` disappears, and only a manual reload recovers. Page-liveness, not reconnect — the reconnect loop already works.
+- **Scope:**
+  - **(a)** Catch every `import('/@prebundle/...')` in the boot graph — `hot.ts` (the `react-refresh-runtime` pull), `boot.ts`, route loading — so the rejection cannot escape to React.
+  - **(b)** Install a top-level React error boundary at the hydration root (in `boot.ts` or per-adapter `hydrate.ts`) that renders the existing SSR content on lazy-load failure instead of unmounting.
+  - **(c)** Retry the lazy import with exponential backoff after WS reconnects — do NOT reload, that is what §2.5 overlay-without-reload ruled out.
+  - **(d)** On WS reconnect, re-run `connectHmr` boot path so a failed runtime pull gets a second chance.
+- **Files:** `packages/core/src/client/boot.ts`, `packages/core/src/client/hot.ts`, `packages/core/src/client/islands.ts`, adapter `hydrate.ts`.
+- **Acceptance:** §2.7's reconnect test passes end-to-end — kill server, wait 2s, restart, edit applies, `__oxideBoot` stays an object, `h1[data-hmr-target]` never leaves the DOM. Regression test with `page.on('pageerror')` gated on `ERR_CONNECTION_REFUSED`.
+- **Effort:** 1 day (boundary + retry + tests). Unblocks §2.7.
+
 ### Tier 4 — process
 
 #### 4.1 — Playwright in CI
@@ -253,6 +268,7 @@ A tier is **done** when every item in it:
 - [ ] 3.7 Perf benchmarks
 - [ ] 3.8 Cache-buster memory bound
 - [ ] 3.9 Route edits hot-swap
+- [ ] 3.10 Client survives transient dev-server outages
 - [x] 4.1 Playwright in CI
 - [x] 4.2 Spec dead-code cleanup
 - [ ] 4.3 This file maintenance (ongoing)
