@@ -544,3 +544,47 @@ fn classify_event_true_created_on_brand_new_file_is_structural() {
     let ev = FileEvent::Created(new_layout);
     assert_eq!(classify_event(&ev), ChangeKind::ConfigOrRoutes);
 }
+
+#[test]
+fn hmr_message_batch_module_update_round_trips() {
+    use crate::{BatchModuleItem, HmrMessage};
+    let msg = HmrMessage::BatchModuleUpdate {
+        items: vec![
+            BatchModuleItem {
+                path: "/abs/a.tsx".into(),
+                url: "/src/a.tsx".into(),
+            },
+            BatchModuleItem {
+                path: "/abs/b.tsx".into(),
+                url: "/src/b.tsx".into(),
+            },
+        ],
+    };
+    let json = msg.to_json();
+    assert!(json.contains("batch-module-update"), "kebab-case type: {json}");
+    assert!(json.contains("a.tsx") && json.contains("b.tsx"), "paths in JSON: {json}");
+    let back = HmrMessage::from_json(&json).unwrap();
+    match back {
+        HmrMessage::BatchModuleUpdate { items } => {
+            assert_eq!(items.len(), 2);
+            assert_eq!(items[0].url, "/src/a.tsx");
+            assert_eq!(items[1].path, "/abs/b.tsx");
+        }
+        other => panic!("expected BatchModuleUpdate, got {other:?}"),
+    }
+}
+
+#[test]
+fn hmr_message_batch_empty_is_valid() {
+    // An empty batch is valid serde; the CLIENT treats it as a no-op. The
+    // server SHOULD never publish one (it falls back to singular for 1
+    // and skips publish for 0), but the shape must round-trip.
+    use crate::HmrMessage;
+    let msg = HmrMessage::BatchModuleUpdate { items: vec![] };
+    let json = msg.to_json();
+    let back = HmrMessage::from_json(&json).unwrap();
+    match back {
+        HmrMessage::BatchModuleUpdate { items } => assert!(items.is_empty()),
+        _ => panic!("wrong variant"),
+    }
+}

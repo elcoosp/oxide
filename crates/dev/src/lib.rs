@@ -221,6 +221,20 @@ pub enum HmrMessage {
         path: String,
         code: String,
     },
+    /// §3.2: several distinct modules changed in the same watcher batch (a
+    /// `git checkout <branch>` touching ~50 files; a scripted edit burst).
+    /// Batched into one frame so the client can fan out the re-imports and
+    /// run a single `performReactRefresh()` at the end, instead of N
+    /// separate refs (which the React scheduler has to reconcile
+    /// concurrently).
+    ///
+    /// `items` is `Vec<BatchModuleItem>`. Each item is exactly what a
+    /// singular `ModuleUpdate` would have carried. Empty `items` is a no-op
+    /// on the client; a batch of 1 SHOULD be published as `ModuleUpdate`
+    /// instead (the server coalesces but falls back to singular for 1).
+    BatchModuleUpdate {
+        items: Vec<BatchModuleItem>,
+    },
     RouteDataUpdate {
         route: String,
         odf_b64: String,
@@ -237,6 +251,17 @@ pub enum HmrMessage {
     Connected {
         build_id: String,
     },
+}
+
+/// §3.2: one entry in a `BatchModuleUpdate`. Structurally identical to a
+/// singular `ModuleUpdate` — path + URL — but exists as its own type so the
+/// serde shape is explicit and a future change (e.g. adding a `kind` field
+/// per item) doesn't touch the singular variant.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BatchModuleItem {
+    pub path: String,
+    #[serde(default)]
+    pub url: String,
 }
 
 impl HmrMessage {

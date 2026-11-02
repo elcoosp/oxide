@@ -1057,19 +1057,16 @@ test.describe('HMR runtime (browser)', () => {
     }
   })
 
-  test('HMR: burst touching N distinct files yields <= N module-update frames (Tier 3.2 diag)', async ({ page }) => {
+  test('HMR: burst touching N distinct files yields one dispatched message (Tier 3.2)', async ({ page }) => {
     test.setTimeout(90_000)
     test.skip(!HMR_AVAILABLE, 'react-refresh not installed in smoke-app')
 
-    // §3.2 DIAGNOSTIC. Scenario: "git checkout <branch>" touches ~50 DISTINCT
-    // files. This test touches N=5 distinct component files in one burst and
-    // measures:
-    //   - delta == 1  -> §3.2 already satisfied (some path coalesces)
-    //   - delta == N  -> per-event dispatch, plan's batch fix warranted
-    //   - 2..N-1      -> partial coalescing
-    // The previous attempt wrote N times to the SAME file and got delta=1 —
-    // vacuous, because per-path content-hash dedup collapses same-file writes
-    // regardless of §3.2. This version is the real scenario.
+    // §3.2: "git checkout <branch>" touches ~50 DISTINCT files, which used
+    // to fire ~50 separate `module-update` frames. This test touches N=5
+    // distinct component files in one burst and asserts the watcher
+    // coalesces them into a SINGLE `batch-module-update` frame — one
+    // WebSocket message, one client dispatch. (Same-file writes are a
+    // different case; per-path content-hash dedup already collapses them.)
     const N = 5
     const FILES: Array<{ path: string; pristine: string; marker: string }> = []
     const candidates = [
@@ -1110,7 +1107,16 @@ test.describe('HMR runtime (browser)', () => {
         })
       }
     })
-    const count = () => hmrFrames.filter((f) => f.includes('"type":"module-update"')).length
+    // §3.2: after the wire batching lands, the server emits ONE
+    // `batch-module-update` for a multi-file burst instead of N singular
+    // `module-update` frames. Count both so the assertion measures the
+    // total dispatch count either way — 1 means batched, N means per-event.
+    const count = () =>
+      hmrFrames.filter(
+        (f) =>
+          f.includes('"type":"module-update"') ||
+          f.includes('"type":"batch-module-update"'),
+      ).length
 
     try {
       await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 })
@@ -1134,8 +1140,13 @@ test.describe('HMR runtime (browser)', () => {
       const delta = count() - before
       console.log(`[DIAG-3.2] distinct-files delta=${delta} (N=${N}, before=${before})`)
 
-      expect(delta, `§3.2 diag: ${delta} frames for ${N} DISTINCT file writes`).toBeGreaterThanOrEqual(1)
-      expect(delta, `§3.2 diag: ${delta} frames for ${N} DISTINCT file writes (per-event expected)`).toBeLessThanOrEqual(N)
+      expect(
+        delta,
+        `§3.2: a burst touching ${N} DISTINCT files must publish exactly ONE ` +
+        `dispatched message (batch-module-update) on the wire. Observed ${delta}. ` +
+        `If ${N}, the coalesce block in the watcher loop regressed; if >${N}, ` +
+        `duplication.`,
+      ).toBe(1)
     } finally {
       for (const f of FILES) writeFileSync(f.path, f.pristine, 'utf8')
       await new Promise((r) => setTimeout(r, 2000))

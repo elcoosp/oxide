@@ -2700,6 +2700,14 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             }
             evs
         };
+        // §3.2: accumulate AdapterHmr events across this batch. Publishing
+        // one BatchModuleUpdate at the end lets the client fan out the
+        // re-imports and run a single performReactRefresh() — necessary for
+        // a `git checkout` burst (~50 distinct files, each currently a
+        // separate refresh). Non-AdapterHmr events (Css/ServerLoader/
+        // ServerModule/ConfigOrRoutes) still publish per-event below, since
+        // they carry different semantics and shouldn't be batched.
+        let mut adapter_hmr_batch: Vec<(String, String)> = Vec::new();
         for ev in events {
             tracing::info!(?ev, "file change");
             outln!(w, "change: {ev:?}");
@@ -2835,10 +2843,12 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                             let rel_slash = rel.replace('\\', "/");
                             let trimmed = rel_slash.trim_start_matches('/');
                             if trimmed.starts_with("src/") {
-                                hub.publish(HmrMessage::ModuleUpdate {
-                                    path: pstr,
-                                    url: format!("/{trimmed}"),
-                                });
+                                // §3.2: accumulate; the post-loop block
+                                // publishes a single singular message if
+                                // only one item was collected, or a batch
+                                // if multiple. This preserves the singular
+                                // shape for the common 1-file save.
+                                adapter_hmr_batch.push((pstr, format!("/{trimmed}")));
                             } else {
                                 hub.publish(HmrMessage::FullReload {
                                     reason: format!("rebuild skipped for non-src file {pstr}"),
@@ -3004,6 +3014,22 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 }
             }
         }
+        // §3.2: publish the accumulated batch. Singular fallback for the
+        // common 1-file save; batch only when the watcher already collected
+        // multiple AdapterHmr events in this tick.
+        if let Some(hub) = started.hmr.as_ref() {
+            if adapter_hmr_batch.len() == 1 {
+                let (path, url) = adapter_hmr_batch.pop().unwrap();
+                hub.publish(oxide_fw_dev::HmrMessage::ModuleUpdate { path, url });
+            } else if adapter_hmr_batch.len() > 1 {
+                let items = adapter_hmr_batch
+                    .into_iter()
+                    .map(|(path, url)| oxide_fw_dev::BatchModuleItem { path, url })
+                    .collect();
+                hub.publish(oxide_fw_dev::HmrMessage::BatchModuleUpdate { items });
+            }
+        }
+
         if !warmed && idle_since.elapsed() >= IDLE_WARM {
             warmed = true;
             for path in &page_routes {

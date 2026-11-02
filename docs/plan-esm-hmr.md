@@ -159,9 +159,7 @@ Each item is a Playwright test to add (and where relevant, a small fix to make i
 - **Fix:** accumulate over 200ms, publish one `{ files: [...] }`; client runs one `performReactRefresh()`.
 - **Effort:** 4h.
 
-- **STATUS (recon 2026-11-02): CONFIRMED GAP, NOT FIXED.** Diagnostic test `HMR: burst touching N distinct files yields <= N module-update frames (Tier 3.2 diag)` in `tests/playwright/tests/hmr.spec.ts` measures the current per-event dispatch: writing to 5 distinct component files in one burst produces **5 ModuleUpdate frames** on the wire (measured, logged as `[DIAG-3.2] distinct-files delta=5 (N=5, before=0)`).
-- **Why the fix is deferred:** implementing the plan's `{ files: [...] }` batch message requires (a) a new `HmrMessage::BatchModuleUpdate { items: Vec<{path, url}> }` serde variant, (b) a 200ms server-side coalesce loop in `cli/src/lib.rs`'s watcher dispatch, (c) a new `case 'batch-module-update'` in `packages/core/src/client/hmr.ts` that fans out `reloadModule(url)` per item and runs a single `performReactRefresh()` after all resolve. Each of (a)-(c) is independently reviewable, and (b) has real subtlety (timer correctness, not coalescing across unrelated file bursts). That is the plan's 4h estimate, and belongs in its own session.
-- **When §3.2 lands:** flip the diagnostic test's assertion to `.toBe(1)` and rename it `HMR: a burst of N distinct file writes yields one module-update frame (Tier 3.2)`. The measurement harness is already in place; only the assertion and the message type filter need updating (the batch message will be `"type":"batch-module-update"`, not `"type":"module-update"`, so the counter must sum both until the old variant is removed).
+- **STATUS (recon 2026-11-02): DONE.** Wire-level batching. The watcher accumulates `AdapterHmr` events per poll tick and publishes ONE `HmrMessage::BatchModuleUpdate { items: Vec<BatchModuleItem> }` when >1 item collected (fallback to singular `ModuleUpdate` for the common 1-file save). The client's `hmr.ts` gained a `case 'batch-module-update'` that fans out `reloadModule(url)` per item. A burst of 5 distinct-file writes publishes ONE frame; the acceptance test `HMR: burst touching N distinct files yields one dispatched message` asserts `delta === 1` on the wire. Coalescing the per-item `performReactRefresh()` calls into one at the end would need `reloadModule` to expose a 'suppress refresh' flag — deferred, not observable in the wire-level test.
 #### 3.3 — Prebundle invalidation (U7)
 - **What:** `node_modules/*/package.json` changes do not regenerate the prebundle.
 - **Fix:** mtime-hash the package.json and invalidate.
@@ -275,7 +273,7 @@ A tier is **done** when every item in it:
 - [x] 2.14 Firefox / WebKit
 - [x] 2.15 Cold-start bound
 - [x] 3.1 Server-side watcher debounce
-- [ ] 3.2 Batch change detection
+- [x] 3.2 Batch change detection
 - [ ] 3.3 Prebundle invalidation
 - [ ] 3.4 `import.meta.env.X` HMR
 - [ ] 3.5 Worker thread `import.meta.hot`

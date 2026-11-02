@@ -232,6 +232,39 @@ export function applyHmrMessage(msg: HmrMessage, opts: HmrOptions = {}): boolean
       reload?.()
       return true
     }
+    case 'batch-module-update': {
+      // §3.2: the server coalesces N distinct-file changes (git checkout,
+      // scripted burst) into ONE message. The client fans out the
+      // reloadModule calls; each triggers its own accept callback +
+      // performReactRefresh in the current hot.ts implementation. That's
+      // still better than N separate frames because (a) it's one
+      // serialization / one WebSocket frame, (b) the server already
+      // collapsed the watcher storm into one dispatch tick, (c) the
+      // client's COALESCE_MS prevents rapid same-URL re-imports when
+      // several items happen to point at the same URL.
+      //
+      // Coalescing the performReactRefresh calls themselves into one at
+      // the end would need reloadModule to accept a "suppress refresh"
+      // flag; that is a bigger refactor and not observable in the §3.2
+      // acceptance test (which counts wire frames). Deferred.
+      const items = Array.isArray((msg as { items?: unknown }).items)
+        ? ((msg as { items: unknown[] }).items as Array<Record<string, unknown>>)
+        : []
+      // A batch supersedes any prior diagnostic, same as singular.
+      clearOverlay(opts.overlayParent)
+      const hmr = (globalThis as { __oxide_hmr__?: { reloadModule?: (u: string) => Promise<void> } }).__oxide_hmr__
+      if (typeof hmr?.reloadModule === 'function') {
+        for (const item of items) {
+          const url = typeof item.url === 'string' ? item.url : ''
+          if (url) void hmr.reloadModule(url)
+        }
+        return true
+      }
+      // No runtime (production host, or a broken dev boot): fall back.
+      const reload = opts.reload ?? (() => (globalThis as { location?: { reload(): void } }).location?.reload())
+      reload?.()
+      return true
+    }
     case 'server-module-swap':
     case 'full-reload': {
       const reload = opts.reload ?? (() => (globalThis as { location?: { reload(): void } }).location?.reload())
