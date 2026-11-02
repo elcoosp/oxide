@@ -116,6 +116,7 @@ Each item is a Playwright test to add (and where relevant, a small fix to make i
 - Test-design lesson: Playwright `page.on('websocket')` fires on ATTEMPT, not success. A future test needs a success signal (a `connected` HMR frame, or `__oxideBoot` still an object, or a `WebSocket.prototype` open counter).
 - When §3.10 lands this becomes a ~3h test again, the reconnect loop is already correct.
 
+- **STATUS (recon 2026-11-02): DONE.** Test in `tests/playwright/tests/hmr-reconnect.spec.ts` (own server on 3111, own fixture guard). Flow: load → snapshot timeOrigin → kill server (await exit) → sleep 2s (forces failed reconnect attempt + in-flight import rejections) → assert `__oxideBoot` still an object and `<h1 data-hmr-target>` still in the DOM → restart server → sleep 2.5s → write edit → assert marker lands without reload → assert no unexpected page errors. Passes on chromium/firefox/webkit after the §3.10 catches. The "page survives the outage" assertion is the §3.10 fix, not a §2.7 test detail — before §3.10, the tree was unmounted and this test failed with "element(s) not found".
 #### 2.8 — Malformed-file mid-edit (reload fallback)
 - Save a syntax-broken file; assert `timeOrigin` **does** change (reload is correct here). **2h.**
 
@@ -208,6 +209,7 @@ Each item is a Playwright test to add (and where relevant, a small fix to make i
 - **Acceptance:** §2.7's reconnect test passes end-to-end — kill server, wait 2s, restart, edit applies, `__oxideBoot` stays an object, `h1[data-hmr-target]` never leaves the DOM. Regression test with `page.on('pageerror')` gated on `ERR_CONNECTION_REFUSED`.
 - **Effort:** 1 day (boundary + retry + tests). Unblocks §2.7.
 
+- **STATUS (recon 2026-11-02): DONE — scope reduced by inspecting the actual failure path.** The plan scoped this as a top-level React error boundary + retry-with-backoff + re-run-connectHmr. The §2.7 diagnostic (see §2.7 STATUS note) showed the actual mechanism: a `ERR_CONNECTION_REFUSED` on `import('react-dom/client')` from `hydrate-island-real.ts`, escaped uncaught. Adding `.catch` at four lazy-import sites — `hydrate-island-real.ts` loadReact, `islands.ts` defaultLoadChunk, and two in `boot.ts` — stops the unmount. No error boundary required: the boundary would mask the symptom, the catches fix the cause. Landed in `6cebf932`. The retry-with-backoff and re-run-connectHmr sub-steps were part of the plan's original design but turned out to be unnecessary once the unmount was prevented — the client's existing reconnect loop + the client's existing accept-callback flow handle post-reconnect edits without any extra machinery. Pinned by §2.7's test.
 ### Tier 4 — process
 
 #### 4.1 — Playwright in CI
@@ -258,7 +260,7 @@ A tier is **done** when every item in it:
 - [x] 2.4 State preservation
 - [x] 2.5 Error overlay + recovery
 - [x] 2.6 Multi-client broadcast
-- [ ] 2.7 WebSocket reconnect
+- [x] 2.7 WebSocket reconnect
 - [x] 2.8 Malformed-file mid-edit
 - [ ] 2.9 `dev.esm: false` rollback
 - [ ] 2.10 `oxide build` regression
@@ -276,7 +278,7 @@ A tier is **done** when every item in it:
 - [ ] 3.7 Perf benchmarks
 - [x] 3.8 Cache-buster memory bound
 - [x] 3.9 Route edits hot-swap
-- [ ] 3.10 Client survives transient dev-server outages
+- [x] 3.10 Client survives transient dev-server outages
 - [x] 4.1 Playwright in CI
 - [x] 4.2 Spec dead-code cleanup
 - [ ] 4.3 This file maintenance (ongoing)
