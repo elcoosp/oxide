@@ -191,6 +191,8 @@ Each item is a Playwright test to add (and where relevant, a small fix to make i
 - **What:** `cargo nextest run --workspace` does not run the HMR spec.
 - **Fix:** CI matrix job: build `oxide`, `pnpm -r build`, `pnpm --filter @oxide/playwright test`.
 - **Effort:** 2h.
+- **STATUS (recon 2026-11-02): pre-existing.** `ci.yml:379-410` already has a `playwright` job: matrix over `[chromium, firefox, webkit]`, `cargo build -p oxide-fw-cli`, `pnpm install`, `pnpm -r --filter '!./packages/oxide-website' run build`, `pnpm exec playwright install --with-deps ${{ matrix.browser }}`, `pnpm exec playwright test --project=${{ matrix.browser }} --timeout=25000`. Every step in the plan's "fix" is present — the plan was written before this job landed.
+- **Gap closed by this tick (previously latent):** `tests/playwright/global-setup.ts` asserted only `target/debug/oxide`, not that `examples/smoke-app-react/node_modules/react-refresh` was installed. Since `HMR_AVAILABLE = existsSync(node_modules/react-refresh)`, a CI runner missing that dep would silently skip every HMR test — green job, zero coverage. Added a CI-only `throw` in `global-setup.ts` (no-op locally). Also added `timeout-minutes: 45` to the playwright job so a hung browser doesn't burn GitHub's default 360-min limit.
 
 #### 4.2 — Spec dead-code cleanup
 - **What:** `grep -c 'console.log\|debugger' tests/playwright/tests/hmr.spec.ts` — should be 0.
@@ -251,7 +253,7 @@ A tier is **done** when every item in it:
 - [ ] 3.7 Perf benchmarks
 - [ ] 3.8 Cache-buster memory bound
 - [ ] 3.9 Route edits hot-swap
-- [ ] 4.1 Playwright in CI
+- [x] 4.1 Playwright in CI
 - [x] 4.2 Spec dead-code cleanup
 - [ ] 4.3 This file maintenance (ongoing)
 
