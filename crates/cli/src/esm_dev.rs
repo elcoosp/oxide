@@ -679,8 +679,27 @@ fn serve_source_file(state: &EsmDevState, rel_path: &str) -> OxideResponse {
         .cloned()
         .unwrap_or_else(|| "@oxide-fw/core/client/hot".to_string());
     let url_literal = format!("{:?}", format!("/src/{rel_path}"));
+    // §3.4: `import.meta.env` — Vite-parity. Read fresh per request so the
+    // watcher's `.env*` branch only needs to publish FullReload (no
+    // cross-scope RwLock). `oxide_fw_config::load` is ~1ms on this
+    // project; acceptable in dev. Only `PUBLIC_*`-prefixed variables are
+    // exposed (§14.2); everything else stays server-side. `MODE` is added
+    // for Vite-parity.
+    let env_json = {
+        let mut obj = match oxide_fw_config::load(
+            &state.root,
+            "development",
+            BTreeMap::new(),
+        ) {
+            Ok(loaded) => loaded.public_env(),
+            Err(_) => BTreeMap::new(),
+        };
+        obj.insert("MODE".to_string(), "development".to_string());
+        serde_json::to_string(&obj).unwrap_or_else(|_| "{}".to_string())
+    };
     let preamble = format!(
         "import {hot_url:?};\n\
+         Object.assign((import.meta.env || (import.meta.env = {{}})), {env_json});\n\
          if (!import.meta.hot && globalThis.__oxide_hmr__) {{\n\
            import.meta.hot = globalThis.__oxide_hmr__.createHotContext({url_literal});\n\
          }}\n"

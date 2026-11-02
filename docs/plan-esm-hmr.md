@@ -178,6 +178,11 @@ Each item is a Playwright test to add (and where relevant, a small fix to make i
 - **Fix:** publish `ModuleUpdate` for the env module; client re-imports the env shim.
 - **Effort:** 2h.
 
+- **STATUS (recon 2026-11-02): DONE, Vite-parity.** The plan's text was contradictory ("what: env changes trigger full reload" vs "fix: publish ModuleUpdate for env module"). Vite 5+ does the FULL RELOAD — env values are read once per module evaluation, so a hot update would leave already-evaluated modules with stale values, silently divergent from a fresh page load.
+- **`import.meta.env` injected in every served module's preamble** (`crates/cli/src/esm_dev.rs::serve_source_file`). Only `PUBLIC_*`-prefixed variables are exposed (§14.2); everything else stays server-side. `MODE: 'development'` for Vite parity. Values read FRESH per request via `oxide_fw_config::load` (~1ms) — no cross-scope state or RwLock. Preamble preserves `import.meta.hot` install.
+- **Watcher publishes `FullReload` on `.env*` change** (`crates/cli/src/lib.rs`). Match: filename starts with `.env` AND parent is the project root (a `.env` under `src/` is a source file, not config). Reason: `.env* change — import.meta.env values refreshed`.
+- **Test** (`tests/playwright/tests/hmr-env.spec.ts`, own server on 3114, own `.env` lifecycle): writes `.env` with `PUBLIC_*` + secret, asserts served module preamble contains the public var + `MODE` and NOT the secret, loads the page in a live browser (proves boot succeeds), edits `.env`, polls the served module for the new value, asserts the secret still does not leak. Runs on all 3 engines.
+- **§14.2 security guarantee** is the test's hard assertion: `SECRET_*` must never appear in a served client module, before OR after a `.env` reload.
 #### 3.5 — Worker thread `import.meta.hot` (U1)
 - **What:** `import.meta.hot` is `undefined` inside `new Worker(...)`.
 - **Fix:** install a worker-side shim via `importScripts` or the entry module.
@@ -289,7 +294,7 @@ A tier is **done** when every item in it:
 - [x] 3.1 Server-side watcher debounce
 - [x] 3.2 Batch change detection
 - [x] 3.3 Prebundle invalidation
-- [ ] 3.4 `import.meta.env.X` HMR
+- [x] 3.4 `import.meta.env.X` HMR
 - [ ] 3.5 Worker thread `import.meta.hot`
 - [ ] 3.6 Multi-worker hub isolation
 - [ ] 3.7 Perf benchmarks

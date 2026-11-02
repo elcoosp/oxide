@@ -2708,6 +2708,43 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                     }
                 }
             }
+
+            // §3.4: a `.env*` change invalidates `import.meta.env` values.
+            // Vite parity: full reload, NOT HMR. Env values are read once
+            // per module evaluation; letting a hot update through would
+            // leave modules that already ran with STALE values — silently
+            // divergent from a fresh page load, which is the worst kind of
+            // bug. Reload is the honest signal.
+            //
+            // Match the exact files config::layer knows about (§14.2):
+            // `.env`, `.env.<mode>`, `.env.local`, `.env.<mode>.local`.
+            // Filename must START with `.env` (a file literally named
+            // `.env` counts) and the parent directory must be the project
+            // root — a `.env` inside `src/` is a source file, not config.
+            let env_file_changed = events.iter().any(|ev| {
+                let p = match ev {
+                    oxide_fw_dev::FileEvent::Modified(p)
+                    | oxide_fw_dev::FileEvent::Created(p)
+                    | oxide_fw_dev::FileEvent::Removed(p) => p,
+                };
+                let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
+                    return false;
+                };
+                name.starts_with(".env")
+                    && p.parent().map(|par| par == rootp.as_path()).unwrap_or(false)
+            });
+            if env_file_changed {
+                // §3.4: full reload. `serve_source_file` reads the env fresh
+                // on each request, so the post-reload page load sees the
+                // new values — no in-memory update needed here.
+                tracing::info!("§3.4: .env* change — full reload");
+                if let Some(hub) = started.hmr.as_ref() {
+                    hub.publish(oxide_fw_dev::HmrMessage::FullReload {
+                        reason: ".env* change — import.meta.env values refreshed"
+                            .to_string(),
+                    });
+                }
+            }
             invalidate_framework_modules(&hmr_pool, &rootp).await;
             let needs_client_rebuild = !cfg.dev.esm && events.iter().any(|e| {
                 let p = match e {
