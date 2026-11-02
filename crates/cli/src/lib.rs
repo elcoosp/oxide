@@ -1488,30 +1488,73 @@ async fn ensure_dev_client_bundle(
 
     let mut needs_build = !manifest_path.is_file();
     if !needs_build {
-        // Check if any source file is newer than the manifest
-        let manifest_mtime = manifest_path.metadata().and_then(|m| m.modified()).unwrap_or_else(|_| std::time::SystemTime::now());
-        let src_dir = rootp.join(&cfg.routes.dir);
-        let mut stack = vec![src_dir];
-        while let Some(dir) = stack.pop() {
-            if let Ok(entries) = std::fs::read_dir(&dir) {
+        let manifest_mtime = manifest_path
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or_else(|_| std::time::SystemTime::now());
+
+        // §2.9 / BUG 3 follow-up: staleness must consider not just the app's
+        // own source tree, but ALSO the framework packages' built dist. A
+        // `packages/core/dist/client-hot.js` edit (e.g. a client-runtime bug
+        // fix) invalidates the bundled client chunk that inlined the old
+        // version — the browser would keep loading the STALE copy from
+        // `dist/client/client-<hash>.js` forever, because the app's own src
+        // has not changed since the last build.
+        //
+        // Scanned roots:
+        //   1. `<root>/<cfg.routes.dir>` — the app's own source (previous
+        //      behavior; only route-tree changes forced rebuild).
+        //   2. `<root>/src` (whole) — catches component / island / util
+        //      edits that aren't under routes/.
+        //   3. `<root>/packages/*/dist` — workspace framework packages
+        //      (`pnpm`-linked into the smoke app).
+        //   4. `<root>/node_modules/@oxide-fw/*/dist` — published packages
+        //      (non-workspace setup).
+        //
+        // A `packages/core/dist/client-hot.js` newer than the manifest
+        // makes needs_build true. This is what made my §3.11 BUG 3 fix
+        // invisible to the running dev server.
+        let mut scan_roots: Vec<std::path::PathBuf> = vec![rootp.join(&cfg.routes.dir)];
+        let src_all = rootp.join("src");
+        if src_all.is_dir() {
+            scan_roots.push(src_all);
+        }
+        if let Ok(entries) = std::fs::read_dir(rootp.join("packages")) {
+            for entry in entries.flatten() {
+                let dist = entry.path().join("dist");
+                if dist.is_dir() {
+                    scan_roots.push(dist);
+                }
+            }
+        }
+        let oxide_fw_nm = rootp.join("node_modules").join("@oxide-fw");
+        if let Ok(entries) = std::fs::read_dir(&oxide_fw_nm) {
+            for entry in entries.flatten() {
+                let dist = entry.path().join("dist");
+                if dist.is_dir() {
+                    scan_roots.push(dist);
+                }
+            }
+        }
+
+        'outer: for root in scan_roots {
+            let mut stack = vec![root];
+            while let Some(dir) = stack.pop() {
+                let Ok(entries) = std::fs::read_dir(&dir) else { continue };
                 for entry in entries.flatten() {
-                    if let Ok(ft) = entry.file_type() {
-                        if ft.is_dir() {
-                            stack.push(entry.path());
-                        } else if ft.is_file() {
-                            if let Ok(m) = entry.metadata() {
-                                if let Ok(t) = m.modified() {
-                                    if t > manifest_mtime {
-                                        needs_build = true;
-                                        break;
-                                    }
-                                }
+                    let Ok(ft) = entry.file_type() else { continue };
+                    if ft.is_dir() {
+                        stack.push(entry.path());
+                    } else if ft.is_file() {
+                        if let Ok(t) = entry.metadata().and_then(|m| m.modified()) {
+                            if t > manifest_mtime {
+                                needs_build = true;
+                                break 'outer;
                             }
                         }
                     }
                 }
             }
-            if needs_build { break; }
         }
     }
 

@@ -114,4 +114,22 @@ test('--no-esm serves /client/__boot__.js, not /@boot/boot.mjs (Tier 2.9)', asyn
     { timeout: 20_000 },
   )
   await expect(page.locator('body')).not.toBeEmpty()
+
+  // §3.11 acceptance: no console errors and no pageerrors on the bundler
+  // path. Strict — zero noise filter other than generic browser chrome.
+  // If this fails, the failing pattern IS the current §3.11 bug (reconcile
+  // against the plan's recon section; add to the plan, do NOT filter).
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(e.message))
+  // The listeners above attach AFTER the assertions; to actually capture
+  // boot-time errors, re-navigate with them in place.
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(
+    () => typeof (window as { __oxideBoot?: unknown }).__oxideBoot !== 'undefined',
+    { timeout: 20_000 },
+  )
+  const noise = [/favicon/i, /Datadog/i, /installHook/i]
+  const real = errors.filter((e) => !noise.some((re) => re.test(e)))
+  expect(real, `console errors on bundler path: ${real.join('\n')}`).toEqual([])
 })

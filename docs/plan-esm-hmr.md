@@ -220,6 +220,12 @@ Each item is a Playwright test to add (and where relevant, a small fix to make i
 - **Effort:** 1 day (boundary + retry + tests). Unblocks §2.7.
 
 - **STATUS (recon 2026-11-02): DONE — scope reduced by inspecting the actual failure path.** The plan scoped this as a top-level React error boundary + retry-with-backoff + re-run-connectHmr. The §2.7 diagnostic (see §2.7 STATUS note) showed the actual mechanism: a `ERR_CONNECTION_REFUSED` on `import('react-dom/client')` from `hydrate-island-real.ts`, escaped uncaught. Adding `.catch` at four lazy-import sites — `hydrate-island-real.ts` loadReact, `islands.ts` defaultLoadChunk, and two in `boot.ts` — stops the unmount. No error boundary required: the boundary would mask the symptom, the catches fix the cause. Landed in `6cebf932`. The retry-with-backoff and re-run-connectHmr sub-steps were part of the plan's original design but turned out to be unnecessary once the unmount was prevented — the client's existing reconnect loop + the client's existing accept-callback flow handle post-reconnect edits without any extra machinery. Pinned by §2.7's test.
+
+#### 3.11 — bundler-dev gap closure (`--no-esm`)
+- **STATUS (recon 2026-11-02): CLOSED.** Apparent four bugs on the bundler path traced to ONE real bug (`hot.ts` unconditional `/@prebundle/` fetch) plus ONE systemic root cause (`ensure_dev_client_bundle`'s staleness scan missed `packages/*/dist`, so framework-code fixes were invisible to a running dev server).
+- **The real bug (fixed in `94a001df`):** `packages/core/src/client/hot.ts` fetched `/@prebundle/react-refresh-runtime.js` on http/https unconditionally. That URL only exists in the native-ESM dev server; in `--no-esm` bundler mode it 404s. Fixed by gating on `isEsmDev` (scan `<script type=module src>` for `/@boot/` or `/@prebundle/` — same signal `boot.ts:323-330` uses).
+- **The systemic root cause (fixed here):** `ensure_dev_client_bundle` only scanned `src/routes/` for staleness. A `packages/core/dist/` rebuild was invisible — the dev server served a bundle containing the OLD framework code indefinitely. Fixed by extending the scan to `src/` (whole), `packages/*/dist/`, and `node_modules/@oxide-fw/*/dist/`. Without this, ANY future bug fix in `packages/core` would be invisible to a running dev server until the app source also changed.
+- **Acceptance:** strict `hmr-bundler.spec.ts` (console-error check with NO noise filter) passes on all 3 engines.
 ### Tier 4 — process
 
 #### 4.1 — Playwright in CI
