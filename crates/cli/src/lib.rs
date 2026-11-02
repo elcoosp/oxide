@@ -94,6 +94,12 @@ pub enum Command {
         /// Add a leading `!` to strip the prefix: `--proxy '!/api=http://x'`.
         #[arg(long)]
         proxy: Vec<String>,
+        /// §2.9: use the bundler path instead of the native ESM dev server
+        /// (equivalent to `dev: { esm: false }` in `oxide.config.ts`).
+        /// Serves `/client/*.js` from `dist/client/` instead of
+        /// `/src/**` transformed modules.
+        #[arg(long = "no-esm")]
+        no_esm: bool,
         /// Hidden test hook: run exactly one watch poll, print `dev ready` and exit.
         /// Without it the dev loop runs until Ctrl-C (§13, not exercised in tests).
         #[arg(long, hide = true)]
@@ -394,6 +400,7 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
             qr,
             open,
             proxy,
+            no_esm,
             once,
         } => {
             cmd_dev(
@@ -406,6 +413,7 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
                     open,
                     port,
                     proxy,
+                    no_esm,
                 },
                 w,
             )
@@ -1956,6 +1964,16 @@ fn rebuild_stale_workspace_packages(rootp: &std::path::Path) {
 async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
     let mut cfg = load_config_or_default(&rootp, "development");
+    // §2.9: `--no-esm` overrides the config after load. The dev server
+    // also re-loads cfg inside `start_server_inner_full`, so the env var
+    // is set here and re-read after the reload (below).
+    if flags.no_esm {
+        cfg.dev.esm = false;
+        // SAFETY: set_var is unsafe on 2024 edition; this is set before
+        // any thread touches the config, at startup, not on a hot path.
+        unsafe { std::env::set_var("OXIDE_DEV_NO_ESM", "1") };
+        tracing::info!("oxide dev: --no-esm — using bundler path");
+    }
     // SPEC-15.1 / §15.2: fail at load for an unknown `kind:"native"` plugin.
     if let Err(e) = crate::native_plugins::parse_native_plugins(&cfg) {
         anyhow::bail!("{} {}", e.0.code, e.0.message);
@@ -7138,6 +7156,8 @@ pub struct DevFlags {
     pub open: bool,
     pub port: Option<u16>,
     pub proxy: Vec<String>,
+    /// §2.9: opt out of the native ESM dev server (bundler path).
+    pub no_esm: bool,
 }
 
 impl DevFlags {
@@ -10845,6 +10865,15 @@ async fn start_server_inner_full(
         "production"
     };
     let cfg = load_config_or_default(&rootp, cfg_env);
+    // §2.9: `--no-esm` is threaded via an env var because cmd_dev's
+    // override on its own cfg never reaches this reload.
+    let cfg = {
+        let mut cfg = cfg;
+        if std::env::var_os("OXIDE_DEV_NO_ESM").is_some() {
+            cfg.dev.esm = false;
+        }
+        cfg
+    };
     set_session_ttl(cfg.security.session_ttl_secs);
     // §10.1: refine inferred render modes from the AST, exactly as `oxide build`
     // does — otherwise the live server sees the scanner's line-oriented guess

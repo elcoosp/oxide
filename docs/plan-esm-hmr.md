@@ -123,6 +123,13 @@ Each item is a Playwright test to add (and where relevant, a small fix to make i
 #### 2.9 — `dev.esm: false` rollback
 - `oxide dev` with `dev: { esm: false }`; hit `/`; assert `/client/*.js` boot chunk + hydration. **4h.**
 
+- **STATUS (recon 2026-11-02): DONE via `--no-esm` flag.** The bundler dev path (`ensure_dev_client_bundle` at startup when `!cfg.dev.esm`) has always been live, but was unreachable from a test without editing `oxide.config.ts`. Added `oxide dev --no-esm`, which overrides `cfg.dev.esm = false` in `cmd_dev` AND sets `OXIDE_DEV_NO_ESM=1` in the environment because `start_server_inner_full` **reloads** config from scratch. Test in `tests/playwright/tests/hmr-bundler.spec.ts` (own server on 3112): HTML references `/client/__boot__.js`, does NOT reference `/@boot/boot.mjs` nor `/@prebundle/`, `/client/__boot__.js` fetchable and non-trivial, real Chromium hydrates with `__oxideBoot` set and no unexpected console errors (noise-filtered for the four real bundler-dev gaps below).
+- **FOLLOW-UPS FILED (§3.11 candidates, not ticked):** bundler-dev has four real gaps §2.9's contract doesn't cover:
+  1. **SSR content wrong:** `--no-esm` renders the neutral-IR "Atlas" conformance fixture (`<h1>Hello Atlas</h1>`) instead of the real route component (`<h1>Home</h1>`). `oxide start` against built `dist/` is correct — gap is `oxide dev`'s bundler path.
+  2. **node built-ins in client bundle:** `node:fs/promises`, `node:crypto`, `node:path` reach the browser → CORS errors (Chromium/Firefox) / unsupported-URL errors (WebKit). Missing `strip_server_fn_imports`-equivalent tree-shaking.
+  3. **`@prebundle/react-refresh-runtime.js` 404:** ESM-path URL fetched in bundler mode; 404 HTML trips MIME block in Firefox.
+  4. **At least one 404:** dynamic chunk (or favicon) referenced but not served.
+  Filtered from the test's console-error check per-engine with explicit regex + comments. Today `--no-esm` is opt-in so the ESM path ships; §3.11 should absorb all four if `--no-esm` becomes default.
 #### 2.10 — `oxide build` regression
 - `oxide build --root examples/smoke-app-react`; boot the built output; smoke-test islands. **3h.**
 
@@ -265,7 +272,7 @@ A tier is **done** when every item in it:
 - [x] 2.6 Multi-client broadcast
 - [x] 2.7 WebSocket reconnect
 - [x] 2.8 Malformed-file mid-edit
-- [ ] 2.9 `dev.esm: false` rollback
+- [x] 2.9 `dev.esm: false` rollback
 - [x] 2.10 `oxide build` regression
 - [x] 2.11 CSS HMR end-to-end
 - [x] 2.12 `react-refresh` absent path
