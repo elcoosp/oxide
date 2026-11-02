@@ -188,6 +188,12 @@ Each item is a Playwright test to add (and where relevant, a small fix to make i
 - **Fix:** install a worker-side shim via `importScripts` or the entry module.
 - **Effort:** 4h.
 
+- **STATUS (recon 2026-11-02): DONE.** Two root causes:
+  1. **`install()` bailed on `typeof window === 'undefined'`** in `packages/core/src/client/hot.ts`. The dev preamble assigns `import.meta.hot = globalThis.__oxide_hmr__.createHotContext(...)`, but in a Worker `globalThis.__oxide_hmr__` was never set. Fixed: detect worker scope (`typeof importScripts === 'function'`), install `__oxide_hmr__` there too. React Refresh installs (`__oxide_refresh`, `__oxide_refresh_reg`, `$RefreshRuntime$` pull) are gated on `hasWindow` — a worker has no components or DOM; only the module accept-callback flow applies.
+  2. **No worker-side WS.** In the main thread `connectHmr()` (from `boot.ts`) owns the socket. Workers have no `boot.ts`. Fixed: a worker-only IIFE at module bottom opens a WS to `/_oxide/hmr`, listens for `module-update`/`batch-module-update`, and calls `reloadModule(url)` per frame. The server's `HmrHub::publish` broadcasts to every subscriber, so main thread AND worker receive the same messages. `full-reload`/`server-module-swap`/`error` frames are ignored in a worker — no DOM to show, and the main thread's own WS handles them.
+  - **Fixture gotcha (NOT a hack):** the initial fixture used an inline `<script>` inside `dangerouslySetInnerHTML` to spawn the worker. The dev CSP (`script-src 'self' 'nonce-...' 'strict-dynamic'`) blocks inline scripts that lack a nonce, and the render pipeline only adds nonces to scripts IT emits (`/@boot/boot.mjs`). The correct pattern for spawning a worker on hydration is a React `useEffect`, not an inline script. Fixture rewritten accordingly. This is also the correct pattern for ANY framework user wanting to spawn a worker — the tested path matches real usage.
+  - **Test:** `tests/playwright/tests/hmr-worker.spec.ts` (own server on 3115, own fixture restore in afterAll). Navigates to `/worker` (via a `useEffect`-driven `<Worker>`), asserts the worker posts `{ hotDefined: true, v: 'WORKER-V0', ts }`, edits the worker source to `WORKER-V1`, asserts the worker posts again with `WORKER-V1`, asserts `performance.timeOrigin` UNCHANGED (worker HMR does not reload the main page).
+- **Fixtures added (permanent):** `examples/smoke-app-react/src/workers/counter.worker.ts` and `examples/smoke-app-react/src/routes/worker/page.tsx`.
 #### 3.6 — Multi-worker hub isolation (U9)
 - **What:** each process has its own broadcast; a WS to server A does not see edits on server B.
 - **Fix:** in-process broadcast across workers, or a shared file/redis channel.
@@ -295,7 +301,7 @@ A tier is **done** when every item in it:
 - [x] 3.2 Batch change detection
 - [x] 3.3 Prebundle invalidation
 - [x] 3.4 `import.meta.env.X` HMR
-- [ ] 3.5 Worker thread `import.meta.hot`
+- [x] 3.5 Worker thread `import.meta.hot`
 - [ ] 3.6 Multi-worker hub isolation
 - [ ] 3.7 Perf benchmarks
 - [x] 3.8 Cache-buster memory bound

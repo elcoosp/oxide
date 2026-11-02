@@ -62,8 +62,27 @@ const MAX_TRACKED_MODULES = 500
 const MAX_TRACKED_URLS = 500
 
 function install(): void {
-  if (typeof window === 'undefined') return
-  const g = window as unknown as {
+  // §3.5: install in Web Workers too. Today the previous guard
+  // (`typeof window === 'undefined'`) bailed, so `import.meta.hot` was
+  // undefined inside `new Worker(...)` — the preamble assigned
+  // `import.meta.hot = globalThis.__oxide_hmr__.createHotContext(...)`,
+  // but `__oxide_hmr__` itself was never installed.
+  //
+  // Worker detection: canonical `typeof importScripts === 'function'`
+  // (available only in worker scope). `self` and `WorkerGlobalScope` are
+  // redundant but harmless.
+  const hasWindow = typeof window !== 'undefined'
+  const hasWorkerScope =
+    typeof self !== 'undefined'
+    && typeof (self as unknown as { importScripts?: unknown }).importScripts === 'function'
+  if (!hasWindow && !hasWorkerScope) return
+
+  // Workers have no `window`, no DOM, no React Refresh runtime. The
+  // `import.meta.hot` surface (createHotContext, accept, dispose, data)
+  // is what worker code needs; `performReactRefresh()` is meaningless in
+  // a worker context. The `__oxide_refresh`/`__oxide_refresh_reg` bits
+  // are guarded below on `hasWindow`.
+  const g = (hasWindow ? window : (self as unknown as typeof window)) as unknown as {
     __oxide_hmr__?: unknown
     __oxide_refresh?: unknown
     __oxide_refresh_reg?: (t: unknown, id: string) => void
@@ -199,7 +218,11 @@ function install(): void {
   // `__oxide_refresh` is what Oxc's inject_hmr_boundary calls in the accept
   // callback. Phase 1-2: full reload. Phase 3 replaces this with
   // react-refresh's performReactRefresh (loaded lazily).
-  if (typeof g.__oxide_refresh === 'undefined') {
+  // §3.5: React Refresh is a DOM-only concept. In a worker, skip the
+  // `__oxide_refresh` / `__oxide_refresh_reg` installs entirely — the
+  // worker module graph has no components, only JS modules whose accept
+  // callbacks fire on `reloadModule`.
+  if (hasWindow && typeof g.__oxide_refresh === 'undefined') {
     g.__oxide_refresh = (_mod: unknown): void => {
       const rt = g.$RefreshRuntime$
       if (rt && typeof rt.performReactRefresh === 'function') {
@@ -226,7 +249,7 @@ function install(): void {
   // re-register but find no baseline to compare to — `performReactRefresh()`
   // "succeeds" but nothing on screen updates.
   const pendingRegistrations: Array<{ t: unknown; id: string }> = []
-  if (typeof g.__oxide_refresh_reg === 'undefined') {
+  if (hasWindow && typeof g.__oxide_refresh_reg === 'undefined') {
     g.__oxide_refresh_reg = (t: unknown, id: string): void => {
       // `id` is now `path:Name` — a stable identifier baked into the module
       // by the compiler (`$RefreshReg$(DocBody, "src/routes/…/doc-body.tsx:DocBody")`).
@@ -252,7 +275,11 @@ function install(): void {
   // it) leaves `$RefreshRuntime$` undefined; `__oxide_refresh` then falls
   // back to a full reload. A dynamic import so the small reload path does not
   // pay a network round-trip on the happy path.
-  if (typeof g.$RefreshRuntime$ === 'undefined') {
+  // §3.5: skip the React Refresh runtime prebundle pull in a worker.
+  // That URL exists, but the runtime has no meaning without a DOM. Keeping
+  // the fetch in a worker would 404 in bundler mode and cost a needless
+  // round-trip in ESM mode.
+  if (hasWindow && typeof g.$RefreshRuntime$ === 'undefined') {
     const nav = (typeof window !== 'undefined' ? window : globalThis) as unknown as {
       location?: { protocol: string }
       document?: { querySelectorAll(s: string): ArrayLike<{ getAttribute?(a: string): string | null }> }
@@ -346,5 +373,67 @@ function install(): void {
 }
 
 install()
+// §3.5: worker-side WS. In the main thread, `connectHmr()` (called from
+// boot.ts) owns the WebSocket. Workers have no boot.ts — nobody calls
+// connectHmr for them. So the worker side opens its own WS to the same
+// /_oxide/hmr endpoint. Broadcast semantics: the server's HmrHub publishes
+// to every connected client, so main thread AND workers all receive the
+// same messages. A worker's `reloadModule(url)` re-imports its own module
+// graph, independent of the main thread's React refresh.
+;(function connectWorkerHmr(): void {
+  const hasWindow = typeof window !== 'undefined'
+  const hasWorkerScope =
+    typeof self !== 'undefined'
+    && typeof (self as unknown as { importScripts?: unknown }).importScripts === 'function'
+  if (hasWindow || !hasWorkerScope) return
+  type WSLike = {
+    onmessage: ((ev: { data: unknown }) => void) | null
+    onclose: (() => void) | null
+    onerror: (() => void) | null
+    close(): void
+  }
+  const g = self as unknown as {
+    WebSocket?: new (url: string) => WSLike
+    location?: { protocol: string; host: string }
+    __oxide_hmr__?: {
+      reloadModule?: (u: string) => Promise<void>
+    }
+  }
+  if (typeof g.WebSocket !== 'function' || !g.location) return
+  const scheme = g.location.protocol === 'https:' ? 'wss' : 'ws'
+  const url = `${scheme}://${g.location.host}/_oxide/hmr`
+  let closed = false
+  let socket: WSLike | undefined
+  const open = (): void => {
+    if (closed) return
+    socket = new g.WebSocket!(url)
+    socket.onmessage = (ev: { data: unknown }) => {
+      try {
+        const raw = typeof ev.data === 'string' ? ev.data : String(ev.data)
+        const msg = JSON.parse(raw) as { type?: string; url?: string; items?: Array<{ url?: string }> }
+        const hmr = g.__oxide_hmr__
+        if (typeof hmr?.reloadModule !== 'function') return
+        if (msg.type === 'module-update' && typeof msg.url === 'string' && msg.url) {
+          void hmr.reloadModule(msg.url)
+        } else if (msg.type === 'batch-module-update' && Array.isArray(msg.items)) {
+          for (const it of msg.items) {
+            if (typeof it.url === 'string' && it.url) void hmr.reloadModule(it.url)
+          }
+        }
+        // full-reload / server-module-swap / error: worker has no DOM to
+        // show an overlay and no page to reload — the main thread's own
+        // WS handles those. Ignore here.
+      } catch { /* malformed frame is not fatal */ }
+    }
+    socket.onclose = () => {
+      socket = undefined
+      if (!closed) setTimeout(open, 1000)
+    }
+    socket.onerror = () => {
+      socket?.close()
+    }
+  }
+  open()
+})()
 
 export type { HotContext }
