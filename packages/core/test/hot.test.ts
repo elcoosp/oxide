@@ -205,3 +205,63 @@ test('modules map stays bounded under many distinct URLs (Tier 3.8a)', async () 
   }
   assert.ok(h.__debug.moduleCount <= MAX, `after overflow: ${h.__debug.moduleCount} > ${MAX}`)
 })
+
+test('__oxide_refresh falls back to a full reload when the React Refresh runtime is absent (Tier 2.12)', () => {
+  // §2.12: the documented fallback when `$RefreshRuntime$` is not on the
+  // global — i.e. the dev server could not prebundle `react-refresh-runtime`
+  // (project doesn't install react-refresh). In that case `__oxide_refresh`
+  // must reload the page, because an in-place React Refresh has nothing to
+  // perform.
+  //
+  // The alternative (silently doing nothing) would leave the user staring
+  // at a stale DOM after a save. The fallback is the correct behaviour; the
+  // plan's §2.12 "HMR tests skip" assertion only holds when react-refresh
+  // is missing at the smoke-app level, which this unit test doesn't need.
+  //
+  // We exercise the fallback by (a) unsetting `$RefreshRuntime$`, (b)
+  // stubbing a fake `location.reload`, (c) calling `__oxide_refresh`. The
+  // `install()` in hot.ts sets `__oxide_refresh` at import time; it was
+  // already set by the first `import('../src/client/hot.ts')` at the top
+  // of this file.
+  const g = globalThis as unknown as {
+    __oxide_refresh?: (mod: unknown) => void
+    $RefreshRuntime$?: { performReactRefresh?: () => void } & Record<string, unknown>
+    location?: { reload?: () => void }
+  }
+  assert.ok(typeof g.__oxide_refresh === 'function', '__oxide_refresh must be installed by hot.ts')
+
+  // Save prior state so we don't break other tests in the same file.
+  const priorRuntime = g.$RefreshRuntime$
+  const priorLocation = g.location
+  let reloadCalls = 0
+  const hadLocation = 'location' in (globalThis as object)
+
+  try {
+    // Clear the runtime. hot.ts's `if (typeof g.$RefreshRuntime$ === 'undefined')`
+    // block won't re-run because `attempted`/runtime state on the closure
+    // has already executed — but the CALL to __oxide_refresh looks up
+    // `g.$RefreshRuntime$` fresh on every invocation, so clearing it is
+    // enough to force the fallback path.
+    delete g.$RefreshRuntime$
+    ;(g as { location?: { reload?: () => void } }).location = {
+      reload: () => { reloadCalls++ },
+    }
+
+    g.__oxide_refresh!({})
+
+    assert.equal(
+      reloadCalls,
+      1,
+      `__oxide_refresh must call location.reload() exactly once when the ` +
+      `runtime is absent; got ${reloadCalls} calls`,
+    )
+  } finally {
+    // Restore prior state so subsequent tests are unaffected.
+    if (priorRuntime !== undefined) g.$RefreshRuntime$ = priorRuntime
+    if (hadLocation) {
+      ;(g as { location?: { reload?: () => void } }).location = priorLocation
+    } else {
+      delete (g as { location?: { reload?: () => void } }).location
+    }
+  }
+})

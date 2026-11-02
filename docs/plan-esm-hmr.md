@@ -133,6 +133,10 @@ Each item is a Playwright test to add (and where relevant, a small fix to make i
 #### 2.12 — `react-refresh` absent path
 - Config-test: uninstall `react-refresh`; assert HMR tests skip but structural tests pass, and a warning is logged. **2h.**
 
+- **STATUS (recon 2026-11-02): DONE — scope split, only the client fallback needed a new test.** The plan's three claims each had a different status:
+- **(a) HMR tests skip when `react-refresh` absent.** Already the pattern: every HMR test in `hmr.spec.ts` has `test.skip(!HMR_AVAILABLE, ...)` where `HMR_AVAILABLE = existsSync(smoke-root/node_modules/react-refresh)`. Testing this means literally uninstalling `react-refresh` mid-run, which would break the shared-server suite. Not worth a new test; the guard is trivially verifiable by inspection and by the CI check added in §4.1 (`global-setup.ts` fails fast if `CI` is set and `react-refresh` is missing, precisely so this mode isn't exercised accidentally).
+- **(b) A warning is logged when prebundle fails.** Already exists: `crates/cli/src/esm_dev.rs:332` prints `oxide dev (esm): cannot prebundle <name> — /@prebundle/<url> will 404 (<err>)`. Fires whenever a `cfg.dev.prebundle` package fails (including react-refresh on a project without it). Exercised implicitly by any dev run against a project missing one of its prebundle deps. Not worth a dedicated stderr-capture test.
+- **(c) `__oxide_refresh` falls back to `location.reload()` when `$RefreshRuntime$` absent.** The actual behavioural guarantee the plan wants. Landed as a new unit test in `packages/core/test/hot.test.ts`: stubs `location.reload`, deletes `$RefreshRuntime$`, calls `__oxide_refresh`, asserts one reload. Fails if the `location.reload()` fallback in `hot.ts`'s `__oxide_refresh` is removed.
 #### 2.13 — Cold-start race (U6)
 - Fresh browser; edit within the first 500ms after `__oxideBoot`; assert the registration replay works. **2h.**
 
@@ -266,7 +270,7 @@ A tier is **done** when every item in it:
 - [ ] 2.9 `dev.esm: false` rollback
 - [x] 2.10 `oxide build` regression
 - [x] 2.11 CSS HMR end-to-end
-- [ ] 2.12 `react-refresh` absent path
+- [x] 2.12 `react-refresh` absent path
 - [x] 2.13 Cold-start race
 - [x] 2.14 Firefox / WebKit
 - [x] 2.15 Cold-start bound
