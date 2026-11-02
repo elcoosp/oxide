@@ -52,6 +52,15 @@ const lastReloadAt = new Map<string, number>()
 const trailingTimers = new Map<string, number>()
 const COALESCE_MS = 100
 
+// §3.8a: bound the two maps that would otherwise grow with every distinct
+// URL a session touches. `modules` grows one entry per reloaded module;
+// `lastReloadAt` grows one entry per URL. In practice a dev session hits
+// tens of URLs, but an editor plugin that repeatedly re-imports a path
+// (or a scripted test) makes the growth unbounded. 500 is 25x a busy
+// session's real needs — any eviction here means the entry is cold.
+const MAX_TRACKED_MODULES = 500
+const MAX_TRACKED_URLS = 500
+
 function install(): void {
   if (typeof window === 'undefined') return
   const g = window as unknown as {
@@ -78,6 +87,10 @@ function install(): void {
           invalidated: false,
         }
         modules.set(url, mod)
+        if (modules.size > MAX_TRACKED_MODULES) {
+          const oldest = modules.keys().next().value
+          if (oldest !== undefined) modules.delete(oldest)
+        }
       }
       const m = mod // closure-capture the narrow type
       return {
@@ -111,7 +124,12 @@ function install(): void {
         }
         return
       }
+      lastReloadAt.delete(url)
       lastReloadAt.set(url, __now)
+      if (lastReloadAt.size > MAX_TRACKED_URLS) {
+        const oldest = lastReloadAt.keys().next().value
+        if (oldest !== undefined) lastReloadAt.delete(oldest)
+      }
       // Phase 3 implementation (delivered in Phase 5b.2): dispose + re-import
       // + accept. `url` is what the browser fetched (`/src/routes/...` or
       // `/@css/...`). The re-import busts the ESM cache with `?t=<ms>` so
@@ -159,6 +177,22 @@ function install(): void {
         }
         freshMod.acceptCallbacks.length = 0
       }
+    },
+    __debug: {
+      // §3.8a: introspection for the memory-bound test. Getters so the
+      // caller always sees current sizes (not a stale snapshot).
+      get moduleCount(): number {
+        return modules.size
+      },
+      get reloadCount(): number {
+        return lastReloadAt.size
+      },
+      get MAX_MODULES(): number {
+        return MAX_TRACKED_MODULES
+      },
+      get MAX_URLS(): number {
+        return MAX_TRACKED_URLS
+      },
     },
   }
 

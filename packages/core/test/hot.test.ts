@@ -36,6 +36,12 @@ type Installed = {
     invalidate(): void
   }
   reloadModule(url: string): Promise<void>
+  __debug: {
+    readonly moduleCount: number
+    readonly reloadCount: number
+    readonly MAX_MODULES: number
+    readonly MAX_URLS: number
+  }
 }
 const globals = globalThis as unknown as {
   window?: object
@@ -168,4 +174,34 @@ test('data payload survives reloads for the same key', async () => {
   // Same `data` object; a setup-once pattern survives a save.
   const after = h.createHotContext(url)
   assert.equal(after.data.setup, 'one-time')
+})
+
+test('modules map stays bounded under many distinct URLs (Tier 3.8a)', async () => {
+  const h = hmr()
+  const MAX = h.__debug.MAX_MODULES
+  assert.ok(MAX > 0 && MAX < 10_000, `MAX_MODULES sanity: got ${MAX}`)
+
+  // createHotContext is what the injected dev preamble calls for every
+  // served module — the natural entry point for `modules.set`. Fill well
+  // past the cap so eviction is guaranteed to have fired.
+  const N = MAX + 500
+  for (let i = 0; i < N; i++) {
+    h.createHotContext(`/synthetic/module-${i}.tsx`)
+  }
+
+  assert.ok(
+    h.__debug.moduleCount <= MAX,
+    `modules.size ${h.__debug.moduleCount} exceeded cap ${MAX} after ${N} inserts`,
+  )
+
+  // The most-recently-inserted URL must still be resolvable. Eviction
+  // drops oldest-first; recent entries survive.
+  const recent = h.createHotContext(`/synthetic/module-${N - 1}.tsx`)
+  assert.equal(recent.url, `/synthetic/module-${N - 1}.tsx`)
+
+  // And inserting more should not push it past the cap again.
+  for (let i = 0; i < 100; i++) {
+    h.createHotContext(`/synthetic/extra-${i}.tsx`)
+  }
+  assert.ok(h.__debug.moduleCount <= MAX, `after overflow: ${h.__debug.moduleCount} > ${MAX}`)
 })

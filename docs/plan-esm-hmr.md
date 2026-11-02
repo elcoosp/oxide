@@ -186,6 +186,10 @@ Each item is a Playwright test to add (and where relevant, a small fix to make i
 - **Fix:** bounded LRU + drop old references after each successful refresh.
 - **Effort:** 2h.
 
+- **STATUS (recon 2026-11-02): PARTIAL — §3.8a DONE, §3.8b deferred.**
+- **§3.8a (done, this batch):** `modules` and `lastReloadAt` in `packages/core/src/client/hot.ts` are now capped at 500 entries each (insertion-order eviction). A session touching thousands of distinct URLs (pathological but possible: a buggy editor plugin, a scripted test) no longer grows JS heap unboundedly. Pinned by `modules map stays bounded under many distinct URLs (Tier 3.8a)` in `packages/core/test/hot.test.ts`; the test uses a new `__debug` getter hook on `globalThis.__oxide_hmr__`.
+- **§3.8b (deferred, architectural):** `?t=<ms>-<seq>` cache-busting still adds one module instance per distinct URL to the **browser's** own ESM module map. JS cannot evict from that map. A real fix needs a proxy architecture (import maps with mutable bindings, or a service worker) — not the plan's 2h. If this ever matters (a week-long dev session on a hot-reload-heavy project), it becomes its own Tier-3 item.
+- The plan's original 2h estimate conflated (a) and (b). (a) is what the test pins; (b) is real but out of scope here.
 #### 3.9 — Route edits hot-swap (U11)
 - **What:** editing an *existing* `routes/**/page.tsx` reloads; production dev servers hot-swap.
 - **Blocked on:** 1.3 (transitive graph).
@@ -270,7 +274,7 @@ A tier is **done** when every item in it:
 - [ ] 3.5 Worker thread `import.meta.hot`
 - [ ] 3.6 Multi-worker hub isolation
 - [ ] 3.7 Perf benchmarks
-- [ ] 3.8 Cache-buster memory bound
+- [x] 3.8 Cache-buster memory bound
 - [x] 3.9 Route edits hot-swap
 - [ ] 3.10 Client survives transient dev-server outages
 - [x] 4.1 Playwright in CI
