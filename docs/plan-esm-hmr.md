@@ -172,6 +172,7 @@ Each item is a Playwright test to add (and where relevant, a small fix to make i
 - **Fix:** mtime-hash the package.json and invalidate.
 - **Effort:** 3h.
 
+- **STATUS (recon 2026-11-02): DONE.** The watcher's per-batch loop now detects (a) any event whose path contains `/node_modules/` and ends with `/package.json`, and (b) any lockfile change (already detected — its handler now also re-runs prebundle). Both re-run `esm_dev::prebundle_cjs_deps(&rootp, &cfg.dev.prebundle)` and publish `HmrMessage::FullReload { reason: "node_modules change — prebundle regenerated (...)" }` in ESM mode. The FullReload (not ModuleUpdate) is the correct signal: a package change is not an edit React Refresh can preserve state across, and the client's next request rebuilds `EsmDevState` with the fresh `rewrite_map` (no in-memory `RwLock` needed). Test in `tests/playwright/tests/hmr-prebundle.spec.ts` (own server on 3113): snapshots prebundle mtime, creates a real package.json under node_modules, asserts mtime advanced AND a `full-reload` frame reached the live socket within 10s. Verified `pnpm`-symlinked `node_modules/<pkg>/package.json` files are NOT usable for the test (they point into the pnpm store outside the watch root); the test uses a fresh `node_modules/.oxide-test-prebundle-diag/package.json` instead.
 #### 3.4 — `import.meta.env.X` HMR (U8)
 - **What:** env changes trigger a full reload. Common Vite requirement.
 - **Fix:** publish `ModuleUpdate` for the env module; client re-imports the env shim.
@@ -287,7 +288,7 @@ A tier is **done** when every item in it:
 - [x] 2.15 Cold-start bound
 - [x] 3.1 Server-side watcher debounce
 - [x] 3.2 Batch change detection
-- [ ] 3.3 Prebundle invalidation
+- [x] 3.3 Prebundle invalidation
 - [ ] 3.4 `import.meta.env.X` HMR
 - [ ] 3.5 Worker thread `import.meta.hot`
 - [ ] 3.6 Multi-worker hub isolation

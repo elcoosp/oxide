@@ -2635,8 +2635,78 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                         | Some("Cargo.lock")
                 )
             });
+            // §3.3: a lockfile change OR a `node_modules/<pkg>/package.json`
+            // change invalidates the ESM prebundle. The prebundle (and the
+            // `rewrite_map` derived from it) is built once at boot; without
+            // this branch, installing a new package — or `pnpm update`ing a
+            // bundled dep — leaves `/@prebundle/<name>.js` serving stale
+            // CJS-to-ESM conversions forever. `pnpm add foo` is the canonical
+            // trigger: the lockfile changes AND node_modules/foo/package.json
+            // is created, both in the same watcher batch.
+            //
+            // Invalidation = re-prebundle to disk + FullReload. The rewrite
+            // map would need Arc<RwLock<...>> to be live-updated (its
+            // consumers cache it at request-entry), so the simpler correct
+            // behaviour is: rebuild the on-disk artifacts, tell the client
+            // to reload. The client's next request builds a fresh EsmDevState
+            // with the new rewrite_map. Any in-flight HMR is superseded by
+            // the reload, which is correct — a package change is not an
+            // edit the React Refresh path can meaningfully preserve.
+            let has_prebundle_invalidation = events.iter().any(|ev| {
+                let p = match ev {
+                    oxide_fw_dev::FileEvent::Modified(p)
+                    | oxide_fw_dev::FileEvent::Created(p)
+                    | oxide_fw_dev::FileEvent::Removed(p) => p,
+                };
+                let pstr = p.to_string_lossy();
+                pstr.contains("/node_modules/") && pstr.ends_with("/package.json")
+            });
+            if has_prebundle_invalidation && cfg.dev.esm {
+                tracing::info!(
+                    "§3.3: node_modules/*/package.json change — re-prebundling"
+                );
+                if let Err(e) =
+                    crate::esm_dev::prebundle_cjs_deps(&rootp, &cfg.dev.prebundle)
+                {
+                    tracing::warn!(error = %e, "§3.3: prebundle invalidation failed");
+                } else {
+                    // Rebuild the rewrite map even though consumers cache it
+                    // at boot — the reload below triggers a fresh
+                    // EsmDevState build on next request. (No in-memory swap
+                    // needed: FullReload is the signal.)
+                    let _ = crate::esm_dev::build_rewrite_map(&rootp, &cfg.dev.prebundle);
+                    if let Some(hub) = started.hmr.as_ref() {
+                        hub.publish(oxide_fw_dev::HmrMessage::FullReload {
+                            reason: format!(
+                                "node_modules change — prebundle regenerated ({} package.json event(s))",
+                                events.iter().filter(|ev| {
+                                    let p = match ev {
+                                        oxide_fw_dev::FileEvent::Modified(p)
+                                        | oxide_fw_dev::FileEvent::Created(p)
+                                        | oxide_fw_dev::FileEvent::Removed(p) => p,
+                                    };
+                                    let pstr = p.to_string_lossy();
+                                    pstr.contains("/node_modules/") && pstr.ends_with("/package.json")
+                                }).count()
+                            ),
+                        });
+                    }
+                }
+            }
             if has_lockfile {
                 tracing::info!("lockfile change — resolver epoch bump");
+                // §3.3: also re-prebundle on lockfile change. The lockfile
+                // mirrors `node_modules` state, but a package can be
+                // hoisted/re-linked without touching its own package.json.
+                // Treat a lockfile touch as a prebundle-invalidation trigger
+                // independent of the per-package check above.
+                if cfg.dev.esm {
+                    if let Err(e) =
+                        crate::esm_dev::prebundle_cjs_deps(&rootp, &cfg.dev.prebundle)
+                    {
+                        tracing::warn!(error = %e, "§3.3: lockfile prebundle re-run failed");
+                    }
+                }
             }
             invalidate_framework_modules(&hmr_pool, &rootp).await;
             let needs_client_rebuild = !cfg.dev.esm && events.iter().any(|e| {
