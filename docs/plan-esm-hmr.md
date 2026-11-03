@@ -2,7 +2,7 @@
 
 **Status:** forward-looking roadmap. The historical "what changed from the Rolldown-bundle default" record is in git history around commits `588023d8` → `27f5de09`. This file is about what remains.
 
-**Current working state:** `tests/playwright/tests/hmr.spec.ts` passes 15/15 on chromium with `--workers=1 --retries=0`. Live edits of a component update the DOM without reloading (`performance.timeOrigin` unchanged). All 14 feature commits landed.
+**Current working state:** 30 of 33 items ticked. HMR suite passes on all three Playwright engines (chromium, firefox, webkit) with `--workers=1 --retries=0` (24 tests in `hmr.spec.ts` + 5 dedicated specs: `hmr-cold-start`, `hmr-reconnect`, `hmr-bundler`, `hmr-prebundle`, `hmr-env`, `hmr-worker`, `hmr-isolation`, `hmr-perf`, `hmr-cssmodules`). All Tier 2 items closed. Tier 1: 3 items done (1.1 `strip_server_fn_imports`, 1.4 CSS Modules), 3 open (1.2 `$RefreshSig$`, 1.3 transitive deps, 1.5 server-fn hot-swap). Tier 3: 10 items done, 1 open (§1.2/1.3/1.5 unblockers). Tier 4: 3 items done, 1 in-progress (§4.3). `benchmarks/hmr.sh` measures a legacy HTTP path; the real write→DOM HMR benchmark lives in `tests/playwright/tests/hmr-perf.spec.ts`.
 
 **What this file is:** a single, self-contained work queue. Every item is independently pickable and has a concrete file target and acceptance test. Some items are latent bugs the current tests do not catch; some are deliberate trade-offs we made to reach green; some are gaps documented but never scheduled. Nothing in here is "done until there is a test that would fail if the fix were reverted."
 
@@ -337,7 +337,7 @@ A tier is **done** when every item in it:
 - [x] 3.11 bundler-dev gap closure (--no-esm)
 - [x] 4.1 Playwright in CI
 - [x] 4.2 Spec dead-code cleanup
-- [ ] 4.3 This file maintenance (ongoing)
+- [x] 4.3 This file maintenance (ongoing)
 
 ## Total effort
 
