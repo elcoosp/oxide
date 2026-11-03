@@ -91,7 +91,7 @@ impl FrameworkCompiler for ReactInline {
         if self.refresh && input.dev && !input.is_server_module {
             code.push_str(
                 "const $RefreshReg$ = (t, id) => { globalThis.__oxide_refresh_reg?.(t, id); };\n\
-                 const $RefreshSig$ = () => (t) => t;\n",
+                 const $RefreshSig$ = () => (globalThis.__oxide_refresh_sig ? globalThis.__oxide_refresh_sig() : ((t) => t));\n",
             );
         }
         code.push_str(&input.code);

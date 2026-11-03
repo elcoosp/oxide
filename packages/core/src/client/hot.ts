@@ -86,6 +86,7 @@ function install(): void {
     __oxide_hmr__?: unknown
     __oxide_refresh?: unknown
     __oxide_refresh_reg?: (t: unknown, id: string) => void
+    __oxide_refresh_sig?: () => (v: unknown) => unknown
     $RefreshRuntime$?: {
       performReactRefresh?: () => void
       injectIntoGlobalHook?: (w: unknown) => void
@@ -234,6 +235,35 @@ function install(): void {
         }
       }
       if (typeof location !== 'undefined') location.reload()
+    }
+  }
+
+  // §1.2: `$RefreshSig$` real implementation. The compiler wraps every hook
+  // call inside a component (`useState`, `useEffect`, custom `use*`) with a
+  // signature function. That function is what lets React Refresh detect a
+  // HOOK-SHAPE change: same hooks in same order → in-place update; changed
+  // count/order → remount (the old hook chain no longer corresponds to the
+  // new one). Without it, editing an `useEffect` dependency array silently
+  // keeps the OLD closure running — the exact class of "component updated
+  // but behaviour is wrong" bug this item exists to close.
+  //
+  // Delegates to `$RefreshRuntime$.createSignatureFunctionForTransform()`,
+  // the same API Vite's react-refresh plugin uses. Falls back to identity
+  // when the runtime is not yet loaded (`pendingRegistrations` in the
+  // compiler's own buffered path ensures the FIRST registration lands after
+  // the runtime loads; sig functions are only needed at re-render time,
+  // which is always after boot).
+  if (hasWindow && typeof g.__oxide_refresh_sig === 'undefined') {
+    g.__oxide_refresh_sig = (): ((v: unknown) => unknown) => {
+      const rt = g.$RefreshRuntime$
+      if (rt && typeof rt.createSignatureFunctionForTransform === 'function') {
+        try {
+          return rt.createSignatureFunctionForTransform()
+        } catch (e) {
+          console.error('[hot] createSignatureFunctionForTransform() threw:', e)
+        }
+      }
+      return (v: unknown) => v
     }
   }
 

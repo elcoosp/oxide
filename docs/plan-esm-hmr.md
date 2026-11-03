@@ -62,6 +62,19 @@ These are the remaining differences from Vite-class dev tooling. Some are **chos
 - **Acceptance:** test that reorders hooks between edits and asserts `performReactRefresh()` triggers a remount (listener count resets).
 - **Effort:** 1 day.
 
+- **STATUS (recon 2026-11-03): PARTIAL — runtime + emit landed, remount not firing.**
+- **What shipped (real, verified):**
+  - Compiler AST walker (`crates/compiler/src/oxc_backend.rs`): `collect_hook_call_spans` + `collect_component_hook_wraps` detect top-level `useX(...)` calls inside component function bodies and wrap the callee as `_s(useX, "useX")(...)`. Verified: served `hmr-target.tsx` emits `const [count, setCount] = _s(useState, "useState")(0);` with `const _s = $RefreshSig$();` at module scope.
+  - Runtime (`packages/core/src/client/hot.ts`): `__oxide_refresh_sig` installs a `createSignatureFunctionForTransform()` delegation. Verified in-browser: `hasSig: true`.
+  - Compiler shim updated in both `oxc_backend.rs` and `framework.rs` to delegate to `__oxide_refresh_sig` with fallback.
+  - Acceptance test (`tests/playwright/tests/hmr-refresh-sig.spec.ts`) and dedicated fixture (`examples/smoke-app-react/src/components/hmr-shape-target.tsx`) — both in the tree, both currently failing.
+- **What's broken:** Adding a hook (`useState` → `useState` + `useEffect`) still causes React's "Rendered more hooks than during the previous render" — meaning React Refresh does an in-place update instead of a remount. The diagnostic captured: `hasSig: true` on the browser, `_s(useEffect, "useEffect")` correctly emitted in the patched file, valid JS, WS ModuleUpdate frame reaches the browser, but h1 stays `SHAPE-ORIGINAL` and the tree unmounts on React's hook-mismatch check.
+- **Root cause hypothesis:** the module-scope `const _s = $RefreshSig$();` executes when `$RefreshRuntime$` may still be loading from the async prebundle fetch. If it's not loaded yet, `__oxide_refresh_sig()` returns the identity fallback `(v) => v`, so the OLD component's hook sig is never registered with the runtime. When HMR loads the NEW component, its sig registers (runtime now ready), but React Refresh has nothing to compare against → falls through to in-place update → React's own hook-count check throws. This is the same race `pendingRegistrations` was built for on the *register* path (§2.13), but the sig path was not buffered.
+- **Likely fix (next session):** two options, both real work:
+  1. Buffer sigs like registrations: `__oxide_refresh_sig()` returns a queueing function that captures `(type, key)` calls until `$RefreshRuntime$` loads, then creates a real sig and replays. The buffered function must replace itself with the real one (or delegate on each call) so subsequent renders use the real sig.
+  2. Move `_s = $RefreshSig$()` from module scope into the component body (`const _s = $RefreshSig$();` right after the function starts), matching react-refresh's actual babel emit shape. This delays sig resolution to render-time, which is after the async runtime fetch resolves for any render except the very first. May or may not fix the OLD-version registration.
+- **Verification harness is ready:** run `pnpm --filter @oxide/playwright exec playwright test hmr-refresh-sig.spec.ts --project=chromium` and it tells you exactly where you are. Fails today on `Expected h1 "SHAPE-PATCHED", got SHAPE-ORIGINAL` — the shape-change never remounted, the tree crashed.
+- **Effort to close:** ~4-6h of focused work. The plumbing is correct; the buffering / scoping is what's missing.
 #### 1.3 — Transitive dependency propagation
 
 - **What:** editing `src/lib/utils.ts` reimports `utils.ts` only; `page.tsx` keeps using the old binding. `$RefreshReg$` saves this for components, but utilities, hooks, constants, context providers are silently stale.

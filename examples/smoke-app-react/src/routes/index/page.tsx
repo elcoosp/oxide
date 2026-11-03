@@ -11,12 +11,14 @@ const greetingFnId = greet.id
 import Counter from '../../islands/counter.tsx'
 import HmrTarget from '../../components/hmr-target.tsx'
 import './page.css'
+import HmrShapeTarget from '../../components/hmr-shape-target.tsx'
 
 export default function Page() {
   return (
     <main data-greeting-fn={greetingFnId}>
       <h1>Home</h1>
       <HmrTarget />
+      <HmrShapeTarget />
       <Island component="Counter" chunk="Counter" props={{ initial: 3 }}>
         <Counter initial={3} />
       </Island>

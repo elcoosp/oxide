@@ -237,13 +237,69 @@ pub fn inject_react_refresh(code: &str, lang: &str, path: &str) -> Result<String
     if regs.is_empty() {
         return Ok(code.to_string());
     }
-    let mut out = String::with_capacity(code.len() + 200 + regs.len() * 40);
+    // §1.2: collect hook-wrapping edits BEFORE emitting. Each `useX(...)`
+    // top-level call inside a component function body gets its CALLEE
+    // wrapped as `_s(useX)(...)` — the outer `_s(useX)` records the hook
+    // type in the signature, the trailing `(...)` invokes the real hook. React Refresh's `createSignatureFunctionForTransform()`
+    // reads this to detect hook-shape changes: same sequence → in-place
+    // update; different → remount (rather than silently keeping the OLD
+    // closure against the new hook chain).
+    //
+    // Scope (deliberately narrow): top-level `VariableDeclaration`
+    // declarators whose init is a `use*` call, and top-level
+    // `ExpressionStatement`s whose expression is a `use*` call. Nested
+    // hooks (inside `.map(...)`, `if (...)`) are NOT wrapped — React's
+    // rules of hooks forbid them at runtime anyway, so wrapping them is
+    // not needed and the byte-span edit is more error-prone there.
+    // §1.2: collect per-hook wraps (for hook signatures) AND per-component
+    // emits (for the component's hook-sequence signature).
+    let mut hook_wraps: Vec<HookWrap> = Vec::new();
+    let mut components: Vec<ComponentEmit> = Vec::new();
+    for stmt in &parsed.program.body {
+        collect_components(stmt, &mut hook_wraps, &mut components);
+    }
+
+    // Build a single list of (byte_position, insert_text) edits, sorted
+    // DESCENDING by position so earlier offsets stay valid as we insert.
+    // Two kinds of inserts:
+    //   - per-hook: `_s(` at callee start, `, "hookName")` at callee end
+    //   - per-component: `_s(Comp, "path:Name", false, function() { return
+    //     [hooks]; });\n` right after the body's opening `{`
+    let mut edits: Vec<(usize, String)> = Vec::new();
+    for w in &hook_wraps {
+        edits.push((w.start, "_s(".to_string()));
+        edits.push((w.end, format!(", {:?})", w.name)));
+    }
+    for comp in &components {
+        let hooks_arr = comp.hook_names.iter().map(|n| n.as_str()).collect::<Vec<_>>().join(", ");
+        let stmt = format!(
+            "_s({name}, {stable_id:?}, false, function() {{ return [{hooks}]; }});\n",
+            name = comp.name,
+            stable_id = format!("{path}:{}", comp.name),
+            hooks = hooks_arr,
+        );
+        // Insert RIGHT AFTER the opening `{` of the body.
+        edits.push((comp.body_start + 1, stmt));
+    }
+    edits.sort_by_key(|(pos, _)| std::cmp::Reverse(*pos));
+    let mut code_with_sig = code.to_string();
+    for (pos, text) in edits {
+        code_with_sig.insert_str(pos, &text);
+    }
+
+    let mut out = String::with_capacity(code_with_sig.len() + 200 + regs.len() * 40);
     out.push_str("// oxide: React Refresh (dev only)\n");
     out.push_str(
         "const $RefreshReg$ = (t, id) => { const r = globalThis.__oxide_refresh_reg; if (typeof r === 'function') { try { r(t, id, import.meta.url); } catch {} } };\n",
     );
-    out.push_str("const $RefreshSig$ = () => (t) => t;\n");
-    out.push_str(code);
+    out.push_str("const $RefreshSig$ = () => (globalThis.__oxide_refresh_sig ? globalThis.__oxide_refresh_sig() : ((t) => t));\n");
+    // §1.2: one `_s` per module, shared by every wrapped hook call. The
+    // runtime's `createSignatureFunctionForTransform` returns a per-component
+    // tracker that discriminates by `type` (the hook function itself), so
+    // sharing one `_s` across all components is what react-refresh's own
+    // babel plugin does.
+    out.push_str("const _s = $RefreshSig$();\n");
+    out.push_str(&code_with_sig);
     if !out.ends_with('\n') {
         out.push('\n');
     }
@@ -263,6 +319,281 @@ pub fn inject_react_refresh(code: &str, lang: &str, path: &str) -> Result<String
         out.push_str(");\n");
     }
     Ok(out)
+}
+
+/// §1.2: walk a component function body and collect byte spans of every
+/// top-level `useX(...)` call. The span is the FULL call expression (from
+/// the `use` identifier's start to the closing paren's end), which is what
+/// the wrapping turns into `_s(useX)(...)` — the parenthesised args become
+/// the second call's args.
+///
+/// `_id` in the tuple is unused in the current emit (kept for future use
+/// in error messages / debug); the wrapper doesn't need a name per-hook.
+fn collect_hook_call_spans(
+    body: &oxc_ast::ast::FunctionBody<'_>,
+    code: &str,
+    out: &mut Vec<(usize, usize, String)>,
+) {
+    use oxc_ast::ast::{Expression, Statement};
+    fn is_use_call(expr: &Expression<'_>) -> Option<(u32, u32, String)> {
+        let Expression::CallExpression(call) = expr else { return None };
+        let Expression::Identifier(id) = &call.callee else { return None };
+        let name = id.name.as_str();
+        if !name.starts_with("use") || name.len() < 4 {
+            return None;
+        }
+        // React's rules: identifier chars after `use` must be uppercase
+        // (useState, useEffect, useCustom) — `userList(...)` is not a hook.
+        let after = name.chars().nth(3)?;
+        if !after.is_uppercase() {
+            return None;
+        }
+        // §1.2: return the callee span AND the hook name. The runtime's
+        // `createSignatureFunctionForTransform()` returns a function whose
+        // SECOND argument must be a STRING key (react-refresh runtime line
+        // ~130: `if ("string" === typeof key) { setSignature(type, key,
+        // ...); return type }`). Without the string key, the call returns
+        // undefined and no signature is recorded — the emission is a
+        // no-op for hook-shape tracking. Shape emitted:
+        //   `_s(useState, "useState")(0)` — the outer `_s(useState, "useState")`
+        //   records the type + name in the signature, and returns the
+        //   original `useState`; the trailing `(0)` invokes it normally.
+        Some((id.span.start, id.span.end, name.to_string()))
+    }
+    let _ = code; // byte slicing not needed; spans are already byte offsets
+    for stmt in &body.statements {
+        match stmt {
+            Statement::VariableDeclaration(v) => {
+                for d in &v.declarations {
+                    if let Some(init) = &d.init
+                        && let Some((s, e, name)) = is_use_call(init)
+                    {
+                        out.push((s as usize, e as usize, name));
+                    }
+                }
+            }
+            Statement::ExpressionStatement(es) => {
+                if let Some((s, e, name)) = is_use_call(&es.expression) {
+                    out.push((s as usize, e as usize, name));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// §1.2: for a top-level statement that DECLARES a component (function,
+/// class, or `const X = () => ...`), find the function bodies and collect
+/// their hook-call spans. `_s = $RefreshSig$();` is inserted at the START
+/// of each body — see `inject_sig_prologue`.
+fn collect_component_hook_wraps(
+    stmt: &Statement<'_>,
+    code: &str,
+    out: &mut Vec<(usize, usize, String)>,
+) {
+    use oxc_ast::ast::{
+        Declaration, ExportDefaultDeclarationKind, Expression, Statement,
+    };
+    fn walk_fn_like(
+        body: &oxc_ast::ast::FunctionBody<'_>,
+        code: &str,
+        out: &mut Vec<(usize, usize, String)>,
+    ) {
+        collect_hook_call_spans(body, code, out);
+    }
+    fn walk_var_decl(v: &oxc_ast::ast::VariableDeclaration<'_>, code: &str, out: &mut Vec<(usize, usize, String)>) {
+        for d in &v.declarations {
+            let Some(init) = &d.init else { continue };
+            match init {
+                Expression::ArrowFunctionExpression(a) => {
+                    if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(b) = &a.body {
+                        walk_fn_like(b, code, out);
+                    }
+                }
+                Expression::FunctionExpression(f) => {
+                    if let Some(b) = &f.body {
+                        walk_fn_like(b, code, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    match stmt {
+        Statement::FunctionDeclaration(f) => {
+            if let Some(b) = &f.body {
+                walk_fn_like(b, code, out);
+            }
+        }
+        Statement::VariableDeclaration(v) => walk_var_decl(v, code, out),
+        Statement::ExportDeclaration(e) => match &e.declaration {
+            Declaration::FunctionDeclaration(f) => {
+                if let Some(b) = &f.body {
+                    walk_fn_like(b, code, out);
+                }
+            }
+            Declaration::VariableDeclaration(v) => walk_var_decl(v.as_ref(), code, out),
+            _ => {}
+        },
+        Statement::ExportDefaultDeclaration(e) => match &e.declaration {
+            ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
+                if let Some(b) = &f.body {
+                    walk_fn_like(b, code, out);
+                }
+            }
+            _ => {}
+        },
+        _ => {}
+    }
+}
+
+/// §1.2: per-component hook-signature info. Each top-level component
+/// gets a `_s(Component, "path:Name", false, function() { return [hooks]; });`
+/// call at the START of its body. That records the component's
+/// hook-sequence signature, which `performReactRefresh` uses to
+/// differentiate in-place updates (same sequence) from remounts
+/// (different sequence). Without this, the runtime has only per-hook
+/// entries (from `_s(useState, "useState")`) but no component-level
+/// sequence to compare.
+#[derive(Debug)]
+struct ComponentEmit {
+    name: String,
+    body_start: usize,
+    hook_names: Vec<String>,
+}
+
+#[derive(Debug)]
+struct HookWrap {
+    start: usize,
+    end: usize,
+    name: String,
+}
+
+fn collect_component_hooks(
+    body: &oxc_ast::ast::FunctionBody<'_>,
+    wraps: &mut Vec<HookWrap>,
+    names: &mut Vec<String>,
+) {
+    use oxc_ast::ast::{Expression, Statement};
+    fn is_use_call(expr: &Expression<'_>) -> Option<(u32, u32, String)> {
+        let Expression::CallExpression(call) = expr else { return None };
+        let Expression::Identifier(id) = &call.callee else { return None };
+        let name = id.name.as_str();
+        if !name.starts_with("use") || name.len() < 4 {
+            return None;
+        }
+        let after = name.chars().nth(3)?;
+        if !after.is_uppercase() {
+            return None;
+        }
+        Some((id.span.start, id.span.end, name.to_string()))
+    }
+    for stmt in &body.statements {
+        match stmt {
+            Statement::VariableDeclaration(v) => {
+                for d in &v.declarations {
+                    if let Some(init) = &d.init
+                        && let Some((s, e, name)) = is_use_call(init)
+                    {
+                        wraps.push(HookWrap { start: s as usize, end: e as usize, name: name.clone() });
+                        names.push(name);
+                    }
+                }
+            }
+            Statement::ExpressionStatement(es) => {
+                if let Some((s, e, name)) = is_use_call(&es.expression) {
+                    wraps.push(HookWrap { start: s as usize, end: e as usize, name: name.clone() });
+                    names.push(name);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn walk_component(
+    name: String,
+    body: Option<&oxc_ast::ast::FunctionBody<'_>>,
+    wraps: &mut Vec<HookWrap>,
+    comps: &mut Vec<ComponentEmit>,
+) {
+    let Some(body) = body else { return };
+    let mut hook_names = Vec::new();
+    collect_component_hooks(body, wraps, &mut hook_names);
+    comps.push(ComponentEmit {
+        name,
+        body_start: body.span.start as usize,
+        hook_names,
+    });
+}
+
+fn collect_components(
+    stmt: &oxc_ast::ast::Statement<'_>,
+    wraps: &mut Vec<HookWrap>,
+    comps: &mut Vec<ComponentEmit>,
+) {
+    use oxc_ast::ast::{
+        BindingPatternKind, Declaration, ExportDefaultDeclarationKind, Expression, Statement,
+    };
+    fn handle_init(
+        name: String,
+        init: &Expression<'_>,
+        wraps: &mut Vec<HookWrap>,
+        comps: &mut Vec<ComponentEmit>,
+    ) {
+        match init {
+            Expression::ArrowFunctionExpression(a) => {
+                if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(b) = &a.body {
+                    walk_component(name, Some(b), wraps, comps);
+                }
+            }
+            Expression::FunctionExpression(f) => {
+                walk_component(name, f.body.as_deref(), wraps, comps);
+            }
+            _ => {}
+        }
+    }
+    match stmt {
+        Statement::FunctionDeclaration(f) => {
+            if let Some(id) = &f.id {
+                walk_component(id.name.to_string(), f.body.as_deref(), wraps, comps);
+            }
+        }
+        Statement::VariableDeclaration(v) => {
+            for d in &v.declarations {
+                if let BindingPatternKind::BindingIdentifier(bid) = &d.id.kind
+                    && let Some(init) = &d.init
+                {
+                    handle_init(bid.name.to_string(), init, wraps, comps);
+                }
+            }
+        }
+        Statement::ExportDeclaration(e) => match &e.declaration {
+            Declaration::FunctionDeclaration(f) => {
+                if let Some(id) = &f.id {
+                    walk_component(id.name.to_string(), f.body.as_deref(), wraps, comps);
+                }
+            }
+            Declaration::VariableDeclaration(v) => {
+                for d in &v.declarations {
+                    if let BindingPatternKind::BindingIdentifier(bid) = &d.id.kind
+                        && let Some(init) = &d.init
+                    {
+                        handle_init(bid.name.to_string(), init, wraps, comps);
+                    }
+                }
+            }
+            _ => {}
+        },
+        Statement::ExportDefaultDeclaration(e) => match &e.declaration {
+            ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
+                let name = f.id.as_ref().map(|i| i.name.to_string()).unwrap_or_else(|| "default".to_string());
+                walk_component(name, f.body.as_deref(), wraps, comps);
+            }
+            _ => {}
+        },
+        _ => {}
+    }
 }
 
 fn top_level_component_names(stmt: &Statement<'_>) -> Vec<String> {
