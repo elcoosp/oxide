@@ -2176,6 +2176,14 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // test calls directly, bypassing this function) can populate the same
     // map in ESM mode.
     populate_dev_component_source(&rootp, &cfg, &tree, &stack).await;
+    // §1.4: pre-compute the CSS-module JS maps for SSR. The Node loader
+    // cannot itself run lightningcss (no Rust callback); the client
+    // `/@css/` path transforms on demand via `serve_css_module`. Both
+    // MUST produce identical mangled names, so the same Rust backend
+    // computes once and writes to `.oxide/css-modules/`.
+    if let Err(e) = crate::esm_dev::precompute_css_modules(&rootp) {
+        tracing::warn!(error = %e, "§1.4: precompute CSS modules failed");
+    }
     if let Some(name) = stack.renderer_name() {
         outln!(w, "framework renderer: {}", name);
     }
@@ -2900,6 +2908,10 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                     | oxide_fw_dev::FileEvent::Removed(p) => p,
                 };
                 let pstr = path.to_string_lossy().to_string();
+                // §1.4: capture BEFORE the match moves `pstr` into
+                // HmrMessage variants — the post-module-update branch below
+                // needs to know whether this was a .module.css edit.
+                let is_module_css = pstr.ends_with(".module.css");
                 // Phase 4: tailwind source change -> rebuild CSS to disk.
                 if tailwind::has_tailwind(&cfg)
                     && tailwind::is_source_file(&pstr)
@@ -2970,6 +2982,17 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                 path: pstr,
                                 code: String::new(),
                             });
+                        }
+                        // §1.4: a `.module.css` change also regenerates its
+                        // pre-computed SSR map. The client's own update comes
+                        // from the ModuleUpdate published above (the /@css/
+                        // reload re-injects the style; React Refresh is not
+                        // needed for CSS). The SSR side reads the fresh
+                        // `.oxide/css-modules/<rel>.mjs` on the next render.
+                        if is_module_css {
+                            if let Err(e) = crate::esm_dev::precompute_css_modules(&rootp) {
+                                tracing::warn!(error = %e, "§1.4: precompute after .module.css change failed");
+                            }
                         }
                     }
                     HmrBehavior::ReloadData => {

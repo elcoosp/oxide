@@ -78,6 +78,13 @@ These are the remaining differences from Vite-class dev tooling. Some are **chos
 - **Acceptance:** end-to-end test that imports `.module.css` and asserts `<h1 class="<mangled>">` renders; assert hot-edit changes the mangled name and the DOM updates.
 - **Effort:** 4–6h.
 
+- **STATUS (recon 2026-11-02): DONE, both backends.**
+- **Client**: `crates/cli/src/esm_dev.rs::serve_css_module` detects `.module.css` / `.module.scss` / `.module.sass`, runs `oxide-fw-assets::LightningCssBackend` (already a workspace dep, already a cli dep), and serves a JS module whose `export default` is the lightningcss class map. Plain `.css` unchanged (still `export default css`).
+- **SSR** (two backends):
+  - *Node* (default in dev): `crates/jshost/worker/tsx-loader.mjs` detects `.module.css`, reads the precomputed `.mjs`; falls through to `export default ""` for plain `.css`. Uses `fileURLToPath` before `path.join` — the first attempt built the path from the `file://` URL, and `path.join` collapsed `///` to `/`, producing ENOENT.
+  - *V8* (`server.backend = "v8"`): `crates/jshost/src/v8_loader.rs` runs `lightningcss::StyleSheet::parse` with `css_modules: Pattern::default()` directly. Added `lightningcss` to `crates/jshost/Cargo.toml`.
+- **Precompute** (`esm_dev::precompute_css_modules`): runs at `cmd_dev` boot and on `.module.css` watcher events. Writes `.oxide/css-modules/<rel-with-__>.mjs`. Node loader reads these files. Both client + SSR go through the SAME `LightningCssBackend` call, so mangled names are byte-identical — the test's `SSR class === client class` assertion is what catches drift.
+- **Test** (`tests/playwright/tests/hmr-cssmodules.spec.ts`, own server on 3119): fixture is a `.module.css` + `import`/`className` in `page.tsx`. Asserts (a) `/@css/*.module.css` exports a map with a mangled `hero`, (b) SSR HTML has the SAME mangled class, (c) live DOM after hydration has the same, (d) editing the `.module.css` updates the injected `<style>` without reloading. Test asserts on `#0ac80a` (lightningcss's normalized serialization of `rgb(10, 200, 10)`) — lightningcss normalizes color syntax; asserting the raw `rgb(...)` would fail even though HMR worked correctly, since the serialized CSS never contains the rgb form. Verified on chromium/firefox/webkit.
 #### 1.5 — Server function hot-swap
 
 - **What:** plain `.server.ts` (not `page.server.ts`) imported by a client component triggers `ServerModuleSwap → location.reload()` on save.
@@ -300,7 +307,7 @@ A tier is **done** when every item in it:
 - [x] 1.1 `strip_server_fn_imports` multi-name
 - [ ] 1.2 `$RefreshSig$` real implementation
 - [ ] 1.3 Transitive dependency propagation
-- [ ] 1.4 CSS Modules
+- [x] 1.4 CSS Modules
 - [ ] 1.5 Server function hot-swap
 - [x] 2.1 Island HMR
 - [x] 2.2 Layout HMR

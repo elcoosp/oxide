@@ -4987,6 +4987,7 @@ dependencies = [
  "deno_core",
  "deno_error",
  "futures",
+ "lightningcss",
  "oxc_resolver",
  "oxide-fw-cache",
  "oxide-fw-compiler",

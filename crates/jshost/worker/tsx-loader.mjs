@@ -270,9 +270,40 @@ export async function load(url, context, nextLoad) {
   // `url.endsWith('.tsx')` on `page.tsx?v=35` is false.
   const queryAt = url.indexOf('?')
   const bareUrl = queryAt >= 0 ? url.slice(0, queryAt) : url
-  // BUG-08: CSS is a server side-effect import — evaluate to an empty
-  // module (SSR never applies styles; the client bundle handles real CSS).
+  // §1.4: `.module.css` needs its pre-computed class map. The client
+  // `/@css/` path transforms via Rust lightningcss on demand; SSR cannot
+  // (Node loader, no Rust callback). Both MUST produce identical mangled
+  // names for hydration — so `oxide dev` pre-computes the map via the same
+  // Rust backend, writes `.oxide/css-modules/<rel>.mjs`, and this loader
+  // resolves the SSR import to that file.
+  //
+  // Plain `.css` remains a side-effect import: empty export, no SSR styling
+  // (the client `<style data-oxide-css>` injection owns that, unchanged).
   if (bareUrl.endsWith('.css')) {
+    if (bareUrl.endsWith('.module.css')) {
+      // Convert the file:// URL to a real POSIX path BEFORE joining. Doing
+      // path manipulation on the URL string and then path.join collapses
+      // `///` to `/` (file:/Users/...), which readFile treats as a
+      // relative path — ENOENT. fileURLToPath gives `/Users/...` and
+      // everything downstream is a normal filesystem operation.
+      try {
+        const fullPath = fileURLToPath(bareUrl)
+        const srcIdx = fullPath.lastIndexOf('/src/')
+        if (srcIdx >= 0) {
+          const rootDir = fullPath.slice(0, srcIdx)
+          const relPath = fullPath.slice(srcIdx + '/src/'.length)
+          const relEnc = relPath.replace(/\//g, '__')
+          const precomputed = join(rootDir, '.oxide', 'css-modules', relEnc + '.mjs')
+          const src = await readFile(precomputed, 'utf8')
+          return { format: 'module', shortCircuit: true, source: src }
+        }
+      } catch {
+        // No pre-computed map — fall through to empty (SSR sees no class).
+        // A `.module.css` compiled by a build (`oxide build`) uses the
+        // bundler's CssPlugin path and never reaches this loader; a
+        // missing-file case is a fresh `oxide dev` before precompute ran.
+      }
+    }
     return { format: 'module', shortCircuit: true, source: 'export default "";' }
   }
   const isTsx = bareUrl.endsWith('.tsx') || bareUrl.endsWith('.jsx')

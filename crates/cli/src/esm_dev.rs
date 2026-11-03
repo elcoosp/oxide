@@ -35,6 +35,99 @@ use oxide_fw_server::{OxideRequest, OxideResponse};
 /// Directory (project-relative) where prebundled deps and copied framework
 /// dist files live. URL-mapped to `/@prebundle/`.
 pub const PREBUNDLE_DIR: &str = ".oxide/esm-prebundle";
+
+/// §1.4: pre-compute the JS module for every `.module.css` in `src/`.
+///
+/// The SSR worker's Node loader cannot itself run lightningcss (it's a
+/// pure-Node loader with no Rust callback). The CLIENT `/@css/` path
+/// transforms on demand via `serve_css_module` (Rust-side lightningcss).
+/// Both MUST produce identical mangled class names for React hydration to
+/// reconcile — so the transform is computed once, by the SAME Rust code
+/// (`LightningCssBackend`), and written to disk where the loader reads it.
+///
+/// Writes `.oxide/css-modules/<rel>.mjs` where `<rel>` is the src-relative
+/// path with `/` replaced by `__` (filesystem-safe, reversible by the
+/// loader). Content is `export default {"local":"mangled",...};` — exactly
+/// what `serve_css_module` exports over the wire.
+///
+/// Called:
+///   - At dev boot (cmd_dev), so the first SSR request works.
+///   - On a `.module.css` change (watcher's StyleSwap branch), so SSR sees
+///     the new map on the next request while the CLIENT injects the new
+///     style via the existing /@css/ reload.
+///
+/// Best-effort: a `.module.css` that fails to transform is skipped with a
+/// warning; the loader falls back to `export default ""` for that file
+/// (which produces an unstyled SSR element, matching prior behaviour for
+/// that file — never a hard failure of the whole page).
+pub fn precompute_css_modules(root: &Path) -> anyhow::Result<()> {
+    let src = root.join("src");
+    if !src.is_dir() {
+        return Ok(());
+    }
+    let out = root.join(".oxide").join("css-modules");
+    std::fs::create_dir_all(&out)?;
+    use oxide_fw_assets::{CssBackend, CssInput, CssKind};
+    let backend = oxide_fw_assets::LightningCssBackend;
+    let mut stack = vec![src.clone()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                stack.push(p);
+                continue;
+            }
+            let fname = p.file_name().and_then(|f| f.to_str()).unwrap_or("");
+            let is_mod = fname.ends_with(".module.css")
+                || fname.ends_with(".module.scss")
+                || fname.ends_with(".module.sass");
+            if !is_mod {
+                continue;
+            }
+            let Ok(code) = std::fs::read_to_string(&p) else { continue };
+            let rel_path = p
+                .strip_prefix(&src)
+                .map(|r| r.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| fname.to_string());
+            let input = CssInput {
+                code,
+                // Same `file` the client `serve_css_module` passes —
+                // REQUIRED for identical hash. `src/{rel_path}`.
+                file: Some(format!("src/{rel_path}")),
+                kind: CssKind::Module,
+                minify: false,
+                targets: Vec::new(),
+            };
+            match backend.transform(&input) {
+                Ok(res) => {
+                    let json = serde_json::to_string(&res.exports)
+                        .unwrap_or_else(|_| "{}".to_string());
+                    let js = format!("export default {json};\n");
+                    let rel_enc = rel_path.replace('/', "__");
+                    let dst = out.join(format!("{rel_enc}.mjs"));
+                    if let Err(e) = std::fs::write(&dst, js) {
+                        tracing::warn!(
+                            path = %dst.display(),
+                            error = %e,
+                            "§1.4: could not write pre-computed CSS module"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        path = %p.display(),
+                        code = %e.0.code,
+                        error = %e.0.message,
+                        "§1.4: CSS modules transform failed; SSR will use empty default"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The ESM manifest. Mirrors `dist/client/client.manifest.json`'s shape.
 pub const MANIFEST_PATH: &str = ".oxide/esm-manifest.json";
 /// The boot entry, URL-served at `/@boot/boot.mjs`.
@@ -811,10 +904,59 @@ fn serve_css_module(state: &EsmDevState, rel_path: &str) -> OxideResponse {
     } else {
         (rel_path.to_string(), source)
     };
+
+    // §1.4: CSS Modules. `x.module.css` gets scoped class names (lightningcss'
+    // cssModules) and the served JS module exports the `local → mangled` map as
+    // `default`. The style injection still runs (so HMR works). The SAME
+    // module is what the SSR worker loads for a `.tsx` that imports
+    // `./x.module.css`, so this one change fixes both client and SSR paths —
+    // before, `heroStyles.hero` on the SSR side evaluated to
+    // `("string").hero` = undefined (the CSS string's `.hero` property),
+    // producing `<h1>` with no class attribute and no error.
+    //
+    // The plain-CSS path (`page.css`) is unchanged: it keeps `export default
+    // css` (the string), which is what the current tests exercise.
+    let is_module = rel_path.ends_with(".module.css")
+        || rel_path.ends_with(".module.scss")
+        || rel_path.ends_with(".module.sass");
+    let (css_body_final, module_exports_js): (String, Option<String>) = if is_module && !css_body.is_empty() {
+        use oxide_fw_assets::{CssBackend, CssInput, CssKind};
+        let backend = oxide_fw_assets::LightningCssBackend;
+        let input = CssInput {
+            code: css_body.clone(),
+            file: Some(format!("src/{rel_path}")),
+            kind: CssKind::Module,
+            targets: Vec::new(),
+            minify: false,
+        };
+        match backend.transform(&input) {
+            Ok(out) => {
+                let exports_json = serde_json::to_string(&out.exports)
+                    .unwrap_or_else(|_| "{}".into());
+                (out.code, Some(exports_json))
+            }
+            Err(e) => {
+                // A transform failure is a user-facing error; serve a module
+                // whose default throws so the console shows the parse error
+                // rather than a silent `{}` map.
+                let msg = serde_json::to_string(&format!(
+                    "oxide dev: CSS modules transform failed for {rel_path}: {} {}",
+                    e.0.code, e.0.message
+                )).unwrap_or_else(|_| "\"css modules transform failed\"".into());
+                return OxideResponse::new(500, format!(
+                    "throw new Error({msg});\nexport default {{}};\n"
+                ))
+                .with_header("content-type", "text/javascript; charset=utf-8")
+                .with_header("cache-control", "no-cache");
+            }
+        }
+    } else {
+        (css_body, None)
+    };
     // `serde_json::to_string` produces a JS-safe string literal (escaping
     // `"`, `\`, control chars); the CSS becomes a string, not raw code, so
     // no tag-break is possible.
-    let css_literal = serde_json::to_string(&css_body).unwrap_or_else(|_| "\"\"".into());
+    let css_literal = serde_json::to_string(&css_body_final).unwrap_or_else(|_| "\"\"".into());
     let id_literal = serde_json::to_string(&id).unwrap_or_else(|_| "\"\"".into());
     // Preamble: install `import.meta.hot` for THIS module (same pattern as
     // `serve_source_file`). Without it the `accept()` below is a no-op, the
@@ -833,6 +975,10 @@ fn serve_css_module(state: &EsmDevState, rel_path: &str) -> OxideResponse {
            import.meta.hot = globalThis.__oxide_hmr__.createHotContext({self_url_literal});\n\
          }}\n"
     );
+    let export_line = match &module_exports_js {
+        Some(json) => format!("export default {json};\n"),
+        None => "export default css;\n".to_string(),
+    };
     let body = format!(
         "{preamble}\
          // oxide-css: {rel_path}\n\
@@ -844,7 +990,7 @@ fn serve_css_module(state: &EsmDevState, rel_path: &str) -> OxideResponse {
            if (!el) {{ el = document.createElement('style'); el.dataset.oxideCss = id; document.head.appendChild(el); }}\n\
            el.textContent = css;\n\
          }}\n\
-         export default css;\n"
+         {export_line}"
     );
     OxideResponse::new(200, body)
         .with_header("content-type", "text/javascript; charset=utf-8")
