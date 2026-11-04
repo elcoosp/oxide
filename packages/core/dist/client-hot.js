@@ -173,7 +173,7 @@ function applyHmrMessage(msg, opts = {}) {
 			(opts.reload ?? (() => globalThis.location?.reload()))?.();
 			return true;
 		}
-		case "server-module-swap":
+		case "server-module-swap": return true;
 		case "full-reload":
 			(opts.reload ?? (() => globalThis.location?.reload()))?.();
 			return true;

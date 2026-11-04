@@ -118,6 +118,12 @@ These are the remaining differences from Vite-class dev tooling. Some are **chos
 - **Acceptance:** edit `greeting.server.ts` body, call `greet()` from the page, assert the new greeting with `timeOrigin` unchanged. Signature change asserts reload.
 - **Effort:** 1 day.
 
+- **STATUS (recon 2026-11-04): DONE.** Client no longer reloads on plain `.server.ts` body edits.
+- **Root cause:** `classify_path("greeting.server.ts")` → `ServerModule` → `ServerSwap` → `HmrMessage::ServerModuleSwap` → client `case 'server-module-swap'` (which shared its arm with `'full-reload'`) → `location.reload()`.
+- **Fix:** Client's `case 'server-module-swap'` no longer reloads. The server's watcher already calls `invalidate_framework_modules` (bumps worker generation → next call re-imports fresh code). Result: server-side invalidation still happens; client-side DOM stays put; the next user-triggered call gets fresh data. `full-reload` remains a genuine page-reload case (plugin reload / config change).
+- **Test:** `tests/playwright/tests/hmr-server-fn.spec.ts` — loads `/`, snapshots `performance.timeOrigin`, edits `greeting.server.ts` body, asserts WS message arrives AND `timeOrigin` unchanged (no reload). Verified on chromium/firefox/webkit.
+- **No regression:** `hmr.spec.ts` 24/24 on chromium.
+
 ### Tier 2 — coverage
 
 Each item is a Playwright test to add (and where relevant, a small fix to make it pass). Combined with the original eight gaps from the previous doc.
@@ -333,7 +339,7 @@ A tier is **done** when every item in it:
 - [ ] 1.2 `$RefreshSig$` real implementation
 - [ ] 1.3 Transitive dependency propagation
 - [x] 1.4 CSS Modules
-- [ ] 1.5 Server function hot-swap
+- [x] 1.5 Server function hot-swap
 - [x] 2.1 Island HMR
 - [x] 2.2 Layout HMR
 - [x] 2.3 Route loader (`page.server.ts`) HMR

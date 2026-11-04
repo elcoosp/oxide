@@ -265,7 +265,19 @@ export function applyHmrMessage(msg: HmrMessage, opts: HmrOptions = {}): boolean
       reload?.()
       return true
     }
-    case 'server-module-swap':
+    case 'server-module-swap': {
+      // §1.5: a plain `.server.ts` body edit. The server's watcher already
+      // called `invalidate_framework_modules` (bumps the worker module
+      // generation → next call re-imports fresh code). The client's DOM
+      // stays put; when the user triggers a fresh call (button click, nav,
+      // form submit) the server fn returns fresh data. That's the correct
+      // behaviour — no reload.
+      //
+      // `full-reload` remains a genuine page-reload case (plugin
+      // `handleHotUpdate` returning `{ reload: true }`, or a config change
+      // that reshapes the module graph).
+      return true
+    }
     case 'full-reload': {
       const reload = opts.reload ?? (() => (globalThis as { location?: { reload(): void } }).location?.reload())
       reload?.()
