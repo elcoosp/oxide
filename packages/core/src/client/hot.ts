@@ -86,7 +86,7 @@ function install(): void {
     __oxide_hmr__?: unknown
     __oxide_refresh?: unknown
     __oxide_refresh_reg?: (t: unknown, id: string) => void
-    __oxide_refresh_sig?: () => (v: unknown) => unknown
+    __oxide_refresh_sig?: () => (...args: unknown[]) => unknown
     $RefreshRuntime$?: {
       performReactRefresh?: () => void
       injectIntoGlobalHook?: (w: unknown) => void
@@ -253,17 +253,35 @@ function install(): void {
   // compiler's own buffered path ensures the FIRST registration lands after
   // the runtime loads; sig functions are only needed at re-render time,
   // which is always after boot).
+  // §1.2: buffered sigs. Same race `pendingRegistrations` closes on the
+  // register path — a component module's `_s(Component, key)` call runs at
+  // module-eval time and can race `$RefreshRuntime$`'s async prebundle
+  // fetch. If we returned the identity fallback, `setSignature` never fires
+  // and HMR has no OLD signature to compare against — the runtime falls
+  // through to in-place update, React throws on hook-count mismatch.
+  type BufferedSig = {
+    calls: unknown[][]
+    real?: (...args: unknown[]) => unknown
+  }
+  const bufferedSigs: BufferedSig[] = []
   if (hasWindow && typeof g.__oxide_refresh_sig === 'undefined') {
-    g.__oxide_refresh_sig = (): ((v: unknown) => unknown) => {
+    g.__oxide_refresh_sig = (): ((...args: unknown[]) => unknown) => {
       const rt = g.$RefreshRuntime$
       if (rt && typeof rt.createSignatureFunctionForTransform === 'function') {
         try {
-          return rt.createSignatureFunctionForTransform()
+          return rt.createSignatureFunctionForTransform() as (...args: unknown[]) => unknown
         } catch (e) {
           console.error('[hot] createSignatureFunctionForTransform() threw:', e)
         }
       }
-      return (v: unknown) => v
+      const buffered: BufferedSig = { calls: [] }
+      bufferedSigs.push(buffered)
+      return (...args: unknown[]) => {
+        if (buffered.real) return buffered.real(...args)
+        buffered.calls.push(args)
+        if (args.length >= 2 && typeof args[1] === 'string') return args[0]
+        return undefined
+      }
     }
   }
 
@@ -394,6 +412,32 @@ function install(): void {
             }
           }
           pendingRegistrations.length = 0
+          // §1.2: replay buffered sigs. Each buffered sig becomes a fresh
+          // `createSignatureFunctionForTransform()` and every queued
+          // `(type, key)` call fires through it, so the OLD component's
+          // signature is registered before any HMR comparison.
+          if (
+            bufferedSigs.length > 0
+            && typeof rt.createSignatureFunctionForTransform === 'function'
+          ) {
+            for (const b of bufferedSigs) {
+              if (b.real) continue
+              try {
+                b.real = rt.createSignatureFunctionForTransform() as (...args: unknown[]) => unknown
+                for (const args of b.calls) {
+                  try {
+                    b.real(...args)
+                  } catch {
+                    // Ignore: a bad sig call must not break the runtime load.
+                  }
+                }
+                b.calls.length = 0
+              } catch {
+                // Ignore: a failed buffered-sig drain must not break the load.
+              }
+            }
+            bufferedSigs.length = 0
+          }
         })
         .catch(() => {
           // Not installed — a full reload is the fallback, no user-visible error.

@@ -1,0 +1,207 @@
+/** Rollup/Vite-shaped plugin object (§15.2). Runtime-agnostic on purpose. */
+type Plugin = {
+  name: string;
+  enforce?: 'pre' | 'post';
+  [hook: string]: unknown;
+};
+/** Neutral head model the core merges across layouts (§16.3). */
+interface HeadTags {
+  title?: string;
+  titleTemplate?: string;
+  base?: {
+    href: string;
+    target?: string;
+  };
+  meta: Array<Record<string, string>>;
+  link: Array<Record<string, string>>;
+  style: Array<{
+    content: string;
+    nonce?: string;
+  }>;
+  script: Array<{
+    content?: string;
+    src?: string;
+    type?: string;
+    nonce?: string;
+    defer?: boolean;
+  }>;
+  jsonLd?: unknown[];
+}
+/** Input to adapter.render() — layouts + page + data (§7). */
+interface RenderInput {
+  /** Matched route id, e.g. `routes/blog/[slug]`. */
+  route: string;
+  url: string;
+  params: Record<string, string | string[]>;
+  /** Loader data (ODF-decoded); deferred slots arrive as promise-likes. */
+  data: unknown;
+  head: HeadTags;
+  /** Serialized ODF payload for `<script type='application/oxide-data'>`. */
+  odf?: Uint8Array;
+  locals?: Record<string, unknown>;
+  /**
+   * §6.4: runtime component resolver, supplied by the worker from the
+   * build-emitted component surface (`dist/server/ssr/index.js`) or the dev
+   * source map. `resolve(routeId)` returns the component/default export, or
+   * `undefined` when the id is absent. Adapters use it for the page, each
+   * layout and the error boundary; it is the replacement for the config
+   * `componentFor` closure.
+   */
+  resolve?: (routeId: string) => unknown;
+  /**
+   * §8.2 / §16.3 layout chain for this route, **outermost → innermost**.
+   * Each entry is a route module id like `routes/layout` or
+   * `routes/blog/layout`. The adapter resolves each via `input.resolve`
+   * and nests the page inside them (outermost wraps everything). Absent on
+   * the client — layouts are a server-render concept here. See
+   * `packages/core/src/server/real-ssr.ts`.
+   */
+  layouts?: string[];
+  /**
+   * §10.2 step 5: route id of the nearest `error.tsx` ancestor, if any.
+   * The adapter renders this component when the page throws during SSR,
+   * instead of a generic 500 page. `undefined` means no boundary was
+   * registered for this route.
+   */
+  errorRoute?: string;
+  /**
+   * §10.2.4: the per-request CSP nonce. Adapters stamp it on any inline
+   * `<script>`/`<style>` they emit, or `strict-dynamic` blocks them.
+   */
+  nonce?: string;
+  /**
+   * §16.4: the resolved request locale. `<html lang="...">` uses this;
+   * empty string means "no i18n configured".
+   */
+  locale?: string;
+  /**
+   * §7.1 / §9.2: resolved deferred-boundary payloads for this render.
+   * Keys are the numeric boundary ids as strings.
+   */
+  deferred?: Record<string, unknown>;
+}
+/** Context for adapter.head() — framework head model → neutral model. */
+interface RenderCtx {
+  route: string;
+  url: string;
+  params: Record<string, string | string[]>;
+  data: unknown;
+  locals?: Record<string, unknown>;
+}
+/** Props for a scaffolded page component (BUG-10): the route's loader data
+ * plus its params. Per-route-typed once SPEC-09 typegen lands. */
+type PageProps<TData = unknown> = {
+  data: TData;
+  params: Record<string, string>;
+};
+/** Input to adapter.update()/hydrate()/mount() on the client (§7). */
+interface ClientInput {
+  route: string;
+  url: string;
+  params: Record<string, string | string[]>;
+  data: unknown;
+  /**
+   * §8.2: the layout chain the page nests inside (outermost first). The SSR
+   * rendered `<RootLayout><Page/></RootLayout>`; the client hydrate must
+   * produce the same tree or React reports a mismatch (#418). `boot.ts`
+   * reads this from `window.__oxide.layouts` (emitted by the server).
+   */
+  layouts?: string[];
+  /**
+   * §7.1 / §9.2: resolved `defer()` values for this route, keyed by the
+   * numeric id the loader assigned. `/__data` carries them so a client-side
+   * navigation resolves its defer slots exactly as the SSR bootstrap does.
+   * Absent on a first hydration (the SSR payload's deferred script is the
+   * source there) and on a route with no deferred data.
+   */
+  deferred?: Record<string, unknown>;
+  /** SPEC-10: the resolved request locale for this route, when the project
+   *  configures i18n. Absent otherwise. */
+  locale?: string;
+  /** §17.1 / §7.1: the CSP nonce for this render. An adapter stamps it on
+   *  any `<script>` it emits — notably the deferred-boundary swapper. Under
+   *  `strict-dynamic` a script without it is blocked. Absent when the
+   *  deployment configures no CSP. */
+  nonce?: string;
+  /** Previous navigation input, when diffing (optional). */
+  from?: ClientInput;
+  /** Search params of the navigation. */
+  searchParams?: URLSearchParams;
+}
+type Disposer = () => void;
+/**
+ * The framework adapter contract (spec §7). The adapter owns components,
+ * rendering, hydration and HMR; the core owns routes, loaders, actions, cache,
+ * head merging, serialization, middleware, client navigation and streaming.
+ */
+interface FrameworkAdapter {
+  contract: 1;
+  name: string;
+  /** e.g. ['.tsx'] | ['.vue'] | ['.svelte'] */
+  extensions: string[];
+  jsxImportSource?: string;
+  capabilities: {
+    /** Who owns streaming boundaries. */
+    suspense: 'native' | 'core';
+    islands: boolean;
+    hmr: 'refresh' | 'component' | 'full';
+    /** Reserved (post-MLP, D17). */
+    rsc?: boolean;
+  };
+  /** Framework compile plugins for the tooling pool. */
+  plugins(opts: unknown): Plugin[];
+  render(input: RenderInput): ReadableStream<Uint8Array>;
+  head(ctx: RenderCtx): HeadTags;
+  hydrate(root: Element, input: ClientInput): Disposer;
+  /** Islands mode (§10.3); adapters without islands omit it.
+   *
+   *  May return the disposer synchronously (IR replay) or as a promise
+   *  (React's `react-dom/client` path, which code-splits its runtime on
+   *  first use). Callers await either. */
+  hydrateIsland?(el: Element, mod: unknown, props: unknown): Disposer | Promise<Disposer>;
+  /**
+   * §8.4 "optimistic navigation with loading boundaries": render a route's
+   * `loading.tsx` component into `overlay` while a client-side navigation's
+   * `/__data` fetch is in flight. Called synchronously by the router's
+   * `onNavigateStart`; the returned disposer is called by `onNavigateEnd`
+   * right before `adapter.update` swaps the tree, so the overlay is torn
+   * down before the new page paints.
+   *
+   * Absent → the framework does not provide a loading renderer; the router
+   * still fires the hooks, so a caller may render its own spinner.
+   */
+  renderLoading?(overlay: Element, input: ClientInput, Component: unknown): Disposer;
+  /** SPA mode shell mount. */
+  mount(root: Element, input: ClientInput): Disposer;
+  /** Client navigation: swap the route tree. */
+  update(input: ClientInput): void;
+}
+/** Client route manifest handed to the client router (from the build, §6.4). */
+interface ClientManifest {
+  buildId?: string;
+  routes: Record<string, ClientRouteEntry>;
+}
+interface ClientRouteEntry {
+  /** Server data module path (page.server.ts), when the route has one. */
+  server?: string;
+  renderMode?: 'static' | 'isr' | 'dynamic' | 'spa' | 'islands';
+  /**
+   * The route's entry JS chunk, relative to the client output dir (§6.4
+   * `RouteBundle.entry_chunk` — the wire manifest serves it under
+   * `/client/<entry_chunk>`). The client runtime imports it through
+   * `componentFor` (client/route-manifest.ts) to render the route's REAL
+   * page component (§8.4/§10.3).
+   */
+  entry_chunk?: string;
+  /** Client entry chunks in preload order. */
+  chunks?: string[];
+  /**
+   * Alternate preload-ordered chunk list emitted by the build's manifest
+   * writer. Either field may be present; the router falls back to `chunks`
+   * if `preload` is absent.
+   */
+  preload?: string[];
+  css?: string[];
+}
+export { FrameworkAdapter as a, Plugin as c, Disposer as i, RenderCtx as l, ClientManifest as n, HeadTags as o, ClientRouteEntry as r, PageProps as s, ClientInput as t, RenderInput as u };
+//# sourceMappingURL=types-CoCogOdY.d.ts.map

@@ -12,7 +12,7 @@ export default function HmrShapeTarget() {
   return (
     <>
       <h1 data-shape-target="">SHAPE-ORIGINAL</h1>
-      <button data-shape-counter="" onClick={() => setCount(count + 1)}>{count}</button>
+      <button data-shape-counter="" onClick={() => setCount((c) => c + 1)}>{count}</button>
     </>
   )
 }

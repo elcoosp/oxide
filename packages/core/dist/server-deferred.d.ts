@@ -1,0 +1,2 @@
+export declare function resolveDeferredPlaceholders(value: unknown, deferred: Record<string, unknown> | undefined, depth?: number, seen?: WeakSet<object>): unknown;
+//# sourceMappingURL=server-deferred.d.ts.map

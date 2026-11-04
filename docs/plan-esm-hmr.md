@@ -75,6 +75,18 @@ These are the remaining differences from Vite-class dev tooling. Some are **chos
   2. Move `_s = $RefreshSig$()` from module scope into the component body (`const _s = $RefreshSig$();` right after the function starts), matching react-refresh's actual babel emit shape. This delays sig resolution to render-time, which is after the async runtime fetch resolves for any render except the very first. May or may not fix the OLD-version registration.
 - **Verification harness is ready:** run `pnpm --filter @oxide/playwright exec playwright test hmr-refresh-sig.spec.ts --project=chromium` and it tells you exactly where you are. Fails today on `Expected h1 "SHAPE-PATCHED", got SHAPE-ORIGINAL` — the shape-change never remounted, the tree crashed.
 - **Effort to close:** ~4-6h of focused work. The plumbing is correct; the buffering / scoping is what's missing.
+
+- **STATUS (recon 2026-11-04): PARTIAL — walker + runtime shipped, emit disabled.** §1.2 remains UNCHECKED.
+- **What ships:**
+  - **Compiler walker** (`crates/compiler/src/oxc_backend.rs`): `build_hook_key` + `collect_components_for_sig`. Produces the Babel-matching key (`useState{[count, setCount](0)}\nuseEffect{}`). Matches `react-refresh/cjs/react-refresh-babel.development.js`'s `getHookCallsSignature` + `createArgumentsForSignature`.
+  - **Runtime** (`packages/core/src/client/hot.ts`): `__oxide_refresh_sig` delegates to `$RefreshRuntime$.createSignatureFunctionForTransform()`. Buffered sigs queue `(type, key)` while the runtime's async prebundle fetch is in flight and replay once loaded.
+  - **Shim**: `$RefreshSig$ = () => (__oxide_refresh_sig ? __oxide_refresh_sig() : ((t) => t))`.
+  - **Test** (`hmr-refresh-sig.spec.ts`) + **fixture** (`hmr-shape-target.tsx`): written, `test.skip`-ed.
+- **What does NOT ship:** `inject_react_refresh` does NOT emit `_s(Comp, key);` at module scope (one-line re-enable — `components` is `vec::new()`).
+- **Why disabled:** in full-suite testing, `hmr.spec.ts` fails under the emit with `ECONNRESET` on a pure-HTTP test (the dev server process dies) plus non-deterministic marker contamination across tests. Isolated runs of `hmr-refresh-sig.spec.ts` pass on all 3 engines — the emit is correct for the sig path. The interaction is specific to the watcher's rebuild-burst path under full-suite load. Suspects: (a) a Rust panic during concurrent recompiles, (b) buffered-sig replay throwing during the burst, (c) a fixture whose sig key breaks during watcher-triggered recompile.
+- **The prior commit `22680499` shipped a broken build** (`BindingPatternKind::BindingIdentifier = &d.id.kind` — invalid for this oxc version). Fixed in the recovery commit.
+- **Test infra lessons:** `test.setTimeout(60_000)` inside `beforeAll` is required (describe-level `timeout` doesn't apply to hooks). Cold `oxide dev` boot can exceed 15s.
+
 #### 1.3 — Transitive dependency propagation
 
 - **What:** editing `src/lib/utils.ts` reimports `utils.ts` only; `page.tsx` keeps using the old binding. `$RefreshReg$` saves this for components, but utilities, hooks, constants, context providers are silently stale.
