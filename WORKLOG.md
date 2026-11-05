@@ -1,3 +1,122 @@
+## Session — full-tree bug hunt + performance pass (TypeScript workspace)
+
+**Milestone:** every `pnpm run typecheck` error across the workspace fixed
+(was 14), 497/497 package tests + 8/8 create-oxide tests green, and a
+sweep of latent correctness/perf bugs found by a full read of the TS
+packages. The Rust crates are untouched (no Rust toolchain in the session
+sandbox; see the notes at the end).
+
+### Fixed — correctness
+
+- **`packages/oxide-website/src/lib/md.server.ts` — SSR-worker infinite
+  loop.** A `>`-without-space line (or a stray `|` row that is not a
+  table) fell through every block branch and was also refused by the
+  paragraph guard, so the walk never advanced: the render looped forever
+  at 100% CPU, synchronously — unkillable by request timeouts. One typo in
+  any content file wedged the worker permanently. Fixed with a CommonMark
+  blockquote match (`>` + optional space) plus a forward-progress
+  guarantee in the paragraph fallback; regression tests in
+  `packages/oxide-website/test/md.server.test.ts`.
+- **`packages/create-oxide` — the published bin was a silent no-op.** The
+  entry guard matched `process.argv[1].endsWith('cli.ts')`, but `bin`
+  points at the compiled `dist/index.js`, so `pnpm create oxide` ran
+  `main()` never. Replaced with the standard ESM main-module check
+  (realpath of argv[1] vs `import.meta.url`); verified by executing the
+  rebuilt bin.
+- **`packages/solid` — Solid 1.x fallback re-imported the same module.**
+  `hydrate-island-real.ts`'s catch retried `@solidjs/web` (the specifier
+  that just threw), so Solid 1 projects could never hydrate islands; the
+  documented `solid-js/web` fallback did not exist. Both the island and
+  page-root paths now try the other specifier through the same
+  variable-specifier `tryLoad` pattern `real-ssr.ts` already used.
+- **Island `update()` listener ledger leak (all four adapters).** Every
+  `client.update` push grew `bound` while `innerHTML` detached the old
+  subtree — unbounded detached-DOM + handler-closure retention for the
+  page's life. The island path now unbinds before rebinding (the page
+  path already did).
+- **Cross-scope handler-marker collision (all four adapters).** Page-level
+  and island-internal handler markers both started at `h0`; the page
+  rebind resolves `[data-ox-id]` from the document root, so a page handler
+  could bind onto an island's element whenever the island preceded it in
+  document order. Island markers stay `h0…` (standalone island replay
+  stays byte-identical to SSR); page-level markers moved to `p0…`;
+  `walkTreeForHandlers`/`bindAll` take the scope explicitly.
+- **`packages/core/src/server/real-ssr.ts` — `emitHead` entity-escaped
+  inline scripts.** Browsers do not decode entities inside `<script>`, so
+  `a && b` shipped as `a &amp;&amp; b` (SyntaxError) and JSON-LD strings
+  were silently corrupted. Script/JSON-LD bodies now use the adapters'
+  `\u003c` convention (`escapeScript` parity); title/meta/link/style
+  unchanged.
+- **`packages/oxide-website/src/routes/rss/route.ts` — unescaped slug in
+  `<link>`/`<guid>` + `<pubDate>Invalid Date</pubDate>`** for a post with
+  a missing/unparseable `date`. Slugs are escaped, unparseable dates are
+  skipped, and `listPosts` sorts undated posts last (previously `''`
+  compared as the NEWEST date).
+- **Docs framework-tabs never hydrated.** `DocBody` rendered
+  `<AdapterTabs />` bare — island hydration only attaches to
+  `<ox-island[data-ox-chunk]>` hosts, so the tabs on every `/docs` page
+  were dead buttons. Wrapped in `<Island>` exactly like the homepage.
+- **Type-level fixes** (14 across core/solid/svelte/website/playwright):
+  `SolidHydrationState.r`, symbol Proxy keys, `SvelteLike.hydrate`,
+  React-Refresh `createSignatureFunctionForTransform`, the
+  `batch-module-update` cast, `FrameworkAdapters` index access, the
+  docs `MdBlock[]` mismatch, and the `*.css` side-effect import
+  declaration.
+- Latent fixes in currently-unmounted islands: `code-highlight.tsx`'s
+  MutationObserver re-triggered on its own writes (self-sustaining loop);
+  `framework-tabs.tsx`'s portal appended next to the SSR placeholder.
+
+### Fixed — performance
+
+- **`packages/core/src/odf-encode.ts`** — `out.push(...bytes)` passes the
+  payload as call arguments and throws `RangeError` beyond the engine's
+  argument limit: any island prop with a ~100 KB+ string or typed array
+  crashed the encode. Now chunked and linear; shared f64/i64 scratch
+  buffer instead of per-value `ArrayBuffer`/`DataView`; one shared
+  `TextEncoder`. Verified with a 500 KB encode/decode roundtrip.
+- `md.server.ts` inline-rule regexes hoisted to module constants
+  (per-line, per-regen allocation).
+- `packages/core/src/bytes.ts` `toBase64` drops the deprecated
+  `unescape(encodeURIComponent())` round-trip for the existing linear
+  helper.
+- Page-root `load()` no longer permanently caches a failed optional-peer
+  import (`attempted` reset on failure, §3.10 parity with the island
+  path) — a transient dev-server outage no longer pins a session to the
+  IR fallback.
+
+### Restored
+
+- The scroll-reveal feature: `RevealBootstrap` adds `.is-revealed` and
+  `layout.tsx` renders `.scroll-progress`, but the stylesheet had no
+  rules for either (the transition the island's header comment promises
+  never existed). Added to `tailwind.css`, gated on
+  `(prefers-reduced-motion: no-preference) and (scripting: enabled)` so
+  no-JS visitors and crawlers always get the final layout.
+
+### Known limitations (documented, not changed)
+
+- `islandRenderState()` scopes framework flavor attrs to
+  `hash6('routes/islands')`; island SSR inside other pages inherits the
+  page scope, so an IR replay of a non-island page differs in flavor
+  attrs. Byte-identity holds only for `routes/islands` today; fixing it
+  means threading the route through the shared `IslandsAdapter` contract.
+- Svelte `<Defer>` does not register pre-resolved boundaries the way
+  Vue's does — `docs/deviations.md` documents the compiled-component
+  obstacle; left as-is to keep the shipped contract stable.
+- `Stats` / `FrameworkTabsBootstrap` islands are registered but not
+  mounted anywhere (dead weight, now bug-free if revived).
+
+### Verified state
+
+- `pnpm run typecheck` — all 15 projects, clean.
+- `pnpm run test:packages` — 497/497 (488 pre-existing + 9 new
+  `md.server` regression tests), including the §22 conformance suite.
+- `pnpm run test:create-oxide` — 8/8; the rebuilt bin scaffolds for real.
+- The `oxide-website` package itself does not build here (`oxide build`
+  needs the Rust CLI).
+
+---
+
 ## Session — §6.3 / §7 framework adapter read path CLOSED
 
 **Milestone:** the read-path gap that blocked "a team can ship a production
@@ -582,9 +701,9 @@ The dynamic-route chunk is equally clean:
 ```js
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 export default function Post(props) {
-	const title = props.data?.title ?? "Untitled";
-	const body = props.data?.body ?? "";
-	return /* @__PURE__ */ _jsxs("article", { children: [...] });
+        const title = props.data?.title ?? "Untitled";
+        const body = props.data?.body ?? "";
+        return /* @__PURE__ */ _jsxs("article", { children: [...] });
 }
 ```
 
