@@ -169,6 +169,11 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
   // navigations racing on the same container mount one after the other,
   // never concurrently).
   let realRoot: RealPageRoot | undefined
+  // Component-HMR: the component reference the current `realRoot` was built
+  // from. `componentFor` resolves through the boot's fresh-aware loadChunk,
+  // so after an HMR `module-update` re-imported the page module it returns
+  // a DIFFERENT reference — that is the swap signal below.
+  let realComponent: unknown = undefined
   let renderSeq = 0
   let realChain: Promise<void> = Promise.resolve()
   const bound: Array<{ el: OxElement; type: string; fn: (ev: unknown) => void }> = []
@@ -242,16 +247,29 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
       }
       try {
         if (realRoot) {
-          realRoot.update(realProps(inp))
-          return
+          // Component-HMR (Vue/Solid/Svelte): a different component
+          // reference means the route's component module was re-imported
+          // by an HMR `module-update` — dispose the stale root and mount
+          // the FRESH component below. A same-reference update stays on
+          // the cheap remount-with-new-props path (navigation / loader
+          // data change).
+          if (Component !== realComponent) {
+            realRoot.dispose()
+            realRoot = undefined
+          } else {
+            realRoot.update(realProps(inp))
+            return
+          }
         }
         // First real mount: hydrate the SSR markup when present, fresh-mount
-        // into an empty root (SPA mode).
+        // into an empty root (SPA mode). An HMR component swap mounts FRESH
+        // (`hydrate: false`): the previous root was disposed above, so its
+        // markup is gone and there is nothing to hydrate against.
         const mounted = await mountVuePageRoot(
           asDomElement(root, 'real framework mount'),
           Component,
           realProps(inp),
-          { hydrate: (root.innerHTML ?? '') !== '' },
+          { hydrate: realComponent === undefined && (root.innerHTML ?? '') !== '' },
         )
         if (disposed || seq !== renderSeq) {
           mounted?.dispose()
@@ -263,6 +281,7 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
           return
         }
         realRoot = mounted
+        realComponent = Component
       } catch (e) {
         console.warn?.('oxide: real page render failed; falling back to IR', e)
         if (!disposed && seq === renderSeq) renderIr()
