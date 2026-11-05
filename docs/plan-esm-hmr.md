@@ -76,7 +76,12 @@ These are the remaining differences from Vite-class dev tooling. Some are **chos
 - **Verification harness is ready:** run `pnpm --filter @oxide/playwright exec playwright test hmr-refresh-sig.spec.ts --project=chromium` and it tells you exactly where you are. Fails today on `Expected h1 "SHAPE-PATCHED", got SHAPE-ORIGINAL` — the shape-change never remounted, the tree crashed.
 - **Effort to close:** ~4-6h of focused work. The plumbing is correct; the buffering / scoping is what's missing.
 
-- **STATUS (recon 2026-11-04): PARTIAL — walker + runtime shipped, emit disabled.** §1.2 remains UNCHECKED.
+- **STATUS (2026-11-05): DONE.** Emit re-enabled and verified end-to-end.
+- **What closed it:**
+  - The ECONNRESET that forced the 2026-11-04 disable was NOT the emit — it was the boot-storm chain (empty watcher baseline, node_modules churn flooding full-reload frames, stale-generation 503s, the client's refresh-runtime load race). All fixed in the §1.3 stability commit + the watch-budget rework; with the emit active the full HMR group passes 31/31 on chromium and 26/26 on firefox.
+  - The emit inserts `_s(Comp, hook_key);` at the END of each component's DECLARING statement (statement end, not function-body end — an arrow-function component would otherwise get the insert between `}` and `;`). Key shape matches react-refresh's babel plugin (`getHookCallsSignature`).
+  - `hmr-refresh-sig.spec.ts` un-skipped and green: adding a hook forces a REMOUNT (counter resets), no reload. Unit tests: compiler 48/48.
+  - Fixture wiring restored: `<HmrShapeTarget />` back on the smoke app's home page (the 66640409 rollback had removed it while leaving the test); its heading is a `<p>` so the island/smoke specs' strict `h1` assertions stay unambiguous.
 - **What ships:**
   - **Compiler walker** (`crates/compiler/src/oxc_backend.rs`): `build_hook_key` + `collect_components_for_sig`. Produces the Babel-matching key (`useState{[count, setCount](0)}\nuseEffect{}`). Matches `react-refresh/cjs/react-refresh-babel.development.js`'s `getHookCallsSignature` + `createArgumentsForSignature`.
   - **Runtime** (`packages/core/src/client/hot.ts`): `__oxide_refresh_sig` delegates to `$RefreshRuntime$.createSignatureFunctionForTransform()`. Buffered sigs queue `(type, key)` while the runtime's async prebundle fetch is in flight and replay once loaded.
@@ -336,8 +341,8 @@ A tier is **done** when every item in it:
 ## Tracking
 
 - [x] 1.1 `strip_server_fn_imports` multi-name
-- [ ] 1.2 `$RefreshSig$` real implementation
-- [ ] 1.3 Transitive dependency propagation
+- [x] 1.2 `$RefreshSig$` real implementation
+- [x] 1.3 Transitive dependency propagation
 - [x] 1.4 CSS Modules
 - [x] 1.5 Server function hot-swap
 - [x] 2.1 Island HMR
