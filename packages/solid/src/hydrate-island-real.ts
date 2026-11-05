@@ -49,6 +49,21 @@ export interface SolidWebLike {
 let cachedWeb: SolidWebLike | undefined
 let cachedCreateElement: ((type: unknown, props: unknown) => unknown) | undefined
 
+/** Import a web-runtime specifier without letting TypeScript resolve it at
+ *  type-check time (Solid 1's `solid-js/web` subpath does not exist in the
+ *  locally-installed Solid 2 types). Narrowed structurally on return. */
+async function tryLoadWeb(name: '@solidjs/web' | 'solid-js/web'): Promise<SolidWebLike | undefined> {
+  try {
+    const mod = (await import(name)) as Partial<SolidWebLike>
+    if (typeof mod.hydrate === 'function' && typeof mod.render === 'function') {
+      return mod as SolidWebLike
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
 async function loadSolid(): Promise<{
   web: SolidWebLike
   createElement: (type: unknown, props: unknown) => unknown
@@ -57,12 +72,17 @@ async function loadSolid(): Promise<{
     return { web: cachedWeb, createElement: cachedCreateElement }
   }
   // Solid 2 keeps the web runtime in a dedicated package; Solid 1 keeps it
-  // in `solid-js/web`. The first import that resolves wins.
-  let web: SolidWebLike
-  try {
-    web = await import('@solidjs/web')
-  } catch {
-    web = await import('@solidjs/web')
+  // in `solid-js/web`. The first import that resolves wins. The fallback
+  // MUST try the other specifier — re-importing the same one (the original
+  // bug) deterministically throws again, so Solid 1.x projects could never
+  // hydrate islands. The variable-specifier `tryLoad` mirrors
+  // ./real-ssr.ts (same fallback order, same reason).
+  const web = (await tryLoadWeb('@solidjs/web')) ?? (await tryLoadWeb('solid-js/web'))
+  if (!web) {
+    throw new Error('hydrateIsland(solid): neither @solidjs/web nor solid-js/web could be loaded')
+  }
+  if (typeof web.hydrate !== 'function' || typeof web.render !== 'function') {
+    throw new Error('hydrateIsland(solid): web runtime exposes no hydrate/render')
   }
   // `createElement`/`createComponent` come from solid-js (the core runtime).
   const solidMod: unknown = await import('solid-js')
