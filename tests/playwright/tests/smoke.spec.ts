@@ -91,9 +91,11 @@ test('browser renders the same HTML the server sent', async ({ page }) => {
   const r = await page.goto('/')
   expect(r?.status()).toBe(200)
   // The `h1` is present in the live DOM, not just the wire bytes — proves
-  // the transport served valid HTML the browser would parse.
+  // the transport served valid HTML the browser would parse. Scoped by
+  // role+name: the HMR fixture (`<HmrTarget/>`) renders a SECOND h1 on this
+  // page, and a bare `locator('h1')` is a strict-mode violation.
   try {
-    await expect(page.locator('h1')).toHaveText('Home', { timeout: 5_000 })
+    await expect(page.getByRole('heading', { name: 'Home', exact: true })).toHaveText('Home', { timeout: 5_000 })
   } catch (e) {
     const dump = await page.content().catch(() => '<dump failed>')
     console.error('[browser h1 FAILED] url =', page.url())
