@@ -1299,9 +1299,16 @@ impl IncrementalWorker {
         let ropts = bundler.build_options(options);
         let diagnostics_sink: std::sync::Arc<std::sync::Mutex<Vec<Diagnostic>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        // The plugin ROOT must be the PROJECT root (the cold path passes
+        // `&self.root`): `OxidePassesPlugin::should_transform` only runs the
+        // 'use cache' / server-fn-stub passes on modules UNDER this root.
+        // Passing `options.out_dir` (dist/client) made every project module
+        // look out-of-scope, so dev rebuilds shipped `.server` modules into
+        // the client bundle unstubbed — `import "node:fs/promises"` reached
+        // the browser and the whole module graph died (§6.4 leak, dev-only).
         let plugins = oxide_plugins_with_sink(
             options,
-            &options.out_dir,
+            &bundler.root,
             std::sync::Arc::clone(&diagnostics_sink),
         );
 
