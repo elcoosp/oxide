@@ -223,18 +223,46 @@ function install(): void {
   // `__oxide_refresh` / `__oxide_refresh_reg` installs entirely — the
   // worker module graph has no components, only JS modules whose accept
   // callbacks fire on `reloadModule`.
+  //
+  // §1.3 (boot-race fix): the React Refresh runtime is fetched with a
+  // non-awaited dynamic import (below). A module-update that arrives while
+  // that import is still in flight — the watcher publishes a burst of
+  // module updates right after boot, and the prebundle fetch takes a
+  // round-trip — used to hit the `location.reload()` fallback, discarding
+  // the page for no reason. When the runtime is merely PENDING, wait for it
+  // and refresh in place; only a FAILED load (react-refresh not installed —
+  // the §2.12 path) or a throwing `performReactRefresh` reloads.
+  let pendingRuntimeLoad: Promise<unknown> | undefined
   if (hasWindow && typeof g.__oxide_refresh === 'undefined') {
     g.__oxide_refresh = (_mod: unknown): void => {
-      const rt = g.$RefreshRuntime$
-      if (rt && typeof rt.performReactRefresh === 'function') {
-        try {
-          rt.performReactRefresh()
-          return
-        } catch (e) {
-          console.error('[hot] performReactRefresh() threw:', e)
+      const perform = (): void => {
+        const rt = g.$RefreshRuntime$
+        if (rt && typeof rt.performReactRefresh === 'function') {
+          try {
+            rt.performReactRefresh()
+            return
+          } catch (e) {
+            console.error('[hot] performReactRefresh() threw:', e)
+            return
+          }
         }
+        // No runtime and nothing pending: react-refresh is not installed
+        // (the §2.12 documented fallback). A full reload applies the edit.
+        if (typeof location !== 'undefined') location.reload()
       }
-      if (typeof location !== 'undefined') location.reload()
+      if (g.$RefreshRuntime$) {
+        perform()
+        return
+      }
+      if (pendingRuntimeLoad) {
+        void pendingRuntimeLoad.then(perform).catch(() => {
+          // The runtime import failed (not installed / prebundle gone):
+          // the reload fallback is the documented behaviour.
+          if (typeof location !== 'undefined') location.reload()
+        })
+        return
+      }
+      perform()
     }
   }
 
@@ -373,7 +401,10 @@ function install(): void {
       // breaking the entire boot graph (boot.mjs failed → DOMContentLoaded
       // blocked → page hung).
       const runtimeUrl: string = '/@prebundle/react-refresh-runtime.js'
-      void (import(/* @vite-ignore */ runtimeUrl) as Promise<{
+      // §1.3: kept as `pendingRuntimeLoad` so `__oxide_refresh` can await a
+      // still-loading runtime instead of falling into the reload path (the
+      // boot-race fix above).
+      pendingRuntimeLoad = (import(/* @vite-ignore */ runtimeUrl) as Promise<{
         default?: unknown
         performReactRefresh?: () => void
         injectIntoGlobalHook?: (w: unknown) => void
