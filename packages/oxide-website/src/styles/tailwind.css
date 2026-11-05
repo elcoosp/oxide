@@ -538,3 +538,37 @@ code, pre, kbd, samp, textarea, input[type="text"], input[type="search"],
   margin: 1rem 0;
   border: 1px solid var(--color-border);
 }
+
+/* ═══════════════ Scroll reveal (islands/reveal.tsx) ═══════════════
+   RevealBootstrap adds .is-revealed to [data-reveal] elements as they enter
+   the viewport. Two guards keep the content visible for everyone else:
+   - `scripting: enabled` — with JS off (or on a browser without the media
+     feature) the hidden pre-reveal state never applies, so crawlers and
+     no-JS visitors always see the final layout;
+   - `prefers-reduced-motion: no-preference` — motion is opt-in (W3C SCR40). */
+@media (prefers-reduced-motion: no-preference) and (scripting: enabled) {
+  [data-reveal] {
+    opacity: 0;
+    transform: translateY(16px);
+    transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+    will-change: opacity, transform;
+  }
+
+  [data-reveal].is-revealed {
+    opacity: 1;
+    transform: none;
+    will-change: auto;
+  }
+}
+
+/* ═══════════════ Scroll progress bar (routes/layout.tsx) ═══════════════ */
+.scroll-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 100;
+  height: 2px;
+  width: 0;
+  background: var(--color-accent);
+  pointer-events: none;
+}
