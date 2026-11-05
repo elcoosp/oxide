@@ -6,6 +6,28 @@ function defaultUrl() {
 	if (!loc) return "";
 	return `${loc.protocol === "https:" ? "wss" : "ws"}://${loc.host}/_oxide/hmr`;
 }
+/**
+* §1.3: does a route PATTERN (`/blog/[slug]`, `/`, `/greeting`) match the
+* concrete `pathname` the browser is on? Segment-wise: a static segment must
+* equal; `[param]` / `:param` / `*` match one non-empty segment. Used to drop
+* `route-data-update` messages for routes the viewer is NOT on — the boot
+* window (and an edit to another page's loader) publishes fresh loader data
+* for foreign routes, and blindly feeding it to `adapter.update` rendered
+* THAT route in place: a phantom navigation with no URL change that replaced
+* the visible page with a different one.
+*/
+function routePatternMatchesPath(pattern, pathname) {
+	const pSegs = pattern.split("/").filter((s) => s.length > 0);
+	const pathSegs = pathname.split("?")[0]?.split("#")[0]?.split("/").filter((s) => s.length > 0) ?? [];
+	if (pSegs.length !== pathSegs.length) return false;
+	for (let i = 0; i < pSegs.length; i++) {
+		const p = pSegs[i] ?? "";
+		const seg = pathSegs[i] ?? "";
+		if (p.startsWith("[") || p.startsWith(":") || p === "*" || p.startsWith("*")) continue;
+		if (p !== seg) return false;
+	}
+	return true;
+}
 /** Swap the <link rel=stylesheet> whose href matches `path` (query-stripped). */
 function swapCss(doc, path) {
 	const bare = path.split("?").at(0) ?? "";
@@ -73,9 +95,11 @@ function showOverlay(diag, parent) {
 * path a navigation uses, §8.4). All failures are silent: an HMR data
 * refresh is best-effort and must never break the socket loop.
 */
-async function refreshRouteData(odfB64) {
+async function refreshRouteData(route, odfB64) {
 	const g = globalThis;
-	const path = (g.location?.pathname ?? "/") + (g.location?.search ?? "");
+	const locPath = g.location?.pathname;
+	if (locPath && !routePatternMatchesPath(route, locPath)) return;
+	const path = (locPath ?? "/") + (g.location?.search ?? "");
 	let decoded;
 	if (odfB64.length > 0) try {
 		const bin = atob(odfB64);
@@ -140,7 +164,7 @@ function applyHmrMessage(msg, opts = {}) {
 			const route = String(msg.route ?? "");
 			const odf = String(msg.odf_b64 ?? "");
 			opts.onRouteData?.(route, odf);
-			refreshRouteData(odf);
+			refreshRouteData(route, odf);
 			return true;
 		}
 		case "module-update": {
@@ -328,15 +352,30 @@ function install() {
 			}
 		}
 	};
+	let pendingRuntimeLoad;
 	if (hasWindow && typeof g.__oxide_refresh === "undefined") g.__oxide_refresh = (_mod) => {
-		const rt = g.$RefreshRuntime$;
-		if (rt && typeof rt.performReactRefresh === "function") try {
-			rt.performReactRefresh();
+		const perform = () => {
+			const rt = g.$RefreshRuntime$;
+			if (rt && typeof rt.performReactRefresh === "function") try {
+				rt.performReactRefresh();
+				return;
+			} catch (e) {
+				console.error("[hot] performReactRefresh() threw:", e);
+				return;
+			}
+			if (typeof location !== "undefined") location.reload();
+		};
+		if (g.$RefreshRuntime$) {
+			perform();
 			return;
-		} catch (e) {
-			console.error("[hot] performReactRefresh() threw:", e);
 		}
-		if (typeof location !== "undefined") location.reload();
+		if (pendingRuntimeLoad) {
+			pendingRuntimeLoad.then(perform).catch(() => {
+				if (typeof location !== "undefined") location.reload();
+			});
+			return;
+		}
+		perform();
 	};
 	const bufferedSigs = [];
 	if (hasWindow && typeof g.__oxide_refresh_sig === "undefined") g.__oxide_refresh_sig = () => {
@@ -379,7 +418,7 @@ function install() {
 				}
 			}
 		}
-		if (isEsmDev) import(
+		if (isEsmDev) pendingRuntimeLoad = import(
 			/* @vite-ignore */
 			"/@prebundle/react-refresh-runtime.js"
 ).then((mod) => {
