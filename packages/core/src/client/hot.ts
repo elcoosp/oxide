@@ -60,6 +60,17 @@ const COALESCE_MS = 100
 // session's real needs — any eviction here means the entry is cold.
 const MAX_TRACKED_MODULES = 500
 const MAX_TRACKED_URLS = 500
+// Component-HMR frameworks (Vue, Solid, Svelte) do not refresh in place via
+// an accept callback the way React Refresh does — the boot runtime
+// re-renders the current route instead (`bootWithRouter`'s
+// `__oxide_on_module_updated` hook). That re-render must render the FRESH
+// module, but `componentFor` → `loadChunk(componentUrl)` performs a plain
+// `import(url)` and the browser's ESM cache would hand back the stale
+// instance for the un-busted URL. `reloadModule` therefore records every
+// freshly imported module under its ORIGINAL url and the boot's loadChunk
+// consults this map first. Bounded the same way as `modules`.
+const freshModules = new Map<string, unknown>()
+const MAX_TRACKED_FRESH = 500
 
 function install(): void {
   // §3.5: install in Web Workers too. Today the previous guard
@@ -197,6 +208,32 @@ function install(): void {
         }
         freshMod.acceptCallbacks.length = 0
       }
+      // Record the fresh module under the ORIGINAL url so the boot
+      // runtime's re-render (`adapter.update(lastInput)` → `componentFor`
+      // → `loadChunk(componentUrl)`) picks the NEW component instead of the
+      // browser ESM cache's stale instance for the un-busted URL. React
+      // ignores this (its accept callback patches in place), Vue/Solid/
+      // Svelte depend on it.
+      freshModules.set(url, fresh)
+      if (freshModules.size > MAX_TRACKED_FRESH) {
+        const oldest = freshModules.keys().next().value
+        if (oldest !== undefined) freshModules.delete(oldest)
+      }
+      // Boot-runtime hook (registered by `bootWithRouter`): after the
+      // reload fully applied, give the page a chance to re-render in place.
+      // React's hook is a no-op (its capability is `refresh` — the accept
+      // callback above already ran React Refresh); the component-capability
+      // frameworks (`vue`/`solid`/`svelte`) re-render the current route
+      // with the fresh module. One hook per reloadModule — for a batch, the
+      // coalesced re-render sees the LAST applied module.
+      try {
+        const hook = (globalThis as {
+          __oxide_on_module_updated?: (url: string) => void
+        }).__oxide_on_module_updated
+        if (typeof hook === 'function') hook(url)
+      } catch {
+        // A throwing hook must not break the HMR loop.
+      }
     },
     __debug: {
       // §3.8a: introspection for the memory-bound test. Getters so the
@@ -213,6 +250,13 @@ function install(): void {
       get MAX_URLS(): number {
         return MAX_TRACKED_URLS
       },
+    },
+    // Boot-runtime lookup: the FRESH module recorded by the last
+    // `reloadModule(url)` for `url`, or undefined. The boot's loadChunk
+    // consults this before `import(url)` so a post-edit re-render renders
+    // the new component (see `freshModules` above).
+    getFreshModule(url: string): unknown {
+      return freshModules.get(url)
     },
   }
 
