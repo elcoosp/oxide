@@ -69,6 +69,14 @@ async function load(): Promise<{ react: ReactClientLike; client: ReactDomClientL
   } catch {
     // Optional peers not installed → the IR fallback owns the page.
     return undefined
+  } finally {
+    // §3.10 parity with hydrate-island-real.ts: a single transient failure
+    // (dev-server restart, HMR outage) must not pin the page path to the IR
+    // fallback for the rest of the session — the island path deliberately
+    // retries. When the deps are genuinely absent the retry still fails
+    // fast (the loader caches the failed specifier), so the steady state
+    // costs nothing.
+    if (!cached) attempted = false
   }
 }
 
