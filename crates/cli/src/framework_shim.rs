@@ -943,6 +943,123 @@ impl FrameworkRenderer for LazyFrameworkRenderer {
     }
 }
 
+/// Rewrite RELATIVE import specifiers in a dev temp component module to
+/// absolute `file://` URLs resolved against the component's REAL source
+/// file.
+///
+/// `precompile_entries` compiles `.vue` / `.svelte` / Solid-`.tsx` routes to
+/// plain JS but leaves their relative imports verbatim (the build path WANTS
+/// that — rolldown's resolver consumes them against the real source paths).
+/// The DEV component source instead writes the compiled JS to
+/// `.oxide/components/<hash>.mjs`, and Node then resolves
+/// `../../components/hmr-target.vue` against THAT directory:
+/// `<root>/components/...` instead of `<root>/src/components/...` —
+/// `ERR_MODULE_NOT_FOUND` on every render of a Vue/Svelte/Solid page whose
+/// SFC imports a relative component. Rewriting to absolute `file://` URLs
+/// pins the import to the real source file; the worker's tsx-loader
+/// (`fileURLToPath` in its load hook) compiles `.vue`/`.svelte`/solid-`.tsx`
+/// from there, and its `resolve` hook keeps appending `?v=<generation>` to
+/// those URLs so an SSR re-import after an HMR edit recompiles fresh.
+///
+/// Absolute (`/x`, `file://`) and bare (`vue`) specifiers pass through
+/// untouched; a malformed span (specifier text not found inside it) is left
+/// as-is rather than guessing.
+fn absolutize_relative_imports(js: &str, source_file: &std::path::Path) -> String {
+    let spans = oxide_fw_compiler::scan_import_spans(js);
+    if spans.is_empty() {
+        return js.to_string();
+    }
+    let mut out = String::with_capacity(js.len());
+    let mut last = 0usize;
+    for sp in &spans {
+        if !sp.specifier.starts_with('.') || sp.end > js.len() || sp.start >= sp.end {
+            continue;
+        }
+        let statement = &js[sp.start..sp.end];
+        // Locate the raw quoted specifier inside the statement span. The
+        // scanner reports the DECODED value; a specifier needing escapes
+        // (non-ASCII, quotes) is left untouched by the `find` miss below.
+        let raw = [format!("\"{}\"", sp.specifier), format!("'{}'", sp.specifier)]
+            .iter()
+            .find_map(|q| statement.find(q.as_str()).map(|i| (i, q.len())))
+            .map(|(i, len)| (sp.start + i, len));
+        let (raw_start, raw_len) = match raw {
+            Some(x) => x,
+            None => continue,
+        };
+        // Anchor on the REAL location of the source file: canonicalize it
+        // first so a symlinked project root (or a TMPDIR-redirected build
+        // dir) resolves before any `..` from the specifier is applied —
+        // the same order Node resolves `importer -> relative specifier`.
+        // Canonicalizing the JOINED path instead would let `..` escape
+        // through the un-resolved base (e.g. /tmp/.tmpABC/../x collapsing
+        // against the lexical /tmp instead of the real temp dir).
+        let canon_src = std::fs::canonicalize(source_file)
+            .unwrap_or_else(|_| source_file.to_path_buf());
+        let base = canon_src
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| {
+                source_file
+                    .parent()
+                    .map(std::path::Path::to_path_buf)
+                    .unwrap_or_default()
+            });
+        let joined = base.join(sp.specifier.as_str());
+        let abs = std::fs::canonicalize(&joined).unwrap_or_else(|_| {
+            // Lexical fallback (file missing / a not-yet-written temp):
+            // collapse `.` and `..` segments without touching the fs.
+            let mut segs: Vec<std::ffi::OsString> = Vec::new();
+            for c in joined.components() {
+                use std::path::Component as C;
+                match c {
+                    C::CurDir => {}
+                    C::ParentDir => {
+                        segs.pop();
+                    }
+                    other => segs.push(other.as_os_str().to_os_string()),
+                }
+            }
+            segs.iter().collect::<std::path::PathBuf>()
+        });
+        let url = path_to_file_url(&abs);
+        // Re-emit a QUOTED string literal — the replaced range includes the
+        // original quotes, and a bare `file://...` token would be a syntax
+        // error (`import x from file:///...`).
+        out.push_str(&js[last..raw_start]);
+        out.push('"');
+        out.push_str(&url);
+        out.push('"');
+        last = raw_start + raw_len;
+    }
+    if last == 0 {
+        return js.to_string();
+    }
+    out.push_str(&js[last..]);
+    out
+}
+
+/// Percent-encode a POSIX path into a `file://` URL (Node `import` accepts
+/// these natively; the worker's loaders `fileURLToPath` them back).
+/// Unreserved characters and `/` pass through; everything else is %XX.
+fn path_to_file_url(path: &std::path::Path) -> String {
+    let s = path.to_string_lossy();
+    let mut url = String::with_capacity(s.len() + 8);
+    url.push_str("file://");
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'-' | b'.' | b'_' | b'~' => {
+                url.push(b as char)
+            }
+            _ => {
+                url.push('%');
+                url.push_str(&format!("{b:02X}"));
+            }
+        }
+    }
+    url
+}
+
 /// §6.4 / WP-C1: build the dev component map — canonical route id → an
 /// importable module path. TS/JS/JSX sources are imported directly (the
 /// worker's loader compiles them); `.vue`/`.svelte` (and Solid's babel JSX)
@@ -974,7 +1091,12 @@ pub async fn dev_component_sources(
                 blake3::hash(format!("{id}\u{0}{}", src.display()).as_bytes()).to_hex()
             );
             let path = comp_dir.join(name);
-            if std::fs::write(&path, js).is_ok() {
+            // The compiled JS keeps the SOURCE file's relative imports; the
+            // temp file lives two directories deeper, so they must be
+            // re-anchored before the module can load (see
+            // `absolutize_relative_imports`).
+            let rewritten = absolutize_relative_imports(js, &src);
+            if std::fs::write(&path, rewritten).is_ok() {
                 out.insert(id, path.to_string_lossy().to_string());
                 continue;
             }
@@ -1225,6 +1347,82 @@ mod tests {
         assert_eq!(chunks[0], b"<h1>");
         assert_eq!(chunks[1], b"chunked");
         assert_eq!(chunks[2], b"</h1>");
+    }
+
+    // ---- dev temp-component import re-anchoring ----------------------------
+    //
+    // A pool-compiled SFC page keeps its source-relative imports; the temp
+    // file under .oxide/components/ lives two directories deeper, so every
+    // relative specifier must be re-anchored to the real source file (see
+    // `absolutize_relative_imports`). These pin the rewrite contract.
+
+    #[test]
+    fn relative_imports_are_anchored_to_the_source_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        // Mirror the real layout: <tmp>/src/routes/page.vue importing
+        // ../components/hmr-target.vue (a SIBLING tree under src/).
+        let src = dir.path().join("src/routes/page.vue");
+        std::fs::create_dir_all(src.parent().unwrap()).unwrap();
+        std::fs::write(&src, "x").unwrap();
+        let comp = dir.path().join("src/components/hmr-target.vue");
+        std::fs::create_dir_all(comp.parent().unwrap()).unwrap();
+        std::fs::write(&comp, "x").unwrap();
+
+        let js = "import H from '../components/hmr-target.vue'\nimport { x } from 'vue'\nexport default H;\n";
+        let out = absolutize_relative_imports(js, &src);
+        // The relative specifier became the absolute file URL of the REAL
+        // source (canonicalized through `..`), the bare one is untouched.
+        assert!(
+            out.contains(&format!("\"file://{}\"", comp.display())),
+            "relative import re-anchored: {out}"
+        );
+        assert!(out.contains("from 'vue'"), "bare specifier untouched: {out}");
+        assert!(out.contains("import H from"), "import clause preserved: {out}");
+        assert!(out.contains("export default H;"), "trailer preserved: {out}");
+    }
+
+    #[test]
+    fn non_relative_and_double_quoted_imports_behave() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("page.svelte");
+        std::fs::write(&src, "x").unwrap();
+        let js = "export * from './gone-away.mjs';\nimport \"./side-effect.mjs\";\nimport a from 'solid-js'\n";
+        let out = absolutize_relative_imports(js, &src);
+        // The missing file falls back to lexical resolution (no canonicalize
+        // hit), still producing an absolute file:// URL.
+        assert!(
+            out.contains(&format!("\"file://{}\"", dir.path().join("gone-away.mjs").display())),
+            "missing relative file still lexically anchored: {out}"
+        );
+        assert!(
+            out.contains(&format!("\"file://{}\"", dir.path().join("side-effect.mjs").display())),
+            "side-effect import anchored: {out}"
+        );
+        assert!(out.contains("from 'solid-js'"), "bare import untouched: {out}");
+    }
+
+    #[test]
+    fn js_without_relative_imports_is_returned_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("page.tsx");
+        std::fs::write(&src, "x").unwrap();
+        let js = "import { a } from 'react'\nconst u = '/src/other.tsx'\nexport default a\n";
+        assert_eq!(absolutize_relative_imports(js, &src), js);
+    }
+
+    #[test]
+    fn file_url_encoding_handles_spaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("my comp");
+        std::fs::create_dir_all(&sub).unwrap();
+        let src = sub.join("page.vue");
+        std::fs::write(&src, "x").unwrap();
+        let js = "import './x.mjs'\n";
+        let out = absolutize_relative_imports(js, &src);
+        assert!(
+            out.contains("/my%20comp/x.mjs"),
+            "space percent-encoded: {out}"
+        );
     }
 }
 
