@@ -1,9 +1,10 @@
 // src/routes/docs/index/page.tsx
 import DocBody from './doc-body.tsx'
+import type { MdBlock } from '../../lib/md.server.ts'
 
 interface Props {
   data?: {
-    doc?: { meta: { title: string; description: string }; html: string }
+    doc?: { meta: { title: string; description: string }; html: MdBlock[] }
     path?: string
   }
 }
