@@ -111,8 +111,9 @@ function bindAll(
   scope: OxElement,
   tree: Node,
   bound: Array<{ el: OxElement; type: string; fn: (ev: unknown) => void }>,
+  islandScope = false,
 ): void {
-  for (const binding of walkTreeForHandlers(tree)) {
+  for (const binding of walkTreeForHandlers(tree, islandScope)) {
     const target = findMarked(scope, binding.id)
     if (!target) continue
     target.addEventListener(binding.event, binding.handler)
@@ -388,7 +389,13 @@ export function hydrateIsland(host: OxElement, mod: unknown, props: unknown, opt
       const nextProps = { ...(props as Record<string, unknown>), ...patch, client }
       const tree = component(nextProps)
       host.innerHTML = renderNodeToString(tree, islandRenderState())
-      bindAll(host, tree, bound)
+      // The innerHTML assignment above detached the previous generation's
+      // elements. Drop their listener records first — otherwise `bound`
+      // grows by one entry per update and pins every detached subtree (and
+      // its handler closures) in memory for the life of the page.
+      for (const b of bound) b.el.removeEventListener(b.type, b.fn)
+      bound.length = 0
+      bindAll(host, tree, bound, true)
     },
     navigate(href: string): void {
       opts.navigate?.(href)
@@ -396,7 +403,7 @@ export function hydrateIsland(host: OxElement, mod: unknown, props: unknown, opt
   }
   const tree = component({ ...(props as Record<string, unknown>), client })
   host.innerHTML = renderNodeToString(tree, islandRenderState())
-  bindAll(host, tree, bound)
+  bindAll(host, tree, bound, true)
   return () => {
     for (const b of bound) b.el.removeEventListener(b.type, b.fn)
     bound.length = 0
@@ -404,7 +411,10 @@ export function hydrateIsland(host: OxElement, mod: unknown, props: unknown, opt
 }
 
 function islandRenderState(): ReturnType<typeof newRenderState> {
-  return newRenderState('routes/islands')
+  // `islandScope: true` keeps the replay's handler markers in the `h<n>` id
+  // space — the same space the page walk used for this island's subtree —
+  // while page-level markers live in `p<n>`. See render.ts RenderState.
+  return { ...newRenderState('routes/islands'), islandScope: true }
 }
 
 export type { ClientHandle, HandlerBinding }
