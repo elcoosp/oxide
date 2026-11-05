@@ -51,6 +51,33 @@ function defaultUrl(): string {
   return `${scheme}://${loc.host}/_oxide/hmr`
 }
 
+/**
+ * §1.3: does a route PATTERN (`/blog/[slug]`, `/`, `/greeting`) match the
+ * concrete `pathname` the browser is on? Segment-wise: a static segment must
+ * equal; `[param]` / `:param` / `*` match one non-empty segment. Used to drop
+ * `route-data-update` messages for routes the viewer is NOT on — the boot
+ * window (and an edit to another page's loader) publishes fresh loader data
+ * for foreign routes, and blindly feeding it to `adapter.update` rendered
+ * THAT route in place: a phantom navigation with no URL change that replaced
+ * the visible page with a different one.
+ */
+export function routePatternMatchesPath(pattern: string, pathname: string): boolean {
+  const pSegs = pattern.split('/').filter((s) => s.length > 0)
+  const pathSegs = pathname
+    .split('?')[0]
+    ?.split('#')[0]
+    ?.split('/')
+    .filter((s) => s.length > 0) ?? []
+  if (pSegs.length !== pathSegs.length) return false
+  for (let i = 0; i < pSegs.length; i++) {
+    const p = pSegs[i] ?? ''
+    const seg = pathSegs[i] ?? ''
+    if (p.startsWith('[') || p.startsWith(':') || p === '*' || p.startsWith('*')) continue
+    if (p !== seg) return false
+  }
+  return true
+}
+
 /** Swap the <link rel=stylesheet> whose href matches `path` (query-stripped). */
 function swapCss(doc: Document, path: string): boolean {
   const bare = path.split('?').at(0) ?? ''
@@ -125,14 +152,20 @@ export function showOverlay(diag: { code?: string; message?: string; fix?: strin
  * path a navigation uses, §8.4). All failures are silent: an HMR data
  * refresh is best-effort and must never break the socket loop.
  */
-async function refreshRouteData(odfB64: string): Promise<void> {
+async function refreshRouteData(route: string, odfB64: string): Promise<void> {
   const g = globalThis as {
     document?: { dispatchEvent?(ev: unknown): boolean }
     location?: { pathname: string; search: string }
     fetch?: typeof fetch
     CustomEvent?: new (type: string, opts: { detail?: unknown }) => unknown
   }
-  const path = (g.location?.pathname ?? '/') + (g.location?.search ?? '')
+  // §1.3: a loader edit for a route the viewer is NOT on must not reach
+  // `adapter.update` — that renders the foreign route in place (phantom
+  // navigation). Drop it here; the data is served fresh on the next real
+  // navigation anyway.
+  const locPath = g.location?.pathname
+  if (locPath && !routePatternMatchesPath(route, locPath)) return
+  const path = (locPath ?? '/') + (g.location?.search ?? '')
   let decoded: unknown
   if (odfB64.length > 0) {
     try {
@@ -205,8 +238,10 @@ export function applyHmrMessage(msg: HmrMessage, opts: HmrOptions = {}): boolean
       opts.onRouteData?.(route, odf)
       // §13.3: re-fetch (or decode) the fresh loader data and re-dispatch it
       // through the same event the boot machinery consumes. Async and
-      // silent — the message itself is handled synchronously.
-      void refreshRouteData(odf)
+      // silent — the message itself is handled synchronously. §1.3: the
+      // route is passed through so a foreign route's data is dropped
+      // instead of re-rendering the page (see refreshRouteData).
+      void refreshRouteData(route, odf)
       return true
     }
     case 'module-update': {
