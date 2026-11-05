@@ -286,11 +286,23 @@ pub fn inject_react_refresh(code: &str, lang: &str, path: &str) -> Result<String
     // rebuild-burst path).
     //
     // The walker and runtime hook (`__oxide_refresh_sig` + bufferedSigs)
-    // ship; the emit is a one-line re-enable when the interaction is
-    // diagnosed. `hmr-refresh-sig.spec.ts` is the acceptance test and
-    // will fail (correctly) until then — it is `test.skip`-ed below to
-    // match this state.
-    let components: Vec<ComponentEmit> = Vec::new();
+    // ship; the emit is re-enabled below.
+    //
+    // §1.2 RE-ENABLED (2026-11-05). The ECONNRESET the disable note refers
+    // to was the boot-storm chain fixed in 8359a20b (watcher boot baseline,
+    // node_modules event filtering, §3.3 boot-settle grace, stale-generation
+    // gating, client runtime race): the "rebuild burst under full-suite
+    // load" that isolated runs never reproduced was the boot-time
+    // workspace-rebuild flood, not the emit. The emit shape below inserts
+    // `_s(Comp, hook_key);` at MODULE scope directly after each component's
+    // declaring statement — the same placement react-refresh's babel plugin
+    // uses (insertAfterPath on the declaration), which also keeps
+    // arrow-function components (`const X = () => …`) syntactically valid,
+    // unlike a body-end insertion.
+    let mut components: Vec<ComponentEmit> = Vec::new();
+    for stmt in &parsed.program.body {
+        collect_components_for_sig(stmt, code, &mut components);
+    }
 
     // Build (byte_position, insert_text) edits: one `_s(Comp, key);\n` after
     // each component's body. Ascending order, then reverse for splice safety.
@@ -301,7 +313,7 @@ pub fn inject_react_refresh(code: &str, lang: &str, path: &str) -> Result<String
             name = comp.name,
             key = comp.hook_key,
         );
-        edits.push((comp.body_end, stmt));
+        edits.push((comp.insert_at, stmt));
     }
     edits.sort_by_key(|(pos, _)| std::cmp::Reverse(*pos));
     let mut code_with_sig = code.to_string();
@@ -481,9 +493,12 @@ fn collect_component_hook_wraps(
 /// `_s(name, key)` at module scope after the component declaration.
 struct ComponentEmit {
     name: String,
-    /// Byte offset to insert the `_s(name, key);\n` — right after the
-    /// component's function body's closing `}`.
-    body_end: usize,
+    /// Byte offset to insert the `_s(name, key);\n` — the END of the
+    /// component's DECLARING statement (function declaration, variable
+    /// declaration, or their export wrappers). Statement end, not function
+    /// body end: an arrow-function component (`const X = () => {}`) would
+    /// otherwise get the insert landed between `}` and `;`.
+    insert_at: usize,
     /// Babel-matching hook-sequence string. E.g. for
     ///   `const [count, setCount] = useState(0); useEffect(() => {}, []);`
     /// the key is `"useState{[count, setCount](0)}\nuseEffect{}"`.
@@ -589,6 +604,7 @@ fn collect_components_for_sig(
     fn walk(
         name: &str,
         body: Option<&oxc_ast::ast::FunctionBody<'_>>,
+        insert_at: usize,
         code: &str,
         out: &mut Vec<ComponentEmit>,
     ) {
@@ -596,16 +612,22 @@ fn collect_components_for_sig(
         if let Some(key) = build_hook_key(body, code) {
             out.push(ComponentEmit {
                 name: name.to_string(),
-                body_end: body.span.end as usize,
+                insert_at,
                 hook_key: key,
             });
         }
     }
 
+    // §1.2: the `_s(Comp, key);` statement is inserted AFTER the declaring
+    // statement's end — the same placement react-refresh's babel plugin
+    // uses (insertAfterPath on the declaration). Inserting at the function
+    // BODY's end would land between an arrow function's closing `}` and the
+    // declarator's `;` (`const X = () => {}_s(X, …);`) — a syntax error.
+    let stmt_end = stmt.span().end as usize;
     match stmt {
         Statement::FunctionDeclaration(f) => {
             if let Some(id) = &f.id {
-                walk(id.name.as_str(), f.body.as_deref(), code, out);
+                walk(id.name.as_str(), f.body.as_deref(), stmt_end, code, out);
             }
         }
         Statement::VariableDeclaration(v) => {
@@ -615,11 +637,11 @@ fn collect_components_for_sig(
                 match init {
                     Expression::ArrowFunctionExpression(a) => {
                         if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &a.body {
-                            walk(id.name.as_str(), Some(body), code, out);
+                            walk(id.name.as_str(), Some(body), stmt_end, code, out);
                         }
                     }
                     Expression::FunctionExpression(fe) => {
-                        walk(id.name.as_str(), fe.body.as_deref(), code, out);
+                        walk(id.name.as_str(), fe.body.as_deref(), stmt_end, code, out);
                     }
                     _ => {}
                 }
@@ -628,7 +650,7 @@ fn collect_components_for_sig(
         Statement::ExportDeclaration(e) => match &e.declaration {
             Declaration::FunctionDeclaration(f) => {
                 if let Some(id) = &f.id {
-                    walk(id.name.as_str(), f.body.as_deref(), code, out);
+                    walk(id.name.as_str(), f.body.as_deref(), stmt_end, code, out);
                 }
             }
             Declaration::VariableDeclaration(v) => {
@@ -638,7 +660,7 @@ fn collect_components_for_sig(
                     if let Expression::ArrowFunctionExpression(a) = init
                         && let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &a.body
                     {
-                        walk(id.name.as_str(), Some(body), code, out);
+                        walk(id.name.as_str(), Some(body), stmt_end, code, out);
                     }
                 }
             }
@@ -651,7 +673,7 @@ fn collect_components_for_sig(
                     .as_ref()
                     .map(|i| i.name.to_string())
                     .unwrap_or_else(|| "default".to_string());
-                walk(&name, f.body.as_deref(), code, out);
+                walk(&name, f.body.as_deref(), stmt_end, code, out);
             }
             _ => {}
         },
