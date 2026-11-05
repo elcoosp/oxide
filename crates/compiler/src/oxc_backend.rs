@@ -1253,7 +1253,7 @@ fn ast_server_fn_stubs(
             let Some(init) = d.init.as_ref() else {
                 continue;
             };
-            let Some(_call) = as_server_fn_call(init) else {
+            let Some(call) = as_server_fn_call(init) else {
                 continue;
             };
 
@@ -1271,11 +1271,56 @@ fn ast_server_fn_stubs(
                 // `@oxide-fw/core/fn`, which owns the fetch + wire format. Previously
                 // this inlined a fetch calling bare `__oxide_encode` /
                 // `__oxide_decode` globals that no module defines.
+                //
+                // `Object.assign(fn, { id })` keeps `NAME.id` working in app
+                // code (`const fnId = greet.id` for a `data-greeting-fn`
+                // attribute): a bare arrow has no `.id`, so the client rendered
+                // `undefined` where the server rendered a runtime-assigned
+                // `anonymous-N` — a guaranteed hydration mismatch.
                 Env::Client => {
-                    format!("{name} = (async (...args) => __oxide_call_fn(\"{id}\", args));")
+                    format!(
+                        "{name} = Object.assign((async (...args) => __oxide_call_fn(\"{id}\", args)), {{ id: \"{id}\" }});"
+                    )
                 }
+                // §9.4: rewrite the single-argument form to the ID-FIRST form
+                // (`serverFn("<static id>", fn)`). Keeping the raw
+                // `serverFn(fn)` call made the RUNTIME assign an
+                // `anonymous-N` id on the server while the client baked the
+                // static id — the two sides disagreed on `NAME.id` and every
+                // page that rendered it failed hydration. With the id-first
+                // form the runtime registers under the SAME static id the
+                // client compiled (the appended `__oxide_register_fn` line
+                // stays as a belt-and-braces registration).
                 Env::Ssr | Env::Edge => {
-                    code[d.span.start as usize..d.span.end as usize].to_string()
+                    let start = d.span.start as usize;
+                    let end = d.span.end as usize;
+                    let decl = &code[start..end];
+                    // Insert `"<id>", ` right after the callee's opening
+                    // paren (`serverFn(`). The call span is byte-exact from
+                    // the AST; the callee is the `serverFn` identifier per
+                    // `as_server_fn_call`.
+                    match decl.find("serverFn") {
+                        Some(callee_at) => {
+                            let after_callee = callee_at + "serverFn".len();
+                            let rest = &decl[after_callee..];
+                            match rest.find('(') {
+                                Some(paren_at) => {
+                                    let insert_at = after_callee + paren_at + 1;
+                                    let mut out = String::with_capacity(decl.len() + id.len() + 4);
+                                    out.push_str(&decl[..insert_at]);
+                                    out.push('"');
+                                    out.push_str(&id);
+                                    out.push_str("\", ");
+                                    out.push_str(&decl[insert_at..]);
+                                    out
+                                }
+                                // No paren (impossible for a CallExpression) —
+                                // keep the original verbatim.
+                                None => decl.to_string(),
+                            }
+                        }
+                        None => decl.to_string(),
+                    }
                 }
             };
             edits.push((d.span.start, d.span.end, repl));
