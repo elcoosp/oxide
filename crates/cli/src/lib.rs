@@ -2048,17 +2048,118 @@ fn rebuild_stale_workspace_packages(rootp: &std::path::Path) {
     }
     if to_rebuild.is_empty() { return; }
     eprintln!("oxide: rebuilding {} stale workspace package(s)...", to_rebuild.len());
+    // Package build scripts call `oxide` (`packages/oxide-website`'s build is
+    // `oxide build`). On a machine without a global `oxide` install — a fresh
+    // clone, CI, this repo's own dev container — that resolution failed with
+    // ENOENT, the rebuild silently no-oped, and the package stayed stale
+    // forever: every subsequent boot retried the rebuild, and the retry's
+    // node_modules churn flooded any connected HMR client with full-reload
+    // frames. Prepend the running binary's directory so `oxide` resolves to
+    // the exact binary that is serving right now.
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    let mut paths: Vec<std::path::PathBuf> = exe_dir.into_iter().collect();
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()));
+    let path_env = std::env::join_paths(&paths)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| std::env::var("PATH").unwrap_or_default());
     for pkg in &to_rebuild {
         let name = pkg.file_name().and_then(|n| n.to_str()).unwrap_or("?");
         eprintln!("  · packages/{}", name);
         let _ = std::process::Command::new("pnpm")
             .args(["build"])
             .current_dir(pkg)
+            .env("PATH", &path_env)
             .status();
     }
 }
 
+/// §1.2 (diagnostics): when `OXIDE_DEV_LOG_FILE` is set, tee everything the
+/// dev server would print — tracing output AND Rust panics — into that file.
+/// `%p` in the value expands to the process id, so a test harness that spawns
+/// several `oxide dev` children gets one log per server
+/// (`OXIDE_DEV_LOG_FILE=/tmp/logs/dev-%p.log`). Panic capture is the point:
+/// a panic in a watcher/worker thread kills the process without anything
+/// reading the stdio pipes being able to attribute the death — the pipe
+/// buffers belong to the test process and its in-memory tail is dropped when
+/// the test itself fails. A per-server file survives.
+fn install_dev_log_file() {
+    use std::io::Write as _;
+    use std::sync::{Arc, Mutex};
+
+    let raw = match std::env::var("OXIDE_DEV_LOG_FILE") {
+        Ok(v) if !v.is_empty() => v,
+        _ => return,
+    };
+    let path = raw.replace("%p", &std::process::id().to_string());
+    let Ok(file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    else {
+        eprintln!("warn: OXIDE_DEV_LOG_FILE={path} is not writable; continuing without it");
+        return;
+    };
+    let sink = Arc::new(Mutex::new(file));
+
+    // Panic hook: write the panic message + location to the file, then chain
+    // to the default hook so stderr still shows it.
+    let default_hook = std::panic::take_hook();
+    let panic_sink = Arc::clone(&sink);
+    std::panic::set_hook(Box::new(move |info| {
+        if let Ok(mut f) = panic_sink.lock() {
+            let loc = info
+                .location()
+                .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+                .unwrap_or_else(|| "<unknown>".to_string());
+            let msg = info.payload();
+            let msg = msg
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| msg.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "<non-string panic payload>".to_string());
+            let backtrace = std::backtrace::Backtrace::force_capture();
+            let _ = writeln!(
+                f,
+                "\n===== PANIC at {loc} =====\n{msg}\nbacktrace:\n{backtrace}\n====="
+            );
+            let _ = f.flush();
+        }
+        default_hook(info);
+    }));
+
+    // Tracing layer: every tracing event also lands in the file.
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_ansi(false)
+        .with_writer(move || {
+            struct SinkWriter(Arc<Mutex<std::fs::File>>);
+            impl std::io::Write for SinkWriter {
+                fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                    let mut f = self.0.lock().map_err(|_| std::io::ErrorKind::Other)?;
+                    f.write(buf)
+                }
+                fn flush(&mut self) -> std::io::Result<()> {
+                    let mut f = self.0.lock().map_err(|_| std::io::ErrorKind::Other)?;
+                    f.flush()
+                }
+            }
+            SinkWriter(Arc::clone(&sink))
+        });
+    // The subscriber is initialized later (see `init_tracing`); stash the
+    // layer via a global so the real init can pick it up. To keep this
+    // self-contained, initialize a dedicated global default here — calls
+    // that initialize their own subscriber later will override it, which is
+    // acceptable: the panic hook above is the critical capture path.
+    use tracing_subscriber::layer::SubscriberExt as _;
+    let _ = tracing::subscriber::set_global_default(
+        tracing_subscriber::registry().with(file_layer),
+    );
+    eprintln!("oxide dev: logging to {path} (OXIDE_DEV_LOG_FILE)");
+}
+
 async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyhow::Result<i32> {
+    install_dev_log_file();
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
     let mut cfg = load_config_or_default(&rootp, "development");
     // §2.9: `--no-esm` overrides the config after load. The dev server
@@ -2433,8 +2534,13 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             }
         }
     }
-    let watcher = oxide_fw_dev::Watcher::with_notify(watch_roots);
+    let watcher = oxide_fw_dev::Watcher::with_notify(watch_roots.clone());
     let mut seen = std::collections::BTreeSet::new();
+    // §1.3 (boot baseline): the on-disk state at boot is NOT a change. Seed
+    // the hash set so the first poll tick diffs boot-time file touches
+    // (workspace rebuild, prebundle write-out, editor/sync-daemon churn)
+    // against reality instead of fanning them out as Created events.
+    watcher.seed_seen(&mut seen);
 
     // PERF-08: a `DemandGraph` over the watched modules. A node per source
     // file whose compute reads that file; a change invalidates only the nodes
@@ -2656,6 +2762,17 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         // to the walk_root path, not the notify callback). Filter BEFORE
         // `invalidate_framework_modules` — filtering after it left the
         // invalidate→write→notify→invalidate loop running.
+        //
+        // §1.3 (boot-flood fix): events under `node_modules/` are also
+        // HMR-insignificant — EXCEPT `package.json`, which §3.3 uses as the
+        // prebundle-invalidation trigger. Without this filter, the boot-time
+        // workspace-package rebuild (which relinks `node_modules/@oxide-fw/*/
+        // dist` symlinks) publishes ~30 `full-reload` frames ("rebuild
+        // skipped for non-src file .../node_modules/...") into the socket of
+        // any client that connects during the burst — the page reload-spams
+        // right after boot and every early test assertion races a navigation.
+        // Framework dist churn is picked up by `ensure_dev_client_bundle`'s
+        // staleness scan (§3.11) at request time, not by HMR.
         let events: Vec<_> = events_raw
             .into_iter()
             .filter(|ev| {
@@ -2665,7 +2782,14 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                     | oxide_fw_dev::FileEvent::Removed(p) => p,
                 };
                 !p.components().any(|c| c.as_os_str() == ".oxide")
-                    && !p.starts_with(rootp.join("dist"))
+                    // The app's own dist AND every workspace package's dist
+                    // (the packages/* dirs are watch roots of their own):
+                    // framework dist churn is picked up by
+                    // `ensure_dev_client_bundle`'s staleness scan (§3.11) at
+                    // request time, not by HMR.
+                    && !watch_roots.iter().any(|r| p.starts_with(r.join("dist")))
+                    && !(p.starts_with(rootp.join("node_modules"))
+                        && p.file_name().and_then(|n| n.to_str()) != Some("package.json"))
             })
             .collect();
         let mut client_rebuilt = false;
@@ -2736,6 +2860,14 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 pstr.contains("/node_modules/") && pstr.ends_with("/package.json")
             });
             if has_prebundle_invalidation && cfg.dev.esm {
+                // §1.3 note: this branch fires only for package.json events
+                // whose content actually changed (the boot baseline seeding
+                // in `Watcher::seed_seen` swallows relink churn for
+                // unchanged files) and the prebundle is regenerated BEFORE
+                // the FullReload publishes, so a reloading client re-fetches
+                // against the fresh artifacts. The per-event node_modules
+                // skip below keeps every OTHER relink event silent, so this
+                // is at most ONE reload per real dependency change.
                 tracing::info!(
                     "§3.3: node_modules/*/package.json change — re-prebundling"
                 );
@@ -2756,12 +2888,14 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                 events.iter().filter(|ev| {
                                     let p = match ev {
                                         oxide_fw_dev::FileEvent::Modified(p)
-                                        | oxide_fw_dev::FileEvent::Created(p)
-                                        | oxide_fw_dev::FileEvent::Removed(p) => p,
+                                            | oxide_fw_dev::FileEvent::Created(p)
+                                            | oxide_fw_dev::FileEvent::Removed(p) => p,
                                     };
                                     let pstr = p.to_string_lossy();
-                                    pstr.contains("/node_modules/") && pstr.ends_with("/package.json")
-                                }).count()
+                                    pstr.contains("/node_modules/")
+                                        && pstr.ends_with("/package.json")
+                                })
+                                .count()
                             ),
                         });
                     }
@@ -2876,7 +3010,24 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             // "file changed" from "in-flight" — the dispatch reads the
             // generation at entry and the exit check is only needed if
             // the bump lands while the dispatch was already running.
-            if let Some(hub) = started.hmr.as_ref() {
+            //
+            // §1.3: the bump is gated on the batch containing at least one
+            // app-source event. A pure `node_modules` batch (a relinked
+            // dependency's package.json) produces no client message and no
+            // source change — bumping the generation on it aborted every
+            // in-flight module fetch with a retryable 503 that nothing
+            // retries (a browser `import()` fails hard), which surfaced as
+            // a page whose hydration never completed when a package relink
+            // landed mid-boot.
+            let has_source_event = events.iter().any(|e| {
+                let p = match e {
+                    oxide_fw_dev::FileEvent::Modified(p)
+                    | oxide_fw_dev::FileEvent::Created(p)
+                    | oxide_fw_dev::FileEvent::Removed(p) => p,
+                };
+                !p.to_string_lossy().contains("/node_modules/")
+            });
+            if has_source_event && let Some(hub) = started.hmr.as_ref() {
                 let g = hub.bump_stale_generation();
                 tracing::debug!(generation = g, "stale generation bumped");
             }
@@ -2962,6 +3113,18 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                     | oxide_fw_dev::FileEvent::Removed(p) => p,
                 };
                 let pstr = path.to_string_lossy().to_string();
+                // §1.3: node_modules paths never dispatch per-event HMR. A
+                // `package.json` under node_modules was already consumed by
+                // the §3.3 prebundle-invalidation branch above (ONE
+                // consolidated FullReload per batch); any other node_modules
+                // event is library churn with no client-visible meaning —
+                // publishing it per-event produced a `full-reload` frame per
+                // relinked file during the boot-time workspace rebuild, and a
+                // client that connected during that burst reload-spammed
+                // itself into a broken boot.
+                if pstr.contains("/node_modules/") {
+                    continue;
+                }
                 // §1.4: capture BEFORE the match moves `pstr` into
                 // HmrMessage variants — the post-module-update branch below
                 // needs to know whether this was a .module.css edit.
