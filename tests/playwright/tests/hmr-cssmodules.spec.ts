@@ -131,7 +131,7 @@ test('CSS module: client class, SSR class, and HMR update all agree (Tier 1.4)',
   const cssModBody = await cssMod.text()
   const exportMatch = cssModBody.match(/export default (\{"hero":"[^"]+"\})/)
   expect(exportMatch, `client /@css/ module missing class map: ${cssModBody.slice(0, 200)}`).not.toBeNull()
-  const clientMap = JSON.parse(exportMatch![1]) as Record<string, string>
+  const clientMap = JSON.parse(exportMatch![1]!) as Record<string, string>
   expect(clientMap.hero, 'client map should have a mangled class').toMatch(/_\w+_hero$/)
 
   // [2] SSR HTML: <h1 class="<same-mangled>">.
