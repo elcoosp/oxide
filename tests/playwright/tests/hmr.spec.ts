@@ -386,7 +386,7 @@ test.describe('HMR runtime (browser)', () => {
   // safety net — the same fix that cfb8e18f applied for hmr-target.tsx,
   // extended to the fixtures 2.1 and 2.3 introduce.
   const HM_FIXTURE = join(smokeRoot, 'src', 'components', 'hmr-target.tsx')
-  const HM_PRISTINE = `import { useState } from 'react'\n\nexport default function HmrTarget() {\n  const [count, setCount] = useState(0)\n  return (\n    <>\n      <h1 data-hmr-target="">HMR-TARGET-ORIGINAL</h1>\n      <button data-hmr-counter="" onClick={() => setCount(count + 1)}>{count}</button>\n    </>\n  )\n}\n`
+  const HM_PRISTINE = `import { useState } from 'react'\nimport { utilValue } from '../lib/util.ts'\n\nexport default function HmrTarget() {\n  const [count, setCount] = useState(0)\n  return (\n    <>\n      <h1 data-hmr-target="">HMR-TARGET-ORIGINAL</h1>\n      <span data-hmr-util="">{utilValue}</span>\n      <button data-hmr-counter="" onClick={() => setCount(count + 1)}>{count}</button>\n    </>\n  )\n}\n`
   const ISLAND_PATH = join(smokeRoot, 'src', 'islands', 'counter.tsx')
   const ISLAND_PRISTINE = readFileSync(ISLAND_PATH, 'utf8')
   const LOADER_PATH = join(smokeRoot, 'src', 'routes', 'greeting', 'page.server.ts')

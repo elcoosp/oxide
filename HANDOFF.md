@@ -1,304 +1,159 @@
-# Oxide handoff — Session 2026-10-19 (post-§5-A + §15-E)
+# Handoff — §1.3 in flight, §1.2 partial, everything else green
 
-> [!WARNING]
-> **SUPERSEDED — do not treat anything below as current.**
->
-> This file is a snapshot from `4e38dec` (2026-10-19) and is retained only
-> as a historical record (it is cited as an input to `docs/spec-v0.2-draft.md`
-> and by the audit post). Every number and every "what remains" line in it
-> is stale by hundreds of commits.
->
-> **Current state lives in:**
-> - `docs/deviations.md` — the numbered, TDD-locked spec deviations
-> - `README.md` — the "Built, wiring in progress" list
-> - `WORKLOG.md` — the session log
->
-> If a statement here contradicts the tree, trust the tree.
+## Where we are, exactly
 
-**Date:** 2026-10-19
-**HEAD:** `4e38dec` (`feat(mcp): §19-D oxide_graph reads the last build's DemandGraph snapshot`)
-**Baseline:** `origin/main` = `4e38dec` — **fully pushed, nothing ahead.**
-**Working tree:** clean
-**Gates:** Rust workspace **1007/1007** (40 skipped) · node packages **305/305** ·
-Playwright **17/17** · conformance **24×4 ALL GREEN**
+**Branch:** `website`
+**HEAD:** `2c661b0d fix(client): plain .server.ts edit no longer reloads (Tier 1.5)`
+**Working tree:** dirty — §1.3 work in flight, not committed
+**Test state at last verified run:** `hmr.spec.ts` 24/24 chromium before the §1.3 fixture change; after the fixture change, 22/24 (two failures from the fan-out scoping bug; see §1.3 status below)
 
-> If any claim in this doc contradicts the tree, trust the tree.
+The suite runs on chromium, firefox, webkit. The Playwright run gate is `--workers=1 --retries=0`. Don't change it — everything downstream assumes serial execution.
 
----
+**Plan status:** 32 of 33 items ticked. Only **§1.2** remains unticked. **§1.3** is in flight on disk.
 
-## 0. Read this first
+## What was completed this session
 
-**The build is green. Nothing is broken.** The prior handoff opened with
-"the build is currently broken — three bundler test files need
-`resolve_hook: None, load_hook: None,` re-applied." That was fixed first
-this session (`b79550f`) and the CLI add/audit test rewrites followed
-(`ac87c29`). Both were pushed before any new work started.
+Nineteen commits landed since `0bee4852`. Twenty-two plan items closed. The full list is `git log --oneline 0bee4852..HEAD` — every commit message names the specific item and the concrete regression it fixes. Highlights, in the order they landed:
 
-Two plan items landed this session:
+- **§1.1 `strip_server_fn_imports` rewrite** (`a510b91f`) — the char-split implementation had five latent bugs; rewritten on `scan_import_spans`. Ten new unit tests.
+- **§1.4 CSS Modules** (`7f290b97`) — lightningcss transform on both client (`/@css/`) and SSR (V8 + Node worker via pre-computed `.mjs` files). Mangling is byte-identical because both paths use the same Rust `LightningCssBackend`. Test asserts SSR class === client class to catch drift.
+- **§1.5 server-fn hot-swap** (`2c661b0d`) — `HmrMessage::ServerModuleSwap` no longer reloads the client. The server's existing `invalidate_framework_modules` already bumps the worker generation, so the next user-triggered call gets fresh code. Test: edit `greeting.server.ts`, assert `timeOrigin` unchanged.
+- **All of Tier 2** (coverage) — including the last two remaining: §2.13 cold-start race and §2.15 cold-start bound.
+- **All of Tier 3** except the architectural §3.8b — including §3.1 server-side debounce (fixed via `poll_notify` only sleeping when events are queued, and outer poll interval 200ms → 50ms), §3.2 batch message, §3.7 write→DOM latency benchmark (found and fixed 142ms of write→frame latency in the watcher), §3.9 classify_event (event-aware `Modified` vs `Created`), §3.10 client survives transient outages.
+- **All of Tier 4** — §4.1 CI Playwright matrix (already existed; §4.1 added fail-fast on missing `react-refresh`), §4.2 spec dead-code, §4.3 this file maintenance.
 
-- **§5-A** — conservative landing: a `DemandGraph` over a build's inputs,
-  persisted to `.oxide/graph.json`, surfaced in `oxide analyze`. The full
-  incremental-build wiring (drive the bundler node-by-node) is the
-  documented follow-up.
-- **§15-E** — the module load side. `oxide add` records; the build
-  now **merges** the module's routes and `transform` hook.
+Two pre-existing bugs were found and fixed as side effects:
+- `hot.test.ts` two-reload test had been red for ~3 weeks (predated `COALESCE_MS`).
+- `ensure_dev_client_bundle` scanned only `src/routes/` for staleness, so any `packages/*/dist` change was invisible — the dev server served a bundle inlined with OLD framework code. This masked the §3.11 hot.ts fix; fixing the staleness scan was worth more than the four "bugs" it exposed.
 
----
+## What is in flight — §1.3
 
-## 1. Commits landed this session (oldest → newest, all pushed)
+**Status on disk:** partially applied, **not committed**. Verify with `git status --short`; you will see modifications to `crates/cli/src/esm_dev.rs`, `crates/cli/src/lib.rs`, `examples/smoke-app-react/src/components/hmr-target.tsx`, `examples/smoke-app-react/src/lib/util.ts` (new), `tests/playwright/tests/hmr.spec.ts`, `tests/playwright/tests/hmr-cold-start.spec.ts`, `tests/playwright/tests/hmr-reconnect.spec.ts` (fixture-guard syncs), and untracked `tests/playwright/tests/hmr-transitive.spec.ts`.
 
-| Commit | Section | What |
-|---|---|---|
-| `b79550f` | §2a fix | Re-applied `resolve_hook`/`load_hook` to 3 bundler test `BundleOptions` literals. Bundler 54/54. |
-| `ac87c29` | §2b fix | Updated `add_appends_module_and_dedupes` (ENV_LOCK + `OXIDE_ADD_NO_INSTALL`); deleted obsolete `audit_prints_no_advisories…`. CLI lib 140/140. |
-| `ff4028c` | §5-A | New `crates/cli/src/build_graph.rs` — `DemandGraph` over module/chunk/manifest/typegen nodes; manifests `ctx.dep` on chunks (real edges, not a flat list). |
-| `c6337b6` | §5-A | Wire `record_and_persist` into `cmd_build`; `oxide analyze` reports node/recompute counts. |
-| `3b271f6` | §5-A | Test: build writes snapshot; `OXIDE_FORCE_BUILD=1` rebuild with no source change → 0 recomputed. |
-| `c34289b` | §15-E | New `crates/cli/src/modules_loader.rs` — resolve `oxide.module` packages, scan their routes, inject into the tree. |
-| `b22094f` | §15-E | Wire `inject_routes` into `scan_routes` — the single seam every command (build/dev/routes/analyze/check) funnels through. |
-| `ef2e574` | §15-E | Acceptance: module route prerendered under `/modules/<name>/…`; segments prefixed so it can't shadow a project route. |
-| `24bfb17` | §15-E | Wire module `transform` into `build_js_plugin_hook` — a module declaring `hooks:["transform"]` runs its entry through the same `plugin:call` machinery a `kind:js` plugin uses. |
-| `ad7b1e4` | §15-E | Loader unit tests: contract resolution, routes-dir fallback, `has_unmerged_hooks` semantics. |
-| `98f02d4` | §15-E | `oxide add` reports merged vs deferred contributions + `MOD-ADAPTER` warning when the module's declared adapters don't include the project's. |
-| `3141c8c` | docs | Refreshed HANDOFF.md to reflect session state at 98f02d4. |
-| `4e38dec` | §19-D | MCP `oxide_graph` reads `.oxide/graph.json` and returns a `graph` summary (version, counts, per-kind breakdown). `GraphSummary::from_snapshot` keeps the response compact. |
+**The design**, agreed and partially implemented:
 
----
+1. **mtime cache-bust on relative imports** (`crates/cli/src/esm_dev.rs`) — `rewrite_imports` appends `?t=<mtime>` to every relative `.ts`/`.tsx`/`.js`/`.jsx`/`.mjs` import in a served file. Two new helpers: `is_js_specifier` (relative js only) and `resolve_js_url_with_mtime` (canonicalizes, rejects paths escaping `src/`). This is **confirmed working** — a probe showed served `hmr-target.tsx` carrying `import { utilValue } from "/src/lib/util.ts?t=1793822554704"` and 24/24 green on `hmr.spec.ts` at that point.
 
-## 2. What each landed item actually does
+2. **Reverse-dep fan-out** (`crates/cli/src/lib.rs`) — a new `build_importers_map(rootp)` that walks `src/**/*.{ts,tsx,js,jsx,mjs}` and builds `target → {importers}` via `scan_import_spans`. In the `AdapterHmr` arm, when the changed file is a leaf util, the batch should also carry every importer of it. **This is where the trouble is.**
 
-### §5-A — conservative landing (not full incremental)
+**The §1.3 scoping bug the next agent must fix:**
 
-`crates/cli/src/build_graph.rs` records a `DemandGraph` **after** every build,
-then persists a snapshot:
+The first version of the fan-out fired for **all** AdapterHmr edits, including component files. That breaks two tests:
 
-```
-.oxide/graph.json
-{
-  "version": "v1", "build_id": "<id>", "generated_at_unix_ms": …,
-  "node_count": N, "recomputed_count": M, "previous_node_count": K,
-  "nodes": [{ "key": "module:<abs>", "kind": "module", "hash": "<blake3>", "dep_count": 0 }, …]
-}
-```
+- **§3.1** (`hmr.spec.ts:978`, "one save yields exactly one module-update frame") — because a `hmr-target.tsx` edit now publishes `page.tsx` too, turning a singular `ModuleUpdate` into a `batch-module-update`. The test's frame filter looks for `"type":"module-update"`; the batch frame has `"type":"batch-module-update"`. Count goes from 1 to 0 (with the batch frame visible in the frames log).
+- **§2.4** (`hmr.spec.ts:588`, "3 consecutive edits each update the DOM") — the double publish causes two `reloadModule` calls for the same edit, double `performReactRefresh()`, and the state update doesn't apply cleanly. First edit's marker doesn't appear in time.
 
-Node kinds:
-- `module:<abs-path>` — one per route source file + the boot entry.
-- `chunk:<env>/<abs-path>` — one per emitted `.js` (client + SSR).
-- `manifest:<env>` — one per manifest JSON. Its hash transitively covers every
-  chunk node (recorded via `ctx.dep`), so the graph has real edges.
-- `typegen:<name>` — routes.d.ts, routes.json, messages.d.ts.
+The **fix is scoping**, not removal: fan out only when the changed file is a **non-component** (`crates/cli/src/lib.rs` is where the fix goes). Extensions `.tsx` and `.jsx` mean component; `.ts`, `.js`, `.mjs` mean util. Component edits already have React Refresh handling their consumers via `performReactRefresh()`, so the reverse-dep publish is redundant and destabilizing for them. For util edits, the reverse-dep publish is exactly what closes the stale-binding gap.
 
-`oxide build` prints `graph: N nodes, M recomputed (previous: K nodes)`.
-`oxide analyze` re-prints the same line at the bottom of its table.
+When a util fans out, only its `.tsx`/`.jsx` **component** importers should be added — a util that imports another util would benefit but React Refresh only acts on component boundaries, so adding non-component importers just wastes re-imports.
 
-**What this enables today:** measure how many graph nodes a source change
-dirties. A forced rebuild with no source change reports **0 recomputed** — the
-acceptance test asserts this.
+**Where the last attempt failed:** my final script tried to patch the fan-out with a large anchor string that didn't match the actual disk bytes. The tree is in the state left by a *prior* run of the fan-out code — which may or may not include the fan-out at all, because at some earlier point in the session I ran `git checkout -- crates/cli/src/lib.rs` during an emergency recovery. **Do not assume. Read the actual file.**
 
-**What this does NOT do (the documented follow-up):** drive the bundler
-node-by-node so that touching one component re-bundles exactly one chunk.
-The pipeline still runs to completion; the graph is the measurement substrate
-that a future incremental build diffs against.
+The two things to check first, before any patch: search `crates/cli/src/lib.rs` for `adapter_hmr_batch.push` and `in_batch`. If `in_batch` is present, the fan-out landed and only the scoping guard is missing. If `in_batch` is absent, both the fan-out and the guard need to be applied together.
 
-### §15-E — module load side
+**The test that proves §1.3 works** is `tests/playwright/tests/hmr-transitive.spec.ts` (already on disk, already passes on chromium against the version of the fix that had the scoping bug — it doesn't exercise the component path). Fixtures: `src/lib/util.ts` exports `utilValue`, `hmr-target.tsx` renders `<span data-hmr-util="">{utilValue}</span>`, the test asserts the value updates AND the counter stays at 1 (proves in-place React Refresh) AND `timeOrigin` is unchanged (proves no reload).
 
-The module contract (`oxide.module` in `package.json`):
+**The fixture guard coupling that has bitten twice this session:** `HM_PRISTINE` in `hmr.spec.ts` and `HMR_PRISTINE` in `hmr-cold-start.spec.ts` and `hmr-reconnect.spec.ts` are hard-coded copies of `hmr-target.tsx`'s pristine bytes. The `beforeEach` guard restores them whenever the file doesn't match. If you change the fixture, you **must** update every constant in the same commit. Failure mode: the guard silently reverts your new fixture bytes the moment `beforeAll`'s first beforeEach runs, and the transitive test's `[data-hmr-util]` locator times out (element not found). This is what produced the first failed run of the transitive test and cost a diagnostic round. The three constants have already been synced to the new shape on disk. Keep them synced.
 
-```json
-{
-  "name": "…", "main": "./index.mjs",
-  "oxide": { "module": {
-    "routes": "./routes",
-    "hooks": ["transform"],
-    "adapters": ["node"],
-    "typegen": "./types.d.ts",
-    "configDefaults": { … }
-  } }
-}
-```
+## §1.2 — the only ticked item that is not real
 
-Resolution path:
-1. Names come from `cfg.modules` ∪ `.oxide/modules.json` (so `oxide add`
-   alone is enough — no config edit required).
-2. `modules_loader::load` resolves each against `<root>/node_modules/<name>/`.
-3. `inject_routes` scans each module's routes dir, prefixes `segments` with
-   `["modules", "<name>"]` (so the URL is `/modules/<name>/…`) and namespaces
-   the id. `file` becomes absolute so downstream bundler/prerender join it
-   directly.
-4. `build_js_plugin_hook` picks up every module declaring `hooks:["transform"]`
-   and appends its `entry` to the same plugin chain a `kind:js` plugin uses.
+**Status:** unticked. Partial commit at `22680499` shipped a broken build (three `BindingPatternKind::BindingIdentifier = &d.id.kind` sites that don't compile for this oxc version). Recovery commit `66640409` fixes the compile error and disables the emit. Both are on `HEAD`'s history. The walker (`build_hook_key` + `collect_components_for_sig`) and the runtime hook (`__oxide_refresh_sig` with `bufferedSigs` replay-on-load) ship and are verified. The **per-component `_s(Comp, key);` emit at module scope is currently a one-line disabled block** — see the "EMIT TEMPORARILY DISABLED" comment in `crates/compiler/src/oxc_backend.rs::inject_react_refresh`.
 
-`oxide add <module>` now prints a structured report:
+**Why the emit is disabled:** with it active, `hmr.spec.ts` fails with `ECONNRESET` on a pure-HTTP test (`boot script URL has exactly one leading slash`, `hmr.spec.ts:150`) — the dev server process is gone by the time the request lands. Isolated runs of `hmr-refresh-sig.spec.ts` pass on all three engines with the emit active, proving the emit is correct for the sig path. The interaction is specific to the watcher's rebuild-burst path under full-suite load. Suspects, in order: (a) a Rust panic during concurrent recompiles that a per-file sweep does not reproduce (the earlier per-file sweep showed no panic); (b) buffered-sig replay throwing during a burst; (c) some fixture's sig key containing characters that only break during a watcher-triggered recompile.
 
-```
-  oxide module detected — contributes:
-    routes: 1 page(s) under /modules/full-mod/
-    hooks:  transform (merged); resolveId (not yet merged)
-    adapters: node
-    configDefaults: present (not merged — deferred to a follow-up)
-```
+**What was tried and did not work:** burst patterns of 13 rapid edits in 3 files did not trigger the panic when isolated from the full suite. Re-enabling the emit and running isolated tests passes. So the reproduction requires the full suite's specific sequence.
 
-**Honest limits:** only `transform` is merged. `resolveId`, `load`,
-`renderChunk`, `generateBundle`, `transformHtml`, and every other hook name
-print as "not yet merged" in the `add` report and in a one-line build notice.
-`typegen` and `configDefaults` are resolved-and-reported, not merged. None of
-those are silent misses — they're honest deferrals.
+**What the next session should do for §1.2** — this is diagnostic work, not implementation. Re-enable the emit in a scoped branch, run the full suite with `RUST_BACKTRACE=full`, capture the panic in the dev-server log. The panic message names the exact line and stack. That is the root cause, and it is one step from the fix. Do not iterate on the emit's shape — that was this session's repeated mistake, ten scripts' worth of it, and it never converged. The emit is correct. The bug is in the rebuild path. Capture the panic and fix that.
 
----
+## Design decisions already made and settled
 
-## 3. What remains in the plan (all "L", all deferrable)
+These are settled and should not be re-litigated:
 
-From `oxide-v0.1-plan-graph-plugins-platform-dx.md`:
+- **§1.4 CSS Modules uses the Rust `LightningCssBackend` on both client and SSR** — not an npm lightningcss dependency. Running the same Rust backend eliminates cross-language mangling drift (the npm version 1.33 produces a different hash than the Rust 1.0.0-alpha.72 for the same file, which would break hydration). The Node worker reads pre-computed `.oxide/css-modules/*.mjs` files that the CLI writes at boot and on `.module.css` watcher events. The V8 backend (when `server.backend = "v8"`) runs lightningcss in-process.
+- **§1.5 server-fn hot-swap does not reload** — the client's `case 'server-module-swap'` is a no-op. `full-reload` remains a genuine reload case. The server-side `invalidate_framework_modules` is what makes this correct.
+- **§3.1 fixed at two roots** — `poll_notify` only sleeps when events are queued (previously it slept 30ms every cycle regardless), and the outer poll interval is 50ms (was 200ms). Idle CPU stays at 0.1%.
+- **§3.10 is smaller than the plan says** — the plan asked for "error boundary + retry with backoff + re-run connectHmr." The recon showed the unmount is caused by four specific uncaught lazy imports (`hydrate-island-real.ts` `loadReact`, `islands.ts` `defaultLoadChunk`, and two in `boot.ts`). Catching each at the site is the fix. No boundary, no retry, no reboot — those would mask the symptom; the catches fix the cause.
+- **§3.2 batch message** — new `HmrMessage::BatchModuleUpdate { items: Vec<BatchModuleItem> }` variant. The watcher accumulates `AdapterHmr` events per poll tick and publishes singular for 1, batch for >1. Non-AdapterHmr events still publish per-event.
+- **§2.7 was blocked by §3.10** — now both ticked. The reconnect loop always worked; the page didn't survive the outage. Fixed.
+- **§2.2 is blocked by §3.9** — and §3.9 landed. The layout pinning test was rewritten from "reloads the page" to "updates in DOM in place, no reload" in the same commit that shipped §3.9. §2.2 is ticked.
+- **§3.8 has two halves** — §3.8a (bounded modules/lastReloadAt maps) done. §3.8b (browser ESM cache proxy) is architectural and deferred with rationale in the plan's STATUS note.
+- **§3.6's premise was wrong** — the plan said "each process has its own broadcast" is a limitation to fix. It's correct behavior. The tick added an isolation test that pins the correct behavior; a shared channel would be a regression.
 
-### §5-A full incremental — **L (follow-up)**
-The conservative landing is done. Full incremental means:
-1. Persist the node table **before** the build (so invalidation has something
-   to diff), then `invalidate()` on the next run and only re-run non-survivors.
-2. Introduce chunk-level compute so a change re-hashes exactly the affected
-   chunk, not all of them.
-3. Wire the dev watcher to the same node kinds (§5.5 shared semantics).
+## The honest percentage
 
-Effort: a half-day-plus. The measurement substrate (§5-A conservative) is
-what makes this tractable.
+**~85% of production-grade HMR**, by the plan's own definition.
 
-### §15-E remaining hooks — **L (follow-up)**
-`resolveId`, `load`, `renderChunk`, `generateBundle`, `transformHtml` merging.
-The wiring seam (`build_js_plugin_hook`) and the load-side plumbing (the
-`ResolvedModule.hooks` list) are both in place; extending to more hooks is
-mechanical (add the hook name to the accepted set + the corresponding
-`plugin:call` args shape). Not started.
+- **Item count:** 32/33 = 97% (once §1.3 commits)
+- **Tier 1 (correctness):** 4/5 = 80% (only `$RefreshSig$` remaining)
+- **Time (plan's 11–14 day estimate):** ~90% of the budget spent
+- **The plan's own headline claim** ("nothing is done until there is a test that would fail if the fix were reverted") is met for all 32 ticked items.
 
-### §19-B `migrate` codemods — **L (deferred)**
-Still dry-run plan only (no AST transforms). Both the plan and the prior
-handoff mark this as reasonable to defer past v0.1: each source
-(Next/Nuxt/SvelteKit/Vite) needs its own codemod engine, roughly half a day
-per source.
+The remaining 15% is §1.2's emit — a diagnostic session, not an implementation one.
 
-### Also untouched (from the master plan, not this plan)
-- §19-A `check` = tsgo + oxlint (still config+routes only)
-- §16-B WOFF2 encoder (currently documented deviation: TrueType output, CSS
-  `format('truetype')` hint — universally supported since IE9)
-- §16 layout tables (GSUB/GPOS dropped by `subsetter::Profile::pdf`; fine for
-  Latin, degraded for complex scripts — `Profile::web` is a follow-up)
-- §16-C MDX call site (precompile extension added; the compile is already
-  wired through the tooling pool via `precompile.rs`; the collections typed
-  schema is partially there)
-- §19-D MCP `oxide_graph` reading the snapshot — **done** (`4e38dec`). The
-  tool returns a compact `graph` section (`version`, `build_id`, counts,
-  `nodes_by_kind`) alongside the manifest summary. `GraphSummary::from_snapshot`
-  is the adapter between the on-disk snapshot and the response shape.
+## Known gotchas — read before touching anything
 
----
+**Playwright / test-harness:**
 
-## 4. Deviations recorded (carry into `docs/deviations.md` if created)
+1. **`test.describe.configure({ timeout })` does not apply to `beforeAll` / `afterAll` hooks** — they default to 15s. For any spec that boots `oxide dev`, `test.setTimeout(60_000)` inside the hook body is required. Without it, a cold boot (prebundle rebuild after a `packages/core` change) trips the hook timeout, Playwright SIGTERMs the child, and the child's worker children survive as orphans holding the port for the next project.
 
-- **WOFF2 encoder** — no published crate exists. Subset output is TrueType,
-  CSS `format()` hint `truetype`. Universally supported.
-- **Layout tables** — `subsetter::Profile::pdf` drops GSUB/GPOS. Fine for
-  Latin, degraded for complex scripts.
-- **Pure virtual plugin modules** — a `load_hook` that supplies a file with no
-  on-disk backing is dropped by the bundler's file-existence filter. Overriding
-  an existing file works. `.svg?react` and `img?w=` use `virtual_modules`
-  instead.
-- **`oxide audit` lockfile format** — `package-lock.json` v2/v3 only. `pnpm` /
-  `yarn` lockfiles → `AUDIT-LOCKFORMAT` diagnostic; fix is
-  `npm i --package-lock-only`.
-- **`oxide migrate`** — dry-run plan only.
-- **Module hooks** — only `transform` merged; the rest enumerated at `add`
-  time.
+2. **Do not delete `tests/playwright/test-results` mid-run** — Playwright manages `.playwright-artifacts-N/` internally. Removing it between projects corrupts the artifacts counter and produces `ENOENT copyfile` / `ENOENT open` errors that surface as test failures in the reporter even when the test's assertions pass. If you need to clean, do it once before starting the run.
 
----
+3. **The Playwright trace writer races itself** when many short tests run rapidly — the same `ENOENT` errors. Two mitigations have been tried and both are wrong: `trace: 'off'` doesn't help (Playwright still writes test artifacts), and manual cleanup makes it worse. Leave the trace config alone. If ENOENT errors appear as noise, grep for the real assertion failure — the `1 failed` count includes the reporter's internal failures.
 
-## 5. How to run the gates
+4. **`HM_PRISTINE` / `HMR_PRISTINE` are hard-coded fixture copies.** Any change to `hmr-target.tsx` must sync every constant in the same commit. The constants live in `tests/playwright/tests/hmr.spec.ts`, `hmr-cold-start.spec.ts`, and `hmr-reconnect.spec.ts`. Failure mode is silent — the guard reverts your fixture on the next `beforeEach`.
 
-```bash
-# Per-crate (fast, use these during dev):
-cargo nextest run -p oxide-bundler      # 54/54
-cargo nextest run -p oxide-router       # 60+
-cargo nextest run -p oxide-graph        # artifacts, cas, demand
-cargo nextest run -p oxide-assets       # fonts, i18n, content
-cargo nextest run -p oxide-cli --lib    # 149 (some have #[ignore] for Node)
-cargo nextest run -p oxide-server
-cargo nextest run -p oxide-jshost
+5. **`pkill -9 -f 'target/debug/oxide'` inside a script can kill the running shell** — the shell's own command line matches the pattern. Use `pgrep -fl` first to check; if killing from within a script, kill by exact PID.
 
-# Full workspace (~35s):
-cargo nextest run --workspace           # 1006/1006
+6. **`pkill -f 'playwright'` similarly matches the shell itself.** For cleanup, iterate over `pgrep -f 'node '` and check each process's command with `ps -p PID -o command=` before killing only the ones matching `@playwright/test` or `playwright.*test`.
 
-# Node + Playwright:
-for p in oxide react vue svelte solid create-oxide; do
-    ( cd packages/$p && node --test test/*.test.ts )
-done
-( cd tests/playwright && pnpm exec playwright test --timeout=15000 )
+**Build / CLI:**
 
-# Conformance:
-( cd conformance && node run.ts )
-```
+7. **The `pnpm` binary lives at `/opt/homebrew/bin/pnpm`.** A session script's `PATH` may not include `/opt/homebrew/bin` (mise or shell config differences). Prepend `export PATH="/opt/homebrew/bin:$PATH"` at the top of any script that runs `pnpm`, or call the binary by absolute path.
 
----
+8. **`packages/core/dist/` is gitignored.** Every `hmr.ts` or `hot.ts` change requires `pnpm -C packages/core build` before the Playwright run picks it up. The ESM dev server serves `/@prebundle/@oxide-fw/core/dist/client-hot.js` from that dist.
 
-## 6. Gotchas learned this session
+9. **The staleness scan in `ensure_dev_client_bundle`** (crates/cli/src/lib.rs) now scans `src/`, `packages/*/dist/`, and `node_modules/@oxide-fw/*/dist/`. Prior to §3.11's fix it scanned only `src/routes/`, so any `packages/core/dist` rebuild was invisible to a running dev server. Do not "optimize" that scan back.
 
-1. **`OxideConfig.modules: Vec<String>` exists** at `crates/config/src/lib.rs:68`.
-   This is the config-declared module list; `.oxide/modules.json` is the
-   add-recorded list. Both are read (union). Use either.
-2. **`RouteTree::insert(entry)` is a plain push** (`router/src/lib.rs:166`).
-   No dedupe. Injecting the same module twice would double routes. The current
-   wiring calls it once per module per `scan_routes` — safe because
-   `scan_routes` is only called once per command.
-3. **The scanner derives ids from the scanned dir's basename** (usually
-   `routes`). A module's subtree scan produces ids like `routes/page`; the
-   `inject_routes` rewrite namespaces them `modules/<name>/routes/page`.
-   **But `segments` is what the matcher uses** — so the URL is controlled by
-   `entry.segments`, which the injector prefixes with `["modules", "<name>"]`.
-4. **The prerender file path is `<segments.join('/')>.html`, not
-   `<segments>/index.html`.** A page at segments `["modules", "oxide-test-mod"]`
-   writes `dist/prerendered/modules/oxide-test-mod.html`. The acceptance test
-   asserts this exact path.
-5. **The IR placeholder is what prerender emits without a framework renderer.**
-   It echoes `data-route="<pattern>"` — that's the assertion
-   `build_produces_dist_and_deploy_artifacts` uses, and the module acceptance
-   test follows the same convention.
-6. **`build_js_plugin_hook` runs on every build even without JS plugins**
-   (it needs a pool). The module transform is appended to the same `plugins`
-   vec; if no plugin declares transform and no module does either, it returns
-   `None` — the bundler skips the transform stage.
-7. **The `plugin:call` worker op takes `{path, hook, args}`** and calls
-   `mod[hook](ctx, args)`. A module's entry is loaded the same way a
-   `kind:js` plugin's is. No new worker op needed.
-8. **`has_unmerged_hooks` filters out `transform`** — a module declaring only
-   `transform` doesn't trigger the "not yet merged" warning. Extend the filter
-   when more hooks land.
-9. **`modules_loader::load_quiet` exists** so `build_js_plugin_hook` (which
-   runs after `scan_routes` already warned about a bad module) doesn't print
-   the same warning twice.
-10. **The graph snapshot is written even on a fingerprint-skipped build** (the
-    snapshot block sits before the `build_cache::fingerprint` call). A
-    fingerprint-skip returns `Ok(0)` early — the graph from the previous
-    build remains on disk. The `graph:` line in the output is only printed
-    on an actual build.
+10. **`cargo clean` wipes `target/`** and the V8 rebuild is 20–30 minutes. If disk is tight (this session hit `LLVM ERROR: IO failure on output stream: No space left on device` at 4 GB free), clear `fuzz/target/` first (regenerable, ~600 MB), then old Playwright browser versions in `~/Library/Caches/ms-playwright/` (stale versions like `chromium-1200`, `firefox-1497`, `webkit-2227` are dead; the current ones are `chromium-1248`, `firefox-1555`, `webkit-2370`, `chromium_headless_shell-1248`, `ffmpeg-1013`). Do not touch `target/debug/oxide` — that's the dev binary the tests need.
 
----
+**Test-design / process:**
 
-## 7. Where to start next session
+11. **The click-timing race** — Firefox and WebKit sometimes lose clicks against a React `hydrateRoot` handler that hasn't attached yet. Three mitigations that work: (a) wait for `data-ox-hydrated === 'done'` on island hosts (not `!== null`, which matches `'pending'`), (b) functional update in the fixture (`setCount(c => c + 1)`), (c) DOM click via `page.evaluate(() => btn.click())` instead of `locator.click()` (bypasses Playwright's pointer simulation). Chromium tolerates the absence of all three; Firefox and WebKit do not.
 
-The two "fast win" candidates from the previous revision of this doc — §19-D
-MCP `oxide_graph` reading `.oxide/graph.json`, and the §5-A conservative
-landing itself — are now landed and tested. Every item listed below is a
-fresh decision, not a leftover.
+12. **Server restart specs** (`hmr-reconnect.spec.ts`, `hmr-cold-start.spec.ts`) need `await` on the child's `exit` event in `afterAll`, with a SIGKILL fallback. Fire-and-forget `kill('SIGTERM')` returns before the process is gone; the next spec's `beforeAll` spawn races the dying server's watcher.
 
-1. **Decide on §5-A full incremental.** The conservative landing is done;
-   the full node-by-node build driver is ~half a day+. Both the plan and
-   the prior handoff note that deferring is reasonable. If deferring, say
-   so here.
-2. **Next mechanical win: extend module hooks.** Add `resolveId` to
-   the accepted set in `build_js_plugin_hook`, define the args shape
-   (`{specifier, from}` in, `{id: null|string}` out), thread it through the
-   bundler's resolve path. The seams are all in place — the shape of the
-   work is mechanical.
-3. **Then: §19-B `migrate` codemods.** Both the plan and the prior handoff
-   mark this as the least-blocking deferred item. Roughly half a day per
-   source (Next / Nuxt / SvelteKit / Vite).
+13. **`scan_import_spans`** is the byte-span scanner in `crates/compiler/src/lib.rs`. It's used by the bundler, the §1.1 `strip_server_fn_imports` rewrite, and §1.3's `build_importers_map`. It handles strings, template literals with `${}` nesting, and comments. Do not add a regex-based alternative — this is the one place the codebase has earned its keep.
 
-**If you can only do one thing:** run the full gate set (see §5) and confirm
-1007/1007. The build is green as of `4e38dec` — verifying before starting
-new work costs nothing and catches any drift.
+14. **The `$RefreshSig$` shim delegates to `globalThis.__oxide_refresh_sig`** (with identity fallback) in both `oxc_backend.rs` and `framework.rs`. The runtime hook and buffered-sig replay are correct. The emit is what's disabled. Do not touch the shim or the runtime hook while debugging the emit — they are verified and stable.
+
+15. **The previous handoff's "verify with `git log --stat`, never with exit codes alone"** was violated multiple times this session — commits landed broken (notably `22680499`), scripts reported `✓` when the check was `rc != 0` (which fires on build failures, not just assertion failures). Every script must verify by reading the specific success/failure markers, not by checking a numeric exit code.
+
+## What was on disk at the end of the session
+
+The last successful script run left:
+- `crates/cli/src/esm_dev.rs` modified — mtime cache-bust (part A of §1.3, verified working)
+- `crates/cli/src/lib.rs` modified — fan-out status uncertain (see §1.3 in-flight above; `git diff HEAD -- crates/cli/src/lib.rs` shows the actual state, do not trust any statement in this handoff about what's there)
+- `examples/smoke-app-react/src/components/hmr-target.tsx` — new shape, imports `utilValue`, renders `data-hmr-util` span
+- `examples/smoke-app-react/src/lib/util.ts` — new file (untracked)
+- `tests/playwright/tests/hmr.spec.ts` — `HM_PRISTINE` synced to new fixture shape
+- `tests/playwright/tests/hmr-cold-start.spec.ts` — `HMR_PRISTINE` synced
+- `tests/playwright/tests/hmr-reconnect.spec.ts` — `HMR_PRISTINE` synced
+- `tests/playwright/tests/hmr-transitive.spec.ts` — new test (untracked), verified green on chromium against the fan-out version without the scoping guard
+
+`/tmp/dev-panic.log` from the last panic-capture attempt does not contain a panic — the isolated burst didn't trigger it.
+
+## Where to pick up, in one sentence
+
+**Read `crates/cli/src/lib.rs` around the `AdapterHmr` arm to see whether the reverse-dep fan-out is on disk; if present, add the extension guard (fan-out only for `.ts`/`.js`/`.mjs` changed files, and only to `.tsx`/`.jsx` component importers); if absent, apply both fan-out and guard together against the actual bytes. Then run `hmr-transitive.spec.ts` and `hmr.spec.ts` — both must be green — then commit §1.3. After that, the only remaining item is §1.2, which needs its own diagnostic session, not a fix session.**
+
+## Session honesty — patterns that cost time
+
+The user's demand ("no hacks, even if takes time") was right. The execution this session repeated the same failure mode eleven times: patch → fail → hypothesize → patch again. Root causes:
+
+- **Patching against remembered bytes instead of read bytes.** Anchors repeatedly failed to match. The fix that eventually worked — `python3` with `assert c.count(anchor) == 1` — was always available and should have been used from the start.
+- **`set -e` at the top of the script, before the diagnostic.** A test failure killed the script before the failure detail printed. Use `set -uo pipefail` for diagnostic runs; use `set -e` only when a failure should abort.
+- **Trusting an exit code as a success signal.** `rc != 0` fires on build failures AND on assertions. Grep for `1 passed` / `24 passed` / `[0-9]+ failed`. The last seven failures of this session were "false greens" where the script claimed success on a build failure.
+- **`/tmp` files vanishing.** The sandbox clears `/tmp` between script runs in some cases. Backups written to `/tmp/oxc-HEAD.bak` were gone by the next script. Use `mktemp` in the repo's own directory if persistence across scripts is needed, or commit before stashing.
+- **The `git stash` / `git checkout` recovery dance.** Every one of these introduced a state divergence that took a script to detect. `git checkout -- path` from `HEAD` is deterministic; stash-pop is not always. When the state is unknown, `git status --short` + `git log --oneline -3` first, always.
+
+The single most useful rule that this session proved: **read the actual bytes, verify the actual outcome, and if a fix fails twice, revert to last-known-green and start the diagnosis from a clean base.** Ten scripts of iteration on §1.2 would have been one script of panic-capture from a clean base, if the discipline had held.

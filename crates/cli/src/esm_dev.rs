@@ -517,6 +517,7 @@ fn rewrite_imports(
     code: &str,
     map: &BTreeMap<String, String>,
     from_src_rel: Option<&str>,
+    src_root: Option<&std::path::Path>,
 ) -> String {
     let spans = oxide_fw_compiler::scan_import_spans(code);
     if spans.is_empty() {
@@ -545,6 +546,10 @@ fn rewrite_imports(
         } else if is_css_specifier(&span.specifier) {
             from_src_rel
                 .and_then(|from| resolve_css_url(from, &span.specifier))
+        } else if is_js_specifier(&span.specifier) {
+            from_src_rel.and_then(|from| {
+                resolve_js_url_with_mtime(from, &span.specifier, src_root)
+            })
         } else {
             None
         };
@@ -574,6 +579,52 @@ fn rewrite_imports(
 /// plain-CSS modules are the current scope; `.scss`/`.sass` are accepted for
 /// the same reason (a component that imports them gets the same treatment
 /// until an actual preprocessor is wired).
+/// §1.3: true when `spec` is a RELATIVE js/ts/tsx/jsx/mjs import — the
+/// kind that stays verbatim in the served module and needs a `?t=<mtime>`
+/// query so browser cache-busting works when the target changes.
+fn is_js_specifier(spec: &str) -> bool {
+    if !(spec.starts_with("./") || spec.starts_with("../")) {
+        return false;
+    }
+    let lower = spec.to_ascii_lowercase();
+    lower.ends_with(".ts")
+        || lower.ends_with(".tsx")
+        || lower.ends_with(".js")
+        || lower.ends_with(".jsx")
+        || lower.ends_with(".mjs")
+}
+
+/// §1.3: resolve a relative js specifier to `/src/<rel>?t=<mtime>`. The
+/// watcher publishes a ModuleUpdate for every importer of the changed
+/// file; when that importer is re-imported, the fresh bytes contain the
+/// new `?t=` here, so the browser re-evaluates the dep instead of serving
+/// its cached module. Together these close the stale-binding gap.
+fn resolve_js_url_with_mtime(
+    from_src_rel: &str,
+    spec: &str,
+    src_root: Option<&std::path::Path>,
+) -> Option<String> {
+    let src_root = src_root?;
+    let src_canon = std::fs::canonicalize(src_root).ok()?;
+    let base = std::path::Path::new(from_src_rel)
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new(""));
+    let abs = std::fs::canonicalize(src_canon.join(base).join(spec)).ok()?;
+    if !abs.starts_with(&src_canon) {
+        return None;
+    }
+    let rel = abs.strip_prefix(&src_canon).ok()?;
+    let mtime = std::fs::metadata(&abs)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .ok()?
+        .as_millis();
+    let rel_str = rel.to_string_lossy().replace('\\', "/");
+    Some(format!("/src/{rel_str}?t={mtime}"))
+}
+
 fn is_css_specifier(spec: &str) -> bool {
     let lower = spec.to_ascii_lowercase();
     lower.ends_with(".css")
@@ -760,7 +811,7 @@ fn serve_source_file(state: &EsmDevState, rel_path: &str) -> OxideResponse {
     // rewriting so its `__oxide_refresh` call survives intact.
     let with_hmr = inject_hmr_boundary(&lowered, &path_for_compiler, lang)
         .unwrap_or(lowered);
-    let rewritten = rewrite_imports(&with_hmr, &state.rewrite_map, Some(rel_path));
+    let rewritten = rewrite_imports(&with_hmr, &state.rewrite_map, Some(rel_path), Some(&state.root.join("src")));
     // Preamble: hot.ts auto-installs `globalThis.__oxide_hmr__` as a module
     // side-effect. The per-module `import.meta.hot` handle must be assigned
     // BEFORE the module body runs (the injected accept call reads it at top
@@ -878,7 +929,7 @@ fn serve_server_fn_module(state: &EsmDevState, rel_path: &str) -> OxideResponse 
         }
     };
     // Rewrite `@oxide-fw/core/fn` → its prebundle URL.
-    let rewritten = rewrite_imports(&stubbed, &state.rewrite_map, Some(rel_path));
+    let rewritten = rewrite_imports(&stubbed, &state.rewrite_map, Some(rel_path), Some(&state.root.join("src")));
     OxideResponse::new(200, rewritten)
         .with_header("content-type", "text/javascript; charset=utf-8")
         .with_header("cache-control", "no-cache")
@@ -1004,7 +1055,7 @@ fn serve_prebundle(state: &EsmDevState, rel_path: &str) -> OxideResponse {
             let is_js = rel_path.ends_with(".js") || rel_path.ends_with(".mjs");
             let body = if is_js {
                 match String::from_utf8(bytes) {
-                    Ok(code) => rewrite_imports(&code, &state.rewrite_map, None).into_bytes(),
+                    Ok(code) => rewrite_imports(&code, &state.rewrite_map, None, Some(&state.root.join("src"))).into_bytes(),
                     Err(e) => e.into_bytes(),
                 }
             } else {
@@ -1098,7 +1149,7 @@ mod tests {
         let mut map = BTreeMap::new();
         map.insert("react".to_string(), "/@prebundle/react.js".to_string());
         let code = "import React from 'react';\nconsole.log(React);\n";
-        let out = rewrite_imports(code, &map, None);
+        let out = rewrite_imports(code, &map, None, None);
         assert!(out.contains("\"/@prebundle/react.js\"") || out.contains("'/@prebundle/react.js'"));
         assert!(!out.contains("from 'react'"));
     }
@@ -1108,7 +1159,7 @@ mod tests {
         let mut map = BTreeMap::new();
         map.insert("./foo".to_string(), "/wrong".to_string());
         let code = "import x from './foo';\n";
-        let out = rewrite_imports(code, &map, None);
+        let out = rewrite_imports(code, &map, None, None);
         assert!(out.contains("from './foo'"));
     }
 
@@ -1117,7 +1168,7 @@ mod tests {
         let mut map = BTreeMap::new();
         map.insert("react".to_string(), "/@prebundle/react.js".to_string());
         let code = "const r = await import('react');\n";
-        let out = rewrite_imports(code, &map, None);
+        let out = rewrite_imports(code, &map, None, None);
         assert!(out.contains("/@prebundle/react.js"));
         assert!(!out.contains("'react'"));
     }
@@ -1270,7 +1321,7 @@ mod integration_tests {
         let code = "import React from 'react';\nimport './styles.css';\n";
         // from_src_rel is `routes/layout.tsx`; `./styles.css` resolves to
         // `routes/styles.css`.
-        let out = rewrite_imports(code, &map, Some("routes/layout.tsx"));
+        let out = rewrite_imports(code, &map, Some("routes/layout.tsx"), None);
         assert!(out.contains("/@css/routes/styles.css"), "css not rewritten: {out}");
         assert!(out.contains("/@prebundle/react.js"), "react not rewritten: {out}");
     }
@@ -1280,18 +1331,18 @@ mod integration_tests {
         let map = BTreeMap::new();
         // From src/page.tsx, `./x.css` → `x.css` (still under src/) → allowed.
         let code = "import './x.css';\n";
-        let out = rewrite_imports(code, &map, Some("page.tsx"));
+        let out = rewrite_imports(code, &map, Some("page.tsx"), None);
         assert!(out.contains("/@css/x.css"), "top-of-src import must resolve: {out}");
 
         // From src/a/b/c.tsx, `../../x.css` pops twice to src/x.css — allowed.
         let mid = "import '../../x.css';\n";
-        let out_mid = rewrite_imports(mid, &map, Some("a/b/c.tsx"));
+        let out_mid = rewrite_imports(mid, &map, Some("a/b/c.tsx"), None);
         assert!(out_mid.contains("/@css/x.css"), "mid-level pop should resolve: {out_mid}");
 
         // From src/a/b/c.tsx, `../../../x.css` pops three times → escapes src/
         // → rejected (specifier left untouched).
         let deep = "import '../../../x.css';\n";
-        let out2 = rewrite_imports(deep, &map, Some("a/b/c.tsx"));
+        let out2 = rewrite_imports(deep, &map, Some("a/b/c.tsx"), None);
         assert!(
             out2.contains("../../../x.css"),
             "escape must not be rewritten: {out2}"

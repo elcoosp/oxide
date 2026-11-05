@@ -1622,6 +1622,60 @@ async fn populate_dev_component_source(
     }
 }
 
+/// §1.3: build a reverse-dependency map over `src/**/*.{ts,tsx,js,jsx,mjs}`.
+/// Returns `target_abs_path -> { importer_abs_paths }`. Parses each file
+/// with the compiler's `scan_import_spans` and resolves relative imports
+/// against the filesystem. Rebuilt per watcher tick — cheap for a normal
+/// dev tree (~30 files), correct without needing to invalidate a cache on
+/// Created/Removed events.
+fn build_importers_map(
+    rootp: &std::path::Path,
+) -> std::collections::BTreeMap<
+    std::path::PathBuf,
+    std::collections::BTreeSet<std::path::PathBuf>,
+> {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::path::PathBuf;
+    let mut map: BTreeMap<PathBuf, BTreeSet<PathBuf>> = BTreeMap::new();
+    let src = rootp.join("src");
+    let Ok(_) = std::fs::canonicalize(&src) else { return map };
+
+    fn walk(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.is_file() {
+                let ext = p
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                if matches!(ext.as_str(), "ts" | "tsx" | "js" | "jsx" | "mjs") {
+                    out.push(p);
+                }
+            }
+        }
+    }
+    let mut files: Vec<PathBuf> = Vec::new();
+    walk(&src, &mut files);
+    for file in files {
+        let Ok(content) = std::fs::read_to_string(&file) else { continue };
+        let Ok(canon_file) = std::fs::canonicalize(&file) else { continue };
+        for span in oxide_fw_compiler::scan_import_spans(&content) {
+            let spec = &span.specifier;
+            if !(spec.starts_with("./") || spec.starts_with("../")) {
+                continue;
+            }
+            let Some(parent) = canon_file.parent() else { continue };
+            let Ok(target) = std::fs::canonicalize(parent.join(spec)) else { continue };
+            map.entry(target).or_default().insert(canon_file.clone());
+        }
+    }
+    map
+}
+
 async fn build_client_bundle(
     rootp: &Path,
     cfg: &oxide_fw_config::OxideConfig,
@@ -3051,7 +3105,75 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                 // only one item was collected, or a batch
                                 // if multiple. This preserves the singular
                                 // shape for the common 1-file save.
-                                adapter_hmr_batch.push((pstr, format!("/{trimmed}")));
+                                //
+                                // §3.2: accumulate; post-loop publishes
+                                // single (1) or batch (>1).
+                                adapter_hmr_batch.push((pstr.clone(), format!("/{trimmed}")));
+                                //
+                                // §1.3: also fan out to every importer of
+                                // this file — BUT ONLY when the changed
+                                // file is a NON-COMPONENT. Component files
+                                // (`.tsx`/`.jsx`) already have React
+                                // Refresh handling their consumers via
+                                // `performReactRefresh()`; fanning out for
+                                // them turns a singular ModuleUpdate into a
+                                // batch AND causes the parent tree to
+                                // re-import redundantly. Util/leaf
+                                // files (`.ts`/`.js`/`.mjs` — no
+                                // `$RefreshReg$` in compiled form) are the
+                                // ones that need the reverse-dep path,
+                                // because nothing else would update the
+                                // importer's stale binding.
+                                let changed_is_component = {
+                                    let lower = pstr.to_ascii_lowercase();
+                                    lower.ends_with(".tsx") || lower.ends_with(".jsx")
+                                };
+                                if !changed_is_component {
+                                    let mut in_batch: std::collections::HashSet<String> =
+                                        std::collections::HashSet::new();
+                                    in_batch.insert(pstr.clone());
+                                    let importers = build_importers_map(&rootp);
+                                    if let Some(imps) =
+                                        importers.get(std::path::Path::new(&pstr))
+                                    {
+                                        let root_str = rootp.to_string_lossy();
+                                        for imp in imps {
+                                            let imp_str = imp.to_string_lossy().to_string();
+                                            if !in_batch.insert(imp_str.clone()) {
+                                                continue;
+                                            }
+                                            // Only fan out to importers that
+                                            // are components (`.tsx`/`.jsx`)
+                                            // — those are the ones whose
+                                            // rendered output depends on the
+                                            // util. A util that imports
+                                            // another util also benefits, but
+                                            // compiling it is unnecessary;
+                                            // React Refresh only acts on
+                                            // component boundaries.
+                                            let lower_imp = imp_str.to_ascii_lowercase();
+                                            let imp_is_component =
+                                                lower_imp.ends_with(".tsx")
+                                                    || lower_imp.ends_with(".jsx");
+                                            if !imp_is_component {
+                                                continue;
+                                            }
+                                            let rel = imp.to_string_lossy();
+                                            let rel_str = rel
+                                                .strip_prefix(root_str.as_ref())
+                                                .unwrap_or(&rel);
+                                            let rel_slash = rel_str.replace('\\', "/");
+                                            let trimmed_imp =
+                                                rel_slash.trim_start_matches('/');
+                                            if trimmed_imp.starts_with("src/") {
+                                                adapter_hmr_batch.push((
+                                                    imp_str,
+                                                    format!("/{trimmed_imp}"),
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
                             } else {
                                 hub.publish(HmrMessage::FullReload {
                                     reason: format!("rebuild skipped for non-src file {pstr}"),

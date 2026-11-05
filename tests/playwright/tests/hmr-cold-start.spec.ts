@@ -133,7 +133,7 @@ test.afterAll(async () => {
 // to this spec's fixture set (only `hmr-target.tsx`). Pristine bytes are
 // hardcoded because the file is NOT git-tracked (per the earlier handoff).
 const HMR_FIXTURE = join(smokeRoot, 'src', 'components', 'hmr-target.tsx')
-const HMR_PRISTINE = `import { useState } from 'react'\n\nexport default function HmrTarget() {\n  const [count, setCount] = useState(0)\n  return (\n    <>\n      <h1 data-hmr-target="">HMR-TARGET-ORIGINAL</h1>\n      <button data-hmr-counter="" onClick={() => setCount(count + 1)}>{count}</button>\n    </>\n  )\n}\n`
+const HMR_PRISTINE = `import { useState } from 'react'\nimport { utilValue } from '../lib/util.ts'\n\nexport default function HmrTarget() {\n  const [count, setCount] = useState(0)\n  return (\n    <>\n      <h1 data-hmr-target="">HMR-TARGET-ORIGINAL</h1>\n      <span data-hmr-util="">{utilValue}</span>\n      <button data-hmr-counter="" onClick={() => setCount(count + 1)}>{count}</button>\n    </>\n  )\n}\n`
 
 test.beforeEach(async () => {
   let cur = ''
