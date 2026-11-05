@@ -1,45 +1,139 @@
-# Handoff — plan complete: 33/33 items ticked
+# Handoff — multi-framework HMR: Vue, Solid, Svelte e2e green
 
 ## Where things stand
 
 **Branch:** `website`
-**HEAD:** `d40a981e feat(refresh): re-enable §1.2 $RefreshSig$ emit — remount on hook-shape change`
+**HEAD:** this commit — the React-only HMR plan (33/33, previous handoff) plus
+framework-agnostic HMR: every supported framework (React, Vue, Solid, Svelte)
+is now e2e-tested through the ESM dev server and green.
 **Working tree:** clean.
-**Plan status:** all 33 items ticked (`docs/plan-esm-hmr.md`). §1.2 and §1.3 — the two items the previous handoff left open — are closed and verified.
+**Binary:** `cargo build -p oxide-fw-cli` (dev profile, `debug=0` in this
+sandbox — see "Sandbox notes").
 
-## What landed this session (three commits after `be2b6fd3`)
+## What landed this session (on top of `a1aa83c9`)
 
-1. **`8359a20b` — §1.3 transitive fan-out + boot-storm stability.** The §1.3 fan-out code (reverse-dep publish for non-component edits, scoped to `.tsx`/`.jsx` importers) was verified end-to-end: a leaf util edit publishes ONE `BatchModuleUpdate` carrying `[util.ts, hmr-target.tsx]`, the DOM updates in place, state is preserved, no reload. Landing it on a fresh clone exposed a boot-storm chain that made every spec flaky; five fixes went in with it (watcher boot baseline, node_modules event filtering, stale-generation gating, workspace-rebuild PATH fix, client refresh-runtime race + foreign-route data guard).
-2. **`d40a981e` — §1.2 $RefreshSig$ emit re-enabled.** The 2026-11-04 ECONNRESET disable was a misattribution — the real culprit was the boot-storm chain, not the emit. The emit inserts `_s(Comp, hook_key);` after each component's DECLARING statement (statement end, not body end, so arrow components stay valid). Acceptance: `hmr-refresh-sig.spec.ts` un-skipped and green — adding a hook REMOUNTS (counter resets), no reload.
-3. **Watch-budget rework** (in `d40a981e`): the recursive inotify watch spent one watch per node_modules directory (~10k in a pnpm store) and nondeterministically exhausted `fs.inotify.max_user_watches` — the watcher silently stopped firing for whichever subtrees lost the registration race. Now: pruned per-directory watches, self-healing watches for post-boot directories (closes the mkdir→write race §3.3's test exercises), and a boot baseline seeding node_modules `package.json` entries.
+### The feature: HMR for every framework
 
-## Verified test state
+The React HMR runtime was already production-grade (previous handoff). Vue,
+Solid and Svelte pages could SSR but had NO client story: the ESM boot entry
+hard-coded `@oxide-fw/react`, the manifest never carried `.vue`/`.svelte`
+component URLs, and SFCs were never served to the browser at all. This
+session made the whole pipeline framework-agnostic:
 
-Gate: `--workers=1 --retries=0` (unchanged).
+1. **ESM dev server** (`crates/cli/src/esm_dev.rs`): `/src/*.vue`,
+   `/src/*.svelte` — and `/src/*.tsx` under Solid — are pool-compiled
+   per request (`serve_pool_compiled_module`, via the Node tooling pool) with
+   the same hot preamble + generic self-accept boundary React pages get.
+   The boot entry wires the CONFIGURED framework's `clientAdapter` (with a
+   working fallback), and the manifest lists `.vue`/`.svelte` page URLs.
+2. **Re-render contract** (`packages/core` client): after a `module-update`
+   the HMR runtime records the fresh module (`getFreshModule`) and calls the
+   boot's `__oxide_on_module_updated` hook; `bootWithRouter` replays the last
+   input through `adapter.update`, which re-resolves the route component.
+   React is excluded (capability `refresh` — React Refresh patches in place).
+   Vue/Solid/Svelte adapters swap the root when the component reference
+   changes (`packages/*/src/hydrate.ts`).
+3. **Watcher fan-out** (`crates/cli/src/lib.rs`): component edits on the
+   component-capability frameworks fan out to importer pages (React keeps
+   the skip — React Refresh owns its updates). Loader edits publish the URL
+   path pattern with the root special-case fixed (`routes/index` → `/`).
+4. **Solid on linux-x64**: `solid-jsx-oxc` ships no linux binary; the worker
+   falls back to `babel-preset-solid` (pure JS, per-project) for BOTH SSR
+   (tsx-loader) and the pool op — including when the binding is present but
+   fails to load. `jsxRuntime: 'preserve'` sucrase pre-strip keeps JSX for
+   the preset; an AST pass renames `$$<event>` → `_$<event>` member keys so
+   Solid 2's delegated-event runtime sees handlers compiled by the 1.x-era
+   preset. §3.6's isolation test — unrunnable before — is now green.
+5. **Svelte 5 runtime sharing** (`crates/bundler/src/prebundle.rs`): the
+   svelte family prebundles as ONE multi-entry rolldown bundle (shared
+   chunks), so `svelte` and `svelte/internal/client` are a single runtime
+   instance. Separate per-package bundles inlined two copies and hydration
+   died (`init` on a null context). `svelte/internal/flags/legacy` joined
+   the prebundle list.
+6. **Svelte hydration**: Svelte 5 exposes `hydrate()` as its own entry
+   point — `mount(..., {hydrate:true})` silently appends a second tree
+   (`packages/svelte/src/real-client.ts`, `hydrate-island-real.ts`).
+7. **Browser-safe adapter dists**: `packages/{vue,solid}/src/image.ts` used
+   `createRequire('node:module')` — a static node builtin import killed the
+   entire client module graph. Replaced with top-level-await dynamic imports
+   (sync availability preserved; optional-peer fallbacks kept).
+8. **Dev temp modules** (`crates/cli/src/framework_shim.rs`): pool-compiled
+   route modules keep source-relative imports; they are re-anchored to the
+   real source files as `file://` URLs before writing `.oxide/components/`
+   (Node resolved them against the temp dir before).
 
-- **chromium** — full HMR group (`hmr`, `hmr-transitive`, `hmr-refresh-sig`, `hmr-cold-start`, `hmr-reconnect`, `hmr-prebundle`, `hmr-bundler`): **31/31**. Group B (`smoke`, `island`, `hmr-server-fn`, `hmr-cssmodules`, `hmr-env`, `hmr-worker`, `hmr-perf`): 12/13. Group C (`deferred`, `loading`, `middleware`, `no-js`, `og`, `socket`, `sse`, `dev-rescan`): 17/17.
-- **firefox** — core HMR specs (`hmr`, `hmr-transitive`, `hmr-refresh-sig`): **26/26**.
-- **Unit tests** — compiler 48/48, dev 56/56 + 46/46 + 1/1.
-- **Not runnable in this environment** (pre-existing, not regressions):
-  - **webkit**: the host is missing GTK4/GStreamer libraries and there is no root to install them. Runs fine on a normal dev machine.
-  - **hmr-isolation (§3.6)**: `solid-jsx-oxc` ships only a darwin-arm64 native binary (the prior session published it from macOS), so `smoke-app-solid` cannot SSR on linux-x64. Fixing it needs the crate source published for linux (outside this repo).
-  - **sw.spec (×2)**: fails identically on the pre-session build in this sandbox (service-worker precache empty in headless chromium here); not touched by this session's changes.
+### Pre-existing bugs the new e2e suite surfaced (all fixed)
 
-## Diagnostics added
+9. **Dev incremental bundle leaked `.server` modules**
+   (`crates/bundler/src/rolldown_backend.rs`): `IncrementalWorker::start`
+   passed `options.out_dir` as the plugin root, so `should_transform`
+   rejected every project module and the server-fn stub passes never ran —
+   `import "node:fs/promises"` reached the browser in `--no-esm` dev mode.
+   Now passes the project root (same as the cold path).
+10. **Server-fn id contract** (`crates/compiler/src/oxc_backend.rs`): the
+    client stub had no `.id` and the SSR build kept the raw single-arg
+    `serverFn(fn)` — the runtime assigned `anonymous-N` on the server while
+    the client rendered `undefined`: a guaranteed hydration mismatch on any
+    page rendering `fn.id` (`data-greeting-fn`). Client stubs now carry
+    `Object.assign(fn, { id })`; SSR/Edge rewrite to the ID-FIRST form
+    `serverFn("<static id>", fn)` so both sides agree. smoke + island
+    browser tests went red→green with this.
+11. **Boot-entry chunk loader** (`crates/cli/src/esm_dev.rs`): the generated
+    loader now consults `__oxide_hmr__.getFreshModule(chunk)` before the
+    (un-busted) `import(chunk)` — otherwise the browser ESM cache hands back
+    the stale page module and HMR re-renders render the old tree.
+12. **Boot entry framework adapter** — covered in (1); the spec-level
+    regression tests live in `tests/playwright/tests/hmr-{vue,solid,svelte}.spec.ts`
+    (7 tests each) with the shared harness `hmr-boot.ts`.
 
-- `OXIDE_DEV_LOG_FILE=/path/dev-%p.log` — `oxide dev` tees all tracing output AND Rust panics (with backtrace) into a per-process log file. This is how a dev-server death can be attributed even when nothing drains the child's stdio pipes. Zero panics were captured across the final full verification runs.
+### Also
 
-## Known gotchas that still apply
+- Spec fixes: manifest route key (`routes/index/page`), prebundle URL
+  sanitizer spelling (`solidjs-web.js`), quote-agnostic svelte import match,
+  h1 locators scoped by role+name (the HMR fixture adds a second h1).
+- `examples/smoke-app-{vue,solid,svelte}` grew `src/components/hmr-target.*`
+  fixtures; their pages import them.
+- HANDOFF's §3.6 note is obsolete: the babel fallback makes
+  `hmr-isolation.spec.ts` runnable and green on linux-x64.
 
-1. `test.setTimeout(60_000)` inside `beforeAll` for any spec that boots `oxide dev` (hook budget ≠ test budget).
-2. Don't delete `tests/playwright/test-results` mid-run.
-3. `HM_PRISTINE` / `HMR_PRISTINE` constants are hard-coded fixture copies — sync them in the same commit as any `hmr-target.tsx` change (`hmr.spec.ts`, `hmr-cold-start.spec.ts`, `hmr-reconnect.spec.ts`).
-4. `pkill -f` patterns match the calling shell — kill by PID.
-5. `packages/core/dist/` is gitignored but force-tracked; run `pnpm -C packages/core build` after any `hot.ts`/`hmr.ts` change and commit the rebuilt dist alongside.
-6. The staleness scan in `ensure_dev_client_bundle` scans `src/`, `packages/*/dist/`, and `node_modules/@oxide-fw/*/dist/` — do not narrow it.
-7. The Playwright run gate is serial (`--workers=1 --retries=0`); everything downstream assumes it.
-8. This sandbox reaps background processes between tool calls and periodically deletes `node_modules` under the project root — if working here again, re-run `pnpm install` (sub-second from the store) before any node invocation, and expect `target/` to persist.
+## Verified test state (this sandbox, chromium, `--workers=1 --retries=0`)
+
+- **Multi-framework HMR**: `hmr-vue` 7/7, `hmr-solid` 7/7,
+  `hmr-svelte` 7/7.
+- **React HMR group**: `hmr` + `hmr-transitive` 20/20, `hmr-refresh-sig` 1/1,
+  `hmr-cold-start` 2/2, `hmr-reconnect` 1/1, `hmr-prebundle` 1/1,
+  `hmr-bundler` 1/1, `hmr-isolation` 1/1 (newly runnable).
+- **Group B**: smoke 4/4, island 3/3, hmr-server-fn 1/1, hmr-cssmodules 1/1,
+  hmr-env 1/1, hmr-worker 1/1, hmr-perf 1/1.
+- **Group C**: deferred 1/1, loading 1/1, middleware 3/3, no-js 2/2, og 3/3,
+  socket 4/4, sse 2/2, dev-rescan 1/1.
+- **Unit**: compiler 48+56, dev 46+1, cli lib 250 (incl. 12 ignored),
+  jshost 78+26; `pnpm test:packages` 488/488.
+- **Not runnable in this environment** (pre-existing, unchanged):
+  - **webkit**: missing GTK4/GStreamer; runs on a normal dev machine.
+  - **sw.spec (×2)**: service-worker precache empty in headless chromium
+    here; fails identically on the pre-session build.
+
+## Sandbox notes for the next session
+
+1. All previous HANDOFF gotchas still apply (60s beforeAll budgets, serial
+   gate, pristine-fixture syncing, `pkill` by PID, core dist rebuild after
+   `hot.ts`/`boot.ts` edits, staleness-scan scope).
+2. **Disk**: the debug target dir is ~7 GB and this sandbox has ~10 GB. If
+   linking fails with "No space left", dedupe stale artifacts:
+   `cd target/debug/deps && for stem in $(ls *.rlib | sed 's/-[0-9a-f]*\.rlib//' | sort | uniq -c | awk '$1>1 {print $2}'); do ls -t $stem-*.rlib | tail -n +2 | while read f; do rm -f "${f%.rlib}" "${f%.rlib}.rmeta" "${f%.rlib}.d"; done; done`
+   Also build with `CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0` and keep
+   `nasm` on PATH (`/home/z/local/bin`) for wasmtime.
+3. `hmr-cold-start` flaked once on the FIRST boot after long idle (watcher
+   baseline race on a cold `.oxide`); every rerun passed. If it fails, rerun
+   before investigating.
+4. The first `pnpm install` after a sandbox recycle may fail with
+   `ERR_PNPM_PACKAGE_MANAGER_CREATE_SLOT_DIR` (stale overlay dentries);
+   `rm -rf node_modules && mkdir node_modules && pnpm install` clears it.
 
 ## Where to pick up, in one sentence
 
-The plan is complete — next work is post-plan hardening (e.g. §3.8b's browser ESM-cache proxy, deferred with rationale in the plan), publishing `solid-jsx-oxc` linux binaries so §3.6's isolation test can run off-macOS, and keeping the suite green in CI.
+The multi-framework HMR rollout is complete and green; next work is
+publishing `solid-jsx-oxc` linux binaries (the babel fallback stays as the
+portable default), the deferred §3.8b browser ESM-cache proxy, and keeping
+the suite green in CI (webkit needs a normal machine).
