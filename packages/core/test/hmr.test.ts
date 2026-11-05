@@ -175,7 +175,11 @@ test('route-data-update with a pushed payload decodes it and dispatches ox:data'
   try {
     const odf = encodeLite({ route: '/slow', url: '/slow', params: { slug: 'x' }, data: { items: [1, 2] } })
     const b64 = Buffer.from(odf).toString('base64')
-    const handled = applyHmrMessage({ type: 'route-data-update', route: 'src/routes/slow/page.server.ts', odf_b64: b64 })
+    // §1.3: the server publishes the route's URL PATH PATTERN ('/slow'),
+    // not the file path — the client drops messages for routes the viewer
+    // is not on (routePatternMatchesPath). Feeding the file path here would
+    // be dropped before reaching the dispatch below.
+    const handled = applyHmrMessage({ type: 'route-data-update', route: '/slow', odf_b64: b64 })
     assert.equal(handled, true)
     await new Promise((r) => setTimeout(r, 10))
     assert.equal(dispatched.length, 1, 'one ox:data dispatched')
@@ -201,7 +205,7 @@ test('route-data-update without a payload re-fetches /__data for the current rou
     }) as typeof fetch,
   })
   try {
-    applyHmrMessage({ type: 'route-data-update', route: 'src/routes/slow/page.server.ts', odf_b64: '' })
+    applyHmrMessage({ type: 'route-data-update', route: '/slow', odf_b64: '' })
     await new Promise((r) => setTimeout(r, 10))
     assert.deepEqual(fetched, ['/__data?route=%2Fslow%3Fx%3D1'], 'current path (+search) fetched')
     assert.equal(dispatched.length, 1)
