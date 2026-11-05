@@ -142,5 +142,7 @@ test('browser hydrates the counter island and a click advances it', async ({ pag
 
 test('home page h1 renders alongside the island', async ({ page }) => {
   await page.goto('http://127.0.0.1:3101/')
-  await expect(page.locator('h1')).toHaveText('Home')
+  // Scoped by role+name: the HMR fixture (`<HmrTarget/>`) renders a SECOND
+  // h1 on this page — a bare `locator('h1')` is a strict-mode violation.
+  await expect(page.getByRole('heading', { name: 'Home', exact: true })).toHaveText('Home')
 })
