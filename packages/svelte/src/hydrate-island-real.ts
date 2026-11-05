@@ -49,8 +49,10 @@ async function loadSvelte(): Promise<SvelteLike> {
  * Hydrate a single `<ox-island>` host with Svelte's own client runtime.
  *
  * `mod` is the dynamic-import result of the island chunk; its `default`
- * export is the Svelte component. `mount(comp, { target, props, hydrate:
- * true })` hydrates the existing SSR markup instead of replacing it.
+ * export is the Svelte component. Svelte 5 exposes hydration as its own
+ * entry point — `mount()` IGNORES an unknown `hydrate` option and appends a
+ * fresh tree next to the SSR markup — so `hydrate()` is used when present,
+ * falling back to `mount()` on runtimes without it.
  *
  * Resolves to a disposer that unmounts the component; `hydrateIslands`
  * stores it and calls it on page teardown.
@@ -66,11 +68,12 @@ export async function svelteHydrateIsland(
   if (component === undefined || component === null) {
     throw new TypeError('hydrateIsland(svelte): island module must export a default component')
   }
-  const mounted = svelte.mount(component, {
-    target: asDomElement(host, 'island hydration'),
-    props: (props as Record<string, unknown>) ?? {},
-    hydrate: true,
-  })
+  const target = asDomElement(host, 'island hydration')
+  const islandProps = (props as Record<string, unknown>) ?? {}
+  const mounted =
+    typeof svelte.hydrate === 'function'
+      ? svelte.hydrate(component, { target, props: islandProps })
+      : svelte.mount(component, { target, props: islandProps })
   return () => {
     try {
       svelte.unmount(mounted)
