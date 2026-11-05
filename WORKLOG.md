@@ -4484,3 +4484,54 @@ Applied the full `oxide-dx-rescue-plan.md`.
 - Added CI gate: build fails if CSS < 20KB.
 - Added `oxide doctor` Tailwind check.
 - Wrote `docs/using-tailwind.md` and `docs/using-images.md`.
+
+## Multi-framework HMR — 2026-11-05 (Vue, Solid, Svelte e2e)
+
+Closed the "built only with React in mind" gap: HMR now works and is e2e
+tested for every supported framework. `hmr-vue.spec.ts`, `hmr-solid.spec.ts`
+and `hmr-svelte.spec.ts` (7 tests each, shared harness `hmr-boot.ts`) boot
+`oxide dev` against the respective smoke app and pin, per framework: the
+manifest carries the route component URL, the boot entry wires the right
+`clientAdapter`, the served module is pool-compiled with prebundle imports,
+the page hydrates without module-load errors, the HMR socket connects, THREE
+successive component edits update the DOM in place (timeOrigin constant,
+counter remounts), and a loader edit re-renders fresh data in place.
+
+Pipeline changes (ESM dev): `/src/*.vue`/`.svelte` (and Solid `.tsx`) are
+pool-compiled per request with the hot preamble + generic self-accept; the
+boot entry wires the configured framework's adapter; the manifest lists SFC
+pages; watcher fan-out covers component-capability frameworks; loader-edit
+route patterns derive `/` from `routes/index`.
+
+Client contract: the HMR runtime records fresh modules (`getFreshModule`)
+and fires `__oxide_on_module_updated` after each reload; `bootWithRouter`
+replays the last input through `adapter.update`; Vue/Solid/Svelte adapters
+dispose and remount when the component reference changes. React is excluded
+(capability `refresh`).
+
+Framework-specific fixes: Solid on linux-x64 runs through a
+babel-preset-solid fallback (SSR + pool op, incl. present-but-unloadable
+native bindings), with a preserve-mode sucrase pre-strip and an AST pass
+renaming `$$<event>` → `_$<event>` delegated-event keys for the Solid 2
+runtime; the svelte family prebundles as one multi-entry rolldown bundle
+(single runtime instance — two copies broke hydration) and hydrates via
+Svelte 5's dedicated `hydrate()` entry point; the Vue/Solid adapter dists
+dropped `node:module` static imports (top-level-await dynamic imports) that
+killed the whole client graph.
+
+Pre-existing bugs the new suite surfaced and fixed: the dev incremental
+bundler passed `out_dir` as the plugin root so `.server` modules shipped
+unstubbed (`node:fs/promises` in the browser, --no-esm mode); the server-fn
+client stub had no `.id` while SSR kept the raw `serverFn(fn)` call —
+`anonymous-N` vs baked-id hydration mismatch (SSR now rewrites to
+`serverFn("<static id>", fn)`, client stubs carry `Object.assign(fn,
+{id})`); the generated boot-entry loader now prefers the HMR runtime's
+fresh module record over the browser ESM cache; dev temp component modules
+re-anchor relative imports to real source files as file:// URLs.
+
+Verification (chromium, `--workers=1 --retries=0`): all four frameworks'
+HMR suites green (21/21 new tests), the full React group green (31/31 + the
+newly-runnable §3.6 isolation), Groups B and C green, unit suites green
+(compiler 48+56, dev 46+1, cli lib 250, jshost 78+26, packages 488/488).
+sw.spec ×2 remain the documented sandbox-only failure; webkit remains
+unrunnable here. Full details in HANDOFF.md.
