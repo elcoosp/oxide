@@ -90,6 +90,17 @@ const TEXT_ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '
 const ATTR_ESCAPES: Record<string, string> = { '&': '&amp;', '"': '&quot;', '<': '&lt;' }
 const escText = (s: string): string => s.replace(/[&<>]/g, (c) => TEXT_ESCAPES[c] as string)
 const escAttr = (s: string): string => s.replace(/[&"<]/g, (c) => ATTR_ESCAPES[c] as string)
+/**
+ * Inline `<script>` body escaping — the same convention the adapters' IR
+ * renderers use (`escapeScript` in each adapter's src/ir.ts): `<` becomes the
+ * literal `\u003c` so a payload containing `</script>` cannot break out of
+ * the raw-text element. HTML entity escaping (`escText`) is WRONG here: the
+ * browser does not decode entities inside `<script>`, so `a && b` became
+ * `a &amp;&amp; b` (SyntaxError) and JSON-LD strings were silently corrupted.
+ * `\u003c` is a valid escape inside both JS string literals and JSON
+ * strings, so payloads still parse to the original value.
+ */
+const escScript = (s: string): string => s.replace(/</g, '\\u003c')
 
 /** Render a neutral HeadTags model to the strings that go inside <head>. */
 export function emitHead(head: HeadTags): string {
@@ -121,12 +132,12 @@ export function emitHead(head: HeadTags): string {
       s.nonce ? ` nonce="${escAttr(s.nonce)}"` : '',
       s.defer ? ' defer' : '',
     ].join('')
-    parts.push(`<script${attrs}>${s.content ? escText(s.content) : ''}</script>`)
+    parts.push(`<script${attrs}>${s.content ? escScript(s.content) : ''}</script>`)
   }
   // §16.3: structured JSON-LD entries are their own script element.
   for (const entry of head.jsonLd ?? []) {
     const body = typeof entry === 'string' ? entry : JSON.stringify(entry)
-    parts.push(`<script type="application/ld+json">${escText(body)}</script>`)
+    parts.push(`<script type="application/ld+json">${escScript(body)}</script>`)
   }
   return parts.join('')
 }
