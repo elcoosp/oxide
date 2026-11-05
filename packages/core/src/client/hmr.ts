@@ -282,8 +282,9 @@ export function applyHmrMessage(msg: HmrMessage, opts: HmrOptions = {}): boolean
       // the end would need reloadModule to accept a "suppress refresh"
       // flag; that is a bigger refactor and not observable in the §3.2
       // acceptance test (which counts wire frames). Deferred.
-      const items = Array.isArray((msg as { items?: unknown }).items)
-        ? ((msg as { items: unknown[] }).items as Array<Record<string, unknown>>)
+      const msgRec = msg as unknown as { items?: unknown }
+      const items = Array.isArray(msgRec.items)
+        ? (msgRec.items as Array<Record<string, unknown>>)
         : []
       // A batch supersedes any prior diagnostic, same as singular.
       clearOverlay(opts.overlayParent)
