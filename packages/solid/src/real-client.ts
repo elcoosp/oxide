@@ -51,6 +51,22 @@ function isSolidCoreLike(v: unknown): v is SolidCoreLike {
   return hasElement || hasComponent
 }
 
+/** Import a web-runtime specifier without letting TypeScript resolve it at
+ *  type-check time (Solid 1's `solid-js/web` subpath does not exist in the
+ *  locally-installed Solid 2 types). Narrowed structurally on return —
+ *  mirrors ./hydrate-island-real.ts and ./real-ssr.ts. */
+async function tryLoadWeb(name: '@solidjs/web' | 'solid-js/web'): Promise<SolidWebClientLike | undefined> {
+  try {
+    const mod: unknown = await import(name)
+    if (isSolidWebClientLike(mod) && typeof mod.hydrate === 'function' && typeof mod.render === 'function') {
+      return mod
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
 async function load(): Promise<{
   web: SolidWebClientLike
   create: (type: unknown, props: unknown) => unknown
@@ -58,16 +74,27 @@ async function load(): Promise<{
   if (cachedWeb && cachedCreate) return { web: cachedWeb, create: cachedCreate }
   if (attempted) return undefined
   attempted = true
-  // Same package order as ./hydrate-island-real.ts: Solid 2's dedicated web
-  // runtime first, Solid 1's `solid-js/web` as the fallback.
-  let web: SolidWebClientLike | undefined
   try {
-    const webMod: unknown = await import('@solidjs/web')
-    if (isSolidWebClientLike(webMod)) web = webMod
-  } catch {
-    return undefined
+    return await loadUncached()
+  } finally {
+    // §3.10 parity with hydrate-island-real.ts: a single transient failure
+    // (dev-server restart, HMR outage) must not pin the page path to the IR
+    // fallback for the rest of the session. A genuinely absent dep still
+    // fails fast — the loader caches the failed specifier.
+    if (!(cachedWeb && cachedCreate)) attempted = false
   }
-  if (!web || typeof web.hydrate !== 'function' || typeof web.render !== 'function') return undefined
+}
+
+async function loadUncached(): Promise<{
+  web: SolidWebClientLike
+  create: (type: unknown, props: unknown) => unknown
+} | undefined> {
+  // Same package order as ./hydrate-island-real.ts: Solid 2's dedicated web
+  // runtime first, Solid 1's `solid-js/web` as the fallback. The variable
+  // specifier keeps TypeScript from resolving the Solid 1 subpath (it does
+  // not exist in the installed Solid 2 types) — mirrors ./real-ssr.ts.
+  const web = (await tryLoadWeb('@solidjs/web')) ?? (await tryLoadWeb('solid-js/web'))
+  if (!web) return undefined
   // `createElement`/`createComponent` come from the solid-js core runtime
   // (the island path uses `createElement`; Solid keeps `createComponent` as
   // the canonical name).
@@ -135,14 +162,18 @@ interface SolidHydrationState {
 export function ensureSolidHydrationState(): void {
   const g = globalThis as { _$HY?: SolidHydrationState }
   if (g._$HY) return
+  // `r` holds one promise per hydration request id; the Proxy swallows
+  // rejections so a dangling `createResource` read can't crash the page.
+  const r: Record<string | symbol, unknown> = {}
   const state: SolidHydrationState = {
     events: [],
     completed: new WeakSet(),
+    r,
     fe() {},
     modules: {},
     loading: {},
   }
-  state.r = new Proxy({} as Record<string, unknown>, {
+  state.r = new Proxy(r, {
     set(target, key, value) {
       if (value instanceof Promise) value.catch(() => {})
       target[key] = value
