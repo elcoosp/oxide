@@ -58,29 +58,27 @@ export function createRealAdapter(opts: RealAdapterOptions) {
     buildHead,
     isAvailable: isSolidAvailable,
     lastError: getLastLoadError,
-    // Solid's renderer takes a zero-argument factory. Pre-invoke the
-    // component OUTSIDE solid's async machinery so a synchronous throw
-    // propagates immediately (otherwise renderToStringAsync hangs and
-    // reports "renderToString timed out"). The built tree is then handed
-    // back to solid as a stable value. §8.2: a layout's `children` arrives
-    // as a `{ Component, props }` descriptor — expanded into a real element
-    // (createComponent + props.children) before the pre-invocation.
+    // Solid's renderer takes a zero-argument factory. The component must be
+    // INVOKED INSIDE that factory — solid scopes hydration-key generation
+    // (`ssrHydrationKey()` → `getNextContextId()`) to the render root the
+    // renderer creates. A tree built OUTSIDE the root renders markup without
+    // `_hk` keys (nothing for the client's `hydrate()` to claim) and, under
+    // the streaming worker, throws "getNextContextId cannot be used under a
+    // non-hydrating context". §8.2: a layout's `children` arrives as a
+    // `{ Component, props }` descriptor — expanded into a real element
+    // (createComponent + props.children) before the render, so the expansion
+    // still happens outside; only the PAGE component's own invocation moved
+    // inside the root.
     renderBody: async (Component, props) => {
       if (typeof Component !== 'function') return String(Component ?? '')
       const expanded = await expandSolidChildren(props)
-      // Solid's renderer takes a zero-argument factory. Pre-invoke the
-      // component OUTSIDE solid's async machinery so a synchronous throw
-      // propagates immediately (otherwise renderToStringAsync hangs and
-      // reports "renderToString timed out"). The built tree is then handed
-      // back to solid as a stable value.
-      const tree = (Component as (p: Record<string, unknown>) => unknown)(expanded)
-      return renderSolidToString(() => tree)
+      return renderSolidToString(() => (Component as (p: Record<string, unknown>) => unknown)(expanded))
     },
     // §7.1: Solid 2's `@solidjs/web` exposes `renderToStream`, so the shell
-    // can reach the client before resources resolve. Same pre-invocation
-    // pattern as `renderBody` — build the tree outside the streaming
-    // machinery so a synchronous throw propagates, with the same §8.2
-    // descriptor expansion for layout children.
+    // can reach the client before resources resolve. Same inside-the-root
+    // invocation as `renderBody` (see its comment — the hydration-key scope
+    // is the render root), with the same §8.2 descriptor expansion for
+    // layout children.
     renderStream: async (Component, props) => {
       if (typeof Component !== 'function') {
         const bytes = new TextEncoder().encode(String(Component ?? ''))
@@ -92,8 +90,7 @@ export function createRealAdapter(opts: RealAdapterOptions) {
         })
       }
       const expanded = await expandSolidChildren(props)
-      const tree = (Component as (p: Record<string, unknown>) => unknown)(expanded)
-      return renderSolidToStream(() => tree)
+      return renderSolidToStream(() => (Component as (p: Record<string, unknown>) => unknown)(expanded))
     },
     rootAttrs: ' id="root" data-solid=""',
     hydrate: hydrate,
