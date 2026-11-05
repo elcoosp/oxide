@@ -1,11 +1,11 @@
 import type { FC } from 'react';
 
-const ADAPTERS = [
-  { id: 'react',  label: 'React',  src: '/frameworks/react.png'  },
-  { id: 'vue',    label: 'Vue',    src: '/frameworks/vue.png'    },
-  { id: 'svelte', label: 'Svelte', src: '/frameworks/svelte.png' },
-  { id: 'solid',  label: 'Solid',  src: '/frameworks/solid.png'  },
-];
+const ADAPTERS = {
+  react:  { label: 'React',  src: '/frameworks/react.png'  },
+  vue:    { label: 'Vue',    src: '/frameworks/vue.png'    },
+  svelte: { label: 'Svelte', src: '/frameworks/svelte.png' },
+  solid:  { label: 'Solid',  src: '/frameworks/solid.png'  },
+};
 
 export const FrameworkAdapters: FC = () => {
   return (
@@ -33,14 +33,14 @@ export const FrameworkAdapters: FC = () => {
 
             {/* React (Top) */}
             <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-spin-slow-reverse flex flex-col items-center gap-2 group">
-              <div className="orbit-logo-tile"><img src={ADAPTERS[0].src} alt="React" /></div>
-              <span className="orbit-label">{ADAPTERS[0].label}</span>
+              <div className="orbit-logo-tile"><img src={ADAPTERS.react.src} alt="React" /></div>
+              <span className="orbit-label">{ADAPTERS.react.label}</span>
             </div>
 
             {/* Svelte (Bottom) */}
             <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 animate-spin-slow-reverse flex flex-col items-center gap-2 group">
-              <div className="orbit-logo-tile"><img src={ADAPTERS[2].src} alt="Svelte" /></div>
-              <span className="orbit-label">{ADAPTERS[2].label}</span>
+              <div className="orbit-logo-tile"><img src={ADAPTERS.svelte.src} alt="Svelte" /></div>
+              <span className="orbit-label">{ADAPTERS.svelte.label}</span>
             </div>
           </div>
 
@@ -49,14 +49,14 @@ export const FrameworkAdapters: FC = () => {
 
             {/* Vue (Left) */}
             <div className="absolute top-1/2 left-0 -translate-x-1/2 -translate-y-1/2 animate-spin-slow flex flex-col items-center gap-2 group">
-              <div className="orbit-logo-tile"><img src={ADAPTERS[1].src} alt="Vue" /></div>
-              <span className="orbit-label">{ADAPTERS[1].label}</span>
+              <div className="orbit-logo-tile"><img src={ADAPTERS.vue.src} alt="Vue" /></div>
+              <span className="orbit-label">{ADAPTERS.vue.label}</span>
             </div>
 
             {/* Solid (Right) */}
             <div className="absolute top-1/2 right-0 translate-x-1/2 -translate-y-1/2 animate-spin-slow flex flex-col items-center gap-2 group">
-              <div className="orbit-logo-tile"><img src={ADAPTERS[3].src} alt="Solid" /></div>
-              <span className="orbit-label">{ADAPTERS[3].label}</span>
+              <div className="orbit-logo-tile"><img src={ADAPTERS.solid.src} alt="Solid" /></div>
+              <span className="orbit-label">{ADAPTERS.solid.label}</span>
             </div>
           </div>
 
