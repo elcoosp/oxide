@@ -109,6 +109,74 @@ export async function isSolidClientAvailable(): Promise<boolean> {
   return (await load()) !== undefined
 }
 
+interface SolidHydrationState {
+  events: unknown[]
+  completed: WeakSet<object>
+  r: unknown
+  fe(): void
+  s?: unknown
+  done?: boolean
+  sp?: unknown[]
+  sw?: (key?: string) => void
+  modules?: Record<string, unknown>
+  loading?: Record<string, Promise<unknown>>
+}
+
+/**
+ * Install the `globalThis._$HY` hydration state `web.hydrate()` unconditionally
+ * reads (`hy.s`, `hy.done`, later `hy.completed` via sharedConfig). Solid
+ * creates it through the hydration script the SERVER embeds (`<Hydration/>
+ * in solid-start`; `generateHydrationScript()`), and the Oxide shell does not
+ * embed that script — without the state `hydrate()` throws
+ * `Cannot read properties of undefined (reading 's')` and the page falls back
+ * to the IR renderer. This is the same state shape the script installs
+ * (including the pre-hydration click/input capture), done client-side.
+ */
+export function ensureSolidHydrationState(): void {
+  const g = globalThis as { _$HY?: SolidHydrationState }
+  if (g._$HY) return
+  const state: SolidHydrationState = {
+    events: [],
+    completed: new WeakSet(),
+    fe() {},
+    modules: {},
+    loading: {},
+  }
+  state.r = new Proxy({} as Record<string, unknown>, {
+    set(target, key, value) {
+      if (value instanceof Promise) value.catch(() => {})
+      target[key] = value
+      return true
+    },
+  })
+  // Pre-hydration event capture — identical to the script's arrow: clicks and
+  // inputs that happen before hydration completes are queued so Solid can
+  // replay them against the hydrated graph.
+  const findClosest = (el: EventTarget | null): HTMLElement | null | undefined => {
+    let cur = el as HTMLElement | null
+    while (cur && typeof cur.hasAttribute === 'function') {
+      if (cur.hasAttribute('_hk')) return cur
+      const host = (cur as unknown as { host?: { nodeType?: number } }).host
+      cur = (host && host.nodeType ? (host as HTMLElement) : cur.parentNode) as HTMLElement | null
+    }
+    return cur && typeof (cur as HTMLElement).hasAttribute === 'function' ? cur : null
+  }
+  if (typeof document !== 'undefined') {
+    for (const type of ['click', 'input']) {
+      document.addEventListener(type, (ev: Event) => {
+        if (!state.events) return
+        const path =
+          typeof (ev as { composedPath?: () => EventTarget[] }).composedPath === 'function'
+            ? (ev as { composedPath: () => EventTarget[] }).composedPath()
+            : [ev.target]
+        const closest = findClosest(path[0] ?? null)
+        if (closest && !state.completed.has(closest)) state.events.push([closest, ev])
+      })
+    }
+  }
+  g._$HY = state
+}
+
 /**
  * Render (or hydrate) a REAL page component into the page container with
  * Solid's own client runtime. The component is wrapped in a zero-argument
@@ -138,6 +206,7 @@ export async function mountSolidPageRoot(
     return rt.web.render(() => rt.create(Component, p), el)
   }
   if (opts.hydrate) {
+    ensureSolidHydrationState()
     disposer = rt.web.hydrate(() => rt.create(Component, props), el)
   } else {
     disposer = renderFresh(props)
