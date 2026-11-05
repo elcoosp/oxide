@@ -1036,6 +1036,31 @@ fn jsx_import_source_for(framework: &str) -> Option<String> {
     }
 }
 
+/// Framework runtime packages the ESM client graph needs prebundled beyond
+/// the React-shaped default list. The pool-compiled client module for each
+/// framework imports its runtime by bare specifier (`vue`,
+/// `svelte/internal/client`, `@solidjs/web`), and the `@oxide-fw/*`
+/// adapter dist files do the same — without these entries the browser
+/// fetches a bare specifier and the whole module graph halts.
+///
+/// `solid-js` is listed for the Solid client adapter's dynamic
+/// `import('solid-js')`; `svelte/internal/disclose-version` is emitted by
+/// every Svelte 5 compiled module, and `svelte/internal/flags/legacy` by
+/// the Svelte 5.3x compiler (it gates the legacy-syntax shims).
+fn framework_prebundle_extras(framework: &str) -> Vec<String> {
+    match framework {
+        "vue" => vec!["vue".to_string()],
+        "svelte" => vec![
+            "svelte".to_string(),
+            "svelte/internal/client".to_string(),
+            "svelte/internal/disclose-version".to_string(),
+            "svelte/internal/flags/legacy".to_string(),
+        ],
+        "solid" => vec!["solid-js".to_string(), "@solidjs/web".to_string()],
+        _ => Vec::new(),
+    }
+}
+
 /// §6.4 / §21: the framework runtimes must never be inlined into the SSR
 /// bundle. Each runtime carries module-level state (React's
 /// `ReactCurrentDispatcher`, Vue's current instance, Svelte's component
@@ -1215,16 +1240,25 @@ async fn hmr_route_data_update(
     }) {
         Some(e) => (
             // Route id → URL path pattern (`routes/blog/[slug]/page` →
-            // `/blog/[slug]`), same derivation as the loading-map keys.
-            match e
-                .id
-                .0
-                .strip_suffix("/page")
-                .unwrap_or(&e.id.0)
-                .strip_prefix("routes")
+            // `/blog/[slug]`). The `index` segment is the ROOT marker (the
+            // scanner ids the root page `routes/index/page`), not a literal
+            // URL segment: `routes/index/page` → `/`. Deriving `/index`
+            // instead produced a pattern the client's
+            // `routePatternMatchesPath` could never match against the
+            // pathname `/` — the route-data-update frame arrived and was
+            // silently dropped, so a loader edit never re-rendered.
             {
-                Some(d) if !d.is_empty() => d.to_string(),
-                _ => "/".to_string(),
+                let dir = e
+                    .id
+                    .0
+                    .strip_suffix("/page")
+                    .unwrap_or(&e.id.0)
+                    .strip_prefix("routes")
+                    .unwrap_or("");
+                match dir {
+                    "" | "/" | "/index" | "index" => "/".to_string(),
+                    d => d.to_string(),
+                }
             },
             routes_root
                 .join(e.file.with_file_name("page.server.ts"))
@@ -1652,7 +1686,10 @@ fn build_importers_map(
                     .and_then(|e| e.to_str())
                     .unwrap_or("")
                     .to_ascii_lowercase();
-                if matches!(ext.as_str(), "ts" | "tsx" | "js" | "jsx" | "mjs") {
+                if matches!(
+                    ext.as_str(),
+                    "ts" | "tsx" | "js" | "jsx" | "mjs" | "vue" | "svelte"
+                ) {
                     out.push(p);
                 }
             }
@@ -3274,24 +3311,41 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                 adapter_hmr_batch.push((pstr.clone(), format!("/{trimmed}")));
                                 //
                                 // §1.3: also fan out to every importer of
-                                // this file — BUT ONLY when the changed
-                                // file is a NON-COMPONENT. Component files
-                                // (`.tsx`/`.jsx`) already have React
-                                // Refresh handling their consumers via
-                                // `performReactRefresh()`; fanning out for
-                                // them turns a singular ModuleUpdate into a
-                                // batch AND causes the parent tree to
-                                // re-import redundantly. Util/leaf
-                                // files (`.ts`/`.js`/`.mjs` — no
-                                // `$RefreshReg$` in compiled form) are the
-                                // ones that need the reverse-dep path,
-                                // because nothing else would update the
-                                // importer's stale binding.
+                                // this file. TWO cases need it:
+                                //
+                                // 1. NON-COMPONENT edits (`.ts`/`.js`/`.mjs`
+                                //    utils): no component registration in
+                                //    compiled form, so nothing else would
+                                //    update the importer's stale binding.
+                                //
+                                // 2. Component edits on the component-
+                                //    capability frameworks (Vue, Solid,
+                                //    Svelte): there is no React-Refresh-style
+                                //    in-place patch — the PAGE module must
+                                //    re-import so its import binding picks
+                                //    up the fresh child module, and the
+                                //    boot's re-render (componentFor →
+                                //    loadChunk) mounts the new tree. React
+                                //    keeps the skip: `performReactRefresh`
+                                //    patches the registered family directly,
+                                //    and fanning out would turn a singular
+                                //    ModuleUpdate into a redundant batch.
                                 let changed_is_component = {
                                     let lower = pstr.to_ascii_lowercase();
-                                    lower.ends_with(".tsx") || lower.ends_with(".jsx")
+                                    lower.ends_with(".tsx")
+                                        || lower.ends_with(".jsx")
+                                        || lower.ends_with(".vue")
+                                        || lower.ends_with(".svelte")
                                 };
-                                if !changed_is_component {
+                                let esm_framework = cfg
+                                    .framework
+                                    .adapter
+                                    .as_deref()
+                                    .or(cfg.framework.name.as_deref())
+                                    .unwrap_or("react");
+                                let react_refresh_owns_update =
+                                    esm_framework == "react" && changed_is_component;
+                                if !react_refresh_owns_update {
                                     let mut in_batch: std::collections::HashSet<String> =
                                         std::collections::HashSet::new();
                                     in_batch.insert(pstr.clone());
@@ -3306,18 +3360,24 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                                 continue;
                                             }
                                             // Only fan out to importers that
-                                            // are components (`.tsx`/`.jsx`)
-                                            // — those are the ones whose
-                                            // rendered output depends on the
-                                            // util. A util that imports
-                                            // another util also benefits, but
-                                            // compiling it is unnecessary;
-                                            // React Refresh only acts on
-                                            // component boundaries.
+                                            // are components — those are the
+                                            // ones whose rendered output
+                                            // depends on the util. `.tsx`
+                                            // /`.jsx` (React + Solid) and
+                                            // `.vue`/`.svelte` (SFC pages
+                                            // and components) all render;
+                                            // a util importing another util
+                                            // also benefits, but compiling
+                                            // it is unnecessary. React
+                                            // Refresh acts on component
+                                            // boundaries; the boot re-render
+                                            // acts on the page boundary.
                                             let lower_imp = imp_str.to_ascii_lowercase();
                                             let imp_is_component =
                                                 lower_imp.ends_with(".tsx")
-                                                    || lower_imp.ends_with(".jsx");
+                                                    || lower_imp.ends_with(".jsx")
+                                                    || lower_imp.ends_with(".vue")
+                                                    || lower_imp.ends_with(".svelte");
                                             if !imp_is_component {
                                                 continue;
                                             }
@@ -3470,6 +3530,11 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                             &rootp,
                                             &components,
                                             &islands,
+                                            cfg.framework
+                                                .adapter
+                                                .as_deref()
+                                                .or(cfg.framework.name.as_deref())
+                                                .unwrap_or("react"),
                                         ) {
                                             tracing::warn!(error = %e, "esm dev: boot entry regen failed");
                                         }
@@ -8180,9 +8245,26 @@ fn build_dispatch_swappable(
         // `/src/*` (transformed ESM) and `/@*` (prebundle / boot / error
         // shim). The pipeline's StaticAssets pass already skips those
         // prefixes in dev; this is the actual handler.
+        //
+        // `/src/*` files whose client transform lives in the Node tooling
+        // pool (Vue/Svelte SFCs, Solid tsx) go through the async
+        // `serve_pool_compiled_module` — the pool compiles the CURRENT file
+        // bytes per request, which is what lets a watcher-published
+        // ModuleUpdate serve fresh code with zero server-side cache
+        // management.
         if let Some(esm) = esm_state.as_ref() {
-            if let Some(resp) = crate::esm_dev::handle_esm_request(esm, &req) {
-                return Box::pin(async move { resp });
+            match crate::esm_dev::handle_esm_request(esm, &req) {
+                Some(crate::esm_dev::EsmAction::Ready(resp)) => {
+                    return Box::pin(async move { resp });
+                }
+                Some(crate::esm_dev::EsmAction::PoolModule(rel)) => {
+                    let esm = std::sync::Arc::clone(esm);
+                    let pool = pool.clone();
+                    return Box::pin(async move {
+                        crate::esm_dev::serve_pool_compiled_module(&esm, &rel, pool.as_ref()).await
+                    });
+                }
+                None => {}
             }
         }
         // PERF-02: surface the pool's live gauges into the metrics registry.
@@ -11361,18 +11443,33 @@ async fn start_server_inner_full(
     // (`with_inspector`), so prod never builds it.
     let dev_esm = with_inspector && cfg.dev.esm;
     let esm_state: Option<std::sync::Arc<crate::esm_dev::EsmDevState>> = if dev_esm {
+        // The configured framework decides (a) which `@oxide-fw/*` package
+        // the boot entry wires as `clientAdapter`, (b) which framework
+        // runtime packages must be prebundled for the client, and (c) which
+        // `/src/*` files compile through the Node tooling pool.
+        let esm_framework = cfg
+            .framework
+            .adapter
+            .clone()
+            .or_else(|| cfg.framework.name.clone())
+            .unwrap_or_else(|| "react".to_string());
         let mut components: std::collections::BTreeMap<String, String> =
             std::collections::BTreeMap::new();
         for entry in &tree.entries {
             let id_str: &str = entry.id.0.as_str();
             let rel = id_str.strip_prefix("routes/").unwrap_or(id_str);
             let mut candidates: Vec<String> = Vec::new();
-            for ext in [".tsx", ".ts", ".jsx", ".js"] {
+            // `.vue`/`.svelte` pages are first-class here: the ESM dev server
+            // serves them pool-compiled (see `needs_pool_compile`), and
+            // without them in the manifest a Vue/Svelte app had NO component
+            // URL at all — `componentFor` returned undefined and the client
+            // could never render or HMR the route.
+            for ext in [".tsx", ".ts", ".jsx", ".js", ".vue", ".svelte"] {
                 candidates.push(format!("src/routes/{rel}{ext}"));
                 candidates.push(format!("src/routes/{rel}/page{ext}"));
             }
             if rel == "index" || rel.is_empty() {
-                for ext in [".tsx", ".ts", ".jsx", ".js"] {
+                for ext in [".tsx", ".ts", ".jsx", ".js", ".vue", ".svelte"] {
                     candidates.push(format!("src/routes/page{ext}"));
                     candidates.push(format!("src/routes/index{ext}"));
                 }
@@ -11410,7 +11507,21 @@ async fn start_server_inner_full(
                 break;
             }
         }
-        let _ = crate::esm_dev::prebundle_cjs_deps(&rootp, &cfg.dev.prebundle);
+        // Framework runtime packages must be in the prebundle + rewrite map
+        // or the client graph 404s: the pool-compiled Vue SFC imports
+        // `vue`, the Svelte output imports `svelte/internal/client`, the
+        // Solid output imports `@solidjs/web`, and the `@oxide-fw/*`
+        // adapter dist files import their framework runtime by bare name.
+        // The default list is React-shaped; extend it per framework without
+        // disturbing an explicit project override (already-present entries
+        // stay where the config put them).
+        let mut prebundle_list = cfg.dev.prebundle.clone();
+        for extra in framework_prebundle_extras(&esm_framework) {
+            if !prebundle_list.contains(&extra) {
+                prebundle_list.push(extra);
+            }
+        }
+        let _ = crate::esm_dev::prebundle_cjs_deps(&rootp, &prebundle_list);
         if let Err(e) = crate::esm_dev::build_esm_manifest(&rootp, &components) {
             tracing::warn!(error = %e, "esm dev: manifest write failed");
         }
@@ -11426,7 +11537,12 @@ async fn start_server_inner_full(
                 islands.insert(name.clone(), format!("/{rel_path}"));
             }
         }
-        if let Err(e) = crate::esm_dev::generate_esm_boot_entry(&rootp, &components, &islands) {
+        if let Err(e) = crate::esm_dev::generate_esm_boot_entry(
+            &rootp,
+            &components,
+            &islands,
+            &esm_framework,
+        ) {
             tracing::warn!(error = %e, "esm dev: boot entry write failed");
         }
         // §6.4 / WP-C1 (ESM path): `ensure_dev_client_bundle` is skipped in
@@ -11443,15 +11559,16 @@ async fn start_server_inner_full(
         if !already_populated {
             populate_dev_component_source(&rootp, &cfg, &tree, &stack).await;
         }
-        let rewrite_map = crate::esm_dev::build_rewrite_map(&rootp, &cfg.dev.prebundle);
+        let rewrite_map = crate::esm_dev::build_rewrite_map(&rootp, &prebundle_list);
         tracing::info!(
             routes_with_component = components.len(),
             "esm dev: state ready"
         );
         Some(std::sync::Arc::new(crate::esm_dev::EsmDevState {
             root: rootp.clone(),
-            jsx_import_source: None,
+            jsx_import_source: jsx_import_source_for(&esm_framework),
             rewrite_map: std::sync::Arc::new(rewrite_map),
+            framework: esm_framework,
         }))
     } else {
         None
