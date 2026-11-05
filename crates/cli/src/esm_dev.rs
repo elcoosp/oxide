@@ -163,6 +163,186 @@ pub struct EsmDevState {
     /// Bare specifier → `/@prebundle/...` URL. Used both to rewrite the
     /// imports of served files and to compose the boot entry.
     pub rewrite_map: Arc<BTreeMap<String, String>>,
+    /// The configured framework (`react | vue | svelte | solid`). Selects
+    /// which `@oxide-fw/*` package the boot entry wires as `clientAdapter`
+    /// and which `/src/*` files need a Node tooling-pool compile (Vue SFC,
+    /// Svelte, Solid tsx) instead of the native Oxc lowering.
+    pub framework: String,
+}
+
+/// What [`handle_esm_request`] decided for a `/src/*` request.
+pub enum EsmAction {
+    /// Serve this response directly.
+    Ready(OxideResponse),
+    /// The module needs a Node tooling-pool compile before it can be served
+    /// (`.vue`/`.svelte` SFCs, and `.tsx`/`.jsx` when the framework is
+    /// Solid — babel-preset-solid's output is the only client-correct Solid
+    /// transform this repo can run on every platform). The payload is the
+    /// src-relative path, query-stripped.
+    PoolModule(String),
+}
+
+/// True when `rel_path` (src-relative, extension included) must be compiled
+/// through the Node tooling pool instead of the native Oxc lowering.
+///
+/// - `.vue` / `.svelte`: `@vue/compiler-sfc` / `svelte/compiler` are JS
+///   packages (crates/compiler/src/framework.rs routes them through the
+///   tooling pool by design — there is no native SFC parser).
+/// - `.tsx`/`.jsx` on Solid: the Oxc lowering emits plain `jsx()` calls,
+///   which for Solid must come from `@solidjs/web/jsx-runtime`. The
+///   `babel-preset-solid` DOM transform in the pool produces the real
+///   `template()/insert()/createComponent()` output the client runtime and
+///   hydration expect, and — unlike the optional `solid-jsx-oxc` native
+///   binding — babel is a pure-JS dependency available on every platform.
+pub fn needs_pool_compile(state: &EsmDevState, rel_path: &str) -> bool {
+    let lower = rel_path.to_ascii_lowercase();
+    if lower.ends_with(".vue") || lower.ends_with(".svelte") {
+        return true;
+    }
+    if state.framework == "solid"
+        && (lower.ends_with(".tsx") || lower.ends_with(".jsx"))
+    {
+        return true;
+    }
+    false
+}
+
+/// The tooling-pool `EntryRef.kind` + the `generate` mode for a
+/// pool-compiled client module.
+fn pool_op_for(rel_path: &str) -> (&'static str, &'static str) {
+    let lower = rel_path.to_ascii_lowercase();
+    if lower.ends_with(".vue") {
+        ("tooling:vue-compile", "dom")
+    } else if lower.ends_with(".svelte") {
+        ("tooling:svelte-compile", "dom")
+    } else {
+        ("tooling:solid-compile", "dom")
+    }
+}
+
+/// Compile a `.vue`/`.svelte`/solid-`.tsx` file to a CLIENT ESM module via
+/// the Node tooling pool and serve it with the same preamble + HMR boundary
+/// + import rewriting [`serve_source_file`] applies.
+///
+/// Called from the dispatch closure (which can await the pool) whenever
+/// [`needs_pool_compile`] matched. The source is read fresh per request —
+/// an HMR re-import after an edit always sees the newest bytes, which is
+/// what makes the watcher's single `ModuleUpdate` publish sufficient (no
+/// server-side precompile + invalidation bookkeeping for client SFCs).
+///
+/// On a pool error the response is a JS module that throws — the browser
+/// surfaces it through the HMR overlay (`HMR-IMPORT`) instead of silently
+/// serving stale code.
+pub async fn serve_pool_compiled_module(
+    state: &EsmDevState,
+    rel_path: &str,
+    pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
+) -> OxideResponse {
+    // Refuse `.server.*` like the plain source path — a Solid page may not
+    // import them, but the guard belongs to the URL family, not the
+    // transform.
+    if rel_path.contains(".server.") {
+        return OxideResponse::new(403, "server module cannot be served to the client")
+            .with_header("content-type", "text/plain; charset=utf-8")
+            .with_header("cache-control", "no-cache");
+    }
+    let fail = |msg: String| -> OxideResponse {
+        let body = format!(
+            "// oxide dev: pool compile failed for src/{rel_path}\n\
+             throw new Error({msg:?});\n"
+        );
+        OxideResponse::new(500, body)
+            .with_header("content-type", "text/javascript; charset=utf-8")
+            .with_header("cache-control", "no-cache")
+    };
+    let abs = state.root.join("src").join(rel_path);
+    let src = match std::fs::read_to_string(&abs) {
+        Ok(s) => s,
+        Err(_) => {
+            return fail(format!("source not found: src/{rel_path}"));
+        }
+    };
+    let Some(pool) = pool else {
+        return fail("tooling pool unavailable — cannot compile SFC/Solid client module".into());
+    };
+    let (op_kind, generate) = pool_op_for(rel_path);
+    let payload = serde_json::json!({
+        "source": src,
+        "filename": format!("src/{rel_path}"),
+        "generate": generate,
+        // The Solid fallback (babel-preset-solid) resolves @babel/core from
+        // the PROJECT's node_modules — the src-relative filename cannot
+        // locate it, so pass the root explicitly. Other ops ignore it.
+        "root": state.root.to_string_lossy(),
+    });
+    let req = oxide_fw_jshost::CallInput {
+        payload,
+        headers: Default::default(),
+        has_body: false,
+        request_id: format!("esm-sfc:{rel_path}"),
+        route: None,
+    };
+    let entry = oxide_fw_jshost::EntryRef {
+        kind: op_kind.to_string(),
+        module: String::new(),
+        export: String::new(),
+    };
+    let mut stream = match pool.call(entry, req).await {
+        Ok(s) => s,
+        Err(e) => return fail(format!("{} {}", e.0.code, e.0.message)),
+    };
+    let bytes = match stream.collect().await {
+        Ok(b) => b,
+        Err(e) => return fail(format!("{} {}", e.0.code, e.0.message)),
+    };
+    let v: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(e) => return fail(format!("worker returned invalid JSON: {e}")),
+    };
+    if let Some(err) = v.get("__oxide_error").and_then(|x| x.as_str()) {
+        return fail(err.to_string());
+    }
+    let js = match v.get("js").and_then(|x| x.as_str()) {
+        Some(js) => js.to_string(),
+        None => return fail("compile op returned no `js` field".into()),
+    };
+    // HMR boundary. The lang is deliberately `"ts"` (NOT the file's own
+    // extension): the boundary picks the accept shape by lang, and for
+    // these frameworks the correct shape is the generic self-accept — the
+    // in-place update is driven by the boot runtime's re-render hook, not
+    // by React Refresh. Passing the real extension would emit the
+    // `__oxide_refresh(mod)` accept, which falls back to `location.reload()`
+    // without a React Refresh runtime — a full reload on every Solid edit.
+    let path_for_compiler = format!("src/{rel_path}");
+    let with_hmr = inject_hmr_boundary(&js, &path_for_compiler, "ts").unwrap_or(js);
+    let rewritten = rewrite_imports(
+        &with_hmr,
+        &state.rewrite_map,
+        Some(rel_path),
+        Some(&state.root.join("src")),
+    );
+    let preamble = hot_preamble(state, &format!("/src/{rel_path}"));
+    let out = format!("{preamble}{rewritten}");
+    OxideResponse::new(200, out)
+        .with_header("content-type", "text/javascript; charset=utf-8")
+        .with_header("cache-control", "no-cache")
+}
+
+/// The per-module preamble: hot runtime import + `import.meta.hot` handle.
+/// Shared by [`serve_source_file`] and [`serve_pool_compiled_module`].
+fn hot_preamble(state: &EsmDevState, url: &str) -> String {
+    let hot_url = state
+        .rewrite_map
+        .get("@oxide-fw/core/client/hot")
+        .cloned()
+        .unwrap_or_else(|| "@oxide-fw/core/client/hot".to_string());
+    let url_literal = format!("{url:?}");
+    format!(
+        "import {hot_url:?};\n\
+         if (!import.meta.hot && globalThis.__oxide_hmr__) {{\n\
+           import.meta.hot = globalThis.__oxide_hmr__.createHotContext({url_literal});\n\
+         }}\n"
+    )
 }
 
 // --- Manifest ------------------------------------------------------------
@@ -201,6 +381,7 @@ pub fn generate_esm_boot_entry(
     root: &Path,
     components: &BTreeMap<String, String>,
     islands: &BTreeMap<String, String>,
+    framework: &str,
 ) -> anyhow::Result<PathBuf> {
     let out = root.join(BOOT_ENTRY_PATH);
     if let Some(parent) = out.parent() {
@@ -239,17 +420,32 @@ pub fn generate_esm_boot_entry(
         src.push_str(&format!("{url:?}"));
         src.push_str(";\n");
     }
-    // Actually boot the client. The static imports above only register the
-    // modules; hydration, router attach, and the HMR WebSocket all live in
-    // `bootWithRouter`. Without this call the page renders SSR-only and no
-    // `connectHmr()` runs — symptoms: islands don't hydrate, edits don't
-    // reach the page, and the ONLY WebSocket is the server's broken inline
-    // fallback (which checks `m.type` on a MessageEvent that carries
-    // `m.data`).
-    if let Some(adapter_url) = lookup.get("@oxide-fw/react") {
-        src.push_str(&format!(
-            "import {{ clientAdapter }} from {adapter_url:?};\n"
-        ));
+    // Wire the CONFIGURED framework's client adapter. The previous hard-
+    // coded `@oxide-fw/react` lookup meant a Vue/Solid/Svelte project booted
+    // with `__adapter = undefined` — no `bootWithRouter`, no hydration, no
+    // HMR WebSocket, no `adapter.update`: the page rendered SSR-only forever
+    // and every module-update frame was dropped on the floor. Fall back to
+    // whichever framework package actually ships exports, so a mis-detected
+    // config degrades to a working page instead of a blank one.
+    let framework_candidates: [&str; 4] = ["react", "vue", "solid", "svelte"];
+    let adapter_specifier = (if framework_candidates.contains(&framework) {
+        Some(format!("@oxide-fw/{framework}"))
+    } else {
+        None
+    })
+    .filter(|spec| lookup.contains_key(spec.as_str()))
+    .or_else(|| {
+        framework_candidates
+            .iter()
+            .map(|f| format!("@oxide-fw/{f}"))
+            .find(|spec| lookup.contains_key(spec.as_str()))
+    });
+    if let Some(adapter_spec) = adapter_specifier {
+        if let Some(adapter_url) = lookup.get(adapter_spec.as_str()) {
+            src.push_str(&format!(
+                "import {{ clientAdapter }} from {adapter_url:?};\n"
+            ));
+        }
     }
     let boot_fn_url = lookup
         .get("@oxide-fw/core/client/boot")
@@ -282,8 +478,17 @@ pub fn generate_esm_boot_entry(
     src.push_str("if (typeof window !== 'undefined') {\n");
     src.push_str("  const __adapter = typeof clientAdapter !== 'undefined' ? clientAdapter : undefined;\n");
     src.push_str("  if (__adapter) {\n");
+    // The chunk loader must prefer the HMR runtime's FRESH module record:
+    // after a `module-update` re-imported a route module, the re-render
+    // (`adapter.update` → `componentFor` → `loadChunk(componentUrl)`) has to
+    // mount the NEW component — a plain `import(chunk)` on the un-busted URL
+    // hits the browser ESM cache and hands back the STALE instance, so the
+    // page re-renders the old tree and the edit appears to do nothing.
+    // (boot.ts's ensureInstalled loader has the same check; this generated
+    // entry is the loader a real ESM dev page actually uses.)
     src.push_str("    window.__oxideRegisterAdapter(__adapter, async (chunk) => {\n");
-    src.push_str("      return __modules[chunk] ?? (await import(chunk));\n");
+    src.push_str("      const hmr = globalThis.__oxide_hmr__;\n");
+    src.push_str("      return __modules[chunk] ?? hmr?.getFreshModule?.(chunk) ?? (await import(chunk));\n");
     src.push_str("    });\n");
     src.push_str("    fetch('/@esm-manifest.json')\n");
     src.push_str("      .then(r => r.ok ? r.json() : undefined)\n");
@@ -582,6 +787,12 @@ fn rewrite_imports(
 /// §1.3: true when `spec` is a RELATIVE js/ts/tsx/jsx/mjs import — the
 /// kind that stays verbatim in the served module and needs a `?t=<mtime>`
 /// query so browser cache-busting works when the target changes.
+/// `.vue`/`.svelte` count too: a page module compiled by the tooling pool
+/// keeps its relative SFC imports verbatim, and when a CHILD component
+/// changes the re-imported page module must fetch the child with a fresh
+/// query or the browser's ESM cache serves the stale instance. The ESM
+/// handler strips the query before dispatching (path_of), so the URLs are
+/// served by the same pool-compile path.
 fn is_js_specifier(spec: &str) -> bool {
     if !(spec.starts_with("./") || spec.starts_with("../")) {
         return false;
@@ -592,6 +803,8 @@ fn is_js_specifier(spec: &str) -> bool {
         || lower.ends_with(".js")
         || lower.ends_with(".jsx")
         || lower.ends_with(".mjs")
+        || lower.ends_with(".vue")
+        || lower.ends_with(".svelte")
 }
 
 /// §1.3: resolve a relative js specifier to `/src/<rel>?t=<mtime>`. The
@@ -700,39 +913,49 @@ fn is_server_specifier(spec: &str) -> bool {
 /// Serve a request under `/src/`, `/@prebundle/`, `/@boot/`, or
 /// `/@esm-error/`. Returns `None` for anything else so the caller falls
 /// through to the normal pipeline.
-pub fn handle_esm_request(
-    state: &EsmDevState,
-    req: &OxideRequest,
-) -> Option<OxideResponse> {
+///
+/// `/src/*` requests for frameworks whose client transform lives in the
+/// Node tooling pool (`.vue`, `.svelte`, Solid `.tsx`) come back as
+/// [`EsmAction::PoolModule`] — the caller (the dispatch closure, which is
+/// async) then awaits [`serve_pool_compiled_module`]. Every other match is
+/// [`EsmAction::Ready`] and can be served synchronously as before.
+pub fn handle_esm_request(state: &EsmDevState, req: &OxideRequest) -> Option<EsmAction> {
     let path = path_of(&req.url);
     if let Some(rest) = path.strip_prefix("/src/") {
-        return Some(serve_source_file(state, rest));
+        let clean = rest.split('?').next().unwrap_or(rest);
+        if needs_pool_compile(state, clean) {
+            return Some(EsmAction::PoolModule(clean.to_string()));
+        }
+        return Some(EsmAction::Ready(serve_source_file(state, clean)));
     }
     if let Some(rest) = path.strip_prefix("/@prebundle/") {
-        return Some(serve_prebundle(state, rest));
+        return Some(EsmAction::Ready(serve_prebundle(state, rest)));
     }
     if let Some(rest) = path.strip_prefix(SERVER_FN_URL_PREFIX) {
-        return Some(serve_server_fn_module(state, rest));
+        return Some(EsmAction::Ready(serve_server_fn_module(state, rest)));
     }
     if let Some(rest) = path.strip_prefix(CSS_URL_PREFIX) {
-        return Some(serve_css_module(state, rest));
+        return Some(EsmAction::Ready(serve_css_module(state, rest)));
     }
     if path == BOOT_SCRIPT_URL {
-        return Some(serve_boot_entry(state));
+        return Some(EsmAction::Ready(serve_boot_entry(state)));
     }
     if path == "/@esm-manifest.json" {
         let manifest_path = state.root.join(MANIFEST_PATH);
         if let Ok(bytes) = std::fs::read(&manifest_path) {
-            return Some(
+            return Some(EsmAction::Ready(
                 OxideResponse::new(200, bytes)
                     .with_header("content-type", "application/json")
                     .with_header("cache-control", "no-cache"),
-            );
+            ));
         }
-        return Some(OxideResponse::new(404, "esm manifest not generated"));
+        return Some(EsmAction::Ready(OxideResponse::new(
+            404,
+            "esm manifest not generated",
+        )));
     }
     if let Some(encoded) = path.strip_prefix("/@esm-error/") {
-        return Some(serve_esm_error(encoded));
+        return Some(EsmAction::Ready(serve_esm_error(encoded)));
     }
     None
 }
@@ -817,12 +1040,6 @@ fn serve_source_file(state: &EsmDevState, rel_path: &str) -> OxideResponse {
     // BEFORE the module body runs (the injected accept call reads it at top
     // level). ESM hoists imports, so the hot.ts import evaluates first, then
     // this file's top-level statements run.
-    let hot_url = state
-        .rewrite_map
-        .get("@oxide-fw/core/client/hot")
-        .cloned()
-        .unwrap_or_else(|| "@oxide-fw/core/client/hot".to_string());
-    let url_literal = format!("{:?}", format!("/src/{rel_path}"));
     // §3.4: `import.meta.env` — Vite-parity. Read fresh per request so the
     // watcher's `.env*` branch only needs to publish FullReload (no
     // cross-scope RwLock). `oxide_fw_config::load` is ~1ms on this
@@ -842,11 +1059,9 @@ fn serve_source_file(state: &EsmDevState, rel_path: &str) -> OxideResponse {
         serde_json::to_string(&obj).unwrap_or_else(|_| "{}".to_string())
     };
     let preamble = format!(
-        "import {hot_url:?};\n\
-         Object.assign((import.meta.env || (import.meta.env = {{}})), {env_json});\n\
-         if (!import.meta.hot && globalThis.__oxide_hmr__) {{\n\
-           import.meta.hot = globalThis.__oxide_hmr__.createHotContext({url_literal});\n\
-         }}\n"
+        "{}\
+         Object.assign((import.meta.env || (import.meta.env = {{}})), {env_json});\n",
+        hot_preamble(state, &format!("/src/{rel_path}")),
     );
     let out = format!("{preamble}{rewritten}");
     OxideResponse::new(200, out)
@@ -1205,6 +1420,7 @@ mod integration_tests {
             root: tmp.to_path_buf(),
             jsx_import_source: None,
             rewrite_map: Arc::new(map),
+            framework: "react".to_string(),
         }
     }
 
@@ -1423,7 +1639,8 @@ mod integration_tests {
             "/src/routes/page.tsx".to_string(),
         );
         let islands = BTreeMap::new();
-        let boot_path = generate_esm_boot_entry(tmp.path(), &components, &islands).unwrap();
+        let boot_path =
+            generate_esm_boot_entry(tmp.path(), &components, &islands, "react").unwrap();
         let body = std::fs::read_to_string(&boot_path).unwrap();
         // The boot file must import the prebundle URL, not the bare specifier
         // — the browser's native resolver cannot see node_modules.
@@ -1439,5 +1656,105 @@ mod integration_tests {
             body.contains("/src/routes/page.tsx"),
             "boot entry should import the page: {body}"
         );
+    }
+
+    #[test]
+    fn boot_entry_wires_the_configured_framework_adapter() {
+        // The ESM boot entry used to hard-code `@oxide-fw/react` — a Vue or
+        // Solid or Svelte project got `__adapter = undefined`, no
+        // bootWithRouter, no HMR socket. The entry must import
+        // `clientAdapter` from the CONFIGURED framework's package.
+        let tmp = tempfile::tempdir().unwrap();
+        let packages = tmp.path().join("packages");
+        // The boot entry's hot-runtime import requires @oxide-fw/core's
+        // `./client/hot` export (same minimal package the hot-URL test
+        // writes).
+        let core = packages.join("core");
+        std::fs::create_dir_all(&core).unwrap();
+        std::fs::write(
+            core.join("package.json"),
+            r#"{
+                "name": "@oxide-fw/core",
+                "exports": {
+                    "./client/hot": { "default": "./dist/client-hot.js" },
+                    "./client": { "default": "./dist/client.js" },
+                    "./client/boot": { "default": "./dist/client-boot.js" }
+                }
+            }"#,
+        )
+        .unwrap();
+        for fw in ["vue", "solid", "svelte"] {
+            let pkg = packages.join(fw);
+            std::fs::create_dir_all(&pkg).unwrap();
+            std::fs::write(
+                pkg.join("package.json"),
+                format!(
+                    r#"{{ "name": "@oxide-fw/{fw}", "exports": {{ ".": {{ "default": "./dist/index.js" }} }} }}"#
+                ),
+            )
+            .unwrap();
+        }
+        let components = BTreeMap::new();
+        let islands = BTreeMap::new();
+        for fw in ["vue", "solid", "svelte"] {
+            let boot_path =
+                generate_esm_boot_entry(tmp.path(), &components, &islands, fw).unwrap();
+            let body = std::fs::read_to_string(&boot_path).unwrap();
+            let expected = format!("from \"/@prebundle/@oxide-fw/{fw}/dist/index.js\"");
+            assert!(
+                body.contains(&expected),
+                "boot entry for {fw} must import its own clientAdapter (expected {expected}): {body}"
+            );
+            for other in ["react", "vue", "solid", "svelte"] {
+                if other == fw {
+                    continue;
+                }
+                assert!(
+                    !body.contains(&format!("@oxide-fw/{other}/dist/index.js")),
+                    "boot entry for {fw} must not import {other}'s adapter: {body}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn needs_pool_compile_matches_sfc_and_solid_tsx_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut map = BTreeMap::new();
+        map.insert(
+            "@oxide-fw/core/client/hot".to_string(),
+            "/@prebundle/@oxide-fw/core/dist/client-hot.js".to_string(),
+        );
+        let vue_state = EsmDevState {
+            root: tmp.path().to_path_buf(),
+            jsx_import_source: None,
+            rewrite_map: Arc::new(map.clone()),
+            framework: "vue".to_string(),
+        };
+        let solid_state = EsmDevState {
+            root: tmp.path().to_path_buf(),
+            jsx_import_source: Some("@solidjs/web".to_string()),
+            rewrite_map: Arc::new(map.clone()),
+            framework: "solid".to_string(),
+        };
+        let react_state = EsmDevState {
+            root: tmp.path().to_path_buf(),
+            jsx_import_source: None,
+            rewrite_map: Arc::new(map),
+            framework: "react".to_string(),
+        };
+        assert!(needs_pool_compile(&vue_state, "routes/index/page.vue"));
+        assert!(needs_pool_compile(&vue_state, "routes/index/page.svelte"));
+        assert!(!needs_pool_compile(&vue_state, "routes/index/page.tsx"));
+        assert!(needs_pool_compile(&solid_state, "routes/index/page.tsx"));
+        assert!(!needs_pool_compile(&solid_state, "lib/util.ts"));
+        assert!(!needs_pool_compile(&react_state, "routes/index/page.tsx"));
+        // SFC compilation is keyed by EXTENSION, not by the configured
+        // framework (crates/compiler/src/framework.rs routes `.vue`/`.svelte`
+        // through the tooling pool by design — there is no native SFC
+        // parser). A React project that imports a `.vue` island still needs
+        // the pool compile, so the vue/svelte arms are framework-agnostic.
+        assert!(needs_pool_compile(&react_state, "routes/index/page.vue"));
+        assert!(needs_pool_compile(&react_state, "routes/index/page.svelte"));
     }
 }
