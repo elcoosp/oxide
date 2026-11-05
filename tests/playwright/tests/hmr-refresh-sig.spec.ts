@@ -47,12 +47,12 @@ const PORT = 3120
 const HMR_AVAILABLE = existsSync(join(smokeRoot, 'node_modules', 'react-refresh'))
 const FIXTURE = join(smokeRoot, 'src', 'components', 'hmr-shape-target.tsx')
 
-const PRISTINE = `import { useState } from 'react'\n\n// §1.2 acceptance fixture. Deliberately minimal: ONE hook (useState), then\n// the test edits the file to add a SECOND hook (useEffect). Before §1.2's\n// real $RefreshSig$, React Refresh could not detect this shape change, so\n// it would do an in-place update and PRESERVE the counter (state stays 3\n// after 3 clicks). With $RefreshSig$ recording the hook sequence, the\n// runtime sees "useState → useState, useEffect" and REMOUNTS — counter\n// resets to 0.\nexport default function HmrShapeTarget() {\n  const [count, setCount] = useState(0)\n  return (\n    <>\n      <h1 data-shape-target="">SHAPE-ORIGINAL</h1>\n      <button data-shape-counter="" onClick={() => setCount((c) => c + 1)}>{count}</button>\n    </>\n  )\n}\n`
+const PRISTINE = `import { useState } from 'react'\n\n// §1.2 acceptance fixture. Deliberately minimal: ONE hook (useState), then\n// the test edits the file to add a SECOND hook (useEffect). Before §1.2's\n// real $RefreshSig$, React Refresh could not detect this shape change, so\n// it would do an in-place update and PRESERVE the counter (state stays 3\n// after 3 clicks). With $RefreshSig$ recording the hook sequence, the\n// runtime sees "useState → useState, useEffect" and REMOUNTS — counter\n// resets to 0.\nexport default function HmrShapeTarget() {\n  const [count, setCount] = useState(0)\n  return (\n    <>\n      <p data-shape-target="">SHAPE-ORIGINAL</p>\n      <button data-shape-counter="" onClick={() => setCount((c) => c + 1)}>{count}</button>\n    </>\n  )\n}\n`
 
 // The edited version adds `useEffect` AFTER `useState` — hook order in the
 // runtime's `fullKey` is ["useState", "useEffect"]. Different from the
 // pristine's ["useState"], so React Refresh must remount.
-const PATCHED = `import { useEffect, useState } from 'react'\n\nexport default function HmrShapeTarget() {\n  const [count, setCount] = useState(0)\n  useEffect(() => { /* shape-changing hook added */ }, [])\n  return (\n    <>\n      <h1 data-shape-target="">SHAPE-PATCHED</h1>\n      <button data-shape-counter="" onClick={() => setCount((c) => c + 1)}>{count}</button>\n    </>\n  )\n}\n`
+const PATCHED = `import { useEffect, useState } from 'react'\n\nexport default function HmrShapeTarget() {\n  const [count, setCount] = useState(0)\n  useEffect(() => { /* shape-changing hook added */ }, [])\n  return (\n    <>\n      <p data-shape-target="">SHAPE-PATCHED</p>\n      <button data-shape-counter="" onClick={() => setCount((c) => c + 1)}>{count}</button>\n    </>\n  )\n}\n`
 
 test.use({ baseURL: `http://127.0.0.1:${PORT}` })
 test.describe.configure({ retries: 0, timeout: 60_000 })
@@ -129,20 +129,6 @@ test.afterEach(async () => {
 test('adding a hook forces remount, not stale in-place update (Tier 1.2)', async ({ page }) => {
   test.setTimeout(60_000)
   test.skip(!HMR_AVAILABLE, 'react-refresh not installed in smoke-app')
-  // §1.2 emit temporarily disabled in the compiler — see
-  // `crates/compiler/src/oxc_backend.rs::inject_react_refresh`'s
-  // EMIT TEMPORARILY DISABLED note. The walker + runtime hook ship;
-  // the emit is a one-line re-enable when the interaction with the
-  // watcher's rebuild-burst path is diagnosed. Test flips to green
-  // the moment the emit comes back.
-  test.skip(true, '§1.2 emit temporarily disabled — see oxc_backend.rs')
-  // §1.2 emit temporarily disabled in the compiler — see
-  // `crates/compiler/src/oxc_backend.rs::inject_react_refresh`'s
-  // EMIT TEMPORARILY DISABLED note. The walker + runtime hook ship;
-  // the emit is a one-line re-enable when the interaction with the
-  // watcher's rebuild-burst path is diagnosed. Test flips to green
-  // the moment the emit comes back.
-  test.skip(true, '§1.2 emit temporarily disabled — see oxc_backend.rs')
 
   try {
     await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 })
@@ -196,10 +182,10 @@ test('adding a hook forces remount, not stale in-place update (Tier 1.2)', async
     // signature mismatch the runtime must act on.
     writeFileSync(FIXTURE, PATCHED, 'utf8')
 
-    // The h1 text changes (SHAPE-ORIGINAL → SHAPE-PATCHED) — proves the
+    // The target text changes (SHAPE-ORIGINAL → SHAPE-PATCHED) — proves the
     // edit propagated. Either outcome (remount OR in-place) would show the
-    // new h1; the counter assertion below is what discriminates.
-    await expect(page.locator('h1[data-shape-target]')).toHaveText('SHAPE-PATCHED', {
+    // new text; the counter assertion below is what discriminates.
+    await expect(page.locator('p[data-shape-target]')).toHaveText('SHAPE-PATCHED', {
       timeout: 15_000,
     })
 
