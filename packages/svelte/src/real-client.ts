@@ -48,6 +48,12 @@ async function load(): Promise<SvelteClientLike | undefined> {
   } catch {
     // Optional peer not installed → the IR fallback owns the page.
     return undefined
+  } finally {
+    // §3.10 parity with hydrate-island-real.ts: a single transient failure
+    // (dev-server restart, HMR outage) must not pin the page path to the IR
+    // fallback for the rest of the session. A genuinely absent dep still
+    // fails fast — the loader caches the failed specifier.
+    if (!cached) attempted = false
   }
 }
 
