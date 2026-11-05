@@ -102,6 +102,7 @@ function install(): void {
       performReactRefresh?: () => void
       injectIntoGlobalHook?: (w: unknown) => void
       register?: (t: unknown, id: string) => void
+      createSignatureFunctionForTransform?: () => unknown
     }
   }
   if (g.__oxide_hmr__) return // idempotent
@@ -453,12 +454,14 @@ function install(): void {
         performReactRefresh?: () => void
         injectIntoGlobalHook?: (w: unknown) => void
         register?: (t: unknown, id: string) => void
+        createSignatureFunctionForTransform?: () => unknown
       }>)
         .then((mod) => {
           type RuntimeShape = {
             performReactRefresh?: () => void
             injectIntoGlobalHook?: (w: unknown) => void
             register?: (t: unknown, id: string) => void
+            createSignatureFunctionForTransform?: () => unknown
           }
           const rt = (mod.default ?? mod) as RuntimeShape
           // `injectIntoGlobalHook` MUST run before any `register()` call,
