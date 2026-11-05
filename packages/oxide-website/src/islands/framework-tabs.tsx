@@ -33,6 +33,10 @@ export default function FrameworkTabsBootstrap() {
         const snippets = parseSnippets(el)
         if (snippets) {
           el.classList.add('fw-code-ready')
+          // Drop the SSR placeholder children: createPortal APPENDS into the
+          // target, so without this the static fallback stays stacked above
+          // the interactive tabs.
+          el.textContent = ''
           return { el, snippets }
         }
         return null
