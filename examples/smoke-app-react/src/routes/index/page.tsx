@@ -10,6 +10,7 @@ import { greet } from '../../greeting.server.ts'
 const greetingFnId = greet.id
 import Counter from '../../islands/counter.tsx'
 import HmrTarget from '../../components/hmr-target.tsx'
+import HmrShapeTarget from '../../components/hmr-shape-target.tsx'
 import './page.css'
 
 export default function Page() {
@@ -17,6 +18,7 @@ export default function Page() {
     <main data-greeting-fn={greetingFnId}>
       <h1>Home</h1>
       <HmrTarget />
+      <HmrShapeTarget />
       <Island component="Counter" chunk="Counter" props={{ initial: 3 }}>
         <Counter initial={3} />
       </Island>
