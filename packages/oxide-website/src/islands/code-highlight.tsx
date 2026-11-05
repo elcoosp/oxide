@@ -18,6 +18,10 @@ import { githubDark } from 'rangi/themes'
 const LANGS = ['tsx','ts','jsx','js','bash','sh','css','html','json','rust','vue','svelte','shell','markdown'] as const
 const ACTIVE = 'code-hl-active'
 
+// Timestamp until which observer-reported mutations are ignored because they
+// were caused by highlight() itself (see the observer below).
+let selfWriteUntil = 0
+
 function normalizeLang(raw: string): string {
   const l = raw.toLowerCase()
   if (l === 'solid') return 'tsx'
@@ -37,6 +41,10 @@ function highlight(pre: HTMLElement) {
     const parsed = new DOMParser().parseFromString(html, 'text/html')
     const shj = parsed.querySelector('[class*="shj-lang-"]')
     if (shj) {
+      // Our own write echoes back through the MutationObserver below as a
+      // childList mutation; without this window the observer would re-run
+      // highlight() on it forever (100% CPU, self-sustaining loop).
+      selfWriteUntil = Date.now() + 100
       code.innerHTML = shj.innerHTML
       const bg = (shj as HTMLElement).style.backgroundColor
       if (bg) pre.style.backgroundColor = bg
@@ -58,6 +66,8 @@ export default function CodeHighlightBootstrap() {
     scan()
 
     const obs = new MutationObserver((mutations) => {
+      // Skip the mutations highlight() itself just caused (see selfWriteUntil).
+      if (Date.now() < selfWriteUntil) return
       for (const m of mutations) {
         if (m.type === 'childList' || m.type === 'characterData') {
           let node = m.target as Node | null
