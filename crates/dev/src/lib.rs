@@ -38,9 +38,12 @@ pub struct Watcher {
 }
 
 /// PERF-11: a `notify` watcher plus the path buffer its callback fills.
+/// The watcher handle is shared so `poll_notify` can add watches for
+/// directories that appear while the server is running (§1.3).
 struct NotifyBackend {
-    /// Held to keep the OS watch alive for the `Watcher`'s lifetime.
-    _watcher: notify::RecommendedWatcher,
+    /// Adds watches for directories created after boot; also owns the OS
+    /// watch for the backend's lifetime.
+    watcher: std::sync::Arc<std::sync::Mutex<notify::RecommendedWatcher>>,
     rx: std::sync::mpsc::Receiver<PathBuf>,
 }
 
@@ -58,6 +61,40 @@ impl Watcher {
             debounce: Duration::from_millis(30),
             backend: None,
         }
+    }
+
+    /// §1.3 (boot baseline): snapshot every watched file's content hash into
+    /// `seen` BEFORE the event loop's first poll. With the notify backend the
+    /// kernel only reports paths that are TOUCHED — but on boot the dev
+    /// server itself (workspace-package rebuild, prebundle write-out) and
+    /// external processes (editors, sync daemons) touch dozens of
+    /// pre-existing files. With an empty `seen`, every one of those looked
+    /// like `Created` and fanned out into module updates / route-data
+    /// updates / full reloads for files nobody edited — the "boot storm"
+    /// that made the first seconds after `oxide dev` nondeterministic for
+    /// any client that connected during it. Seeding makes the CURRENT
+    /// on-disk state the baseline: a touched-but-unchanged file diffs to no
+    /// event; a real edit still diffs to `Modified`; a genuinely new file
+    /// still diffs to `Created`.
+    ///
+    /// Under `node_modules` the seed is deliberately NARROW: only
+    /// `package.json` entries (the single node_modules path class whose
+    /// events survive the CLI's HMR pre-filter — everything else under
+    /// node_modules is dropped there). Hashing the whole dependency tree is
+    /// both wasteful and actively harmful: walking `.pnpm`'s store paths
+    /// costs seconds on a cold cache, and the watcher loop only starts
+    /// AFTER the seed — a slow seed delays change detection for every early
+    /// edit. The top-level links (`node_modules/<pkg>`,
+    /// `node_modules/@scope/<pkg>`) are hashed THROUGH the symlink so the
+    /// inotify watch-add race (which reports those entries as spurious
+    /// `Created` on the first post-boot ticks) diffs against reality.
+    pub fn seed_seen(&self, seen: &mut std::collections::BTreeSet<(PathBuf, String)>) {
+        let mut current: BTreeMap<PathBuf, String> = BTreeMap::new();
+        for root in &self.roots {
+            walk_root(root, &mut current);
+            seed_node_modules_pkg_jsons(root, &mut current);
+        }
+        seen.extend(current);
     }
 
     /// PERF-11: a `Watcher` backed by the OS-native `notify` watcher. Falls
@@ -80,7 +117,7 @@ impl Watcher {
     fn try_notify(roots: &[PathBuf]) -> Result<NotifyBackend> {
         use notify::{RecursiveMode, Watcher as _};
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             if let Ok(ev) = res {
                 for p in ev.paths {
                     let _ = tx.send(p);
@@ -88,15 +125,25 @@ impl Watcher {
             }
         })
         .map_err(|e| crate::err("DEV-NOTIFY", format!("create watcher: {e}")))?;
+        let watcher = std::sync::Arc::new(std::sync::Mutex::new(watcher));
         for root in roots {
-            watcher
-                .watch(root, RecursiveMode::Recursive)
-                .map_err(|e| crate::err("DEV-NOTIFY", format!("watch {}: {e}", root.display())))?;
+            // §1.3 (watch budget): a plain `RecursiveMode::Recursive` watch
+            // on the app root registers one inotify watch per directory —
+            // including every directory under `node_modules` (~10k dirs in
+            // a pnpm store) — which blows the kernel's per-user watch cap
+            // (`fs.inotify.max_user_watches`, 8192 here) whenever browsers
+            // and other dev servers hold watches too. Once the cap is hit,
+            // watch registration fails MID-TREE and events for the
+            // unregistered subtrees are silently lost — the watcher appears
+            // to work for some files and never fires for others, depending
+            // on how many watches other processes happened to hold at
+            // boot. Prune instead: descend everywhere EXCEPT the pnpm
+            // store's bulk, and cap the node_modules descent at the
+            // top-level package dirs (whose direct `package.json` children
+            // are the §3.3 prebundle-invalidation signal).
+            add_pruned_watches(&watcher, root, RecursiveMode::NonRecursive, 0)?;
         }
-        Ok(NotifyBackend {
-            _watcher: watcher,
-            rx,
-        })
+        Ok(NotifyBackend { watcher, rx })
     }
 
     /// Poll-based snapshot diffing (notify backend slots in behind this API).
@@ -179,33 +226,130 @@ impl Watcher {
         }
         let mut events = Vec::new();
         for path in touched {
-            // Skip editor temp files / directories.
-            if path.is_dir() {
-                continue;
-            }
+            // Skip editor temp files.
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if name.ends_with('~') || name.starts_with('.') && name.ends_with(".swp") {
                 continue;
             }
-            let old = seen.iter().find(|(p, _)| p == &path).cloned();
-            match (old, hash_file(&path)) {
-                (Some((_, old_hash)), Some(new_hash)) if old_hash != new_hash => {
-                    seen.remove(&(path.clone(), old_hash.clone()));
-                    seen.insert((path.clone(), new_hash));
-                    events.push(FileEvent::Modified(path));
+            if path.is_dir() {
+                // §1.3 (self-healing watch): the pruned watch tree registers
+                // each directory individually, so a directory CREATED after
+                // boot is not watched yet. Register it now and scan its
+                // direct children — a `mkdir` immediately followed by file
+                // writes (the §3.3 prebundle test, a new route folder) would
+                // otherwise lose every event inside it to the watch-add
+                // race. The children hash-diff against `seen` like any other
+                // first sighting: new files emit `Created`.
+                let _ = add_watch_dir(&backend.watcher, &path);
+                if let Ok(children) = std::fs::read_dir(&path) {
+                    for child in children.flatten() {
+                        let cp = child.path();
+                        if cp.is_dir() {
+                            continue;
+                        }
+                        emit_diff(&cp, seen, &mut events);
+                    }
                 }
-                (None, Some(new_hash)) => {
-                    seen.insert((path.clone(), new_hash));
-                    events.push(FileEvent::Created(path));
-                }
-                (Some((_, old_hash)), None) => {
-                    seen.remove(&(path.clone(), old_hash));
-                    events.push(FileEvent::Removed(path));
-                }
-                _ => {}
+                continue;
             }
+            emit_diff(&path, seen, &mut events);
         }
         Ok(events)
+    }
+}
+
+/// §1.3: directories whose subtree is NEVER watched. `.pnpm` alone holds
+/// thousands of directories in a pnpm workspace — the whole point of the
+/// pruned watch is to stay far below `fs.inotify.max_user_watches`.
+const WATCH_PRUNE_DIRS: &[&str] = &[".git", "target", ".oxide", ".pnpm", ".bin", ".cache"];
+
+/// §1.3: register a single non-recursive watch on `dir`. Best-effort: a
+/// registration racing the directory's deletion fails and is ignored.
+fn add_watch_dir(
+    watcher: &std::sync::Arc<std::sync::Mutex<notify::RecommendedWatcher>>,
+    dir: &Path,
+) -> Result<()> {
+    use notify::{RecursiveMode, Watcher as _};
+    let mut w = watcher
+        .lock()
+        .map_err(|_| crate::err("DEV-NOTIFY", "watcher lock poisoned"))?;
+    w.watch(dir, RecursiveMode::NonRecursive)
+        .map_err(|e| crate::err("DEV-NOTIFY", format!("watch {}: {e}", dir.display())))
+}
+
+/// §1.3 (watch budget): walk `root` and register a NON-recursive inotify
+/// watch per directory, pruning the expensive subtree (see
+/// [`WATCH_PRUNE_DIRS`]) and capping the `node_modules` descent at its
+/// top-level package directories. A plain `RecursiveMode::Recursive` watch
+/// spends one watch per directory under node_modules (~10k in a pnpm
+/// workspace) and exhausts `fs.inotify.max_user_watches` nondeterministically
+/// — the failure mode was a watcher that silently stopped firing for
+/// whichever subtrees lost the registration race.
+fn add_pruned_watches(
+    watcher: &std::sync::Arc<std::sync::Mutex<notify::RecommendedWatcher>>,
+    root: &Path,
+    _mode: notify::RecursiveMode,
+    depth: u8,
+) -> Result<()> {
+    const NODE_MODULES_MAX_DEPTH: u8 = 2;
+    let _ = add_watch_dir(watcher, root);
+    let Ok(md) = std::fs::metadata(root) else {
+        return Ok(());
+    };
+    if !md.is_dir() {
+        return Ok(());
+    }
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        if WATCH_PRUNE_DIRS.contains(&name) {
+            continue;
+        }
+        let Ok(emd) = std::fs::symlink_metadata(&p) else { continue };
+        if emd.is_symlink() {
+            // Symlinked dirs (pnpm links into the store / workspace
+            // packages): the LINK's parent is watched, so creations of the
+            // link itself are seen; the target's content is covered by its
+            // own watch root (workspace packages) or does not need events
+            // (store internals).
+            continue;
+        }
+        if !emd.is_dir() {
+            continue;
+        }
+        let under_nm = root.file_name().and_then(|n| n.to_str()) == Some("node_modules");
+        let next_depth = if under_nm { depth + 1 } else { depth };
+        if under_nm && next_depth > NODE_MODULES_MAX_DEPTH {
+            continue;
+        }
+        let _ = add_pruned_watches(watcher, &p, _mode, next_depth);
+    }
+    Ok(())
+}
+
+/// §1.3: hash-diff one touched file against `seen`, emitting the event kind
+/// the diff implies and updating `seen` in place. Shared by the plain
+/// touched-path path and the new-directory child scan.
+fn emit_diff(path: &Path, seen: &mut BTreeSet<(PathBuf, String)>, events: &mut Vec<FileEvent>) {
+    let old = seen.iter().find(|(p, _)| p == path).cloned();
+    match (old, hash_file(path)) {
+        (Some((_, old_hash)), Some(new_hash)) if old_hash != new_hash => {
+            seen.remove(&(path.to_path_buf(), old_hash.clone()));
+            seen.insert((path.to_path_buf(), new_hash));
+            events.push(FileEvent::Modified(path.to_path_buf()));
+        }
+        (None, Some(new_hash)) => {
+            seen.insert((path.to_path_buf(), new_hash));
+            events.push(FileEvent::Created(path.to_path_buf()));
+        }
+        (Some((_, old_hash)), None) => {
+            seen.remove(&(path.to_path_buf(), old_hash));
+            events.push(FileEvent::Removed(path.to_path_buf()));
+        }
+        _ => {}
     }
 }
 
@@ -520,6 +664,47 @@ fn walk_root(root: &Path, out: &mut BTreeMap<PathBuf, String>) {
         {
             out.insert(p, hash);
         }
+    }
+}
+
+/// §1.3: seed the dependency tree's `package.json` entries — the ONLY
+/// node_modules path class whose events survive the CLI's HMR pre-filter
+/// (see `seed_seen`'s doc for why the rest of node_modules stays unseeded).
+/// Top-level `node_modules/<pkg>` and `node_modules/@scope/<pkg>` links are
+/// hashed THROUGH the symlink; `.pnpm`/`.bin`/`.oxide` are skipped (a real
+/// install's new store paths are new files — they diff as `Created` and
+/// correctly trigger §3.3 without a baseline).
+fn seed_node_modules_pkg_jsons(root: &Path, out: &mut BTreeMap<PathBuf, String>) {
+    let nm = root.join("node_modules");
+    let Ok(top) = std::fs::read_dir(&nm) else {
+        return;
+    };
+    for entry in top.flatten() {
+        let p = entry.path();
+        let name = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        if name == ".pnpm" || name == ".bin" || name == ".oxide" {
+            continue;
+        }
+        if name.starts_with('@') {
+            // A scope directory (possibly a real dir containing package
+            // links): seed one level deeper.
+            let Ok(pkgs) = std::fs::read_dir(&p) else { continue };
+            for pkg in pkgs.flatten() {
+                seed_pkg_json(&pkg.path(), out);
+            }
+        } else {
+            seed_pkg_json(&p, out);
+        }
+    }
+}
+
+fn seed_pkg_json(pkg_dir: &Path, out: &mut BTreeMap<PathBuf, String>) {
+    let pj = pkg_dir.join("package.json");
+    if let Some(hash) = hash_file(&pj) {
+        out.insert(pj, hash);
     }
 }
 
