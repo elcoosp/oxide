@@ -11,7 +11,7 @@ export default function HmrShapeTarget() {
   const [count, setCount] = useState(0)
   return (
     <>
-      <h1 data-shape-target="">SHAPE-ORIGINAL</h1>
+      <p data-shape-target="">SHAPE-ORIGINAL</p>
       <button data-shape-counter="" onClick={() => setCount((c) => c + 1)}>{count}</button>
     </>
   )
