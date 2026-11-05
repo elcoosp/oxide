@@ -94,7 +94,51 @@ pub fn prebundle_cjs_to_esm(
     let all_names: Vec<String> = packages.to_vec();
     let mut bundled: Vec<String> = Vec::new();
 
+    // Svelte's subpaths must share ONE runtime instance. The `svelte` entry
+    // imports its internal client through RELATIVE paths
+    // (`svelte/src/internal/client/index.js`), never through the bare
+    // specifier `svelte/internal/client`, so the per-package
+    // externalization cannot see the relationship: bundling `svelte`
+    // separately INLINES a second copy of the client runtime. The page
+    // module (compiled with `generate: 'dom'`) imports the standalone
+    // `svelte/internal/client` prebundle — two copies means mount() sets
+    // `component_context` on one module's state while the page's
+    // lifecycle `init()` reads the other's (`null`) and the page falls back
+    // to the IR renderer. A single multi-entry bundle (entries keep their
+    // map-expected filenames, shared internals become one chunk) keeps
+    // exactly one runtime instance across all of them.
+    let svelte_family: Vec<(String, PathBuf)> = resolved
+        .iter()
+        .filter(|(pkg, _)| pkg == "svelte" || pkg.starts_with("svelte/"))
+        .cloned()
+        .collect();
+    if svelte_family.len() > 1 {
+        let externals: Vec<String> = all_names
+            .iter()
+            .filter(|p| !(p.as_str() == "svelte" || p.starts_with("svelte/")))
+            .cloned()
+            .collect();
+        for (pkg, entry) in &svelte_family {
+            if let Err(e) = bundle_family_multi_entry(
+                root,
+                &svelte_family,
+                pkg,
+                entry,
+                out_dir,
+                &externals,
+            ) {
+                failures.push((pkg.clone(), e));
+                continue;
+            }
+            bundled.push(pkg.clone());
+        }
+    }
+
     for (pkg, entry) in &resolved {
+        // The svelte family was already bundled together above.
+        if svelte_family.iter().any(|(p, _)| p == pkg) {
+            continue;
+        }
         // External = every OTHER prebundle package. This makes react-dom-client
         // emit `import React from "react"` (bare, rewritten to
         // `/@prebundle/react.js` by `rewrite_imports` downstream) rather than
@@ -115,6 +159,106 @@ pub fn prebundle_cjs_to_esm(
     Ok(PrebundleResult {
         bundled,
         failures,
+    })
+}
+
+/// Bundle a FAMILY of entries (one framework runtime + its subpaths) in a
+/// single rolldown invocation so shared internals become ONE set of chunks
+/// every entry imports — instead of each single-entry bundle inlining its
+/// own copy. Entry chunks keep the names the prebundle URL map expects
+/// (`sanitized_stem(pkg).js`); shared chunks get rolldown's hashed names and
+/// are referenced relatively, which the browser resolves against the
+/// `/@prebundle/...` URL.
+///
+/// `focus_pkg`/`focus_entry` select which entry's post-processing this call
+/// performs (the CJS named-export augmentation + `__require` rewrite run per
+/// entry chunk; svelte itself is pure ESM, so they normally no-op).
+fn bundle_family_multi_entry(
+    root: &Path,
+    family: &[(String, PathBuf)],
+    focus_pkg: &str,
+    focus_entry: &Path,
+    out_dir: &Path,
+    externals: &[String],
+) -> Result<(), String> {
+    let focus_name = sanitized_stem(focus_pkg);
+    let root_owned = root.to_path_buf();
+    let out_dir_owned = out_dir.to_path_buf();
+    let externals_owned = externals.to_vec();
+    let inputs: Vec<rolldown::InputItem> = family
+        .iter()
+        .map(|(pkg, entry)| rolldown::InputItem {
+            name: Some(sanitized_stem(pkg)),
+            import: entry.to_string_lossy().into_owned(),
+        })
+        .collect();
+    let focus_owned = focus_entry.to_path_buf();
+
+    std::thread::scope(|scope| {
+        scope
+            .spawn(move || -> Result<(), String> {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| format!("tokio: {e}"))?;
+
+                rt.block_on(async move {
+                    let external_opt = if externals_owned.is_empty() {
+                        None
+                    } else {
+                        Some(rolldown::IsExternal::from(externals_owned.clone()))
+                    };
+                    let opts = rolldown::BundlerOptions {
+                        input: Some(inputs),
+                        cwd: Some(root_owned),
+                        platform: Some(rolldown::Platform::Browser),
+                        format: Some(rolldown::OutputFormat::Esm),
+                        dir: Some(out_dir_owned.to_string_lossy().into_owned()),
+                        external: external_opt,
+                        define: Some(
+                            [(
+                                "process.env.NODE_ENV".to_string(),
+                                "\"development\"".to_string(),
+                            )]
+                            .into_iter()
+                            .collect(),
+                        ),
+                        // Multi-entry + shared chunks: without splitting every
+                        // entry would inline the whole runtime again.
+                        code_splitting: Some(rolldown_common::CodeSplittingMode::Bool(true)),
+                        ..Default::default()
+                    };
+
+                    let mut b = rolldown::BundlerBuilder::default()
+                        .with_options(opts)
+                        .build()
+                        .map_err(|e| format!("init: {e}"))?;
+
+                    b.write().await.map_err(|e| format!("write: {e}"))?;
+
+                    // Same per-entry post-process as `bundle_one`, applied to
+                    // THIS call's focus entry (each family member invokes
+                    // bundle_family_multi_entry with itself as the focus).
+                    let bundle_path = out_dir_owned.join(format!("{focus_name}.js"));
+                    let names = std::fs::read_to_string(&focus_owned)
+                        .map(|s| oxide_fw_compiler::extract_cjs_export_names(&s))
+                        .unwrap_or_default();
+                    let mut bundle = std::fs::read_to_string(&bundle_path)
+                        .map_err(|e| format!("read bundle: {e}"))?;
+                    let original_len = bundle.len();
+                    if !names.is_empty() {
+                        bundle = augment_bundle_with_named_exports(&bundle, &names);
+                    }
+                    bundle = rewrite_require_calls(&bundle, &externals_owned);
+                    if bundle.len() != original_len {
+                        std::fs::write(&bundle_path, &bundle)
+                            .map_err(|e| format!("postprocess write: {e}"))?;
+                    }
+                    Ok(())
+                })
+            })
+            .join()
+            .unwrap_or_else(|_| Err("worker panicked".into()))
     })
 }
 
