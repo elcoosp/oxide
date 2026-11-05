@@ -12,7 +12,11 @@
 export interface SvelteClientLike {
   mount(
     component: unknown,
-    opts: { target: Element; props?: Record<string, unknown>; hydrate?: boolean },
+    opts: { target: Element; props?: Record<string, unknown> },
+  ): unknown
+  hydrate?(
+    component: unknown,
+    opts: { target: Element; props?: Record<string, unknown> },
   ): unknown
   unmount(component: unknown): void
 }
@@ -56,8 +60,11 @@ export async function isSvelteClientAvailable(): Promise<boolean> {
  * Mount (or hydrate) a REAL page component into the page container with
  * Svelte's own client runtime.
  *
- * - `hydrate: true` → `mount(..., { hydrate: true })` attaches to the
- *   server-rendered markup in `container` (§10.3 — the islands path).
+ * - `hydrate: true` → `hydrate(...)` attaches to the server-rendered markup
+ *   in `container` (§10.3 — the islands path). Svelte 5 exposes hydration
+ *   as its own entry point — `mount()` IGNORES an unknown `hydrate` option
+ *   and appends a fresh tree next to the SSR markup (two `<main>`s, the
+ *   pre-fix symptom) — so the dedicated `hydrate()` is used when present.
  * - `hydrate: false` → fresh `mount(...)` into the container.
  *
  * Returns `undefined` when Svelte is not installed — callers fall back to
@@ -79,8 +86,8 @@ export async function mountSveltePageRoot(
     return svelte.mount(Component, { target: el, props: p })
   }
   let instance: unknown
-  if (opts.hydrate) {
-    instance = svelte.mount(Component, { target: el, props, hydrate: true })
+  if (opts.hydrate && typeof svelte.hydrate === 'function') {
+    instance = svelte.hydrate(Component, { target: el, props })
   } else {
     instance = mountFresh(props)
   }
