@@ -23,11 +23,18 @@ function asDomElement(v: { dispatchEvent?(ev: unknown): boolean; innerHTML: stri
 }
 
 
-/** Structural shape of the Svelte 5 client `mount` / `unmount` surface. */
+/** Structural shape of the Svelte 5 client `mount` / `unmount` surface.
+ * Svelte 5.35+ additionally exposes `hydrate()` as its own entry point —
+ * `mount(..., { hydrate: true })` silently appends a second tree, so the
+ * island path prefers `hydrate()` when the runtime provides it. */
 export interface SvelteLike {
   mount(
     component: unknown,
     opts: { target: Element; props?: Record<string, unknown>; hydrate?: boolean },
+  ): unknown
+  hydrate?(
+    component: unknown,
+    opts: { target: Element; props?: Record<string, unknown> },
   ): unknown
   unmount(component: unknown): void
 }
