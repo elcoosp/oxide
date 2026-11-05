@@ -15,6 +15,7 @@
 
 import type { Disposer } from '@oxide-fw/core/types'
 import type { OxElement, ClientOptions } from './hydrate.ts'
+import { ensureSolidHydrationState } from './real-client.ts'
 
 /** Runtime type guard for solid-js core factory (Solid 2's createElement or
  *  Solid 1's createComponent). */
@@ -84,6 +85,9 @@ async function loadSolid(): Promise<{
  * export is the Solid component. Solid's `hydrate(fn, el)` uses a
  * `createElement` thunk to rebuild the reactive graph against the SSR markup.
  *
+ * `ensureSolidHydrationState` (shared with the page-root path) installs the
+ * `_$HY` state the server-side hydration script normally provides.
+ *
  * Resolves to a disposer that renders nothing (Solid's hydration does not
  * expose an unmount handle); the disposer is a no-op for parity with React's
  * and keeps `hydrateIslands`'s teardown uniform across adapters.
@@ -95,6 +99,7 @@ export async function solidHydrateIsland(
   _opts: ClientOptions = {},
 ): Promise<Disposer> {
   const { web, createElement } = await loadSolid()
+  ensureSolidHydrationState()
   const component = (mod as { default?: unknown })?.default ?? mod
   if (component === undefined || component === null) {
     throw new TypeError('hydrateIsland(solid): island module must export a default component')
