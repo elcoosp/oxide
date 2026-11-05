@@ -2,7 +2,9 @@
 // Four frameworks × four shapes; templates generated programmatically so each
 // emitted project is self-contained (framework flavor + per-shape route modules).
 import { mkdir, writeFile, readdir } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 export type Framework = 'react' | 'vue' | 'svelte' | 'solid';
 export type Shape = 'minimal' | 'blog' | 'dashboard' | 'storefront';
@@ -347,6 +349,26 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   }
 }
 
-if (process.argv[1] && process.argv[1].endsWith('cli.ts')) {
+/** True when THIS module is the process entry point (bin execution), not an
+ *  import (tests, library consumers).
+ *
+ *  The previous guard — `process.argv[1].endsWith('cli.ts')` — only matched
+ *  the SOURCE filename, and tsdown compiles this file to `dist/index.js`, the
+ *  path `package.json`'s `bin` points at. `pnpm create oxide` therefore
+ *  evaluated the module and exited 0 without ever invoking `main()`: a
+ *  silent no-op CLI. Comparing the resolved entry URL is the standard ESM
+ *  "am I main?" check; `realpathSync` folds the `.bin/create-oxide` symlink
+ *  so both sides point at the same file. */
+function isMainModule(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return pathToFileURL(realpathSync(entry)).href === import.meta.url;
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
   main().then((code) => process.exit(code));
 }
