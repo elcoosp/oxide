@@ -1,4 +1,5 @@
 // src/routes/docs/doc-body.tsx
+import { Island } from '@oxide-fw/react'
 import AdapterTabs from '../../islands/adapter-tabs.tsx'
 import type { MdBlock } from '../../lib/md.server.ts'
 
@@ -36,9 +37,17 @@ export default function DocBody({ doc }: { doc?: Doc }) {
               note: META[id].note,
               snippet: block.data[id] || ''
             }))
+            // The tabs are interactive (useState/onClick), so they must
+            // hydrate: a bare `<AdapterTabs />` renders to static HTML and
+            // the boot never attaches to it — island hydration only targets
+            // `<ox-island[data-ox-chunk]>` hosts (core/client/islands.ts),
+            // exactly how the homepage mounts the same component. The
+            // direct render below is the SSR fallback the Island wraps.
             return (
               <div key={i} className="not-prose my-8">
-                <AdapterTabs adapters={adapters} />
+                <Island component="AdapterTabs" chunk="AdapterTabs" strategy="visible" props={{ adapters }}>
+                  <AdapterTabs adapters={adapters} />
+                </Island>
               </div>
             )
           }
