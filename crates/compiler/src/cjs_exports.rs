@@ -22,10 +22,9 @@
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    ArrowFunctionBody, ArrowFunctionExpression, AssignmentExpression,
-    AssignmentTarget, BlockStatement, CallExpression, Expression, Function,
-    FunctionBody, ObjectExpression, ObjectPropertyKind, Program, PropertyKey,
-    Statement, TryStatement,
+    ArrowFunctionBody, ArrowFunctionExpression, AssignmentExpression, AssignmentTarget,
+    BlockStatement, CallExpression, Expression, Function, FunctionBody, ObjectExpression,
+    ObjectPropertyKind, Program, PropertyKey, Statement, TryStatement,
 };
 use oxc_parser::Parser;
 use oxc_span::SourceType;
@@ -246,16 +245,18 @@ fn assignment_target_name(t: &AssignmentTarget<'_>) -> Option<String> {
     let prop = m.property.name.as_str().to_string();
     // exports.NAME
     if let Expression::Identifier(id) = &m.object
-        && id.name.as_str() == "exports" {
-            return Some(prop);
-        }
+        && id.name.as_str() == "exports"
+    {
+        return Some(prop);
+    }
     // module.exports.NAME
     if let Expression::StaticMemberExpression(inner) = &m.object
         && inner.property.name.as_str() == "exports"
-            && let Expression::Identifier(id) = &inner.object
-                && id.name.as_str() == "module" {
-                    return Some(prop);
-                }
+        && let Expression::Identifier(id) = &inner.object
+        && id.name.as_str() == "module"
+    {
+        return Some(prop);
+    }
     None
 }
 
@@ -324,9 +325,21 @@ mod tests {
               })();
         "#;
         let names = extract_cjs_export_names(src);
-        assert!(names.contains(&"Fragment".to_string()), "names = {:?}", names);
-        assert!(names.contains(&"useState".to_string()), "names = {:?}", names);
-        assert!(names.contains(&"useEffect".to_string()), "names = {:?}", names);
+        assert!(
+            names.contains(&"Fragment".to_string()),
+            "names = {:?}",
+            names
+        );
+        assert!(
+            names.contains(&"useState".to_string()),
+            "names = {:?}",
+            names
+        );
+        assert!(
+            names.contains(&"useEffect".to_string()),
+            "names = {:?}",
+            names
+        );
     }
 
     #[test]
