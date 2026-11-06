@@ -182,6 +182,57 @@ fn scan_missing_root_is_error() {
     assert_eq!(e.0.code, "SRV-ASSET");
 }
 
+// --------------------------- SEC-STATIC (P0-1): dist/server must not be servable
+
+#[test]
+fn scan_filtered_excludes_server_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    // Mirrors the production layout: dist/{client,server}, public files at root.
+    std::fs::create_dir_all(dir.path().join("client")).unwrap();
+    std::fs::create_dir_all(dir.path().join("server/ssr")).unwrap();
+    std::fs::write(dir.path().join("client/app-8f2c1d9e.js"), b"h").unwrap();
+    std::fs::write(dir.path().join("server/ssr/index.js"), b"SECRET-BUNDLE").unwrap();
+    std::fs::write(
+        dir.path().join("server/server.manifest.json"),
+        b"SECRET-MANIFEST",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("server/l0-seed.json"), b"SECRET-SEED").unwrap();
+    std::fs::write(dir.path().join("favicon.ico"), b"f").unwrap();
+    let assets = StaticAssets::scan_filtered(dir.path(), &["server"]).unwrap();
+    assert!(assets.index.contains_key("/client/app-8f2c1d9e.js"));
+    assert!(assets.index.contains_key("/favicon.ico"));
+    assert!(!assets.index.contains_key("/server/ssr/index.js"));
+    assert!(!assets.index.contains_key("/server/server.manifest.json"));
+    assert!(!assets.index.contains_key("/server/l0-seed.json"));
+}
+
+#[test]
+fn serve_denies_server_internal_paths_even_if_indexed() {
+    // Defense in depth: build the index WITHOUT the filter, then assert the
+    // serve path still refuses to hand out build-internal files.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("server/ssr")).unwrap();
+    std::fs::write(dir.path().join("server/ssr/index.js"), b"SECRET-BUNDLE").unwrap();
+    std::fs::write(dir.path().join("server.manifest.json"), b"SECRET-MANIFEST").unwrap();
+    std::fs::write(dir.path().join("l0-seed.json"), b"SECRET-SEED").unwrap();
+    let path = dir.path().to_path_buf();
+    std::mem::forget(dir);
+    let assets = StaticAssets::scan(path).unwrap();
+    for p in [
+        "/server/ssr/index.js",
+        "/server",
+        "/server/",
+        "/server.manifest.json",
+        "/l0-seed.json",
+    ] {
+        assert!(
+            assets.serve(&req("GET", p, &[]), p).is_none(),
+            "{p} must be denied"
+        );
+    }
+}
+
 // ------------------------------------------------------------------ StaticAssets::serve
 
 #[test]
@@ -202,10 +253,41 @@ fn serve_200_with_headers() {
     );
     assert_eq!(
         resp.header("cache-control"),
-        Some("public, max-age=31536000, immutable")
+        // CACHE-SPLIT: `app.js` is an unhashed name → short TTL, not immutable.
+        Some("public, max-age=3600, must-revalidate")
     );
     assert_eq!(resp.header("vary"), Some("Accept-Encoding"));
     assert_eq!(resp.body.as_ref(), b"console.log(1)");
+}
+
+#[test]
+fn serve_hashed_names_get_immutable_unhashed_do_not() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("app-8f2c1d9e.js"), b"h").unwrap();
+    std::fs::write(dir.path().join("favicon.ico"), b"f").unwrap();
+    std::fs::write(dir.path().join("robots.txt"), b"r").unwrap();
+    std::fs::write(dir.path().join("hero-aabbccddeeff1122.png"), b"p").unwrap();
+    let path = dir.path().to_path_buf();
+    std::mem::forget(dir);
+    let assets = StaticAssets::scan(path).unwrap();
+    let cc = |p: &str| {
+        assets
+            .serve(&req("GET", p, &[]), p)
+            .unwrap()
+            .header("cache-control")
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(
+        cc("/app-8f2c1d9e.js"),
+        "public, max-age=31536000, immutable"
+    );
+    assert_eq!(
+        cc("/hero-aabbccddeeff1122.png"),
+        "public, max-age=31536000, immutable"
+    );
+    assert_eq!(cc("/favicon.ico"), "public, max-age=3600, must-revalidate");
+    assert_eq!(cc("/robots.txt"), "public, max-age=3600, must-revalidate");
 }
 
 #[test]
@@ -223,7 +305,7 @@ fn serve_304_on_if_none_match() {
     assert_eq!(resp.header("etag"), Some(format!("\"{etag}\"").as_str()));
     assert_eq!(
         resp.header("cache-control"),
-        Some("public, max-age=31536000, immutable")
+        Some("public, max-age=3600, must-revalidate")
     );
     // weak + list + star forms also match
     for inm in [
@@ -464,6 +546,13 @@ fn csp_header_modes() {
     assert!(strict.contains("style-src 'self' 'unsafe-inline'"));
     assert!(strict.contains("object-src 'none'"));
     assert!(strict.contains("base-uri 'self'"));
+    // P1 (readiness) CSP defaults: no third-party font host by default
+    // (GDPR), and the previously-missing directives exist.
+    assert!(!strict.contains("googleapis"), "{strict}");
+    assert!(!strict.contains("gstatic"), "{strict}");
+    assert!(strict.contains("img-src 'self' data:"), "{strict}");
+    assert!(strict.contains("frame-ancestors 'none'"), "{strict}");
+    assert!(strict.contains("form-action 'self'"), "{strict}");
     let hash = csp_header("hash", "abc");
     assert!(
         hash.contains("script-src 'self' 'wasm-unsafe-eval';"),
@@ -707,9 +796,16 @@ fn rate_limiter_burst_then_refill() {
     assert!(rl.allow("other", 5, 2));
     // simulate the window passing by rewinding the bucket's last-refill instant
     {
-        let mut map = rl.buckets.lock().unwrap();
-        let e = map.get_mut("k").unwrap();
-        e.1 = Instant::now() - Duration::from_secs(2);
+        // PERF-22: the buckets are a sharded dashmap keyed by hash now.
+        let mut found = None;
+        for mut e in rl.buckets.iter_mut() {
+            if *e.key() == oxide_fw_server::bucket_hash("k") {
+                e.1 = Instant::now() - Duration::from_secs(2);
+                found = Some(());
+                break;
+            }
+        }
+        assert!(found.is_some(), "bucket for `k` exists");
     }
     assert!(
         rl.allow("k", 5, 2),
@@ -831,6 +927,9 @@ async fn metrics_endpoint_renders_prometheus_text() {
         rate_limiter: Arc::new(RateLimiter::default()),
         health_path: "/_oxide/health".into(),
         metrics_path: "/_oxide/metrics".into(),
+        // P1 hardening: the production gate (no token + not dev) is 403, so
+        // this pipeline carries a token and the request presents it.
+        metrics_auth_token: Some("test-token".into()),
         metrics: Some(m),
         inspector: None,
         page_renderer: None,
@@ -847,7 +946,30 @@ async fn metrics_endpoint_renders_prometheus_text() {
         ..Default::default()
     };
     let d = &echo_dispatch();
-    let resp = p.serve_request(req("GET", "/_oxide/metrics", &[]), d).await;
+    // P1 hardening: no token → 401; wrong token → 401.
+    let unauth = p.serve_request(req("GET", "/_oxide/metrics", &[]), d).await;
+    assert_eq!(unauth.status, 401);
+    let bad = p
+        .serve_request(
+            req(
+                "GET",
+                "/_oxide/metrics",
+                &[("authorization", "Bearer nope")],
+            ),
+            d,
+        )
+        .await;
+    assert_eq!(bad.status, 401);
+    let resp = p
+        .serve_request(
+            req(
+                "GET",
+                "/_oxide/metrics",
+                &[("authorization", "Bearer test-token")],
+            ),
+            d,
+        )
+        .await;
     assert_eq!(resp.status, 200);
     let ct = resp
         .headers
@@ -861,7 +983,9 @@ async fn metrics_endpoint_renders_prometheus_text() {
         body.contains("# TYPE oxide_requests_total counter"),
         "{body}"
     );
-    assert!(body.contains("oxide_requests_total 1"), "{body}");
+    // P1 hardening: the unauthenticated probes are counted as requests too
+    // (setup observe + the three serve_request calls).
+    assert!(body.contains("oxide_requests_total 3"), "{body}");
 }
 
 #[tokio::test]
