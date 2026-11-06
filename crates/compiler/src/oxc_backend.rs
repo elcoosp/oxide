@@ -389,43 +389,54 @@ fn build_hook_key(body: &oxc_ast::ast::FunctionBody<'_>, code: &str) -> Option<S
     use oxc_span::GetSpan;
     let mut parts: Vec<String> = Vec::new();
     for stmt in &body.statements {
-        let mut push_hook = |hook: &str, var_pattern: Option<&str>, call: &oxc_ast::ast::CallExpression<'_>| {
-            let mut s = String::new();
-            s.push_str(hook);
-            s.push('{');
-            if let Some(v) = var_pattern {
-                s.push_str(v);
-            }
-            // Babel format: useState and useReducer append their relevant
-            // arg source. From `getHookCallsSignature` (babel plugin
-            // line ~129-137): useState → arg[0], useReducer → arg[1].
-            if hook == "useState" && !call.arguments.is_empty() {
-                if let Some(expr) = call.arguments[0].as_expression() {
+        let mut push_hook =
+            |hook: &str, var_pattern: Option<&str>, call: &oxc_ast::ast::CallExpression<'_>| {
+                let mut s = String::new();
+                s.push_str(hook);
+                s.push('{');
+                if let Some(v) = var_pattern {
+                    s.push_str(v);
+                }
+                // Babel format: useState and useReducer append their relevant
+                // arg source. From `getHookCallsSignature` (babel plugin
+                // line ~129-137): useState → arg[0], useReducer → arg[1].
+                if hook == "useState" && !call.arguments.is_empty() {
+                    if let Some(expr) = call.arguments[0].as_expression() {
+                        let span = expr.span();
+                        s.push('(');
+                        s.push_str(&code[span.start as usize..span.end as usize]);
+                        s.push(')');
+                    }
+                } else if hook == "useReducer"
+                    && call.arguments.len() > 1
+                    && let Some(expr) = call.arguments[1].as_expression()
+                {
                     let span = expr.span();
                     s.push('(');
                     s.push_str(&code[span.start as usize..span.end as usize]);
                     s.push(')');
                 }
-            } else if hook == "useReducer" && call.arguments.len() > 1
-                && let Some(expr) = call.arguments[1].as_expression() {
-                    let span = expr.span();
-                    s.push('(');
-                    s.push_str(&code[span.start as usize..span.end as usize]);
-                    s.push(')');
-                }
-            s.push('}');
-            parts.push(s);
-        };
+                s.push('}');
+                parts.push(s);
+            };
         match stmt {
             Statement::VariableDeclaration(v) => {
                 for d in &v.declarations {
                     let Some(init) = &d.init else { continue };
-                    let Expression::CallExpression(call) = init else { continue };
-                    let Expression::Identifier(id) = &call.callee else { continue };
+                    let Expression::CallExpression(call) = init else {
+                        continue;
+                    };
+                    let Expression::Identifier(id) = &call.callee else {
+                        continue;
+                    };
                     let name = id.name.as_str();
                     if name.len() < 4
                         || !name.starts_with("use")
-                        || !name.chars().nth(3).map(|c| c.is_uppercase()).unwrap_or(false)
+                        || !name
+                            .chars()
+                            .nth(3)
+                            .map(|c| c.is_uppercase())
+                            .unwrap_or(false)
                     {
                         continue;
                     }
@@ -440,12 +451,20 @@ fn build_hook_key(body: &oxc_ast::ast::FunctionBody<'_>, code: &str) -> Option<S
                 }
             }
             Statement::ExpressionStatement(es) => {
-                let Expression::CallExpression(call) = &es.expression else { continue };
-                let Expression::Identifier(id) = &call.callee else { continue };
+                let Expression::CallExpression(call) = &es.expression else {
+                    continue;
+                };
+                let Expression::Identifier(id) = &call.callee else {
+                    continue;
+                };
                 let name = id.name.as_str();
                 if name.len() < 4
                     || !name.starts_with("use")
-                    || !name.chars().nth(3).map(|c| c.is_uppercase()).unwrap_or(false)
+                    || !name
+                        .chars()
+                        .nth(3)
+                        .map(|c| c.is_uppercase())
+                        .unwrap_or(false)
                 {
                     continue;
                 }
@@ -505,7 +524,9 @@ fn collect_components_for_sig(
         }
         Statement::VariableDeclaration(v) => {
             for d in &v.declarations {
-                let BindingPattern::BindingIdentifier(id) = &d.id else { continue };
+                let BindingPattern::BindingIdentifier(id) = &d.id else {
+                    continue;
+                };
                 let Some(init) = &d.init else { continue };
                 match init {
                     Expression::ArrowFunctionExpression(a) => {
@@ -528,7 +549,9 @@ fn collect_components_for_sig(
             }
             Declaration::VariableDeclaration(v) => {
                 for d in &v.declarations {
-                    let BindingPattern::BindingIdentifier(id) = &d.id else { continue };
+                    let BindingPattern::BindingIdentifier(id) = &d.id else {
+                        continue;
+                    };
                     let Some(init) = &d.init else { continue };
                     if let Expression::ArrowFunctionExpression(a) = init
                         && let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &a.body
@@ -539,53 +562,52 @@ fn collect_components_for_sig(
             }
             _ => {}
         },
-        Statement::ExportDefaultDeclaration(e) => if let ExportDefaultDeclarationKind::FunctionDeclaration(f) = &e.declaration {
-            let name = f
-                .id
-                .as_ref()
-                .map(|i| i.name.to_string())
-                .unwrap_or_else(|| "default".to_string());
-            walk(&name, f.body.as_deref(), stmt_end, code, out);
-        },
+        Statement::ExportDefaultDeclaration(e) => {
+            if let ExportDefaultDeclarationKind::FunctionDeclaration(f) = &e.declaration {
+                let name =
+                    f.id.as_ref()
+                        .map(|i| i.name.to_string())
+                        .unwrap_or_else(|| "default".to_string());
+                walk(&name, f.body.as_deref(), stmt_end, code, out);
+            }
+        }
         _ => {}
     }
 }
 
 fn top_level_component_names(stmt: &Statement<'_>) -> Vec<String> {
     match stmt {
-        Statement::FunctionDeclaration(f) => f
-            .id
-            .as_ref()
-            .map(|id| vec![id.name.to_string()])
-            .unwrap_or_default(),
-        Statement::ClassDeclaration(c) => c
-            .id
-            .as_ref()
-            .map(|id| vec![id.name.to_string()])
-            .unwrap_or_default(),
-        Statement::ExportDeclaration(e) => match &e.declaration {
-            Declaration::FunctionDeclaration(f) => f
-                .id
-                .as_ref()
+        Statement::FunctionDeclaration(f) => {
+            f.id.as_ref()
                 .map(|id| vec![id.name.to_string()])
-                .unwrap_or_default(),
+                .unwrap_or_default()
+        }
+        Statement::ClassDeclaration(c) => {
+            c.id.as_ref()
+                .map(|id| vec![id.name.to_string()])
+                .unwrap_or_default()
+        }
+        Statement::ExportDeclaration(e) => match &e.declaration {
+            Declaration::FunctionDeclaration(f) => {
+                f.id.as_ref()
+                    .map(|id| vec![id.name.to_string()])
+                    .unwrap_or_default()
+            }
             Declaration::ClassDeclaration(cl) => cl
                 .id
                 .as_ref()
                 .map(|id| vec![id.name.to_string()])
                 .unwrap_or_default(),
-            Declaration::VariableDeclaration(v) => {
-                var_declarator_component_names(v.as_ref())
-            }
+            Declaration::VariableDeclaration(v) => var_declarator_component_names(v.as_ref()),
             _ => Vec::new(),
         },
         Statement::VariableDeclaration(v) => var_declarator_component_names(v.as_ref()),
         Statement::ExportDefaultDeclaration(e) => match &e.declaration {
-            ExportDefaultDeclarationKind::FunctionDeclaration(f) => f
-                .id
-                .as_ref()
-                .map(|id| vec![id.name.to_string()])
-                .unwrap_or_default(),
+            ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
+                f.id.as_ref()
+                    .map(|id| vec![id.name.to_string()])
+                    .unwrap_or_default()
+            }
             ExportDefaultDeclarationKind::ClassDeclaration(cl) => cl
                 .id
                 .as_ref()
@@ -638,7 +660,6 @@ pub fn lower_to_js_with_refresh(
     let with_refresh = inject_react_refresh(&lowered, lang, path).unwrap_or(lowered);
     Ok((with_refresh, srcmap))
 }
-
 
 impl OxcTransformer {
     /// Run only the AST-driven passes — `'use cache'` rewriting, server-fn
@@ -1379,7 +1400,6 @@ fn oxidation_location(path: &str, line: usize, col: usize) -> oxide_fw_diagnosti
     oxide_fw_diagnostics::Location::file(path, line as u32, col as u32)
 }
 
-
 #[cfg(test)]
 mod react_refresh_tests {
     use super::*;
@@ -1404,7 +1424,10 @@ mod react_refresh_tests {
             "src/routes/widget.tsx",
         )
         .unwrap();
-        assert!(out.contains("$RefreshReg$(Widget"), "missing reg call: {out}");
+        assert!(
+            out.contains("$RefreshReg$(Widget"),
+            "missing reg call: {out}"
+        );
     }
 
     #[test]
@@ -1432,8 +1455,7 @@ mod react_refresh_tests {
 
     #[test]
     fn non_component_gets_no_reg() {
-        let out =
-            inject_react_refresh("export const FOO = 42;\n", "tsx", "src/x.tsx").unwrap();
+        let out = inject_react_refresh("export const FOO = 42;\n", "tsx", "src/x.tsx").unwrap();
         assert!(!out.contains("$RefreshReg$("), "should not inject: {out}");
     }
 
@@ -1457,8 +1479,14 @@ mod react_refresh_tests {
             "src/x.tsx",
         )
         .unwrap();
-        assert!(out.contains("$RefreshReg$(Foo"), "exported const not registered: {out}");
-        assert!(out.contains("$RefreshReg$(Bar"), "exported fn not registered: {out}");
+        assert!(
+            out.contains("$RefreshReg$(Foo"),
+            "exported const not registered: {out}"
+        );
+        assert!(
+            out.contains("$RefreshReg$(Bar"),
+            "exported fn not registered: {out}"
+        );
     }
 
     #[test]
