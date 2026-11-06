@@ -12,21 +12,32 @@ use oxide_fw_diagnostics::OxideError;
 /// The canonical schema URL for `oxide.config.ts`.
 pub const SCHEMA_URL: &str = "https://oxide.dev/config.schema.json";
 
+/// The error codes this crate surfaces. `SCHEMA-001` wraps a config-crate
+/// failure; `SCHEMA-002` means the generated schema was not parseable JSON
+/// (a serde bug class, not user input).
+pub const CODE_CONFIG_FAILURE: &str = "SCHEMA-001";
+pub const CODE_NOT_JSON: &str = "SCHEMA-002";
+
+/// Wrap a config-crate failure into this crate's user-visible error shape.
+/// Extracted so the mapping (code + context) is testable without forcing the
+/// infallible happy path to fail.
+fn wrap_config_error(e: OxideError) -> OxideError {
+    OxideError::new(CODE_CONFIG_FAILURE, format!("config schema: {}", e.0.message))
+}
+
 /// Return the JSON Schema for `oxide.config.ts` as a pretty-printed
 /// JSON string.
 ///
 /// Delegates to [`oxide_fw_config::config_schema_pretty`] so there is
 /// exactly one source of truth for the schema shape.
 pub fn schema_pretty() -> Result<String, OxideError> {
-    oxide_fw_config::config_schema_pretty()
-        .map_err(|e| OxideError::new("SCHEMA-001", format!("config schema: {}", e.0.message)))
+    oxide_fw_config::config_schema_pretty().map_err(wrap_config_error)
 }
 
 /// Return the JSON Schema as a [`serde_json::Value`].
 pub fn schema_value() -> Result<serde_json::Value, OxideError> {
     let s = schema_pretty()?;
-    serde_json::from_str(&s)
-        .map_err(|e| OxideError::new("SCHEMA-002", format!("schema is not valid JSON: {e}")))
+    serde_json::from_str(&s).map_err(|e| OxideError::new(CODE_NOT_JSON, format!("schema is not valid JSON: {e}")))
 }
 
 /// The `$schema` URL a config file should reference.
@@ -54,5 +65,12 @@ mod tests {
     #[test]
     fn schema_url_is_a_url() {
         assert!(schema_url().starts_with("https://"));
+    }
+
+    #[test]
+    fn config_failures_wrap_as_schema_001_with_context() {
+        let e = wrap_config_error(OxideError::new("CFG-SCHEMA", "schema serialization failed: x"));
+        assert_eq!(e.0.code, CODE_CONFIG_FAILURE);
+        assert_eq!(e.0.message, "config schema: schema serialization failed: x");
     }
 }
