@@ -23,6 +23,8 @@ mod resolve;
 mod rolldown_backend;
 pub mod svg_react;
 
+pub use resolve::normalize;
+
 use blake3::Hasher;
 use oxide_fw_compiler::{
     Env as CompilerEnv, OxcTransformer, TransformInput, Transformer as _, is_server_module_path,
