@@ -942,7 +942,10 @@ fn scan_local_reexport_does_not_hang() {
     // pattern, causing `oxide dev` to hang on first load).
     let code = "export { foo };\nexport { a, b as c };\nexport const x = 1;\n";
     let spans = scan_import_spans(code);
-    assert!(spans.is_empty(), "local re-exports are not imports: {spans:?}");
+    assert!(
+        spans.is_empty(),
+        "local re-exports are not imports: {spans:?}"
+    );
 }
 
 #[test]
@@ -959,9 +962,18 @@ fn scan_reexport_with_from_still_works() {
     let code = "export { foo } from './foo.js';\nexport * from './bar.js';\nexport * as ns from './baz.js';\n";
     let spans = scan_import_spans(code);
     let specs: Vec<&str> = spans.iter().map(|s| s.specifier.as_str()).collect();
-    assert!(specs.contains(&"./foo.js"), "from-reexport missing: {spans:?}");
-    assert!(specs.contains(&"./bar.js"), "star-reexport missing: {spans:?}");
-    assert!(specs.contains(&"./baz.js"), "star-as-reexport missing: {spans:?}");
+    assert!(
+        specs.contains(&"./foo.js"),
+        "from-reexport missing: {spans:?}"
+    );
+    assert!(
+        specs.contains(&"./bar.js"),
+        "star-reexport missing: {spans:?}"
+    );
+    assert!(
+        specs.contains(&"./baz.js"),
+        "star-as-reexport missing: {spans:?}"
+    );
 }
 
 #[test]
