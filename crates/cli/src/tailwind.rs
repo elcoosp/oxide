@@ -35,7 +35,8 @@ pub fn has_tailwind(cfg: &OxideConfig) -> bool {
 /// oxide.config.* (the config file itself), and .css/.scss/.sass
 /// (those go through HmrBehavior::StyleSwap).
 pub fn is_tailwind_relevant(path: &str) -> bool {
-    is_source_file(path) || (path.contains("/src/styles/") && path.to_ascii_lowercase().ends_with(".css"))
+    is_source_file(path)
+        || (path.contains("/src/styles/") && path.to_ascii_lowercase().ends_with(".css"))
 }
 
 pub fn is_source_file(path: &str) -> bool {
@@ -88,7 +89,9 @@ async fn compute_css(
         .unwrap_or_default();
     let tailwind_css = tooling.tailwind_build(&css_src, &base, &candidates).await?;
     if candidates.len() >= 8 && tailwind_css.trim().len() < 64 {
-        return Err(bld_err("BLD-TAILWIND-EMPTY: Tailwind compile produced empty/near-empty CSS. The entry stylesheet is likely corrupt."));
+        return Err(bld_err(
+            "BLD-TAILWIND-EMPTY: Tailwind compile produced empty/near-empty CSS. The entry stylesheet is likely corrupt.",
+        ));
     }
 
     let input = CssInput {
@@ -111,15 +114,23 @@ async fn compute_css(
 fn css_has_tailwind_import(root: &Path) -> bool {
     // Walk src/styles recursively (future-proof) and src/styles itself.
     fn scan_dir(dir: &Path) -> bool {
-        let Ok(entries) = std::fs::read_dir(dir) else { return false };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return false;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                if scan_dir(&path) { return true; }
+                if scan_dir(&path) {
+                    return true;
+                }
                 continue;
             }
-            if !path.extension().map(|e| e == "css").unwrap_or(false) { continue; }
-            let Ok(content) = std::fs::read_to_string(&path) else { continue };
+            if !path.extension().map(|e| e == "css").unwrap_or(false) {
+                continue;
+            }
+            let Ok(content) = std::fs::read_to_string(&path) else {
+                continue;
+            };
             if content.contains("@import \"tailwindcss\"")
                 || content.contains("@import 'tailwindcss'")
             {
