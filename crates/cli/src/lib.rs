@@ -1579,14 +1579,12 @@ async fn ensure_dev_client_bundle(
                     let Ok(ft) = entry.file_type() else { continue };
                     if ft.is_dir() {
                         stack.push(entry.path());
-                    } else if ft.is_file() {
-                        if let Ok(t) = entry.metadata().and_then(|m| m.modified()) {
-                            if t > manifest_mtime {
+                    } else if ft.is_file()
+                        && let Ok(t) = entry.metadata().and_then(|m| m.modified())
+                            && t > manifest_mtime {
                                 needs_build = true;
                                 break 'outer;
                             }
-                        }
-                    }
                 }
             }
         }
@@ -1839,8 +1837,8 @@ async fn build_client_bundle(
         Ok(outcome) => {
 
             // [wr115] Write compiled Tailwind CSS directly + patch manifest.
-            if let Some(p) = pool {
-                if let Ok(Some(tw)) = crate::tailwind::precompute(p.clone(), cfg, rootp).await {
+            if let Some(p) = pool
+                && let Ok(Some(tw)) = crate::tailwind::precompute(p.clone(), cfg, rootp).await {
                     let client_dir = rootp.join("dist/client");
                     let _ = std::fs::create_dir_all(&client_dir);
                     let hash = oxide_fw_bundler::ChunkBundler::content_hash(&[tw.css.as_bytes()]);
@@ -1852,8 +1850,8 @@ async fn build_client_bundle(
                     // Update the manifest: point every route's css at the
                     // compiled file, delete any other tailwind-*.css.
                     let manifest_path = client_dir.join("client.manifest.json");
-                    if let Ok(raw) = std::fs::read_to_string(&manifest_path) {
-                        if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                    if let Ok(raw) = std::fs::read_to_string(&manifest_path)
+                        && let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&raw) {
                             if let Some(routes) = v.get_mut("routes").and_then(|r| r.as_object_mut()) {
                                 for (_k, route) in routes.iter_mut() {
                                     if let Some(css) = route.get_mut("css").and_then(|c| c.as_array_mut()) {
@@ -1869,7 +1867,6 @@ async fn build_client_bundle(
                             let _ = std::fs::write(&manifest_path,
                                 serde_json::to_string_pretty(&v).unwrap_or_default());
                         }
-                    }
                     // Delete superseded CSS so exactly one exists
                     if let Ok(entries) = std::fs::read_dir(&client_dir) {
                         for e in entries.flatten() {
@@ -1880,7 +1877,6 @@ async fn build_client_bundle(
                         }
                     }
                 }
-            }
         
             outln!(
                 w,
@@ -2032,21 +2028,19 @@ fn consolidate_tailwind_css_and_manifest(rootp: &std::path::Path) {
                         }
                     }
                 }
-                if had_tailwind && new_css.iter().any(|e| e.as_str() == Some(newest_name.as_str())) {
-                    if css.len() != new_css.len() || css.first() != new_css.first() {
+                if had_tailwind && new_css.iter().any(|e| e.as_str() == Some(newest_name.as_str()))
+                    && (css.len() != new_css.len() || css.first() != new_css.first()) {
                         *css = new_css;
                         changed = true;
                     }
-                }
             }
         }
     }
 
-    if changed {
-        if let Ok(pretty) = serde_json::to_string_pretty(&v) {
+    if changed
+        && let Ok(pretty) = serde_json::to_string_pretty(&v) {
             let _ = std::fs::write(&manifest_path, pretty);
         }
-    }
 }
 
 
@@ -2945,13 +2939,12 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 // hoisted/re-linked without touching its own package.json.
                 // Treat a lockfile touch as a prebundle-invalidation trigger
                 // independent of the per-package check above.
-                if cfg.dev.esm {
-                    if let Err(e) =
+                if cfg.dev.esm
+                    && let Err(e) =
                         crate::esm_dev::prebundle_cjs_deps(&rootp, &cfg.dev.prebundle)
                     {
                         tracing::warn!(error = %e, "§3.3: lockfile prebundle re-run failed");
                     }
-                }
             }
 
             // §3.4: a `.env*` change invalidates `import.meta.env` values.
@@ -3167,8 +3160,13 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 // needs to know whether this was a .module.css edit.
                 let is_module_css = pstr.ends_with(".module.css");
                 // Phase 4: tailwind source change -> rebuild CSS to disk.
+                // `is_tailwind_relevant` (not `is_source_file`) so an edit to
+                // a `src/styles/*.css` entry — new utilities in @theme, a new
+                // @apply — also rebuilds the compiled tailwind-*.css. The
+                // rebuild is a content-diff no-op when nothing changed, so
+                // the extra CSS events cost one scan, not a rebuild.
                 if tailwind::has_tailwind(&cfg)
-                    && tailwind::is_source_file(&pstr)
+                    && tailwind::is_tailwind_relevant(&pstr)
                     && let Some(pool) = hmr_tooling_pool.clone()
                 {
                     match tailwind::rebuild_for_dev(pool, &cfg, &rootp).await {
@@ -3243,11 +3241,10 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                         // reload re-injects the style; React Refresh is not
                         // needed for CSS). The SSR side reads the fresh
                         // `.oxide/css-modules/<rel>.mjs` on the next render.
-                        if is_module_css {
-                            if let Err(e) = crate::esm_dev::precompute_css_modules(&rootp) {
+                        if is_module_css
+                            && let Err(e) = crate::esm_dev::precompute_css_modules(&rootp) {
                                 tracing::warn!(error = %e, "§1.4: precompute after .module.css change failed");
                             }
-                        }
                     }
                     HmrBehavior::ReloadData => {
                         // §13.3: a `page.server.ts` change re-runs the route's
@@ -8087,7 +8084,6 @@ struct DispatchOpts {
     i18n_cfg: Option<oxide_fw_assets::i18n::I18nConfig>,
     endpoint_dispatcher: Option<std::sync::Arc<dyn oxide_fw_server::EndpointDispatcher>>,
     middleware_dispatcher: Option<std::sync::Arc<dyn oxide_fw_server::MiddlewareDispatcher>>,
-    dev_hmr: bool,
     vary_headers: Vec<String>,
     waterfall: Option<oxide_fw_dev::WaterfallRecorder>,
     session_codec: Option<std::sync::Arc<oxide_fw_server::SessionCodec>>,
@@ -8115,7 +8111,6 @@ fn build_dispatch(
         i18n_cfg: opts.i18n_cfg,
         endpoint_dispatcher: opts.endpoint_dispatcher,
         middleware_dispatcher: opts.middleware_dispatcher,
-        dev_hmr: opts.dev_hmr,
         vary_headers: opts.vary_headers,
         waterfall: opts.waterfall,
         session_codec: opts.session_codec,
@@ -8145,6 +8140,18 @@ fn forward_action_set_cookies(
     }
 }
 
+/// P-07b: the JSON shape of matched route params, shared by the middleware
+/// and endpoint dispatchers. Built lazily at the call sites so page requests
+/// that reach neither dispatcher never pay the per-param allocations.
+fn build_params_json(
+    params: &std::collections::BTreeMap<String, String>,
+) -> serde_json::Map<String, serde_json::Value> {
+    params
+        .iter()
+        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+        .collect()
+}
+
 pub(crate) struct DispatchArgs {
     pub swappable: SwappableRouteTree,
     pub metrics: std::sync::Arc<oxide_fw_server::Metrics>,
@@ -8160,7 +8167,6 @@ pub(crate) struct DispatchArgs {
     pub i18n_cfg: Option<oxide_fw_assets::i18n::I18nConfig>,
     pub endpoint_dispatcher: Option<std::sync::Arc<dyn oxide_fw_server::EndpointDispatcher>>,
     pub middleware_dispatcher: Option<std::sync::Arc<dyn oxide_fw_server::MiddlewareDispatcher>>,
-    pub dev_hmr: bool,
     pub vary_headers: Vec<String>,
     pub waterfall: Option<oxide_fw_dev::WaterfallRecorder>,
     pub session_codec: Option<std::sync::Arc<oxide_fw_server::SessionCodec>>,
@@ -8186,7 +8192,6 @@ fn build_dispatch_swappable(
         i18n_cfg,
         endpoint_dispatcher,
         middleware_dispatcher,
-        dev_hmr,
         vary_headers,
         waterfall,
         session_codec,
@@ -8447,13 +8452,21 @@ fn build_dispatch_swappable(
             .into_iter()
             .map(|f| routes_root.join(f))
             .collect();
-        let endpoint_params_json: serde_json::Map<String, serde_json::Value> = params
-            .iter()
-            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-            .collect();
+        // P-07b: built on first use. The JSON param map is consumed only by
+        // the middleware loop and the §10.2 endpoint dispatcher; a page
+        // request with no middleware file and no route.ts skips the
+        // per-param allocations entirely (`params` itself stays alive for
+        // the loader / L0-key paths below).
+        let mut endpoint_params_json: Option<serde_json::Map<String, serde_json::Value>> = None;
         // P-07: header/method/url are borrowed from `req_owned` at the
         // dispatcher call sites instead of cloned per request.
         let endpoint_body: bytes::Bytes = req.body.clone();
+        // PERF-03: one nonce per request. The blake3 hash of the request id
+        // was recomputed at up to 5 injection points (L0 hit materialize,
+        // 304-materialize, loader input, streaming head, deferred settles);
+        // every site stamps the SAME value (§17.1 strict-dynamic), so hash
+        // once here and reuse it everywhere.
+        let request_nonce: String = oxide_fw_server::nonce_for(&req.request_id);
 
         // §10.2 step 5 / §8.3: an unmatched URL gets a 404 status (the
         // `status` label above). To render a user-visible 404 page the
@@ -8694,7 +8707,8 @@ fn build_dispatch_swappable(
                             module_path: &module_path_s,
                             method: &req_owned.method,
                             url: &req_owned.url,
-                            params: &endpoint_params_json,
+                            params: endpoint_params_json
+                                .get_or_insert_with(|| build_params_json(&params)),
                             headers: &req_owned.headers,
                             body: endpoint_body.as_ref(),
                             locals: locals_for_call,
@@ -9059,8 +9073,8 @@ fn build_dispatch_swappable(
                         let _ = bg.invalidate_path(&bg_path, false).await;
                     });
                 }
-                let nonce = oxide_fw_server::nonce_for(&req_owned.request_id);
-                let body = hit.materialize(&nonce);
+                let nonce = request_nonce.as_str();
+                let body = hit.materialize(nonce);
                 let mut resp = oxide_fw_server::OxideResponse::new(hit.status(), body);
                 for (k, v) in &hit.headers() {
                     resp = resp.with_header(k, v.clone());
@@ -9118,9 +9132,9 @@ fn build_dispatch_swappable(
                             tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
                                 .await
                         {
-                            let nonce = oxide_fw_server::nonce_for(&req_owned.request_id);
+                            let nonce = request_nonce.as_str();
                             let body = String::from_utf8_lossy(&entry.body)
-                                .replace(l0_cache::NONCE_SENTINEL, &nonce)
+                                .replace(l0_cache::NONCE_SENTINEL, nonce)
                                 .into_bytes();
                             let mut resp = oxide_fw_server::OxideResponse::new(entry.status, body);
                             for (k, v) in &entry.headers {
@@ -9661,7 +9675,8 @@ fn build_dispatch_swappable(
                         module_path: &module_path_s,
                         method: &req_owned.method,
                         url: &req_owned.url,
-                        params: &endpoint_params_json,
+                        params: endpoint_params_json
+                            .get_or_insert_with(|| build_params_json(&params)),
                         headers: &req_owned.headers,
                         body: endpoint_body.as_ref(),
                         locals: &middleware_locals,
@@ -9793,7 +9808,7 @@ fn build_dispatch_swappable(
                 // swapper, which is an inline IIFE and would be blocked under
                 // `strict-dynamic` without it. Same value the pipeline uses
                 // for its own injected tags.
-                input.nonce = Some(oxide_fw_server::nonce_for(&req_owned.request_id));
+                input.nonce = Some(request_nonce.clone());
                 // 16-G: the route's own `meta` joins the neutral head model.
                 // The live path has no plugin `renderHead` contribution to
                 // merge with here (that is a build-time hook); the route's
@@ -9834,7 +9849,7 @@ fn build_dispatch_swappable(
                         let bridged = render_stream_with_recovery(
                             render_stream,
                             Some(label.clone()),
-                            Some(oxide_fw_server::nonce_for(&req_owned.request_id)),
+                            Some(request_nonce.clone()),
                             label.clone(),
                         );
 
@@ -9842,7 +9857,7 @@ fn build_dispatch_swappable(
                         // `defer()`, hold the document's closing tags and
                         // emit a resolution script per settle as it arrives,
                         // instead of one batched tag after the slowest.
-                        let nonce_for_settles = oxide_fw_server::nonce_for(&req_owned.request_id);
+                        let nonce_for_settles = request_nonce.clone();
                         let bridged = match page_settles.take() {
                             Some(rx) => {
                                 // §20 / O3b: pass the recorder + request id
@@ -12007,7 +12022,6 @@ async fn start_server_inner_full(
         },
         endpoint_dispatcher,
         middleware_dispatcher,
-        dev_hmr: hmr.is_some(),
         vary_headers: cfg.cache.l0.vary.clone(),
         waterfall: waterfall_recorder.clone(),
         session_codec,
