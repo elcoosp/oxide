@@ -7,8 +7,6 @@ use oxide_fw_config::OxideConfig;
 use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use oxide_fw_jshost::{Pool, ToolingModules};
 
-const SOURCE_EXTENSIONS: [&str; 7] = ["ts", "tsx", "js", "jsx", "vue", "svelte", "html"];
-
 pub struct TailwindOutput {
     pub entry: PathBuf,
     pub css: String,
@@ -209,32 +207,4 @@ fn find_entry_css(root: &Path) -> std::io::Result<Option<PathBuf>> {
         }
     }
     Ok(None)
-}
-
-fn collect_sources(dir: &Path, out: &mut Vec<serde_json::Value>) -> std::io::Result<()> {
-    if !dir.is_dir() {
-        return Ok(());
-    }
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_sources(&path, out)?;
-            continue;
-        }
-        let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
-            continue;
-        };
-        if !SOURCE_EXTENSIONS.contains(&ext) {
-            continue;
-        }
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        out.push(serde_json::json!({
-            "content": text,
-            "extension": ext,
-        }));
-    }
-    Ok(())
 }
