@@ -6407,6 +6407,10 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     } else {
         rb.bundle(&client_opts).map_err(|e| {
             persist_diagnostics(&rootp, std::slice::from_ref(&e.0));
+            // The Diagnostic message flattens the error chain; print the full
+            // chain on stderr so a bundler failure is debuggable without
+            // re-running under a debugger.
+            eprintln!("bundler (client) failed — full chain: {e:#}");
             anyhow::anyhow!("{} {}", e.0.code, e.0.message)
         })?
     };
@@ -6667,6 +6671,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         let mut diags = client_outcome.diagnostics.clone();
         diags.push((*e.0).clone());
         persist_diagnostics(&rootp, &diags);
+        eprintln!("bundler (server) failed — full chain: {e:#}");
         anyhow::anyhow!("{} {}", e.0.code, e.0.message)
     })?;
 
