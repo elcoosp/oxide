@@ -268,14 +268,12 @@ impl FrameworkHost {
             };
             match self.pool.call(entry, input).await {
                 Ok(mut stream) => {
-                    if let Ok(bytes) = stream.collect().await {
-                        if let Ok(v) = serde_json::from_slice::<Value>(&bytes) {
-                            if let Some(g) = v.get("generation").and_then(|x| x.as_u64()) {
+                    if let Ok(bytes) = stream.collect().await
+                        && let Ok(v) = serde_json::from_slice::<Value>(&bytes)
+                            && let Some(g) = v.get("generation").and_then(|x| x.as_u64()) {
                                 max_gen = max_gen.max(g);
                                 any_ok = true;
                             }
-                        }
-                    }
                 }
                 Err(e) => {
                     failed += 1;
