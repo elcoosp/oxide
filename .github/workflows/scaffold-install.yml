@@ -1,0 +1,113 @@
+name: scaffold-install
+
+# Pre-0.1 readiness P0-3: a CI job that scaffolds each framework starter,
+# installs its dependencies from packed tarballs (a stand-in for a registry),
+# builds the project with the real CLI binary, boots the server and curls the
+# index page. Without this gate the README quick-start could rot again (it
+# previously exited 2 on its own documented command).
+
+on:
+  push: { branches: [main] }
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scaffold:
+    name: scaffold + install + build + boot (${{ matrix.framework }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [react, vue, svelte, solid]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: scaffold-${{ matrix.framework }}
+          cache-on-failure: true
+
+      - name: Build the CLI binary
+        run: cargo build --release -p oxide-fw-cli
+
+      - name: Build npm packages
+        run: |
+          npm install -g pnpm@10
+          pnpm --version
+          pnpm --filter create-oxide build
+          pnpm --filter @oxide-fw/core build
+          pnpm --filter @oxide-fw/${{ matrix.framework }} build
+
+      - name: Pack npm packages into a local registry dir
+        run: |
+          mkdir -p /tmp/oxide-registry
+          cd packages/create-oxide  && npm pack --pack-destination /tmp/oxide-registry
+          cd ../core                && npm pack --pack-destination /tmp/oxide-registry
+          cd ../${{ matrix.framework }} && npm pack --pack-destination /tmp/oxide-registry
+          cd ../cli-npm             && npm pack --pack-destination /tmp/oxide-registry
+          ls /tmp/oxide-registry
+
+      - name: Scaffold the starter
+        run: |
+          node packages/create-oxide/src/cli.ts my-app \
+            --framework ${{ matrix.framework }} \
+            --template blog
+
+      - name: Rewrite deps to the packed tarballs (skip the binary download)
+        working-directory: my-app
+        run: |
+          export OXIDE_SKIP_DOWNLOAD=1
+          node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const reg = "/tmp/oxide-registry";
+            const find = (name) => fs.readdirSync(reg).find((f) => f.startsWith(name.replace("@", "").replace("/", "-") + "-"));
+            for (const d of ["@oxide-fw/core", "@oxide-fw/${{ matrix.framework }}", "create-oxide"]) {
+              const t = find(d);
+              if (t && pkg.dependencies[d]) pkg.dependencies[d] = `file:${reg}/${t}`;
+            }
+            // The CLI wrapper is satisfied by the locally built binary;
+            // drop the dep so npm does not try a postinstall download.
+            delete pkg.dependencies["@oxide-fw/cli"];
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));
+          '
+          cat package.json
+
+      - name: Install
+        working-directory: my-app
+        run: npm install
+
+      - name: Build
+        working-directory: my-app
+        env:
+          OXIDE_BIN: ${{ github.workspace }}/target/release/oxide
+        run: |
+          $OXIDE_BIN --version
+          npm run build
+
+      - name: Boot + curl
+        working-directory: my-app
+        env:
+          OXIDE_BIN: ${{ github.workspace }}/target/release/oxide
+        run: |
+          npm run start &
+          for i in $(seq 1 60); do
+            sleep 1
+            if curl -fsS http://localhost:3000/ > /tmp/page.html 2>/dev/null; then
+              echo "got index page on attempt $i"
+              head -c 400 /tmp/page.html
+              exit 0
+            fi
+          done
+          echo "server did not answer within 60s"
+          exit 1
