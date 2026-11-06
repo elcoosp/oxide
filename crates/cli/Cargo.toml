@@ -36,6 +36,10 @@ oxide-fw-cache = { workspace = true, features = ["redis", "s3"] }
 dashmap = { workspace = true }
 oxide-fw-render = { workspace = true }
 oxide-fw-server = { workspace = true }
+# PERF-L0 (readiness): segment-compressed cache entries (zstd frames, gzip
+# members) for the L0 hit path.
+zstd = { workspace = true }
+flate2 = { workspace = true }
 tokio-rustls = { workspace = true }
 oxide-fw-assets = { workspace = true, features = ["subset"] }
 oxide-fw-dev = { workspace = true }
