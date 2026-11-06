@@ -449,8 +449,8 @@ impl StaticAssets {
         // the body on disk may have changed since the client got that etag.
         // Serve fresh bytes every time; the `no-cache` header prevents the
         // browser from caching them long enough for this to matter.
-        if !is_dev_pre {
-            if let Some(inm) = req.header("if-none-match") {
+        if !is_dev_pre
+            && let Some(inm) = req.header("if-none-match") {
                 let matches = inm.split(',').map(|c| c.trim()).any(|cand| {
                     let cand = cand.strip_prefix("W/").unwrap_or(cand);
                     cand == "*" || cand.trim_matches('"') == etag_raw
@@ -464,7 +464,6 @@ impl StaticAssets {
                     );
                 }
             }
-        }
 
         let is_get = req.method.eq_ignore_ascii_case("GET");
         let range = if is_get {
