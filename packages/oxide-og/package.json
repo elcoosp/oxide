@@ -10,7 +10,8 @@
   "scripts": {
     "og": "tsx src/cli.ts",
     "build": "tsc -p tsconfig.json",
-    "generate": "tsx src/cli.ts --input ./assets --out out"
+    "generate": "tsx src/cli.ts --input ./assets --out out",
+    "test": "node --import tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@fontsource/inter": "^5.3.0",
