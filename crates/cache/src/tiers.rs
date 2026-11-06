@@ -22,6 +22,7 @@ use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use redb::ReadableDatabase;
 use redb::{Database, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -509,8 +510,12 @@ pub struct TieredCache {
     pub memory: MemoryTier,
     pub disk: Option<DiskTier>,
     pub remote: Option<Arc<dyn CacheHandler>>,
-    /// Tag index: tag → keys.
-    pub tags: DashMap<String, Vec<String>>,
+    /// Tag index: tag → keys. A `HashSet` because membership is the only
+    /// question the write path asks (P-18b: an entry re-set under a tag that
+    /// already indexes thousands of keys is O(1), not an O(n) linear scan);
+    /// readers need no order — [`TieredCache::tag_keys`] sorts for
+    /// determinism before returning.
+    pub tags: DashMap<String, HashSet<String>>,
     hits: AtomicU64,
     misses: AtomicU64,
     stale_served: AtomicU64,
@@ -661,10 +666,7 @@ impl TieredCache {
             });
         }
         for tag in &entry.tags {
-            let mut list = self.tags.entry(tag.clone()).or_default();
-            if !list.iter().any(|k| k == key) {
-                list.push(key.to_string());
-            }
+            self.tags.entry(tag.clone()).or_default().insert(key.to_string());
         }
         Ok(())
     }
@@ -696,7 +698,11 @@ impl TieredCache {
     /// Keys tagged with `tag` across the in-memory index, disk and remote (deduped,
     /// sorted for determinism).
     pub async fn tag_keys(&self, tag: &str) -> Result<Vec<String>> {
-        let mut keys = self.tags.get(tag).map(|l| l.clone()).unwrap_or_default();
+        let mut keys: Vec<String> = self
+            .tags
+            .get(tag)
+            .map(|l| l.iter().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
         if let Some(disk) = &self.disk {
             for k in disk.tag_keys(tag)? {
                 if !keys.contains(&k) {
@@ -860,7 +866,11 @@ impl CacheHandler for TieredCache {
     }
 
     async fn tag_keys(&self, tag: &str) -> Result<Vec<String>> {
-        Ok(self.tags.get(tag).map(|v| v.clone()).unwrap_or_default())
+        Ok(self
+            .tags
+            .get(tag)
+            .map(|v| v.iter().cloned().collect::<Vec<_>>())
+            .unwrap_or_default())
     }
 
     async fn invalidate_tag(&self, tag: &str, _soft: bool) -> Result<usize> {
