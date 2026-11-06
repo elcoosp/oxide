@@ -4843,6 +4843,7 @@ dependencies = [
  "chrono",
  "clap",
  "dashmap 6.2.1",
+ "flate2",
  "futures",
  "image",
  "mimalloc",
@@ -4878,6 +4879,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "zstd",
 ]
 
 [[package]]
@@ -5081,6 +5083,7 @@ dependencies = [
  "blake3",
  "brotli",
  "bytes",
+ "dashmap 6.2.1",
  "flate2",
  "futures",
  "h3",
