@@ -22,9 +22,9 @@ use rolldown::{
 use rolldown_common::{BundlerTransformOptions, Either, JsxOptions as RolldownJsxOptions};
 use rolldown_common::{ModuleType, Output};
 use rolldown_plugin::{
-    HookLoadArgs, HookLoadOutput, HookLoadReturn, HookTransformArgs, HookTransformOutput,
-    HookTransformReturn, HookUsage, Plugin, Pluginable, SharedLoadPluginContext,
-    SharedTransformPluginContext,
+    HookLoadArgs, HookLoadOutput, HookLoadReturn, HookResolveIdArgs, HookResolveIdOutput,
+    HookResolveIdReturn, HookTransformArgs, HookTransformOutput, HookTransformReturn, HookUsage,
+    Plugin, Pluginable, PluginContext, SharedLoadPluginContext, SharedTransformPluginContext,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -687,15 +687,35 @@ pub struct PrecompiledPlugin {
 }
 
 impl PrecompiledPlugin {
+    /// BUG-MAPKEY: the keys MUST be lexically normalized. Callers built the
+    /// map from lexical joins (`routes/index` + `../../components/a.vue`
+    /// keeps the `..` segments), while Rolldown resolves the same import to
+    /// the normalized spelling — the lookup missed and the raw SFC reached
+    /// the parser. Normalizing on both sides (here and in `lookup`) makes
+    /// the comparison spelling-independent.
     pub fn new(sources: BTreeMap<PathBuf, String>) -> Self {
-        Self { sources }
+        Self {
+            sources: sources
+                .into_iter()
+                .map(|(k, v)| (crate::normalize(&k), v))
+                .collect(),
+        }
     }
 
-    /// Exact path, then canonicalized (`/var` vs `/private/var` on macOS —
-    /// same trap the CLI's canonicalize steps guard against).
+    /// Exact path, then lexically normalized, then canonicalized (`/var` vs
+    /// `/private/var` on macOS — same trap the CLI's canonicalize steps guard
+    /// against). The normalized fallback is the BUG-MapKey net: precompile
+    /// keys are normalized paths, while an importer may hand Rolldown an id
+    /// with `..` segments (`/proj/src/routes/index/../../components/a.vue`);
+    /// canonicalize alone resolves those through the filesystem, but only
+    /// when the file exists, so the lexical pass must come first.
     fn lookup(&self, id: &str) -> Option<String> {
         let p = Path::new(id);
         if let Some(s) = self.sources.get(p) {
+            return Some(s.clone());
+        }
+        let normalized = crate::normalize(p);
+        if let Some(s) = self.sources.get(&normalized) {
             return Some(s.clone());
         }
         let canon = PathBuf::from(id).canonicalize().ok()?;
@@ -726,6 +746,116 @@ impl Plugin for PrecompiledPlugin {
                 side_effects: None,
                 module_type: Some(ModuleType::Js),
             }))
+        }
+    }
+}
+
+/// §15-E: bridge the CLI-level `resolveId` plugin hook (JS/WASM plugins,
+/// wrapped by the CLI into [`ResolveHook`]) into Rolldown's own resolve
+/// chain. First plugin returning a concrete id wins; `None` falls through to
+/// the built-ins, exactly like the dev-path walker in `bundle_incremental`.
+#[derive(Debug)]
+pub struct HookResolveIdBridgePlugin {
+    resolve_hook: Option<crate::ResolveHook>,
+}
+
+impl HookResolveIdBridgePlugin {
+    pub fn new(resolve_hook: Option<crate::ResolveHook>) -> Self {
+        Self { resolve_hook }
+    }
+}
+
+impl Plugin for HookResolveIdBridgePlugin {
+    fn name(&self) -> std::borrow::Cow<'static, str> {
+        "oxide-hook-resolve-bridge".into()
+    }
+
+    fn register_hook_usage(&self) -> HookUsage {
+        HookUsage::ResolveId
+    }
+
+    fn resolve_id(
+        &self,
+        _ctx: &PluginContext,
+        args: &HookResolveIdArgs<'_>,
+    ) -> impl std::future::Future<Output = HookResolveIdReturn> + Send {
+        let hook = self.resolve_hook.clone();
+        let specifier = args.specifier.to_string();
+        let importer = args.importer.map(str::to_string).unwrap_or_default();
+        async move {
+            let Some(hook) = hook else { return Ok(None) };
+            // The CLI closure blocks on a worker round-trip (its own scoped
+            // thread + runtime); that is acceptable here — the bundler runs on
+            // a dedicated thread and the plugin worker is a separate process,
+            // so a stall cannot deadlock. A hook failure degrades to `None`
+            // (fall through to the built-in resolver) and is reported on
+            // stderr, matching the CssPlugin's degradation convention.
+            match hook.call(&specifier, &importer) {
+                Ok(Some(p)) => Ok(Some(HookResolveIdOutput {
+                    id: ArcStr::from(p.to_string_lossy().as_ref()),
+                    external: None,
+                    normalize_external_id: None,
+                    side_effects: None,
+                    package_json_path: None,
+                })),
+                Ok(None) => Ok(None),
+                Err(e) => {
+                    eprintln!(
+                        "plugin resolveId({specifier:?}) failed: {} {}",
+                        e.0.code, e.0.message
+                    );
+                    Ok(None)
+                }
+            }
+        }
+    }
+}
+
+/// §15-E: bridge the CLI-level `load` plugin hook into Rolldown's load chain.
+/// The FIRST non-null `code` overrides the disk read (same contract the CLI
+/// doc-comment specifies); `None` falls through to the built-ins.
+#[derive(Debug)]
+pub struct HookLoadBridgePlugin {
+    load_hook: Option<crate::LoadHook>,
+}
+
+impl HookLoadBridgePlugin {
+    pub fn new(load_hook: Option<crate::LoadHook>) -> Self {
+        Self { load_hook }
+    }
+}
+
+impl Plugin for HookLoadBridgePlugin {
+    fn name(&self) -> std::borrow::Cow<'static, str> {
+        "oxide-hook-load-bridge".into()
+    }
+
+    fn register_hook_usage(&self) -> HookUsage {
+        HookUsage::Load
+    }
+
+    fn load(
+        &self,
+        _ctx: SharedLoadPluginContext,
+        args: &HookLoadArgs<'_>,
+    ) -> impl std::future::Future<Output = HookLoadReturn> + Send {
+        let hook = self.load_hook.clone();
+        let id = args.id.to_string();
+        async move {
+            let Some(hook) = hook else { return Ok(None) };
+            match hook.call(&id) {
+                Ok(Some(code)) => Ok(Some(HookLoadOutput {
+                    code: ArcStr::from(code),
+                    map: None,
+                    side_effects: None,
+                    module_type: Some(ModuleType::Js),
+                })),
+                Ok(None) => Ok(None),
+                Err(e) => {
+                    eprintln!("plugin load({id:?}) failed: {} {}", e.0.code, e.0.message);
+                    Ok(None)
+                }
+            }
         }
     }
 }
@@ -884,6 +1014,24 @@ fn oxide_plugins_with_sink(
             options.precompiled.clone(),
         )));
     }
+    // §15-E: bridge the CLI-level `resolveId` / `load` plugin hooks into the
+    // production chain. Without this the hooks only run in DEV (the
+    // incremental graph walker consults them) — a plugin-virtualized module
+    // then resolves in `oxide dev` but the production bundle leaves the
+    // import unresolved, Rolldown externalizes the specifier, and the shipped
+    // SSR build carries a runtime import of a module that does not exist.
+    // LAST in the chain: built-in load/resolve (precompiled, css, fs) keeps
+    // priority; the bridge only answers what the built-ins did not.
+    if options.resolve_hook.is_some() {
+        plugins.push(Pluginable::new_shared(HookResolveIdBridgePlugin::new(
+            options.resolve_hook.clone(),
+        )));
+    }
+    if options.load_hook.is_some() {
+        plugins.push(Pluginable::new_shared(HookLoadBridgePlugin::new(
+            options.load_hook.clone(),
+        )));
+    }
     plugins
 }
 
@@ -935,7 +1083,13 @@ impl OxidePassesPlugin {
             env,
             build_secret,
             root,
-            precompiled,
+            // BUG-MAPKEY: normalize here for the same reason
+            // `PrecompiledPlugin::new` does — the guard compares against
+            // bundler-side ids, which are normalized spellings.
+            precompiled: precompiled
+                .into_iter()
+                .map(|(k, v)| (crate::normalize(&k), v))
+                .collect(),
             transform_hook,
             diagnostics,
         }
@@ -1005,6 +1159,57 @@ impl OxidePassesPlugin {
             _ => "mjs",
         }
     }
+
+    /// BUG-MAPKEY guard (pure, unit-testable): does `id` name a framework
+    /// SFC (`.vue` / `.svelte`) or `.mdx` document that reached the bundler
+    /// WITHOUT precompiled content?
+    ///
+    /// When the precompile pass misses a module (map-key mismatch, a failed
+    /// compile, no tooling pool), the raw file used to flow into Rolldown's
+    /// parser — `<template>…` parsed as JSX surfaced as the cryptic
+    /// `rolldown write: Unexpected JSX expression`, with no file name. The
+    /// guard turns that into a named `BLD-SFC` diagnostic that fails the
+    /// build loudly (the sink's first entry becomes the error in
+    /// `bundle_cold`).
+    fn unprecompiled_sfc(&self, id: &str) -> Option<Diagnostic> {
+        // Strip any query/fragment (`./x.vue?raw`), same as the CSS plugin.
+        let bare = id.split(['?', '#']).next().unwrap_or(id);
+        let ext = Path::new(bare).extension()?.to_str()?;
+        if !matches!(ext, "vue" | "svelte" | "mdx") {
+            return None;
+        }
+        let abs = PathBuf::from(bare);
+        let normalized = crate::normalize(&abs);
+        if self.precompiled.contains_key(&abs)
+            || self.precompiled.contains_key(&normalized)
+        {
+            return None;
+        }
+        // The canonicalize pass resolves symlinked roots (`/var` vs
+        // `/private/var`); a miss there settles it.
+        if let Ok(canon) = abs.canonicalize()
+            && self.precompiled.contains_key(&canon)
+        {
+            return None;
+        }
+        let msg = match ext {
+            "mdx" => format!(
+                "module {bare} reached the bundler as raw Markdown — the MDX precompile pass did not produce content for it"
+            ),
+            _ => format!(
+                "module {bare} reached the bundler as a raw .{ext} file — the precompile pass did not produce content for it"
+            ),
+        };
+        Some(
+            Diagnostic::error("BLD-SFC", msg)
+                .with_fix(format!(
+                    "check the tooling-pool logs for the {ext} compile failure of {bare}; the build must not bundle raw framework SFC sources"
+                ))
+                .with_cause(
+                    "the precompiled-map lookup missed this module id, so Rolldown would parse the raw file (a `<template>` block reads as a JSX expression)",
+                ),
+        )
+    }
 }
 
 impl Plugin for OxidePassesPlugin {
@@ -1013,7 +1218,39 @@ impl Plugin for OxidePassesPlugin {
     }
 
     fn register_hook_usage(&self) -> HookUsage {
-        HookUsage::Transform
+        HookUsage::Transform | HookUsage::Load
+    }
+
+    /// BUG-MAPKEY guard: a raw `.vue` / `.svelte` / `.mdx` id the precompile
+    /// pass never produced content for must fail the build with a named
+    /// diagnostic — NOT flow into Rolldown's parser, where `<template>…`
+    /// parses as a JSX expression and the build dies with the file-less
+    /// `Unexpected JSX expression`. The stub module returned here is only a
+    /// parse-safety net: the pushed diagnostic already fails the build.
+    fn load(
+        &self,
+        _ctx: SharedLoadPluginContext,
+        args: &HookLoadArgs<'_>,
+    ) -> impl std::future::Future<Output = HookLoadReturn> + Send {
+        // Compute eagerly, return ONE async block — two `async move` blocks in
+        // one fn do not unify (see the CssPlugin note below).
+        let out: Option<HookLoadOutput> = {
+            let violation = self.unprecompiled_sfc(args.id);
+            violation.map(|d| {
+                if let Ok(mut sink) = self.diagnostics.lock() {
+                    sink.push(d);
+                }
+                HookLoadOutput {
+                    code: ArcStr::from(
+                        "throw new Error('oxide: unprecompiled framework module (see the BLD-SFC diagnostic)');",
+                    ),
+                    map: None,
+                    side_effects: None,
+                    module_type: Some(ModuleType::Js),
+                }
+            })
+        };
+        async move { Ok(out) }
     }
 
     fn transform(
@@ -1151,6 +1388,152 @@ mod bug_solid_tests {
             ro.resolve.is_none(),
             "no explicit resolve without conditions"
         );
+    }
+}
+
+#[cfg(test)]
+mod bug_mapkey_tests {
+    //! BUG-MAPKEY: precompiled-map keys and bundler module ids must agree.
+    //! The historical failure: `resolve_relative` handed back a key with `..`
+    //! segments while Rolldown resolved the same import to the normalized
+    //! path; the lookup missed, the raw `.vue`/`.svelte` file reached the
+    //! parser, and the build died with the file-less `Unexpected JSX
+    //! expression`.
+
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn plugin_with(key: &str) -> PrecompiledPlugin {
+        let mut sources = BTreeMap::new();
+        sources.insert(
+            PathBuf::from(key),
+            "export default 'compiled'".to_string(),
+        );
+        PrecompiledPlugin::new(sources)
+    }
+
+    #[test]
+    fn lookup_hits_a_normalized_id_when_the_key_has_dotdot_segments() {
+        let p = plugin_with("/proj/src/routes/index/../../components/a.vue");
+        assert!(
+            p.lookup("/proj/src/components/a.vue").is_some(),
+            "bundler-side normalized id must find the non-normalized precompile key"
+        );
+    }
+
+    #[test]
+    fn lookup_hits_a_dotdot_id_when_the_key_is_normalized() {
+        let p = plugin_with("/proj/src/components/a.vue");
+        assert!(
+            p.lookup("/proj/src/routes/index/../../components/a.vue")
+                .is_some(),
+            "an importer-supplied id with `..` segments must still find the normalized key"
+        );
+    }
+
+    #[test]
+    fn lookup_miss_keeps_failing_for_unknown_modules() {
+        let p = plugin_with("/proj/src/components/a.vue");
+        assert!(p.lookup("/proj/src/components/other.vue").is_none());
+    }
+
+    fn passes_with(keys: &[&str]) -> OxidePassesPlugin {
+        let mut precompiled = BTreeMap::new();
+        for k in keys {
+            precompiled.insert(
+                PathBuf::from(k),
+                "export default 'compiled'".to_string(),
+            );
+        }
+        OxidePassesPlugin::new(
+            oxide_fw_compiler::Env::Client,
+            "secret".to_string(),
+            PathBuf::from("/proj"),
+            precompiled,
+            None,
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        )
+    }
+
+    #[test]
+    fn guard_flags_a_raw_sfc_not_in_the_map() {
+        let passes = passes_with(&[]);
+        let d = passes
+            .unprecompiled_sfc("/proj/src/components/a.vue")
+            .expect("raw .vue without precompiled content must be flagged");
+        assert_eq!(d.code, "BLD-SFC");
+        assert!(d.message.contains("/proj/src/components/a.vue"));
+        assert!(
+            d.message.contains("raw .vue"),
+            "message names the file kind: {}",
+            d.message
+        );
+    }
+
+    #[test]
+    fn guard_flags_a_raw_svelte_and_mdx_too() {
+        let passes = passes_with(&[]);
+        assert!(passes.unprecompiled_sfc("/proj/src/b.svelte").is_some());
+        let d = passes
+            .unprecompiled_sfc("/proj/content.mdx")
+            .expect("raw .mdx must be flagged");
+        assert!(d.message.contains("raw Markdown"), "{}", d.message);
+    }
+
+    #[test]
+    fn guard_passes_a_module_the_map_covers_exactly() {
+        let passes = passes_with(&["/proj/src/components/a.vue"]);
+        assert!(passes.unprecompiled_sfc("/proj/src/components/a.vue").is_none());
+    }
+
+    #[test]
+    fn guard_passes_a_module_the_map_covers_normalized() {
+        // The BUG-MAPKEY shape: map key carries `..`, the bundler id does not.
+        let passes = passes_with(&["/proj/src/routes/index/../../components/a.vue"]);
+        assert!(
+            passes
+                .unprecompiled_sfc("/proj/src/components/a.vue")
+                .is_none(),
+            "normalized id must count as covered — the guard must never flag a module lookup would resolve"
+        );
+    }
+
+    #[test]
+    fn guard_passes_a_module_the_map_covers_by_canonical_path() {
+        // A symlinked root (`/var` vs `/private/var`): only the canonical
+        // spelling is in the map. The file must exist for canonicalize to
+        // succeed, so build one under a tempdir.
+        let tmp = std::env::temp_dir().join("oxide-bug-mapkey-guard-test");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let sfc = tmp.join("a.vue");
+        std::fs::write(&sfc, "<template />").unwrap();
+        let mut precompiled = BTreeMap::new();
+        precompiled.insert(
+            sfc.canonicalize().unwrap(),
+            "export default 'compiled'".to_string(),
+        );
+        let passes = OxidePassesPlugin::new(
+            oxide_fw_compiler::Env::Client,
+            "secret".to_string(),
+            tmp.clone(),
+            precompiled,
+            None,
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        );
+        assert!(
+            passes.unprecompiled_sfc(sfc.to_string_lossy().as_ref()).is_none(),
+            "canonical map spelling must count as covered"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn guard_ignores_non_sfc_extensions_and_queries() {
+        let passes = passes_with(&[]);
+        assert!(passes.unprecompiled_sfc("/proj/src/page.tsx").is_none());
+        assert!(passes.unprecompiled_sfc("/proj/src/style.css").is_none());
+        assert!(passes.unprecompiled_sfc("/proj/src/logo.svg?react").is_none());
     }
 }
 
