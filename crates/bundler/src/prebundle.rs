@@ -66,14 +66,15 @@ pub fn prebundle_cjs_to_esm(
     // the package declares one (`module`, or `exports.import`), otherwise
     // the CJS entry (React 19 ships CJS-only — that's the point of the
     // Rolldown CJS interop analysis below).
-    let mut resolve_opts = oxc_resolver::ResolveOptions::default();
-    resolve_opts.main_fields = vec!["module".to_string(), "main".to_string()];
-    resolve_opts.condition_names = vec![
-        "import".to_string(),
-        "module".to_string(),
-        "browser".to_string(),
-    ];
-    let resolver = oxc_resolver::Resolver::new(resolve_opts);
+    let resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
+        main_fields: vec!["module".to_string(), "main".to_string()],
+        condition_names: vec![
+            "import".to_string(),
+            "module".to_string(),
+            "browser".to_string(),
+        ],
+        ..oxc_resolver::ResolveOptions::default()
+    });
 
     let mut resolved: Vec<(String, PathBuf)> = Vec::new();
     let mut failures: Vec<(String, String)> = Vec::new();
@@ -396,8 +397,8 @@ fn resolve_through_wrapper_impl(path: &Path, depth: u32) -> PathBuf {
             }
             let Some(end) = rest[1..].find(quote) else { continue };
             let rel = &rest[1..1 + end];
-            if rel.starts_with("./") {
-                candidates.push(rel[2..].to_string());
+            if let Some(stripped) = rel.strip_prefix("./") {
+                candidates.push(stripped.to_string());
             }
         }
     }
@@ -576,20 +577,15 @@ fn sanitized_stem(name: &str) -> String {
     name.replace('/', "-").replace('@', "")
 }
 
-/// `"react-dom/client"` → `"react-dom-client.js"` (the on-disk filename the
-/// dev server maps `/@prebundle/react-dom-client.js` to).
-fn sanitized_filename(name: &str) -> String {
-    let mut s = sanitized_stem(name);
-    s.push_str(".js");
-    s
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn sanitize_package_names() {
+        // The on-disk contract the dev server relies on: a prebundle entry is
+        // `<sanitized_stem(pkg)>.js` and is mapped from `/@prebundle/<stem>.js`.
+        let sanitized_filename = |name: &str| format!("{}.js", sanitized_stem(name));
         assert_eq!(sanitized_filename("react"), "react.js");
         assert_eq!(sanitized_filename("react-dom/client"), "react-dom-client.js");
         assert_eq!(sanitized_filename("react/jsx-runtime"), "react-jsx-runtime.js");
