@@ -26,7 +26,7 @@ export default function Page(props: Props) {
             <div className="flex flex-wrap items-center gap-3 font-mono text-xs text-zinc-500 mb-4">
               <span>{p.date}</span>
               {p.tags.map((t) => (
-                <span className="bg-zinc-800/80 text-zinc-300 px-2.5 py-1 rounded-md" key={t}>
+                <span className="bg-zinc-800/80 text-zinc-300 px-2.5 py-1 rounded-md" key={`${p.slug}#${t}`}>
                   #{t}
                 </span>
               ))}
