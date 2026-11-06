@@ -12,6 +12,12 @@ import {
   configTs,
   pageServerTs,
   main,
+  parseArgs,
+  tokenize,
+  packageJson,
+  FRAMEWORK_RUNTIME_DEPS,
+  tsconfigJson,
+  gitignore,
 } from '../src/cli.ts';
 
 test('scaffolds every framework × shape combo with required files', async () => {
@@ -21,10 +27,10 @@ test('scaffolds every framework × shape combo with required files', async () =>
       for (const shape of SHAPES) {
         const dir = join(base, `${fw}-${shape}`);
         const files = await scaffold(shape, fw, dir);
-        // SPEC-19.2: shape-specific extras — minimal=6 (the base set),
-        // blog=8 (blog/[slug]/page + page.server), dashboard=8, storefront=8.
+        // SPEC-19.2: shape-specific extras — minimal=8 (the base set +
+        // tsconfig.json + .gitignore), blog=10, dashboard=10, storefront=10.
         const expectedFiles =
-          shape === 'minimal' ? 6 : 8;
+          shape === 'minimal' ? 8 : 10;
         assert.equal(
           files.length,
           expectedFiles,
@@ -35,6 +41,24 @@ test('scaffolds every framework × shape combo with required files', async () =>
         assert.equal(pkg.scripts.build, 'oxide build');
         assert.equal(pkg.scripts.start, 'oxide start');
         assert.ok(pkg.dependencies[`@oxide-fw/${fw}`]);
+        // P0-3: the released version is 0.1.0 — pinning anything else makes
+        // `npm install` fail on a fresh machine. Inside the monorepo the
+        // scaffold uses workspace:* instead; simulate the published mode by
+        // pointing PWD outside packages/.
+        const savedPwd = process.env['PWD'];
+        process.env['PWD'] = '/tmp/not-the-monorepo';
+        const publishedPkg = JSON.parse(packageJson(fw));
+        process.env['PWD'] = savedPwd;
+        assert.equal(publishedPkg.dependencies['@oxide-fw/core'], '0.1.0');
+        assert.equal(publishedPkg.dependencies[`@oxide-fw/${fw}`], '0.1.0');
+        // P0-3: the framework runtime must be a real dependency, not an
+        // optional peer nobody installs.
+        for (const [runtime, range] of Object.entries(FRAMEWORK_RUNTIME_DEPS[fw])) {
+          assert.equal(pkg.dependencies[runtime], range, `${fw} installs ${runtime}`);
+        }
+        // P0-3: tsconfig + .gitignore exist.
+        await readFile(join(dir, 'tsconfig.json'), 'utf8');
+        await readFile(join(dir, '.gitignore'), 'utf8');
         const cfg = await readFile(join(dir, 'oxide.config.ts'), 'utf8');
         for (const key of ['framework:', 'routes:', 'server:', 'render:', 'adapter:', 'build:']) {
           assert.ok(cfg.includes(key), `${fw}/${shape} config has ${key}`);
@@ -165,4 +189,92 @@ test('emitted framework call opts into real SSR', () => {
     assert.ok(cfg.includes(`${fw}({ ssr: 'real' })`), `${fw} opts into real SSR`)
   }
 })
+
+// -------- P0-2: real flag parsing (README quick-start must actually work)
+
+test('README quick-start parses: my-app --framework react --template blog', () => {
+  const p = parseArgs(['my-app', '--framework', 'react', '--template', 'blog']);
+  assert.equal(p.dir, 'my-app');
+  assert.equal(p.framework, 'react');
+  assert.equal(p.template, 'blog');
+});
+
+test('README quick-start parses with = style and short flags', () => {
+  const p1 = parseArgs(['my-app', '--framework=solid', '--template=storefront']);
+  assert.equal(p1.dir, 'my-app');
+  assert.equal(p1.framework, 'solid');
+  assert.equal(p1.template, 'storefront');
+  const p2 = parseArgs(['-f', 'vue', '-t', 'minimal', '-d', 'app-dir']);
+  assert.equal(p2.framework, 'vue');
+  assert.equal(p2.template, 'minimal');
+  assert.equal(p2.dir, 'app-dir');
+});
+
+test('bare project name parses (defaults for flags when provided via legacy positionals)', () => {
+  // Legacy order still honoured: [template, framework, dir]
+  const legacy = parseArgs(['minimal', 'react', 'somewhere']);
+  assert.equal(legacy.template, 'minimal');
+  assert.equal(legacy.framework, 'react');
+  assert.equal(legacy.dir, 'somewhere');
+});
+
+test('missing flags fall back to sensible defaults; invalid values error', () => {
+  const bare = parseArgs(['my-app']);
+  assert.equal(bare.dir, 'my-app');
+  assert.equal(bare.framework, 'react');
+  assert.equal(bare.template, 'minimal');
+  const half = parseArgs(['my-app', '--framework', 'svelte']);
+  assert.equal(half.framework, 'svelte');
+  assert.equal(half.template, 'minimal');
+  assert.throws(() => parseArgs(['my-app', '--framework', 'angular', '--template', 'blog']), /unknown framework/);
+  assert.throws(() => parseArgs(['my-app', '--framework', 'react', '--template', 'hackernews']), /unknown template/);
+});
+
+test('unknown flags and values fail fast', () => {
+  assert.throws(() => parseArgs(['my-app', '--framework', 'angular', '--template', 'blog']), /unknown framework/);
+  assert.throws(() => parseArgs(['my-app', '--nope']), /unknown option/);
+  assert.throws(() => parseArgs(['my-app', '--framework']), /requires a value/);
+});
+
+test('help and version flags parse', () => {
+  assert.equal(parseArgs(['--help']).help, true);
+  assert.equal(parseArgs(['-h']).help, true);
+  assert.equal(parseArgs(['--version']).version, true);
+});
+
+test('the pre-fix misparse is gone: my-app is a directory, not a template', () => {
+  // Before the fix, `my-app --framework react --template blog` was read as
+  // [template, framework, dir] → template="my-app" → exit 2.
+  const p = parseArgs(['my-app', '-f', 'svelte', '-t', 'blog']);
+  assert.equal(p.dir, 'my-app');
+  assert.notEqual(p.template, 'my-app');
+});
+
+test('main() handles the README quick-start end to end (exit 0)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'oxide-create-flags-'));
+  const savedCwd = process.cwd();
+  process.chdir(dir);
+  try {
+    const code = await main(['my-app', '--framework', 'react', '--template', 'blog']);
+    assert.equal(code, 0);
+    const app = join(dir, 'my-app');
+    const entries = await readdir(app);
+    assert.ok(entries.includes('tsconfig.json'));
+    assert.ok(entries.includes('.gitignore'));
+    const pkg = JSON.parse(await readFile(join(app, 'package.json'), 'utf8'));
+    assert.equal(pkg.dependencies['@oxide-fw/react'], 'workspace:*');
+    assert.equal(pkg.dependencies['react'], '^19.0.0');
+  } finally {
+    process.chdir(savedCwd);
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('tsconfig adapts jsx settings per framework', () => {
+  assert.ok(tsconfigJson('react').includes('"jsx": "react-jsx"'));
+  assert.ok(tsconfigJson('solid').includes('"jsxImportSource": "solid-js"'));
+  assert.ok(tsconfigJson('vue').includes('"jsx": "preserve"'));
+  assert.ok(gitignore().includes('dist/'));
+  assert.ok(gitignore().includes('node_modules/'));
+});
 
