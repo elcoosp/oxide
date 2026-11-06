@@ -1,0 +1,41 @@
+{
+  "name": "@oxide-fw/cli",
+  "version": "0.1.0",
+  "description": "Prebuilt oxide CLI binary installer — downloads the platform binary from GitHub Releases and exposes it as `oxide`.",
+  "type": "module",
+  "bin": {
+    "oxide": "./bin.js"
+  },
+  "scripts": {
+    "postinstall": "node ./install.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "bin.js",
+    "install.js",
+    "platform.js",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/elcoosp/oxide.git",
+    "directory": "packages/cli-npm"
+  },
+  "license": "MIT OR Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "oxide",
+    "cli",
+    "binary",
+    "web-framework"
+  ],
+  "homepage": "https://github.com/elcoosp/oxide/tree/main/packages/cli-npm#readme",
+  "bugs": {
+    "url": "https://github.com/elcoosp/oxide/issues"
+  },
+  "author": "elcoosp <elcoosp@gmail.com>"
+}
