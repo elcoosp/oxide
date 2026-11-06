@@ -2,7 +2,7 @@
 // refuses non-empty dirs, emitted config matches §14.1 keys.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, writeFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -15,6 +15,7 @@ import {
   parseArgs,
   tokenize,
   packageJson,
+  isInsidePnpmWorkspace,
   FRAMEWORK_RUNTIME_DEPS,
   tsconfigJson,
   gitignore,
@@ -43,12 +44,11 @@ test('scaffolds every framework × shape combo with required files', async () =>
         assert.ok(pkg.dependencies[`@oxide-fw/${fw}`]);
         // P0-3: the released version is 0.1.0 — pinning anything else makes
         // `npm install` fail on a fresh machine. Inside the monorepo the
-        // scaffold uses workspace:* instead; simulate the published mode by
-        // pointing PWD outside packages/.
-        const savedPwd = process.env['PWD'];
-        process.env['PWD'] = '/tmp/not-the-monorepo';
+        // scaffold uses workspace:* instead; the published mode is the
+        // DEFAULT (no workspace above the target dir — BUG-PWD: detection
+        // comes from the output directory, never the caller's PWD env var,
+        // which does not track process.chdir()).
         const publishedPkg = JSON.parse(packageJson(fw));
-        process.env['PWD'] = savedPwd;
         assert.equal(publishedPkg.dependencies['@oxide-fw/core'], '0.1.0');
         assert.equal(publishedPkg.dependencies[`@oxide-fw/${fw}`], '0.1.0');
         // P0-3: the framework runtime must be a real dependency, not an
@@ -262,11 +262,51 @@ test('main() handles the README quick-start end to end (exit 0)', async () => {
     assert.ok(entries.includes('tsconfig.json'));
     assert.ok(entries.includes('.gitignore'));
     const pkg = JSON.parse(await readFile(join(app, 'package.json'), 'utf8'));
-    assert.equal(pkg.dependencies['@oxide-fw/react'], 'workspace:*');
+    // BUG-PWD: a tmpdir scaffold is OUTSIDE any pnpm workspace, so the deps
+    // pin the published version — regardless of the PWD env var this test
+    // process inherited (the old assertion read `PWD`, so this test passed
+    // only when the suite was launched from a `packages/` path).
+    assert.equal(pkg.dependencies['@oxide-fw/react'], '0.1.0');
     assert.equal(pkg.dependencies['react'], '^19.0.0');
   } finally {
     process.chdir(savedCwd);
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('scaffolding inside a pnpm workspace pins workspace:* (BUG-PWD regression)', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'oxide-create-ws-'));
+  try {
+    // The workspace marker sits ABOVE the scaffold target, exactly like the
+    // oxide monorepo layout (repo root → packages/<name>). Detection must
+    // find it from the OUTPUT dir — no PWD coupling.
+    await writeFile(join(base, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n');
+    const dir = join(base, 'packages', 'new-starter');
+    const files = await scaffold('minimal', 'vue', dir);
+    assert.ok(files.length > 0);
+    const pkg = JSON.parse(await readFile(join(dir, 'package.json'), 'utf8'));
+    assert.equal(pkg.dependencies['@oxide-fw/core'], 'workspace:*');
+    assert.equal(pkg.dependencies['@oxide-fw/vue'], 'workspace:*');
+    assert.equal(pkg.dependencies['@oxide-fw/cli'], 'workspace:*');
+    // The framework runtime keeps its real semver range either way.
+    assert.equal(pkg.dependencies['vue'], '^3.6.0-rc.11');
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test('isInsidePnpmWorkspace walks up and stops at the root', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'oxide-create-wsdetect-'));
+  try {
+    assert.equal(isInsidePnpmWorkspace(base), false, 'no marker → not a workspace');
+    await writeFile(join(base, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n');
+    assert.equal(isInsidePnpmWorkspace(base), true, 'marker at the dir itself');
+    const nested = join(base, 'a', 'b', 'c');
+    await mkdir(nested, { recursive: true });
+    await writeFile(join(nested, 'keep.txt'), 'x');
+    assert.equal(isInsidePnpmWorkspace(nested), true, 'marker found N levels up');
+  } finally {
+    await rm(base, { recursive: true, force: true });
   }
 });
 
