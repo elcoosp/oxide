@@ -8356,7 +8356,6 @@ async fn action_set_cookie_survives_200_rerender() {
     );
 }
 
-
 /// Phase 4b E2E: proves the native ESM dev server is wired end-to-end — the
 /// page HTML points at `/@boot/boot.mjs`, that file imports the prebundle
 /// `hot` URL, `.tsx` sources are served as transformed ESM, and `.server.*`
@@ -8491,7 +8490,6 @@ async fn dev_server_serves_esm_urls_over_http() {
     );
 }
 
-
 /// Proves `react-refresh/runtime` is prebundled to
 /// `/@prebundle/react-refresh-runtime.js` when the project installs the
 /// package. That file is what `hot.ts` lazy-imports to upgrade
@@ -8503,7 +8501,10 @@ async fn dev_server_serves_esm_urls_over_http() {
 #[ignore]
 async fn dev_server_serves_react_refresh_prebundle() {
     let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workspace = manifest.parent().and_then(|p| p.parent()).expect("workspace root");
+    let workspace = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root");
     let smoke = workspace.join("examples/smoke-app-react");
     let config_path = smoke.join("oxide.config.ts");
     assert!(
@@ -8552,7 +8553,6 @@ async fn dev_server_serves_react_refresh_prebundle() {
         "runtime should export injectIntoGlobalHook"
     );
 }
-
 
 /// Website E2E: proves the whole CSS pipeline wires up for a real project
 /// with a Tailwind plugin — precompute → disk-scan fallback → served CSS.
