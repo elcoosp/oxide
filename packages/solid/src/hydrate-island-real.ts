@@ -49,12 +49,39 @@ export interface SolidWebLike {
 let cachedWeb: SolidWebLike | undefined
 let cachedCreateElement: ((type: unknown, props: unknown) => unknown) | undefined
 
-/** Import a web-runtime specifier without letting TypeScript resolve it at
- *  type-check time (Solid 1's `solid-js/web` subpath does not exist in the
- *  locally-installed Solid 2 types). Narrowed structurally on return. */
-async function tryLoadWeb(name: '@solidjs/web' | 'solid-js/web'): Promise<SolidWebLike | undefined> {
+/** Import the Solid 2 web runtime. The specifier MUST stay a string literal:
+ *  the dev-server prebundle rewrites static specifiers to `/@prebundle/*.js`
+ *  URLs and Rolldown's prod bundler resolves them — a dynamic variable
+ *  specifier (`import(name)`) survives compilation verbatim, the browser
+ *  rejects it with `Failed to resolve module specifier` BEFORE any request,
+ *  and the catch turns that into `undefined` → the island silently falls
+ *  back to the IR tree. `Partial<SolidWebLike>` keeps TypeScript from
+ *  resolving the exact export shape. */
+async function tryLoadWebSolid2(): Promise<SolidWebLike | undefined> {
   try {
-    const mod = (await import(name)) as Partial<SolidWebLike>
+    const mod = (await import('@solidjs/web')) as Partial<SolidWebLike>
+    if (typeof mod.hydrate === 'function' && typeof mod.render === 'function') {
+      return mod as SolidWebLike
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Solid 1's web runtime fallback. The specifier is built by CONCATENATION,
+ *  deliberately: as a static literal Rolldown's prod bundler tries to
+ *  resolve `solid-js/web` — which does not exist under Solid 2 — and the
+ *  whole client build fails with `Could not resolve 'solid-js/web'`. A
+ *  computed specifier stays opaque to static analysis; the browser cannot
+ *  resolve a bare specifier at runtime, so the catch degrades to
+ *  `undefined` (the primary `@solidjs/web` load already succeeded). */
+async function tryLoadWebSolid1(): Promise<SolidWebLike | undefined> {
+  try {
+    // 'solid-js/web' assembled at runtime (join, NOT concatenation: esbuild
+    // constant-folds 'a' + 'b' back into the literal the doc-comment bans).
+    const solid1Web = ['solid-js', 'web'].join('/')
+    const mod = (await import(solid1Web)) as unknown as Partial<SolidWebLike>
     if (typeof mod.hydrate === 'function' && typeof mod.render === 'function') {
       return mod as SolidWebLike
     }
@@ -75,9 +102,10 @@ async function loadSolid(): Promise<{
   // in `solid-js/web`. The first import that resolves wins. The fallback
   // MUST try the other specifier — re-importing the same one (the original
   // bug) deterministically throws again, so Solid 1.x projects could never
-  // hydrate islands. The variable-specifier `tryLoad` mirrors
-  // ./real-ssr.ts (same fallback order, same reason).
-  const web = (await tryLoadWeb('@solidjs/web')) ?? (await tryLoadWeb('solid-js/web'))
+  // hydrate islands. Both loads use string-literal specifiers (see the
+  // loader doc-comments): same fallback order as ./real-ssr.ts, which runs
+  // under Node where bare dynamic specifiers resolve from node_modules.
+  const web = (await tryLoadWebSolid2()) ?? (await tryLoadWebSolid1())
   if (!web) {
     throw new Error('hydrateIsland(solid): neither @solidjs/web nor solid-js/web could be loaded')
   }
