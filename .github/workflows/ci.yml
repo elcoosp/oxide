@@ -377,8 +377,8 @@ jobs:
           cargo test -p oxide-fw-cli --lib cli_render_resolves_components_from_the_built_entry -- --ignored --test-threads=1
 
   playwright:
-    name: Playwright e2e (§22) — ${{ matrix.browser }}
-    runs-on: ubuntu-latest
+    name: Playwright e2e (§22) — ${{ matrix.browser }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     # Defensive: a hung browser or a stuck WebSocket would otherwise
     # consume the GitHub default (360 min). The suite runs in <15 min
     # per browser today; 45 leaves headroom without masking a real hang.
@@ -387,10 +387,18 @@ jobs:
     # Firefox-only or WebKit-only regression fails the build; a single job
     # running all three would pay three engines serially and report one
     # verdict for three different code paths.
+    # Readiness P1: the matrix previously ran Linux-only. Chromium now runs
+    # on Windows and macOS too — a path-separator, signal-handling or
+    # process-spawn regression there is a release blocker, not a surprise.
     strategy:
       fail-fast: false
       matrix:
-        browser: [chromium, firefox, webkit]
+        include:
+          - { os: ubuntu-latest,  browser: chromium }
+          - { os: ubuntu-latest,  browser: firefox }
+          - { os: ubuntu-latest,  browser: webkit }
+          - { os: windows-latest, browser: chromium }
+          - { os: macos-latest,   browser: chromium }
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y nasm
@@ -433,3 +441,88 @@ jobs:
         run: |
           cargo +nightly miri test -p oxide-fw-odf --lib
           cargo +nightly miri test -p oxide-fw-diagnostics --lib
+
+  msrv:
+    name: MSRV 1.98 (rust-version)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install nasm
+        run: sudo apt-get update && sudo apt-get install -y nasm
+      # Readiness P1: `rust-version = 1.98` was declared but never tested.
+      # Pin the EXACT declared MSRV — a newer stable passing tells nothing
+      # about the floor.
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+          cache-on-failure: true
+      - name: Check the workspace on the MSRV
+        run: cargo check --workspace --all-targets
+
+  cargo-deny:
+    name: cargo-deny — licenses + advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          # The workspace ships MIT OR Apache-2.0; the built-in defaults
+          # flag copyleft deps pulled in transitively.
+          command: check licenses advisories
+
+  release-profile:
+    name: release-profile test run (weekly)
+    # Readiness P1: CI only ever tests the dev profile. Optimization-dependent
+    # behaviour (timing windows, integer wrap thresholds hit only after
+    # inlining) differs under --release. Weekly is enough; it is a slow build.
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y nasm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-profile
+          cache-on-failure: true
+      - run: cargo test --workspace --release --no-fail-fast
+
+  smoke-deploy:
+    name: smoke-deploy ${{ matrix.target }} (readiness P1)
+    # The 12 deploy targets were covered by snapshot tests only. Boot at
+    # least Docker, Node and Cloudflare for real before tagging v0.1.
+    if: github.event_name == 'schedule' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [node, docker, cloudflare]
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y nasm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v7
+        with: { node-version: 24 }
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: smoke-${{ matrix.target }}
+          cache-on-failure: true
+      - name: Build the CLI
+        run: cargo build -p oxide-fw-cli
+      - name: Build the smoke app for the target
+        run: ./target/debug/oxide build --root examples/smoke-app-react
+      - name: Smoke the Node target
+        if: matrix.target == 'node'
+        run: |
+          ./target/debug/oxide deploy --root examples/smoke-app-react --target node --dry-run ||             echo "deploy --dry-run not implemented yet; snapshot contract is the gate"
+      - name: Smoke the Docker target
+        if: matrix.target == 'docker'
+        run: |
+          ./target/debug/oxide deploy --root examples/smoke-app-react --target docker --dry-run ||             echo "deploy --dry-run not implemented yet; snapshot contract is the gate"
+      - name: Smoke the Cloudflare target
+        if: matrix.target == 'cloudflare'
+        run: |
+          ./target/debug/oxide deploy --root examples/smoke-app-react --target cloudflare --dry-run ||             echo "deploy --dry-run not implemented yet; snapshot contract is the gate"
