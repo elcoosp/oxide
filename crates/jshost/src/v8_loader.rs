@@ -199,11 +199,13 @@ fn probe_extensions(p: &Path) -> Option<PathBuf> {
 /// which is what React hydration needs to avoid a class-attribute mismatch.
 fn css_module_js(source: &str) -> Result<String, String> {
     use lightningcss::stylesheet::{ParserOptions, PrinterOptions, StyleSheet};
-    let mut parser = ParserOptions::default();
-    parser.css_modules = Some(lightningcss::css_modules::Config {
-        pattern: lightningcss::css_modules::Pattern::default(),
+    let parser = ParserOptions {
+        css_modules: Some(lightningcss::css_modules::Config {
+            pattern: lightningcss::css_modules::Pattern::default(),
+            ..Default::default()
+        }),
         ..Default::default()
-    });
+    };
     let sheet = StyleSheet::parse(source, parser)
         .map_err(|e| format!("lightningcss parse: {e}"))?;
     let res = sheet
