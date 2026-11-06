@@ -39,14 +39,22 @@ fn resolve_relative(from_file: &Path, spec: &str) -> Option<PathBuf> {
         base.with_extension("js"),
     ] {
         if cand.is_file() {
-            return Some(cand);
+            // BUG-MAPKEY: the returned path IS the precompiled-map key. A
+            // lexical join keeps the specifier's `..` segments
+            // (`/proj/src/routes/index/../../components/a.vue`), while the
+            // bundler resolves the same import to the normalized
+            // `/proj/src/components/a.vue` — the lookup missed, the raw SFC
+            // reached Rolldown's parser, and the build died with the
+            // file-less `Unexpected JSX expression`. Normalize so both sides
+            // speak the same path spelling.
+            return Some(oxide_fw_bundler::normalize(&cand));
         }
     }
     // Try ./Dir/index.vue style.
     for ext in ["vue", "svelte", "mdx", "ts", "tsx", "js"] {
         let idx = base.join(format!("index.{ext}"));
         if idx.is_file() {
-            return Some(idx);
+            return Some(oxide_fw_bundler::normalize(&idx));
         }
     }
     None
@@ -66,6 +74,12 @@ fn scan_import_specs(src: &str) -> Vec<String> {
 /// SPEC-16-C: compile a `.mdx` file via \`@mdx-js/mdx\` in the tooling pool.
 /// Returns `None` when the compile failed (best-effort — same convention as
 /// \`.vue\`/\`.svelte\`).
+///
+/// `jsx` stays `false` (the MDX default): the compile emits a pure-JS program
+/// that calls the automatic runtime (`react/jsx-runtime`). With `jsx: true`
+/// the output kept literal JSX syntax and the bundler rejected every MDX
+/// chunk with `Unexpected JSX expression` — the doc-commented regression the
+/// `bundle_edge_entry_accepts_mdx_reachable_from_the_entry` test pins.
 async fn compile_mdx(pool: &Arc<dyn Pool>, path: &Path) -> anyhow::Result<Option<String>> {
     let source = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("read {}: {e}", path.display()))?;
@@ -83,7 +97,7 @@ async fn compile_mdx(pool: &Arc<dyn Pool>, path: &Path) -> anyhow::Result<Option
                 source,
                 {
                     "outputFormat": "program",
-                    "jsx": true,
+                    "jsx": false,
                     "jsxImportSource": "react"
                 }
             ],
@@ -381,4 +395,87 @@ pub async fn precompile_entries(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod bug_mapkey_tests {
+    //! BUG-MAPKEY: `resolve_relative` produces the precompiled-map keys. The
+    //! historical failure: the lexical join kept the specifier's `..`
+    //! segments, the bundler resolved the same import to the normalized path,
+    //! the lookup missed, the raw SFC reached Rolldown's parser, and the
+    //! build died with the file-less `Unexpected JSX expression`.
+
+    use super::*;
+
+    fn write_tree(root: &std::path::Path) -> std::path::PathBuf {
+        let comp = root.join("src/components/hmr-target.vue");
+        std::fs::create_dir_all(comp.parent().unwrap()).unwrap();
+        std::fs::write(&comp, "<template><p>x</p></template>").unwrap();
+        let page = root.join("src/routes/index/page.vue");
+        std::fs::create_dir_all(page.parent().unwrap()).unwrap();
+        std::fs::write(&page, "<template><main /></template>").unwrap();
+        page
+    }
+
+    #[test]
+    fn parent_relative_specifiers_resolve_to_normalized_paths() {
+        let tmp = std::env::temp_dir().join("oxide-bug-mapkey-resolve-relative");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let page = write_tree(&tmp);
+
+        let got = resolve_relative(&page, "../../components/hmr-target.vue")
+            .expect("import resolves");
+        assert_eq!(
+            got,
+            tmp.join("src/components/hmr-target.vue"),
+            "the map key must NOT carry `..` segments — the bundler resolves the same import to the normalized spelling"
+        );
+        assert!(
+            !got.to_string_lossy().contains(".."),
+            "key must be lexically normalized, got {}",
+            got.display()
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn same_dir_specifiers_stay_normalized() {
+        let tmp = std::env::temp_dir().join("oxide-bug-mapkey-resolve-relative-2");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("src/routes")).unwrap();
+        let page = tmp.join("src/routes/page.vue");
+        std::fs::write(&page, "<template />").unwrap();
+        std::fs::write(tmp.join("src/routes/partial.vue"), "<template />").unwrap();
+        let got = resolve_relative(&page, "./partial.vue").expect("import resolves");
+        assert_eq!(got, tmp.join("src/routes/partial.vue"));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn index_file_resolution_is_normalized_too() {
+        let tmp = std::env::temp_dir().join("oxide-bug-mapkey-resolve-relative-3");
+        let _ = std::fs::remove_dir_all(&tmp);
+        let dir = tmp.join("src/components/widget");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("index.vue"), "<template />").unwrap();
+        let page = tmp.join("src/routes/other/page.vue");
+        std::fs::create_dir_all(page.parent().unwrap()).unwrap();
+        std::fs::write(&page, "<template />").unwrap();
+        let got = resolve_relative(&page, "../../components/widget").expect("import resolves");
+        assert_eq!(got, tmp.join("src/components/widget/index.vue"));
+        assert!(!got.to_string_lossy().contains(".."));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn non_relative_specifiers_return_none() {
+        let tmp = std::env::temp_dir().join("oxide-bug-mapkey-resolve-relative-4");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let page = write_tree(&tmp);
+        assert!(resolve_relative(&page, "vue").is_none());
+        assert!(resolve_relative(&page, "@oxide-fw/core").is_none());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }
