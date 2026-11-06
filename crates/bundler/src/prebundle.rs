@@ -120,14 +120,9 @@ pub fn prebundle_cjs_to_esm(
             .cloned()
             .collect();
         for (pkg, entry) in &svelte_family {
-            if let Err(e) = bundle_family_multi_entry(
-                root,
-                &svelte_family,
-                pkg,
-                entry,
-                out_dir,
-                &externals,
-            ) {
+            if let Err(e) =
+                bundle_family_multi_entry(root, &svelte_family, pkg, entry, out_dir, &externals)
+            {
                 failures.push((pkg.clone(), e));
                 continue;
             }
@@ -144,11 +139,7 @@ pub fn prebundle_cjs_to_esm(
         // emit `import React from "react"` (bare, rewritten to
         // `/@prebundle/react.js` by `rewrite_imports` downstream) rather than
         // bundling its own React copy.
-        let externals: Vec<String> = all_names
-            .iter()
-            .filter(|p| *p != pkg)
-            .cloned()
-            .collect();
+        let externals: Vec<String> = all_names.iter().filter(|p| *p != pkg).cloned().collect();
 
         if let Err(e) = bundle_one(root, pkg, entry, out_dir, &externals) {
             failures.push((pkg.clone(), e));
@@ -157,10 +148,7 @@ pub fn prebundle_cjs_to_esm(
         bundled.push(pkg.clone());
     }
 
-    Ok(PrebundleResult {
-        bundled,
-        failures,
-    })
+    Ok(PrebundleResult { bundled, failures })
 }
 
 /// Bundle a FAMILY of entries (one framework runtime + its subpaths) in a
@@ -326,9 +314,7 @@ fn bundle_one(
                         .build()
                         .map_err(|e| format!("init: {e}"))?;
 
-                    b.write()
-                        .await
-                        .map_err(|e| format!("write: {e}"))?;
+                    b.write().await.map_err(|e| format!("write: {e}"))?;
 
                     // Post-process the bundle in one pass:
                     // (1) augment named exports extracted from the CJS AST
@@ -391,11 +377,15 @@ fn resolve_through_wrapper_impl(path: &Path, depth: u32) -> PathBuf {
     for raw_line in content.lines() {
         let line = raw_line.trim();
         if let Some(rest) = line.strip_prefix("module.exports = require(") {
-            let Some(quote) = rest.chars().next() else { continue };
+            let Some(quote) = rest.chars().next() else {
+                continue;
+            };
             if !matches!(quote, '\'' | '"') {
                 continue;
             }
-            let Some(end) = rest[1..].find(quote) else { continue };
+            let Some(end) = rest[1..].find(quote) else {
+                continue;
+            };
             let rel = &rest[1..1 + end];
             if let Some(stripped) = rel.strip_prefix("./") {
                 candidates.push(stripped.to_string());
@@ -563,9 +553,7 @@ fn rewrite_require_calls(bundle: &str, externals: &[String]) -> String {
 
     let mut with_imports = String::with_capacity(out.len() + imports.len() * 48);
     for (module_id, import_name) in &imports {
-        with_imports.push_str(&format!(
-            "import {import_name} from {module_id:?};\n"
-        ));
+        with_imports.push_str(&format!("import {import_name} from {module_id:?};\n"));
     }
     with_imports.push_str(&out);
     with_imports
@@ -587,8 +575,14 @@ mod tests {
         // `<sanitized_stem(pkg)>.js` and is mapped from `/@prebundle/<stem>.js`.
         let sanitized_filename = |name: &str| format!("{}.js", sanitized_stem(name));
         assert_eq!(sanitized_filename("react"), "react.js");
-        assert_eq!(sanitized_filename("react-dom/client"), "react-dom-client.js");
-        assert_eq!(sanitized_filename("react/jsx-runtime"), "react-jsx-runtime.js");
+        assert_eq!(
+            sanitized_filename("react-dom/client"),
+            "react-dom-client.js"
+        );
+        assert_eq!(
+            sanitized_filename("react/jsx-runtime"),
+            "react-jsx-runtime.js"
+        );
         assert_eq!(sanitized_filename("rangi/themes"), "rangi-themes.js");
     }
 
