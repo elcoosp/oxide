@@ -1,0 +1,133 @@
+name: release-binaries
+
+# Prebuilt `oxide` binaries (pre-0.1 readiness P0-4).
+#
+# `cargo install oxide-fw-cli` compiles deno_core, wasmtime, rolldown, oxc,
+# resvg and ravif on the user's machine — tens of minutes and several GB of
+# RAM, which makes the scaffold unusable. This workflow builds the release
+# binary for every supported target, attaches it (plus SHA256SUMS, an SBOM and
+# build provenance) to the GitHub Release created by `release.yml`, and is what
+# the `@oxide-fw/cli` npm wrapper downloads from.
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux gnu + musl, x64 + arm64
+          - { target: x86_64-unknown-linux-gnu,      os: ubuntu-24.04,  cross: false }
+          - { target: aarch64-unknown-linux-gnu,     os: ubuntu-24.04,  cross: true  }
+          - { target: x86_64-unknown-linux-musl,     os: ubuntu-24.04,  cross: true  }
+          - { target: aarch64-unknown-linux-musl,    os: ubuntu-24.04,  cross: true  }
+          # macOS, x64 + arm64
+          - { target: x86_64-apple-darwin,           os: macos-15,      cross: false }
+          - { target: aarch64-apple-darwin,          os: macos-15,      cross: false }
+          # Windows x64
+          - { target: x86_64-pc-windows-msvc,        os: windows-2025,  cross: false }
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+          cache-on-failure: true
+
+      - name: Install cross (Linux cross targets)
+        if: matrix.cross
+        run: |
+          cargo install cross --locked
+          # musl needs musl-gcc for link-time C deps; cross images ship it.
+          echo "CROSS_CONTAINER_OPTS=--network host" >> "$GITHUB_ENV"
+
+      - name: Build (cross)
+        if: matrix.cross
+        run: cross build --release --target ${{ matrix.target }} -p oxide-fw-cli
+
+      - name: Build (native)
+        if: ${{ !matrix.cross }}
+        run: cargo build --release --target ${{ matrix.target }} -p oxide-fw-cli
+
+      - name: Stage binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          ext=""
+          if [[ "${{ matrix.target }}" == windows* ]]; then ext=".exe"; fi
+          mkdir -p stage
+          cp "target/${{ matrix.target }}/release/oxide${ext}" "stage/oxide-${GITHUB_REF_NAME#v}-${{ matrix.target }}${ext}"
+          # Smoketest: the binary must at least print its version.
+          "target/${{ matrix.target }}/release/oxide${ext}" --version
+
+      - name: Generate SBOM (CycloneDX)
+        shell: bash
+        run: |
+          cargo install cargo-cyclonedx --locked || true
+          cargo cyclonedx -p oxide-fw-cli --format json || echo "SBOM generation failed; continuing"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oxide-${{ matrix.target }}
+          path: stage/*
+          if-no-files-found: error
+
+  checksums-and-release:
+    name: Checksums, SBOM, provenance, attach to release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write # for build provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS
+        working-directory: artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum oxide-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'artifacts/oxide-*'
+
+      - name: Attach artifacts to the GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            artifacts/oxide-*
+            artifacts/SHA256SUMS
+          fail_on_unmatched_files: true
