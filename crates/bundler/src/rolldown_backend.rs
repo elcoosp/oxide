@@ -1416,13 +1416,11 @@ impl IncrementalWorker {
         if let Some(hook) = options.render_chunk_hook.as_ref() {
             for c in &output.chunks {
                 let file_path = options.out_dir.join(&c.file);
-                if let Ok(src) = std::fs::read_to_string(&file_path) {
-                    if let Ok(Some(new_src)) = hook.call(&c.file, &src) {
-                        if new_src != src {
+                if let Ok(src) = std::fs::read_to_string(&file_path)
+                    && let Ok(Some(new_src)) = hook.call(&c.file, &src)
+                        && new_src != src {
                             let _ = std::fs::write(&file_path, &new_src);
                         }
-                    }
-                }
             }
         }
         if let Some(hook) = options.generate_bundle_hook.as_ref() {
