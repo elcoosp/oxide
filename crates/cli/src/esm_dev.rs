@@ -440,13 +440,12 @@ pub fn generate_esm_boot_entry(
             .map(|f| format!("@oxide-fw/{f}"))
             .find(|spec| lookup.contains_key(spec.as_str()))
     });
-    if let Some(adapter_spec) = adapter_specifier {
-        if let Some(adapter_url) = lookup.get(adapter_spec.as_str()) {
+    if let Some(adapter_spec) = adapter_specifier
+        && let Some(adapter_url) = lookup.get(adapter_spec.as_str()) {
             src.push_str(&format!(
                 "import {{ clientAdapter }} from {adapter_url:?};\n"
             ));
         }
-    }
     let boot_fn_url = lookup
         .get("@oxide-fw/core/client/boot")
         .map(|s| s.to_string())
@@ -469,7 +468,7 @@ pub fn generate_esm_boot_entry(
         src.push_str(&format!("import {sym} from {path:?};\n"));
     }
     src.push_str("const __modules = {\n");
-    for (name, _) in islands {
+    for name in islands.keys() {
         let sym = format!("__island_{name}");
         src.push_str(&format!("  {name:?}: {sym},\n"));
     }
@@ -543,8 +542,8 @@ fn read_framework_exports(root: &Path) -> Option<Vec<(String, String)>> {
 
     // 1. Scan node_modules/@oxide-fw/*
     let nm = root.join("node_modules/@oxide-fw");
-    if nm.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&nm) {
+    if nm.is_dir()
+        && let Ok(entries) = std::fs::read_dir(&nm) {
             for entry in entries.flatten() {
                 let pkg_json = entry.path().join("package.json");
                 if let Some(mut exports) = read_exports_at(&pkg_json) {
@@ -552,12 +551,11 @@ fn read_framework_exports(root: &Path) -> Option<Vec<(String, String)>> {
                 }
             }
         }
-    }
 
     // 2. Scan workspace packages/*/package.json
     let ws = root.join("packages");
-    if ws.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&ws) {
+    if ws.is_dir()
+        && let Ok(entries) = std::fs::read_dir(&ws) {
             for entry in entries.flatten() {
                 let pkg_json = entry.path().join("package.json");
                 if let Some(mut exports) = read_exports_at(&pkg_json) {
@@ -565,7 +563,6 @@ fn read_framework_exports(root: &Path) -> Option<Vec<(String, String)>> {
                 }
             }
         }
-    }
 
     if out.is_empty() { None } else { Some(out) }
 }
@@ -663,19 +660,16 @@ fn copy_framework_dist(root: &Path, out_dir: &Path) -> anyhow::Result<()> {
     if let Ok(entries) = std::fs::read_dir(root.join("packages")) {
         for entry in entries.flatten() {
             let pkg_json = entry.path().join("package.json");
-            if let Ok(raw) = std::fs::read_to_string(&pkg_json) {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
-                    if let Some(name) = v.get("name").and_then(|n| n.as_str()) {
-                        if name.starts_with("@oxide-fw/") {
+            if let Ok(raw) = std::fs::read_to_string(&pkg_json)
+                && let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw)
+                    && let Some(name) = v.get("name").and_then(|n| n.as_str())
+                        && name.starts_with("@oxide-fw/") {
                             let dist = entry.path().join("dist");
                             if dist.is_dir() {
                                 let short = name.strip_prefix("@oxide-fw/").unwrap_or(name);
                                 let _ = copy_pkg(&dist, short);
                             }
                         }
-                    }
-                }
-            }
         }
     }
 
@@ -879,9 +873,7 @@ fn resolve_relative_url(from_src_rel: &str, spec: &str, prefix: &str) -> Option<
             Component::Normal(s) => segments.push(s.to_os_string()),
             Component::CurDir => {}
             Component::ParentDir => {
-                if segments.pop().is_none() {
-                    return None;
-                }
+                segments.pop()?;
             }
             Component::RootDir | Component::Prefix(_) => return None,
         }
