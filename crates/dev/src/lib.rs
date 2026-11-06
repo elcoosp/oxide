@@ -115,7 +115,7 @@ impl Watcher {
     }
 
     fn try_notify(roots: &[PathBuf]) -> Result<NotifyBackend> {
-        use notify::{RecursiveMode, Watcher as _};
+        use notify::RecursiveMode;
         let (tx, rx) = std::sync::mpsc::channel();
         let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             if let Ok(ev) = res {
