@@ -1638,4 +1638,4 @@ mod sec08_tests {
 }
 
 pub mod prebundle;
-pub use prebundle::{prebundle_cjs_to_esm, PrebundleResult};
+pub use prebundle::{PrebundleResult, prebundle_cjs_to_esm};
