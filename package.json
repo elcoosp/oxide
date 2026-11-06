@@ -15,7 +15,7 @@
     "test:fixtures": "./tests/fixtures/check.sh",
     "test:framework-adapter": "cargo test -p oxide-jshost --test framework_host_e2e -- --ignored && cargo test -p oxide-jshost --test loader_host_e2e -- --ignored && cargo test -p oxide-jshost --test hmr_e2e -- --ignored && pnpm run test:smoke && pnpm run test:fixtures",
     "test:oxide": "node --test packages/core/test/*.test.ts",
-    "test:packages": "node --test packages/*/test/*.test.ts conformance/test/*.test.ts",
+    "test:packages": "node --test packages/*/test/*.test.ts packages/*/test/*.test.js conformance/test/*.test.ts",
     "test:playwright": "pnpm --filter @oxide/playwright test",
     "test:playwright:install": "pnpm --filter @oxide/playwright install-browsers",
     "test:react": "node --test packages/react/test/*.test.ts",
@@ -24,7 +24,9 @@
     "test:solid": "node --test packages/solid/test/*.test.ts",
     "test:svelte": "node --test packages/svelte/test/*.test.ts",
     "test:vue": "node --test packages/vue/test/*.test.ts",
-    "typecheck": "pnpm -r --workspace-concurrency=1 run typecheck"
+    "typecheck": "pnpm -r --workspace-concurrency=1 run typecheck",
+    "test:cli-npm": "node --test packages/cli-npm/test/*.test.js",
+    "test:oxide-og": "pnpm -C packages/oxide-og test"
   },
   "engines": {
     "node": ">=24"
