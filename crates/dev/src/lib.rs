@@ -308,7 +308,9 @@ fn add_pruned_watches(
         if WATCH_PRUNE_DIRS.contains(&name) {
             continue;
         }
-        let Ok(emd) = std::fs::symlink_metadata(&p) else { continue };
+        let Ok(emd) = std::fs::symlink_metadata(&p) else {
+            continue;
+        };
         if emd.is_symlink() {
             // Symlinked dirs (pnpm links into the store / workspace
             // packages): the LINK's parent is watched, so creations of the
@@ -464,8 +466,14 @@ pub fn classify_path(path: &str) -> ChangeKind {
         // previously (incorrectly) triggering a full route-tree rescan.
         let fname = lower.rsplit('/').next().unwrap_or("");
         let is_structural = [
-            "page.", "layout.", "error.", "not-found.", "loading.",
-            "template.", "route.", "socket.",
+            "page.",
+            "layout.",
+            "error.",
+            "not-found.",
+            "loading.",
+            "template.",
+            "route.",
+            "socket.",
         ]
         .iter()
         .any(|p| fname.starts_with(p));
@@ -559,7 +567,12 @@ pub fn classify_event(ev: &FileEvent) -> ChangeKind {
         // Route-component files: Modified means in-place, Created/Removed
         // means the tree changed.
         let content_prefix = [
-            "page.", "layout.", "error.", "not-found.", "loading.", "template.",
+            "page.",
+            "layout.",
+            "error.",
+            "not-found.",
+            "loading.",
+            "template.",
         ];
         if content_prefix.iter().any(|p| fname.starts_with(p)) {
             return match ev {
@@ -681,17 +694,16 @@ fn seed_node_modules_pkg_jsons(root: &Path, out: &mut BTreeMap<PathBuf, String>)
     };
     for entry in top.flatten() {
         let p = entry.path();
-        let name = p
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default();
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
         if name == ".pnpm" || name == ".bin" || name == ".oxide" {
             continue;
         }
         if name.starts_with('@') {
             // A scope directory (possibly a real dir containing package
             // links): seed one level deeper.
-            let Ok(pkgs) = std::fs::read_dir(&p) else { continue };
+            let Ok(pkgs) = std::fs::read_dir(&p) else {
+                continue;
+            };
             for pkg in pkgs.flatten() {
                 seed_pkg_json(&pkg.path(), out);
             }
@@ -1152,7 +1164,6 @@ pub use dev_server::{
 
 #[cfg(test)]
 mod tests;
-
 
 #[cfg(test)]
 mod esm_module_update_tests {
