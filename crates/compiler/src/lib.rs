@@ -26,19 +26,21 @@ use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-pub mod framework;
 pub mod cjs_exports;
+pub mod framework;
 pub mod generate_params;
 pub mod lexer;
 mod oxc_backend;
 
+pub use cjs_exports::extract_cjs_export_names;
 pub use framework::{
     Framework, FrameworkCompiler, FrameworkInput, FrameworkOutput, ReactInline, SolidInline,
     ToolingDispatcher, compiler_for,
 };
 pub use generate_params::{GenerateParamsResult, extract_generate_params};
-pub use cjs_exports::extract_cjs_export_names;
-pub use oxc_backend::{OxcTransformer, inject_react_refresh, lower_to_js, lower_to_js_with_refresh};
+pub use oxc_backend::{
+    OxcTransformer, inject_react_refresh, lower_to_js, lower_to_js_with_refresh,
+};
 
 pub type Result<T> = std::result::Result<T, OxideError>;
 
@@ -673,9 +675,14 @@ fn strip_server_fn_imports(out: &str) -> String {
             ImportEdit::Delete => {
                 let mut end = sp.end;
                 let bytes = result.as_bytes();
-                if bytes.get(end) == Some(&b';') { end += 1; }
-                if bytes.get(end) == Some(&b'\n') { end += 1; }
-                else if bytes.get(end) == Some(&b'\r') && bytes.get(end + 1) == Some(&b'\n') { end += 2; }
+                if bytes.get(end) == Some(&b';') {
+                    end += 1;
+                }
+                if bytes.get(end) == Some(&b'\n') {
+                    end += 1;
+                } else if bytes.get(end) == Some(&b'\r') && bytes.get(end + 1) == Some(&b'\n') {
+                    end += 2;
+                }
                 result.replace_range(sp.start..end, "");
             }
             ImportEdit::Replace(new_stmt) => {
@@ -694,12 +701,18 @@ enum ImportEdit {
 
 fn rewrite_import_stripping_server_fn(stmt: &str) -> ImportEdit {
     let trimmed = stmt.trim_start();
-    let Some(after_import) = trimmed.strip_prefix("import") else { return ImportEdit::Unchanged };
-    let Some(first) = after_import.chars().next() else { return ImportEdit::Unchanged };
+    let Some(after_import) = trimmed.strip_prefix("import") else {
+        return ImportEdit::Unchanged;
+    };
+    let Some(first) = after_import.chars().next() else {
+        return ImportEdit::Unchanged;
+    };
     if !(first.is_whitespace() || first == '{' || first == '*' || first == '"' || first == '\'') {
         return ImportEdit::Unchanged;
     }
-    let Some(from_pos) = find_top_level_from(trimmed) else { return ImportEdit::Unchanged };
+    let Some(from_pos) = find_top_level_from(trimmed) else {
+        return ImportEdit::Unchanged;
+    };
     let tail = &trimmed[from_pos..];
     let mut clause = trimmed["import".len()..from_pos].trim().to_string();
     let is_type = clause.starts_with("type ") || clause == "type";
@@ -707,14 +720,28 @@ fn rewrite_import_stripping_server_fn(stmt: &str) -> ImportEdit {
         clause = clause["type".len()..].trim_start().to_string();
     }
     let (mut default_part, named_part, namespace_part) = if let Some(open) = clause.find('{') {
-        let Some(close) = find_balanced_close(&clause, open) else { return ImportEdit::Unchanged };
+        let Some(close) = find_balanced_close(&clause, open) else {
+            return ImportEdit::Unchanged;
+        };
         (
-            clause[..open].trim().trim_end_matches(',').trim().to_string(),
+            clause[..open]
+                .trim()
+                .trim_end_matches(',')
+                .trim()
+                .to_string(),
             clause[open + 1..close].to_string(),
-            clause[close + 1..].trim().trim_start_matches(',').trim().to_string(),
+            clause[close + 1..]
+                .trim()
+                .trim_start_matches(',')
+                .trim()
+                .to_string(),
         )
     } else {
-        (clause.trim().trim_end_matches(',').trim().to_string(), String::new(), String::new())
+        (
+            clause.trim().trim_end_matches(',').trim().to_string(),
+            String::new(),
+            String::new(),
+        )
     };
     let mut changed = false;
     if !default_part.is_empty() && is_server_fn_reference(&default_part) {
@@ -724,18 +751,36 @@ fn rewrite_import_stripping_server_fn(stmt: &str) -> ImportEdit {
     let mut kept: Vec<String> = Vec::new();
     for piece in split_top_level_commas(&named_part) {
         let t = piece.trim();
-        if t.is_empty() { continue; }
-        if is_server_fn_reference(t) { changed = true; } else { kept.push(t.to_string()); }
+        if t.is_empty() {
+            continue;
+        }
+        if is_server_fn_reference(t) {
+            changed = true;
+        } else {
+            kept.push(t.to_string());
+        }
     }
-    if !changed { return ImportEdit::Unchanged; }
+    if !changed {
+        return ImportEdit::Unchanged;
+    }
     let named_out = kept.join(", ");
     let mut segments: Vec<String> = Vec::new();
-    if !default_part.is_empty() { segments.push(default_part); }
-    if !named_out.is_empty() { segments.push(format!("{{ {} }}", named_out)); }
-    if !namespace_part.is_empty() { segments.push(namespace_part); }
-    if segments.is_empty() { return ImportEdit::Delete; }
+    if !default_part.is_empty() {
+        segments.push(default_part);
+    }
+    if !named_out.is_empty() {
+        segments.push(format!("{{ {} }}", named_out));
+    }
+    if !namespace_part.is_empty() {
+        segments.push(namespace_part);
+    }
+    if segments.is_empty() {
+        return ImportEdit::Delete;
+    }
     let mut rebuilt = String::from("import ");
-    if is_type { rebuilt.push_str("type "); }
+    if is_type {
+        rebuilt.push_str("type ");
+    }
     rebuilt.push_str(&segments.join(", "));
     rebuilt.push(' ');
     rebuilt.push_str(tail);
@@ -747,7 +792,12 @@ fn find_balanced_close(s: &str, open: usize) -> Option<usize> {
     for (i, c) in s[open..].char_indices() {
         match c {
             '{' => depth += 1,
-            '}' => { depth -= 1; if depth == 0 { return Some(open + i); } }
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(open + i);
+                }
+            }
             _ => {}
         }
     }
@@ -762,17 +812,26 @@ fn split_top_level_commas(inner: &str) -> Vec<String> {
         match c {
             '{' | '[' | '(' | '<' => depth += 1,
             '}' | ']' | ')' | '>' => depth -= 1,
-            ',' if depth == 0 => { out.push(inner[start..i].to_string()); start = i + 1; }
+            ',' if depth == 0 => {
+                out.push(inner[start..i].to_string());
+                start = i + 1;
+            }
             _ => {}
         }
     }
-    if start < inner.len() { out.push(inner[start..].to_string()); }
+    if start < inner.len() {
+        out.push(inner[start..].to_string());
+    }
     out
 }
 
 fn is_server_fn_reference(text: &str) -> bool {
     let s = text.trim();
-    let s = s.strip_prefix("type").filter(|r| r.starts_with(char::is_whitespace)).map(|r| r.trim_start()).unwrap_or(s);
+    let s = s
+        .strip_prefix("type")
+        .filter(|r| r.starts_with(char::is_whitespace))
+        .map(|r| r.trim_start())
+        .unwrap_or(s);
     let word = s.split_whitespace().next().unwrap_or("");
     word.trim_end_matches(',').trim_end_matches('}').trim() == "serverFn"
 }
@@ -788,21 +847,32 @@ fn find_top_level_from(s: &str) -> Option<usize> {
     let mut i = 0usize;
     while i < bytes.len() {
         if let Some(q) = in_str {
-            if bytes[i] == b'\\' && i + 1 < bytes.len() { i += 2; continue; }
-            if bytes[i] == q { in_str = None; }
+            if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                i += 2;
+                continue;
+            }
+            if bytes[i] == q {
+                in_str = None;
+            }
             i += 1;
             continue;
         }
         match bytes[i] {
-            b'"' | b'\'' => { in_str = Some(bytes[i]); i += 1; continue; }
+            b'"' | b'\'' => {
+                in_str = Some(bytes[i]);
+                i += 1;
+                continue;
+            }
             b'{' | b'(' | b'[' => depth += 1,
             b'}' | b')' | b']' => depth -= 1,
             _ => {}
         }
-        if depth == 0 && i + 4 <= bytes.len() && &bytes[i..i+4] == b"from" {
+        if depth == 0 && i + 4 <= bytes.len() && &bytes[i..i + 4] == b"from" {
             let before_ok = i == 0 || !is_ident_byte(bytes[i - 1]);
             let after_ok = i + 4 >= bytes.len() || !is_ident_byte(bytes[i + 4]);
-            if before_ok && after_ok { return Some(i); }
+            if before_ok && after_ok {
+                return Some(i);
+            }
         }
         i += 1;
     }
@@ -1522,9 +1592,18 @@ mod strip_server_fn_imports_tests {
         let input = "import { serverFn, defineLoad } from \"@oxide-fw/core/server\";\nexport const x = 1;\n";
         let out = strip_server_fn_imports(input);
         assert!(!out.contains("serverFn"), "serverFn still present:\n{out}");
-        assert!(out.contains("{ defineLoad }"), "balanced braces missing (regression: original impl dropped closing brace):\n{out}");
-        assert!(out.contains("\"@oxide-fw/core/server\""), "specifier lost:\n{out}");
-        assert!(out.contains("export const x = 1"), "rest of file lost:\n{out}");
+        assert!(
+            out.contains("{ defineLoad }"),
+            "balanced braces missing (regression: original impl dropped closing brace):\n{out}"
+        );
+        assert!(
+            out.contains("\"@oxide-fw/core/server\""),
+            "specifier lost:\n{out}"
+        );
+        assert!(
+            out.contains("export const x = 1"),
+            "rest of file lost:\n{out}"
+        );
     }
 
     #[test]
@@ -1595,6 +1674,9 @@ mod strip_server_fn_imports_tests {
     fn compound_identifier_does_not_match() {
         let input = "import { myServerFn, serverFnHelper } from \"x\";\n";
         let out = strip_server_fn_imports(input);
-        assert_eq!(out, input, "compound identifiers should not match bare serverFn");
+        assert_eq!(
+            out, input,
+            "compound identifiers should not match bare serverFn"
+        );
     }
 }
