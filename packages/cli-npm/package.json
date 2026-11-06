@@ -1,13 +1,15 @@
 {
   "name": "@oxide-fw/cli",
   "version": "0.1.0",
-  "description": "Prebuilt oxide CLI binary installer — downloads the platform binary from GitHub Releases and exposes it as `oxide`.",
+  "description": "Prebuilt oxide CLI binary installer \u2014 downloads the platform binary from GitHub Releases and exposes it as `oxide`.",
   "type": "module",
   "bin": {
     "oxide": "./bin.js"
   },
   "scripts": {
-    "postinstall": "node ./install.js"
+    "postinstall": "node ./install.js",
+    "test": "node --test test/*.test.js",
+    "typecheck": "node --check bin.js && node --check install.js && node --check platform.js"
   },
   "engines": {
     "node": ">=22"
