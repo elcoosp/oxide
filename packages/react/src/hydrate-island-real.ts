@@ -63,13 +63,24 @@ async function loadReact(): Promise<{
   // into a runtime chunk loaded only on first island hydration. The bundler
   // dedupes: a project that already imports React elsewhere shares the same
   // chunk.
-  const [reactMod, clientMod] = await Promise.all([
-    import('react'),
-    import('react-dom/client'),
-  ])
-  cachedReact = reactMod
-  cachedClient = clientMod
-  return { client: cachedClient, react: cachedReact! }
+  // §3.10: a transient dev-server outage makes these dynamic imports reject
+  // with `ERR_CONNECTION_REFUSED`. Uncaught here, that rejection surfaces as
+  // a page-level unhandled rejection; in the wild that has been observed to
+  // unmount the island's React root. Catch and treat as "runtime unavailable"
+  // — the island stays rendered as SSR markup, no client handlers, no crash.
+  try {
+    const [reactMod, clientMod] = await Promise.all([
+      import('react'),
+      import('react-dom/client'),
+    ])
+    cachedReact = reactMod
+    cachedClient = clientMod
+    return { client: cachedClient, react: cachedReact! }
+  } catch (e) {
+    console.error?.('[oxide] island hydration deferred: runtime not loadable', e)
+    // Do NOT cache — the next island scan (post-reconnect) gets another try.
+    throw new Error('island runtime unavailable') // caller treats as soft failure
+  }
 }
 
 /**

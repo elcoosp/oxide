@@ -12,6 +12,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
+tracing = { workspace = true }
 oxide-fw-diagnostics = { workspace = true }
 oxide-fw-graph = { workspace = true }
 oxide-fw-compiler = { workspace = true }

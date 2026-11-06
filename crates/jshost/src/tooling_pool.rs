@@ -110,12 +110,19 @@ impl ToolingModules {
 
 // tailwind tooling delegates to @oxide-fw/tailwind/runtime.mjs
 impl ToolingModules {
-    pub async fn tailwind_scan(&self, files: Vec<Value>) -> Result<Vec<String>> {
+    pub async fn tailwind_scan(
+        &self,
+        sources: Vec<Value>,
+        files: Vec<Value>,
+    ) -> Result<Vec<String>> {
+        // [wr104] Pass real source globs. scanner.scanFiles(content-only)
+        // returns [] in this @tailwindcss/oxide version; scanner.scan()
+        // walking sources is the reliable path.
         let out = self
             .call_module(ModuleCall {
                 module: "@oxide-fw/tailwind/runtime.mjs".into(),
                 export: "scan".into(),
-                args: vec![serde_json::json!({ "sources": [], "files": files })],
+                args: vec![serde_json::json!({ "sources": sources, "files": files })],
             })
             .await?;
         let arr = out.as_array().ok_or_else(|| {

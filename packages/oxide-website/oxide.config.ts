@@ -29,7 +29,7 @@ export default defineConfig({
       AdapterTabs: 'src/islands/adapter-tabs.tsx',
       RevealBootstrap: 'src/islands/reveal.tsx',
       FrameworkTabsBootstrap: 'src/islands/framework-tabs.tsx',
-    },
+},
   }),
 
   routes: { dir: 'src/routes' },

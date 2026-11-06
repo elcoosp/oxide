@@ -11,7 +11,6 @@
 // two would need a wrapper component. A page that wants the preload adds
 // it via the adapter's `head()`; documented in the compat notes.
 
-import { createRequire } from 'node:module'
 import { deriveSizesFromSrcset } from '@oxide-fw/core/image-sizes'
 
 export interface ImageVariantModule {
@@ -36,21 +35,28 @@ interface SsrElementFn {
   (tag: string, attrs: Record<string, unknown>, children: unknown, dynamic: boolean): unknown
 }
 
-// `@solidjs/web` is an optional peer. Resolve it lazily inside `Image()` so
-// importing this module does not require the package to be installed.
-// Calling `Image()` without it falls through to the descriptor fallback.
-const requireSolidImage_ = createRequire(import.meta.url)
+// `@solidjs/web` is an optional peer. Resolve it lazily at module load —
+// WITHOUT `createRequire('node:module')`: the adapter dist is served to the
+// BROWSER in dev ESM mode (and bundled for client builds), where a static
+// `node:module` import killed the whole client module graph (every page 500s
+// at boot). The dynamic import resolves in the browser (the dev server
+// rewrites the bare specifier to the prebundled runtime) and in the SSR
+// worker alike; the top-level await keeps the result synchronously readable
+// by `Image()`, preserving the "optional peer → descriptor fallback"
+// contract.
 type WebModule = { ssrElement?: SsrElementFn }
 let cachedWeb: WebModule | undefined
-let webAttempted = false
-function getWeb(): WebModule | undefined {
-  if (webAttempted) return cachedWeb
-  webAttempted = true
-  try {
-    cachedWeb = requireSolidImage_('@solidjs/web') as WebModule
-  } catch {
-    cachedWeb = undefined
+try {
+  const mod = (await import('@solidjs/web')) as WebModule | { default?: WebModule }
+  const resolved = ((mod as { default?: WebModule }).default ?? mod) as WebModule
+  if (resolved && typeof resolved.ssrElement === 'function') {
+    cachedWeb = resolved
   }
+} catch {
+  // Optional peer absent — Image() falls through to the descriptor fallback.
+}
+
+function getWeb(): WebModule | undefined {
   return cachedWeb
 }
 

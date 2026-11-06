@@ -98,11 +98,13 @@ fn tooling_pool_size() -> usize {
 /// unchanged. Errors propagate with the same `OxideError` type.
 pub struct AdapterPageRenderer {
     inner: Arc<dyn FrameworkRenderer>,
+    dev_mode: bool,
     /// The client manifest, used to look up the stylesheet(s) a route's
     /// chunks depend on. Populated by `with_client_manifest` at the CLI's
     /// construction site; without it the page renders unstyled, which is
     /// exactly the failure mode that shipped before this fix.
     client_manifest: Option<Arc<serde_json::Value>>,
+    manifest_path: Option<std::path::PathBuf>,
 }
 
 impl AdapterPageRenderer {
@@ -110,7 +112,12 @@ impl AdapterPageRenderer {
     /// a `LazyFrameworkRenderer` via `build_stack` that defers config
     /// evaluation to the first render; tests can substitute a fake.
     pub fn new(inner: Arc<dyn FrameworkRenderer>) -> Self {
-        Self { inner, client_manifest: None }
+        Self {
+            inner,
+            client_manifest: None,
+            manifest_path: None,
+            dev_mode: false,
+        }
     }
 
     /// Attach the client manifest so the renderer can emit the stylesheet
@@ -123,6 +130,11 @@ impl AdapterPageRenderer {
         self
     }
 
+    pub fn with_manifest_path(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.manifest_path = Some(path.into());
+        self
+    }
+
     /// Append `<link rel="stylesheet">` entries for the route's CSS chunks.
     /// `input.head` is the JSON object the JS adapter merges
     /// (`packages/*/src/render.ts`); each entry is `{href, rel}`.
@@ -131,7 +143,65 @@ impl AdapterPageRenderer {
         if input.route.starts_with("__oxide_") {
             return;
         }
-        let Some(manifest) = self.client_manifest.as_ref() else { return };
+        let manifest_owned = if self.dev_mode {
+            self.manifest_path
+                .as_ref()
+                .and_then(|p| std::fs::read_to_string(p).ok())
+                .and_then(|txt| serde_json::from_str(&txt).ok())
+                .map(std::sync::Arc::new)
+        } else {
+            None
+        };
+        // [wr101] Fallback: when manifest is absent, scan dist/client/*.css
+        // (this is the dev case — the bundler-written manifest has no css entry).
+        let manifest_owned: Option<Arc<serde_json::Value>> = if manifest_owned.is_some() {
+            manifest_owned
+        } else {
+            match self.client_manifest.as_ref() {
+                Some(m) => Some(Arc::clone(m)),
+                None => self.manifest_path.as_ref().and_then(|p| {
+                    std::fs::read_to_string(p)
+                        .ok()
+                        .and_then(|txt| serde_json::from_str::<serde_json::Value>(&txt).ok())
+                        .map(Arc::new)
+                }),
+            }
+        };
+
+        let use_disk_scan = manifest_owned
+            .as_ref()
+            .and_then(|m| m.get("routes"))
+            .is_none();
+
+        if use_disk_scan {
+            let Some(path) = self.manifest_path.as_ref() else {
+                return;
+            };
+            let Some(dir) = path.parent() else { return };
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            let Some(link) = input.head.get_mut("link").and_then(|v| v.as_array_mut()) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("tailwind-") && name.ends_with(".css") {
+                    let href = format!("/client/{}", name);
+                    if !link
+                        .iter()
+                        .any(|v| v.get("href").and_then(|h| h.as_str()) == Some(href.as_str()))
+                    {
+                        link.push(serde_json::json!({ "href": href, "rel": "stylesheet" }));
+                    }
+                }
+            }
+            return;
+        }
+
+        let Some(manifest) = manifest_owned.as_ref() else {
+            return;
+        };
         let Some(routes) = manifest.get("routes").and_then(|r| r.as_object()) else {
             return;
         };
@@ -184,6 +254,35 @@ impl AdapterPageRenderer {
                 continue;
             }
             link.push(serde_json::json!({ "href": href, "rel": "stylesheet" }));
+        }
+        // [wr196] Force inject global tailwind CSS for routes missing from manifest
+        // (e.g. docs/[page], which the bundler might not map to the global CSS chunk).
+        let has_css = input
+            .head
+            .get("link")
+            .and_then(|v| v.as_array())
+            .is_some_and(|arr| {
+                arr.iter().any(|l| {
+                    l.get("href")
+                        .and_then(|h| h.as_str())
+                        .is_some_and(|h| h.contains("tailwind-"))
+                })
+            });
+
+        if !has_css
+            && let Some(path) = self.manifest_path.as_ref()
+            && let Some(dir) = path.parent()
+            && let Ok(entries) = std::fs::read_dir(dir)
+        {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("tailwind-") && name.ends_with(".css") {
+                    let href = format!("/client/{}", name);
+                    if let Some(link) = input.head.get_mut("link").and_then(|v| v.as_array_mut()) {
+                        link.push(serde_json::json!({ "href": href, "rel": "stylesheet" }));
+                    }
+                }
+            }
         }
     }
 }
@@ -453,6 +552,26 @@ pub async fn build_framework_stack(
         .and_then(|p| p.parent())
         .map(|p| p.to_path_buf());
 
+    // §16.5 / WP-r9-1: the worker resolves `dist/content` against
+    // `process.env.OXIDE_ROOT ?? process.cwd()`. The env var must be set
+    // BEFORE the pool spawns — a worker inherits the parent's env at spawn
+    // time, and this is the earliest point any pool code runs. Setting it
+    // here makes the API self-contained: a caller (test, embedded server)
+    // that never goes through `cmd_dev` still gets content resolution
+    // rooted at the project, not at whatever cwd happens to be.
+    if let Some(root) = project_root.as_ref()
+        // P1 (readiness): `apply_startup_env` already wrote OXIDE_ROOT
+        // pre-runtime for every CLI command; only embedded callers that
+        // never went through `main` still need the write. Never overwrite.
+        && std::env::var_os("OXIDE_ROOT").is_none()
+    {
+        // SAFETY: pool threads spawn below in this function; nothing else
+        // reads OXIDE_ROOT concurrently from another thread at this point.
+        unsafe {
+            std::env::set_var("OXIDE_ROOT", root.to_string_lossy().as_ref());
+        }
+    }
+
     use oxide_fw_jshost::{JsHost, NodeHost, PoolConfig, V8Host};
 
     // §6.3: which framework's JSX the worker's `tsx-loader.mjs` should
@@ -685,15 +804,24 @@ pub async fn build_framework_stack(
             };
             Some(Arc::new({
                 let mut renderer = AdapterPageRenderer::new(Arc::new(lazy));
+                // P1 (readiness): dev-mode probes answer from the atomic, not a racy
+                // per-call env read.
+                let is_dev = oxide_fw_server::dev_mode();
+                renderer = AdapterPageRenderer {
+                    dev_mode: is_dev,
+                    ..renderer
+                };
+                if let Some(root) = project_root.as_ref() {
+                    renderer =
+                        renderer.with_manifest_path(root.join("dist/client/client.manifest.json"));
+                }
                 // The client manifest names the CSS chunk each route's
                 // entries depend on. Best-effort: dev has no dist/ until the
                 // first build, and a stylesheet-less project legitimately
                 // has an empty routes[].css.
                 if let Some(root) = project_root.as_deref()
-                    && let Ok(bytes) =
-                        std::fs::read(root.join("dist/client/client.manifest.json"))
-                    && let Ok(manifest) =
-                        serde_json::from_slice::<serde_json::Value>(&bytes)
+                    && let Ok(bytes) = std::fs::read(root.join("dist/client/client.manifest.json"))
+                    && let Ok(manifest) = serde_json::from_slice::<serde_json::Value>(&bytes)
                 {
                     renderer = renderer.with_client_manifest(Arc::new(manifest));
                 }
@@ -859,6 +987,126 @@ impl FrameworkRenderer for LazyFrameworkRenderer {
     }
 }
 
+/// Rewrite RELATIVE import specifiers in a dev temp component module to
+/// absolute `file://` URLs resolved against the component's REAL source
+/// file.
+///
+/// `precompile_entries` compiles `.vue` / `.svelte` / Solid-`.tsx` routes to
+/// plain JS but leaves their relative imports verbatim (the build path WANTS
+/// that — rolldown's resolver consumes them against the real source paths).
+/// The DEV component source instead writes the compiled JS to
+/// `.oxide/components/<hash>.mjs`, and Node then resolves
+/// `../../components/hmr-target.vue` against THAT directory:
+/// `<root>/components/...` instead of `<root>/src/components/...` —
+/// `ERR_MODULE_NOT_FOUND` on every render of a Vue/Svelte/Solid page whose
+/// SFC imports a relative component. Rewriting to absolute `file://` URLs
+/// pins the import to the real source file; the worker's tsx-loader
+/// (`fileURLToPath` in its load hook) compiles `.vue`/`.svelte`/solid-`.tsx`
+/// from there, and its `resolve` hook keeps appending `?v=<generation>` to
+/// those URLs so an SSR re-import after an HMR edit recompiles fresh.
+///
+/// Absolute (`/x`, `file://`) and bare (`vue`) specifiers pass through
+/// untouched; a malformed span (specifier text not found inside it) is left
+/// as-is rather than guessing.
+fn absolutize_relative_imports(js: &str, source_file: &std::path::Path) -> String {
+    let spans = oxide_fw_compiler::scan_import_spans(js);
+    if spans.is_empty() {
+        return js.to_string();
+    }
+    let mut out = String::with_capacity(js.len());
+    let mut last = 0usize;
+    for sp in &spans {
+        if !sp.specifier.starts_with('.') || sp.end > js.len() || sp.start >= sp.end {
+            continue;
+        }
+        let statement = &js[sp.start..sp.end];
+        // Locate the raw quoted specifier inside the statement span. The
+        // scanner reports the DECODED value; a specifier needing escapes
+        // (non-ASCII, quotes) is left untouched by the `find` miss below.
+        let raw = [
+            format!("\"{}\"", sp.specifier),
+            format!("'{}'", sp.specifier),
+        ]
+        .iter()
+        .find_map(|q| statement.find(q.as_str()).map(|i| (i, q.len())))
+        .map(|(i, len)| (sp.start + i, len));
+        let (raw_start, raw_len) = match raw {
+            Some(x) => x,
+            None => continue,
+        };
+        // Anchor on the REAL location of the source file: canonicalize it
+        // first so a symlinked project root (or a TMPDIR-redirected build
+        // dir) resolves before any `..` from the specifier is applied —
+        // the same order Node resolves `importer -> relative specifier`.
+        // Canonicalizing the JOINED path instead would let `..` escape
+        // through the un-resolved base (e.g. /tmp/.tmpABC/../x collapsing
+        // against the lexical /tmp instead of the real temp dir).
+        let canon_src =
+            std::fs::canonicalize(source_file).unwrap_or_else(|_| source_file.to_path_buf());
+        let base = canon_src
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| {
+                source_file
+                    .parent()
+                    .map(std::path::Path::to_path_buf)
+                    .unwrap_or_default()
+            });
+        let joined = base.join(sp.specifier.as_str());
+        let abs = std::fs::canonicalize(&joined).unwrap_or_else(|_| {
+            // Lexical fallback (file missing / a not-yet-written temp):
+            // collapse `.` and `..` segments without touching the fs.
+            let mut segs: Vec<std::ffi::OsString> = Vec::new();
+            for c in joined.components() {
+                use std::path::Component as C;
+                match c {
+                    C::CurDir => {}
+                    C::ParentDir => {
+                        segs.pop();
+                    }
+                    other => segs.push(other.as_os_str().to_os_string()),
+                }
+            }
+            segs.iter().collect::<std::path::PathBuf>()
+        });
+        let url = path_to_file_url(&abs);
+        // Re-emit a QUOTED string literal — the replaced range includes the
+        // original quotes, and a bare `file://...` token would be a syntax
+        // error (`import x from file:///...`).
+        out.push_str(&js[last..raw_start]);
+        out.push('"');
+        out.push_str(&url);
+        out.push('"');
+        last = raw_start + raw_len;
+    }
+    if last == 0 {
+        return js.to_string();
+    }
+    out.push_str(&js[last..]);
+    out
+}
+
+/// Percent-encode a POSIX path into a `file://` URL (Node `import` accepts
+/// these natively; the worker's loaders `fileURLToPath` them back).
+/// Unreserved characters and `/` pass through; everything else is %XX.
+fn path_to_file_url(path: &std::path::Path) -> String {
+    let s = path.to_string_lossy();
+    let mut url = String::with_capacity(s.len() + 8);
+    url.push_str("file://");
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'-' | b'.' | b'_' | b'~' => {
+                url.push(b as char)
+            }
+            _ => {
+                url.push('%');
+                url.push_str(&format!("{b:02X}"));
+            }
+        }
+    }
+    url
+}
+
 /// §6.4 / WP-C1: build the dev component map — canonical route id → an
 /// importable module path. TS/JS/JSX sources are imported directly (the
 /// worker's loader compiles them); `.vue`/`.svelte` (and Solid's babel JSX)
@@ -890,7 +1138,12 @@ pub async fn dev_component_sources(
                 blake3::hash(format!("{id}\u{0}{}", src.display()).as_bytes()).to_hex()
             );
             let path = comp_dir.join(name);
-            if std::fs::write(&path, js).is_ok() {
+            // The compiled JS keeps the SOURCE file's relative imports; the
+            // temp file lives two directories deeper, so they must be
+            // re-anchored before the module can load (see
+            // `absolutize_relative_imports`).
+            let rewritten = absolutize_relative_imports(js, &src);
+            if std::fs::write(&path, rewritten).is_ok() {
                 out.insert(id, path.to_string_lossy().to_string());
                 continue;
             }
@@ -903,6 +1156,111 @@ pub async fn dev_component_sources(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- Phase 5 CSS injection tests -------------------------------------
+    //
+    // The disk-scan fallback in `inject_route_css` is what makes CSS reach
+    // the browser in ESM mode (no client manifest exists). These tests
+    // pin that contract: given a `dist/client/` directory containing a
+    // `tailwind-*.css` file, every rendered route gets a `<link
+    // rel="stylesheet">` for it — no `client.manifest.json` required.
+
+    fn make_adapter_with_css_dir(
+        css_filename: Option<&str>,
+    ) -> (AdapterPageRenderer, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let client = dir.path().join("dist/client");
+        std::fs::create_dir_all(&client).unwrap();
+        if let Some(name) = css_filename {
+            std::fs::write(client.join(name), "/* test */").unwrap();
+        }
+        // Intentionally do NOT write client.manifest.json — the disk-scan
+        // fallback must fire when the manifest is absent.
+        let renderer = AdapterPageRenderer::new(Arc::new(EchoFramework))
+            .with_manifest_path(client.join("client.manifest.json"));
+        (renderer, dir)
+    }
+
+    fn empty_render_input(route: &str) -> oxide_fw_server::PageRenderInput {
+        oxide_fw_server::PageRenderInput {
+            route: route.into(),
+            url: format!("/{}", route.trim_start_matches("routes/")),
+            params: Default::default(),
+            data: serde_json::json!({}),
+            head: serde_json::json!({ "meta": [], "link": [], "style": [], "script": [] }),
+            layouts: Vec::new(),
+            error_route_id: None,
+            locale: None,
+            deferred: Default::default(),
+            nonce: None,
+        }
+    }
+
+    #[test]
+    fn disk_scan_emits_link_for_tailwind_css() {
+        let (renderer, _dir) = make_adapter_with_css_dir(Some("tailwind-abcdef.css"));
+        let mut input = empty_render_input("routes/index");
+        renderer.inject_route_css(&mut input);
+        let links = input
+            .head
+            .get("link")
+            .and_then(|v| v.as_array())
+            .expect("link array present");
+        assert_eq!(links.len(), 1, "one stylesheet link: {links:?}");
+        assert_eq!(
+            links[0].get("href").and_then(|h| h.as_str()),
+            Some("/client/tailwind-abcdef.css")
+        );
+        assert_eq!(
+            links[0].get("rel").and_then(|r| r.as_str()),
+            Some("stylesheet")
+        );
+    }
+
+    #[test]
+    fn disk_scan_noop_without_tailwind_css() {
+        let (renderer, _dir) = make_adapter_with_css_dir(None);
+        let mut input = empty_render_input("routes/index");
+        renderer.inject_route_css(&mut input);
+        let links = input
+            .head
+            .get("link")
+            .and_then(|v| v.as_array())
+            .expect("link array present");
+        assert!(links.is_empty(), "no CSS to inject: {links:?}");
+    }
+
+    #[test]
+    fn disk_scan_skips_warmup_route() {
+        let (renderer, _dir) = make_adapter_with_css_dir(Some("tailwind-abc.css"));
+        let mut input = empty_render_input("__oxide_warmup__");
+        renderer.inject_route_css(&mut input);
+        let links = input
+            .head
+            .get("link")
+            .and_then(|v| v.as_array())
+            .expect("link array present");
+        assert!(links.is_empty(), "warmup route emits no head: {links:?}");
+    }
+
+    #[test]
+    fn disk_scan_dedupes_repeat_render() {
+        let (renderer, _dir) = make_adapter_with_css_dir(Some("tailwind-abc.css"));
+        let mut input = empty_render_input("routes/index");
+        renderer.inject_route_css(&mut input);
+        // Simulate a second render of the same route: a fresh input, no
+        // carried-over link. Ensures we don't double-emit from an already-
+        // populated head.
+        let mut input2 = empty_render_input("routes/index");
+        renderer.inject_route_css(&mut input2);
+        let links = input2
+            .head
+            .get("link")
+            .and_then(|v| v.as_array())
+            .expect("link array present");
+        assert_eq!(links.len(), 1);
+    }
+
     use oxide_fw_jshost::FrameworkRenderInput;
 
     /// A framework renderer that echoes what it received — lets tests assert
@@ -1041,6 +1399,100 @@ mod tests {
         assert_eq!(chunks[0], b"<h1>");
         assert_eq!(chunks[1], b"chunked");
         assert_eq!(chunks[2], b"</h1>");
+    }
+
+    // ---- dev temp-component import re-anchoring ----------------------------
+    //
+    // A pool-compiled SFC page keeps its source-relative imports; the temp
+    // file under .oxide/components/ lives two directories deeper, so every
+    // relative specifier must be re-anchored to the real source file (see
+    // `absolutize_relative_imports`). These pin the rewrite contract.
+
+    #[test]
+    fn relative_imports_are_anchored_to_the_source_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        // Mirror the real layout: <tmp>/src/routes/page.vue importing
+        // ../components/hmr-target.vue (a SIBLING tree under src/).
+        let src = dir.path().join("src/routes/page.vue");
+        std::fs::create_dir_all(src.parent().unwrap()).unwrap();
+        std::fs::write(&src, "x").unwrap();
+        let comp = dir.path().join("src/components/hmr-target.vue");
+        std::fs::create_dir_all(comp.parent().unwrap()).unwrap();
+        std::fs::write(&comp, "x").unwrap();
+
+        let js = "import H from '../components/hmr-target.vue'\nimport { x } from 'vue'\nexport default H;\n";
+        let out = absolutize_relative_imports(js, &src);
+        // The relative specifier became the absolute file URL of the REAL
+        // source (canonicalized through `..`), the bare one is untouched.
+        assert!(
+            out.contains(&format!("\"file://{}\"", comp.display())),
+            "relative import re-anchored: {out}"
+        );
+        assert!(
+            out.contains("from 'vue'"),
+            "bare specifier untouched: {out}"
+        );
+        assert!(
+            out.contains("import H from"),
+            "import clause preserved: {out}"
+        );
+        assert!(
+            out.contains("export default H;"),
+            "trailer preserved: {out}"
+        );
+    }
+
+    #[test]
+    fn non_relative_and_double_quoted_imports_behave() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("page.svelte");
+        std::fs::write(&src, "x").unwrap();
+        let js = "export * from './gone-away.mjs';\nimport \"./side-effect.mjs\";\nimport a from 'solid-js'\n";
+        let out = absolutize_relative_imports(js, &src);
+        // The missing file falls back to lexical resolution (no canonicalize
+        // hit), still producing an absolute file:// URL.
+        assert!(
+            out.contains(&format!(
+                "\"file://{}\"",
+                dir.path().join("gone-away.mjs").display()
+            )),
+            "missing relative file still lexically anchored: {out}"
+        );
+        assert!(
+            out.contains(&format!(
+                "\"file://{}\"",
+                dir.path().join("side-effect.mjs").display()
+            )),
+            "side-effect import anchored: {out}"
+        );
+        assert!(
+            out.contains("from 'solid-js'"),
+            "bare import untouched: {out}"
+        );
+    }
+
+    #[test]
+    fn js_without_relative_imports_is_returned_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("page.tsx");
+        std::fs::write(&src, "x").unwrap();
+        let js = "import { a } from 'react'\nconst u = '/src/other.tsx'\nexport default a\n";
+        assert_eq!(absolutize_relative_imports(js, &src), js);
+    }
+
+    #[test]
+    fn file_url_encoding_handles_spaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("my comp");
+        std::fs::create_dir_all(&sub).unwrap();
+        let src = sub.join("page.vue");
+        std::fs::write(&src, "x").unwrap();
+        let js = "import './x.mjs'\n";
+        let out = absolutize_relative_imports(js, &src);
+        assert!(
+            out.contains("/my%20comp/x.mjs"),
+            "space percent-encoded: {out}"
+        );
     }
 }
 

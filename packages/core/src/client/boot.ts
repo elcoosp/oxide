@@ -15,8 +15,14 @@ import { fromBase64 } from '../bytes.ts'
 import { loadScripts } from './scripts.ts'
 import { setRouteComponentSource, isParamSegment, type ClientManifestLike } from './route-manifest.ts'
 import { attachDeferGlue, type DeferGlue } from './defer-glue.ts'
+import { connectHmr } from './hmr.ts'
 import type { FrameworkAdapter } from '../types.ts'
 import { loadMessages, setMessageLocales } from './messages.ts'
+// Side-effect import: installs `globalThis.__oxide_hmr__` in
+// the browser so any module that reads `import.meta.hot` (including
+// files served by the native ESM dev server) sees a live handle. A
+// no-op in Node (SSR / config loader).
+import './hot.ts'
 
 interface BootState {
   adapter?: FrameworkAdapter
@@ -44,7 +50,23 @@ function ensureInstalled(w: BootWindow): void {
   if (w.__oxideRegisterAdapter) return
   w.__oxideBoot = {
     loadChunk: async (chunk) => {
-      return await import(/* @vite-ignore */ chunk)
+      // HMR: a component module the dev runtime just re-imported is
+      // recorded under its ORIGINAL url (`__oxide_hmr__.getFreshModule`).
+      // Prefer it over `import(chunk)` — the browser's ESM cache would
+      // hand back the stale instance for the un-busted URL and the
+      // re-render after an edit would render the OLD component.
+      const hmr = (globalThis as {
+        __oxide_hmr__?: { getFreshModule?: (u: string) => unknown }
+      }).__oxide_hmr__
+      const fresh = hmr?.getFreshModule?.(chunk)
+      if (fresh !== undefined) return fresh
+      // §3.10: catch so an outage leaves a log, not a page-level rejection.
+      try {
+        return await import(/* @vite-ignore */ chunk)
+      } catch (e) {
+        console.error?.('[oxide] chunk load failed; deferred', chunk, e)
+        return undefined
+      }
     },
   }
   w.__oxideRegisterAdapter = (adapter, loadChunk) => {
@@ -159,6 +181,7 @@ export function bootWithRouter(
      * renders the route's REAL page component instead of the IR registry.
      * Absent → data-only prefetch and the IR fallback.
      */
+    clientBase?: string
     manifest?: ClientManifestLike & {
       /**
        * §16.4: the locales this build emitted catalogs for. Absent when the
@@ -189,8 +212,57 @@ export function bootWithRouter(
     location?: { pathname: string; search: string }
   }
 
+  // Component-HMR (Vue/Solid/Svelte): after a `module-update` re-imports a
+  // module, the page must re-render with the FRESH component — there is no
+  // React Refresh accept path to do it. The HMR runtime calls
+  // `__oxide_on_module_updated(url)` after every completed `reloadModule`;
+  // this hook replays the LAST known input through `adapter.update`, which
+  // resolves the route's component through `componentFor` → `loadChunk` —
+  // and `loadChunk` prefers the fresh module recorded by the HMR runtime.
+  // React is excluded: its capability is `refresh`, the accept callback
+  // already patched the tree in place, and a replay `update` would remount
+  // and destroy the state the React Refresh path preserves.
+  //
+  // `lastInput` is the input to replay: the hydration input (route, url,
+  // params, data, layouts) at boot, then whatever the last `ox:data`
+  // (loader HMR) or navigation delivered. Without it a replay would need
+  // another `/__data` fetch — the page already HAS the data.
+  let lastInput:
+    | Parameters<NonNullable<BootAdapter['update']>>[number]
+    | undefined
+  const onModuleUpdated = (url: string): void => {
+    const caps = (
+      adapter as { capabilities?: { hmr?: string } }
+    ).capabilities
+    if (caps?.hmr === 'refresh') return
+    if (lastInput === undefined) return
+    try {
+      adapter.update(lastInput)
+    } catch (e) {
+      console.warn?.('oxide: HMR re-render failed for', url, e)
+    }
+  }
+  ;(globalThis as { __oxide_on_module_updated?: (url: string) => void }).__oxide_on_module_updated =
+    onModuleUpdated
+
   const loadChunk =
-    w.__oxideBoot?.loadChunk ?? (async (c: string) => import(/* @vite-ignore */ c))
+    w.__oxideBoot?.loadChunk ??
+    (async (c: string) => {
+      // Same fresh-module preference as `ensureInstalled`'s loader (the
+      // fallback path when the boot runtime was not installed before this
+      // call). See the comment there.
+      const hmr = (globalThis as {
+        __oxide_hmr__?: { getFreshModule?: (u: string) => unknown }
+      }).__oxide_hmr__
+      const fresh = hmr?.getFreshModule?.(c)
+      if (fresh !== undefined) return fresh
+      try {
+        return await import(/* @vite-ignore */ c)
+      } catch (e) {
+        console.error?.('[oxide] chunk load failed (fallback); deferred', c, e)
+        return undefined
+      }
+    })
 
   // §6.4 + §8.4/§10.3: register the manifest + chunk loader BEFORE the root
   // hydrates so every adapter's hydrate()/mount()/update() resolves REAL
@@ -248,6 +320,10 @@ export function bootWithRouter(
       data,
       layouts,
     }
+    // The replay input for component-HMR re-renders (see onModuleUpdated).
+    // Set BEFORE hydrate so an edit that arrives during boot still has a
+    // valid input to replay.
+    lastInput = input
     try {
       adapter.hydrate(root, input)
       hydratedRoot = true
@@ -261,8 +337,14 @@ export function bootWithRouter(
   //     `window.__oxide` (pure SPA, or non-SSR HTML) still gets island
   //     hydration here.
   try {
-    hydrateIslands({ doc, adapter, loadChunk })
-    loadScripts({ doc })
+    // Defer island hydration to the next microtask so React's hydrateRoot()
+    // runs first. hydrateIslands() injects `data-ox-hydrated="done"` into the
+    // DOM, which causes React to throw a hydration mismatch if it runs before
+    // the root has finished hydrating.
+    Promise.resolve().then(() => {
+      hydrateIslands({ doc, adapter, loadChunk })
+      loadScripts({ doc })
+    })
   } catch (e) {
     console.error?.('oxide: island hydration failed', e)
   }
@@ -284,6 +366,34 @@ export function bootWithRouter(
   //       `<script type="application/oxide-deferred">`. Attach the core
   //       glue here so deferred boundaries resolve without islands or a
   //       page root.
+  // §13.3: wire the dev-server HMR WebSocket when this module was served
+  // by `oxide dev` in ESM mode. Detection is structural: only the ESM dev
+  // path serves a module script from `/@boot/` or `/@prebundle/` — a
+  // production build's boot chunk comes from `/client/`. In non-dev, no
+  // WebSocket is opened.
+  {
+    const w = maybeWindow()
+    const doc = w?.document
+    if (doc) {
+      const scripts = doc.querySelectorAll('script[type="module"]')
+      let isEsmDev = false
+      for (let i = 0; i < scripts.length; i++) {
+        const src = scripts[i]?.getAttribute?.('src') ?? ''
+        if (src.includes('/@boot/') || src.includes('/@prebundle/')) {
+          isEsmDev = true
+          break
+        }
+      }
+      if (isEsmDev) {
+        try {
+          connectHmr()
+        } catch (e) {
+          console.warn?.('oxide: HMR websocket failed to open', e)
+        }
+      }
+    }
+  }
+
   let bootGlue: DeferGlue | undefined
   if (routerOnly) {
     try {
@@ -436,6 +546,7 @@ export function bootWithRouter(
     }
 
     try {
+      lastInput = input
       adapter.update(input)
     } catch (err) {
       console.warn?.('oxide: ox:data update threw', err)
@@ -444,7 +555,16 @@ export function bootWithRouter(
   doc.addEventListener('ox:data', onData as EventListener)
 
   const router = createRouter({
-    adapter,
+    clientBase: opts.clientBase,
+    // Track every navigation's input so a component-HMR re-render can
+    // replay the CURRENT route's input (not just the boot route's).
+    adapter: {
+      ...adapter,
+      update: (input: Parameters<NonNullable<BootAdapter['update']>>[number]) => {
+        lastInput = input
+        return adapter.update(input)
+      },
+    },
     onNavigateStart,
     onNavigateEnd,
     ...(opts.manifest ? { manifest: opts.manifest } : {}),

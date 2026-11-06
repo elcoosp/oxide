@@ -157,6 +157,7 @@ fn hmr_messages_roundtrip_through_json_all_variants() {
     let msgs = vec![
         HmrMessage::ModuleUpdate {
             path: "app.tsx".into(),
+            url: String::new(),
         },
         HmrMessage::CssUpdate {
             path: "a.css".into(),
@@ -420,4 +421,179 @@ fn record_staged_settle_first_still_merges() {
     assert_eq!(snap.len(), 1);
     assert_eq!(snap[0].trace_id.as_deref(), Some("trace-xyz"));
     assert!(snap[0].waterfall_ms.iter().any(|(n, _)| n == "render"));
+}
+
+#[test]
+fn classify_event_modified_layout_is_component() {
+    assert_eq!(
+        classify_event(&FileEvent::Modified("src/routes/layout.tsx".into())),
+        ChangeKind::Component,
+        "content edit to an existing layout → in-place, not rescan",
+    );
+}
+
+#[test]
+fn classify_event_created_layout_is_structural() {
+    assert_eq!(
+        classify_event(&FileEvent::Created("src/routes/layout.tsx".into())),
+        ChangeKind::ConfigOrRoutes,
+        "a NEW layout changes the tree → rescan",
+    );
+}
+
+#[test]
+fn classify_event_removed_layout_is_structural() {
+    assert_eq!(
+        classify_event(&FileEvent::Removed("src/routes/layout.tsx".into())),
+        ChangeKind::ConfigOrRoutes,
+        "deleting a layout changes the tree → rescan",
+    );
+}
+
+#[test]
+fn classify_event_modified_page_is_component() {
+    assert_eq!(
+        classify_event(&FileEvent::Modified("src/routes/greeting/page.tsx".into())),
+        ChangeKind::Component,
+    );
+}
+
+#[test]
+fn classify_event_modified_route_ts_stays_structural() {
+    // `route.ts` defines an endpoint; body edit changes its identity.
+    assert_eq!(
+        classify_event(&FileEvent::Modified("src/routes/api/route.ts".into())),
+        ChangeKind::ConfigOrRoutes,
+    );
+}
+
+#[test]
+fn classify_event_modified_socket_stays_structural() {
+    assert_eq!(
+        classify_event(&FileEvent::Modified("src/routes/chat/socket.ts".into())),
+        ChangeKind::ConfigOrRoutes,
+    );
+}
+
+#[test]
+fn classify_event_delegates_for_css() {
+    assert_eq!(
+        classify_event(&FileEvent::Modified("src/styles/global.css".into())),
+        ChangeKind::Css,
+    );
+}
+
+#[test]
+fn classify_event_delegates_for_page_server_loader() {
+    assert_eq!(
+        classify_event(&FileEvent::Modified(
+            "src/routes/greeting/page.server.ts".into()
+        )),
+        ChangeKind::ServerLoader,
+    );
+}
+
+#[test]
+fn classify_event_delegates_for_non_page_server_module() {
+    assert_eq!(
+        classify_event(&FileEvent::Modified(
+            "src/routes/nested/layout.server.ts".into()
+        )),
+        ChangeKind::ServerModule,
+    );
+}
+
+#[test]
+fn classify_event_outside_routes_is_component() {
+    assert_eq!(
+        classify_event(&FileEvent::Modified("src/components/foo.tsx".into())),
+        ChangeKind::Component,
+    );
+}
+
+#[test]
+fn classify_event_spurious_created_on_existing_file_is_modified() {
+    // §3.9: a Created event for a file that already existed >1s ago is a
+    // spurious Created (macOS temp+rename write pattern). Rewrite to
+    // Modified so a content edit to `routes/layout.tsx` behaves as an
+    // in-place edit, not a route-tree rescan.
+    let dir = tempdir().unwrap();
+    // classify_event only treats a file as a route file when its path
+    // contains `routes/`; use a real route-shaped path.
+    let routes_dir = dir.path().join("src").join("routes");
+    fs::create_dir_all(&routes_dir).unwrap();
+    let layout = routes_dir.join("layout.tsx");
+    fs::write(&layout, "before").unwrap();
+    // Sleep past the 1s threshold so birthtime is "old enough".
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let ev = FileEvent::Created(layout.clone());
+    assert_eq!(
+        classify_event(&ev),
+        ChangeKind::Component,
+        "spurious Created on an existing route file must classify as Component"
+    );
+}
+
+#[test]
+fn classify_event_true_created_on_brand_new_file_is_structural() {
+    // Sanity: a genuinely new file (birthtime within 1s) still classifies
+    // as ConfigOrRoutes. Without this pair, the birthtime fix could be a
+    // blanket "Created -> Modified" that breaks route additions.
+    let dir = tempdir().unwrap();
+    let routes_dir = dir.path().join("src").join("routes");
+    fs::create_dir_all(&routes_dir).unwrap();
+    let new_layout = routes_dir.join("layout.tsx");
+    fs::write(&new_layout, "fresh").unwrap();
+    let ev = FileEvent::Created(new_layout);
+    assert_eq!(classify_event(&ev), ChangeKind::ConfigOrRoutes);
+}
+
+#[test]
+fn hmr_message_batch_module_update_round_trips() {
+    use crate::{BatchModuleItem, HmrMessage};
+    let msg = HmrMessage::BatchModuleUpdate {
+        items: vec![
+            BatchModuleItem {
+                path: "/abs/a.tsx".into(),
+                url: "/src/a.tsx".into(),
+            },
+            BatchModuleItem {
+                path: "/abs/b.tsx".into(),
+                url: "/src/b.tsx".into(),
+            },
+        ],
+    };
+    let json = msg.to_json();
+    assert!(
+        json.contains("batch-module-update"),
+        "kebab-case type: {json}"
+    );
+    assert!(
+        json.contains("a.tsx") && json.contains("b.tsx"),
+        "paths in JSON: {json}"
+    );
+    let back = HmrMessage::from_json(&json).unwrap();
+    match back {
+        HmrMessage::BatchModuleUpdate { items } => {
+            assert_eq!(items.len(), 2);
+            assert_eq!(items[0].url, "/src/a.tsx");
+            assert_eq!(items[1].path, "/abs/b.tsx");
+        }
+        other => panic!("expected BatchModuleUpdate, got {other:?}"),
+    }
+}
+
+#[test]
+fn hmr_message_batch_empty_is_valid() {
+    // An empty batch is valid serde; the CLIENT treats it as a no-op. The
+    // server SHOULD never publish one (it falls back to singular for 1
+    // and skips publish for 0), but the shape must round-trip.
+    use crate::HmrMessage;
+    let msg = HmrMessage::BatchModuleUpdate { items: vec![] };
+    let json = msg.to_json();
+    let back = HmrMessage::from_json(&json).unwrap();
+    match back {
+        HmrMessage::BatchModuleUpdate { items } => assert!(items.is_empty()),
+        _ => panic!("wrong variant"),
+    }
 }

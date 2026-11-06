@@ -612,12 +612,62 @@ impl Default for BuildConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct DevConfig {
     pub bundle: bool,
     pub https: bool,
     pub proxy: BTreeMap<String, String>,
+    /// Native ESM dev server (Phase 1 of the HMR design in
+    /// `docs/ideas/hmr.md`). When `true`, `oxide dev` skips the client
+    /// bundler and serves `.tsx`/`.ts` source files directly as transformed
+    /// ESM (Oxc, ~8ms per file). The client manifest points
+    /// `componentFor` at `/src/*.tsx` URLs, which the existing client
+    /// runtime already handles via `import(url)`.
+    ///
+    /// Default `true` since Phase 4 (React Refresh proven, see
+    /// `docs/plan-esm-hmr.md`). Opt out per project with
+    /// `dev: { esm: false }` in `oxide.config.ts` to fall back to the
+    /// Rolldown bundle + full-reload HMR path.
+    pub esm: bool,
+    /// Packages to bundle once at dev startup from CJS to ESM. Each entry
+    /// is served from `.oxide/esm-prebundle/<name>.js` and referenced by
+    /// the importmap. `react`, `react-dom/client` and `react/jsx-runtime`
+    /// must be prebundled because their published entries are CJS and the
+    /// browser cannot execute them natively.
+    pub prebundle: Vec<String>,
+}
+
+impl Default for DevConfig {
+    fn default() -> Self {
+        Self {
+            bundle: false,
+            https: false,
+            proxy: BTreeMap::new(),
+            // Phase 4: React Refresh is proven (Phase 3 tests green), so the
+            // native ESM dev server is the default. Rollback:
+            // `dev: { esm: false }` in `oxide.config.ts`.
+            esm: true,
+            prebundle: vec![
+                // React 19 ships CJS-only. `prebundle_cjs_to_esm` bundles
+                // each entry with Rolldown's CJS interop (entry-point mode),
+                // which scans `exports.useState = ...` and emits real named
+                // ESM exports. `react` must be a separate entry from
+                // `react-dom/client` so that each has its own file, and
+                // `react-dom-client.js` externalizes `react` (resolved by
+                // the import map to `/@prebundle/react.js`) so the browser
+                // has exactly one React instance with one dispatcher.
+                "react".into(),
+                "react-dom".into(),
+                "react-dom/client".into(),
+                "react/jsx-runtime".into(),
+                "react-refresh/runtime".into(),
+                "lucide-react".into(),
+                "rangi".into(),
+                "rangi/themes".into(),
+            ],
+        }
+    }
 }
 
 /// SPEC-16 / §14.2: detect the nearest monorepo workspace root above `dir`.

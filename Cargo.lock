@@ -4802,6 +4802,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -4842,12 +4843,14 @@ dependencies = [
  "chrono",
  "clap",
  "dashmap 6.2.1",
+ "flate2",
  "futures",
  "image",
  "mimalloc",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "oxc_resolver",
  "oxide-fw-adapters",
  "oxide-fw-assets",
  "oxide-fw-bundler",
@@ -4876,6 +4879,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "zstd",
 ]
 
 [[package]]
@@ -4985,6 +4989,7 @@ dependencies = [
  "deno_core",
  "deno_error",
  "futures",
+ "lightningcss",
  "oxc_resolver",
  "oxide-fw-cache",
  "oxide-fw-compiler",
@@ -5078,6 +5083,7 @@ dependencies = [
  "blake3",
  "brotli",
  "bytes",
+ "dashmap 6.2.1",
  "flate2",
  "futures",
  "h3",
@@ -7713,7 +7719,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.6",
  "windows-sys 0.61.2",

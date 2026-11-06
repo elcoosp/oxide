@@ -30,7 +30,12 @@ function globals(): WithBase64Globals {
  */
 export function toBase64(s: string): string {
   const g = globals()
-  if (typeof g.btoa === 'function') return g.btoa(unescape(encodeURIComponent(s)))
+  if (typeof g.btoa === 'function') {
+    // UTF-8 bytes → binary string → btoa. (The previous
+    // `unescape(encodeURIComponent(s))` round-trip works but relies on the
+    // deprecated Annex B `unescape`; this reuses the linear-time helper.)
+    return g.btoa(bytesToBinary(new TextEncoder().encode(s)))
+  }
   if (g.Buffer) return g.Buffer.from(s, 'utf8').toString('base64')
   throw new TypeError('toBase64: no base64 encoder available')
 }

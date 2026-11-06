@@ -41,6 +41,7 @@ mod native_plugins;
 
 mod build_cache;
 mod build_graph;
+mod esm_dev;
 mod framework_shim;
 mod l0_cache;
 pub mod loader_shim;
@@ -93,6 +94,12 @@ pub enum Command {
         /// Add a leading `!` to strip the prefix: `--proxy '!/api=http://x'`.
         #[arg(long)]
         proxy: Vec<String>,
+        /// §2.9: use the bundler path instead of the native ESM dev server
+        /// (equivalent to `dev: { esm: false }` in `oxide.config.ts`).
+        /// Serves `/client/*.js` from `dist/client/` instead of
+        /// `/src/**` transformed modules.
+        #[arg(long = "no-esm")]
+        no_esm: bool,
         /// Hidden test hook: run exactly one watch poll, print `dev ready` and exit.
         /// Without it the dev loop runs until Ctrl-C (§13, not exercised in tests).
         #[arg(long, hide = true)]
@@ -117,6 +124,12 @@ pub enum Command {
         root: String,
         #[arg(long)]
         port: Option<u16>,
+        /// PERF-23 (readiness): skip the renderer warm-up. Warm-up costs ~1 s
+        /// of startup (a synthetic render) so the first REAL request never
+        /// pays the cold path; short-lived benchmark/CI runs and
+        /// pre-scaled fleets use this to boot instantly.
+        #[arg(long = "no-warmup")]
+        no_warmup: bool,
     },
     /// Preview the production build locally.
     Preview {
@@ -368,6 +381,97 @@ fn build_otel_layer(
     Ok(tracing_opentelemetry::layer().with_tracer(tracer))
 }
 
+impl Command {
+    /// P1 (readiness): the `--root` argument, when this command takes one.
+    /// Read by [`apply_startup_env`] so env writes happen pre-runtime.
+    pub fn root_arg(&self) -> Option<&str> {
+        Some(match self {
+            Command::Dev { root, .. }
+            | Command::Build { root, .. }
+            | Command::Start { root, .. }
+            | Command::Preview { root, .. }
+            | Command::Routes { root, .. }
+            | Command::Analyze { root, .. }
+            | Command::Check { root, .. }
+            | Command::Why { root, .. }
+            | Command::Doctor { root, .. }
+            | Command::Secrets { root, .. }
+            | Command::Add { root, .. }
+            | Command::Generate { root, .. }
+            | Command::Cache { root, .. }
+            | Command::Audit { root, .. }
+            | Command::Migrate { root, .. }
+            | Command::Test { root, .. }
+            | Command::Mcp { root, .. }
+            | Command::Config { root, .. }
+            | Command::Render { root, .. } => root.as_str(),
+            Command::Schema => return None,
+        })
+    }
+
+    /// P1 (readiness): true for `oxide dev` — the command whose runtime
+    /// behaviour dev-mode gates.
+    pub fn is_dev_command(&self) -> bool {
+        matches!(self, Command::Dev { .. })
+    }
+}
+
+/// P1 (readiness): ALL startup-time environment writes happen HERE, in the
+/// synchronous binary entry point BEFORE the tokio runtime (and its worker
+/// threads) exist. Previously each `cmd_*` wrote `OXIDE_DEV` / `OXIDE_ROOT` /
+/// `OXIDE_DEV_MODE` mid-async — `set_var` concurrent with a `get_var` on a
+/// request thread is a data race (why edition 2024 marks `set_var` unsafe),
+/// and production behaviour could flip because someone exported
+/// `OXIDE_DEV_MODE` in a shell. Child worker processes still inherit the
+/// variables from this parent env at spawn time.
+///
+/// In-process dev-mode probes answer from the atomic
+/// (`oxide_fw_server::set_dev_mode`) instead of re-reading the env per request.
+pub fn apply_startup_env(cli: &Cli) {
+    // Dev mode is a command-level fact, decided once. `set_dev_mode` makes
+    // the atomic authoritative for the process; the env var remains only for
+    // child-process inheritance (loader hooks, workers).
+    oxide_fw_server::set_dev_mode(cli.command.is_dev_command());
+    if cli.command.is_dev_command() {
+        // SAFETY: pre-runtime — see the function doc.
+        unsafe { std::env::set_var("OXIDE_DEV", "1") };
+        if let Command::Dev { no_esm, .. } = &cli.command
+            && *no_esm
+        {
+            // SAFETY: pre-runtime — see the function doc.
+            unsafe { std::env::set_var("OXIDE_DEV_NO_ESM", "1") };
+        }
+    }
+    // PERF-23: `oxide start --no-warmup` skips the renderer warm-up. Read
+    // once by the warm-up block in `start_server_inner_full`.
+    if let Command::Start {
+        no_warmup: true, ..
+    } = &cli.command
+    {
+        // SAFETY: pre-runtime — see the function doc.
+        unsafe { std::env::set_var("OXIDE_NO_WARMUP", "1") };
+    }
+    // §17.2: deny outbound network from plugin/tooling workers (`--offline-plugins`).
+    // Read by `PoolConfig::default` for every worker pool; process-global is
+    // correct — the build is one process and the flag applies to all workers.
+    if let Command::Build {
+        offline_plugins: true,
+        ..
+    } = &cli.command
+    {
+        // SAFETY: pre-runtime — `main` calls this before `Runtime::new`, so
+        // no other thread exists to race an env read (P1 readiness).
+        unsafe { std::env::set_var("OXIDE_OFFLINE_PLUGINS", "1") };
+    }
+    // Thread the project root to worker subprocesses so `getCollection`
+    // resolves `dist/content` against the project, not the shell's cwd.
+    if let Some(root) = cli.command.root_arg() {
+        let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| std::path::PathBuf::from(root));
+        // SAFETY: pre-runtime — see above.
+        unsafe { std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref()) };
+    }
+}
+
 pub async fn run(cli: Cli) -> anyhow::Result<i32> {
     init_tracing();
     let mut buf: Vec<u8> = Vec::new();
@@ -393,6 +497,7 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
             qr,
             open,
             proxy,
+            no_esm,
             once,
         } => {
             cmd_dev(
@@ -405,6 +510,7 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
                     open,
                     port,
                     proxy,
+                    no_esm,
                 },
                 w,
             )
@@ -414,17 +520,17 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
             root,
             r#static,
             mode: _,
-            offline_plugins,
+            offline_plugins: _,
         } => {
-            if offline_plugins {
-                // Read by `PoolConfig::default` for every worker pool the
-                // build spawns. Process-global is correct here: the build is
-                // one process and the flag applies to all its workers.
-                unsafe { std::env::set_var("OXIDE_OFFLINE_PLUGINS", "1") };
-            }
+            // P1 (readiness): `OXIDE_OFFLINE_PLUGINS` is written pre-runtime
+            // by `apply_startup_env` — see `apply_startup_env` and `main.rs`.
             cmd_build(&root, r#static, w).await
         }
-        Command::Start { root, port } => cmd_serve(&root, port, "oxide start", w).await,
+        Command::Start {
+            root,
+            port,
+            no_warmup: _,
+        } => cmd_serve(&root, port, "oxide start", w).await,
         Command::Preview { root } => cmd_serve(&root, None, "oxide preview", w).await,
         Command::Routes { root } => cmd_routes(&root, w).await,
         Command::Analyze { root } => cmd_analyze(&root, w).await,
@@ -1027,6 +1133,31 @@ fn jsx_import_source_for(framework: &str) -> Option<String> {
     }
 }
 
+/// Framework runtime packages the ESM client graph needs prebundled beyond
+/// the React-shaped default list. The pool-compiled client module for each
+/// framework imports its runtime by bare specifier (`vue`,
+/// `svelte/internal/client`, `@solidjs/web`), and the `@oxide-fw/*`
+/// adapter dist files do the same — without these entries the browser
+/// fetches a bare specifier and the whole module graph halts.
+///
+/// `solid-js` is listed for the Solid client adapter's dynamic
+/// `import('solid-js')`; `svelte/internal/disclose-version` is emitted by
+/// every Svelte 5 compiled module, and `svelte/internal/flags/legacy` by
+/// the Svelte 5.3x compiler (it gates the legacy-syntax shims).
+fn framework_prebundle_extras(framework: &str) -> Vec<String> {
+    match framework {
+        "vue" => vec!["vue".to_string()],
+        "svelte" => vec![
+            "svelte".to_string(),
+            "svelte/internal/client".to_string(),
+            "svelte/internal/disclose-version".to_string(),
+            "svelte/internal/flags/legacy".to_string(),
+        ],
+        "solid" => vec!["solid-js".to_string(), "@solidjs/web".to_string()],
+        _ => Vec::new(),
+    }
+}
+
 /// §6.4 / §21: the framework runtimes must never be inlined into the SSR
 /// bundle. Each runtime carries module-level state (React's
 /// `ReactCurrentDispatcher`, Vue's current instance, Svelte's component
@@ -1103,13 +1234,21 @@ fn bundle_env_options(args: BundleEnvArgs) -> oxide_fw_bundler::BundleOptions {
     // bundler) keeps the bundler agnostic of a project's framework — the
     // CLI is what decides a build is a production build. Without this,
     // React ships the dev build (~1 MB) into every island chunk.
+    // P1 (readiness): dev-mode probes answer from the atomic (set once at
+    // startup), not a racy per-call env read.
+    let is_dev = oxide_fw_server::dev_mode();
     let mut define: BTreeMap<String, String> = BTreeMap::new();
     match env {
         oxide_fw_bundler::BundleEnv::Client => {
-            define.insert(
-                "process.env.NODE_ENV".to_string(),
-                "\"production\"".to_string(),
-            );
+            // [wr102] NODE_ENV must match dev/prod, not be hardcoded to
+            // production. Otherwise `oxide dev` ships React's minified
+            // production build and #418 becomes unreadable.
+            let env_val = if minify && !is_dev {
+                "production"
+            } else {
+                "development"
+            };
+            define.insert("process.env.NODE_ENV".to_string(), format!("\"{env_val}\""));
         }
         oxide_fw_bundler::BundleEnv::Ssr => {
             // Server rendering must NOT bake in "production": loaders may
@@ -1201,16 +1340,24 @@ async fn hmr_route_data_update(
     }) {
         Some(e) => (
             // Route id → URL path pattern (`routes/blog/[slug]/page` →
-            // `/blog/[slug]`), same derivation as the loading-map keys.
-            match e
-                .id
-                .0
-                .strip_suffix("/page")
-                .unwrap_or(&e.id.0)
-                .strip_prefix("routes")
+            // `/blog/[slug]`). The `index` segment is the ROOT marker (the
+            // scanner ids the root page `routes/index/page`), not a literal
+            // URL segment: `routes/index/page` → `/`. Deriving `/index`
+            // instead produced a pattern the client's
+            // `routePatternMatchesPath` could never match against the
+            // pathname `/` — the route-data-update frame arrived and was
+            // silently dropped, so a loader edit never re-rendered.
             {
-                Some(d) if !d.is_empty() => d.to_string(),
-                _ => "/".to_string(),
+                let dir =
+                    e.id.0
+                        .strip_suffix("/page")
+                        .unwrap_or(&e.id.0)
+                        .strip_prefix("routes")
+                        .unwrap_or("");
+                match dir {
+                    "" | "/" | "/index" | "index" => "/".to_string(),
+                    d => d.to_string(),
+                }
             },
             routes_root
                 .join(e.file.with_file_name("page.server.ts"))
@@ -1465,13 +1612,234 @@ async fn ensure_dev_client_bundle(
     cfg: &oxide_fw_config::OxideConfig,
     tree: &oxide_fw_router::RouteTree,
     pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
+    bundler: &oxide_fw_bundler::RolldownBundler,
     w: Writer<'_>,
 ) -> anyhow::Result<()> {
     let dist = rootp.join("dist");
     let client_out = dist.join("client");
-    if client_out.join("client.manifest.json").is_file() {
-        return Ok(());
+    let manifest_path = client_out.join("client.manifest.json");
+
+    let mut needs_build = !manifest_path.is_file();
+    if !needs_build {
+        let manifest_mtime = manifest_path
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or_else(|_| std::time::SystemTime::now());
+
+        // §2.9 / BUG 3 follow-up: staleness must consider not just the app's
+        // own source tree, but ALSO the framework packages' built dist. A
+        // `packages/core/dist/client-hot.js` edit (e.g. a client-runtime bug
+        // fix) invalidates the bundled client chunk that inlined the old
+        // version — the browser would keep loading the STALE copy from
+        // `dist/client/client-<hash>.js` forever, because the app's own src
+        // has not changed since the last build.
+        //
+        // Scanned roots:
+        //   1. `<root>/<cfg.routes.dir>` — the app's own source (previous
+        //      behavior; only route-tree changes forced rebuild).
+        //   2. `<root>/src` (whole) — catches component / island / util
+        //      edits that aren't under routes/.
+        //   3. `<root>/packages/*/dist` — workspace framework packages
+        //      (`pnpm`-linked into the smoke app).
+        //   4. `<root>/node_modules/@oxide-fw/*/dist` — published packages
+        //      (non-workspace setup).
+        //
+        // A `packages/core/dist/client-hot.js` newer than the manifest
+        // makes needs_build true. This is what made my §3.11 BUG 3 fix
+        // invisible to the running dev server.
+        let mut scan_roots: Vec<std::path::PathBuf> = vec![rootp.join(&cfg.routes.dir)];
+        let src_all = rootp.join("src");
+        if src_all.is_dir() {
+            scan_roots.push(src_all);
+        }
+        if let Ok(entries) = std::fs::read_dir(rootp.join("packages")) {
+            for entry in entries.flatten() {
+                let dist = entry.path().join("dist");
+                if dist.is_dir() {
+                    scan_roots.push(dist);
+                }
+            }
+        }
+        let oxide_fw_nm = rootp.join("node_modules").join("@oxide-fw");
+        if let Ok(entries) = std::fs::read_dir(&oxide_fw_nm) {
+            for entry in entries.flatten() {
+                let dist = entry.path().join("dist");
+                if dist.is_dir() {
+                    scan_roots.push(dist);
+                }
+            }
+        }
+
+        'outer: for root in scan_roots {
+            let mut stack = vec![root];
+            while let Some(dir) = stack.pop() {
+                let Ok(entries) = std::fs::read_dir(&dir) else {
+                    continue;
+                };
+                for entry in entries.flatten() {
+                    let Ok(ft) = entry.file_type() else { continue };
+                    if ft.is_dir() {
+                        stack.push(entry.path());
+                    } else if ft.is_file()
+                        && let Ok(t) = entry.metadata().and_then(|m| m.modified())
+                        && t > manifest_mtime
+                    {
+                        needs_build = true;
+                        break 'outer;
+                    }
+                }
+            }
+        }
     }
+
+    if needs_build {
+        tracing::info!(
+            "ensure_dev_client_bundle: source is newer than manifest or missing — rebuilding"
+        );
+        build_client_bundle(rootp, cfg, tree, pool, bundler, None, w).await
+    } else {
+        Ok(())
+    }
+}
+
+/// Populate `stack.component_source` with route → source-file mappings so the
+/// dev render path can resolve components without a build-emitted
+/// `dist/server/ssr/index.js`. Called from:
+///
+/// - `cmd_dev` (all modes) — one-time at boot.
+/// - `start_server_inner_full` (ESM mode only) — covers the smoke test and
+///   any other direct caller of `start_dev_server_full` that bypasses
+///   `cmd_dev`. Without this, the ESM path (which skips
+///   `ensure_dev_client_bundle` and therefore never writes an SSR entry)
+///   has an empty `component_source` and every render 500s with
+///   "no component resolved".
+///
+/// Idempotent: each call writes the same `sources` map.
+async fn populate_dev_component_source(
+    rootp: &Path,
+    cfg: &oxide_fw_config::OxideConfig,
+    tree: &oxide_fw_router::RouteTree,
+    stack: &crate::framework_shim::FrameworkStack,
+) {
+    use oxide_fw_router::RouteKind;
+    let routes_root = rootp.join(&cfg.routes.dir);
+    let entries: std::collections::BTreeMap<String, std::path::PathBuf> = tree
+        .entries
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.kind,
+                RouteKind::Page
+                    | RouteKind::Layout
+                    | RouteKind::Error
+                    | RouteKind::NotFound
+                    | RouteKind::Template
+            )
+        })
+        .map(|e| (canonical_route_id(&e.id.0), routes_root.join(&e.file)))
+        .collect();
+    if entries.is_empty() {
+        return;
+    }
+    let framework = cfg
+        .framework
+        .adapter
+        .as_deref()
+        .or(cfg.framework.name.as_deref());
+    let sources = crate::framework_shim::dev_component_sources(
+        rootp,
+        framework,
+        entries,
+        stack.tooling_pool.as_ref(),
+    )
+    .await;
+    if let Ok(mut src) = stack.component_source.write() {
+        src.sources = sources;
+    }
+}
+
+/// §1.3: build a reverse-dependency map over `src/**/*.{ts,tsx,js,jsx,mjs}`.
+/// Returns `target_abs_path -> { importer_abs_paths }`. Parses each file
+/// with the compiler's `scan_import_spans` and resolves relative imports
+/// against the filesystem. Rebuilt per watcher tick — cheap for a normal
+/// dev tree (~30 files), correct without needing to invalidate a cache on
+/// Created/Removed events.
+fn build_importers_map(
+    rootp: &std::path::Path,
+) -> std::collections::BTreeMap<std::path::PathBuf, std::collections::BTreeSet<std::path::PathBuf>>
+{
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::path::PathBuf;
+    let mut map: BTreeMap<PathBuf, BTreeSet<PathBuf>> = BTreeMap::new();
+    let src = rootp.join("src");
+    let Ok(_) = std::fs::canonicalize(&src) else {
+        return map;
+    };
+
+    fn walk(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.is_file() {
+                let ext = p
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                if matches!(
+                    ext.as_str(),
+                    "ts" | "tsx" | "js" | "jsx" | "mjs" | "vue" | "svelte"
+                ) {
+                    out.push(p);
+                }
+            }
+        }
+    }
+    let mut files: Vec<PathBuf> = Vec::new();
+    walk(&src, &mut files);
+    for file in files {
+        let Ok(content) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let Ok(canon_file) = std::fs::canonicalize(&file) else {
+            continue;
+        };
+        for span in oxide_fw_compiler::scan_import_spans(&content) {
+            let spec = &span.specifier;
+            if !(spec.starts_with("./") || spec.starts_with("../")) {
+                continue;
+            }
+            let Some(parent) = canon_file.parent() else {
+                continue;
+            };
+            let Ok(target) = std::fs::canonicalize(parent.join(spec)) else {
+                continue;
+            };
+            map.entry(target).or_default().insert(canon_file.clone());
+        }
+    }
+    map
+}
+
+async fn build_client_bundle(
+    rootp: &Path,
+    cfg: &oxide_fw_config::OxideConfig,
+    tree: &oxide_fw_router::RouteTree,
+    pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
+    bundler: &oxide_fw_bundler::RolldownBundler,
+    changed: Option<&[std::path::PathBuf]>,
+    w: Writer<'_>,
+) -> anyhow::Result<()> {
+    tracing::info!(
+        changed = changed.map(|c| c.len()).unwrap_or(0),
+        "build_client_bundle ENTRY"
+    );
+    let dist = rootp.join("dist");
+    let client_out = dist.join("client");
 
     // Entries: pages + endpoints + loading boundaries (mirrors cmd_build).
     let mut entries: BTreeMap<String, PathBuf> = BTreeMap::new();
@@ -1577,29 +1945,86 @@ async fn ensure_dev_client_bundle(
     client_opts.load_hook = build_js_plugin_load_hook(rootp, cfg, pool);
     client_opts.render_chunk_hook = build_js_plugin_render_chunk_hook(rootp, cfg, pool);
     client_opts.generate_bundle_hook = build_js_plugin_generate_bundle_hook(rootp, cfg, pool);
+    outln!(w, "dev: rebuilding client bundle...");
     use oxide_fw_bundler::Bundler as _;
-    let rb = oxide_fw_bundler::RolldownBundler::new(rootp);
-    match rb.bundle(&client_opts) {
+    match bundler.bundle_incremental(&client_opts, changed) {
         Ok(outcome) => {
+            // [wr115] Write compiled Tailwind CSS directly + patch manifest.
+            if let Some(p) = pool
+                && let Ok(Some(tw)) = crate::tailwind::precompute(p.clone(), cfg, rootp).await
+            {
+                let client_dir = rootp.join("dist/client");
+                let _ = std::fs::create_dir_all(&client_dir);
+                let hash = oxide_fw_bundler::ChunkBundler::content_hash(&[tw.css.as_bytes()]);
+                let filename = format!("tailwind-{hash}.css");
+                let _ = std::fs::write(client_dir.join(&filename), &tw.css);
+                outln!(
+                    w,
+                    "tailwind: {} ({} bytes, {} utilities)",
+                    filename,
+                    tw.css.len(),
+                    tw.css.matches('.').count()
+                );
+
+                // Update the manifest: point every route's css at the
+                // compiled file, delete any other tailwind-*.css.
+                let manifest_path = client_dir.join("client.manifest.json");
+                if let Ok(raw) = std::fs::read_to_string(&manifest_path)
+                    && let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&raw)
+                {
+                    if let Some(routes) = v.get_mut("routes").and_then(|r| r.as_object_mut()) {
+                        for (_k, route) in routes.iter_mut() {
+                            if let Some(css) = route.get_mut("css").and_then(|c| c.as_array_mut()) {
+                                *css = vec![serde_json::Value::String(filename.clone())];
+                            }
+                        }
+                    }
+                    if let Some(assets) = v.get_mut("assets").and_then(|a| a.as_object_mut()) {
+                        for (_k, val) in assets.iter_mut() {
+                            *val = serde_json::Value::String(filename.clone());
+                        }
+                    }
+                    let _ = std::fs::write(
+                        &manifest_path,
+                        serde_json::to_string_pretty(&v).unwrap_or_default(),
+                    );
+                }
+                // Delete superseded CSS so exactly one exists
+                if let Ok(entries) = std::fs::read_dir(&client_dir) {
+                    for e in entries.flatten() {
+                        let n = e.file_name().to_string_lossy().to_string();
+                        if n.starts_with("tailwind-") && n.ends_with(".css") && n != filename {
+                            let _ = std::fs::remove_file(e.path());
+                        }
+                    }
+                }
+            }
+
             outln!(
                 w,
-                "dev: client bundle ready ({} chunks)",
+                "dev: client bundle rebuilt ({} chunks)",
                 outcome.chunks.len()
             );
             Ok(())
         }
         Err(e) => {
             // A failed dev bundle is reported but not fatal: the SSR-only
-            // page still serves (no client hydration), and the error overlay
-            // surfaces the diagnostic. A hard failure here would stop `dev`
-            // on a project that only has a syntax error in one component.
+            // page still serves (no client hydration). But the caller MUST
+            // know it failed — publishing `FullReload` after a failed
+            // rebuild is what causes "flash of change then revert": the
+            // browser reloads, gets fresh SSR HTML, then hydrates with the
+            // OLD client bundle that was never overwritten.
             outln!(
                 w,
-                "dev: client bundle failed ({} {}); pages serve without hydration",
+                "dev: client bundle failed ({} {}); NOT publishing FullReload",
                 e.0.code,
                 e.0.message
             );
-            Ok(())
+            Err(anyhow::anyhow!(
+                "dev client bundle failed: {} {}",
+                e.0.code,
+                e.0.message
+            ))
         }
     }
 }
@@ -1608,6 +2033,42 @@ async fn ensure_dev_client_bundle(
 /// The dev loop rewrites `dist/content` when this is true; `getCollection`
 /// then re-reads by content hash, so no worker restart or cache clear is
 /// needed.
+fn is_client_source(path: &Path, rootp: &Path) -> bool {
+    let lower = path.to_string_lossy().to_ascii_lowercase();
+    let result;
+    if lower.ends_with(".server.ts") || lower.ends_with(".server.tsx") {
+        result = false;
+        tracing::info!(path = %path.display(), reason = "server-ext", "DIAG is_client_source");
+        return result;
+    }
+    if !matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("ts")
+            | Some("tsx")
+            | Some("js")
+            | Some("jsx")
+            | Some("vue")
+            | Some("svelte")
+            | Some("mjs")
+            | Some("cjs")
+    ) {
+        result = false;
+        tracing::info!(path = %path.display(), ext = ?path.extension(), reason = "bad-ext", "DIAG is_client_source");
+        return result;
+    }
+    let canon_root = std::fs::canonicalize(rootp).unwrap_or_else(|_| rootp.to_path_buf());
+    let canon_src = canon_root.join("src");
+    let canon_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    result = canon_path.starts_with(&canon_src);
+    tracing::info!(
+        path = %canon_path.display(),
+        src = %canon_src.display(),
+        result = result,
+        "DIAG is_client_source"
+    );
+    result
+}
+
 fn content_source_changed(
     root: &Path,
     cfg: &oxide_fw_config::OxideConfig,
@@ -1626,9 +2087,276 @@ fn content_source_changed(
     })
 }
 
+/// [wr200] Dev-mode fix (plan T5): keep exactly ONE `tailwind-*.css` in
+/// `dist/client/` and rewrite `client.manifest.json` to point every route's
+/// `css` array at it. Without this, HMR rebuilds leave the manifest pointing
+/// at a stale hash, so client-side navigation swaps to the old CSS and loses
+/// new styles (e.g. docs-shell after a wr198-style source change).
+fn consolidate_tailwind_css_and_manifest(rootp: &std::path::Path) {
+    let client_dir = rootp.join("dist/client");
+    let Ok(entries) = std::fs::read_dir(&client_dir) else {
+        return;
+    };
+
+    // Find all tailwind-*.css files, newest last
+    let mut css_files: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("tailwind-") && n.ends_with(".css"))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    if css_files.is_empty() {
+        return;
+    }
+
+    // Sort by mtime ascending (oldest first, newest last)
+    css_files.sort_by_key(|p| {
+        p.metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+    });
+
+    let newest = match css_files.pop() {
+        Some(p) => p,
+        None => return,
+    };
+    let newest_name = newest
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.to_string())
+        .unwrap_or_default();
+
+    // Delete all older tailwind CSS files
+    for old in &css_files {
+        let _ = std::fs::remove_file(old);
+    }
+
+    // Rewrite the manifest's css arrays to point at the newest file
+    let manifest_path = client_dir.join("client.manifest.json");
+    let Ok(raw) = std::fs::read_to_string(&manifest_path) else {
+        return;
+    };
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return;
+    };
+
+    let mut changed = false;
+    if let Some(routes) = v.get_mut("routes").and_then(|r| r.as_object_mut()) {
+        for (_route_id, route) in routes.iter_mut() {
+            if let Some(css) = route.get_mut("css").and_then(|c| c.as_array_mut()) {
+                // Replace any tailwind-*.css entries with the newest
+                let mut new_css: Vec<serde_json::Value> = Vec::new();
+                let mut had_tailwind = false;
+                for entry in css.iter() {
+                    if let Some(name) = entry.as_str() {
+                        if name.starts_with("tailwind-") && name.ends_with(".css") {
+                            had_tailwind = true;
+                            new_css.push(serde_json::Value::String(newest_name.clone()));
+                        } else {
+                            new_css.push(entry.clone());
+                        }
+                    }
+                }
+                if had_tailwind
+                    && new_css
+                        .iter()
+                        .any(|e| e.as_str() == Some(newest_name.as_str()))
+                    && (css.len() != new_css.len() || css.first() != new_css.first())
+                {
+                    *css = new_css;
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    if changed && let Ok(pretty) = serde_json::to_string_pretty(&v) {
+        let _ = std::fs::write(&manifest_path, pretty);
+    }
+}
+
+/// [wr208] Rebuild local workspace packages whose `dist/` is older than `src/`.
+/// Without this, edits to `packages/core/src/*.ts` never reach the client
+/// bundle — `oxide dev` reads from `node_modules/@oxide-fw/core/dist/`,
+/// not from source. Diagnostics that blamed the site's own code wasted
+/// hours chasing changes that were already correct.
+fn rebuild_stale_workspace_packages(rootp: &std::path::Path) {
+    let packages_dir = rootp
+        .parent()
+        .and_then(|p| p.parent())
+        .map(|p| p.join("packages"));
+    let Some(packages_dir) = packages_dir else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(&packages_dir) else {
+        return;
+    };
+    let mut to_rebuild = Vec::new();
+    for entry in entries.flatten() {
+        let pkg = entry.path();
+        if !pkg.is_dir() {
+            continue;
+        }
+        let dist = pkg.join("dist");
+        let src = pkg.join("src");
+        if !src.is_dir() {
+            continue;
+        }
+        let dist_time = dist.metadata().and_then(|m| m.modified()).ok();
+        let src_time = src.metadata().and_then(|m| m.modified()).ok();
+        // Three-way match: a package whose `dist/` doesn't exist at all
+        // (fresh clone, `.gitignore`d build artifacts) but whose `src/` does
+        // is a workspace package that has never been built. The previous
+        // two-way match skipped it silently, so `oxide dev` served a stale
+        // (or missing) `dist/client-hot.js` and hot.ts imports failed with
+        // ERR_MODULE_NOT_FOUND.
+        let needs = match (dist_time, src_time) {
+            (None, Some(_)) => true,
+            (Some(dt), Some(st)) => st > dt,
+            _ => false,
+        };
+        if needs {
+            to_rebuild.push(pkg);
+        }
+    }
+    if to_rebuild.is_empty() {
+        return;
+    }
+    eprintln!(
+        "oxide: rebuilding {} stale workspace package(s)...",
+        to_rebuild.len()
+    );
+    // Package build scripts call `oxide` (`packages/oxide-website`'s build is
+    // `oxide build`). On a machine without a global `oxide` install — a fresh
+    // clone, CI, this repo's own dev container — that resolution failed with
+    // ENOENT, the rebuild silently no-oped, and the package stayed stale
+    // forever: every subsequent boot retried the rebuild, and the retry's
+    // node_modules churn flooded any connected HMR client with full-reload
+    // frames. Prepend the running binary's directory so `oxide` resolves to
+    // the exact binary that is serving right now.
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    let mut paths: Vec<std::path::PathBuf> = exe_dir.into_iter().collect();
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let path_env = std::env::join_paths(&paths)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| std::env::var("PATH").unwrap_or_default());
+    for pkg in &to_rebuild {
+        let name = pkg.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+        eprintln!("  · packages/{}", name);
+        let _ = std::process::Command::new("pnpm")
+            .args(["build"])
+            .current_dir(pkg)
+            .env("PATH", &path_env)
+            .status();
+    }
+}
+
+/// §1.2 (diagnostics): when `OXIDE_DEV_LOG_FILE` is set, tee everything the
+/// dev server would print — tracing output AND Rust panics — into that file.
+/// `%p` in the value expands to the process id, so a test harness that spawns
+/// several `oxide dev` children gets one log per server
+/// (`OXIDE_DEV_LOG_FILE=/tmp/logs/dev-%p.log`). Panic capture is the point:
+/// a panic in a watcher/worker thread kills the process without anything
+/// reading the stdio pipes being able to attribute the death — the pipe
+/// buffers belong to the test process and its in-memory tail is dropped when
+/// the test itself fails. A per-server file survives.
+fn install_dev_log_file() {
+    use std::io::Write as _;
+    use std::sync::{Arc, Mutex};
+
+    let raw = match std::env::var("OXIDE_DEV_LOG_FILE") {
+        Ok(v) if !v.is_empty() => v,
+        _ => return,
+    };
+    let path = raw.replace("%p", &std::process::id().to_string());
+    let Ok(file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    else {
+        eprintln!("warn: OXIDE_DEV_LOG_FILE={path} is not writable; continuing without it");
+        return;
+    };
+    let sink = Arc::new(Mutex::new(file));
+
+    // Panic hook: write the panic message + location to the file, then chain
+    // to the default hook so stderr still shows it.
+    let default_hook = std::panic::take_hook();
+    let panic_sink = Arc::clone(&sink);
+    std::panic::set_hook(Box::new(move |info| {
+        if let Ok(mut f) = panic_sink.lock() {
+            let loc = info
+                .location()
+                .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+                .unwrap_or_else(|| "<unknown>".to_string());
+            let msg = info.payload();
+            let msg = msg
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| msg.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "<non-string panic payload>".to_string());
+            let backtrace = std::backtrace::Backtrace::force_capture();
+            let _ = writeln!(
+                f,
+                "\n===== PANIC at {loc} =====\n{msg}\nbacktrace:\n{backtrace}\n====="
+            );
+            let _ = f.flush();
+        }
+        default_hook(info);
+    }));
+
+    // Tracing layer: every tracing event also lands in the file.
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_ansi(false)
+        .with_writer(move || {
+            struct SinkWriter(Arc<Mutex<std::fs::File>>);
+            impl std::io::Write for SinkWriter {
+                fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                    let mut f = self.0.lock().map_err(|_| std::io::ErrorKind::Other)?;
+                    f.write(buf)
+                }
+                fn flush(&mut self) -> std::io::Result<()> {
+                    let mut f = self.0.lock().map_err(|_| std::io::ErrorKind::Other)?;
+                    f.flush()
+                }
+            }
+            SinkWriter(Arc::clone(&sink))
+        });
+    // The subscriber is initialized later (see `init_tracing`); stash the
+    // layer via a global so the real init can pick it up. To keep this
+    // self-contained, initialize a dedicated global default here — calls
+    // that initialize their own subscriber later will override it, which is
+    // acceptable: the panic hook above is the critical capture path.
+    use tracing_subscriber::layer::SubscriberExt as _;
+    let _ =
+        tracing::subscriber::set_global_default(tracing_subscriber::registry().with(file_layer));
+    eprintln!("oxide dev: logging to {path} (OXIDE_DEV_LOG_FILE)");
+}
+
 async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyhow::Result<i32> {
+    install_dev_log_file();
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
     let mut cfg = load_config_or_default(&rootp, "development");
+    // §2.9: `--no-esm` overrides the config after load. The dev server
+    // also re-loads cfg inside `start_server_inner_full`, so the env var
+    // is set here and re-read after the reload (below).
+    if flags.no_esm {
+        cfg.dev.esm = false;
+        // P1 (readiness): `OXIDE_DEV_NO_ESM` is written pre-runtime by
+        // `apply_startup_env` (the config reload below re-reads it).
+        tracing::info!("oxide dev: --no-esm — using bundler path");
+    }
     // SPEC-15.1 / §15.2: fail at load for an unknown `kind:"native"` plugin.
     if let Err(e) = crate::native_plugins::parse_native_plugins(&cfg) {
         anyhow::bail!("{} {}", e.0.code, e.0.message);
@@ -1723,15 +2451,8 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // `OXIDE_DEV` gates the versioned-resolve behavior; `OXIDE_ROOT` lets
     // the loader find `.oxide/hmr-generation` (written by the watcher on
     // each `framework:invalidate`). Both are inherited by the worker
-    // subprocess at spawn.
-    // Edition 2024 makes `set_var` unsafe (env vars are process-global and
-    // not thread-safe in general). This runs at cmd_dev entry, before any
-    // worker thread is spawned, and the only other reader is the worker
-    // subprocess after fork.
-    unsafe {
-        std::env::set_var("OXIDE_DEV", "1");
-        std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref());
-    }
+    // subprocess at spawn — both are written PRE-RUNTIME by
+    // `apply_startup_env` (P1 readiness env-race fix), so nothing to do here.
     // SPEC-15-C: write a plugin registry the loader reads. The
     // `tsx-loader.mjs` runs in the app's Node process — it does NOT have
     // access to the worker's `__oxide_op_request` bridge, so it imports
@@ -1784,41 +2505,17 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // route-table → source-file map. TS/JS/JSX go through the worker's
     // loader; SFCs are precompiled once here (and recompiled on watcher
     // invalidation, which re-imports through the bumped generation).
-    {
-        use oxide_fw_router::RouteKind;
-        let routes_root = rootp.join(&cfg.routes.dir);
-        let entries: BTreeMap<String, PathBuf> = tree
-            .entries
-            .iter()
-            .filter(|e| {
-                matches!(
-                    e.kind,
-                    RouteKind::Page
-                        | RouteKind::Layout
-                        | RouteKind::Error
-                        | RouteKind::NotFound
-                        | RouteKind::Template
-                )
-            })
-            .map(|e| (canonical_route_id(&e.id.0), routes_root.join(&e.file)))
-            .collect();
-        if !entries.is_empty() {
-            let framework = cfg
-                .framework
-                .adapter
-                .as_deref()
-                .or(cfg.framework.name.as_deref());
-            let sources = framework_shim::dev_component_sources(
-                &rootp,
-                framework,
-                entries,
-                stack.tooling_pool.as_ref(),
-            )
-            .await;
-            if let Ok(mut src) = stack.component_source.write() {
-                src.sources = sources;
-            }
-        }
+    // Extracted into a helper so `start_server_inner_full` (which the smoke
+    // test calls directly, bypassing this function) can populate the same
+    // map in ESM mode.
+    populate_dev_component_source(&rootp, &cfg, &tree, &stack).await;
+    // §1.4: pre-compute the CSS-module JS maps for SSR. The Node loader
+    // cannot itself run lightningcss (no Rust callback); the client
+    // `/@css/` path transforms on demand via `serve_css_module`. Both
+    // MUST produce identical mangled names, so the same Rust backend
+    // computes once and writes to `.oxide/css-modules/`.
+    if let Err(e) = crate::esm_dev::precompute_css_modules(&rootp) {
+        tracing::warn!(error = %e, "§1.4: precompute CSS modules failed");
     }
     if let Some(name) = stack.renderer_name() {
         outln!(w, "framework renderer: {}", name);
@@ -1843,7 +2540,93 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // §13.1 / P0-7: a fresh `oxide dev` has no client bundle, so nothing
     // would hydrate, navigate, or load a route's JS. Build it once (unminified)
     // if the manifest is missing. A `dev` after `build` finds it and skips.
-    ensure_dev_client_bundle(&rootp, &cfg, &tree, stack.tooling_pool.as_ref(), w).await?;
+    // Path A: one RolldownBundler for the whole dev session, so the
+    // incremental worker (and Rolldown's internal module snapshot) survives
+    // across rebuilds. Creating a fresh bundler per call (the previous
+    // behavior) forces a cold rebuild every save — 1.5s regardless of how
+    // few modules changed.
+    let client_bundler = oxide_fw_bundler::RolldownBundler::new(&rootp);
+    if cfg.dev.esm {
+        // Phase 5: native ESM mode has no client bundle to build — the boot
+        // entry imports source modules directly. CSS is unaffected: it flows
+        // through two paths that run below regardless of this branch:
+        //
+        // 1. `tailwind::precompute` writes `dist/client/tailwind-<hash>.css`
+        //    (runs later in this function, independent of the bundle).
+        // 2. `AdapterPageRenderer::inject_route_css`'s disk-scan fallback
+        //    (wr101) emits `<link rel="stylesheet">` for any `tailwind-*.css`
+        //    it finds — `with_manifest_path` is set unconditionally in
+        //    `build_framework_stack`, so the disk scan fires even when no
+        //    `client.manifest.json` exists.
+        //
+        // A project with raw CSS imports inside a route component would
+        // 404 on `/src/**/*.css` — that was already true in ESM mode and is
+        // tracked as Phase 5b (deferred).
+        tracing::info!("dev: ESM mode — skipping cold-start client bundle");
+    } else {
+        let t0 = std::time::Instant::now();
+        ensure_dev_client_bundle(
+            &rootp,
+            &cfg,
+            &tree,
+            stack.tooling_pool.as_ref(),
+            &client_bundler,
+            w,
+        )
+        .await?;
+        tracing::info!(
+            elapsed_ms = t0.elapsed().as_millis() as u64,
+            "dev: initial client bundle (cold worker)"
+        );
+    }
+
+    // [wr208] Rebuild stale workspace packages before bundling
+    rebuild_stale_workspace_packages(&rootp);
+
+    // [wr205] Enrich manifest with layout chains — was only done in cmd_build.
+    // Without layout_chain, client-side navigation can't compose the layout tree
+    // (e.g. docs-shell wrapper for /docs/* routes), and falls to the IR fallback
+    // which returns NotFoundPage for any route not in PAGES.
+    {
+        let manifest_path = rootp.join("dist/client/client.manifest.json");
+        if manifest_path.is_file() {
+            let _ = enrich_manifest_layout_chains(&manifest_path, &tree);
+        }
+    }
+
+    // [wr200] Consolidate tailwind CSS files + sync manifest.
+    // Prevents stale-hash manifest entries from breaking CSR navigation
+    // after a source change produces a new CSS hash.
+    consolidate_tailwind_css_and_manifest(&rootp);
+
+    // [wr101] Force dev mode for React dev build.
+    // P1 (readiness): `OXIDE_DEV_MODE` is written pre-runtime by
+    // `apply_startup_env` (dev command); in-process probes read the atomic
+    // via `oxide_fw_server::dev_mode()`.
+
+    // [wr106] Call precompute UNCONDITIONALLY. It self-checks:
+    //   `!has_tailwind(&cfg) && !css_has_tailwind_import(&rootp)` -> Ok(None)
+    // The old `if has_tailwind(&cfg) { ... }` guard was a bug: config
+    // extraction fails on `plugins: [tailwind()]` (extract_minimal_framework
+    // doesn't collect plugins), so has_tailwind returned false and precompute
+    // never ran — hence 19KB CSS without utilities.
+    if let Some(pool) = stack.tooling_pool.clone() {
+        match crate::tailwind::precompute(pool, &cfg, &rootp).await {
+            Ok(Some(out)) => {
+                let client_dir = rootp.join("dist/client");
+                let _ = std::fs::create_dir_all(&client_dir);
+                let hash = blake3::hash(out.css.as_bytes()).to_hex().to_string();
+                let filename = format!("tailwind-{}.css", &hash[..12]);
+                let _ = std::fs::write(client_dir.join(&filename), &out.css);
+                outln!(w, "tailwind: {} ({} bytes)", filename, out.css.len());
+            }
+            Ok(None) => {}
+            Err(e) => eprintln!(
+                "warn: tailwind precompute failed: {} {}",
+                e.0.code, e.0.message
+            ),
+        }
+    }
     // §16.4: tell the client whether this project has message
     // catalogs, so it does not fetch one that cannot exist.
     stamp_i18n_locales(&rootp, &cfg);
@@ -1941,8 +2724,13 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             }
         }
     }
-    let watcher = oxide_fw_dev::Watcher::with_notify(watch_roots);
+    let watcher = oxide_fw_dev::Watcher::with_notify(watch_roots.clone());
     let mut seen = std::collections::BTreeSet::new();
+    // §1.3 (boot baseline): the on-disk state at boot is NOT a change. Seed
+    // the hash set so the first poll tick diffs boot-time file touches
+    // (workspace rebuild, prebundle write-out, editor/sync-daemon churn)
+    // against reality instead of fanning them out as Created events.
+    watcher.seed_seen(&mut seen);
 
     // PERF-08: a `DemandGraph` over the watched modules. A node per source
     // file whose compute reads that file; a change invalidates only the nodes
@@ -1961,25 +2749,19 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     ) {
         if let Some(pool) = pool.as_ref() {
             let host = oxide_fw_jshost::FrameworkHost::new(std::sync::Arc::clone(pool));
-            match host.invalidate().await {
+            match host.invalidate_all().await {
                 Ok(generation) => {
-                    // SPEC-14: publish the new generation to disk so the
-                    // loader's `resolve()` hook (`tsx-loader.mjs`) can
-                    // version the config's transitive component imports
-                    // with `?v=<generation>`. The generation number matches
-                    // the worker's in-memory counter, so versioned imports
-                    // hit the correct eval graph on every edit.
                     let gen_path = root.join(".oxide").join("hmr-generation");
                     if let Some(parent) = gen_path.parent() {
                         let _ = std::fs::create_dir_all(parent);
                     }
                     let _ = std::fs::write(&gen_path, generation.to_string());
-                    tracing::debug!(generation, "framework modules invalidated")
+                    tracing::debug!(generation, "framework modules invalidated on ALL workers");
                 }
                 Err(e) => tracing::warn!(
                     code = %e.0.code,
                     error = %e.0.message,
-                    "framework invalidate failed",
+                    "framework invalidate_all failed",
                 ),
             }
         }
@@ -2148,7 +2930,19 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     let mut idle_since = std::time::Instant::now();
     let mut warmed = true; // nothing to do until the first quiet period
     loop {
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        // §3.7 latency fix: 50ms (was 200ms). The outer poll interval sets
+        // the FLOOR on write→detection latency: a write at T=0.001ms is not
+        // seen until the next tick. 200ms meant an average 100ms delay
+        // before the debounce even started. 50ms brings the average to
+        // ~25ms. Combined with the §3.7 fix in poll_notify (debounce only
+        // when events are queued), the whole write→frame path drops from
+        // ~142ms to ~40ms on the smoke app.
+        //
+        // CPU impact is nil on an idle filesystem: poll_notify now drains
+        // `try_recv` and returns immediately when nothing is queued — no
+        // blocking sleep, no hashing, no event construction. 20 polls/sec
+        // of a cheap try_recv is microseconds.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         let events_raw = watcher
             .poll(&mut seen)
             .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
@@ -2158,6 +2952,17 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         // to the walk_root path, not the notify callback). Filter BEFORE
         // `invalidate_framework_modules` — filtering after it left the
         // invalidate→write→notify→invalidate loop running.
+        //
+        // §1.3 (boot-flood fix): events under `node_modules/` are also
+        // HMR-insignificant — EXCEPT `package.json`, which §3.3 uses as the
+        // prebundle-invalidation trigger. Without this filter, the boot-time
+        // workspace-package rebuild (which relinks `node_modules/@oxide-fw/*/
+        // dist` symlinks) publishes ~30 `full-reload` frames ("rebuild
+        // skipped for non-src file .../node_modules/...") into the socket of
+        // any client that connects during the burst — the page reload-spams
+        // right after boot and every early test assertion races a navigation.
+        // Framework dist churn is picked up by `ensure_dev_client_bundle`'s
+        // staleness scan (§3.11) at request time, not by HMR.
         let events: Vec<_> = events_raw
             .into_iter()
             .filter(|ev| {
@@ -2167,9 +2972,18 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                     | oxide_fw_dev::FileEvent::Removed(p) => p,
                 };
                 !p.components().any(|c| c.as_os_str() == ".oxide")
-                    && !p.starts_with(rootp.join("dist"))
+                    // The app's own dist AND every workspace package's dist
+                    // (the packages/* dirs are watch roots of their own):
+                    // framework dist churn is picked up by
+                    // `ensure_dev_client_bundle`'s staleness scan (§3.11) at
+                    // request time, not by HMR.
+                    && !watch_roots.iter().any(|r| p.starts_with(r.join("dist")))
+                    && !(p.starts_with(rootp.join("node_modules"))
+                        && p.file_name().and_then(|n| n.to_str()) != Some("package.json"))
             })
             .collect();
+        let mut client_rebuilt = false;
+        let mut client_rebuild_error: Option<String> = None;
         if !events.is_empty() {
             // §10.8: PPR shells are keyed by build id; dev's id is stable, so
             // a source edit must clear the store explicitly or the next
@@ -2209,10 +3023,192 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                         | Some("Cargo.lock")
                 )
             });
+            // §3.3: a lockfile change OR a `node_modules/<pkg>/package.json`
+            // change invalidates the ESM prebundle. The prebundle (and the
+            // `rewrite_map` derived from it) is built once at boot; without
+            // this branch, installing a new package — or `pnpm update`ing a
+            // bundled dep — leaves `/@prebundle/<name>.js` serving stale
+            // CJS-to-ESM conversions forever. `pnpm add foo` is the canonical
+            // trigger: the lockfile changes AND node_modules/foo/package.json
+            // is created, both in the same watcher batch.
+            //
+            // Invalidation = re-prebundle to disk + FullReload. The rewrite
+            // map would need Arc<RwLock<...>> to be live-updated (its
+            // consumers cache it at request-entry), so the simpler correct
+            // behaviour is: rebuild the on-disk artifacts, tell the client
+            // to reload. The client's next request builds a fresh EsmDevState
+            // with the new rewrite_map. Any in-flight HMR is superseded by
+            // the reload, which is correct — a package change is not an
+            // edit the React Refresh path can meaningfully preserve.
+            let has_prebundle_invalidation = events.iter().any(|ev| {
+                let p = match ev {
+                    oxide_fw_dev::FileEvent::Modified(p)
+                    | oxide_fw_dev::FileEvent::Created(p)
+                    | oxide_fw_dev::FileEvent::Removed(p) => p,
+                };
+                let pstr = p.to_string_lossy();
+                pstr.contains("/node_modules/") && pstr.ends_with("/package.json")
+            });
+            if has_prebundle_invalidation && cfg.dev.esm {
+                // §1.3 note: this branch fires only for package.json events
+                // whose content actually changed (the boot baseline seeding
+                // in `Watcher::seed_seen` swallows relink churn for
+                // unchanged files) and the prebundle is regenerated BEFORE
+                // the FullReload publishes, so a reloading client re-fetches
+                // against the fresh artifacts. The per-event node_modules
+                // skip below keeps every OTHER relink event silent, so this
+                // is at most ONE reload per real dependency change.
+                tracing::info!("§3.3: node_modules/*/package.json change — re-prebundling");
+                if let Err(e) = crate::esm_dev::prebundle_cjs_deps(&rootp, &cfg.dev.prebundle) {
+                    tracing::warn!(error = %e, "§3.3: prebundle invalidation failed");
+                } else {
+                    // Rebuild the rewrite map even though consumers cache it
+                    // at boot — the reload below triggers a fresh
+                    // EsmDevState build on next request. (No in-memory swap
+                    // needed: FullReload is the signal.)
+                    let _ = crate::esm_dev::build_rewrite_map(&rootp, &cfg.dev.prebundle);
+                    if let Some(hub) = started.hmr.as_ref() {
+                        hub.publish(oxide_fw_dev::HmrMessage::FullReload {
+                            reason: format!(
+                                "node_modules change — prebundle regenerated ({} package.json event(s))",
+                                events.iter().filter(|ev| {
+                                    let p = match ev {
+                                        oxide_fw_dev::FileEvent::Modified(p)
+                                            | oxide_fw_dev::FileEvent::Created(p)
+                                            | oxide_fw_dev::FileEvent::Removed(p) => p,
+                                    };
+                                    let pstr = p.to_string_lossy();
+                                    pstr.contains("/node_modules/")
+                                        && pstr.ends_with("/package.json")
+                                })
+                                .count()
+                            ),
+                        });
+                    }
+                }
+            }
             if has_lockfile {
                 tracing::info!("lockfile change — resolver epoch bump");
+                // §3.3: also re-prebundle on lockfile change. The lockfile
+                // mirrors `node_modules` state, but a package can be
+                // hoisted/re-linked without touching its own package.json.
+                // Treat a lockfile touch as a prebundle-invalidation trigger
+                // independent of the per-package check above.
+                if cfg.dev.esm
+                    && let Err(e) = crate::esm_dev::prebundle_cjs_deps(&rootp, &cfg.dev.prebundle)
+                {
+                    tracing::warn!(error = %e, "§3.3: lockfile prebundle re-run failed");
+                }
+            }
+
+            // §3.4: a `.env*` change invalidates `import.meta.env` values.
+            // Vite parity: full reload, NOT HMR. Env values are read once
+            // per module evaluation; letting a hot update through would
+            // leave modules that already ran with STALE values — silently
+            // divergent from a fresh page load, which is the worst kind of
+            // bug. Reload is the honest signal.
+            //
+            // Match the exact files config::layer knows about (§14.2):
+            // `.env`, `.env.<mode>`, `.env.local`, `.env.<mode>.local`.
+            // Filename must START with `.env` (a file literally named
+            // `.env` counts) and the parent directory must be the project
+            // root — a `.env` inside `src/` is a source file, not config.
+            let env_file_changed = events.iter().any(|ev| {
+                let p = match ev {
+                    oxide_fw_dev::FileEvent::Modified(p)
+                    | oxide_fw_dev::FileEvent::Created(p)
+                    | oxide_fw_dev::FileEvent::Removed(p) => p,
+                };
+                let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
+                    return false;
+                };
+                name.starts_with(".env")
+                    && p.parent()
+                        .map(|par| par == rootp.as_path())
+                        .unwrap_or(false)
+            });
+            if env_file_changed {
+                // §3.4: full reload. `serve_source_file` reads the env fresh
+                // on each request, so the post-reload page load sees the
+                // new values — no in-memory update needed here.
+                tracing::info!("§3.4: .env* change — full reload");
+                if let Some(hub) = started.hmr.as_ref() {
+                    hub.publish(oxide_fw_dev::HmrMessage::FullReload {
+                        reason: ".env* change — import.meta.env values refreshed".to_string(),
+                    });
+                }
             }
             invalidate_framework_modules(&hmr_pool, &rootp).await;
+            let needs_client_rebuild = !cfg.dev.esm
+                && events.iter().any(|e| {
+                    let p = match e {
+                        oxide_fw_dev::FileEvent::Modified(p)
+                        | oxide_fw_dev::FileEvent::Created(p)
+                        | oxide_fw_dev::FileEvent::Removed(p) => p,
+                    };
+                    is_client_source(p, &rootp)
+                        && !matches!(
+                            oxide_fw_dev::hmr_behavior(oxide_fw_dev::classify_event(e)),
+                            oxide_fw_dev::HmrBehavior::RestartSubsystems
+                        )
+                });
+            tracing::info!(
+                n_events = events.len(),
+                needs_client_rebuild = needs_client_rebuild,
+                "DIAG watcher decision"
+            );
+            if needs_client_rebuild {
+                let live_tree = started.swappable_tree.load();
+                let changed_paths: Vec<std::path::PathBuf> = events
+                    .iter()
+                    .filter_map(|e| match e {
+                        oxide_fw_dev::FileEvent::Modified(p)
+                        | oxide_fw_dev::FileEvent::Created(p)
+                        | oxide_fw_dev::FileEvent::Removed(p) => {
+                            if is_client_source(p, &rootp) {
+                                Some(p.clone())
+                            } else {
+                                None
+                            }
+                        }
+                    })
+                    .collect();
+                let t0 = std::time::Instant::now();
+                match build_client_bundle(
+                    &rootp,
+                    &cfg,
+                    &live_tree,
+                    hmr_tooling_pool.as_ref(),
+                    &client_bundler,
+                    Some(&changed_paths),
+                    w,
+                )
+                .await
+                {
+                    Ok(()) => {
+                        tracing::info!(
+                            changed = changed_paths.len(),
+                            elapsed_ms = t0.elapsed().as_millis() as u64,
+                            "watcher: incremental client bundle OK"
+                        );
+                        let manifest_path = rootp.join("dist/client/client.manifest.json");
+                        let _ = enrich_manifest_layout_chains(&manifest_path, &live_tree);
+                        consolidate_tailwind_css_and_manifest(&rootp);
+                        client_rebuilt = true;
+                        // A successful rebuild supersedes any previous
+                        // failure. Without this reset, once a rebuild failed,
+                        // `client_rebuild_error` stayed `Some` for the rest of
+                        // the dev session and every subsequent AdapterHmr
+                        // event re-published `HmrMessage::Error` — the
+                        // overlay could never clear.
+                        client_rebuild_error = None;
+                    }
+                    Err(e) => {
+                        client_rebuild_error = Some(format!("{e}"));
+                        tracing::error!(error = %e, "watcher: rebuild FAILED");
+                    }
+                }
+            }
             // §5.6: bump the stale generation BEFORE releasing the loop,
             // so any in-flight dev dispatch's `select!` (see
             // `wrap_dispatch_with_stale_guard` below) aborts and returns
@@ -2221,7 +3217,24 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             // "file changed" from "in-flight" — the dispatch reads the
             // generation at entry and the exit check is only needed if
             // the bump lands while the dispatch was already running.
-            if let Some(hub) = started.hmr.as_ref() {
+            //
+            // §1.3: the bump is gated on the batch containing at least one
+            // app-source event. A pure `node_modules` batch (a relinked
+            // dependency's package.json) produces no client message and no
+            // source change — bumping the generation on it aborted every
+            // in-flight module fetch with a retryable 503 that nothing
+            // retries (a browser `import()` fails hard), which surfaced as
+            // a page whose hydration never completed when a package relink
+            // landed mid-boot.
+            let has_source_event = events.iter().any(|e| {
+                let p = match e {
+                    oxide_fw_dev::FileEvent::Modified(p)
+                    | oxide_fw_dev::FileEvent::Created(p)
+                    | oxide_fw_dev::FileEvent::Removed(p) => p,
+                };
+                !p.to_string_lossy().contains("/node_modules/")
+            });
+            if has_source_event && let Some(hub) = started.hmr.as_ref() {
                 let g = hub.bump_stale_generation();
                 tracing::debug!(generation = g, "stale generation bumped");
             }
@@ -2260,6 +3273,41 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             idle_since = std::time::Instant::now();
             warmed = false;
         }
+        // §3.9: FSEvents on macOS (and any watcher that reports directory-level
+        // diffs) can deliver Created + Modified for the same path when a
+        // writeFileSync changes an already-existing file. The Created would route
+        // to ConfigOrRoutes -> RestartSubsystems -> FullReload, racing the
+        // Modified's AdapterHmr -> ModuleUpdate. Drop a Created event when a
+        // Modified for the same path is in the same batch: the file existed
+        // before the batch, so it was not actually created.
+        let events = {
+            use std::collections::HashSet;
+            let mut evs = events;
+            let modded: HashSet<std::path::PathBuf> = evs
+                .iter()
+                .filter_map(|e| match e {
+                    oxide_fw_dev::FileEvent::Modified(p) => Some(p.clone()),
+                    _ => None,
+                })
+                .collect();
+            let before = evs.len();
+            evs.retain(|e| !matches!(e, oxide_fw_dev::FileEvent::Created(p) if modded.contains(p)));
+            if evs.len() != before {
+                tracing::info!(
+                    dropped = before - evs.len(),
+                    "§3.9: dropped Created events shadowed by Modified in same batch"
+                );
+            }
+            evs
+        };
+        // §3.2: accumulate AdapterHmr events across this batch. Publishing
+        // one BatchModuleUpdate at the end lets the client fan out the
+        // re-imports and run a single performReactRefresh() — necessary for
+        // a `git checkout` burst (~50 distinct files, each currently a
+        // separate refresh). Non-AdapterHmr events (Css/ServerLoader/
+        // ServerModule/ConfigOrRoutes) still publish per-event below, since
+        // they carry different semantics and shouldn't be batched.
+        let mut adapter_hmr_batch: Vec<(String, String)> = Vec::new();
         for ev in events {
             tracing::info!(?ev, "file change");
             outln!(w, "change: {ev:?}");
@@ -2272,9 +3320,30 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                     | oxide_fw_dev::FileEvent::Removed(p) => p,
                 };
                 let pstr = path.to_string_lossy().to_string();
+                // §1.3: node_modules paths never dispatch per-event HMR. A
+                // `package.json` under node_modules was already consumed by
+                // the §3.3 prebundle-invalidation branch above (ONE
+                // consolidated FullReload per batch); any other node_modules
+                // event is library churn with no client-visible meaning —
+                // publishing it per-event produced a `full-reload` frame per
+                // relinked file during the boot-time workspace rebuild, and a
+                // client that connected during that burst reload-spammed
+                // itself into a broken boot.
+                if pstr.contains("/node_modules/") {
+                    continue;
+                }
+                // §1.4: capture BEFORE the match moves `pstr` into
+                // HmrMessage variants — the post-module-update branch below
+                // needs to know whether this was a .module.css edit.
+                let is_module_css = pstr.ends_with(".module.css");
                 // Phase 4: tailwind source change -> rebuild CSS to disk.
+                // `is_tailwind_relevant` (not `is_source_file`) so an edit to
+                // a `src/styles/*.css` entry — new utilities in @theme, a new
+                // @apply — also rebuilds the compiled tailwind-*.css. The
+                // rebuild is a content-diff no-op when nothing changed, so
+                // the extra CSS events cost one scan, not a rebuild.
                 if tailwind::has_tailwind(&cfg)
-                    && tailwind::is_source_file(&pstr)
+                    && tailwind::is_tailwind_relevant(&pstr)
                     && let Some(pool) = hmr_tooling_pool.clone()
                 {
                     match tailwind::rebuild_for_dev(pool, &cfg, &rootp).await {
@@ -2305,12 +3374,56 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                         }
                     }
                 }
-                let kind = oxide_fw_dev::classify_path(&pstr);
+                let kind = oxide_fw_dev::classify_event(&ev);
                 match oxide_fw_dev::hmr_behavior(kind) {
-                    HmrBehavior::StyleSwap => hub.publish(HmrMessage::CssUpdate {
-                        path: pstr,
-                        code: String::new(),
-                    }),
+                    HmrBehavior::StyleSwap => {
+                        // ESM mode: a CSS file in `src/` is imported through a
+                        // `/@css/<rel>` module (see `serve_css_module`) that
+                        // self-accepts and replaces its `<style>` in place.
+                        // Publishing a `ModuleUpdate` with the module URL lets
+                        // the client's `reloadModule` re-import it, which
+                        // re-executes the module body and swaps the style tag.
+                        //
+                        // Non-`src/` CSS (or bundler mode) keeps the legacy
+                        // `CssUpdate` — a `<link>` href swap for the bundler-
+                        // emitted stylesheet.
+                        let src_dir = rootp.join("src");
+                        let in_src = path.starts_with(&src_dir);
+                        let is_esm = cfg.dev.esm;
+                        if in_src && is_esm {
+                            let root_str = rootp.to_string_lossy();
+                            let rel = pstr.strip_prefix(root_str.as_ref()).unwrap_or(&pstr);
+                            let rel_slash = rel.replace('\\', "/");
+                            let trimmed = rel_slash.trim_start_matches('/');
+                            if let Some(inner) = trimmed.strip_prefix("src/") {
+                                hub.publish(HmrMessage::ModuleUpdate {
+                                    path: pstr,
+                                    url: format!("/@css/{inner}"),
+                                });
+                            } else {
+                                hub.publish(HmrMessage::CssUpdate {
+                                    path: pstr,
+                                    code: String::new(),
+                                });
+                            }
+                        } else {
+                            hub.publish(HmrMessage::CssUpdate {
+                                path: pstr,
+                                code: String::new(),
+                            });
+                        }
+                        // §1.4: a `.module.css` change also regenerates its
+                        // pre-computed SSR map. The client's own update comes
+                        // from the ModuleUpdate published above (the /@css/
+                        // reload re-injects the style; React Refresh is not
+                        // needed for CSS). The SSR side reads the fresh
+                        // `.oxide/css-modules/<rel>.mjs` on the next render.
+                        if is_module_css
+                            && let Err(e) = crate::esm_dev::precompute_css_modules(&rootp)
+                        {
+                            tracing::warn!(error = %e, "§1.4: precompute after .module.css change failed");
+                        }
+                    }
                     HmrBehavior::ReloadData => {
                         // §13.3: a `page.server.ts` change re-runs the route's
                         // loader and publishes the route's URL PATH PATTERN
@@ -2348,7 +3461,121 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                             });
                         }
                     }
-                    HmrBehavior::AdapterHmr => hub.publish(HmrMessage::ModuleUpdate { path: pstr }),
+                    HmrBehavior::AdapterHmr => {
+                        if let Some(err_msg) = client_rebuild_error.as_ref() {
+                            let diag = oxide_fw_diagnostics::Diagnostic::error(
+                                "DEV-BUNDLE",
+                                format!("rebuild failed for {pstr}: {err_msg}"),
+                            );
+                            hub.publish(HmrMessage::Error { diagnostic: diag });
+                        } else if cfg.dev.esm {
+                            tracing::info!("HMR: publishing ModuleUpdate for ESM file");
+                            let root_str = rootp.to_string_lossy();
+                            let rel = pstr.strip_prefix(root_str.as_ref()).unwrap_or(&pstr);
+                            let rel_slash = rel.replace('\\', "/");
+                            let trimmed = rel_slash.trim_start_matches('/');
+                            if trimmed.starts_with("src/") {
+                                // §3.2: accumulate; the post-loop block
+                                // publishes a single singular message if
+                                // only one item was collected, or a batch
+                                // if multiple. This preserves the singular
+                                // shape for the common 1-file save.
+                                //
+                                // §3.2: accumulate; post-loop publishes
+                                // single (1) or batch (>1).
+                                adapter_hmr_batch.push((pstr.clone(), format!("/{trimmed}")));
+                                //
+                                // §1.3: also fan out to every importer of
+                                // this file. TWO cases need it:
+                                //
+                                // 1. NON-COMPONENT edits (`.ts`/`.js`/`.mjs`
+                                //    utils): no component registration in
+                                //    compiled form, so nothing else would
+                                //    update the importer's stale binding.
+                                //
+                                // 2. Component edits on the component-
+                                //    capability frameworks (Vue, Solid,
+                                //    Svelte): there is no React-Refresh-style
+                                //    in-place patch — the PAGE module must
+                                //    re-import so its import binding picks
+                                //    up the fresh child module, and the
+                                //    boot's re-render (componentFor →
+                                //    loadChunk) mounts the new tree. React
+                                //    keeps the skip: `performReactRefresh`
+                                //    patches the registered family directly,
+                                //    and fanning out would turn a singular
+                                //    ModuleUpdate into a redundant batch.
+                                let changed_is_component = {
+                                    let lower = pstr.to_ascii_lowercase();
+                                    lower.ends_with(".tsx")
+                                        || lower.ends_with(".jsx")
+                                        || lower.ends_with(".vue")
+                                        || lower.ends_with(".svelte")
+                                };
+                                let esm_framework = cfg
+                                    .framework
+                                    .adapter
+                                    .as_deref()
+                                    .or(cfg.framework.name.as_deref())
+                                    .unwrap_or("react");
+                                let react_refresh_owns_update =
+                                    esm_framework == "react" && changed_is_component;
+                                if !react_refresh_owns_update {
+                                    let mut in_batch: std::collections::HashSet<String> =
+                                        std::collections::HashSet::new();
+                                    in_batch.insert(pstr.clone());
+                                    let importers = build_importers_map(&rootp);
+                                    if let Some(imps) = importers.get(std::path::Path::new(&pstr)) {
+                                        let root_str = rootp.to_string_lossy();
+                                        for imp in imps {
+                                            let imp_str = imp.to_string_lossy().to_string();
+                                            if !in_batch.insert(imp_str.clone()) {
+                                                continue;
+                                            }
+                                            // Only fan out to importers that
+                                            // are components — those are the
+                                            // ones whose rendered output
+                                            // depends on the util. `.tsx`
+                                            // /`.jsx` (React + Solid) and
+                                            // `.vue`/`.svelte` (SFC pages
+                                            // and components) all render;
+                                            // a util importing another util
+                                            // also benefits, but compiling
+                                            // it is unnecessary. React
+                                            // Refresh acts on component
+                                            // boundaries; the boot re-render
+                                            // acts on the page boundary.
+                                            let lower_imp = imp_str.to_ascii_lowercase();
+                                            let imp_is_component = lower_imp.ends_with(".tsx")
+                                                || lower_imp.ends_with(".jsx")
+                                                || lower_imp.ends_with(".vue")
+                                                || lower_imp.ends_with(".svelte");
+                                            if !imp_is_component {
+                                                continue;
+                                            }
+                                            let rel = imp.to_string_lossy();
+                                            let rel_str =
+                                                rel.strip_prefix(root_str.as_ref()).unwrap_or(&rel);
+                                            let rel_slash = rel_str.replace('\\', "/");
+                                            let trimmed_imp = rel_slash.trim_start_matches('/');
+                                            if trimmed_imp.starts_with("src/") {
+                                                adapter_hmr_batch
+                                                    .push((imp_str, format!("/{trimmed_imp}")));
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                hub.publish(HmrMessage::FullReload {
+                                    reason: format!("rebuild skipped for non-src file {pstr}"),
+                                });
+                            }
+                        } else if client_rebuilt {
+                            hub.publish(HmrMessage::FullReload {
+                                reason: format!("rebuilt client bundle after {pstr}"),
+                            });
+                        }
+                    }
                     HmrBehavior::ServerSwap => {
                         hub.publish(HmrMessage::ServerModuleSwap { path: pstr })
                     }
@@ -2420,6 +3647,92 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                     tracing::info!(
                                         "dev: route tree + component sources rebuilt after {pstr} change"
                                     );
+                                    let live_tree = started.swappable_tree.load();
+                                    if cfg.dev.esm {
+                                        // Native ESM mode: no client bundle to
+                                        // rebuild. The boot entry imports each
+                                        // route's source module directly, so
+                                        // regenerate `.oxide/esm-manifest.json`
+                                        // and `.oxide/esm-boot.mjs` from the
+                                        // fresh tree. `EsmDevState` itself is
+                                        // immutable across a route add — the
+                                        // rewrite map only depends on the
+                                        // framework exports + the prebundle
+                                        // list, both fixed at dev-start.
+                                        let mut components: std::collections::BTreeMap<
+                                            String,
+                                            String,
+                                        > = std::collections::BTreeMap::new();
+                                        let routes_root = rootp.join(&cfg.routes.dir);
+                                        for entry in &live_tree.entries {
+                                            let rel_from_routes =
+                                                entry.file.to_string_lossy().to_string();
+                                            let id_str = entry.id.0.as_str().to_string();
+                                            components.insert(
+                                                id_str,
+                                                format!(
+                                                    "/src/{}/{rel_from_routes}",
+                                                    cfg.routes
+                                                        .dir
+                                                        .trim_start_matches("src/")
+                                                        .trim_end_matches('/')
+                                                ),
+                                            );
+                                        }
+                                        if let Err(e) =
+                                            crate::esm_dev::build_esm_manifest(&rootp, &components)
+                                        {
+                                            tracing::warn!(error = %e, "esm dev: manifest regen failed");
+                                        }
+                                        // Rebuild the island map from config
+                                        // (identical to the boot-time path
+                                        // above). Cheap — it's a BTreeMap
+                                        // walk over the config's already-
+                                        // parsed registry.
+                                        let mut islands: std::collections::BTreeMap<
+                                            String,
+                                            String,
+                                        > = std::collections::BTreeMap::new();
+                                        for (name, rel_path) in &cfg.framework.islands {
+                                            let full_path = rootp.join(rel_path);
+                                            if full_path.is_file() {
+                                                islands
+                                                    .insert(name.clone(), format!("/{rel_path}"));
+                                            }
+                                        }
+                                        if let Err(e) = crate::esm_dev::generate_esm_boot_entry(
+                                            &rootp,
+                                            &components,
+                                            &islands,
+                                            cfg.framework
+                                                .adapter
+                                                .as_deref()
+                                                .or(cfg.framework.name.as_deref())
+                                                .unwrap_or("react"),
+                                        ) {
+                                            tracing::warn!(error = %e, "esm dev: boot entry regen failed");
+                                        }
+                                        let _ = &routes_root;
+                                    } else if build_client_bundle(
+                                        &rootp,
+                                        &cfg,
+                                        &live_tree,
+                                        hmr_tooling_pool.as_ref(),
+                                        &client_bundler,
+                                        None,
+                                        w,
+                                    )
+                                    .await
+                                    .is_ok()
+                                    {
+                                        let manifest_path =
+                                            rootp.join("dist/client/client.manifest.json");
+                                        let _ = enrich_manifest_layout_chains(
+                                            &manifest_path,
+                                            &live_tree,
+                                        );
+                                        consolidate_tailwind_css_and_manifest(&rootp);
+                                    }
                                     hub.publish(HmrMessage::FullReload {
                                         reason: "route tree rebuilt".to_string(),
                                     });
@@ -2443,6 +3756,22 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 }
             }
         }
+        // §3.2: publish the accumulated batch. Singular fallback for the
+        // common 1-file save; batch only when the watcher already collected
+        // multiple AdapterHmr events in this tick.
+        if let Some(hub) = started.hmr.as_ref() {
+            if adapter_hmr_batch.len() == 1 {
+                let (path, url) = adapter_hmr_batch.pop().unwrap();
+                hub.publish(oxide_fw_dev::HmrMessage::ModuleUpdate { path, url });
+            } else if adapter_hmr_batch.len() > 1 {
+                let items = adapter_hmr_batch
+                    .into_iter()
+                    .map(|(path, url)| oxide_fw_dev::BatchModuleItem { path, url })
+                    .collect();
+                hub.publish(oxide_fw_dev::HmrMessage::BatchModuleUpdate { items });
+            }
+        }
+
         if !warmed && idle_since.elapsed() >= IDLE_WARM {
             warmed = true;
             for path in &page_routes {
@@ -3383,7 +4712,18 @@ fn inject_island_boot_script(shell: &str, boot_url: &str, nonce: &str) -> String
     // script tag — `'self'` alone is not enough. The prerender pass has the
     // build-time nonce (derived from build_id) in scope; the live server
     // path derives a per-request nonce and stamps it the same way.
-    let tag = format!(r#"<script type="module" src="/{boot_url}" nonce="{nonce}"></script>"#);
+    // Normalize the leading slash: the bundler path passes
+    // `client/__boot__.js` (no leading slash) and the native-ESM dev
+    // path passes `/@boot/boot.mjs` (already leading-slashed). A blind
+    // format!("/{boot_url}") produced `//@boot/boot.mjs`, which the
+    // browser parses as a protocol-relative URL (`//user:pass@host/path`)
+    // → `http://boot/boot.mjs` → ERR_NAME_NOT_RESOLVED.
+    let src = if boot_url.starts_with('/') {
+        boot_url.to_string()
+    } else {
+        format!("/{boot_url}")
+    };
+    let tag = format!(r#"<script type="module" src="{src}" nonce="{nonce}"></script>"#);
     if let Some(idx) = shell.rfind("</body>") {
         let mut out = String::with_capacity(shell.len() + tag.len() + 1);
         out.push_str(&shell[..idx]);
@@ -4417,14 +5757,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // cannot double the prefix — `PathBuf::join` returns the RHS unchanged
     // when it is absolute.
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
-    // §16.5 / WP-r9-1: thread the project root to worker
-    // subprocesses so `getCollection` resolves `dist/content`
-    // against the project, not the shell's cwd. Edition 2024:
-    // set_var is process-global; this runs before any worker
-    // thread spawns.
-    unsafe {
-        std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref());
-    }
+    // §16.5 / WP-r9-1: OXIDE_ROOT is written PRE-RUNTIME by
+    // `apply_startup_env` (P1 readiness env-race fix); nothing to do here.
     let dist = rootp.join("dist");
 
     // §5.1 early cutoff. The fingerprint walk is only paid when the previous
@@ -4792,6 +6126,16 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         Some(pool) => tailwind::precompute(pool, &cfg, &rootp).await?,
         None => None,
     };
+
+    // [Phase 2 I4] Copy public/ → dist/ so `oxide build` is standalone deployable.
+    let public_dir = rootp.join("public");
+    if public_dir.is_dir() {
+        // SEC-STATIC: propagate instead of swallowing — a build that could not
+        // copy public/ must say so (missing favicon/robots is invisible otherwise).
+        copy_tree(&public_dir, &rootp.join("dist"))
+            .map_err(|e| anyhow::anyhow!("copying public/ into dist/: {e}"))?;
+    }
+
     let css_transform = build_css_transform_hook(&cfg, tw_output.map(std::sync::Arc::new));
 
     let client_opts = bundle_env_options(BundleEnvArgs {
@@ -4940,7 +6284,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
                     let rel_url = spec.split('?').next().unwrap_or(spec);
                     // Strip leading `./` from the relative URL.
                     let rel_url = rel_url.strip_prefix("./").unwrap_or(rel_url);
-                    let url_base = format!("/_oxide/image?src={rel_url}");
+                    let url_base = format!("/_oxide/image?url=/{rel_url}");
                     let srcset = oxide_fw_assets::srcset(&widths, &url_base);
                     let max_w = widths.iter().copied().max().unwrap_or(w0);
                     let src = format!("{url_base}&w={max_w}");
@@ -6533,6 +7877,8 @@ pub struct DevFlags {
     pub open: bool,
     pub port: Option<u16>,
     pub proxy: Vec<String>,
+    /// §2.9: opt out of the native ESM dev server (bundler path).
+    pub no_esm: bool,
 }
 
 impl DevFlags {
@@ -6927,7 +8273,6 @@ struct DispatchOpts {
     i18n_cfg: Option<oxide_fw_assets::i18n::I18nConfig>,
     endpoint_dispatcher: Option<std::sync::Arc<dyn oxide_fw_server::EndpointDispatcher>>,
     middleware_dispatcher: Option<std::sync::Arc<dyn oxide_fw_server::MiddlewareDispatcher>>,
-    dev_hmr: bool,
     vary_headers: Vec<String>,
     waterfall: Option<oxide_fw_dev::WaterfallRecorder>,
     session_codec: Option<std::sync::Arc<oxide_fw_server::SessionCodec>>,
@@ -6955,11 +8300,11 @@ fn build_dispatch(
         i18n_cfg: opts.i18n_cfg,
         endpoint_dispatcher: opts.endpoint_dispatcher,
         middleware_dispatcher: opts.middleware_dispatcher,
-        dev_hmr: opts.dev_hmr,
         vary_headers: opts.vary_headers,
         waterfall: opts.waterfall,
         session_codec: opts.session_codec,
         ppr_shells: opts.ppr_shells,
+        esm_state: None,
     })
 }
 
@@ -6984,6 +8329,18 @@ fn forward_action_set_cookies(
     }
 }
 
+/// P-07b: the JSON shape of matched route params, shared by the middleware
+/// and endpoint dispatchers. Built lazily at the call sites so page requests
+/// that reach neither dispatcher never pay the per-param allocations.
+fn build_params_json(
+    params: &std::collections::BTreeMap<String, String>,
+) -> serde_json::Map<String, serde_json::Value> {
+    params
+        .iter()
+        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+        .collect()
+}
+
 pub(crate) struct DispatchArgs {
     pub swappable: SwappableRouteTree,
     pub metrics: std::sync::Arc<oxide_fw_server::Metrics>,
@@ -6999,11 +8356,11 @@ pub(crate) struct DispatchArgs {
     pub i18n_cfg: Option<oxide_fw_assets::i18n::I18nConfig>,
     pub endpoint_dispatcher: Option<std::sync::Arc<dyn oxide_fw_server::EndpointDispatcher>>,
     pub middleware_dispatcher: Option<std::sync::Arc<dyn oxide_fw_server::MiddlewareDispatcher>>,
-    pub dev_hmr: bool,
     pub vary_headers: Vec<String>,
     pub waterfall: Option<oxide_fw_dev::WaterfallRecorder>,
     pub session_codec: Option<std::sync::Arc<oxide_fw_server::SessionCodec>>,
     pub ppr_shells: Option<PprShells>,
+    pub esm_state: Option<std::sync::Arc<crate::esm_dev::EsmDevState>>,
 }
 
 fn build_dispatch_swappable(
@@ -7024,16 +8381,15 @@ fn build_dispatch_swappable(
         i18n_cfg,
         endpoint_dispatcher,
         middleware_dispatcher,
-        dev_hmr,
         vary_headers,
         waterfall,
         session_codec,
         ppr_shells,
+        esm_state,
     } = args;
 
     let boot_script_url_for_render = boot_script_url.clone();
     let ppr_for_render = ppr_shells.clone();
-    let dev_hmr_for_render = dev_hmr;
     let actions_for_dispatch = actions.clone();
     let endpoint_for_dispatch = endpoint_dispatcher.clone();
     let middleware_for_dispatch = middleware_dispatcher.clone();
@@ -7079,10 +8435,60 @@ fn build_dispatch_swappable(
                 )
             });
         }
-        // PERF-02: surface the pool's live gauges into the metrics registry.
+        // Native ESM dev server (Phase 1): the dispatch intercept owns
+        // `/src/*` (transformed ESM) and `/@*` (prebundle / boot / error
+        // shim). The pipeline's StaticAssets pass already skips those
+        // prefixes in dev; this is the actual handler.
+        //
+        // `/src/*` files whose client transform lives in the Node tooling
+        // pool (Vue/Svelte SFCs, Solid tsx) go through the async
+        // `serve_pool_compiled_module` — the pool compiles the CURRENT file
+        // bytes per request, which is what lets a watcher-published
+        // ModuleUpdate serve fresh code with zero server-side cache
+        // management.
+        if let Some(esm) = esm_state.as_ref() {
+            match crate::esm_dev::handle_esm_request(esm, &req) {
+                Some(crate::esm_dev::EsmAction::Ready(resp)) => {
+                    return Box::pin(async move { resp });
+                }
+                Some(crate::esm_dev::EsmAction::PoolModule(rel)) => {
+                    let esm = std::sync::Arc::clone(esm);
+                    let pool = pool.clone();
+                    return Box::pin(async move {
+                        crate::esm_dev::serve_pool_compiled_module(&esm, &rel, pool.as_ref()).await
+                    });
+                }
+                None => {}
+            }
+        }
+        // PERF-02/PERF-19 (readiness): surface the pool's live gauges into the
+        // metrics registry — but NOT per request. `stats()` copies and sorts
+        // up to 1000 wait samples under a mutex on every call, which the
+        // request path paid for nothing. A gauge needs second-scale freshness:
+        // refresh at most once per second (the atomic gate is process-global;
+        // a lost race just skips one refresh).
         if let Some(p) = pool.as_ref() {
-            let s = p.stats();
-            metrics.observe_pool(s.workers, s.in_flight, s.queue_wait_ms_p99);
+            const POOL_GAUGE_INTERVAL_MS: u64 = 1000;
+            static POOL_GAUGE_LAST_MS: std::sync::atomic::AtomicU64 =
+                std::sync::atomic::AtomicU64::new(0);
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let last = POOL_GAUGE_LAST_MS.load(std::sync::atomic::Ordering::Relaxed);
+            if now_ms.saturating_sub(last) >= POOL_GAUGE_INTERVAL_MS
+                && POOL_GAUGE_LAST_MS
+                    .compare_exchange(
+                        last,
+                        now_ms,
+                        std::sync::atomic::Ordering::Relaxed,
+                        std::sync::atomic::Ordering::Relaxed,
+                    )
+                    .is_ok()
+            {
+                let s = p.stats();
+                metrics.observe_pool(s.workers, s.in_flight, s.queue_wait_ms_p99);
+            }
         }
         let raw = req.url.split(['?', '#']).next().unwrap_or("/").to_string();
 
@@ -7259,13 +8665,21 @@ fn build_dispatch_swappable(
             .into_iter()
             .map(|f| routes_root.join(f))
             .collect();
-        let endpoint_params_json: serde_json::Map<String, serde_json::Value> = params
-            .iter()
-            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-            .collect();
+        // P-07b: built on first use. The JSON param map is consumed only by
+        // the middleware loop and the §10.2 endpoint dispatcher; a page
+        // request with no middleware file and no route.ts skips the
+        // per-param allocations entirely (`params` itself stays alive for
+        // the loader / L0-key paths below).
+        let mut endpoint_params_json: Option<serde_json::Map<String, serde_json::Value>> = None;
         // P-07: header/method/url are borrowed from `req_owned` at the
         // dispatcher call sites instead of cloned per request.
         let endpoint_body: bytes::Bytes = req.body.clone();
+        // PERF-03: one nonce per request. The blake3 hash of the request id
+        // was recomputed at up to 5 injection points (L0 hit materialize,
+        // 304-materialize, loader input, streaming head, deferred settles);
+        // every site stamps the SAME value (§17.1 strict-dynamic), so hash
+        // once here and reuse it everywhere.
+        let request_nonce: String = oxide_fw_server::nonce_for(&req.request_id);
 
         // §10.2 step 5 / §8.3: an unmatched URL gets a 404 status (the
         // `status` label above). To render a user-visible 404 page the
@@ -7506,7 +8920,8 @@ fn build_dispatch_swappable(
                             module_path: &module_path_s,
                             method: &req_owned.method,
                             url: &req_owned.url,
-                            params: &endpoint_params_json,
+                            params: endpoint_params_json
+                                .get_or_insert_with(|| build_params_json(&params)),
                             headers: &req_owned.headers,
                             body: endpoint_body.as_ref(),
                             locals: locals_for_call,
@@ -7871,11 +9286,32 @@ fn build_dispatch_swappable(
                         let _ = bg.invalidate_path(&bg_path, false).await;
                     });
                 }
-                let nonce = oxide_fw_server::nonce_for(&req_owned.request_id);
-                let body = hit.materialize(&nonce);
+                let nonce = request_nonce.as_str();
+                // PERF-L0 (readiness): serve the COMPRESSED representation
+                // straight from the stored segment frames when the client
+                // accepts one. The stored frames are reused byte-for-byte;
+                // only the nonce is compressed fresh. The response carries
+                // Content-Encoding so the pipeline's finish step skips its
+                // own spawn_blocking compression (the old path compressed
+                // every L0 hit — the React fixture's p99 missed < 1 ms).
+                let negotiated = req_owned
+                    .header("accept-encoding")
+                    .and_then(|ae| oxide_fw_server::negotiate_encoding(ae, &["zstd", "gzip"]));
+                let (body, encoding) = match negotiated
+                    .as_deref()
+                    .and_then(|enc| hit.materialize_compressed(nonce, enc))
+                {
+                    Some(b) => (b, negotiated),
+                    None => (hit.materialize(nonce), None),
+                };
                 let mut resp = oxide_fw_server::OxideResponse::new(hit.status(), body);
                 for (k, v) in &hit.headers() {
                     resp = resp.with_header(k, v.clone());
+                }
+                if let Some(enc) = &encoding {
+                    resp = resp
+                        .with_header("content-encoding", enc.clone())
+                        .with_header("vary", "Accept-Encoding");
                 }
                 resp = resp.with_header("etag", etag);
                 // §20: an explicit cache-outcome header makes the L0
@@ -7930,10 +9366,10 @@ fn build_dispatch_swappable(
                             tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
                                 .await
                         {
-                            let nonce = oxide_fw_server::nonce_for(&req_owned.request_id);
-                            let body = String::from_utf8_lossy(&entry.body)
-                                .replace(l0_cache::NONCE_SENTINEL, &nonce)
-                                .into_bytes();
+                            let nonce = request_nonce.as_str();
+                            // PERF-L0: follower path decodes plain OR envelope
+                            // bodies through the shared materializer.
+                            let body = l0_cache::materialize_entry_body(&entry, nonce);
                             let mut resp = oxide_fw_server::OxideResponse::new(entry.status, body);
                             for (k, v) in &entry.headers {
                                 resp = resp.with_header(k, v.clone());
@@ -8473,7 +9909,8 @@ fn build_dispatch_swappable(
                         module_path: &module_path_s,
                         method: &req_owned.method,
                         url: &req_owned.url,
-                        params: &endpoint_params_json,
+                        params: endpoint_params_json
+                            .get_or_insert_with(|| build_params_json(&params)),
                         headers: &req_owned.headers,
                         body: endpoint_body.as_ref(),
                         locals: &middleware_locals,
@@ -8605,7 +10042,7 @@ fn build_dispatch_swappable(
                 // swapper, which is an inline IIFE and would be blocked under
                 // `strict-dynamic` without it. Same value the pipeline uses
                 // for its own injected tags.
-                input.nonce = Some(oxide_fw_server::nonce_for(&req_owned.request_id));
+                input.nonce = Some(request_nonce.clone());
                 // 16-G: the route's own `meta` joins the neutral head model.
                 // The live path has no plugin `renderHead` contribution to
                 // merge with here (that is a build-time hook); the route's
@@ -8646,7 +10083,7 @@ fn build_dispatch_swappable(
                         let bridged = render_stream_with_recovery(
                             render_stream,
                             Some(label.clone()),
-                            Some(oxide_fw_server::nonce_for(&req_owned.request_id)),
+                            Some(request_nonce.clone()),
                             label.clone(),
                         );
 
@@ -8654,7 +10091,7 @@ fn build_dispatch_swappable(
                         // `defer()`, hold the document's closing tags and
                         // emit a resolution script per settle as it arrives,
                         // instead of one batched tag after the slowest.
-                        let nonce_for_settles = oxide_fw_server::nonce_for(&req_owned.request_id);
+                        let nonce_for_settles = request_nonce.clone();
                         let bridged = match page_settles.take() {
                             Some(rx) => {
                                 // §20 / O3b: pass the recorder + request id
@@ -8716,40 +10153,25 @@ fn build_dispatch_swappable(
                         // <link> on a CSS update, and reloads the page on
                         // a module/server update. Inlined (not a bundled
                         // module) so it works in dev without a build step.
-                        let hmr_tag = if dev_hmr_for_render {
-                            format!(
-                                concat!(
-                                    r#"<script nonce="{n}">(function(){{"#,
-                                    r#"try{{var ws=new WebSocket((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/_oxide/hmr');"#,
-                                    r#"ws.onmessage=function(ev){{try{{var m=JSON.parse(ev.data);"#,
-                                    // B-21: a tab open across a server restart holds
-                                    // assets from the old build_id — hard reload.
-                                    r#"if(m.type==='connected'){{if(window.__oxideBuildId&&window.__oxideBuildId!==m.build_id){{location.reload();return;}}window.__oxideBuildId=m.build_id;}}"#,
-                                    r#"if(m.type==='css-update'){{var p=(m.path||'').split('?')[0];var ls=document.querySelectorAll('link[rel=stylesheet]');"#,
-                                    r#"for(var i=0;i<ls.length;i++){{var h=(ls[i].getAttribute('href')||'').split('?')[0];"#,
-                                    r#"if(h===p||h.slice(-p.length)===p){{ls[i].setAttribute('href',p+'?t='+Date.now());break;}}}}}}"#,
-                                    r#"else if(m.type==='module-update'||m.type==='server-module-swap'||m.type==='full-reload'){{location.reload();}}"#,
-                                    r#"else if(m.type==='route-data-update'){{var ad=function(b64){{try{{if(window.__oxide)window.__oxide.data=b64;}}catch(e){{}}"#,
-                                    r#"document.dispatchEvent(new CustomEvent('ox:data',{{detail:{{route:m.route||location.pathname,odf:b64}}}}));}};"#,
-                                    r#"fetch('/__data?route='+encodeURIComponent(location.pathname),{{headers:{{accept:'application/oxide+odf'}}}})"#,
-                                    r#".then(function(r){{return r.ok?r.arrayBuffer():Promise.reject(0)}})"#,
-                                    r#".then(function(buf){{var u=new Uint8Array(buf);var s='';for(var i=0;i<u.length;i++)s+=String.fromCharCode(u[i]);var b64=btoa(s);ad(b64);}})"#,
-                                    r#".catch(function(){{ad(m.odf_b64||'');}});}}"#,
-                                    r#"else if(m.type==='error'){{var d=document.createElement('div');"#,
-                                    r#"d.setAttribute('data-oxide-error','');d.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);color:#fff;font:14px/1.4 monospace;padding:2rem;z-index:2147483647;overflow:auto';"#,
-                                    r#"d.textContent=(m.diagnostic&&(m.diagnostic.code+': '+m.diagnostic.message))||'Oxide error';document.body.appendChild(d);"#,
-                                    r#"d.addEventListener('click',function(){{d.remove();}});}}}}catch(e){{}}}};"#,
-                                    r#"ws.onclose=function(){{setTimeout(function(){{location.reload();}},2000);}};}}catch(e){{}}}})();</script>"#,
-                                ),
-                                n = nonce,
-                            )
-                        } else {
-                            String::new()
-                        };
+                        let hmr_tag = String::new(); // HMR is handled by bootWithRouter via connectHmr();
                         let body = match boot_script_url_for_render.as_deref() {
                             Some(url) => {
+                                // Normalize the leading slash. The bundler
+                                // path passes `client/__boot__.js` and the
+                                // native-ESM dev path passes
+                                // `/@boot/boot.mjs`; a blind format!("/{url}")
+                                // produced `//@boot/boot.mjs` on the ESM
+                                // path, which the browser parses as
+                                // `//user:pass@host/path` → `http://boot/…`
+                                // → ERR_NAME_NOT_RESOLVED. The boot script
+                                // never loaded, hydration/HMR never ran.
+                                let boot_src = if url.starts_with('/') {
+                                    url.to_string()
+                                } else {
+                                    format!("/{url}")
+                                };
                                 let tag = format!(
-                                    r#"{odf_tag}{deferred_tag}{hmr_tag}<script type="module" src="/{url}" nonce="{nonce}"></script>"#,
+                                    r#"{odf_tag}{deferred_tag}{hmr_tag}<script type="module" src="{boot_src}" nonce="{nonce}"></script>"#,
                                 );
                                 oxide_fw_server::inject_before_close(
                                     bridged,
@@ -10109,12 +11531,45 @@ fn stamp_i18n_locales(root: &Path, cfg: &oxide_fw_config::OxideConfig) {
     }
 }
 
+fn copy_tree(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    if !src.is_dir() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_tree(&src_path, &dst_path)?;
+        } else if src_path.is_file() {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
 fn load_client_assets(rootp: &Path) -> Option<oxide_fw_server::StaticAssets> {
     let dist = rootp.join("dist");
+    let public = rootp.join("public");
+    if public.is_dir() {
+        // SEC-STATIC: a failed public/ copy used to be silently ignored
+        // (`let _ =`), which shipped a site without favicon/robots and made the
+        // failure invisible. Warn loudly, but do not fail the boot.
+        if let Err(e) = copy_tree(&public, &dist) {
+            tracing::warn!("copying public/ into dist/ failed: {e}");
+        }
+    }
     if !dist.is_dir() {
         return None;
     }
-    oxide_fw_server::StaticAssets::scan(dist).ok()
+    // SEC-STATIC (P0-1): scan dist/ EXCLUDING the `server` directory. The
+    // previous unfiltered scan indexed `dist/server/ssr/index.js`,
+    // `dist/server/server.manifest.json` and `dist/server/l0-seed.json`, which
+    // made the whole SSR bundle downloadable from the production port
+    // (`curl /server/ssr/index.js`). `StaticAssets::serve` additionally
+    // hard-denies those paths for defense in depth.
+    oxide_fw_server::StaticAssets::scan_filtered(dist, &["server"]).ok()
 }
 
 /// BUG-11: turn `server.host` into a bind IP. `localhost` (and `""`) → the
@@ -10211,14 +11666,8 @@ async fn start_server_inner_full(
     // the client manifest) is absolute — the worker resolves a module path
     // against its own cwd, so a relative root breaks `action:run` / `loader:run`.
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
-    // §16.5 / WP-r9-1: thread the project root to worker
-    // subprocesses so `getCollection` resolves `dist/content`
-    // against the project, not the shell's cwd. Edition 2024:
-    // set_var is process-global; this runs before any worker
-    // thread spawns.
-    unsafe {
-        std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref());
-    }
+    // §16.5 / WP-r9-1: OXIDE_ROOT is written PRE-RUNTIME by
+    // `apply_startup_env` (P1 readiness env-race fix); nothing to do here.
     // §16.6 / WP-r10-1: the config env must match the server mode.
     // Before this fix, dev loaded "production" and so ignored
     // `security.sessionTtlSecs` set in the dev config (a common
@@ -10231,6 +11680,15 @@ async fn start_server_inner_full(
         "production"
     };
     let cfg = load_config_or_default(&rootp, cfg_env);
+    // §2.9: `--no-esm` is threaded via an env var because cmd_dev's
+    // override on its own cfg never reaches this reload.
+    let cfg = {
+        let mut cfg = cfg;
+        if std::env::var_os("OXIDE_DEV_NO_ESM").is_some() {
+            cfg.dev.esm = false;
+        }
+        cfg
+    };
     set_session_ttl(cfg.security.session_ttl_secs);
     // §10.1: refine inferred render modes from the AST, exactly as `oxide build`
     // does — otherwise the live server sees the scanner's line-oriented guess
@@ -10241,6 +11699,140 @@ async fn start_server_inner_full(
         &cfg,
         scan_routes(&rootp, &cfg, stack.tooling_pool.as_ref()).await?,
     ));
+
+    // Native ESM dev server (Phase 1): build the shared state the dispatch
+    // intercept uses to serve `/src/*` and `/@*` as transformed ESM. Opt-in
+    // via `dev.esm = true` in `oxide.config.ts`; only in dev
+    // (`with_inspector`), so prod never builds it.
+    let dev_esm = with_inspector && cfg.dev.esm;
+    let esm_state: Option<std::sync::Arc<crate::esm_dev::EsmDevState>> = if dev_esm {
+        // The configured framework decides (a) which `@oxide-fw/*` package
+        // the boot entry wires as `clientAdapter`, (b) which framework
+        // runtime packages must be prebundled for the client, and (c) which
+        // `/src/*` files compile through the Node tooling pool.
+        let esm_framework = cfg
+            .framework
+            .adapter
+            .clone()
+            .or_else(|| cfg.framework.name.clone())
+            .unwrap_or_else(|| "react".to_string());
+        let mut components: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for entry in &tree.entries {
+            let id_str: &str = entry.id.0.as_str();
+            let rel = id_str.strip_prefix("routes/").unwrap_or(id_str);
+            let mut candidates: Vec<String> = Vec::new();
+            // `.vue`/`.svelte` pages are first-class here: the ESM dev server
+            // serves them pool-compiled (see `needs_pool_compile`), and
+            // without them in the manifest a Vue/Svelte app had NO component
+            // URL at all — `componentFor` returned undefined and the client
+            // could never render or HMR the route.
+            for ext in [".tsx", ".ts", ".jsx", ".js", ".vue", ".svelte"] {
+                candidates.push(format!("src/routes/{rel}{ext}"));
+                candidates.push(format!("src/routes/{rel}/page{ext}"));
+            }
+            if rel == "index" || rel.is_empty() {
+                for ext in [".tsx", ".ts", ".jsx", ".js", ".vue", ".svelte"] {
+                    candidates.push(format!("src/routes/page{ext}"));
+                    candidates.push(format!("src/routes/index{ext}"));
+                }
+            }
+            for cand in &candidates {
+                if !rootp.join(cand).is_file() {
+                    continue;
+                }
+                // REJECT server-only route files. These exist on disk under
+                // `src/routes/` but must NEVER reach the browser: an API
+                // route (route.ts), websocket (socket.ts), or route-level
+                // middleware (middleware.ts) is server-executed and imports
+                // server-only modules (e.g. `md.server.ts`) the browser
+                // cannot fetch (our handler returns 403). Shipping one of
+                // these into the boot entry broke the ENTIRE module graph:
+                // the browser fetches it, hits a 403 on a transitive
+                // `.server.` import, and never reaches the boot script that
+                // opens the HMR WebSocket. Symptom: edit a file, nothing
+                // happens, no console error, no HMR message.
+                let file_name = cand.rsplit('/').next().unwrap_or(cand);
+                let server_only = file_name.ends_with(".server.ts")
+                    || file_name.ends_with(".server.tsx")
+                    || file_name.ends_with(".server.js")
+                    || file_name.ends_with(".server.jsx")
+                    || file_name == "route.ts"
+                    || file_name == "route.js"
+                    || file_name == "socket.ts"
+                    || file_name == "socket.js"
+                    || file_name == "middleware.ts"
+                    || file_name == "middleware.js";
+                if server_only {
+                    continue;
+                }
+                components.insert(id_str.to_string(), format!("/{cand}"));
+                break;
+            }
+        }
+        // Framework runtime packages must be in the prebundle + rewrite map
+        // or the client graph 404s: the pool-compiled Vue SFC imports
+        // `vue`, the Svelte output imports `svelte/internal/client`, the
+        // Solid output imports `@solidjs/web`, and the `@oxide-fw/*`
+        // adapter dist files import their framework runtime by bare name.
+        // The default list is React-shaped; extend it per framework without
+        // disturbing an explicit project override (already-present entries
+        // stay where the config put them).
+        let mut prebundle_list = cfg.dev.prebundle.clone();
+        for extra in framework_prebundle_extras(&esm_framework) {
+            if !prebundle_list.contains(&extra) {
+                prebundle_list.push(extra);
+            }
+        }
+        let _ = crate::esm_dev::prebundle_cjs_deps(&rootp, &prebundle_list);
+        if let Err(e) = crate::esm_dev::build_esm_manifest(&rootp, &components) {
+            tracing::warn!(error = %e, "esm dev: manifest write failed");
+        }
+        // `cfg.framework.islands` is the typed island registry
+        // (component name → source path relative to project root).
+        // Filter to entries that actually exist on disk so a stale config
+        // doesn't produce a boot entry with a missing import.
+        let mut islands: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for (name, rel_path) in &cfg.framework.islands {
+            let full_path = rootp.join(rel_path);
+            if full_path.is_file() {
+                islands.insert(name.clone(), format!("/{rel_path}"));
+            }
+        }
+        if let Err(e) =
+            crate::esm_dev::generate_esm_boot_entry(&rootp, &components, &islands, &esm_framework)
+        {
+            tracing::warn!(error = %e, "esm dev: boot entry write failed");
+        }
+        // §6.4 / WP-C1 (ESM path): `ensure_dev_client_bundle` is skipped in
+        // ESM mode, so no `dist/server/ssr/index.js` is produced by the
+        // dev server. Populate the worker's component-source map here
+        // instead, so the render path can resolve routes without a build
+        // entry. Guarded by emptiness because `cmd_dev` already populated
+        // this map on the CLI path (and we'd rather not precompile twice).
+        let already_populated = stack
+            .component_source
+            .read()
+            .map(|s| !s.sources.is_empty())
+            .unwrap_or(false);
+        if !already_populated {
+            populate_dev_component_source(&rootp, &cfg, &tree, &stack).await;
+        }
+        let rewrite_map = crate::esm_dev::build_rewrite_map(&rootp, &prebundle_list);
+        tracing::info!(
+            routes_with_component = components.len(),
+            "esm dev: state ready"
+        );
+        Some(std::sync::Arc::new(crate::esm_dev::EsmDevState {
+            root: rootp.clone(),
+            jsx_import_source: jsx_import_source_for(&esm_framework),
+            rewrite_map: std::sync::Arc::new(rewrite_map),
+            framework: esm_framework,
+        }))
+    } else {
+        None
+    };
     let (bind_ip, requested_port) = match bind {
         // A caller-supplied port is honoured verbatim — including 0, which
         // means "ephemeral, OS chooses" (the test and CI convention).
@@ -10300,13 +11892,20 @@ async fn start_server_inner_full(
             .ok()
             .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
     };
-    let boot_script_url: Option<String> = client_manifest_json.as_ref().and_then(|v| {
-        v.get("routes")
-            .and_then(|r| r.get("__boot__"))
-            .and_then(|r| r.get("entry_chunk"))
-            .and_then(|e| e.as_str())
-            .map(|f| format!("client/{f}"))
-    });
+    let boot_script_url: Option<String> = if esm_state.is_some() {
+        // ESM mode has no `client.manifest.json` — the boot entry is a
+        // generated module that imports `@oxide-fw/core/client/hot` first
+        // (installs the HMR runtime) then each route component.
+        Some(crate::esm_dev::BOOT_SCRIPT_URL.to_string())
+    } else {
+        client_manifest_json.as_ref().and_then(|v| {
+            v.get("routes")
+                .and_then(|r| r.get("__boot__"))
+                .and_then(|r| r.get("entry_chunk"))
+                .and_then(|e| e.as_str())
+                .map(|f| format!("client/{f}"))
+        })
+    };
     // §11 L0: a response cache for static/isr routes. The build id scopes
     // entries to this deployment, so a rebuild invalidates them; it comes from
     // the client manifest, falling back to a source-derived hash when no build
@@ -10372,6 +11971,10 @@ async fn start_server_inner_full(
         server_fns,
         actions: actions.clone(),
         limits: oxide_fw_server::Limits::default(),
+        // P1 hardening: the metrics bearer token. `OXIDE_METRICS_TOKEN` is the
+        // env seam (a config field would belong in the schema — post-v0.1);
+        // unset + non-dev → the endpoint answers 403 instead of leaking.
+        metrics_auth_token: std::env::var("OXIDE_METRICS_TOKEN").ok(),
         // SPEC-10: locale policy for the pipeline (None when unconfigured).
         i18n: {
             let c = &cfg.i18n;
@@ -10668,11 +12271,11 @@ async fn start_server_inner_full(
         },
         endpoint_dispatcher,
         middleware_dispatcher,
-        dev_hmr: hmr.is_some(),
         vary_headers: cfg.cache.l0.vary.clone(),
         waterfall: waterfall_recorder.clone(),
         session_codec,
         ppr_shells: ppr_shells.clone(),
+        esm_state: esm_state.clone(),
     });
     // §5.6: dev-mode stale guard. When a HMR hub is wired, wrap the
     // dispatch so a mid-flight file change aborts the render (no serving
@@ -10723,7 +12326,13 @@ async fn start_server_inner_full(
     // §6.4 / Wave M: warm the renderer on a background task. Socket is
     // already bound (health → 200); ready → 503 until the synthetic render
     // completes. Single-node traffic continues unaffected while this runs.
-    if let Some(renderer) = renderer_to_warm {
+    // PERF-23: `--no-warmup` skips the synthetic render. `/_oxide/ready` is
+    // gated on `render_ready`, so flip it immediately — the server is honest
+    // about being cold (ready ⇒ warm would be a lie).
+    if std::env::var_os("OXIDE_NO_WARMUP").is_some() {
+        render_ready.store(true, std::sync::atomic::Ordering::SeqCst);
+        tracing::info!("--no-warmup: skipping renderer warm-up");
+    } else if let Some(renderer) = renderer_to_warm {
         let ready = std::sync::Arc::clone(&render_ready);
         tokio::spawn(async move {
             match renderer.warm().await {
@@ -11367,6 +12976,22 @@ async fn cmd_doctor(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
         );
         all_ok = false;
     }
+    // P1 hardening (readiness): an empty `security.hostAllowList` accepts ANY
+    // Host header — a DNS-rebinding / host-header-injection vector in
+    // production. Doctor surfaces it as a warning (not a failure: dev servers
+    // legitimately run without one).
+    if cfg.security.host_allow_list.is_empty() {
+        outln!(
+            w,
+            "[--] host allow list: empty — ANY Host header is accepted; set security.hostAllowList before exposing this server publicly"
+        );
+    } else {
+        outln!(
+            w,
+            "[ok] host allow list: {} host pattern(s)",
+            cfg.security.host_allow_list.len()
+        );
+    }
     Ok(if all_ok { 0 } else { 1 })
 }
 
@@ -11964,14 +13589,8 @@ async fn cmd_render(
     use oxide_fw_jshost::{FrameworkHost, JsHost, LoaderHost, NodeHost, PoolConfig};
 
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
-    // §16.5 / WP-r9-1: thread the project root to worker
-    // subprocesses so `getCollection` resolves `dist/content`
-    // against the project, not the shell's cwd. Edition 2024:
-    // set_var is process-global; this runs before any worker
-    // thread spawns.
-    unsafe {
-        std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref());
-    }
+    // §16.5 / WP-r9-1: OXIDE_ROOT is written PRE-RUNTIME by
+    // `apply_startup_env` (P1 readiness env-race fix); nothing to do here.
     let config_path = find_config_file(&rootp)?;
     // Load the config to find `routes.dir` for the loader lookup. Non-strict:
     // a config that the Rust extractor cannot fully parse (e.g. a

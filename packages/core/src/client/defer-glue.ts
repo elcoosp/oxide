@@ -147,6 +147,10 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
   const doc: DeferGlueDoc | undefined = options.doc ?? (globalThis as { document?: DeferGlueDoc }).document
   const eventName = options.eventName ?? 'ox:swap'
   const registry = new Map<number, DeferredClient>()
+  /** id → desired text. Populated on resolve; consumed by the marker
+   *  MutationObserver that reconciles any later clobber (React remount,
+   *  framework re-render, external override). */
+  const reconciled = new Map<number, string>()
   /**
    * §7.1: when a slot resolves, if the page contains a
    * `[data-deferred-value="<id>"]` marker, write the resolved value into
@@ -181,6 +185,65 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
     }
   }
 
+  /** Compute the text a marker should show for a resolved value. Mirrors
+   *  `updateMarker`'s convention so a retry can compare and skip no-ops. */
+  const desiredText = (value: unknown): string => {
+    if (
+      value &&
+      typeof value === 'object' &&
+      typeof (value as { label?: unknown }).label === 'string'
+    ) {
+      return (value as { label: string }).label
+    }
+    if (typeof value === 'string') return value
+    return JSON.stringify(value)
+  }
+
+  /**
+   * Reconcile a marker write across several animation frames. Needed because
+   * React's hydration can (a) error with #418 on a text mismatch, and (b)
+   * respond by **replacing the marker element** — not just its text — so a
+   * one-shot write against the pre-hydration element is lost. React may also
+   * do its work in a microtask that runs *after* the first rAF, so a single
+   * reapply on frame 1 can still be too early.
+   *
+   * Strategy: run for the full 30-frame window (≈500ms at 60fps) with **no
+   * early exit on stability**. An earlier attempt stopped after 3 stable
+   * frames — that heuristic missed React #418's clobber, which lands a few
+   * frames *after* the glue settles. On non-React pages, the 30 no-op frames
+   * cost ~0.1ms each — negligible. The persistent MutationObserver
+   * (`attachDeferGlue`) is belt-and-braces for anything later than 500ms.
+   */
+  const scheduleMarkerReapply = (id: number, value: unknown): void => {
+    // Non-browser host (SSR worker, node:test without a DOM, the
+    // adapter's preload path): there is no hydration pass that will
+    // clobber a marker. Skip the retry entirely — otherwise every slot
+    // resolution posts 30 timers that keep the process event loop alive
+    // for ~500ms per test, without changing anything observable. Browser
+    // hosts always have `requestAnimationFrame`.
+    const raf = (globalThis as { requestAnimationFrame?: (cb: () => void) => unknown })
+      .requestAnimationFrame
+    if (typeof raf !== 'function') return
+
+    const desired = desiredText(value)
+    let attempts = 0
+    const MAX_ATTEMPTS = 30
+
+    const tick = (): void => {
+      attempts++
+      if (dead) return
+      if (attempts > MAX_ATTEMPTS) return
+      if (!doc || typeof doc.querySelectorAll !== 'function') return
+      const els = doc.querySelectorAll(`[data-deferred-value="${id}"]`)
+      const el = els && els.length > 0 ? els[0] : undefined
+      if (el && el.textContent !== desired) {
+        el.textContent = desired
+      }
+      raf(tick)
+    }
+    raf(tick)
+  }
+
   /**
    * Resolve (or reject) one slot from a settle value, and update any
    * matching `[data-deferred-value]` marker. A rejected defer is
@@ -208,7 +271,19 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
     // overwrite a marker that a user might have set to something else).
     const wasPending = slot.status === 'pending'
     slot.resolve(value)
-    if (wasPending) updateMarker(id, value)
+    if (wasPending) {
+      // Record the desired text so the MutationObserver can reconcile any
+      // later clobber (React #418's remount, a framework re-render, or an
+      // external override) without re-deriving the value each time.
+      reconciled.set(id, desiredText(value))
+      // Best-effort synchronous write: non-React pages see the value
+      // immediately, and the retry below is a no-op.
+      updateMarker(id, value)
+      // 30-frame retry window (≈500ms) covers React #418's clobber, which
+      // can land several frames after hydration begins. No early exit on
+      // stability — an earlier "3 stable frames" heuristic missed it.
+      scheduleMarkerReapply(id, value)
+    }
   }
 
   let dead = false
@@ -234,7 +309,6 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
   // the slot instead of resolving it to a shape the page did not expect.
   const resolveFromScripts = (): void => {
     if (typeof doc.querySelectorAll !== 'function') return
-    // Method call — `this` is `doc`. No detach dance.
     const scripts = doc.querySelectorAll('script[type="application/oxide-deferred"]')
     for (let i = 0; i < scripts.length; i++) {
       const script = scripts[i]
@@ -272,13 +346,27 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
   // A streamed settle appends its script after the document has loaded, so
   // `resolveFromScripts` has already run. Watch for the insertions and
   // resolve each new one. The observer disconnects in `dispose`.
-  let observer: { disconnect(): void; observe(target: unknown, options?: { childList?: boolean; subtree?: boolean }): void } | null = null
+  let observer: { disconnect(): void; observe(target: unknown, options?: { childList?: boolean; subtree?: boolean; characterData?: boolean }): void } | null = null
   const MO = (globalThis as { MutationObserver?: new (cb: (m: unknown[]) => void) => {
     observe(t: unknown, o: unknown): void
     disconnect(): void
   } }).MutationObserver
   if (typeof MO === 'function' && doc.documentElement !== undefined) {
     observer = new MO((mutations: unknown[]) => {
+      // Belt-and-braces (React #418 remounts, framework re-renders, any
+      // late clobber): reconcile every resolved marker whose DOM text
+      // disagrees with the value the glue wrote. Runs on every mutation
+      // batch — `reconciled` is bounded by the number of resolved deferred
+      // slots, so this is O(resolved). The 30-frame rAF retry above is the
+      // primary mechanism; this catches clobbers that land after that window.
+      if (!dead && doc && typeof doc.querySelectorAll === 'function') {
+        for (const [id, desired] of reconciled) {
+          const els = doc.querySelectorAll(`[data-deferred-value="${id}"]`)
+          const el = els && els.length > 0 ? els[0] : undefined
+          if (el && el.textContent !== desired) el.textContent = desired
+        }
+      }
+      // Existing behaviour: resolve any newly appended deferred script.
       for (const m of mutations) {
         const added = (m as { addedNodes?: ArrayLike<unknown> }).addedNodes
         if (!added) continue
@@ -297,6 +385,7 @@ export function attachDeferGlue(options: DeferGlueOptions = {}): DeferGlue {
     observer.observe(doc.documentElement, {
       childList: true,
       subtree: true,
+      characterData: true,
     })
   }
   // Try synchronously, then again on DOMContentLoaded in case the script

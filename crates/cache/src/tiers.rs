@@ -22,6 +22,7 @@ use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use redb::ReadableDatabase;
 use redb::{Database, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -151,9 +152,13 @@ fn ioerr(e: std::io::Error) -> OxideError {
 /// Disk tier: redb index + zstd blob files under `root`.
 ///
 /// Layout: `root/blobs/<first-2-chars-of-blob-name>/<blob-name>.bin`; the blob is the
-/// zstd-compressed JSON serialization of an [`Entry`]. On load the stored blake3 is
-/// verified; any mismatch/decode failure/missing blob deletes the entry and reports a
-/// miss (silent self-healing eviction — corruption must never serve, §17.2).
+/// zstd-compressed serialization of an [`Entry`]. PERF-L1 (readiness): the body is
+/// stored RAW next to the metadata JSON ([`BLOB_MAGIC`] header) — the previous
+/// format ran the whole entry through `serde_json`, which expands a binary body
+/// into a JSON number array (3-4× the bytes) before zstd ever sees it. On load the
+/// stored blake3 is verified; any mismatch/decode failure/missing blob deletes the
+/// entry and reports a miss (silent self-healing eviction — corruption must never
+/// serve, §17.2). Legacy (JSON-body) blobs still decode via the fallback path.
 pub struct DiskTier {
     pub root: PathBuf,
     index: Database,
@@ -163,7 +168,17 @@ pub struct DiskTier {
     pub max_bytes: u64,
     /// S-08: reject a single entry larger than this before writing it.
     pub max_entry: u64,
+    /// PERF-L1 (readiness): in-memory `((stored_at, key) → compressed size)`
+    /// order index. The old prune did a FULL TABLE SCAN with a JSON parse per
+    /// row on EVERY eviction — O(N²) for an N-entry prune burst. The map is
+    /// maintained on set/delete/open; picking a victim is `first_key_value`.
+    /// Bounded by the entry count (keys ~120 bytes) — acceptable next to the
+    /// redb index itself.
+    order: std::sync::Mutex<std::collections::BTreeMap<(u64, String), u64>>,
 }
+
+/// PERF-L1: blob v2 magic — `magic || u32 BE meta_len || meta_json || raw body`.
+const BLOB_MAGIC: &[u8; 4] = b"OXD1";
 
 /// S-08 default disk budget (1 GiB) and per-entry cap (32 MiB). A project can
 /// override via config; these bounds stop attacker-minted keys filling the disk.
@@ -197,17 +212,27 @@ impl DiskTier {
             txn.open_table(TAG_TABLE).map_err(dberr)?;
         }
         txn.commit().map_err(dberr)?;
-        // S-08: seed the current-size counter from the existing index.
+        // S-08: seed the current-size counter from the existing index, and the
+        // PERF-L1 stored_at order index alongside it (one scan instead of a
+        // per-eviction scan later).
         let mut cur = 0u64;
+        let mut order = std::collections::BTreeMap::new();
         {
             let rtxn = index.begin_read().map_err(dberr)?;
             let table = rtxn.open_table(ENTRY_TABLE).map_err(dberr)?;
             let iter = table.iter().map_err(dberr)?;
             for row in iter {
-                if let Ok((_, v)) = row
+                if let Ok((k, v)) = row
                     && let Ok(idx) = serde_json::from_slice::<DiskIndexEntry>(v.value())
                 {
                     cur = cur.saturating_add(idx.size);
+                    order.insert(
+                        (
+                            idx.stored_at,
+                            String::from_utf8_lossy(k.value()).into_owned(),
+                        ),
+                        idx.size,
+                    );
                 }
             }
         }
@@ -217,6 +242,7 @@ impl DiskTier {
             cur_bytes: AtomicU64::new(cur),
             max_bytes,
             max_entry,
+            order: std::sync::Mutex::new(order),
         })
     }
 
@@ -254,12 +280,25 @@ impl DiskTier {
                 format!("entry {raw_len} exceeds per-entry cap {}", self.max_entry),
             ));
         }
-        let serialized = serde_json::to_vec(entry).map_err(jsonerr)?;
+        // PERF-L1: blob v2 — raw body appended after the metadata JSON, so the
+        // body never passes through serde_json (a binary body becomes a JSON
+        // number array, 3-4× its bytes).
+        let mut meta = entry.clone();
+        meta.body = Vec::new();
+        let meta_json = serde_json::to_vec(&meta).map_err(jsonerr)?;
+        let mut serialized =
+            Vec::with_capacity(BLOB_MAGIC.len() + 4 + meta_json.len() + entry.body.len());
+        serialized.extend_from_slice(BLOB_MAGIC);
+        serialized.extend_from_slice(&(meta_json.len() as u32).to_be_bytes());
+        serialized.extend_from_slice(&meta_json);
+        serialized.extend_from_slice(&entry.body);
         let hash = blake3::hash(&serialized).to_string();
         let compressed = zstd::bulk::compress(&serialized, 3)
             .map_err(|e| err("CAC-ZSTD", format!("compress: {e}")))?;
-        // The previous row's size, so the byte counter stays exact on replace.
-        let prev_size = self.indexed_size(key);
+        // The previous row's size + stored_at, so the byte counter and the
+        // order index stay exact on replace.
+        let prev = self.indexed_meta(key);
+        let prev_size = prev.map(|(s, _)| s).unwrap_or(0);
         let path = self.blob_path(key);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(ioerr)?;
@@ -302,7 +341,12 @@ impl DiskTier {
         }
         txn.commit().map_err(dberr)?;
         // S-08: update the byte counter and prune oldest-first past the budget.
+        // PERF-L1: maintain the order index (drop the previous placement).
         let new_size = compressed.len() as u64;
+        if let Some((_, prev_stored)) = prev {
+            self.order_forget_placement(key, prev_stored);
+        }
+        self.order_record(key, entry.stored_at, new_size);
         self.cur_bytes.fetch_sub(prev_size, Ordering::Relaxed);
         let after = self.cur_bytes.fetch_add(new_size, Ordering::Relaxed) + new_size;
         if after > self.max_bytes {
@@ -311,59 +355,71 @@ impl DiskTier {
         Ok(())
     }
 
-    /// S-08: the indexed compressed size of `key`, or 0 when absent.
-    fn indexed_size(&self, key: &str) -> u64 {
+    /// PERF-L1: forget a specific (stored_at, key) placement.
+    fn order_forget_placement(&self, key: &str, stored_at: u64) {
+        let mut order = self.order.lock().unwrap_or_else(|p| p.into_inner());
+        order.remove(&(stored_at, key.to_string()));
+    }
+
+    /// S-08: the indexed (compressed size, stored_at) of `key`, or `None` when absent.
+    fn indexed_meta(&self, key: &str) -> Option<(u64, u64)> {
         let Ok(txn) = self.index.begin_read() else {
-            return 0;
+            return None;
         };
         let Ok(table) = txn.open_table(ENTRY_TABLE) else {
-            return 0;
+            return None;
         };
         match table.get(key.as_bytes()) {
             Ok(Some(v)) => serde_json::from_slice::<DiskIndexEntry>(v.value())
-                .map(|i| i.size)
-                .unwrap_or(0),
-            _ => 0,
+                .ok()
+                .map(|i| (i.size, i.stored_at)),
+            _ => None,
+        }
+    }
+
+    /// PERF-L1: record the (stored_at, key) order entry for `key`. The caller
+    /// forgets any previous placement first (it knows the old stored_at).
+    fn order_record(&self, key: &str, stored_at: u64, size: u64) {
+        let mut order = self.order.lock().unwrap_or_else(|p| p.into_inner());
+        order.insert((stored_at, key.to_string()), size);
+    }
+
+    /// PERF-L1: forget `key`'s order entry (on delete).
+    fn order_forget(&self, key: &str) {
+        let mut order = self.order.lock().unwrap_or_else(|p| p.into_inner());
+        let stale: Vec<(u64, String)> = order.keys().filter(|sk| sk.1 == key).cloned().collect();
+        for sk in stale {
+            order.remove(&sk);
         }
     }
 
     /// S-08: evict least-recently-stored entries until the total is under
     /// `target`. Ordering is by `stored_at` ascending (LRU by write time —
-    /// the durable proxy the GC already tracks).
+    /// the durable proxy the GC already tracks). PERF-L1: victims come from
+    /// the in-memory order index (`first_key_value`), not a full redb scan
+    /// with a JSON parse per row per eviction.
     fn prune_oldest_until(&self, target: u64) {
         loop {
             if self.cur_bytes.load(Ordering::Relaxed) <= target {
                 return;
             }
-            // Find the oldest key + its size.
-            let victim = {
-                let Ok(txn) = self.index.begin_read() else {
-                    return;
-                };
-                let Ok(table) = txn.open_table(ENTRY_TABLE) else {
-                    return;
-                };
-                let Ok(iter) = table.iter() else {
-                    return;
-                };
-                let mut oldest: Option<(String, u64, u64)> = None; // (key, stored_at, size)
-                for row in iter {
-                    let Ok((k, v)) = row else { continue };
-                    let Some(idx) = serde_json::from_slice::<DiskIndexEntry>(v.value()).ok() else {
-                        continue;
-                    };
-                    let k = String::from_utf8_lossy(k.value()).into_owned();
-                    if oldest.as_ref().is_none_or(|(_, ts, _)| idx.stored_at < *ts) {
-                        oldest = Some((k, idx.stored_at, idx.size));
-                    }
-                }
-                oldest
-            };
-            let Some((key, _, _)) = victim else {
+            let victim = self
+                .order
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .keys()
+                .next()
+                .map(|(_, k)| k.clone());
+            let Some(key) = victim else {
                 return;
             };
-            // `delete` decrements `cur_bytes` itself.
+            // `delete` decrements `cur_bytes` and forgets the order entry itself.
             if self.delete(&key).is_err() {
+                // Never spin on an undecodable victim: forget it locally.
+                self.order_forget(&key);
+                if self.cur_bytes.load(Ordering::Relaxed) > target {
+                    continue;
+                }
                 return;
             }
         }
@@ -396,6 +452,24 @@ impl DiskTier {
         };
         if blake3::hash(&decoded).to_string() != idx.hash {
             self.delete(key)?; // hash mismatch — silent miss (§17.2)
+            return Ok(None);
+        }
+        // PERF-L1: blob v2 (raw body) first, legacy JSON-entry fallback.
+        if decoded.len() >= BLOB_MAGIC.len() + 4 && &decoded[..BLOB_MAGIC.len()] == BLOB_MAGIC {
+            let meta_len = u32::from_be_bytes(
+                decoded[BLOB_MAGIC.len()..BLOB_MAGIC.len() + 4]
+                    .try_into()
+                    .unwrap_or([0; 4]),
+            ) as usize;
+            let body_start = BLOB_MAGIC.len() + 4 + meta_len;
+            if body_start <= decoded.len()
+                && let Ok(mut entry) =
+                    serde_json::from_slice::<Entry>(&decoded[BLOB_MAGIC.len() + 4..body_start])
+            {
+                entry.body = decoded[body_start..].to_vec();
+                return Ok(Some(entry));
+            }
+            self.delete(key)?;
             return Ok(None);
         }
         match serde_json::from_slice::<Entry>(&decoded) {
@@ -438,6 +512,8 @@ impl DiskTier {
         if let Some(idx) = idx {
             // S-08: keep the byte budget counter exact.
             self.cur_bytes.fetch_sub(idx.size, Ordering::Relaxed);
+            // PERF-L1: forget the order entry.
+            self.order_forget_placement(key, idx.stored_at);
             // Best-effort blob removal; a missing file is already "deleted".
             let _ = std::fs::remove_file(self.root.join(&idx.path));
             Ok(true)
@@ -507,10 +583,16 @@ fn classify(e: &Entry, now: u64) -> Freshness {
 /// is honored by the caller (render layer), not here.
 pub struct TieredCache {
     pub memory: MemoryTier,
-    pub disk: Option<DiskTier>,
+    /// PERF-L1 (readiness): `Arc` so the blocking disk calls can move onto the
+    /// blocking pool (`spawn_blocking` needs `'static`).
+    pub disk: Option<Arc<DiskTier>>,
     pub remote: Option<Arc<dyn CacheHandler>>,
-    /// Tag index: tag → keys.
-    pub tags: DashMap<String, Vec<String>>,
+    /// Tag index: tag → keys. A `HashSet` because membership is the only
+    /// question the write path asks (P-18b: an entry re-set under a tag that
+    /// already indexes thousands of keys is O(1), not an O(n) linear scan);
+    /// readers need no order — [`TieredCache::tag_keys`] sorts for
+    /// determinism before returning.
+    pub tags: DashMap<String, HashSet<String>>,
     hits: AtomicU64,
     misses: AtomicU64,
     stale_served: AtomicU64,
@@ -548,7 +630,7 @@ impl TieredCache {
 
     /// Attach a local disk tier (L1).
     pub fn with_disk(mut self, root: std::path::PathBuf) -> Result<Self> {
-        self.disk = Some(DiskTier::open(root)?);
+        self.disk = Some(std::sync::Arc::new(DiskTier::open(root)?));
         Ok(self)
     }
 
@@ -583,23 +665,37 @@ impl TieredCache {
             }
         }
 
-        // L1: disk (promote on hit).
-        if let Some(disk) = &self.disk
-            && let Some(e) = disk.get(key)?
-        {
-            match classify(&e, now) {
-                Freshness::Fresh => {
-                    self.memory.insert(key, e.clone());
-                    self.bump_hit(false);
-                    return Ok(Some(Hit::Fresh(Arc::new(e))));
-                }
-                Freshness::Stale => {
-                    self.memory.insert(key, e.clone());
-                    self.bump_hit(true);
-                    return Ok(Some(Hit::Stale(Arc::new(e))));
-                }
-                Freshness::Expired => {
-                    disk.delete(key)?;
+        // L1: disk (promote on hit). PERF-L1: redb + std::fs are BLOCKING —
+        // run them on the blocking pool so a slow disk does not stall a
+        // Tokio worker. `spawn_blocking` needs 'static: the disk tier is
+        // behind an Arc; failures on the join handle become a miss (the
+        // panic path is a poisoned pool, not a correctness bug).
+        if let Some(disk) = &self.disk {
+            let disk = Arc::clone(disk);
+            let k = key.to_string();
+            let hit = tokio::task::spawn_blocking(move || disk.get(&k)).await;
+            let e = match hit {
+                Ok(Ok(Some(e))) => Some(e),
+                Ok(_) => None,
+                Err(_) => None,
+            };
+            if let Some(e) = e {
+                match classify(&e, now) {
+                    Freshness::Fresh => {
+                        self.memory.insert(key, e.clone());
+                        self.bump_hit(false);
+                        return Ok(Some(Hit::Fresh(Arc::new(e))));
+                    }
+                    Freshness::Stale => {
+                        self.memory.insert(key, e.clone());
+                        self.bump_hit(true);
+                        return Ok(Some(Hit::Stale(Arc::new(e))));
+                    }
+                    Freshness::Expired => {
+                        let disk = Arc::clone(self.disk.as_ref().unwrap());
+                        let k = key.to_string();
+                        let _ = tokio::task::spawn_blocking(move || disk.delete(&k)).await;
+                    }
                 }
             }
         }
@@ -645,8 +741,14 @@ impl TieredCache {
             return Ok(());
         }
         self.memory.insert(key, entry.clone());
+        // PERF-L1: the disk write (zstd + fsync-ish fs + redb txn) is blocking.
         if let Some(disk) = &self.disk {
-            disk.set(key, &entry)?;
+            let disk = Arc::clone(disk);
+            let k = key.to_string();
+            let e = entry.clone();
+            // The disk tier is best-effort relative to the memory tier: a
+            // poisoned blocking task must not fail the request.
+            let _ = tokio::task::spawn_blocking(move || disk.set(&k, &e)).await;
         }
         // P-18: the remote L2 write is off the request path — the local tiers
         // already satisfy the caller, so a slow/hanging remote must not block
@@ -661,10 +763,10 @@ impl TieredCache {
             });
         }
         for tag in &entry.tags {
-            let mut list = self.tags.entry(tag.clone()).or_default();
-            if !list.iter().any(|k| k == key) {
-                list.push(key.to_string());
-            }
+            self.tags
+                .entry(tag.clone())
+                .or_default()
+                .insert(key.to_string());
         }
         Ok(())
     }
@@ -696,7 +798,11 @@ impl TieredCache {
     /// Keys tagged with `tag` across the in-memory index, disk and remote (deduped,
     /// sorted for determinism).
     pub async fn tag_keys(&self, tag: &str) -> Result<Vec<String>> {
-        let mut keys = self.tags.get(tag).map(|l| l.clone()).unwrap_or_default();
+        let mut keys: Vec<String> = self
+            .tags
+            .get(tag)
+            .map(|l| l.iter().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
         if let Some(disk) = &self.disk {
             for k in disk.tag_keys(tag)? {
                 if !keys.contains(&k) {
@@ -860,7 +966,11 @@ impl CacheHandler for TieredCache {
     }
 
     async fn tag_keys(&self, tag: &str) -> Result<Vec<String>> {
-        Ok(self.tags.get(tag).map(|v| v.clone()).unwrap_or_default())
+        Ok(self
+            .tags
+            .get(tag)
+            .map(|v| v.iter().cloned().collect::<Vec<_>>())
+            .unwrap_or_default())
     }
 
     async fn invalidate_tag(&self, tag: &str, _soft: bool) -> Result<usize> {

@@ -112,8 +112,9 @@ function bindAll(
   scope: OxElement,
   tree: Node,
   bound: Array<{ el: OxElement; type: string; fn: (ev: unknown) => void }>,
+  islandScope = false,
 ): void {
-  for (const binding of walkTreeForHandlers(tree)) {
+  for (const binding of walkTreeForHandlers(tree, islandScope)) {
     const target = findMarked(scope, binding.id)
     if (!target) continue
     target.addEventListener(binding.event, binding.handler)
@@ -168,6 +169,11 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
   // navigations racing on the same container mount one after the other,
   // never concurrently).
   let realRoot: RealPageRoot | undefined
+  // Component-HMR: the component reference the current `realRoot` was built
+  // from. `componentFor` resolves through the boot's fresh-aware loadChunk,
+  // so after an HMR `module-update` re-imported the page module it returns
+  // a DIFFERENT reference — that is the swap signal below.
+  let realComponent: unknown = undefined
   let renderSeq = 0
   let realChain: Promise<void> = Promise.resolve()
   const bound: Array<{ el: OxElement; type: string; fn: (ev: unknown) => void }> = []
@@ -241,16 +247,29 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
       }
       try {
         if (realRoot) {
-          realRoot.update(realProps(inp))
-          return
+          // Component-HMR (Vue/Solid/Svelte): a different component
+          // reference means the route's component module was re-imported
+          // by an HMR `module-update` — dispose the stale root and mount
+          // the FRESH component below. A same-reference update stays on
+          // the cheap remount-with-new-props path (navigation / loader
+          // data change).
+          if (Component !== realComponent) {
+            realRoot.dispose()
+            realRoot = undefined
+          } else {
+            realRoot.update(realProps(inp))
+            return
+          }
         }
         // First real mount: hydrate the SSR markup when present, fresh-mount
-        // into an empty root (SPA mode).
+        // into an empty root (SPA mode). An HMR component swap mounts FRESH
+        // (`hydrate: false`): the previous root was disposed above, so its
+        // markup is gone and there is nothing to hydrate against.
         const mounted = await mountSveltePageRoot(
           asDomElement(root, 'real framework mount'),
           Component,
           realProps(inp),
-          { hydrate: (root.innerHTML ?? '') !== '' },
+          { hydrate: realComponent === undefined && (root.innerHTML ?? '') !== '' },
         )
         if (disposed || seq !== renderSeq) {
           mounted?.dispose()
@@ -262,6 +281,7 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
           return
         }
         realRoot = mounted
+        realComponent = Component
       } catch (e) {
         console.warn?.('oxide: real page render failed; falling back to IR', e)
         if (!disposed && seq === renderSeq) renderIr()
@@ -370,7 +390,13 @@ export function hydrateIsland(host: OxElement, mod: unknown, props: unknown, opt
       const nextProps = { ...(props as Record<string, unknown>), ...patch, client }
       const tree = component(nextProps)
       host.innerHTML = renderNodeToString(tree, islandRenderState())
-      bindAll(host, tree, bound)
+      // The innerHTML assignment above detached the previous generation's
+      // elements. Drop their listener records first — otherwise `bound`
+      // grows by one entry per update and pins every detached subtree (and
+      // its handler closures) in memory for the life of the page.
+      for (const b of bound) b.el.removeEventListener(b.type, b.fn)
+      bound.length = 0
+      bindAll(host, tree, bound, true)
     },
     navigate(href: string): void {
       opts.navigate?.(href)
@@ -378,7 +404,7 @@ export function hydrateIsland(host: OxElement, mod: unknown, props: unknown, opt
   }
   const tree = component({ ...(props as Record<string, unknown>), client })
   host.innerHTML = renderNodeToString(tree, islandRenderState())
-  bindAll(host, tree, bound)
+  bindAll(host, tree, bound, true)
   return () => {
     for (const b of bound) b.el.removeEventListener(b.type, b.fn)
     bound.length = 0
@@ -386,7 +412,10 @@ export function hydrateIsland(host: OxElement, mod: unknown, props: unknown, opt
 }
 
 function islandRenderState(): ReturnType<typeof newRenderState> {
-  return newRenderState('routes/islands')
+  // `islandScope: true` keeps the replay's handler markers in the `h<n>` id
+  // space — the same space the page walk used for this island's subtree —
+  // while page-level markers live in `p<n>`. See render.ts RenderState.
+  return { ...newRenderState('routes/islands'), islandScope: true }
 }
 
 export type { ClientHandle, HandlerBinding }

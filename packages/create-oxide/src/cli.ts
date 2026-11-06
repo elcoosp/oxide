@@ -2,7 +2,9 @@
 // Four frameworks × four shapes; templates generated programmatically so each
 // emitted project is self-contained (framework flavor + per-shape route modules).
 import { mkdir, writeFile, readdir } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 export type Framework = 'react' | 'vue' | 'svelte' | 'solid';
 export type Shape = 'minimal' | 'blog' | 'dashboard' | 'storefront';
@@ -168,11 +170,25 @@ export function packageJson(framework: Framework): string {
     start: 'oxide start',
   };
   const inWorkspace = (process.env['PWD'] ?? '').includes('packages/');
-  const v = inWorkspace ? 'workspace:*' : '0.2.0';
+  // P0-3 (pre-0.1 readiness): the release is 0.1.0 — the scaffold used to pin
+  // 0.2.0, which does not exist, so `npm install` failed outright.
+  const v = inWorkspace ? 'workspace:*' : '0.1.0';
   const deps: Record<string, string> = {
     '@oxide-fw/core': v,
     [`@oxide-fw/${framework}`]: v,
+    // P0-4: the `oxide dev` script needs the CLI binary. The npm wrapper
+    // downloads the prebuilt binary in postinstall, so a scaffold works
+    // without a global install or a Rust toolchain.
+    '@oxide-fw/cli': v,
   };
+  // P0-3: the adapters declare the framework runtimes as OPTIONAL peer
+  // dependencies, so nothing installed them and the generated project could
+  // not compile. Add the runtime the chosen adapter needs, mirroring the
+  // adapter's own peer range.
+  const runtime = FRAMEWORK_RUNTIME_DEPS[framework];
+  for (const [name, range] of Object.entries(runtime)) {
+    deps[name] = range;
+  }
   return JSON.stringify(
     {
       name: `oxide-${framework}-app`,
@@ -184,6 +200,61 @@ export function packageJson(framework: Framework): string {
     null,
     2,
   ) + '\n';
+}
+
+/** Framework runtime packages the generated project must install (P0-3),
+ *  mirroring each adapter's peerDependencies ranges. */
+export const FRAMEWORK_RUNTIME_DEPS: Record<Framework, Record<string, string>> = {
+  react: { react: '^19.0.0', 'react-dom': '^19.0.0' },
+  vue: { vue: '^3.6.0-rc.11', '@vue/server-renderer': '^3.6.0-rc.11' },
+  svelte: { svelte: '^5.0.0' },
+  solid: { 'solid-js': '^2.0.0-rc.14', '@solidjs/web': '^2.0.0-rc.14' },
+};
+
+/** Generated tsconfig.json — TypeScript 7 (native preview) style, module
+ *  resolution + JSX settings matching what `oxide build` expects. */
+export function tsconfigJson(framework: Framework): string {
+  const jsx: Record<Framework, string> = {
+    react: 'react-jsx',
+    solid: 'react-jsx',
+    vue: 'preserve',
+    svelte: 'preserve',
+  };
+  return JSON.stringify(
+    {
+      compilerOptions: {
+        target: 'ES2023',
+        module: 'ESNext',
+        moduleResolution: 'bundler',
+        lib: ['ES2023', 'DOM', 'DOM.Iterable'],
+        types: [],
+        strict: true,
+        noEmit: true,
+        isolatedModules: true,
+        verbatimModuleSyntax: true,
+        skipLibCheck: true,
+        jsx: jsx[framework],
+        jsxImportSource: framework === 'solid' ? 'solid-js' : framework === 'react' ? 'react' : undefined,
+        allowImportingTsExtensions: true,
+      },
+      include: ['src', 'oxide.config.ts'],
+    },
+    null,
+    2,
+  ) + '\n';
+}
+
+/** Generated .gitignore — build output and env files (P0-3). */
+export function gitignore(): string {
+  return `node_modules/
+dist/
+.oxide/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+`;
 }
 
 export function readmeMd(framework: Framework, shape: Shape): string {
@@ -312,6 +383,10 @@ export async function scaffold(template: string, framework: string, dir: string)
     [join(dir, 'package.json'), packageJson(framework)],
     [join(dir, 'oxide.config.ts'), configTs(framework, template)],
     [join(dir, 'README.md'), readmeMd(framework, template)],
+    // P0-3: a generated project without a tsconfig or .gitignore could not
+    // typecheck and would commit dist/ + node_modules/. Emit both.
+    [join(dir, 'tsconfig.json'), tsconfigJson(framework)],
+    [join(dir, '.gitignore'), gitignore()],
     [join(dir, 'src', 'routes', 'layout.' + ext), layoutComponent(framework)],
     [join(dir, 'src', 'routes', 'page.' + ext), pageComponent(framework, template)],
     [join(dir, 'src', 'routes', 'page.server.ts'), pageServerTs(template)],
@@ -327,15 +402,165 @@ export async function scaffold(template: string, framework: string, dir: string)
   return writes.map(([p]) => p);
 }
 
+export interface ParsedArgs {
+  dir: string;
+  framework: Framework;
+  template: Shape;
+  help: boolean;
+  version: boolean;
+}
+
+export const USAGE = `Usage: create-oxide [project-name] [options]
+
+Scaffold an Oxide starter project.
+
+Arguments:
+  [project-name]        Target directory (default: current directory)
+
+Options:
+  -f, --framework <name>   Framework adapter: react, vue, svelte, solid
+  -t, --template <shape>   Starter shape: minimal, blog, dashboard, storefront
+  -d, --dir <path>         Target directory (same as the positional argument)
+  -h, --help               Show this help
+  -V, --version            Show the create-oxide version
+
+Examples:
+  npm create oxide@latest my-app
+  npm create oxide@latest my-app -- --framework react --template blog
+`;
+
+interface RawArgs {
+  flags: Record<string, string | boolean>;
+  positionals: string[];
+}
+
+/** Split argv into flags and positionals, accepting both `--flag value` and
+ *  `--flag=value` plus the single-dash short forms. Unknown flags error. */
+export function tokenize(argv: readonly string[]): RawArgs {
+  const flags: Record<string, string | boolean> = {};
+  const positionals: string[] = [];
+  const VALUE_FLAGS = new Set(['--framework', '-f', '--template', '-t', '--dir', '-d']);
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--') {
+      positionals.push(...argv.slice(i + 1));
+      break;
+    }
+    if (arg.startsWith('-')) {
+      let name = arg;
+      let value: string | undefined;
+      const eq = arg.indexOf('=');
+      if (eq !== -1) {
+        name = arg.slice(0, eq);
+        value = arg.slice(eq + 1);
+      }
+      if (VALUE_FLAGS.has(name) && value === undefined) {
+        value = argv[++i];
+        if (value === undefined) {
+          throw new Error(`flag ${name} requires a value\n\n${USAGE}`);
+        }
+      }
+      if (name === '--help' || name === '-h') {
+        flags['help'] = true;
+      } else if (name === '--version' || name === '-V') {
+        flags['version'] = true;
+      } else if (name === '--framework' || name === '-f') {
+        flags['framework'] = value!;
+      } else if (name === '--template' || name === '-t') {
+        flags['template'] = value!;
+      } else if (name === '--dir' || name === '-d') {
+        flags['dir'] = value!;
+      } else {
+        throw new Error(`unknown option "${arg}"\n\n${USAGE}`);
+      }
+    } else {
+      positionals.push(arg);
+    }
+  }
+  return { flags, positionals };
+}
+
+/** Parse argv into a scaffold request. Throws on unknown/invalid input with
+ *  a message that includes the usage text. Flags win; the legacy positional
+ *  order `[template, framework, dir]` is still honoured for backwards
+ *  compatibility (with a warning on stderr). */
+export function parseArgs(
+  argv: readonly string[],
+  defaults: { framework?: Framework; template?: Shape } = {},
+): ParsedArgs {
+  const { flags, positionals } = tokenize(argv);
+  // --help / --version short-circuit before flag validation.
+  if (flags['help'] === true || flags['version'] === true) {
+    return {
+      dir: '.',
+      framework: defaults.framework ?? 'react',
+      template: defaults.template ?? 'minimal',
+      help: flags['help'] === true,
+      version: flags['version'] === true,
+    };
+  }
+  let framework = (flags['framework'] as string | undefined) ?? defaults.framework;
+  let template = (flags['template'] as string | undefined) ?? defaults.template;
+  let dir = (flags['dir'] as string | undefined) ?? '.';
+
+  // Legacy order: [template, framework, dir?] — only when the first positional
+  // is a known shape and the second (if any) a known framework. `my-app` is
+  // not a shape, so the documented quick-start parses as a project name.
+  const p0 = positionals[0];
+  const p1 = positionals[1];
+  if (
+    p0 !== undefined &&
+    isShape(p0) &&
+    template === undefined &&
+    (p1 === undefined || isFramework(p1))
+  ) {
+    template = p0;
+    if (p1 !== undefined && framework === undefined) {
+      framework = p1;
+      console.error('note: positional <template> <framework> <dir> is deprecated; use --framework/--template');
+    }
+    if (positionals[2] !== undefined && flags['dir'] === undefined) dir = positionals[2];
+  } else {
+    if (p0 !== undefined && flags['dir'] === undefined) dir = p0;
+    if (p1 !== undefined) {
+      throw new Error(`unexpected extra argument "${p1}"\n\n${USAGE}`);
+    }
+  }
+
+  // Non-interactive defaults: the README headline `npx create-oxide my-app`
+  // must produce a runnable project with no questions asked. Explicit but
+  // INVALID flag values still error below.
+  template = template ?? 'minimal';
+  framework = framework ?? 'react';
+  if (!isShape(template)) {
+    throw new Error(`unknown template "${template}" (expected one of ${SHAPES.join(', ')})\n\n${USAGE}`);
+  }
+  if (!isFramework(framework)) {
+    throw new Error(`unknown framework "${framework}" (expected one of ${FRAMEWORKS.join(', ')})\n\n${USAGE}`);
+  }
+  return { dir, framework, template, help: flags['help'] === true, version: flags['version'] === true };
+}
+
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<number> {
-  const [template = 'minimal', framework = 'react', dir = '.'] = argv;
-  if (!isShape(template) || !isFramework(framework)) {
-    console.error(`✖ unknown template "${template}" or framework "${framework}"`);
+  let parsed: ParsedArgs;
+  try {
+    parsed = parseArgs(argv);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`✖ ${message}`);
     return 2;
   }
+  if (parsed.help) {
+    console.log(USAGE.trim());
+    return 0;
+  }
+  if (parsed.version) {
+    console.log('create-oxide 0.1.0');
+    return 0;
+  }
   try {
-    const files = await scaffold(template, framework, dir);
-    console.log(`✔ scaffolded oxide ${template} (${framework}) into ${dir}`);
+    const files = await scaffold(parsed.template, parsed.framework, parsed.dir);
+    console.log(`✔ scaffolded oxide ${parsed.template} (${parsed.framework}) into ${parsed.dir}`);
     for (const f of files) console.log(`  ${f}`);
     console.log(`\nnext: npm install && npm run dev`);
     return 0;
@@ -347,6 +572,26 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   }
 }
 
-if (process.argv[1] && process.argv[1].endsWith('cli.ts')) {
+/** True when THIS module is the process entry point (bin execution), not an
+ *  import (tests, library consumers).
+ *
+ *  The previous guard — `process.argv[1].endsWith('cli.ts')` — only matched
+ *  the SOURCE filename, and tsdown compiles this file to `dist/index.js`, the
+ *  path `package.json`'s `bin` points at. `pnpm create oxide` therefore
+ *  evaluated the module and exited 0 without ever invoking `main()`: a
+ *  silent no-op CLI. Comparing the resolved entry URL is the standard ESM
+ *  "am I main?" check; `realpathSync` folds the `.bin/create-oxide` symlink
+ *  so both sides point at the same file. */
+function isMainModule(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return pathToFileURL(realpathSync(entry)).href === import.meta.url;
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
   main().then((code) => process.exit(code));
 }

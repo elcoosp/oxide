@@ -15,7 +15,10 @@ use crate::{
     Transformer, inject_hmr_boundary, is_server_module_path, scan_import_spans,
 };
 use oxc_allocator::Allocator;
-use oxc_ast::ast::{Program, Statement};
+use oxc_ast::ast::{
+    BindingPattern, Declaration, ExportDefaultDeclarationKind, Expression, Program, Statement,
+    VariableDeclaration,
+};
 use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType};
 use oxide_fw_diagnostics::Diagnostic;
@@ -193,6 +196,469 @@ pub fn lower_to_js(
     let code = ret.code;
     let map = ret.map.map(|m| m.into_owned_sourcemap());
     Ok((code, map))
+}
+
+/// Inject React Refresh's `$RefreshReg$` calls for every top-level component
+/// (function declaration, class declaration, or arrow/function/class bound to
+/// `const`/`let`/`var`), plus the `$RefreshReg$`/`$RefreshSig$` shim at the
+/// top of the module. Wrapped in `export` declarations too.
+///
+/// Returns the input unchanged for:
+/// - Non-tsx/jsx languages (React Refresh only matters for React components).
+/// - Sources that already declare `$RefreshReg$` (idempotent — a caller that
+///   re-transforms an already-injected source keeps one shim and one set of
+///   registration calls).
+/// - Sources that fail to parse (best-effort; the caller will get the parse
+///   diagnostic from `lower_to_js` first).
+/// - Sources with no top-level components.
+///
+/// The `$RefreshSig$` chain for custom hooks is intentionally **not**
+/// generated — React Refresh treats an unhinted component as "always
+/// invalidated when its module changes," which is a safe default and what the
+/// official Babel plugin does in the absence of a stable hook signature. A
+/// later phase can add the signature chain.
+pub fn inject_react_refresh(code: &str, lang: &str, path: &str) -> Result<String> {
+    if !matches!(lang, "tsx" | "jsx") {
+        return Ok(code.to_string());
+    }
+    if code.contains("$RefreshReg$") {
+        return Ok(code.to_string());
+    }
+    let allocator = Allocator::default();
+    let source_type = source_type_for(lang);
+    let parsed = Parser::new(&allocator, code, source_type).parse();
+    if !parsed.diagnostics.is_empty() {
+        return Ok(code.to_string());
+    }
+    let mut regs: Vec<String> = Vec::new();
+    for stmt in &parsed.program.body {
+        regs.extend(top_level_component_names(stmt));
+    }
+    if regs.is_empty() {
+        return Ok(code.to_string());
+    }
+    // §1.2: collect hook-wrapping edits BEFORE emitting. Each `useX(...)`
+    // top-level call inside a component function body gets its CALLEE
+    // wrapped as `_s(useX)(...)` — the outer `_s(useX)` records the hook
+    // type in the signature, the trailing `(...)` invokes the real hook. React Refresh's `createSignatureFunctionForTransform()`
+    // reads this to detect hook-shape changes: same sequence → in-place
+    // update; different → remount (rather than silently keeping the OLD
+    // closure against the new hook chain).
+    //
+    // Scope (deliberately narrow): top-level `VariableDeclaration`
+    // declarators whose init is a `use*` call, and top-level
+    // `ExpressionStatement`s whose expression is a `use*` call. Nested
+    // hooks (inside `.map(...)`, `if (...)`) are NOT wrapped — React's
+    // rules of hooks forbid them at runtime anyway, so wrapping them is
+    // not needed and the byte-span edit is more error-prone there.
+    // §1.2: per-COMPONENT hook-sequence signatures. Emitted at MODULE
+    // scope AFTER the component declaration, matching react-refresh's
+    // babel plugin (react-refresh/cjs/react-refresh-babel.development.js
+    // line 468-480: `insertAfterPath.insertAfter(_s(Component, key))`).
+    //
+    // What `key` is (line 205-229 of the plugin + line 129-137 of
+    // `getHookCallsSignature`): a STRING built from the hook occurrences
+    // in the component body, each formatted `name{varName(args)}`, joined
+    // by `\n`. `setSignature(Component, key)` records this string;
+    // `refreshUpdate` compares old vs new `computeFullKey(sig)` — same
+    // → in-place update, different → remount. If the key were the
+    // component path (as an earlier attempt emitted), old and new keys
+    // would be identical, and the runtime would do an in-place update
+    // against a mismatched hook chain — React throws "Rendered more hooks
+    // than during the previous render" exactly as observed.
+    //
+    // What `getCustomHooks` is (4th arg of `_s(...)`): a function that
+    // returns an array of hook FUNCTIONS in body order. The runtime looks
+    // each up in `allSignaturesByType`; if found, appends its key to
+    // `computeFullKey`. Per-hook entries only exist if we emit them (we
+    // don't in this implementation — no need, since the sequence string
+    // already covers shape), so this returns an empty array for now,
+    // which the runtime handles (line 89-93: default `getCustomHooks` =
+    // `() => []`).
+    // §1.2 EMIT TEMPORARILY DISABLED (2026-11-04). The walker
+    // (build_hook_key + collect_components_for_sig) is verified and
+    // tested, but emitting `_s(Comp, key)` at module scope was
+    // destabilizing the dev server under test-suite load — see the
+    // session's diagnostic logs (`ECONNRESET` on pure-HTTP tests
+    // indicates a Rust panic in the compiler during a rebuild burst;
+    // `hmr-refresh-sig.spec.ts` passes in isolation, so the emit is
+    // correct for the sig path but interacts badly with the watcher's
+    // rebuild-burst path).
+    //
+    // The walker and runtime hook (`__oxide_refresh_sig` + bufferedSigs)
+    // ship; the emit is re-enabled below.
+    //
+    // §1.2 RE-ENABLED (2026-11-05). The ECONNRESET the disable note refers
+    // to was the boot-storm chain fixed in 8359a20b (watcher boot baseline,
+    // node_modules event filtering, §3.3 boot-settle grace, stale-generation
+    // gating, client runtime race): the "rebuild burst under full-suite
+    // load" that isolated runs never reproduced was the boot-time
+    // workspace-rebuild flood, not the emit. The emit shape below inserts
+    // `_s(Comp, hook_key);` at MODULE scope directly after each component's
+    // declaring statement — the same placement react-refresh's babel plugin
+    // uses (insertAfterPath on the declaration), which also keeps
+    // arrow-function components (`const X = () => …`) syntactically valid,
+    // unlike a body-end insertion.
+    let mut components: Vec<ComponentEmit> = Vec::new();
+    for stmt in &parsed.program.body {
+        collect_components_for_sig(stmt, code, &mut components);
+    }
+
+    // Build (byte_position, insert_text) edits: one `_s(Comp, key);\n` after
+    // each component's body. Ascending order, then reverse for splice safety.
+    let mut edits: Vec<(usize, String)> = Vec::new();
+    for comp in &components {
+        let stmt = format!(
+            "_s({name}, {key:?});\n",
+            name = comp.name,
+            key = comp.hook_key,
+        );
+        edits.push((comp.insert_at, stmt));
+    }
+    edits.sort_by_key(|(pos, _)| std::cmp::Reverse(*pos));
+    let mut code_with_sig = code.to_string();
+    for (pos, text) in edits {
+        code_with_sig.insert_str(pos, &text);
+    }
+
+    let mut out = String::with_capacity(code_with_sig.len() + 200 + regs.len() * 40);
+    out.push_str("// oxide: React Refresh (dev only)\n");
+    out.push_str(
+        "const $RefreshReg$ = (t, id) => { const r = globalThis.__oxide_refresh_reg; if (typeof r === 'function') { try { r(t, id, import.meta.url); } catch {} } };\n",
+    );
+    out.push_str("const $RefreshSig$ = () => (globalThis.__oxide_refresh_sig ? globalThis.__oxide_refresh_sig() : ((t) => t));\n");
+    // §1.2: one `_s` per module, shared by every wrapped hook call. The
+    // runtime's `createSignatureFunctionForTransform` returns a per-component
+    // tracker that discriminates by `type` (the hook function itself), so
+    // sharing one `_s` across all components is what react-refresh's own
+    // babel plugin does.
+    out.push_str("const _s = $RefreshSig$();\n");
+    out.push_str(&code_with_sig);
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    // Emit `path:name` as the id. React Refresh keys families by the
+    // id passed to `$RefreshReg$`: if the id changes, the old and new
+    // module versions are treated as different components and
+    // `performReactRefresh()` has nothing to correlate against (the
+    // screen doesn't update). Building the id from `import.meta.url`
+    // breaks this because the HMR re-import URL carries `?t=<ms>`. The
+    // source path is stable across reloads, so use it directly.
+    for name in &regs {
+        let stable_id = format!("{path}:{name}");
+        out.push_str("$RefreshReg$(");
+        out.push_str(name);
+        out.push_str(", ");
+        out.push_str(&format!("{:?}", stable_id));
+        out.push_str(");\n");
+    }
+    Ok(out)
+}
+
+/// §1.2: per-component hook-signature info. Each top-level component
+/// gets a `_s(Component, "path:Name", false, function() { return [hooks]; });`
+/// call at the START of its body. That records the component's
+/// hook-sequence signature, which `performReactRefresh` uses to
+/// differentiate in-place updates (same sequence) from remounts
+/// (different sequence). Without this, the runtime has only per-hook
+/// entries (from `_s(useState, "useState")`) but no component-level
+/// sequence to compare.
+/// §1.2: a component with its hook-sequence key. Emitted as
+/// `_s(name, key)` at module scope after the component declaration.
+struct ComponentEmit {
+    name: String,
+    /// Byte offset to insert the `_s(name, key);\n` — the END of the
+    /// component's DECLARING statement (function declaration, variable
+    /// declaration, or their export wrappers). Statement end, not function
+    /// body end: an arrow-function component (`const X = () => {}`) would
+    /// otherwise get the insert landed between `}` and `;`.
+    insert_at: usize,
+    /// Babel-matching hook-sequence string. E.g. for
+    ///   `const [count, setCount] = useState(0); useEffect(() => {}, []);`
+    /// the key is `"useState{[count, setCount](0)}\nuseEffect{}"`.
+    /// Different hook sequences produce different keys → remount.
+    hook_key: String,
+}
+
+/// §1.2: build the hook-sequence key for a function body. Returns `None`
+/// when the body has no top-level hooks — such a component is a "no possible
+/// shape change" and the runtime treats it as in-place-always, which is
+/// correct (nothing to remount over).
+fn build_hook_key(body: &oxc_ast::ast::FunctionBody<'_>, code: &str) -> Option<String> {
+    use oxc_ast::ast::{BindingPattern, Expression, Statement};
+    use oxc_span::GetSpan;
+    let mut parts: Vec<String> = Vec::new();
+    for stmt in &body.statements {
+        let mut push_hook =
+            |hook: &str, var_pattern: Option<&str>, call: &oxc_ast::ast::CallExpression<'_>| {
+                let mut s = String::new();
+                s.push_str(hook);
+                s.push('{');
+                if let Some(v) = var_pattern {
+                    s.push_str(v);
+                }
+                // Babel format: useState and useReducer append their relevant
+                // arg source. From `getHookCallsSignature` (babel plugin
+                // line ~129-137): useState → arg[0], useReducer → arg[1].
+                if hook == "useState" && !call.arguments.is_empty() {
+                    if let Some(expr) = call.arguments[0].as_expression() {
+                        let span = expr.span();
+                        s.push('(');
+                        s.push_str(&code[span.start as usize..span.end as usize]);
+                        s.push(')');
+                    }
+                } else if hook == "useReducer"
+                    && call.arguments.len() > 1
+                    && let Some(expr) = call.arguments[1].as_expression()
+                {
+                    let span = expr.span();
+                    s.push('(');
+                    s.push_str(&code[span.start as usize..span.end as usize]);
+                    s.push(')');
+                }
+                s.push('}');
+                parts.push(s);
+            };
+        match stmt {
+            Statement::VariableDeclaration(v) => {
+                for d in &v.declarations {
+                    let Some(init) = &d.init else { continue };
+                    let Expression::CallExpression(call) = init else {
+                        continue;
+                    };
+                    let Expression::Identifier(id) = &call.callee else {
+                        continue;
+                    };
+                    let name = id.name.as_str();
+                    if name.len() < 4
+                        || !name.starts_with("use")
+                        || !name
+                            .chars()
+                            .nth(3)
+                            .map(|c| c.is_uppercase())
+                            .unwrap_or(false)
+                    {
+                        continue;
+                    }
+                    let var_src: Option<String> = match &d.id {
+                        BindingPattern::BindingIdentifier(id) => Some(id.name.to_string()),
+                        other => {
+                            let span = other.span();
+                            Some(code[span.start as usize..span.end as usize].to_string())
+                        }
+                    };
+                    push_hook(name, var_src.as_deref(), call);
+                }
+            }
+            Statement::ExpressionStatement(es) => {
+                let Expression::CallExpression(call) = &es.expression else {
+                    continue;
+                };
+                let Expression::Identifier(id) = &call.callee else {
+                    continue;
+                };
+                let name = id.name.as_str();
+                if name.len() < 4
+                    || !name.starts_with("use")
+                    || !name
+                        .chars()
+                        .nth(3)
+                        .map(|c| c.is_uppercase())
+                        .unwrap_or(false)
+                {
+                    continue;
+                }
+                push_hook(name, None, call);
+            }
+            _ => {}
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n"))
+    }
+}
+
+/// §1.2: walk a top-level statement and collect every component it declares
+/// (function decl, `const X = () => ...`, `const X = function ...`, wrapped
+/// in export). Each with its hook-sequence key and body end offset.
+fn collect_components_for_sig(
+    stmt: &oxc_ast::ast::Statement<'_>,
+    code: &str,
+    out: &mut Vec<ComponentEmit>,
+) {
+    use oxc_ast::ast::{
+        BindingPattern, Declaration, ExportDefaultDeclarationKind, Expression, Statement,
+    };
+    use oxc_span::GetSpan;
+
+    fn walk(
+        name: &str,
+        body: Option<&oxc_ast::ast::FunctionBody<'_>>,
+        insert_at: usize,
+        code: &str,
+        out: &mut Vec<ComponentEmit>,
+    ) {
+        let Some(body) = body else { return };
+        if let Some(key) = build_hook_key(body, code) {
+            out.push(ComponentEmit {
+                name: name.to_string(),
+                insert_at,
+                hook_key: key,
+            });
+        }
+    }
+
+    // §1.2: the `_s(Comp, key);` statement is inserted AFTER the declaring
+    // statement's end — the same placement react-refresh's babel plugin
+    // uses (insertAfterPath on the declaration). Inserting at the function
+    // BODY's end would land between an arrow function's closing `}` and the
+    // declarator's `;` (`const X = () => {}_s(X, …);`) — a syntax error.
+    let stmt_end = stmt.span().end as usize;
+    match stmt {
+        Statement::FunctionDeclaration(f) => {
+            if let Some(id) = &f.id {
+                walk(id.name.as_str(), f.body.as_deref(), stmt_end, code, out);
+            }
+        }
+        Statement::VariableDeclaration(v) => {
+            for d in &v.declarations {
+                let BindingPattern::BindingIdentifier(id) = &d.id else {
+                    continue;
+                };
+                let Some(init) = &d.init else { continue };
+                match init {
+                    Expression::ArrowFunctionExpression(a) => {
+                        if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &a.body {
+                            walk(id.name.as_str(), Some(body), stmt_end, code, out);
+                        }
+                    }
+                    Expression::FunctionExpression(fe) => {
+                        walk(id.name.as_str(), fe.body.as_deref(), stmt_end, code, out);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Statement::ExportDeclaration(e) => match &e.declaration {
+            Declaration::FunctionDeclaration(f) => {
+                if let Some(id) = &f.id {
+                    walk(id.name.as_str(), f.body.as_deref(), stmt_end, code, out);
+                }
+            }
+            Declaration::VariableDeclaration(v) => {
+                for d in &v.declarations {
+                    let BindingPattern::BindingIdentifier(id) = &d.id else {
+                        continue;
+                    };
+                    let Some(init) = &d.init else { continue };
+                    if let Expression::ArrowFunctionExpression(a) = init
+                        && let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &a.body
+                    {
+                        walk(id.name.as_str(), Some(body), stmt_end, code, out);
+                    }
+                }
+            }
+            _ => {}
+        },
+        Statement::ExportDefaultDeclaration(e) => {
+            if let ExportDefaultDeclarationKind::FunctionDeclaration(f) = &e.declaration {
+                let name =
+                    f.id.as_ref()
+                        .map(|i| i.name.to_string())
+                        .unwrap_or_else(|| "default".to_string());
+                walk(&name, f.body.as_deref(), stmt_end, code, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn top_level_component_names(stmt: &Statement<'_>) -> Vec<String> {
+    match stmt {
+        Statement::FunctionDeclaration(f) => {
+            f.id.as_ref()
+                .map(|id| vec![id.name.to_string()])
+                .unwrap_or_default()
+        }
+        Statement::ClassDeclaration(c) => {
+            c.id.as_ref()
+                .map(|id| vec![id.name.to_string()])
+                .unwrap_or_default()
+        }
+        Statement::ExportDeclaration(e) => match &e.declaration {
+            Declaration::FunctionDeclaration(f) => {
+                f.id.as_ref()
+                    .map(|id| vec![id.name.to_string()])
+                    .unwrap_or_default()
+            }
+            Declaration::ClassDeclaration(cl) => cl
+                .id
+                .as_ref()
+                .map(|id| vec![id.name.to_string()])
+                .unwrap_or_default(),
+            Declaration::VariableDeclaration(v) => var_declarator_component_names(v.as_ref()),
+            _ => Vec::new(),
+        },
+        Statement::VariableDeclaration(v) => var_declarator_component_names(v.as_ref()),
+        Statement::ExportDefaultDeclaration(e) => match &e.declaration {
+            ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
+                f.id.as_ref()
+                    .map(|id| vec![id.name.to_string()])
+                    .unwrap_or_default()
+            }
+            ExportDefaultDeclarationKind::ClassDeclaration(cl) => cl
+                .id
+                .as_ref()
+                .map(|id| vec![id.name.to_string()])
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
+fn var_declarator_component_names(v: &VariableDeclaration<'_>) -> Vec<String> {
+    v.declarations
+        .iter()
+        .filter_map(|decl| {
+            let init = decl.init.as_ref()?;
+            if !matches!(
+                init,
+                Expression::ArrowFunctionExpression(_)
+                    | Expression::FunctionExpression(_)
+                    | Expression::ClassExpression(_)
+            ) {
+                return None;
+            }
+            if let BindingPattern::BindingIdentifier(id) = &decl.id {
+                Some(id.name.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// `lower_to_js` with React Refresh registration calls injected for `.tsx`
+/// and `.jsx` sources. The transform ordering matches the JSX-lowering path:
+/// parse once, lower to JS, then walk the **original** source for component
+/// names (the lowered output still contains the same top-level bindings). If
+/// either pass fails, the JS-lowered code is still returned — a
+/// Refresh-registration failure must never break rendering.
+pub fn lower_to_js_with_refresh(
+    code: &str,
+    lang: &'static str,
+    path: &str,
+    jsx_import_source: Option<&str>,
+) -> Result<(String, Option<oxc_sourcemap::OwnedSourceMap>)> {
+    let (lowered, srcmap) = lower_to_js(code, lang, path, jsx_import_source)?;
+    if !matches!(lang, "tsx" | "jsx") {
+        return Ok((lowered, srcmap));
+    }
+    let with_refresh = inject_react_refresh(&lowered, lang, path).unwrap_or(lowered);
+    Ok((with_refresh, srcmap))
 }
 
 impl OxcTransformer {
@@ -693,14 +1159,59 @@ fn ast_server_fn_stubs(
 
             let repl = match env {
                 // §9.4: the client stub delegates to `__oxide_call_fn` from
-                // `oxide/fn`, which owns the fetch + wire format. Previously
+                // `@oxide-fw/core/fn`, which owns the fetch + wire format. Previously
                 // this inlined a fetch calling bare `__oxide_encode` /
                 // `__oxide_decode` globals that no module defines.
+                //
+                // `Object.assign(fn, { id })` keeps `NAME.id` working in app
+                // code (`const fnId = greet.id` for a `data-greeting-fn`
+                // attribute): a bare arrow has no `.id`, so the client rendered
+                // `undefined` where the server rendered a runtime-assigned
+                // `anonymous-N` — a guaranteed hydration mismatch.
                 Env::Client => {
-                    format!("{name} = (async (...args) => __oxide_call_fn(\"{id}\", args));")
+                    format!(
+                        "{name} = Object.assign((async (...args) => __oxide_call_fn(\"{id}\", args)), {{ id: \"{id}\" }});"
+                    )
                 }
+                // §9.4: rewrite the single-argument form to the ID-FIRST form
+                // (`serverFn("<static id>", fn)`). Keeping the raw
+                // `serverFn(fn)` call made the RUNTIME assign an
+                // `anonymous-N` id on the server while the client baked the
+                // static id — the two sides disagreed on `NAME.id` and every
+                // page that rendered it failed hydration. With the id-first
+                // form the runtime registers under the SAME static id the
+                // client compiled (the appended `__oxide_register_fn` line
+                // stays as a belt-and-braces registration).
                 Env::Ssr | Env::Edge => {
-                    code[d.span.start as usize..d.span.end as usize].to_string()
+                    let start = d.span.start as usize;
+                    let end = d.span.end as usize;
+                    let decl = &code[start..end];
+                    // Insert `"<id>", ` right after the callee's opening
+                    // paren (`serverFn(`). The call span is byte-exact from
+                    // the AST; the callee is the `serverFn` identifier per
+                    // `as_server_fn_call`.
+                    match decl.find("serverFn") {
+                        Some(callee_at) => {
+                            let after_callee = callee_at + "serverFn".len();
+                            let rest = &decl[after_callee..];
+                            match rest.find('(') {
+                                Some(paren_at) => {
+                                    let insert_at = after_callee + paren_at + 1;
+                                    let mut out = String::with_capacity(decl.len() + id.len() + 4);
+                                    out.push_str(&decl[..insert_at]);
+                                    out.push('"');
+                                    out.push_str(&id);
+                                    out.push_str("\", ");
+                                    out.push_str(&decl[insert_at..]);
+                                    out
+                                }
+                                // No paren (impossible for a CallExpression) —
+                                // keep the original verbatim.
+                                None => decl.to_string(),
+                            }
+                        }
+                        None => decl.to_string(),
+                    }
                 }
             };
             edits.push((d.span.start, d.span.end, repl));
@@ -736,7 +1247,7 @@ fn ast_server_fn_stubs(
     }
 
     if !client_stub_ids.is_empty() {
-        let import = "import { __oxide_call_fn } from \"oxide/fn\";\n";
+        let import = "import { __oxide_call_fn } from \"@oxide-fw/core/fn\";\n";
         out = format!("{import}{out}");
     }
     if !ssr_lines.is_empty() {
@@ -887,4 +1398,110 @@ type _UnusedAstMap = AstBTreeMap<String, String>;
 /// Build a `Location` for a 1-based (line, column) in `path`.
 fn oxidation_location(path: &str, line: usize, col: usize) -> oxide_fw_diagnostics::Location {
     oxide_fw_diagnostics::Location::file(path, line as u32, col as u32)
+}
+
+#[cfg(test)]
+mod react_refresh_tests {
+    use super::*;
+
+    #[test]
+    fn tsx_function_declaration_gets_reg() {
+        let out = inject_react_refresh(
+            "export default function Page() { return null; }\n",
+            "tsx",
+            "src/routes/page.tsx",
+        )
+        .unwrap();
+        assert!(out.contains("$RefreshReg$(Page"), "missing reg call: {out}");
+        assert!(out.contains("const $RefreshReg$"), "missing shim: {out}");
+    }
+
+    #[test]
+    fn tsx_named_export_arrow_gets_reg() {
+        let out = inject_react_refresh(
+            "export const Widget = () => null;\n",
+            "tsx",
+            "src/routes/widget.tsx",
+        )
+        .unwrap();
+        assert!(
+            out.contains("$RefreshReg$(Widget"),
+            "missing reg call: {out}"
+        );
+    }
+
+    #[test]
+    fn tsx_class_gets_reg() {
+        let out = inject_react_refresh(
+            "export class K extends React.Component {}\n",
+            "tsx",
+            "src/comp.tsx",
+        )
+        .unwrap();
+        assert!(out.contains("$RefreshReg$(K"), "missing reg call: {out}");
+    }
+
+    #[test]
+    fn tsx_multiple_components_get_regs() {
+        let out = inject_react_refresh(
+            "function A() { return null; }\nfunction B() { return null; }\n",
+            "tsx",
+            "src/x.tsx",
+        )
+        .unwrap();
+        assert!(out.contains("$RefreshReg$(A"));
+        assert!(out.contains("$RefreshReg$(B"));
+    }
+
+    #[test]
+    fn non_component_gets_no_reg() {
+        let out = inject_react_refresh("export const FOO = 42;\n", "tsx", "src/x.tsx").unwrap();
+        assert!(!out.contains("$RefreshReg$("), "should not inject: {out}");
+    }
+
+    #[test]
+    fn non_tsx_passthrough() {
+        let out = inject_react_refresh("const x = 1;\n", "ts", "src/x.ts").unwrap();
+        assert!(!out.contains("$RefreshReg$"));
+    }
+
+    #[test]
+    fn parser_hoists_exported_components_into_bare_statements() {
+        // The current transform relies on the parser producing bare
+        // `Statement::VariableDeclaration` / `FunctionDeclaration` for
+        // `export const X = () => ...` / `export function F() {}`. If a
+        // future oxc reverses that (puts `declaration` back on
+        // `ExportNamedDeclaration`), this test fails loudly, prompting
+        // the `top_level_component_names` match to add the arm back.
+        let out = inject_react_refresh(
+            "export const Foo = () => null;\nexport function Bar() { return null; }\n",
+            "tsx",
+            "src/x.tsx",
+        )
+        .unwrap();
+        assert!(
+            out.contains("$RefreshReg$(Foo"),
+            "exported const not registered: {out}"
+        );
+        assert!(
+            out.contains("$RefreshReg$(Bar"),
+            "exported fn not registered: {out}"
+        );
+    }
+
+    #[test]
+    fn idempotent() {
+        let src = "export default function Page() { return null; }\n";
+        let once = inject_react_refresh(src, "tsx", "src/x.tsx").unwrap();
+        let twice = inject_react_refresh(&once, "tsx", "src/x.tsx").unwrap();
+        assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn lower_to_js_with_refresh_emits_reg_for_tsx() {
+        let src = "import React from 'react';\nexport default function Page() {\n  return <div>hi</div>;\n}\n";
+        let (out, _) = lower_to_js_with_refresh(src, "tsx", "src/page.tsx", None).unwrap();
+        assert!(out.contains("$RefreshReg$(Page"), "missing reg: {out}");
+        assert!(!out.contains("<div>hi</div>"), "jsx not lowered: {out}");
+    }
 }

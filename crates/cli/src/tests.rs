@@ -1037,6 +1037,49 @@ async fn http_get(addr: std::net::SocketAddr, path: &str) -> String {
     String::from_utf8_lossy(&buf).into_owned()
 }
 
+/// Extract the body from an HTTP/1.1 response and de-chunk it if the
+/// transport used `transfer-encoding: chunked`. Header assertions must
+/// stay on the raw response (`http_get`), because decoding strips the
+/// `content-length`/`transfer-encoding` markers. Body-content assertions
+/// use this so a substring that happens to straddle a chunk boundary
+/// (e.g. `<div id="root" data-reactroot="">` split at `data-reactro|ot`)
+/// is still found.
+#[allow(dead_code)]
+fn body_of(raw: &str) -> String {
+    let body = match raw.split_once("\r\n\r\n") {
+        Some((_, b)) => b,
+        None => return String::new(),
+    };
+    if raw.to_lowercase().contains("transfer-encoding: chunked") {
+        decode_chunked(body)
+    } else {
+        body.to_string()
+    }
+}
+
+#[allow(dead_code)]
+fn decode_chunked(mut s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    while let Some((sz_line, rest)) = s.split_once("\r\n") {
+        let Ok(sz) = usize::from_str_radix(sz_line.trim(), 16) else {
+            break;
+        };
+        if sz == 0 {
+            break;
+        }
+        if rest.len() < sz {
+            out.push_str(rest);
+            break;
+        }
+        out.push_str(&rest[..sz]);
+        s = rest[sz..].trim_start_matches("\r\n");
+        if s.is_empty() {
+            break;
+        }
+    }
+    out
+}
+
 /// Start the real dev server against `examples/smoke-app-react` and issue HTTP
 /// requests. This closes the loop between the CLI subcommands (already
 /// E2E-tested in `smoke_app_renders_through_real_config`) and the
@@ -1138,16 +1181,17 @@ async fn dev_server_serves_smoke_app_over_http() {
     // assertion is on the *framework* shape — the React root marker — not on
     // the fixture's page markup: that coupling is covered by
     // `cli_render_resolves_components_from_the_built_entry`.
+    let home_body = body_of(&resp_home);
     assert!(
-        resp_home.contains("data-reactroot"),
+        home_body.contains("data-reactroot"),
         "home body should carry the framework root marker:\n{}",
-        resp_home
+        home_body
     );
     assert!(
-        !resp_home.contains("data-ox-not-found"),
+        !home_body.contains("data-ox-not-found"),
         "home must NOT be the not-found boundary — the route id must \
          match the adapter's expected key:\n{}",
-        resp_home
+        home_body
     );
     // Health probe: the pipeline's built-in health path answers before
     // dispatch (spec §12.1). Cheap second request confirms the server
@@ -1189,15 +1233,16 @@ async fn dev_server_serves_smoke_app_over_http() {
     //       IR fallback (BlogPage in the Atlas registry) renders the slug
     //       as part of its byline, so this proves the param threaded through
     //       router → dispatch → PageRenderInput → renderer.
+    let blog_body = body_of(&resp_blog);
     assert!(
-        !resp_blog.contains("data-ox-not-found"),
+        !blog_body.contains("data-ox-not-found"),
         "blog route must not hit the not-found boundary:\n{}",
-        resp_blog
+        blog_body
     );
     assert!(
-        resp_blog.contains("hello-smoke"),
+        blog_body.contains("hello-smoke"),
         "blog body should carry the URL param slug (rendered by the smoke-app's own page.tsx):\n{}",
-        resp_blog
+        blog_body
     );
 
     // Clean shutdown; the accept loop notices and the listener drops.
@@ -8308,5 +8353,335 @@ async fn action_set_cookie_survives_200_rerender() {
         cookies.iter().any(|v| v.contains("oxide_b6=testvalue")),
         "action's Set-Cookie must survive the 200 re-render; headers: {:?}",
         resp.headers,
+    );
+}
+
+/// Phase 4b E2E: proves the native ESM dev server is wired end-to-end — the
+/// page HTML points at `/@boot/boot.mjs`, that file imports the prebundle
+/// `hot` URL, `.tsx` sources are served as transformed ESM, and `.server.*`
+/// sources are refused with 403.
+///
+/// `#[ignore]` for the same reasons as `dev_server_serves_smoke_app_over_http`:
+/// needs `pnpm install` + `pnpm --filter @oxide-fw/core build` so
+/// `packages/core/dist/` exists and `ensure_dev_client_bundle` can populate
+/// `dist/client/`. Run with:
+///     cargo test -p oxide-fw-cli -- --ignored dev_server_serves_esm_urls_over_http
+#[tokio::test]
+#[ignore]
+async fn dev_server_serves_esm_urls_over_http() {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root");
+    let smoke = workspace.join("examples/smoke-app-react");
+    let config_path = smoke.join("oxide.config.ts");
+    assert!(
+        config_path.is_file(),
+        "smoke-app fixture missing at {}; run `pnpm install`",
+        smoke.display()
+    );
+
+    let stack = crate::framework_shim::build_framework_stack(
+        Some(&config_path),
+        oxide_fw_config::JsBackend::Node,
+        None,
+        None,
+    )
+    .await;
+
+    let started = crate::start_dev_server_full(
+        smoke.to_str().expect("smoke path utf-8"),
+        Some(0),
+        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        None,
+        Vec::new(),
+        stack,
+        None,
+    )
+    .await
+    .expect("start_dev_server_full");
+    let addr = started.addr;
+
+    // --- Home page HTML: boot script URL is the ESM entry ---
+    let home = http_get(addr, "/").await;
+    assert!(
+        home.starts_with("HTTP/1.1 200"),
+        "home status line: {}",
+        home.lines().next().unwrap_or("")
+    );
+    assert!(
+        home.contains("src=\"/@boot/boot.mjs\""),
+        "home HTML should reference /@boot/boot.mjs with a single leading slash: {home}"
+    );
+    assert!(
+        !home.contains("//@boot/boot.mjs"),
+        "boot script URL must not have a doubled leading slash (ERR_NAME_NOT_RESOLVED): {home}"
+    );
+    assert!(
+        !home.contains("/client/index-"),
+        "home HTML should not reference a chunk file in ESM mode: {home}"
+    );
+
+    // --- Boot entry: imports the prebundle hot runtime + page module ---
+    let boot = http_get(addr, "/@boot/boot.mjs").await;
+    assert!(
+        boot.starts_with("HTTP/1.1 200"),
+        "boot entry status line: {}",
+        boot.lines().next().unwrap_or("")
+    );
+    assert!(
+        boot.contains("/@prebundle/@oxide-fw/core/dist/client-hot.js"),
+        "boot entry should import the prebundle hot URL: {boot}"
+    );
+    assert!(
+        boot.contains("/src/routes/index/page.tsx"),
+        "boot entry should import the page: {boot}"
+    );
+    // REGRESSION GUARD: the boot entry must never import a server-only
+    // route file. If it does, the browser fetches the file, the handler
+    // correctly returns 403 on a transitive `.server.` import, and the
+    // whole module graph halts — no boot, no HMR, no hydration. Symptom:
+    // editing a file does nothing in the browser.
+    for bad in [
+        ".server.ts",
+        ".server.tsx",
+        ".server.js",
+        ".server.jsx",
+        "/route.ts",
+        "/route.js",
+        "/socket.ts",
+        "/socket.js",
+        "/middleware.ts",
+        "/middleware.js",
+    ] {
+        assert!(
+            !boot.contains(bad),
+            "boot entry must not import server-only files ({bad}): {boot}"
+        );
+    }
+
+    // --- Source .tsx: lowered to ESM with refresh registration ---
+    let page_tsx = http_get(addr, "/src/routes/index/page.tsx").await;
+    assert!(
+        page_tsx.starts_with("HTTP/1.1 200"),
+        "page.tsx status: {}",
+        page_tsx.lines().next().unwrap_or("")
+    );
+    assert!(
+        page_tsx.contains("text/javascript"),
+        "page.tsx should be served as JS: {page_tsx}"
+    );
+    assert!(
+        page_tsx.contains("$RefreshReg$(Page"),
+        "page.tsx should carry the refresh registration: {page_tsx}"
+    );
+    assert!(
+        !page_tsx.contains("<main data-greeting-fn"),
+        "page.tsx should be lowered to JS, not raw TSX: {page_tsx}"
+    );
+
+    // --- Server module: refused with 403 ---
+    let server_ts = http_get(addr, "/src/routes/greeting.server.ts").await;
+    assert!(
+        server_ts.starts_with("HTTP/1.1 403"),
+        "server module should be refused with 403: {}",
+        server_ts.lines().next().unwrap_or("")
+    );
+}
+
+/// Proves `react-refresh/runtime` is prebundled to
+/// `/@prebundle/react-refresh-runtime.js` when the project installs the
+/// package. That file is what `hot.ts` lazy-imports to upgrade
+/// `__oxide_refresh` from a full reload to an in-place update.
+///
+/// `#[ignore]` — node_modules + binds a port, same as the other E2E
+/// dev-server tests.
+#[tokio::test]
+#[ignore]
+async fn dev_server_serves_react_refresh_prebundle() {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root");
+    let smoke = workspace.join("examples/smoke-app-react");
+    let config_path = smoke.join("oxide.config.ts");
+    assert!(
+        config_path.is_file(),
+        "smoke-app fixture missing at {}",
+        smoke.display()
+    );
+    assert!(
+        smoke.join("node_modules/react-refresh").exists(),
+        "react-refresh must be installed for this test"
+    );
+
+    let stack = crate::framework_shim::build_framework_stack(
+        Some(&config_path),
+        oxide_fw_config::JsBackend::Node,
+        None,
+        None,
+    )
+    .await;
+
+    let started = crate::start_dev_server_full(
+        smoke.to_str().expect("smoke path utf-8"),
+        Some(0),
+        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        None,
+        Vec::new(),
+        stack,
+        None,
+    )
+    .await
+    .expect("start_dev_server_full");
+    let addr = started.addr;
+
+    let resp = http_get(addr, "/@prebundle/react-refresh-runtime.js").await;
+    assert!(
+        resp.starts_with("HTTP/1.1 200"),
+        "react-refresh prebundle status: {}",
+        resp.lines().next().unwrap_or("")
+    );
+    assert!(
+        resp.contains("performReactRefresh"),
+        "runtime should export performReactRefresh"
+    );
+    assert!(
+        resp.contains("injectIntoGlobalHook"),
+        "runtime should export injectIntoGlobalHook"
+    );
+}
+
+/// Website E2E: proves the whole CSS pipeline wires up for a real project
+/// with a Tailwind plugin — precompute → disk-scan fallback → served CSS.
+///
+/// The website has a real `plugins: [tailwind()]` config, its homepage
+/// renders through the real React adapter, and its `dist/client/` carries a
+/// `tailwind-<hash>.css` from a prior build. This test starts the dev server
+/// in-process (same `start_dev_server_full` the smoke test uses) and asserts:
+///
+///   1. GET `/` returns 200.
+///   2. The body carries a `<link rel="stylesheet">` for a
+///      `tailwind-<hash>.css` — that's the disk-scan fallback in
+///      `AdapterPageRenderer::inject_route_css` firing, exactly the path
+///      that makes CSS reach the browser in ESM mode with no manifest.
+///   3. The body references `/@boot/boot.mjs`, not `/client/__boot__.js` —
+///      the ESM dispatch intercept owns the boot entry, not the bundle.
+///   4. GET the extracted tailwind URL returns 200 with real generated CSS.
+///
+/// ## Prerequisites
+///
+/// The test requires a prior `pnpm --filter @oxide-fw/website build` (or a
+/// prior `oxide dev` run) so `packages/oxide-website/dist/client/` contains
+/// a `tailwind-<hash>.css`. `tailwind::precompute` runs in `cmd_dev`, but
+/// this test calls `start_dev_server_full` directly — the same prerequisite
+/// class as Phase 5a's `component_source` gap. A guard skips the test with a
+/// clear message instead of failing on a fresh checkout.
+///
+/// Run with:
+///     cargo test -p oxide-fw-cli -- --ignored dev_server_serves_website_with_tailwind_css
+#[tokio::test]
+#[ignore]
+async fn dev_server_serves_website_with_tailwind_css() {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root");
+    let website = workspace.join("packages/oxide-website");
+    let config_path = website.join("oxide.config.ts");
+    assert!(
+        config_path.is_file(),
+        "website fixture missing at {}",
+        website.display()
+    );
+
+    // Guard on the build artifact the test depends on. `tailwind::precompute`
+    // lives in `cmd_dev`, which this test bypasses — see the doc comment.
+    let client_dir = website.join("dist/client");
+    let has_tailwind = std::fs::read_dir(&client_dir)
+        .ok()
+        .map(|entries| {
+            entries.flatten().any(|e| {
+                let n = e.file_name().to_string_lossy().to_string();
+                n.starts_with("tailwind-") && n.ends_with(".css")
+            })
+        })
+        .unwrap_or(false);
+    assert!(
+        has_tailwind,
+        "requires a prior `pnpm --filter @oxide-fw/website build`; \
+         dist/client/tailwind-*.css not found at {}",
+        client_dir.display()
+    );
+
+    let stack = crate::framework_shim::build_framework_stack(
+        Some(&config_path),
+        oxide_fw_config::JsBackend::Node,
+        None,
+        None,
+    )
+    .await;
+
+    let started = crate::start_dev_server_full(
+        website.to_str().expect("website path utf-8"),
+        Some(0),
+        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        None,
+        Vec::new(),
+        stack,
+        None,
+    )
+    .await
+    .expect("start_dev_server_full");
+    let addr = started.addr;
+
+    // ---- GET / ----
+    let resp = http_get(addr, "/").await;
+    assert!(
+        resp.starts_with("HTTP/1.1 200"),
+        "website home status: {}\nbody: {}",
+        resp.lines().next().unwrap_or(""),
+        body_of(&resp)
+    );
+    let body = body_of(&resp);
+
+    assert!(
+        body.contains("/@boot/boot.mjs"),
+        "website home should reference ESM boot entry: {body}"
+    );
+    assert!(
+        !body.contains("/client/__boot__.js"),
+        "website home must not reference the bundled boot chunk in ESM mode: {body}"
+    );
+    assert!(
+        body.contains("rel=\"stylesheet\""),
+        "website home should carry a stylesheet <link>: {body}"
+    );
+    assert!(
+        body.contains("/client/tailwind-"),
+        "website home should reference a tailwind CSS file: {body}"
+    );
+
+    // ---- Extract + fetch the CSS URL itself ----
+    let css_name = body
+        .split("/client/tailwind-")
+        .nth(1)
+        .and_then(|s| s.split('"').next())
+        .map(|s| format!("/client/tailwind-{s}"))
+        .expect("could not extract tailwind CSS href from body");
+    let css_resp = http_get(addr, &css_name).await;
+    assert!(
+        css_resp.starts_with("HTTP/1.1 200"),
+        "tailwind CSS at {} should be served: {}",
+        css_name,
+        css_resp.lines().next().unwrap_or("")
+    );
+    assert!(
+        css_resp.contains(".flex") || css_resp.contains("@layer") || css_resp.len() > 1000,
+        "served CSS should contain real generated tailwind rules (length {}):",
+        css_resp.len()
     );
 }

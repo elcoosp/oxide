@@ -37,13 +37,22 @@ interface RenderState {
   nextElementId: number
   /** Deterministic scope id (route-derived) for framework flavors. */
   scope: string
+  /** True while walking an island subtree: handler markers restart at `h0`
+   *  so a standalone hydrateIsland() replay is byte-identical to the SSR
+   *  island markup. Page-level markers use `p0`…` instead — both scopes start
+   *  their counters at 0, and without the prefix a page rebind resolving
+   *  `[data-ox-id="h0"]` from the document root could bind a page handler
+   *  onto an island's element (or vice versa) whenever the island precedes
+   *  the page's own marker in document order. */
+  islandScope?: boolean
   /** Client handler bindings collected during the walk (hydration contract). */
   handlers: Array<HandlerBinding>
 }
 
 /** One client handler the server marked with data-ox-on / data-ox-id. */
 export interface HandlerBinding {
-  /** The deterministic marker id (`h0`, `h1`, …) emitted as data-ox-id. */
+  /** The deterministic marker id (`p0`, `p1`, … page scope; `h0`, `h1`, …
+   *  island scope) emitted as data-ox-id. */
   id: string
   /** DOM event name (lowercased `on` prop, e.g. `click`). */
   event: string
@@ -86,7 +95,9 @@ function renderAttrs(node: Extract<Node, { kind: 'element' }>, state: RenderStat
     if (isHandlerProp(key, value)) {
       // Client event intent (§7 hydration contract): serialize as protocol
       // markers; hydration re-binds via the deterministic data-ox-id path.
-      const id = `h${state.handlers.length}`
+      // `p<n>` page scope vs `h<n>` island scope keeps the two id spaces
+      // disjoint (see RenderState.islandScope).
+      const id = `${state.islandScope ? 'h' : 'p'}${state.handlers.length}`
       state.handlers.push({ id, event: eventOf(key), handler: value })
       attrs['data-ox-on'] = eventOf(key)
       attrs['data-ox-id'] = id
@@ -133,7 +144,10 @@ function walk(node: Node, state: RenderState, depth: number, flavorAttrs: boolea
       // ids restart at 0 so a standalone hydrateIsland() render is
       // byte-identical to the SSR island markup. Boundary ids continue the
       // shell sequence (state.defers is shared).
-      const islandState: RenderState = { ...state, nextElementId: 0, handlers: [] }
+      // `islandScope: true` moves the island's handler markers into the
+      // `h<n>` id space — page-level markers stay `p<n>` so a page rebind can
+      // never grab an island's element (or the reverse).
+      const islandState: RenderState = { ...state, nextElementId: 0, handlers: [], islandScope: true }
       const ssr = walk(node.children, islandState, depth + 1, flavorAttrs).html
       return {
         html: islandElement(
@@ -700,8 +714,11 @@ export function renderNodeToString(node: Node, state: RenderState): string {
  * fresh state and return the collected data-ox-on / data-ox-id bindings in
  * marker order. The client binds these onto the live DOM (src/hydrate.ts).
  */
-export function walkTreeForHandlers(tree: Node): HandlerBinding[] {
-  const state = newRenderState('')
+export function walkTreeForHandlers(tree: Node, islandScope = false): HandlerBinding[] {
+  // `islandScope` must match the scope the island's HTML was rendered with
+  // (hydrateIsland passes true): island markers live in the `h<n>` space,
+  // page markers in `p<n>` (see RenderState.islandScope).
+  const state = islandScope ? { ...newRenderState(''), islandScope: true } : newRenderState('')
   walk(tree, state, 1, true)
   return state.handlers
 }

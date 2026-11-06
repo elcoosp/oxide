@@ -1,76 +1,44 @@
-// src/islands/copy-install.tsx — the install command, copyable in one click.
-//
-// The interior.dev rule this enforces: reserve the width of every state before
-// it arrives. The button renders "Copy", "Copied" and "Select" stacked in the
-// same grid cell, so the row never shifts when the label changes. All three
-// spans are always present; only opacity flips.
-//
-// Failure is a real state, not an afterthought. navigator.clipboard.writeText
-// rejects on insecure origins, on denied permission, and inside some embedded
-// webviews. When it does, the component selects the text instead so the user
-// can copy manually — the interaction completes either way.
-
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Copy, Check } from 'lucide-react'
 
 type Status = 'idle' | 'copied' | 'failed'
-
-interface Props {
-  command: string
-}
+interface Props { command: string }
 
 export default function CopyInstall({ command }: Props) {
   const [status, setStatus] = useState<Status>('idle')
-  const timer = useRef<number | null>(null)
-  const code = useRef<HTMLElement | null>(null)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => () => {
-    if (timer.current !== null) window.clearTimeout(timer.current)
+    if (timer.current) clearTimeout(timer.current)
   }, [])
 
-  const copy = useCallback(async () => {
-    if (timer.current !== null) window.clearTimeout(timer.current)
+  const onClick = useCallback(async () => {
     try {
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(command)
-        setStatus('copied')
-      } else {
-        throw new Error('clipboard unavailable')
-      }
+      await navigator.clipboard.writeText(command)
+      setStatus('copied')
     } catch {
       setStatus('failed')
-      const node = code.current
-      if (node) {
-        const range = document.createRange()
-        range.selectNodeContents(node)
-        const sel = window.getSelection()
-        if (sel) {
-          sel.removeAllRanges()
-          sel.addRange(range)
-        }
-      }
     }
-    timer.current = window.setTimeout(() => setStatus('idle'), 2000)
+    if (timer.current) clearTimeout(timer.current)
+    timer.current = setTimeout(() => setStatus('idle'), 2000)
   }, [command])
 
   return (
-    <div className="copy-install" data-status={status}>
-      <code className="copy-install-cmd" ref={code}>{command}</code>
+    <div className="flex items-center justify-between w-full bg-[#09090b] border border-zinc-800 rounded-lg p-2 pl-4">
+      <div className="flex items-center gap-3 font-mono text-sm min-w-0">
+        <span className="text-[#e45631] select-none shrink-0">$</span>
+        <code className="text-zinc-300 truncate font-mono">{command}</code>
+      </div>
       <button
         type="button"
-        className="copy-install-btn"
-        onClick={copy}
-        aria-label={status === 'copied' ? 'Copied to clipboard' : 'Copy install command'}
+        onClick={onClick}
+        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono text-zinc-400 bg-zinc-900 hover:bg-zinc-800 hover:text-zinc-200 rounded-md border border-zinc-800 hover:border-zinc-700 transition-colors shrink-0 ml-4"
+        aria-label="Copy install command"
       >
-        <span className="copy-install-label">
-          <span data-state="idle" hidden={status !== 'idle'}>Copy</span>
-          <span data-state="copied" hidden={status !== 'copied'}>Copied</span>
-          <span data-state="failed" hidden={status !== 'failed'}>Select</span>
-        </span>
+        {status === 'idle' && (<><Copy size={14} /><span>Copy</span></>)}
+        {status === 'copied' && (<><Check size={14} className="text-green-500" /><span className="text-green-500">Copied</span></>)}
+        {status === 'failed' && (<span>Select</span>)}
       </button>
-      <span className="sr-only" role="status" aria-live="polite">
-        {status === 'copied' ? 'Install command copied to clipboard' : ''}
-        {status === 'failed' ? 'Clipboard unavailable — command selected, copy manually' : ''}
-      </span>
     </div>
   )
 }

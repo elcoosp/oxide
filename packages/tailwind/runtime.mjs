@@ -44,11 +44,24 @@ export async function ping() {
  * Returns the deduplicated sorted candidate list.
  */
 export async function scan({ sources, files }) {
-  const scanner = new Scanner({ sources: sources ?? [] })
-  if (Array.isArray(files) && files.length > 0) {
-    return scanner.scanFiles(files)
-  }
-  return scanner.scan()
+  const scanner = new Scanner({ sources: sources ?? [] });
+  // Two paths, both real:
+  //   - `scan()` walks the `sources` globs from disk (the CLI's HMR path
+  //     passes the project's src glob here).
+  //   - `scanFiles()` scans in-memory `ChangedContent[]` (the test's path
+  //     and the HMR incremental path).
+  // The earlier [wr104] note claimed `scanFiles()` returned [] in this
+  // version of @tailwindcss/oxide — that observation was wrong: it returns
+  // the right candidates when `extension` is set. Verified against 4.3.3.
+  // Both results are merged so a project with both disk sources and
+  // in-memory edits gets a complete list.
+  const fromDisk = scanner.scan();
+  const fromFiles =
+    files && files.length > 0
+      ? scanner.scanFiles(files)
+      : [];
+  const merged = new Set([...fromDisk, ...fromFiles]);
+  return Array.from(merged).sort();
 }
 
 /**

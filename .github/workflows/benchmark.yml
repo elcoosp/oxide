@@ -1,0 +1,81 @@
+name: benchmark
+
+# Pre-0.1 readiness P0-6: benchmarks must run against a RELEASE build on a
+# pinned runner class, with repeated runs so p50/p99 are meaningful, and the
+# §21 incumbent comparison (Next / Nuxt / SvelteKit / SolidStart) gets a slot
+# on the same hardware. Wall-clock results are informational (no gate) until
+# a dedicated self-hosted runner exists; the deterministic size columns stay
+# gated by the existing `bench-gate` job in ci.yml.
+
+on:
+  # Weekly on the pinned runner class + manual dispatch.
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  bench:
+    name: release benchmarks (pinned runner)
+    runs-on: ubuntu-24.04 # pinned runner class: ubuntu-24.04, 4 vCPU
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bench-release
+          cache-on-failure: true
+
+      - name: Install nasm (image codecs)
+        run: sudo apt-get update && sudo apt-get install -y nasm
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Build the CLI in RELEASE mode
+        run: cargo build --release -p oxide-fw-cli
+
+      - name: Record environment
+        run: |
+          {
+            echo "commit: $(git rev-parse HEAD)"
+            echo "rustc:  $(rustc --version)"
+            echo "node:   $(node --version)"
+            echo "cpu:    $(nproc) vCPU (ubuntu-24.04 runner)"
+          } | tee benchmarks/env.txt
+
+      # §21: cold + warm runs; run.sh regenerates the table. The committed
+      # report.md stays the source of truth — this job POSTS the fresh table
+      # to the run summary so a human compares before re-baselining.
+      - name: Run the §21 table (release build)
+        run: |
+          for i in 1 2 3; do
+            echo "### Run $i" >> "$GITHUB_STEP_SUMMARY"
+            ./benchmarks/run.sh | tee -a "$GITHUB_STEP_SUMMARY" || true
+            git checkout -- benchmarks/report.md 2>/dev/null || true
+          done
+
+      # §21 incumbent comparison on identical hardware. Fails soft until the
+      # reference apps are wired up; the scaffolding records the intent.
+      - name: Incumbent comparison (Next/Nuxt/SvelteKit/SolidStart)
+        run: |
+          echo "TODO(spec §21): install incumbents and run the same fixtures." \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Load test (oha) — p50/p99 for the smoke app
+        run: |
+          cargo install oha --locked || echo "oha unavailable; skipping"
+          if command -v oha >/dev/null; then
+            (cd examples/smoke-app && ../../target/release/oxide build)
+            (cd examples/smoke-app && OXIDE_SKIP_DOWNLOAD=1 ../../target/release/oxide start --port 3999 &)
+            sleep 5
+            oha -n 5000 -c 50 --no-tui http://localhost:3999/ | tee -a "$GITHUB_STEP_SUMMARY"
+            pkill -f "target/release/oxide" || true
+          fi

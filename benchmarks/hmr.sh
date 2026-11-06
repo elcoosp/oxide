@@ -16,7 +16,8 @@ set -uo pipefail
 set +m   # silence 'Killed' job-control noise
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-CLI="${OXIDE_CLI:-$ROOT/target/debug/oxide}"
+PROFILE="${OXIDE_BENCH_PROFILE:-release}"
+CLI="${OXIDE_CLI:-$ROOT/target/$PROFILE/oxide}"
 APP="${APP:-$ROOT/examples/smoke-app-react}"
 N="${N:-15}"
 PORT="${PORT:-3199}"
@@ -43,12 +44,12 @@ cleanup() {
     cp "$BAK" "$PAGE" 2>/dev/null
     rm -f "$BAK"
     kill -9 "$srv" 2>/dev/null
-    ( pkill -9 -f "target/debug/oxide" ) 2>/dev/null
+    ( pkill -9 -f "target/$PROFILE/oxide" ) 2>/dev/null
 }
 trap cleanup EXIT INT TERM
 
 echo "=== start dev server on port $PORT ==="
-( pkill -9 -f "target/debug/oxide" ) 2>/dev/null
+( pkill -9 -f "target/$PROFILE/oxide" ) 2>/dev/null
 sleep 0.5
 "$CLI" dev --root "$APP" --port "$PORT" >/dev/null 2>&1 &
 srv=$!

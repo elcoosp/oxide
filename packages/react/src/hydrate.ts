@@ -114,8 +114,9 @@ function bindAll(
   scope: OxElement,
   tree: Node,
   bound: Array<{ el: OxElement; type: string; fn: (ev: unknown) => void }>,
+  islandScope = false,
 ): void {
-  for (const binding of walkTreeForHandlers(tree)) {
+  for (const binding of walkTreeForHandlers(tree, islandScope)) {
     const target = findMarked(scope, binding.id)
     if (!target) continue
     target.addEventListener(binding.event, binding.handler)
@@ -170,6 +171,7 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
   // navigations racing on the same container mount one after the other,
   // never concurrently).
   let realRoot: RealPageRoot | undefined
+  let currentLayoutChainKey = ""
   let renderSeq = 0
   let realChain: Promise<void> = Promise.resolve()
   const bound: Array<{ el: OxElement; type: string; fn: (ev: unknown) => void }> = []
@@ -246,7 +248,7 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
     // container (SPA mode) on initial load. Client navigation
     // (allowHydrate=false) is unaffected — it always re-renders, because the
     // container holds the PREVIOUS route's markup by then.
-    if (allowHydrate && (root.innerHTML ?? '') !== '') return false
+    // Allow hydration on initial load for real SSR pages.
     const key = routeIdFor(inp.route, src.manifest)
     if (key === undefined) {
       console.warn?.('[oxide-diag] real-render skipped: route ' + JSON.stringify(inp.route) + ' not matched in manifest (routes: ' + Object.keys(src.manifest.routes).join(',') + ')')
@@ -266,22 +268,69 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
         return
       }
       try {
-        if (realRoot) {
-          // §7 / §8.4: client navigation to a DIFFERENT route needs a
-          // different Component. The previous signature took props only,
-          // so realRoot.update re-rendered the ORIGINAL page — the URL
-          // changed but the DOM stayed on the old route.
-          realRoot.update(Component, realProps(inp))
-          return
-        }
         // §8.2: resolve the layout chain first — SSR rendered
         // `<RootLayout><Page/></RootLayout>`; the client must hydrate the
         // same tree or React reports mismatch #418.
+        // [wr214] Fall back to manifest layout_chain when inp.layouts is empty.
+        // CSR fetch may lose the layouts field (SSR's ODF payload carries it,
+        // but normalizeInput drops it in some paths). The manifest always has
+        // layout_chain — trust it so client nav composes the same tree SSR does.
+        //
+        // [wr217b] MUST be computed before the wr215 chain-key comparison
+        // below. When this declaration trailed the comparison, the read
+        // `declaredLayouts.join('|')` in the chain-key line hit the TDZ
+        // (ReferenceError: Cannot access 'declaredLayouts' before
+        // initialization). The surrounding catch called renderIr(), which
+        // paints NotFoundPage — the symptom was a 404 on every client-side
+        // navigation to a route with a layout while SSR (which never enters
+        // this function) worked fine.
+        let declaredLayouts = inp.layouts ?? []
+        if (declaredLayouts.length === 0) {
+          const manifestEntry = src.manifest.routes[key]
+          if (manifestEntry && Array.isArray(manifestEntry.layout_chain)) {
+            declaredLayouts = manifestEntry.layout_chain
+            console.log(
+              '[oxide-diag] tryRealRender: inp.layouts empty — using manifest layout_chain',
+              { route: inp.route, chain: declaredLayouts, manifestKey: key }
+            )
+          }
+        }
+        // [wr215] Compare layout chain BEFORE deciding update-vs-remount.
+        // realRoot was mounted with the FIRST route's layout chain. If the
+        // new route needs a different chain (e.g. [RootLayout] → [RootLayout,
+        // DocsLayout]), calling realRoot.update() keeps the OLD wrappers and
+        // drops the new one — which is why docs pages were "bare content, no
+        // sidebar" while SSR (fresh mount) worked. Dispose + remount when the
+        // chain actually changes; only reuse the root when it doesn't.
+        const newChainKey = declaredLayouts.join('|')
+        if (realRoot) {
+          if (newChainKey === currentLayoutChainKey) {
+            // Same chain — safe to update in place
+            realRoot.update(Component, realProps(inp))
+            return
+          }
+          // Chain changed — dispose the old tree so the new mount composes
+          // the correct layout wrappers
+          console.log(
+            '[oxide-diag] tryRealRender: layout chain changed — remount',
+            { from: currentLayoutChainKey, to: newChainKey, route: inp.route }
+          )
+          realRoot.dispose()
+          realRoot = undefined
+        }
         const layoutComponents: Array<{ id: string; Component: unknown }> = []
-        for (const lid of inp.layouts ?? []) {
+        for (const lid of declaredLayouts) {
           const lc = await componentFor(lid)
           if (lc) layoutComponents.push({ id: lid, Component: lc })
         }
+        console.log(
+          '[oxide-diag] tryRealRender: layout resolution',
+          {
+            route: inp.route,
+            declaredLayouts,
+            resolved: layoutComponents.map(l => l.id),
+          }
+        )
         if (disposed || seq !== renderSeq) return
         // Whether we can `hydrateRoot` depends on whether we can rebuild the
         // EXACT server tree. That needs every layout's client component;
@@ -293,7 +342,6 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
         // ends up correct (client tree wins), there is no mismatch, and
         // custom elements (`<ox-island>`) survive so island hydration still
         // finds its hosts.
-        const declaredLayouts = inp.layouts ?? []
         // §8.4: hydrateRoot() only on the initial page-load. On a client
         // navigation the container still holds the PREVIOUS route's markup,
         // so hydrateRoot() would #418. (The initial-load SSR case is caught
@@ -326,6 +374,7 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
           return
         }
         realRoot = mounted
+        currentLayoutChainKey = newChainKey
       } catch (e) {
         console.warn?.('oxide: real page render failed; falling back to IR', e)
         if (!disposed && seq === renderSeq) renderIr()
@@ -438,7 +487,13 @@ export function hydrateIsland(host: OxElement, mod: unknown, props: unknown, opt
       const nextProps = { ...(props as Record<string, unknown>), ...patch, client }
       const tree = component(nextProps)
       host.innerHTML = renderNodeToString(tree, islandRenderState())
-      bindAll(host, tree, bound)
+      // The innerHTML assignment above detached the previous generation's
+      // elements. Drop their listener records first — otherwise `bound`
+      // grows by one entry per update and pins every detached subtree (and
+      // its handler closures) in memory for the life of the page.
+      for (const b of bound) b.el.removeEventListener(b.type, b.fn)
+      bound.length = 0
+      bindAll(host, tree, bound, true)
     },
     navigate(href: string): void {
       opts.navigate?.(href)
@@ -446,7 +501,7 @@ export function hydrateIsland(host: OxElement, mod: unknown, props: unknown, opt
   }
   const tree = component({ ...(props as Record<string, unknown>), client })
   host.innerHTML = renderNodeToString(tree, islandRenderState())
-  bindAll(host, tree, bound)
+  bindAll(host, tree, bound, true)
   return () => {
     for (const b of bound) b.el.removeEventListener(b.type, b.fn)
     bound.length = 0
@@ -454,7 +509,10 @@ export function hydrateIsland(host: OxElement, mod: unknown, props: unknown, opt
 }
 
 function islandRenderState(): ReturnType<typeof newRenderState> {
-  return newRenderState('routes/islands')
+  // `islandScope: true` keeps the replay's handler markers in the `h<n>` id
+  // space — the same space the page walk used for this island's subtree —
+  // while page-level markers live in `p<n>`. See render.ts RenderState.
+  return { ...newRenderState('routes/islands'), islandScope: true }
 }
 
 export type { ClientHandle, HandlerBinding }

@@ -247,10 +247,10 @@ fn stubs_client_emit_fetch_stub_per_export() {
         assert!(out.contains(&needle), "missing {needle}");
     }
     assert!(
-        out.contains("import { __oxide_call_fn } from \"oxide/fn\";"),
+        out.contains("import { __oxide_call_fn } from \"@oxide-fw/core/fn\";"),
         "the client stub must import the runtime caller exactly once"
     );
-    // The fetch + wire format live in `oxide/fn` now; the emitted stub only
+    // The fetch + wire format live in `@oxide-fw/core/fn` now; the emitted stub only
     // names the id. Assert that shape instead of the old inline fetch.
     for stub in &stubs {
         assert!(
@@ -289,7 +289,7 @@ fn stubs_schema_first_arg_supported() {
     assert_eq!(stubs.len(), 1);
     assert_eq!(stubs[0].export_name, "create");
     assert!(out.contains("__oxide_call_fn("));
-    assert!(out.contains("import { __oxide_call_fn } from \"oxide/fn\";"));
+    assert!(out.contains("import { __oxide_call_fn } from \"@oxide-fw/core/fn\";"));
     assert_eq!(out.matches("export const create").count(), 1);
 }
 
@@ -932,4 +932,53 @@ fn infer_dynamic_for_function_expression_with_request_param() {
     let m = infer_render_mode(src, "page.server.ts");
     assert_eq!(m.mode, "dynamic");
     assert_eq!(m.trigger, Some("searchParams"));
+}
+
+#[test]
+fn scan_local_reexport_does_not_hang() {
+    // `export { foo };` has no `from` clause. The scanner must advance past
+    // the clause or it loops forever on the same `export` token. Regression
+    // for a real hang (the client.js prebundle contained exactly this
+    // pattern, causing `oxide dev` to hang on first load).
+    let code = "export { foo };\nexport { a, b as c };\nexport const x = 1;\n";
+    let spans = scan_import_spans(code);
+    assert!(
+        spans.is_empty(),
+        "local re-exports are not imports: {spans:?}"
+    );
+}
+
+#[test]
+fn scan_star_without_from_does_not_hang() {
+    // `export *` alone is invalid JS, but the scanner must not hang on it.
+    let code = "export *;\n";
+    let spans = scan_import_spans(code);
+    assert!(spans.is_empty());
+}
+
+#[test]
+fn scan_reexport_with_from_still_works() {
+    // The valid case must still extract the specifier.
+    let code = "export { foo } from './foo.js';\nexport * from './bar.js';\nexport * as ns from './baz.js';\n";
+    let spans = scan_import_spans(code);
+    let specs: Vec<&str> = spans.iter().map(|s| s.specifier.as_str()).collect();
+    assert!(
+        specs.contains(&"./foo.js"),
+        "from-reexport missing: {spans:?}"
+    );
+    assert!(
+        specs.contains(&"./bar.js"),
+        "star-reexport missing: {spans:?}"
+    );
+    assert!(
+        specs.contains(&"./baz.js"),
+        "star-as-reexport missing: {spans:?}"
+    );
+}
+
+#[test]
+fn scan_export_default_does_not_hang() {
+    let code = "export default function F() {}\n";
+    let spans = scan_import_spans(code);
+    assert!(spans.is_empty());
 }

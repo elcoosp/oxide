@@ -20,6 +20,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
+import { loadSolidBabel, solidBabelTransform } from './solid-babel.mjs'
 
 const require = createRequire(import.meta.url)
 
@@ -27,9 +28,24 @@ function tryRequire(name) {
   try { return require(name) } catch { return null }
 }
 
-const sucrase = tryRequire('sucrase')
-const vueSfc = tryRequire('@vue/compiler-sfc')
-const svelteCompiler = tryRequire('svelte/compiler')
+let sucrase = tryRequire('sucrase')
+let vueSfc = tryRequire('@vue/compiler-sfc')
+let svelteCompiler = tryRequire('svelte/compiler')
+
+// Tooling packages resolve from the worker's own location (workspace-root
+// install) ONCE at process start. If node_modules was pruned and recreated
+// after this process started, the cached `null` would stick forever — retry
+// from the PROJECT root (OXIDE_ROOT) at call time. The app root walks up to
+// the same workspace install, so one hit covers every framework package.
+function retryToolingFromRoot(name, current) {
+  if (current) return current
+  if (!OXIDE_ROOT) return current
+  try {
+    return createRequire(join(OXIDE_ROOT, 'package.json'))(name)
+  } catch {
+    return current
+  }
+}
 const solidJsxOxc = (() => {
   const m = tryRequire('solid-jsx-oxc')
   return m ? (m.default ?? m) : null
@@ -180,27 +196,70 @@ function compileTsx(source, path) {
   // Solid's JSX compiles to `ssr`/template calls, not React's `jsx()`
   // factories — `solid-jsx-oxc` (Rust/OXC, NAPI) is the compiler for it.
   // Its output keeps TS annotations, so a follow-up type-strip runs after.
-  if (FRAMEWORK === 'solid' && solidJsxOxc) {
-    const out = solidJsxOxc.transform(source, {
-      moduleName: '@solidjs/web',
-      generate: 'ssr',
-      hydratable: true,
-      filename: path,
-    })
-    let js = typeof out === 'string' ? out : out.code
-    // The alpha ignores `moduleName` and emits `solid-js/web`; Solid 2.0
-    // moved the runtime to `@solidjs/web`. Rewrite the specifier.
-    js = js.replaceAll('from "solid-js/web"', 'from "@solidjs/web"')
-           .replaceAll("from 'solid-js/web'", "from '@solidjs/web'")
-    if (sucrase) {
-      js = sucrase.transform(js, {
-        transforms: ['typescript'],
+  if (FRAMEWORK === 'solid') {
+    if (solidJsxOxc) {
+      let nativeFailed = false
+      try {
+        const out = solidJsxOxc.transform(source, {
+          moduleName: '@solidjs/web',
+          generate: 'ssr',
+          hydratable: true,
+          filename: path,
+        })
+        let js = typeof out === 'string' ? out : out.code
+        // The alpha ignores `moduleName` and emits `solid-js/web`; Solid 2.0
+        // moved the runtime to `@solidjs/web`. Rewrite the specifier.
+        js = js.replaceAll('from "solid-js/web"', 'from "@solidjs/web"')
+               .replaceAll("from 'solid-js/web'", "from '@solidjs/web'")
+        if (sucrase) {
+          js = sucrase.transform(js, {
+            transforms: ['typescript'],
+            production: true,
+            filePath: path,
+          }).code
+        }
+        return js
+      } catch (e) {
+        // The binding can be REQUIREABLE and still unusable: the package's
+        // JS shim loads, then throws at transform time when the platform
+        // `.node` binary is absent ("Native module not loaded"). Fall
+        // through to the pure-JS babel fallback instead of failing SSR.
+        nativeFailed = true
+        if (!/native module|\.node|platform/i.test(String(e?.message ?? e))) {
+          throw e
+        }
+        void nativeFailed
+      }
+    }
+    // Platform fallback: `solid-jsx-oxc` ships per-platform NAPI binaries
+    // and upstream has not published a linux-x64 build — a Solid app must
+    // still SSR there. `babel-preset-solid` (a pure-JS dependency of the
+    // Solid project itself) produces the same `ssr()` template output the
+    // hydratable client expects. TS is stripped FIRST: babel cannot parse
+    // TS annotations (no TS syntax plugin in the tree) while sucrase's
+    // preserve-mode pass leaves the JSX verbatim for the preset.
+    const compiler = loadSolidBabel(OXIDE_ROOT || null)
+    sucrase = retryToolingFromRoot('sucrase', sucrase)
+    if (compiler && sucrase) {
+      // `jsxRuntime: 'preserve'` is load-bearing: sucrase's typescript-only
+      // pass parses `<HmrTarget />` as a TS type assertion
+      // (tsParseMaybeAssignWithoutJSX) and dies, while the jsx pass without
+      // preserve would lower the JSX to React factory calls the preset can
+      // no longer see. preserve = TS stripped, JSX left verbatim.
+      const stripped = sucrase.transform(source, {
+        transforms: ['typescript', 'jsx'],
+        jsxRuntime: 'preserve',
         production: true,
         filePath: path,
       }).code
+      return solidBabelTransform(compiler, stripped, path, {
+        generate: 'ssr',
+        hydratable: true,
+        moduleName: '@solidjs/web',
+      })
     }
-    return js
   }
+  sucrase = retryToolingFromRoot('sucrase', sucrase)
   if (!sucrase) return null
   const result = sucrase.transform(source, {
     transforms: ['typescript', 'jsx'],
@@ -212,6 +271,8 @@ function compileTsx(source, path) {
 }
 
 function compileVue(source, path) {
+  vueSfc = retryToolingFromRoot('@vue/compiler-sfc', vueSfc)
+  sucrase = retryToolingFromRoot('sucrase', sucrase)
   if (!vueSfc) return null
   const { descriptor, errors } = vueSfc.parse(source, { filename: path })
   if (errors && errors.length > 0) {
@@ -240,6 +301,8 @@ function compileVue(source, path) {
 }
 
 function compileSvelte(source, path) {
+  svelteCompiler = retryToolingFromRoot('svelte/compiler', svelteCompiler)
+  sucrase = retryToolingFromRoot('sucrase', sucrase)
   if (!svelteCompiler) return null
   const compiled = svelteCompiler.compile(source, {
     filename: path,
@@ -270,9 +333,40 @@ export async function load(url, context, nextLoad) {
   // `url.endsWith('.tsx')` on `page.tsx?v=35` is false.
   const queryAt = url.indexOf('?')
   const bareUrl = queryAt >= 0 ? url.slice(0, queryAt) : url
-  // BUG-08: CSS is a server side-effect import — evaluate to an empty
-  // module (SSR never applies styles; the client bundle handles real CSS).
+  // §1.4: `.module.css` needs its pre-computed class map. The client
+  // `/@css/` path transforms via Rust lightningcss on demand; SSR cannot
+  // (Node loader, no Rust callback). Both MUST produce identical mangled
+  // names for hydration — so `oxide dev` pre-computes the map via the same
+  // Rust backend, writes `.oxide/css-modules/<rel>.mjs`, and this loader
+  // resolves the SSR import to that file.
+  //
+  // Plain `.css` remains a side-effect import: empty export, no SSR styling
+  // (the client `<style data-oxide-css>` injection owns that, unchanged).
   if (bareUrl.endsWith('.css')) {
+    if (bareUrl.endsWith('.module.css')) {
+      // Convert the file:// URL to a real POSIX path BEFORE joining. Doing
+      // path manipulation on the URL string and then path.join collapses
+      // `///` to `/` (file:/Users/...), which readFile treats as a
+      // relative path — ENOENT. fileURLToPath gives `/Users/...` and
+      // everything downstream is a normal filesystem operation.
+      try {
+        const fullPath = fileURLToPath(bareUrl)
+        const srcIdx = fullPath.lastIndexOf('/src/')
+        if (srcIdx >= 0) {
+          const rootDir = fullPath.slice(0, srcIdx)
+          const relPath = fullPath.slice(srcIdx + '/src/'.length)
+          const relEnc = relPath.replace(/\//g, '__')
+          const precomputed = join(rootDir, '.oxide', 'css-modules', relEnc + '.mjs')
+          const src = await readFile(precomputed, 'utf8')
+          return { format: 'module', shortCircuit: true, source: src }
+        }
+      } catch {
+        // No pre-computed map — fall through to empty (SSR sees no class).
+        // A `.module.css` compiled by a build (`oxide build`) uses the
+        // bundler's CssPlugin path and never reaches this loader; a
+        // missing-file case is a fresh `oxide dev` before precompute ran.
+      }
+    }
     return { format: 'module', shortCircuit: true, source: 'export default "";' }
   }
   const isTsx = bareUrl.endsWith('.tsx') || bareUrl.endsWith('.jsx')

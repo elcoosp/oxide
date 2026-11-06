@@ -51,6 +51,33 @@ function defaultUrl(): string {
   return `${scheme}://${loc.host}/_oxide/hmr`
 }
 
+/**
+ * §1.3: does a route PATTERN (`/blog/[slug]`, `/`, `/greeting`) match the
+ * concrete `pathname` the browser is on? Segment-wise: a static segment must
+ * equal; `[param]` / `:param` / `*` match one non-empty segment. Used to drop
+ * `route-data-update` messages for routes the viewer is NOT on — the boot
+ * window (and an edit to another page's loader) publishes fresh loader data
+ * for foreign routes, and blindly feeding it to `adapter.update` rendered
+ * THAT route in place: a phantom navigation with no URL change that replaced
+ * the visible page with a different one.
+ */
+export function routePatternMatchesPath(pattern: string, pathname: string): boolean {
+  const pSegs = pattern.split('/').filter((s) => s.length > 0)
+  const pathSegs = pathname
+    .split('?')[0]
+    ?.split('#')[0]
+    ?.split('/')
+    .filter((s) => s.length > 0) ?? []
+  if (pSegs.length !== pathSegs.length) return false
+  for (let i = 0; i < pSegs.length; i++) {
+    const p = pSegs[i] ?? ''
+    const seg = pathSegs[i] ?? ''
+    if (p.startsWith('[') || p.startsWith(':') || p === '*' || p.startsWith('*')) continue
+    if (p !== seg) return false
+  }
+  return true
+}
+
 /** Swap the <link rel=stylesheet> whose href matches `path` (query-stripped). */
 function swapCss(doc: Document, path: string): boolean {
   const bare = path.split('?').at(0) ?? ''
@@ -125,14 +152,20 @@ export function showOverlay(diag: { code?: string; message?: string; fix?: strin
  * path a navigation uses, §8.4). All failures are silent: an HMR data
  * refresh is best-effort and must never break the socket loop.
  */
-async function refreshRouteData(odfB64: string): Promise<void> {
+async function refreshRouteData(route: string, odfB64: string): Promise<void> {
   const g = globalThis as {
     document?: { dispatchEvent?(ev: unknown): boolean }
     location?: { pathname: string; search: string }
     fetch?: typeof fetch
     CustomEvent?: new (type: string, opts: { detail?: unknown }) => unknown
   }
-  const path = (g.location?.pathname ?? '/') + (g.location?.search ?? '')
+  // §1.3: a loader edit for a route the viewer is NOT on must not reach
+  // `adapter.update` — that renders the foreign route in place (phantom
+  // navigation). Drop it here; the data is served fresh on the next real
+  // navigation anyway.
+  const locPath = g.location?.pathname
+  if (locPath && !routePatternMatchesPath(route, locPath)) return
+  const path = (locPath ?? '/') + (g.location?.search ?? '')
   let decoded: unknown
   if (odfB64.length > 0) {
     try {
@@ -175,6 +208,19 @@ async function refreshRouteData(odfB64: string): Promise<void> {
   }
 }
 
+/**
+ * Remove the diagnostic overlay if present. Called when a subsequent
+ * `module-update` (or successful re-import) proves the earlier diagnostic is
+ * stale — the user fixed the file and the next edit applied cleanly.
+ */
+export function clearOverlay(parent?: HTMLElement): void {
+  const doc = (globalThis as { document?: Document }).document
+  if (!doc) return
+  const root = parent ?? doc.body
+  const el = root?.querySelector?.('#ox-hmr-overlay') ?? doc.getElementById('ox-hmr-overlay')
+  if (el) el.remove()
+}
+
 /** Apply one HMR message. Returns true when handled. */
 export function applyHmrMessage(msg: HmrMessage, opts: HmrOptions = {}): boolean {
   const doc = (globalThis as { document?: Document }).document
@@ -192,15 +238,82 @@ export function applyHmrMessage(msg: HmrMessage, opts: HmrOptions = {}): boolean
       opts.onRouteData?.(route, odf)
       // §13.3: re-fetch (or decode) the fresh loader data and re-dispatch it
       // through the same event the boot machinery consumes. Async and
-      // silent — the message itself is handled synchronously.
-      void refreshRouteData(odf)
+      // silent — the message itself is handled synchronously. §1.3: the
+      // route is passed through so a foreign route's data is dropped
+      // instead of re-rendering the page (see refreshRouteData).
+      void refreshRouteData(route, odf)
       return true
     }
     case 'module-update': {
-      opts.onModuleUpdate?.(String(msg.path ?? ''))
+      const path = String(msg.path ?? '')
+      const url = typeof msg.url === 'string' ? msg.url : ''
+      // A fresh module update supersedes any earlier diagnostic; the user
+      // fixed the file, the rebuild succeeded, the overlay is stale.
+      clearOverlay(opts.overlayParent)
+      // ESM dev: `url` is the source URL the browser fetched, so route the
+      // reload through the HMR runtime's `reloadModule`. Phase 2 does a full
+      // page reload; Phase 3 upgrades that to React Refresh in place.
+      const hmr = (globalThis as { __oxide_hmr__?: { reloadModule?: (u: string) => Promise<void> } }).__oxide_hmr__
+      if (url && typeof hmr?.reloadModule === 'function') {
+        void hmr.reloadModule(url)
+        return true
+      }
+      if (opts.onModuleUpdate) {
+        opts.onModuleUpdate(path)
+        return true
+      }
+      // No URL and no callback: fall back to a full reload.
+      const reload = opts.reload ?? (() => (globalThis as { location?: { reload(): void } }).location?.reload())
+      reload?.()
       return true
     }
-    case 'server-module-swap':
+    case 'batch-module-update': {
+      // §3.2: the server coalesces N distinct-file changes (git checkout,
+      // scripted burst) into ONE message. The client fans out the
+      // reloadModule calls; each triggers its own accept callback +
+      // performReactRefresh in the current hot.ts implementation. That's
+      // still better than N separate frames because (a) it's one
+      // serialization / one WebSocket frame, (b) the server already
+      // collapsed the watcher storm into one dispatch tick, (c) the
+      // client's COALESCE_MS prevents rapid same-URL re-imports when
+      // several items happen to point at the same URL.
+      //
+      // Coalescing the performReactRefresh calls themselves into one at
+      // the end would need reloadModule to accept a "suppress refresh"
+      // flag; that is a bigger refactor and not observable in the §3.2
+      // acceptance test (which counts wire frames). Deferred.
+      const msgRec = msg as unknown as { items?: unknown }
+      const items = Array.isArray(msgRec.items)
+        ? (msgRec.items as Array<Record<string, unknown>>)
+        : []
+      // A batch supersedes any prior diagnostic, same as singular.
+      clearOverlay(opts.overlayParent)
+      const hmr = (globalThis as { __oxide_hmr__?: { reloadModule?: (u: string) => Promise<void> } }).__oxide_hmr__
+      if (typeof hmr?.reloadModule === 'function') {
+        for (const item of items) {
+          const url = typeof item.url === 'string' ? item.url : ''
+          if (url) void hmr.reloadModule(url)
+        }
+        return true
+      }
+      // No runtime (production host, or a broken dev boot): fall back.
+      const reload = opts.reload ?? (() => (globalThis as { location?: { reload(): void } }).location?.reload())
+      reload?.()
+      return true
+    }
+    case 'server-module-swap': {
+      // §1.5: a plain `.server.ts` body edit. The server's watcher already
+      // called `invalidate_framework_modules` (bumps the worker module
+      // generation → next call re-imports fresh code). The client's DOM
+      // stays put; when the user triggers a fresh call (button click, nav,
+      // form submit) the server fn returns fresh data. That's the correct
+      // behaviour — no reload.
+      //
+      // `full-reload` remains a genuine page-reload case (plugin
+      // `handleHotUpdate` returning `{ reload: true }`, or a config change
+      // that reshapes the module graph).
+      return true
+    }
     case 'full-reload': {
       const reload = opts.reload ?? (() => (globalThis as { location?: { reload(): void } }).location?.reload())
       reload?.()

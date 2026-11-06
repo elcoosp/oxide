@@ -17,6 +17,7 @@ import process from "node:process";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
+import { loadSolidBabel, solidBabelTransform } from "./solid-babel.mjs";
 import * as fs from "node:fs";
 import * as pathMod from "node:path";
 
@@ -70,6 +71,38 @@ async function transformDir(sourcePath) {
 }
 
 const require = createRequire(import.meta.url);
+
+// Tooling packages resolve from the worker's own location (workspace-root
+// install). That resolution happens ONCE at process start — if the sandbox
+// (or a package manager prune) removed node_modules and re-created it after
+// this process started, the module-level cached value stays `null` forever.
+// The per-call helpers below retry from the PROJECT root (the app being
+// served) at call time and cache per root, so a re-install is picked up
+// without restarting the pool.
+const requireCache = new Map();
+function requireFrom(root, name) {
+  const key = `${root || "<worker>"}|${name}`;
+  if (requireCache.get(key)) return requireCache.get(key);
+  let mod = null;
+  if (root) {
+    try {
+      mod = createRequire(pathMod.join(root, "package.json"))(name);
+    } catch {
+      mod = null;
+    }
+  }
+  if (!mod) {
+    try {
+      mod = require(name);
+    } catch {
+      mod = null;
+    }
+  }
+  // Only POSITIVE results are cached — a miss (node_modules pruned and
+  // re-created after this process started) must stay retryable.
+  if (mod) requireCache.set(key, mod);
+  return mod;
+}
 const sucrase = (() => { try { return require('sucrase') } catch { return null } })();
 const solidJsxOxc = (() => {
   try {
@@ -344,16 +377,72 @@ function loadModule(name) {
 
 async function dispatchSolidCompile(id, input) {
   const { source, filename, ssr } = input.payload ?? {};
+  const projectRoot = typeof input.payload?.root === "string" ? input.payload.root : null;
+  const ts = requireFrom(projectRoot, "sucrase");
   if (typeof source !== "string" || typeof filename !== "string") {
     callErr(id, "JSH-SOLID", "solid-compile requires {source, filename}");
     return;
   }
-  if (!solidJsxOxc || typeof solidJsxOxc.transform !== "function") {
-    callErr(
-      id,
-      "JSH-SOLID",
-      "solid-compile requires `solid-jsx-oxc` in the workspace (Rust/OXC Solid JSX compiler)",
-    );
+  // Platform fallback first: `solid-jsx-oxc` ships per-platform NAPI
+  // binaries (no linux-x64 upstream), so when the native binding is absent
+  // — or PRESENT but unusable (its JS shim loads, then throws at transform
+  // time: "Native module not loaded") — the compile must still succeed via
+  // babel-preset-solid, a pure-JS dependency of every Solid project. The
+  // PROJECT root is preferred so an app-level install resolves (the
+  // worker's own resolution only covers a workspace-root install). `root`
+  // is passed by the ESM dev server's pool-compile call; the `filename`
+  // there is src-RELATIVE and cannot be used to find the project, so only
+  // fall back to `findProjectRoot` when the caller passed an absolute path.
+  const babelFallback = () => {
+    const payloadRoot =
+      typeof input.payload?.root === "string" && input.payload.root.length > 0
+        ? input.payload.root
+        : null;
+    const fallbackRoot =
+      payloadRoot ??
+      (filename && (filename.startsWith("/") || filename.startsWith("\\"))
+        ? findProjectRoot(filename)
+        : null);
+    const fallback = loadSolidBabel(fallbackRoot);
+    if (!fallback || !ts) {
+      callErr(
+        id,
+        "JSH-SOLID",
+        "solid-compile requires the native `solid-jsx-oxc` binding for " +
+          `${process.platform}-${process.arch}, or babel-preset-solid + @babel/core in the project`,
+      );
+      return;
+    }
+    let js;
+    try {
+      // TS strip first — babel cannot parse TS annotations (no TS syntax
+      // plugin). `jsxRuntime: 'preserve'` is load-bearing: sucrase's
+      // typescript-only pass parses `<Foo />` as a TS type assertion
+      // (tsParseMaybeAssignWithoutJSX) and dies, while the jsx pass without
+      // preserve would lower the JSX to React factory calls the preset can
+      // no longer see. preserve = TS stripped, JSX left verbatim.
+      const stripped = ts.transform(source, {
+        transforms: ["typescript", "jsx"],
+        jsxRuntime: "preserve",
+        production: true,
+        filePath: filename,
+      }).code;
+      js = solidBabelTransform(fallback, stripped, filename, {
+        generate: ssr ? "ssr" : "dom",
+        hydratable: true,
+        moduleName: "@solidjs/web",
+      });
+    } catch (e) {
+      callErr(id, "JSH-SOLID", `solid babel fallback: ${e?.message ?? e}`);
+      return;
+    }
+    callOk(id, { js });
+  };
+
+  const nativeUsable =
+    solidJsxOxc && typeof solidJsxOxc.transform === "function";
+  if (!nativeUsable) {
+    babelFallback();
     return;
   }
   // `solid-jsx-oxc` compiles `<main>…</main>` JSX into `ssr`-template
@@ -377,7 +466,14 @@ async function dispatchSolidCompile(id, input) {
       filename,
     });
   } catch (e) {
-    callErr(id, "JSH-SOLID", `solid transform: ${e.message ?? e}`);
+    const msg = String(e?.message ?? e);
+    if (/native module|\.node|platform/i.test(msg)) {
+      // A requireable binding without a loadable platform binary — the
+      // babel fallback owns the compile (see comment above).
+      babelFallback();
+      return;
+    }
+    callErr(id, "JSH-SOLID", `solid transform: ${msg}`);
     return;
   }
   let js = typeof out === "string" ? out : out?.code;
@@ -393,9 +489,9 @@ async function dispatchSolidCompile(id, input) {
   // this rewrite becomes a no-op (the same string).
   js = js.replaceAll('from "solid-js/web"', 'from "@solidjs/web"')
          .replaceAll("from 'solid-js/web'", "from '@solidjs/web'");
-  if (sucrase) {
+  if (ts) {
     try {
-      js = sucrase.transform(js, {
+      js = ts.transform(js, {
         transforms: ["typescript"],
         production: true,
         filePath: filename,
@@ -410,13 +506,14 @@ async function dispatchSolidCompile(id, input) {
 
 async function dispatchVueCompile(id, input) {
   const { source, filename, generate } = input.payload ?? {};
+  const projectRoot = typeof input.payload?.root === "string" ? input.payload.root : null;
+  const ts = requireFrom(projectRoot, "sucrase");
   if (typeof source !== "string" || typeof filename !== "string") {
     callErr(id, "JSH-VUE", "vue-compile requires {source, filename}");
     return;
   }
-  let vue;
-  try { vue = require("@vue/compiler-sfc"); }
-  catch (e) { callErr(id, "JSH-VUE", `require(@vue/compiler-sfc): ${e.message}`); return; }
+  const vue = requireFrom(projectRoot, "@vue/compiler-sfc");
+  if (!vue) { callErr(id, "JSH-VUE", "require(@vue/compiler-sfc) failed (worker + project root)"); return; }
   const parsed = vue.parse(source, { filename });
   if (parsed.errors && parsed.errors.length > 0) {
     callErr(id, "JSH-VUE", `vue parse: ${parsed.errors[0].message ?? parsed.errors[0]}`);
@@ -444,9 +541,9 @@ async function dispatchVueCompile(id, input) {
   // output. The bundler's Rolldown pipeline expects JS here; strip types
   // with sucrase (the same transform the dev loader uses).
   let js = script.content;
-  if (sucrase) {
+  if (ts) {
     try {
-      js = sucrase.transform(js, {
+      js = ts.transform(js, {
         transforms: ["typescript"],
         production: true,
         filePath: filename,
@@ -461,13 +558,14 @@ async function dispatchVueCompile(id, input) {
 
 async function dispatchSvelteCompile(id, input) {
   const { source, filename, generate } = input.payload ?? {};
+  const projectRoot = typeof input.payload?.root === "string" ? input.payload.root : null;
+  const ts = requireFrom(projectRoot, "sucrase");
   if (typeof source !== "string" || typeof filename !== "string") {
     callErr(id, "JSH-SVELTE", "svelte-compile requires {source, filename}");
     return;
   }
-  let svelte;
-  try { svelte = require("svelte/compiler"); }
-  catch (e) { callErr(id, "JSH-SVELTE", `require(svelte/compiler): ${e.message}`); return; }
+  const svelte = requireFrom(projectRoot, "svelte/compiler");
+  if (!svelte) { callErr(id, "JSH-SVELTE", "require(svelte/compiler) failed (worker + project root)"); return; }
   let compiled;
   try {
     compiled = svelte.compile(source, {
@@ -482,9 +580,9 @@ async function dispatchSvelteCompile(id, input) {
   let js = compiled?.js?.code ?? "";
   // `<script lang="ts">` passes type annotations through to the emitted
   // JS. Strip them the same way the Vue op does.
-  if (sucrase) {
+  if (ts) {
     try {
-      js = sucrase.transform(js, {
+      js = ts.transform(js, {
         transforms: ["typescript"],
         production: true,
         filePath: filename,

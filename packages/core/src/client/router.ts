@@ -197,6 +197,9 @@ export function createRouter(opts: RouterOptions): Router {
     if (target && target !== '_self') return false
     const href = a.getAttribute('href')
     if (!href) return false
+    // [wr203] data-ox-reload forces a full-page navigation (SSR is more
+    // reliable than CSR right now). Same effect as Ctrl+Click on a link.
+    if (a.hasAttribute('data-ox-reload')) return false // forced full reload
     if (a.hasAttribute('data-ox-link')) return true // forced interception
     try {
       return new URL(href, location.href).origin === new URL(location.href).origin
@@ -465,11 +468,13 @@ export function createRouter(opts: RouterOptions): Router {
       .catch(() => {})
   }
 
+  const win = (doc as unknown as { defaultView?: { addEventListener: (type: string, fn: (ev: unknown) => void) => void; removeEventListener: (type: string, fn: (ev: unknown) => void) => void } }).defaultView
+
   function attach(): () => void {
     doc.addEventListener('click', onClick)
     doc.addEventListener('mouseover', onHover)
     doc.addEventListener('focusin', onHover)
-    doc.addEventListener('popstate', onPopstate)
+    if (win) win.addEventListener('popstate', onPopstate)
     if (IO) {
       io = new IO((entries) => {
         for (const entry of entries) {
@@ -490,7 +495,7 @@ export function createRouter(opts: RouterOptions): Router {
     doc.removeEventListener('click', onClick)
     doc.removeEventListener('mouseover', onHover)
     doc.removeEventListener('focusin', onHover)
-    doc.removeEventListener('popstate', onPopstate)
+    if (win) win.removeEventListener('popstate', onPopstate)
     io?.disconnect()
     io = undefined
     for (const ac of inFlight.values()) ac.abort()

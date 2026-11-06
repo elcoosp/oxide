@@ -32,6 +32,9 @@ use std::path::{Path, PathBuf};
 /// Rolldown-backed bundler (D3: "Rolldown used as a library").
 pub struct RolldownBundler {
     pub root: PathBuf,
+    /// Lazy incremental worker. `Mutex` because the trait's `&self` methods
+    /// need interior mutability to lazily spawn the worker on first use.
+    incremental: std::sync::Mutex<Option<IncrementalWorker>>,
 }
 
 /// Strip the Windows extended-length path prefix from `path` and return
@@ -71,7 +74,10 @@ fn strip_windows_verbatim(path: &str) -> std::borrow::Cow<'_, str> {
 
 impl RolldownBundler {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            incremental: std::sync::Mutex::new(None),
+        }
     }
 
     fn build_options(&self, options: &BundleOptions) -> BundlerOptions {
@@ -227,6 +233,36 @@ impl RolldownBundler {
 
 impl Bundler for RolldownBundler {
     fn bundle(&self, options: &BundleOptions) -> crate::Result<BundleOutput> {
+        // A cold `bundle` call invalidates any incremental state — the
+        // caller asked for a full rebuild, so give them exactly that.
+        if let Ok(mut guard) = self.incremental.lock() {
+            *guard = None;
+        }
+        self.bundle_cold(options)
+    }
+
+    fn bundle_incremental(
+        &self,
+        options: &BundleOptions,
+        changed: Option<&[PathBuf]>,
+    ) -> crate::Result<BundleOutput> {
+        let desired_hash = hash_bundle_options(options);
+        let mut guard = self.incremental.lock().unwrap_or_else(|p| p.into_inner());
+
+        let needs_new = match guard.as_ref() {
+            None => true,
+            Some(w) => w.options_hash != desired_hash,
+        };
+        if needs_new {
+            *guard = None;
+            *guard = Some(IncrementalWorker::start(self, options)?);
+        }
+        guard.as_ref().unwrap().rebuild(options, changed)
+    }
+}
+
+impl RolldownBundler {
+    fn bundle_cold(&self, options: &BundleOptions) -> crate::Result<BundleOutput> {
         let ropts = self.build_options(options);
         let out_dir = options.out_dir.clone();
         // The scoped closure consumes `out_dir`; the post-emit hook
@@ -1174,5 +1210,233 @@ mod strip_windows_verbatim_tests {
         // A `?` elsewhere in the path must not be mangled — only the
         // exact leading `\\?\` or `//?/` prefix is stripped.
         assert_eq!(strip_windows_verbatim("src/foo?bar.tsx"), "src/foo?bar.tsx");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Incremental worker (Path A of the DX rescue)
+//
+// A dedicated OS thread owns a Rolldown `Bundler` + a Tokio runtime. The
+// `Bundler` keeps a snapshot of the last build, so subsequent calls to
+// `incremental_write` with `ScanMode::Partial(changed_files)` skip
+// re-parsing unchanged modules.
+//
+// KNOWN CEILING: rolldown's `incremental_write` still runs `bundle_write`
+// (tree-shake + chunk + codegen + sourcemap) on the WHOLE graph, regardless
+// of `scan_mode`. On the oxide-website project this delivers ~30% faster
+// rebuilds (2000ms cold → ~1450ms warm) — not the 5-10x we hoped. To go
+// below ~1.4s requires rolldown's `hmr_stage` API (fetch partial modules,
+// re-emit only affected chunks), which is a different interface than
+// `incremental_write` and a separate future project. See
+// internal-docs if/when we tackle it.
+//
+// The worker is created lazily on the first `bundle_incremental` call. Its
+// lifetime is tied to the owning `RolldownBundler`. When that bundler drops,
+// the sender drops, the worker's `recv()` returns `Err`, and the thread
+// exits. No explicit shutdown needed.
+//
+// Post-emit hooks (`renderChunk`, `generateBundle`) are applied on the
+// CALLER side after receiving the raw `BundleOutput` — no need to plumb
+// them through the worker thread.
+// ---------------------------------------------------------------------------
+
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use rolldown_common::ScanMode;
+
+/// One incremental worker: a Rolldown `Bundler` + Tokio runtime on a
+/// dedicated thread, driven by messages from the owning `RolldownBundler`.
+pub(crate) struct IncrementalWorker {
+    request_tx: std::sync::mpsc::Sender<WorkerMsg>,
+    /// Fingerprint of the `BundleOptions` this worker was built for. When a
+    /// caller's options hash differs (new entry, changed minify, etc.), the
+    /// caller drops this worker and builds a new one.
+    options_hash: String,
+    /// True after the first successful write. Rolldown forces a full scan on
+    /// a snapshot-less bundler, so the first request must always be `Full`.
+    first_write_done: AtomicBool,
+}
+
+enum WorkerMsg {
+    Write {
+        changed: Option<Vec<arcstr::ArcStr>>,
+        out_dir: std::path::PathBuf,
+        env: crate::BundleEnv,
+        entries: std::collections::BTreeMap<String, std::path::PathBuf>,
+        resp_tx: std::sync::mpsc::SyncSender<crate::Result<crate::BundleOutput>>,
+    },
+}
+
+/// Fingerprint of the options that change the bundler's graph. Hooks are
+/// excluded — they're stateless Arc wrappers around plugin state and are
+/// applied on the caller side anyway. Plugin *definition* changes show up
+/// via `transform_hook` presence or `entries`, which this does catch.
+fn hash_bundle_options(options: &crate::BundleOptions) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    format!("{:?}", options.env).hash(&mut h);
+    for (k, v) in &options.entries {
+        k.hash(&mut h);
+        v.to_string_lossy().hash(&mut h);
+    }
+    options.minify.hash(&mut h);
+    options.sourcemap.hash(&mut h);
+    for e in &options.externals {
+        e.hash(&mut h);
+    }
+    for (k, v) in &options.define {
+        k.hash(&mut h);
+        v.hash(&mut h);
+    }
+    options.build_secret.hash(&mut h);
+    options.jsx_import_source.hash(&mut h);
+    for (k, v) in &options.precompiled {
+        k.to_string_lossy().hash(&mut h);
+        v.hash(&mut h);
+    }
+    format!("{:016x}", h.finish())
+}
+
+impl IncrementalWorker {
+    fn start(bundler: &RolldownBundler, options: &crate::BundleOptions) -> crate::Result<Self> {
+        let options_hash = hash_bundle_options(options);
+        let ropts = bundler.build_options(options);
+        let diagnostics_sink: std::sync::Arc<std::sync::Mutex<Vec<Diagnostic>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        // The plugin ROOT must be the PROJECT root (the cold path passes
+        // `&self.root`): `OxidePassesPlugin::should_transform` only runs the
+        // 'use cache' / server-fn-stub passes on modules UNDER this root.
+        // Passing `options.out_dir` (dist/client) made every project module
+        // look out-of-scope, so dev rebuilds shipped `.server` modules into
+        // the client bundle unstubbed — `import "node:fs/promises"` reached
+        // the browser and the whole module graph died (§6.4 leak, dev-only).
+        let plugins = oxide_plugins_with_sink(
+            options,
+            &bundler.root,
+            std::sync::Arc::clone(&diagnostics_sink),
+        );
+
+        let (tx, rx) = std::sync::mpsc::channel::<WorkerMsg>();
+
+        std::thread::Builder::new()
+            .name("oxide-rolldown-incremental".into())
+            .spawn(move || {
+                let rt = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        eprintln!("oxide: incremental worker runtime: {e}");
+                        return;
+                    }
+                };
+                let mut bundler = match rt.block_on(async {
+                    if plugins.is_empty() {
+                        RolldownCore::new(ropts)
+                    } else {
+                        BundlerBuilder::default()
+                            .with_options(ropts)
+                            .with_plugins(plugins)
+                            .build()
+                    }
+                }) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("oxide: incremental worker init: {e}");
+                        return;
+                    }
+                };
+                while let Ok(WorkerMsg::Write { changed, out_dir, env, entries, resp_tx }) = rx.recv() {
+                    let scan_mode: ScanMode<arcstr::ArcStr> = match changed {
+                        Some(files) if !files.is_empty() => {
+                            tracing::info!(n_files = files.len(), files = ?files, "worker: ScanMode::Partial");
+                            ScanMode::Partial(files)
+                        }
+                        _ => {
+                            tracing::info!("worker: ScanMode::Full");
+                            ScanMode::Full
+                        }
+                    };
+                    let t0 = std::time::Instant::now();
+                    let result = rt.block_on(async { bundler.incremental_write(scan_mode).await });
+                    let elapsed = t0.elapsed();
+                    tracing::info!(
+                        elapsed_ms = elapsed.as_millis() as u64,
+                        ok = result.is_ok(),
+                        "worker: incremental_write returned"
+                    );
+                    let converted: crate::Result<crate::BundleOutput> = result
+                        .map_err(|e| {
+                            err("BLD-ROLLDOWN", format!("incremental write: {e}"))
+                        })
+                        .and_then(|ro| convert(ro, &out_dir, env, &entries));
+                    let _ = resp_tx.send(converted);
+                }
+            })
+            .map_err(|e| err("BLD-ROLLDOWN", format!("spawn incremental worker: {e}")))?;
+
+        Ok(Self {
+            request_tx: tx,
+            options_hash,
+            first_write_done: AtomicBool::new(false),
+        })
+    }
+
+    fn rebuild(
+        &self,
+        options: &crate::BundleOptions,
+        changed: Option<&[std::path::PathBuf]>,
+    ) -> crate::Result<crate::BundleOutput> {
+        let files: Option<Vec<arcstr::ArcStr>> = changed.map(|paths| {
+            paths
+                .iter()
+                .map(|p| arcstr::ArcStr::from(p.to_string_lossy().as_ref()))
+                .collect()
+        });
+        // First call is always Full — rolldown enforces this on a
+        // snapshot-less bundler regardless, but being explicit here means a
+        // caller's first `changed = Some([...])` still gets a full build.
+        let is_first = !self.first_write_done.swap(true, Ordering::SeqCst);
+        let files = if is_first { None } else { files };
+
+        let (resp_tx, resp_rx) = std::sync::mpsc::sync_channel(1);
+        self.request_tx
+            .send(WorkerMsg::Write {
+                changed: files,
+                out_dir: options.out_dir.clone(),
+                env: options.env,
+                entries: options.entries.clone(),
+                resp_tx,
+            })
+            .map_err(|_| err("BLD-ROLLDOWN", "incremental worker died"))?;
+        let mut output = resp_rx
+            .recv()
+            .map_err(|_| err("BLD-ROLLDOWN", "incremental worker died"))??;
+
+        // Apply post-emit hooks on the caller side (same order as the cold
+        // path in `bundle`): renderChunk per chunk, then generateBundle over
+        // the final list.
+        if let Some(hook) = options.render_chunk_hook.as_ref() {
+            for c in &output.chunks {
+                let file_path = options.out_dir.join(&c.file);
+                if let Ok(src) = std::fs::read_to_string(&file_path)
+                    && let Ok(Some(new_src)) = hook.call(&c.file, &src)
+                    && new_src != src
+                {
+                    let _ = std::fs::write(&file_path, &new_src);
+                }
+            }
+        }
+        if let Some(hook) = options.generate_bundle_hook.as_ref() {
+            let files: Vec<String> = output.chunks.iter().map(|c| c.file.clone()).collect();
+            if let Ok(Some(kept)) = hook.call(&files) {
+                let keep: std::collections::BTreeSet<&str> =
+                    kept.iter().map(String::as_str).collect();
+                output.chunks.retain(|c| keep.contains(c.file.as_str()));
+            }
+        }
+        Ok(output)
     }
 }

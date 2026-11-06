@@ -1,100 +1,96 @@
-// src/islands/adapter-tabs.tsx — one engine, four frameworks.
-//
-// Switching tabs is a same-document navigation in miniature. Where the View
-// Transitions API exists (Baseline since Oct 2025) the panel crossfades from
-// its old geometry to its new one; elsewhere the switch is instant, which is
-// the correct fallback — a missing transition is invisible, a broken one is
-// not.
-//
-// Reduced motion collapses both paths to the instant switch, per W3C C39:
-// the information (which adapter is selected) still arrives, only the trip is
-// skipped.
+import { useMemo, useState } from 'react';
+import { codeToHtml } from 'rangi';
+import { githubDark } from 'rangi/themes';
 
-import { useCallback, useMemo, useState } from 'react'
-import { supportsViewTransitions, useReducedMotion } from '../lib/motion.ts'
-
-export interface Adapter {
-  id: string
-  label: string
-  snippet: string
-  note: string
+interface Adapter {
+  id: string;
+  label: string;
+  logo?: string;
+  note: string;
+  snippet: string;
 }
 
 interface Props {
-  adapters: Adapter[]
+  adapters: Adapter[];
+}
+
+function stripShikiStyle(html: string): string {
+  return html.replace(/<div\b([^>]*)>/g, (match, attrs) => {
+    if (/class="[^"]*shj-/.test(attrs)) {
+      return `<div${attrs.replace(/\s+style="[^"]*"/, '')}>`;
+    }
+    return match;
+  });
 }
 
 export default function AdapterTabs({ adapters }: Props) {
-  const firstId = adapters[0]?.id ?? ''
-  const [active, setActive] = useState<string>(firstId)
-  const reduced = useReducedMotion()
+  const [activeId, setActiveId] = useState(adapters[0]?.id);
+  const current = adapters.find(a => a.id === activeId) ?? adapters[0];
 
-  const current = useMemo<Adapter | undefined>(
-    () => adapters.find((a) => a.id === active) ?? adapters[0],
-    [adapters, active],
-  )
+  if (!current) return null;
 
-  const select = useCallback((id: string) => {
-    if (id === active) return
-    if (!reduced && supportsViewTransitions()) {
-      const doc = document as Document & {
-        startViewTransition?: (cb: () => void) => unknown
-      }
-      if (typeof doc.startViewTransition === 'function') {
-        doc.startViewTransition(() => setActive(id))
-        return
-      }
+  // rangi does not natively support 'vue' or 'svelte', map them to 'html' to prevent crashes.
+  const lang = current.id === 'solid' ? 'tsx'
+             : current.id === 'vue' ? 'html'
+             : current.id === 'svelte' ? 'html'
+             : 'tsx';
+
+  // Highlighting is pure given (snippet, lang) — memo it so a parent-driven
+  // re-render (HMR replay, island remount) doesn't re-run the tokenizer.
+  const highlightedHtml = useMemo(() => {
+    try {
+      return stripShikiStyle(codeToHtml(current.snippet, {
+        lang,
+        theme: githubDark,
+        lineNumbers: false,
+      }));
+    } catch (e) {
+      console.error('rangi highlight failed:', e);
+      const escaped = current.snippet.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return `<pre><code>${escaped}</code></pre>`;
     }
-    setActive(id)
-  }, [active, reduced])
-
-  const onKeyDown = useCallback((e: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (adapters.length === 0) return
-    const i = adapters.findIndex((x) => x.id === active)
-    const at = i < 0 ? 0 : i
-    if (e.key === 'ArrowRight') {
-      e.preventDefault()
-      const next = adapters[(at + 1) % adapters.length]
-      if (next) select(next.id)
-    } else if (e.key === 'ArrowLeft') {
-      e.preventDefault()
-      const prev = adapters[(at - 1 + adapters.length) % adapters.length]
-      if (prev) select(prev.id)
-    }
-  }, [adapters, active, select])
-
-  if (!current) return null
+  }, [current.snippet, lang]);
 
   return (
-    <div className="adapter-tabs">
-      <div className="adapter-tablist" role="tablist" aria-label="Framework adapter">
-        {adapters.map((a) => (
+    <div className="max-w-[1080px] mx-auto border border-zinc-800 rounded-[10px] overflow-hidden">
+      <div role="tablist" className="flex flex-wrap gap-1 p-1.5 bg-[#09090b] border-b border-zinc-800">
+        {adapters.map(a => (
           <button
             key={a.id}
             type="button"
             role="tab"
-            id={`tab-${a.id}`}
-            aria-selected={a.id === active}
-            aria-controls={`panel-${a.id}`}
-            tabIndex={a.id === active ? 0 : -1}
-            className="adapter-tab"
-            onClick={() => select(a.id)}
-            onKeyDown={onKeyDown}
+            aria-selected={activeId === a.id}
+            onClick={() => setActiveId(a.id)}
+            className={`inline-flex items-center gap-2 px-3 py-2 font-mono text-[13px] cursor-pointer border border-transparent rounded-[7px] transition-colors ${
+              activeId === a.id
+                ? 'bg-zinc-900 text-zinc-50'
+                : 'bg-transparent text-zinc-400 hover:text-zinc-200'
+            }`}
           >
+            {a.logo && (
+              <span className="flex items-center justify-center w-[18px] h-[18px] rounded-full bg-zinc-200 overflow-hidden shrink-0">
+                <img
+                  src={a.logo}
+                  alt=""
+                  className="tab-logo"
+                  width={12}
+                  height={12}
+                  style={{ width: '12px', height: '12px', objectFit: 'contain' }}
+                />
+              </span>
+            )}
             {a.label}
           </button>
         ))}
       </div>
-      <div
-        className="adapter-panel"
-        role="tabpanel"
-        id={`panel-${current.id}`}
-        aria-labelledby={`tab-${current.id}`}
-        style={{ viewTransitionName: 'adapter-panel' }}
-      >
-        <pre className="adapter-snippet"><code>{current.snippet}</code></pre>
-        <p className="adapter-note">{current.note}</p>
+
+      <div className="adapter-shiki bg-zinc-900">
+        <div dangerouslySetInnerHTML={{ __html: highlightedHtml }} />
       </div>
+
+      <p className="m-0 px-5 py-4 bg-[#09090b] text-zinc-400 text-sm font-mono border-t border-zinc-800">
+        {current.note}
+      </p>
     </div>
-  )
+  );
 }

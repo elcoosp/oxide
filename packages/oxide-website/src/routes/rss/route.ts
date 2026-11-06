@@ -6,11 +6,15 @@ import { site } from '../../lib/site.ts'
 
 export async function GET(_request: Request): Promise<Response> {
   const items = (await listPosts())
+    // A post without a parseable `date` would emit `<pubDate>Invalid Date
+    // </pubDate>` (invalid RSS — some readers drop the whole feed); skip it
+    // here. `listPosts` already sorts unparseable dates last.
+    .filter((p) => !Number.isNaN(Date.parse(p.date)))
     .map(
       (p) => `    <item>
       <title>${xmlEsc(p.title)}</title>
-      <link>${site.url}/blog/${p.slug}</link>
-      <guid isPermaLink="true">${site.url}/blog/${p.slug}</guid>
+      <link>${xmlEsc(`${site.url}/blog/${p.slug}`)}</link>
+      <guid isPermaLink="true">${xmlEsc(`${site.url}/blog/${p.slug}`)}</guid>
       <pubDate>${new Date(p.date).toUTCString()}</pubDate>
       <description>${xmlEsc(p.description)}</description>
     </item>`,

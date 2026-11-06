@@ -266,6 +266,20 @@ pub struct Limits {
     pub max_url_len: usize,
     pub multipart_parts: usize,
     pub slow_request_timeout_ms: u64,
+    /// P1 hardening (readiness): max concurrent accepted connections for the
+    /// whole process. The accept loop previously had NO cap — unbounded memory
+    /// and task growth under a connection flood.
+    pub max_connections: usize,
+    /// P1 hardening: max concurrent connections from ONE peer IP. Prevents a
+    /// single host from monopolizing the pool. Trusted-proxy deployments should
+    /// tune this together with `security.trustedProxies` (the bucket key is the
+    /// socket peer unless the proxy is trusted).
+    pub max_per_ip: usize,
+    /// P1 hardening: graceful-drain budget in seconds (§12.2). Hardcoded to 5 s
+    /// before, which silently cut off Kubernetes long-rolling-update traffic
+    /// (default terminationGracePeriodSeconds is 30 s). `OXIDE_DRAIN_SECS`
+    /// overrides at start time without a config change.
+    pub drain_secs: u64,
 }
 
 impl Default for Limits {
@@ -276,6 +290,9 @@ impl Default for Limits {
             max_url_len: 8 * 1024,
             multipart_parts: 1000,
             slow_request_timeout_ms: 30_000,
+            max_connections: 1024,
+            max_per_ip: 64,
+            drain_secs: 30,
         }
     }
 }
@@ -286,7 +303,10 @@ impl Default for Limits {
 pub struct StaticAssets {
     pub root: std::path::PathBuf,
     /// prebuilt map: url path → (file, etag, size, mtime).
-    pub index: BTreeMap<String, AssetEntry>,
+    /// PERF-21 (readiness): `HashMap` — the URL path is only ever probed,
+    /// never range-scanned; the `BTreeMap`'s ordered layout bought nothing
+    /// and cost more on lookup.
+    pub index: std::collections::HashMap<String, AssetEntry>,
 }
 
 #[derive(Debug, Clone)]
@@ -307,6 +327,22 @@ impl StaticAssets {
     /// chars of the blake3 content hash; precompressed siblings `<f>.zst|.br|.gz` map
     /// to `zstd`/`br`/`gzip`.
     pub fn scan(root: impl Into<std::path::PathBuf>) -> Result<Self> {
+        Self::scan_filtered(root, &[])
+    }
+
+    /// SEC-STATIC (pre-0.1 readiness P0-1): like [`StaticAssets::scan`], but skips
+    /// whole directories by NAME at any depth. The production build layout is
+    /// `dist/client/` (public, hashed) + `dist/server/` (the SSR bundle, the
+    /// server manifest and the L0 seed) + copied `public/` files at the root.
+    /// Only `dist/client` + the copied public files are meant to be web-facing;
+    /// indexing `dist/server` made the SSR bundle and its manifest downloadable
+    /// (`curl /server/ssr/index.js`). The CLI now passes `&["server"]` so the
+    /// server bundle is never indexed, and [`StaticAssets::serve`] additionally
+    /// hard-denies those paths for defense in depth.
+    pub fn scan_filtered(
+        root: impl Into<std::path::PathBuf>,
+        exclude_dirs: &[&str],
+    ) -> Result<Self> {
         let root = root.into();
         if !root.is_dir() {
             return Err(err(
@@ -314,8 +350,8 @@ impl StaticAssets {
                 format!("asset root {} is not a directory", root.display()),
             ));
         }
-        let mut index = BTreeMap::new();
-        walk_assets(&root, &root, &mut index)?;
+        let mut index = std::collections::HashMap::new();
+        walk_assets_filtered(&root, &root, &mut index, exclude_dirs)?;
         Ok(Self { root, index })
     }
 
@@ -328,8 +364,95 @@ impl StaticAssets {
     /// *compressed* variant serves the full negotiated representation with 200 —
     /// no partial decode. `HEAD` returns headers only.
     pub fn serve(&self, req: &OxideRequest, path: &str) -> Option<OxideResponse> {
-        let entry = self.index.get(path)?;
-        let etag_raw = entry.etag.as_str();
+        // SEC-STATIC (P0-1): hard deny for build-internal files. Even if a stale
+        // index (or a custom scan) contains them, the SSR bundle, its manifest and
+        // the L0 seed must never be served. 404, not 403: do not confirm existence.
+        if is_server_internal_path(path) {
+            return None;
+        }
+        let is_dev_pre = dev_mode();
+        // Dev: fall back to disk on index miss. `StaticAssets::scan` runs
+        // once at startup and is designed for immutable prod assets. Rolldown
+        // rebuilds emit NEW chunk names (e.g. `doc-body-<hash>.js`) that
+        // weren't in the index, so they'd 404 forever. A 404 on a chunk makes
+        // the browser's dynamic import fail, `componentFor` returns
+        // undefined, and the page falls back to IR — the "flash of new then
+        // revert to old" symptom.
+        let disk_entry_owned: Option<AssetEntry> = if is_dev_pre && !self.index.contains_key(path) {
+            let rel = path.trim_start_matches('/');
+            // Reject path traversal defensively even though the caller
+            // (dispatch) already normalizes the URL.
+            if rel.contains("..") || rel.is_empty() {
+                None
+            } else {
+                let disk = self.root.join(rel);
+                if disk.is_file() {
+                    std::fs::read(&disk).ok().map(|content| {
+                        let etag = blake3::hash(&content).to_hex()[..16].to_string();
+                        let md = std::fs::metadata(&disk).ok();
+                        let mtime = md
+                            .as_ref()
+                            .and_then(|m| m.modified().ok())
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let mut precompressed = BTreeMap::new();
+                        for (ext, enc) in [("zst", "zstd"), ("br", "br"), ("gz", "gzip")] {
+                            let mut sibling = disk.clone().into_os_string();
+                            sibling.push(format!(".{ext}"));
+                            let sibling = std::path::PathBuf::from(sibling);
+                            if sibling.is_file() {
+                                precompressed.insert(enc.to_string(), sibling);
+                            }
+                        }
+                        let filename = disk
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("")
+                            .to_string();
+                        tracing::info!(
+                            path = path,
+                            disk = %disk.display(),
+                            "asset: fresh chunk from disk (dev index miss)"
+                        );
+                        AssetEntry {
+                            path: disk,
+                            etag,
+                            size: content.len() as u64,
+                            mtime,
+                            content_type: content_type_for(&filename),
+                            precompressed,
+                        }
+                    })
+                } else {
+                    tracing::warn!(
+                        path = path,
+                        disk = %disk.display(),
+                        "asset: index miss AND disk miss — genuine 404"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let entry = self.index.get(path).or(disk_entry_owned.as_ref())?;
+        // Dev: recompute the etag from the FRESH file so a rebuilt chunk
+        // gets a new etag AND the moka-body-cache and index-etag both
+        // serve the current bytes. In prod, entry.etag is correct (assets
+        // are hashed and immutable).
+        let fresh_etag_owned: String;
+        let etag_raw: &str = if is_dev_pre {
+            match std::fs::read(&entry.path) {
+                Ok(bytes) => {
+                    fresh_etag_owned = blake3::hash(&bytes).to_hex().to_string()[..16].to_string();
+                    &fresh_etag_owned
+                }
+                Err(_) => entry.etag.as_str(),
+            }
+        } else {
+            entry.etag.as_str()
+        };
         let etag_h = format!("\"{etag_raw}\"");
         // §16.6: a service worker script must REVALIDATE on every fetch. A
         // year-long immutable `sw.js` keeps serving the old precache list —
@@ -339,6 +462,9 @@ impl StaticAssets {
         // (their names change with their content).
         const SW_CACHE_CTL: &str = "public, max-age=0, must-revalidate";
         const CACHE_CTL: &str = "public, max-age=31536000, immutable";
+        // CACHE-SPLIT (P1): unhashed public files. One hour + revalidation:
+        // fresh enough after a deploy, still cacheable by CDNs.
+        const UNHASHED_CACHE_CTL: &str = "public, max-age=3600, must-revalidate";
         // §16.5 / WP-r9-7: the search index is an unhashed,
         // rebuilt-every-build file. `immutable` would pin a stale index in
         // every visitor's browser for a year. Same must-revalidate class
@@ -347,13 +473,32 @@ impl StaticAssets {
             || path == "/pwa-register.js"
             || path == "/client/search-index.json"
             || path == "/search-index.json";
+        // [wr217] In dev, serve /client/* with no-cache so every rebuild reaches
+        // the browser. Without this the `immutable` header pins every JS/CSS
+        // asset for a year and the browser never sees updates — dev works
+        // against the first-loaded bundle forever.
+        let is_dev = dev_mode();
+        // CACHE-SPLIT (P1): `immutable` is only correct for content-addressed
+        // (hashed) filenames. Unhashed files — `favicon.ico`, `robots.txt`,
+        // `sitemap.xml`, `site.webmanifest`, unhashed images in `public/` —
+        // pinned for a year would serve stale content after a deploy. Give them
+        // a short, revalidatable TTL instead.
+        let file_name = path.rsplit('/').next().unwrap_or("");
         let cache_ctl: &str = if is_service_worker {
             SW_CACHE_CTL
-        } else {
+        } else if is_dev && path.starts_with("/client/") {
+            "no-cache, no-store, must-revalidate"
+        } else if is_hashed_asset_name(file_name) {
             CACHE_CTL
+        } else {
+            UNHASHED_CACHE_CTL
         };
 
-        if let Some(inm) = req.header("if-none-match") {
+        // In dev, skip the 304 short-circuit: even if the etag matches,
+        // the body on disk may have changed since the client got that etag.
+        // Serve fresh bytes every time; the `no-cache` header prevents the
+        // browser from caching them long enough for this to matter.
+        if !is_dev_pre && let Some(inm) = req.header("if-none-match") {
             let matches = inm.split(',').map(|c| c.trim()).any(|cand| {
                 let cand = cand.strip_prefix("W/").unwrap_or(cand);
                 cand == "*" || cand.trim_matches('"') == etag_raw
@@ -451,14 +596,37 @@ fn asset_body_cache() -> &'static moka::sync::Cache<std::path::PathBuf, Bytes> {
 }
 
 /// P-12: return the asset body from the cache, reading it once on a miss.
+///
+/// **Dev bypass**: in dev (`OXIDE_DEV`/`OXIDE_DEV_MODE`), ALWAYS read from
+/// disk. The moka cache is keyed by file path and lives for 300s; HMR
+/// rewrites `dist/client/*.js` in place with the same path, so the cache
+/// serves the first-build bytes forever. That was the "flash of change
+/// then revert" — SSR was fresh (fresh V8 modules) but the browser chunk
+/// was the first-build version, hydration mismatched, React re-rendered
+/// with the stale client.
 fn cached_asset_body(path: &std::path::Path) -> Option<Bytes> {
+    let is_dev = dev_mode();
+    if is_dev {
+        // Bypass the moka body cache entirely in dev.
+        return std::fs::read(path).ok().map(Bytes::from);
+    }
+    // PERF-21 (readiness): size ceiling for the process-wide body cache. The
+    // asset cache is capped at 256 MiB TOTAL; without a per-file ceiling one
+    // large video/streamed asset read on a miss would evict every hot JS/CSS
+    // chunk. Big files are read per request but never occupy cache space.
+    const MAX_CACHED_ASSET_BYTES: u64 = 8 * 1024 * 1024;
+    let cacheable = std::fs::metadata(path)
+        .map(|m| m.len() <= MAX_CACHED_ASSET_BYTES)
+        .unwrap_or(false);
     let cache = asset_body_cache();
     if let Some(b) = cache.get(path) {
         return Some(b);
     }
     let bytes = std::fs::read(path).ok()?;
     let b = Bytes::from(bytes);
-    cache.insert(path.to_path_buf(), b.clone());
+    if cacheable {
+        cache.insert(path.to_path_buf(), b.clone());
+    }
     Some(b)
 }
 
@@ -478,11 +646,14 @@ fn with_asset_headers(
     resp
 }
 
-/// Recursive asset walk (hidden files and directories are skipped).
-fn walk_assets(
+/// Recursive asset walk (hidden files and directories are skipped;
+/// directories whose name is in `exclude_dirs` are pruned — see
+/// [`StaticAssets::scan_filtered`]).
+fn walk_assets_filtered(
     root: &std::path::Path,
     dir: &std::path::Path,
-    index: &mut BTreeMap<String, AssetEntry>,
+    index: &mut std::collections::HashMap<String, AssetEntry>,
+    exclude_dirs: &[&str],
 ) -> Result<()> {
     let entries = std::fs::read_dir(dir)
         .map_err(|e| err("SRV-ASSET", format!("read {}: {e}", dir.display())))?;
@@ -498,7 +669,11 @@ fn walk_assets(
             Err(_) => continue,
         };
         if ft.is_dir() {
-            walk_assets(root, &path, index)?;
+            let dir_name = name.to_string_lossy();
+            if exclude_dirs.iter().any(|x| *x == dir_name) {
+                continue;
+            }
+            walk_assets_filtered(root, &path, index, exclude_dirs)?;
             continue;
         }
         if !ft.is_file() {
@@ -540,6 +715,66 @@ fn walk_assets(
         );
     }
     Ok(())
+}
+
+/// SEC-STATIC (P0-1): paths that reference build-internal files. The SSR
+/// bundle lives under `dist/server/` and indexes as `/server/…`; the server
+/// manifest and L0 seed are also written under `dist/server/`. Deny any path
+/// whose first segment is `server`, plus the root-level names as defense in
+/// depth against a build layout change. These files are inputs to the running
+/// server, not public assets.
+fn is_server_internal_path(path: &str) -> bool {
+    let p = path.trim_start_matches('/');
+    if p == "server" || p.starts_with("server/") {
+        return true;
+    }
+    matches!(
+        p,
+        "server.manifest.json" | "l0-seed.json" | "client.manifest.json.decoded"
+    )
+}
+
+/// CACHE-SPLIT (P1): does this file name look content-addressed? A filename is
+/// considered hashed when its last dash-separated stem segment is a hex run of
+/// 8+ chars (`app-DjK3f9b2.js`, `hero.2a1b3c4d5e6f7a8b.png` style names emitted
+/// by the bundler and the image pipeline). Only hashed names are safe to serve
+/// with `max-age=31536000, immutable`; everything else gets a short TTL.
+fn is_hashed_asset_name(file_name: &str) -> bool {
+    let stem = match file_name.rsplit_once('.') {
+        Some((s, ext)) if !ext.is_empty() => s,
+        _ => return false,
+    };
+    match stem.rsplit_once('-') {
+        Some((_, seg)) => seg.len() >= 8 && seg.chars().all(|c| c.is_ascii_hexdigit()),
+        None => false,
+    }
+}
+
+/// Dev-mode probe. P1 (readiness): the per-request `std::env::var` reads were
+/// (a) 2 syscalls-ish lookups per request and (b) a data race — the CLI writes
+/// these variables, and a `set_var` concurrent with a `get_var` on another
+/// thread is UB (edition 2024 marks `set_var` unsafe for exactly this). The
+/// CLI now calls [`set_dev_mode`] once at startup (pre-runtime, see
+/// `apply_startup_env`), and this function answers from the atomic WITHOUT
+/// touching the process env. The env fallback remains for embedded callers
+/// that set the variables before any request thread exists.
+static DEV_MODE_FLAG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static DEV_MODE_KNOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// P1 (readiness): declare the process's dev mode once, before the async
+/// runtime (and any request threads) exist. Call from the binary entry point.
+pub fn set_dev_mode(dev: bool) {
+    DEV_MODE_FLAG.store(dev, std::sync::atomic::Ordering::SeqCst);
+    DEV_MODE_KNOWN.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Dev-mode probe, read once per call site instead of two env reads. Kept as a
+/// function (not a `OnceLock`) because tests flip these variables at runtime.
+pub fn dev_mode() -> bool {
+    if DEV_MODE_KNOWN.load(std::sync::atomic::Ordering::SeqCst) {
+        return DEV_MODE_FLAG.load(std::sync::atomic::Ordering::SeqCst);
+    }
+    std::env::var("OXIDE_DEV").is_ok() || std::env::var("OXIDE_DEV_MODE").is_ok()
 }
 
 fn content_type_for(file_name: &str) -> &'static str {
@@ -663,6 +898,7 @@ impl std::io::Write for ChunkSink {
 enum StreamEncoder {
     Zstd(Box<zstd::stream::write::Encoder<'static, ChunkSink>>),
     Gzip(Box<flate2::write::GzEncoder<ChunkSink>>),
+    Br(Box<brotli::CompressorWriter<ChunkSink>>),
 }
 
 impl StreamEncoder {
@@ -671,6 +907,11 @@ impl StreamEncoder {
             "zstd" => Ok(StreamEncoder::Zstd(Box::new(
                 zstd::stream::write::Encoder::new(sink, 3)?,
             ))),
+            // PERF-06: brotli streaming arm. Quality 4 keeps per-chunk
+            // latency low; the window size is the brotli default (22).
+            "br" => Ok(StreamEncoder::Br(Box::new(brotli::CompressorWriter::new(
+                sink, 4096, 4, 22,
+            )))),
             _ => Ok(StreamEncoder::Gzip(Box::new(
                 flate2::write::GzEncoder::new(sink, flate2::Compression::new(3)),
             ))),
@@ -683,6 +924,7 @@ impl std::io::Write for StreamEncoder {
         match self {
             StreamEncoder::Zstd(w) => w.write(buf),
             StreamEncoder::Gzip(w) => w.write(buf),
+            StreamEncoder::Br(w) => w.write(buf),
         }
     }
 
@@ -690,6 +932,7 @@ impl std::io::Write for StreamEncoder {
         match self {
             StreamEncoder::Zstd(w) => w.flush(),
             StreamEncoder::Gzip(w) => w.flush(),
+            StreamEncoder::Br(w) => w.flush(),
         }
     }
 }
@@ -699,6 +942,9 @@ impl StreamEncoder {
         match self {
             StreamEncoder::Zstd(w) => w.finish().map(|_| ()),
             StreamEncoder::Gzip(w) => w.finish().map(|_| ()),
+            // brotli flushes the tail (including the final block) on drop;
+            // an explicit flush surfaces any write error.
+            StreamEncoder::Br(mut w) => w.flush(),
         }
     }
 }
@@ -853,10 +1099,20 @@ fn alt_svc_for(port: u16) -> &'static str {
 /// `off` (and any unknown mode) yields an empty string — the header is absent.
 pub fn csp_header(mode: &str, nonce: &str) -> String {
     match mode {
+        // P1 (readiness) CSP defaults:
+        //  - Google Fonts hosts REMOVED. Sending every EU visitor's IP to a
+        //    third-party font host by DEFAULT is a GDPR problem (a German
+        //    court fined a site for exactly this in 2022). A project that
+        //    wants Google Fonts appends the hosts itself.
+        //  - `img-src` now exists (`'self' data:`): `data:` image placeholders
+        //    (the image pipeline's LQIP) were silently blocked before because
+        //    default-src 'self' applied.
+        //  - `frame-ancestors 'none'` (clickjacking), `form-action 'self'`
+        //    (exfiltration via forms), `object-src 'none'`, `base-uri 'self'`.
         "strict" => format!(
-            "default-src 'self'; script-src 'self' 'nonce-{nonce}' 'strict-dynamic'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'"
+            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'nonce-{nonce}' 'strict-dynamic'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
         ),
-        "hash" => "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'".into(),
+        "hash" => "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'".into(),
         _ => String::new(),
     }
 }
@@ -1252,9 +1508,29 @@ pub struct RateLimiter {
     pub buckets: dashmap_like::Buckets,
 }
 
+/// PERF-22: the bucket-key hash (SipHash under a process-random
+/// `RandomState`; see [`dashmap_like::Buckets`]).
+pub fn bucket_hash(key: &str) -> u64 {
+    use std::hash::{BuildHasher, Hasher as _};
+    static RS: std::sync::OnceLock<std::collections::hash_map::RandomState> =
+        std::sync::OnceLock::new();
+    let mut h = RS
+        .get_or_init(std::collections::hash_map::RandomState::new)
+        .build_hasher();
+    h.write(key.as_bytes());
+    h.finish()
+}
+
 pub mod dashmap_like {
+    /// PERF-22 (readiness): sharded concurrent map keyed by the 64-bit
+    /// SipHash of the bucket key (`RandomState` seeds are per-process random,
+    /// so an attacker cannot target a hash collision — and a collision would
+    /// only OVER-limit two clients, never bypass the limit). Replaces the
+    /// single `Mutex<BTreeMap<String, …>>` that allocated a `String` per
+    /// request, serialized every request behind one global lock, and ran a
+    /// full `retain` scan under that lock.
     pub type Buckets =
-        std::sync::Mutex<std::collections::BTreeMap<String, (f64, std::time::Instant)>>;
+        dashmap::DashMap<u64, (f64, std::time::Instant), std::collections::hash_map::RandomState>;
 }
 
 impl RateLimiter {
@@ -1263,7 +1539,9 @@ impl RateLimiter {
     /// Token bucket: capacity `max`, starts full, refills continuously at
     /// `max / window_secs` tokens per second (`window_secs` clamped to ≥ 1).
     pub fn allow(&self, key: &str, max: u32, window_secs: u64) -> bool {
-        let mut map = self.buckets.lock().unwrap();
+        // PERF-22: hash once — no String allocation per request, no global
+        // lock (dashmap shards internally).
+        let k = bucket_hash(key);
         let now = Instant::now();
         // A3 / S-10: bound the bucket map. Keys are attacker-influenced (the
         // peer IP or a forwarded address), so without eviction a long-lived
@@ -1271,12 +1549,14 @@ impl RateLimiter {
         // idle longer than the largest window we can observe (one hour) once
         // the map grows past a sane bound. A bucket that is evicted while
         // still active simply starts full again — the same coarse limit the
-        // token bucket already has between processes.
-        if map.len() > 4096 {
-            map.retain(|_, (_, last)| now.duration_since(*last).as_secs() < 3600);
+        // token bucket already has between processes. `retain` runs
+        // shard-parallel on dashmap instead of blocking every request.
+        if self.buckets.len() > 4096 {
+            self.buckets
+                .retain(|_, (_, last)| now.duration_since(*last).as_secs() < 3600);
         }
         let rate = max as f64 / window_secs.max(1) as f64;
-        let bucket = map.entry(key.to_string()).or_insert((max as f64, now));
+        let mut bucket = self.buckets.entry(k).or_insert((max as f64, now));
         let elapsed = now.duration_since(bucket.1).as_secs_f64();
         bucket.0 = (bucket.0 + elapsed * rate).min(max as f64);
         bucket.1 = now;
@@ -1504,6 +1784,12 @@ pub struct Pipeline {
     /// Prometheus metrics endpoint path (§20). `/_oxide/metrics` default;
     /// empty string disables.
     pub metrics_path: String,
+    /// P1 hardening (readiness): bearer token required to read the metrics
+    /// endpoint. The endpoint used to be public on the MAIN port, exposing
+    /// per-route request rates and error counts to anyone. When `None`: open
+    /// in dev (OXIDE_DEV/OXIDE_DEV_MODE), 403 in production — set
+    /// `OXIDE_METRICS_TOKEN` (env) or `security.metricsAuthToken` (config).
+    pub metrics_auth_token: Option<String>,
     /// Optional metrics registry. When `Some`, `/metrics_path` renders it.
     pub metrics: Option<Arc<Metrics>>,
     /// Optional inspector provider (§13.4). When `Some`, `/__oxide` and
@@ -2107,6 +2393,7 @@ impl Default for Pipeline {
             ready_path: String::new(),
             render_ready: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             metrics_path: String::new(),
+            metrics_auth_token: None,
             metrics: None,
             inspector: None,
             hmr: None,
@@ -3269,16 +3556,22 @@ impl Pipeline {
         mut req: OxideRequest,
         dispatch: &dyn Fn(OxideRequest) -> futures::future::BoxFuture<'static, OxideResponse>,
     ) -> futures::future::BoxFuture<'_, OxideResponse> {
+        use tracing::Instrument as _;
         // §20 tracing: one span per request, propagated through the W3C trace
         // context when an OTLP endpoint is configured. The span carries the
         // request id so it can be correlated with `Server-Timing` and logs.
+        //
+        // P1 (readiness): the span is now `.instrument()`ed onto the RETURNED
+        // future. The old `span.enter()` guard was dropped when this function
+        // returned the still-unpolled future, so every await AFTER entry — the
+        // whole render, the loader fetches, the cache fill — ran OUTSIDE the
+        // request span and could not be correlated in traces.
         let span = tracing::info_span!(
             "oxide.request",
             request_id = %req.request_id,
             method = %req.method,
             path = %path_of(&req.url),
         );
-        let _enter = span.enter();
 
         // §20 metrics: time the request, observe the response with a bounded
         // route label. The native prefix is entirely synchronous, so Raw and
@@ -3290,16 +3583,21 @@ impl Pipeline {
 
         // SPEC-24: stage spans. `match` covers routing + native rules; the
         // render/load happen inside the dispatch delegate (which emits its own
-        // `total`); these spans make the native stages observable.
-        let _match = tracing::info_span!("oxide.match").entered();
-        let native = self.native_prefix(&mut req);
-        drop(_match);
+        // `total`); these spans make the native stages observable. The sync
+        // native stage runs under the span via an explicit enter scope.
+        let native = {
+            let _enter = span.enter();
+            let _match = tracing::info_span!("oxide.match").entered();
+            let n = self.native_prefix(&mut req);
+            drop(_match);
+            n
+        };
         match native {
             NativePrefix::Raw(resp) => {
                 if let Some(m) = &metrics {
                     m.observe("_native", started.elapsed(), resp.status);
                 }
-                Box::pin(std::future::ready(resp))
+                Box::pin(std::future::ready(resp).instrument(span))
             }
             NativePrefix::Static(resp, rule_headers) => {
                 let request_id = req.request_id.clone();
@@ -3313,7 +3611,7 @@ impl Pipeline {
                 if let Some(m) = &metrics {
                     m.observe("_static", started.elapsed(), finished.status);
                 }
-                Box::pin(std::future::ready(finished))
+                Box::pin(std::future::ready(finished).instrument(span))
             }
             NativePrefix::RemoteImage {
                 endpoint,
@@ -3324,16 +3622,19 @@ impl Pipeline {
                 let request_id = req.request_id.clone();
                 let method = req.method.clone();
                 let cookie = req.header("cookie").map(str::to_string);
-                Box::pin(async move {
-                    let resp = fetch_remote_image(endpoint, request, format).await;
-                    self.finish_response_with_request(
-                        resp,
-                        &rule_headers,
-                        &request_id,
-                        Some(&method),
-                        cookie.as_deref(),
-                    )
-                })
+                Box::pin(
+                    async move {
+                        let resp = fetch_remote_image(endpoint, request, format).await;
+                        self.finish_response_with_request(
+                            resp,
+                            &rule_headers,
+                            &request_id,
+                            Some(&method),
+                            cookie.as_deref(),
+                        )
+                    }
+                    .instrument(span),
+                )
             }
             NativePrefix::ServerFn {
                 id,
@@ -3347,16 +3648,19 @@ impl Pipeline {
                 let method = req.method.clone();
                 let cookie = req.header("cookie").map(str::to_string);
                 let dispatch = self.server_fns.clone();
-                Box::pin(async move {
-                    let resp = run_server_fn(dispatch.as_deref(), &id, &args).await;
-                    self.finish_response_with_request(
-                        resp,
-                        &rule_headers,
-                        &request_id,
-                        Some(&method),
-                        cookie.as_deref(),
-                    )
-                })
+                Box::pin(
+                    async move {
+                        let resp = run_server_fn(dispatch.as_deref(), &id, &args).await;
+                        self.finish_response_with_request(
+                            resp,
+                            &rule_headers,
+                            &request_id,
+                            Some(&method),
+                            cookie.as_deref(),
+                        )
+                    }
+                    .instrument(span),
+                )
             }
             NativePrefix::Dispatch(rule_headers, content_language) => {
                 // Capture the request id before `req` moves into `dispatch` —
@@ -3377,35 +3681,38 @@ impl Pipeline {
                 let started_render = started;
                 // Call dispatch synchronously; only the (Send) boxed future crosses the await.
                 let fut = dispatch(req);
-                Box::pin(async move {
-                    let mut resp = fut.await;
-                    if !resp
-                        .headers
-                        .iter()
-                        .any(|(k, _)| k.eq_ignore_ascii_case("server-timing"))
-                    {
-                        let ms = started_render.elapsed().as_secs_f64() * 1000.0;
-                        resp = resp.with_header("Server-Timing", format!("total;dur={ms:.2}"));
-                    }
-                    // SPEC-10: the resolved locale rides the page response.
-                    if let Some(loc) = &content_language
-                        && !resp
+                Box::pin(
+                    async move {
+                        let mut resp = fut.await;
+                        if !resp
                             .headers
                             .iter()
-                            .any(|(k, _)| k.eq_ignore_ascii_case("content-language"))
-                    {
-                        resp = resp.with_header("Content-Language", loc.clone());
+                            .any(|(k, _)| k.eq_ignore_ascii_case("server-timing"))
+                        {
+                            let ms = started_render.elapsed().as_secs_f64() * 1000.0;
+                            resp = resp.with_header("Server-Timing", format!("total;dur={ms:.2}"));
+                        }
+                        // SPEC-10: the resolved locale rides the page response.
+                        if let Some(loc) = &content_language
+                            && !resp
+                                .headers
+                                .iter()
+                                .any(|(k, _)| k.eq_ignore_ascii_case("content-language"))
+                        {
+                            resp = resp.with_header("Content-Language", loc.clone());
+                        }
+                        self.finish_response_full_async(
+                            resp,
+                            &rule_headers,
+                            &request_id,
+                            Some(&method),
+                            cookie.as_deref(),
+                            accept_encoding.as_deref(),
+                        )
+                        .await
                     }
-                    self.finish_response_full_async(
-                        resp,
-                        &rule_headers,
-                        &request_id,
-                        Some(&method),
-                        cookie.as_deref(),
-                        accept_encoding.as_deref(),
-                    )
-                    .await
-                })
+                    .instrument(span),
+                )
             }
         }
     }
@@ -3489,16 +3796,47 @@ impl Pipeline {
         }
 
         // (3a) metrics endpoint (§20) — Prometheus text exposition.
+        // P1 hardening: bearer-token gate. A token always wins; without one
+        // the endpoint is dev-only (production returns 403 rather than leak
+        // per-route traffic to the public port).
         if req.method.eq_ignore_ascii_case("GET")
             && !self.metrics_path.is_empty()
             && path == self.metrics_path
         {
-            return NativePrefix::Raw(match &self.metrics {
-                Some(m) => OxideResponse::new(200, Bytes::from(m.render()))
-                    .with_header("content-type", "text/plain; version=0.0.4; charset=utf-8"),
-                None => OxideResponse::new(404, "metrics endpoint not configured")
+            // An UNCONFIGURED endpoint 404s before the gate: it leaks nothing
+            // (there is no registry to protect) and keeps the "not configured"
+            // contract for dev tooling.
+            let Some(m) = &self.metrics else {
+                return NativePrefix::Raw(
+                    OxideResponse::new(404, "metrics endpoint not configured")
+                        .with_header("content-type", "text/plain; charset=utf-8"),
+                );
+            };
+            if let Some(token) = &self.metrics_auth_token {
+                let auth = req.header("authorization").unwrap_or("");
+                let presented = auth.strip_prefix("Bearer ").unwrap_or("");
+                if presented.is_empty() || !constant_time_eq(presented.as_bytes(), token.as_bytes())
+                {
+                    return NativePrefix::Raw(
+                        OxideResponse::new(401, "metrics requires a bearer token")
+                            .with_header("content-type", "text/plain; charset=utf-8")
+                            .with_header("www-authenticate", "Bearer"),
+                    );
+                }
+            } else if !dev_mode() {
+                return NativePrefix::Raw(
+                    OxideResponse::new(
+                        403,
+                        "metrics is protected in production: set OXIDE_METRICS_TOKEN \
+                         or security.metricsAuthToken (or run in dev)",
+                    )
                     .with_header("content-type", "text/plain; charset=utf-8"),
-            });
+                );
+            }
+            return NativePrefix::Raw(
+                OxideResponse::new(200, Bytes::from(m.render()))
+                    .with_header("content-type", "text/plain; version=0.0.4; charset=utf-8"),
+            );
         }
 
         // (3a.1) web-vitals beacon (§16.6 / §20). The client's reporting hook
@@ -3708,7 +4046,15 @@ impl Pipeline {
         // for the dispatch path; a static hit returns before rules run.
         let mut rule_headers: Vec<(String, String)> = Vec::new();
         let is_get_head = matches!(req.method.to_ascii_uppercase().as_str(), "GET" | "HEAD");
+        // Native ESM dev server: `/src/*` and `/@*` are served by the CLI's
+        // dispatch intercept (see `crates/cli/src/esm_dev.rs`), never by the
+        // static-asset store. Without this guard, `StaticAssets::serve`
+        // would fall through to the disk (dev fallback) and try to read
+        // `<root>/src/foo.tsx` — the raw TSX, not the transformed ESM.
+        let is_dev = std::env::var("OXIDE_DEV").is_ok() || std::env::var("OXIDE_DEV_MODE").is_ok();
+        let is_esm_path = is_dev && (path.starts_with("/src/") || path.starts_with("/@"));
         if is_get_head
+            && !is_esm_path
             && (path_has_extension(&path) || path.starts_with("/_oxide/static"))
             && let Some(assets) = &self.assets
             && let Some(resp) = assets.serve(req, &path)
@@ -3849,7 +4195,11 @@ impl Pipeline {
                     .map(|(_, v)| v.clone())
                     .unwrap_or_default();
                 if is_compressible(&ct_owned)
-                    && let Some(enc) = negotiate_encoding(ae, &["zstd", "gzip"])
+                    // PERF-06 (readiness): brotli in the dynamic negotiation
+                    // set — `compress_body` and the streaming encoder both
+                    // support it; servers that only ever sent zstd/gzip left
+                    // br-capable clients (all modern browsers) on zstd.
+                    && let Some(enc) = negotiate_encoding(ae, &["zstd", "br", "gzip"])
                     && let Some(stream) = resp.stream.take()
                 {
                     resp.stream = Some(spawn_stream_compressor(&enc, stream));
@@ -3869,7 +4219,7 @@ impl Pipeline {
                     .map(|(_, v)| v.clone())
                     .unwrap_or_default();
                 if is_compressible(&ct_owned)
-                    && let Some(enc) = negotiate_encoding(ae, &["zstd", "gzip"])
+                    && let Some(enc) = negotiate_encoding(ae, &["zstd", "br", "gzip"])
                 {
                     let body = resp.body.clone();
                     let orig_len = body.len();
@@ -4205,6 +4555,25 @@ pub struct Server {
     pub addr: std::net::SocketAddr,
 }
 
+/// P1 hardening: RAII guard for a per-IP connection slot. Dropping it decrements
+/// the peer's count and removes the entry at zero so the map cannot grow
+/// unbounded with churned client IPs.
+struct IpSlotGuard {
+    ip: std::net::IpAddr,
+    map: Arc<std::sync::Mutex<std::collections::HashMap<std::net::IpAddr, usize>>>,
+}
+impl Drop for IpSlotGuard {
+    fn drop(&mut self) {
+        let mut m = self.map.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(c) = m.get_mut(&self.ip) {
+            *c -= 1;
+            if *c == 0 {
+                m.remove(&self.ip);
+            }
+        }
+    }
+}
+
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Unpredictable per-request id (SEC-02): 16 CSPRNG bytes, hex.
@@ -4324,6 +4693,22 @@ impl Server {
         // completes the handshake must not pin a task forever.
         const ACCEPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+        // P1 hardening (readiness): connection-level controls. The accept loop
+        // previously had no cap at all — a flood of sockets grew tasks and
+        // buffers unbounded.
+        let conn_sem = Arc::new(tokio::sync::Semaphore::new(pipeline.limits.max_connections));
+        let per_ip: Arc<std::sync::Mutex<std::collections::HashMap<std::net::IpAddr, usize>>> =
+            Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        let max_per_ip = pipeline.limits.max_per_ip.max(1);
+        // §12.2: configurable drain budget. Defaults to 30 s (Kubernetes'
+        // terminationGracePeriodSeconds default); `OXIDE_DRAIN_SECS` overrides.
+        let drain_budget = std::time::Duration::from_secs(
+            std::env::var("OXIDE_DRAIN_SECS")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(pipeline.limits.drain_secs),
+        );
+
         loop {
             tokio::select! {
                 _ = shutdown.changed() => break,
@@ -4334,6 +4719,43 @@ impl Server {
                             tracing::warn!(error = %e, "accept failed");
                             continue;
                         }
+                    };
+                    // P1 hardening: disable Nagle — SSR responses are streamed
+                    // in small chunks; a 40 ms delayed-ACK stall is visible in
+                    // p99 TTFB.
+                    let _ = stream.set_nodelay(true);
+                    // P1 hardening: global connection cap. When the process is
+                    // at capacity, refuse THIS socket instead of growing
+                    // unbounded. Closing immediately (RST-less FIN) is the
+                    // standard overload signal; the client retries.
+                    if conn_sem.available_permits() == 0 {
+                        tracing::warn!(
+                            peer = %peer,
+                            limit = pipeline.limits.max_connections,
+                            "connection limit reached; refusing connection"
+                        );
+                        continue;
+                    }
+                    let permit = conn_sem.clone().try_acquire_owned().ok();
+                    let Some(permit) = permit else {
+                        tracing::warn!(peer = %peer, "connection limit reached; refusing connection");
+                        continue;
+                    };
+                    // P1 hardening: per-IP concurrency cap.
+                    let ip_slot = {
+                        let mut map = per_ip.lock().unwrap_or_else(|p| p.into_inner());
+                        let count = map.entry(peer.ip()).or_insert(0);
+                        if *count >= max_per_ip {
+                            None
+                        } else {
+                            *count += 1;
+                            Some((peer.ip(), Arc::clone(&per_ip)))
+                        }
+                    };
+                    let Some((peer_ip_addr, per_ip_for_drop)) = ip_slot else {
+                        tracing::warn!(peer = %peer, limit = max_per_ip, "per-IP connection limit reached; refusing");
+                        drop(permit);
+                        continue;
                     };
                     let peer_ip = Some(peer.ip());
                     let pipeline_for_service = Arc::clone(&pipeline);
@@ -4463,10 +4885,26 @@ impl Server {
                                     let resp = pipeline.serve_request(oreq, dispatch.as_ref()).await;
                                     Ok(to_hyper_response(resp))
                                 }
-                                Err(e) => Ok(to_hyper_response(OxideResponse::new(413, e.0.message))),
+                                // P1 (readiness): map by diagnostic code — the
+                                // body-read timeout (SRV-408) used to answer
+                                // 413 Payload Too Large, which told clients to
+                                // shrink a body that was merely too SLOW.
+                                Err(e) if e.0.code == "SRV-408" => Ok(to_hyper_response(
+                                    OxideResponse::new(408, e.0.message)
+                                        .with_header("connection", "close"),
+                                )),
+                                Err(e) if e.0.code == "SRV-413" => {
+                                    Ok(to_hyper_response(OxideResponse::new(413, e.0.message)))
+                                }
+                                Err(e) => Ok(to_hyper_response(OxideResponse::new(400, e.0.message))),
                             }
                         }
                     });
+
+                    // The per-IP slot and the semaphore permit both move into
+                    // the connection task so they are released when the
+                    // CONNECTION ends, not when the accept iteration ends.
+                    let ip_guard = IpSlotGuard { ip: peer_ip_addr, map: per_ip_for_drop };
 
                     match &tls_acceptor {
                         Some(acceptor) => {
@@ -4481,6 +4919,9 @@ impl Server {
                             // connection and move it into the task.
                             let watcher = graceful.watcher();
                             tokio::spawn(async move {
+                                // Hold the connection-limit slot + per-IP slot
+                                // for the life of the connection.
+                                let _slots = (permit, ip_guard);
                                 let tls_stream = match tokio::time::timeout(
                                     ACCEPT_TIMEOUT,
                                     acceptor.accept(stream),
@@ -4512,6 +4953,9 @@ impl Server {
                             );
                             let guard = graceful.watch(conn.into_owned());
                             tokio::spawn(async move {
+                                // Hold the connection-limit slot + per-IP slot
+                                // for the life of the connection.
+                                let _slots = (permit, ip_guard);
                                 let _ = guard.await;
                             });
                         }
@@ -4521,8 +4965,10 @@ impl Server {
         }
 
         drop(listener);
-        // Give in-flight connections up to 5 s to drain, then close (§12.2).
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), graceful.shutdown()).await;
+        // §12.2: give in-flight connections the drain budget to finish, then
+        // close. Was hardcoded to 5 s — see `Limits::drain_secs`.
+        let _ = tokio::time::timeout(drain_budget, graceful.shutdown()).await;
+        tracing::info!(drain_secs = drain_budget.as_secs(), "listener drained");
         Ok(())
     }
 

@@ -81,80 +81,14 @@ Effect: an `oxide build` for Cloudflare deploys a payload nobody runs. The JS fa
 
 ## `<Defer>` for `suspense: 'core'` adapters — closed (§7.1)
 
-
-
-
 **Status.** Closed — both `suspense: 'core'` adapters now have a shipped, exported, tested `<Defer>`, and the wire protocol retains its end-to-end coverage from the React `suspense: 'native'` smoke app.
 
 The wire protocol (`<template data-ox-b>` / `<ox-defer data-ox-b>` placeholder, `<template data-ox-c>` + swapper, `ox:swap` dispatch) is verified end-to-end by `tests/playwright/tests/deferred.spec.ts`, which boots `oxide start` on the React smoke app and asserts two deferred settles arrive as distinct resolution scripts in the browser. The protocol is adapter-independent.
 
-Vue (`suspense: 'core'`): `packages/vue/src/defer.ts` is exposed at `@oxide/vue/defer` (fixed in 19e8263 — the file existed but was not in the exports map, so no consumer could reach it) and covered by `packages/vue/test/defer-component.test.ts`, which SSR-renders through `vue/server-renderer` and asserts the shell marker + fallback shape against a placeholder value, plus the resolved-inline path against a plain value.
+Vue (`suspense: 'core'`): `packages/vue/src/defer.ts` is exposed at `@oxide-fw/vue/defer` (fixed in 19e8263 — the file existed but was not in the exports map, so no consumer could reach it) and covered by `packages/vue/test/defer-component.test.ts`, which SSR-renders through `vue/server-renderer` and asserts the shell marker + fallback shape against a placeholder value, plus the resolved-inline path against a plain value.
 
-Svelte (`suspense: 'core'`): the `<Defer>` component ships as `packages/svelte/src/Defer.svelte`, exported at `@oxide/svelte/defer` (the export was missing from the commit that first claimed to close this deviation; added in a follow-up), covered by `packages/svelte/test/defer-component.test.ts`, which compiles the component through `svelte/compiler` and asserts the placeholder marker + fallback, the resolved-inline path, and the exact-shape check. An export-map contract test on each adapter (`packages/{svelte,vue}/test/export-map.test.ts`) now fails if a shipped component is not reachable — the specific bug class that made this deviation's status momentarily false.
-
-The three obstacles the original entry listed: (1) VNode placeholder markup — solved by the attribute-only swapper selector `[data-ox-b]`; verified by conformance's `streaming: a non-template boundary host swaps too` assertion; (2) Svelte compiled-component requirement — solved by shipping `Defer.svelte` and testing its compiled output; (3) swapper nonce — solved earlier this session, verified in `defer-swapper-nonce.test.ts` per adapter.
-
-The wire protocol (`<template data-ox-b>` / `<ox-defer data-ox-b>` placeholder, `<template data-ox-c>` + swapper, `ox:swap` dispatch) is verified end-to-end by `tests/playwright/tests/deferred.spec.ts`, which boots `oxide start` on the React smoke app and asserts two deferred settles arrive as distinct resolution scripts in the browser. The protocol is adapter-independent.
-
-Vue (`suspense: 'core'`): `packages/vue/src/defer.ts` is exported at `@oxide/vue/defer` (this change fixes a real gap — the file existed but was not in the exports map, so no consumer could reach it) and covered by `packages/vue/test/defer-component.test.ts`, which SSR-renders through `vue/server-renderer` and asserts the shell marker + fallback shape against a placeholder value, plus the resolved-inline path against a plain value.
-
-Svelte (`suspense: 'core'`): the `<Defer>` component ships as `packages/svelte/src/Defer.svelte`, exported at `@oxide/svelte/defer`, covered by `packages/svelte/test/defer-component.test.ts`. That test compiles the component through `svelte/compiler`, renders it via `svelte/server`, and asserts the placeholder marker + fallback, the resolved-inline path, and the exact-shape check that a wider object carrying `__deferred` alongside other keys is a plain object. This addresses the deviation's own obstacle 2 (Svelte ships `.ts`-only, so a `<Defer>` needs a compiled component): the component ships as source and the consumer's compiler handles it, and the test proves the compiled output emits the marker the swapper expects.
+Svelte (`suspense: 'core'`): the `<Defer>` component ships as `packages/svelte/src/Defer.svelte`, exported at `@oxide-fw/svelte/defer` (the export was missing from the commit that first claimed to close this deviation; added in a follow-up), covered by `packages/svelte/test/defer-component.test.ts`. That test compiles the component through `svelte/compiler`, renders it via `svelte/server`, and asserts the placeholder marker + fallback, the resolved-inline path, and the exact-shape check that a wider object carrying `__deferred` alongside other keys is a plain object. This addresses the deviation's own obstacle 2 (Svelte ships `.ts`-only, so a `<Defer>` needs a compiled component): the component ships as source and the consumer's compiler handles it, and the test proves the compiled output emits the marker the swapper expects.
 
 The three obstacles the original entry listed: (1) VNode placeholder markup — solved by the attribute-only swapper selector `[data-ox-b]`; verified by conformance's `streaming: a non-template boundary host swaps too` assertion; (2) Svelte compiled-component requirement — solved by shipping `Defer.svelte` and testing its compiled output; (3) swapper nonce — solved earlier this session, verified in `defer-swapper-nonce.test.ts` per adapter.
-What is verified: the deferred streaming *wire protocol* — `<template data-ox-b>` placeholder, `<template data-ox-c>` + swapper, `ox:swap` dispatch — is tested end-to-end. `tests/playwright/tests/deferred.spec.ts` (added in a13c4e1) boots `oxide start` on the React smoke app and asserts two deferred settles arrive as distinct resolution scripts in the browser. The protocol is adapter-independent, so that test covers the wire contract every `suspense: 'core'` adapter consumes.
 
-What is shipped but untested: the Vue `<Defer>` component (`packages/vue/src/defer.ts`, 63 lines, Vue is `suspense: 'core'`). No test — no Vue smoke app, no conformance import — exercises that component. Its correctness rests on code review, not on a green test.
-
-What is NOT shipped: the Svelte `<Defer>` component. Svelte is `suspense: 'core'` and there is no `packages/svelte/src/defer.ts`; the only `deferred` references in `packages/svelte/src/` are IR node type names, not a `<Defer>` component. This is the deviation's own obstacle 2 — Svelte ships `.ts`-only, so a `<Defer>` component needs either a compiled `.svelte` file or the sentinel-comment design from the WP-A2 plan (keep placeholders out of VNodes entirely; the core HTML pass rewrites `<!--ox-b:ID-->` into `<template data-ox-b>`).
-
-React and Solid are `suspense: 'native'`; `<Defer>` is n/a for them.
-
-So the three obstacles from the original entry are: (1) VNode placeholder markup — **solved** by the attribute-only swapper selector `[data-ox-b]`, verified in conformance; (2) Svelte compiled-component requirement — **open**, no Svelte `<Defer>` shipped; (3) swapper nonce — **solved** earlier in the session. Two of three obstacles are closed; the third needs the Svelte component and, once that lands, a `suspense: 'core'` smoke app + Playwright spec (or a conformance assertion on `<Defer>`-rendered markup per adapter). The Vue component needs the same test treatment to close "untested" to "verified". Both E-effort.
-**What lands.** The wire protocol exists and is tested — `template[data-ox-b]`
-placeholder, `template[data-ox-c]` + swapper resolution, `ox:swap` dispatch,
-error-boundary mapping (`conformance/suite.ts`, four assertions per adapter
-against the IR renderer). The IR renderer is its reference implementation.
-Vue and Svelte have **no `<Defer>`**; a `deferred(...)` value in a
-`suspense: 'core'` real adapter renders its resolved value inline (the
-`defer()` fixes below) but never streams.
-
-**Why this is not a small component.** Three obstacles, each found while
-attempting the implementation:
-
-1. **Placeholder markup cannot go through VNode rendering.** A Vue
-   `<Defer>` that returns `h('template', …)` renders as
-   `<template data-ox-b="0"><!--[-->fallback<!--]--></template>` — Vue's
-   hydration comment markers land inside the template, and the swapper
-   moves `t.innerHTML` into the page, so the markers end up in the DOM.
-   The placeholder must be emitted as raw HTML, which needs a render
-   escape hatch (a `v-html` wrapper, or an adapter that post-processes a
-   sentinel).
-
-2. **Svelte needs a compiled component.** The package ships `.ts` only
-   (`src/Image.svelte` is the one exception, declared in `exports`).
-   `<Defer>` would have to be a `.svelte` file with its own build step, or
-   a string-template rendered through `svelte/server` — a different
-   mechanism from Vue's, which means the "one `<Defer>` per framework" in
-   the spec is genuinely two implementations, not one shared one.
-
-3. ~~**The swapper `<script>` has no nonce.**~~ **FIXED** — the nonce now
-   travels `PageRenderInput.nonce` → `FrameworkRenderInput.nonce` →
-   `RenderInput.nonce`, and each IR renderer passes it to
-   `boundaryContent`. Both call sites populate it: the live path with
-   `nonce_for(request_id)`, the prerender path with the build-time nonce it
-   already stamps on its own injected tags. Verified end-to-end — the
-   emitted swapper carries `nonce='…'`, and it is omitted when the
-   deployment configures no CSP. This was a pre-existing bug in the IR
-   path, independent of `<Defer>`, and would have blocked any streaming
-   adapter.
-
-**What was tried and reverted.** A render-scoped registry
-(`createBoundaryRegistry` / `withBoundaryRegistry` / `registerBoundary` /
-`deferredIdOf`) plus a Vue `<Defer>` emitting `h('template', …)`. Reverted
-on hitting obstacle 1 — the emitted markup was wrong in a way that would
-have shipped broken boundaries.
-
-**What would change it.** Solve obstacle 1 first (a raw-HTML escape hatch
-the adapter can use), then obstacle 2 (Svelte needs a compiled component,
-so its `<Defer>` is a separate implementation). Obstacle 3 is fixed; the
-nonce now reaches every streaming render.
+An export-map contract test on each adapter (`packages/{svelte,vue}/test/export-map.test.ts`) fails if a shipped component is not reachable — the specific bug class that made this deviation's status momentarily false.

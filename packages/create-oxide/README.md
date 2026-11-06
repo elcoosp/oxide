@@ -26,12 +26,20 @@ npx create-oxide@latest my-app
 pnpm create oxide my-app
 ```
 
-The CLI asks two questions — which framework, which template — and writes
-a complete project. Or pass them as flags for a non-interactive scaffold:
-
 ```bash
 pnpm create oxide my-app --framework react --template blog
+# short flags work too
+pnpm create oxide my-app -f vue -t dashboard
+# or scaffold into the current directory
+pnpm create oxide . -f solid -t minimal
 ```
+
+Omitted flags fall back to `--framework react --template minimal`; explicit
+but unknown values fail fast with the list of valid choices. Run
+`npx create-oxide --help` for the full usage text and `--version` for the
+release. The legacy positional order (`create-oxide blog react my-app`) is
+still accepted but deprecated. The project name (first positional) is the
+target directory; it is created if missing and must be empty.
 
 Then:
 

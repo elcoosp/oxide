@@ -98,6 +98,13 @@ impl L0Cache {
             return None; // beyond TTL + SWR
         }
         let stale = !entry.is_fresh(now);
+        // PERF-L0 (readiness): an envelope entry stores a seg_count of 0 for a
+        // body WITHOUT sentinels only when it went through `encode_segments`,
+        // which returns None for plain bodies — so a 0 count cannot occur.
+        // Belt and braces: treat a 0 count as corrupt and skip the entry.
+        if entry.body.starts_with(L0_ENV_MAGIC) && seg_count_of(&entry.body) == 0 {
+            return None;
+        }
         Some(CachedResponse { entry, stale })
     }
 
@@ -119,6 +126,11 @@ impl L0Cache {
     /// PERF-04: build the cache `Entry` without storing it. The single-flight
     /// owner builds it once, stores it, and broadcasts the same `Arc` to
     /// followers.
+    ///
+    /// PERF-L0 (readiness): a sentineled body is stored as the SEGMENT
+    /// ENVELOPE ([`encode_segments`]) — one independent zstd frame per
+    /// sentinel-split segment — so a compressed hit reuses the frames and
+    /// never re-compresses the page. Plain bodies (no nonce) stay plain.
     pub fn make_entry(
         &self,
         status: u16,
@@ -126,6 +138,7 @@ impl L0Cache {
         body: Vec<u8>,
         tags: Vec<String>,
     ) -> Entry {
+        let body = encode_segments(&body).unwrap_or(body);
         let etag = {
             let mut h = blake3::Hasher::new();
             h.update(&body);
@@ -245,35 +258,262 @@ impl CachedResponse {
 
     /// Replace the nonce sentinel with `nonce` and build the final body in a
     /// single allocation (zero allocations when no sentinel is present).
+    /// Understands BOTH plain sentineled bodies and the segment-compressed
+    /// envelope ([`encode_segments`]).
     pub fn materialize(&self, nonce: &str) -> bytes::Bytes {
+        materialize_entry_body(&self.entry, nonce)
+    }
+
+    /// PERF-L0 (readiness): build the FINAL COMPRESSED body for `nonce` from
+    /// the segment envelope, reusing the stored frames byte-for-byte and
+    /// compressing only the (tiny) nonce itself. Concatenated independent
+    /// frames/members are a valid stream for both zstd and gzip, so the hit
+    /// path costs a memcpy plus one ~20-byte compression — no re-compression
+    /// of the page body, no decompress, no extra body copy. Returns `None`
+    /// when the entry is not an envelope (caller falls back to
+    /// [`Self::materialize`] + pipeline compression).
+    pub fn materialize_compressed(&self, nonce: &str, enc: &str) -> Option<bytes::Bytes> {
         let body = &self.entry.body;
-        if !body
-            .windows(NONCE_SENTINEL.len())
-            .any(|w| w == NONCE_SENTINEL.as_bytes())
-        {
-            return bytes::Bytes::copy_from_slice(body);
+        if body.len() < L0_ENV_MAGIC.len() + 2 || &body[..L0_ENV_MAGIC.len()] != L0_ENV_MAGIC {
+            return None;
         }
-        let pat = NONCE_SENTINEL.as_bytes();
+        let enc_id = body[L0_ENV_MAGIC.len()];
+        let want = match enc {
+            "zstd" => ENC_ZSTD,
+            "gzip" => ENC_GZIP,
+            _ => return None,
+        };
+        if enc_id != want {
+            return None;
+        }
+        let seg_count = u32::from_be_bytes(
+            body[L0_ENV_MAGIC.len() + 1..L0_ENV_MAGIC.len() + 5]
+                .try_into()
+                .ok()?,
+        ) as usize;
+        let mut cur = L0_ENV_MAGIC.len() + 5;
+        let mut records: Vec<(bool, usize, usize)> = Vec::with_capacity(seg_count);
+        for _ in 0..seg_count {
+            if cur + 4 > body.len() {
+                return None;
+            }
+            let hdr = u32::from_be_bytes(body[cur..cur + 4].try_into().ok()?);
+            let raw = hdr & 0x8000_0000 != 0;
+            let len = (hdr & 0x7FFF_FFFF) as usize;
+            cur += 4;
+            if cur + len > body.len() {
+                return None;
+            }
+            records.push((raw, cur, len));
+            if !raw {
+                // compressed records carry a trailing u32 decompressed length
+                cur += len + 4;
+            } else {
+                cur += len;
+            }
+        }
+        let nonce_member = compress_small(nonce.as_bytes(), enc_id)?;
         let mut out = Vec::with_capacity(body.len());
-        let mut rest = &body[..];
-        while let Some(i) = find_subslice(rest, pat) {
-            out.extend_from_slice(&rest[..i]);
-            out.extend_from_slice(nonce.as_bytes());
-            rest = &rest[i + pat.len()..];
+        for (i, (raw, off, len)) in records.iter().enumerate() {
+            if i > 0 {
+                out.extend_from_slice(&nonce_member);
+            }
+            if *raw {
+                // A raw record between compressed ones is only possible in a
+                // degenerate store; decode it as plain bytes (still valid to
+                // emit — the caller asked for the assembled PLAIN body via
+                // this function only when it needs compressed output, so a
+                // raw record makes the envelope unusable for that purpose).
+                return None;
+            }
+            out.extend_from_slice(&body[*off..*off + *len]);
         }
-        out.extend_from_slice(rest);
-        bytes::Bytes::from(out)
+        Some(bytes::Bytes::from(out))
     }
 
     /// True when the body still carries the sentinel (i.e. it was stored with
     /// a substitutable nonce).
     #[cfg(test)]
     pub fn has_sentinel(&self) -> bool {
-        self.entry
-            .body
-            .windows(NONCE_SENTINEL.len())
-            .any(|w| w == NONCE_SENTINEL.as_bytes())
+        match decode_envelope_segments(&self.entry.body) {
+            Some(_) => seg_count_of(&self.entry.body) > 1,
+            None => self
+                .entry
+                .body
+                .windows(NONCE_SENTINEL.len())
+                .any(|w| w == NONCE_SENTINEL.as_bytes()),
+        }
     }
+}
+
+/// PERF-L0 (readiness): envelope magic. A stored body starting with these
+/// bytes is `magic || enc_id || u32 BE seg_count || records...` where each
+/// record is `u32 BE (len | 0x8000_0000 for raw) || bytes` (+ `u32 BE
+/// orig_len` for compressed records). Segments are the body split on the
+/// sentinel; the live nonce is spliced BETWEEN segments on serve.
+pub const L0_ENV_MAGIC: &[u8; 5] = b"OXLC1";
+const ENC_ZSTD: u8 = 1;
+const ENC_GZIP: u8 = 2;
+
+fn seg_count_of(stored: &[u8]) -> usize {
+    if stored.len() < L0_ENV_MAGIC.len() + 5 || &stored[..L0_ENV_MAGIC.len()] != L0_ENV_MAGIC {
+        return 0;
+    }
+    u32::from_be_bytes(
+        stored[L0_ENV_MAGIC.len() + 1..L0_ENV_MAGIC.len() + 5]
+            .try_into()
+            .unwrap(),
+    ) as usize
+}
+
+/// Decode an envelope into (enc_id, Vec<Vec<u8>> plain segments). `None` for
+/// a plain (non-envelope) body.
+fn decode_envelope_segments(stored: &[u8]) -> Option<Vec<Vec<u8>>> {
+    if stored.len() < L0_ENV_MAGIC.len() + 5 || &stored[..L0_ENV_MAGIC.len()] != L0_ENV_MAGIC {
+        return None;
+    }
+    let enc_id = stored[L0_ENV_MAGIC.len()];
+    let seg_count = seg_count_of(stored);
+    let mut cur = L0_ENV_MAGIC.len() + 5;
+    let mut segs = Vec::with_capacity(seg_count);
+    for _ in 0..seg_count {
+        if cur + 4 > stored.len() {
+            return None;
+        }
+        let hdr = u32::from_be_bytes(stored[cur..cur + 4].try_into().ok()?);
+        let (raw, len) = (hdr & 0x8000_0000 != 0, (hdr & 0x7FFF_FFFF) as usize);
+        cur += 4;
+        if cur + len > stored.len() {
+            return None;
+        }
+        let chunk = &stored[cur..cur + len];
+        cur += len;
+        if raw {
+            segs.push(chunk.to_vec());
+        } else {
+            if cur + 4 > stored.len() {
+                return None;
+            }
+            let orig_len = u32::from_be_bytes(stored[cur..cur + 4].try_into().ok()?) as usize;
+            cur += 4;
+            segs.push(decompress_segment(chunk, orig_len, enc_id)?);
+        }
+    }
+    Some(segs)
+}
+
+/// Unified body materialization for hits AND single-flight followers: plain
+/// sentineled bodies splice the nonce; envelope entries decode segments and
+/// splice the nonce between them.
+pub fn materialize_entry_body(entry: &Entry, nonce: &str) -> bytes::Bytes {
+    if let Some(segs) = decode_envelope_segments(&entry.body) {
+        let n = nonce.as_bytes();
+        let mut out = Vec::with_capacity(entry.body.len() + segs.len() * n.len());
+        for (i, seg) in segs.iter().enumerate() {
+            if i > 0 {
+                out.extend_from_slice(n);
+            }
+            out.extend_from_slice(seg);
+        }
+        return bytes::Bytes::from(out);
+    }
+    let body = &entry.body;
+    if !body
+        .windows(NONCE_SENTINEL.len())
+        .any(|w| w == NONCE_SENTINEL.as_bytes())
+    {
+        return bytes::Bytes::copy_from_slice(body);
+    }
+    let pat = NONCE_SENTINEL.as_bytes();
+    let mut out = Vec::with_capacity(body.len());
+    let mut rest = &body[..];
+    while let Some(i) = find_subslice(rest, pat) {
+        out.extend_from_slice(&rest[..i]);
+        out.extend_from_slice(nonce.as_bytes());
+        rest = &rest[i + pat.len()..];
+    }
+    out.extend_from_slice(rest);
+    bytes::Bytes::from(out)
+}
+
+fn compress_segment(seg: &[u8], enc_id: u8) -> Option<Vec<u8>> {
+    match enc_id {
+        ENC_ZSTD => zstd::bulk::compress(seg, 3).ok(),
+        ENC_GZIP => {
+            use std::io::Write as _;
+            let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(3));
+            e.write_all(seg).ok()?;
+            e.finish().ok()
+        }
+        _ => None,
+    }
+}
+
+fn decompress_segment(chunk: &[u8], orig_len: usize, enc_id: u8) -> Option<Vec<u8>> {
+    match enc_id {
+        ENC_ZSTD => zstd::bulk::decompress(chunk, orig_len).ok(),
+        ENC_GZIP => {
+            use std::io::Read as _;
+            let mut out = Vec::with_capacity(orig_len);
+            flate2::read::GzDecoder::new(chunk)
+                .read_to_end(&mut out)
+                .ok()?;
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
+/// Compress ONLY the nonce (a few dozen bytes) into a single self-contained
+/// frame/member so stored frames can be reused verbatim on a compressed hit.
+fn compress_small(nonce: &[u8], enc_id: u8) -> Option<Vec<u8>> {
+    compress_segment(nonce, enc_id)
+}
+
+/// PERF-L0 (readiness): encode a sentineled body as independent compressed
+/// segments (one zstd frame / gzip member per segment). Concatenated frames
+/// and members are VALID streams, so a hit reuses the stored frames and only
+/// compresses the nonce. Returns `None` when the body has no sentinel (plain
+/// bodies stay plain — they are request-independent and can be compressed
+/// once by the pipeline).
+pub fn encode_segments(body: &[u8]) -> Option<Vec<u8>> {
+    let pat = NONCE_SENTINEL.as_bytes();
+    if !body.windows(pat.len()).any(|w| w == pat) {
+        return None;
+    }
+    // Prefer zstd; fall back to gzip (the two encodings the dynamic path
+    // negotiates today).
+    let enc_id = ENC_ZSTD;
+    // Split on the multi-byte sentinel manually — slice::split matches
+    // single elements only.
+    let mut segments: Vec<&[u8]> = Vec::new();
+    {
+        let mut rest = body;
+        while let Some(i) = find_subslice(rest, pat) {
+            segments.push(&rest[..i]);
+            rest = &rest[i + pat.len()..];
+        }
+        segments.push(rest);
+    }
+    let mut out = Vec::with_capacity(body.len() / 2 + 16);
+    out.extend_from_slice(L0_ENV_MAGIC);
+    out.push(enc_id);
+    out.extend_from_slice(&(segments.len() as u32).to_be_bytes());
+    for seg in &segments {
+        match compress_segment(seg, enc_id) {
+            Some(c) => {
+                out.extend_from_slice(&(c.len() as u32).to_be_bytes());
+                out.extend_from_slice(&c);
+                out.extend_from_slice(&(seg.len() as u32).to_be_bytes());
+            }
+            // Incompressible segment (should not happen for HTML): store raw.
+            None => {
+                out.extend_from_slice(&((seg.len() as u32) | 0x8000_0000).to_be_bytes());
+                out.extend_from_slice(seg);
+            }
+        }
+    }
+    Some(out)
 }
 
 /// P-03: first index of `needle` in `hay`, or `None`.
@@ -510,6 +750,103 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ------------------------- PERF-L0 (readiness): segment-compressed entries
+
+    #[test]
+    fn envelope_roundtrips_through_materialize() {
+        // put → make_entry encodes sentineled bodies; materialize decodes
+        // them back to the nonce-spliced page.
+        let c = cache(60);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let body = format!(
+                "<html><head></head><body><script nonce=\"{NONCE_SENTINEL}\">x</script><p>mid</p><span data-n=\"{NONCE_SENTINEL}\"></span></body></html>"
+            );
+            c.put(L0Put {
+                route: "r2",
+                params: "",
+                vary: "",
+                status: 200,
+                headers: vec![],
+                body: body.clone().into_bytes(),
+                tags: vec![],
+            })
+            .await;
+            let got = c.get("r2", "", "").await.unwrap();
+            assert!(got.has_sentinel());
+            let plain = got.materialize("NN");
+            assert_eq!(plain.as_ref(), body.replace(NONCE_SENTINEL, "NN").as_bytes());
+        });
+    }
+
+    #[test]
+    fn compressed_hit_reuses_frames_and_matches_plain() {
+        // The compressed materialization must be a VALID zstd stream whose
+        // decoded bytes equal the plain materialization — that is the whole
+        // point (the hit path serves it with content-encoding: zstd).
+        let c = cache(60);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let page = "A".repeat(2048);
+            let body = format!(
+                "<html><script nonce=\"{NONCE_SENTINEL}\"></script>{page}<i data-x=\"{NONCE_SENTINEL}\">z</i></html>"
+            );
+            c.put(L0Put {
+                route: "r3",
+                params: "",
+                vary: "",
+                status: 200,
+                headers: vec![],
+                body: body.clone().into_bytes(),
+                tags: vec![],
+            })
+            .await;
+            let got = c.get("r3", "", "").await.unwrap();
+            let compressed = got
+                .materialize_compressed("REALN", "zstd")
+                .expect("envelope entry compresses");
+            // Decode the assembled stream and compare to the plain body.
+            let decoded = zstd::stream::decode_all(compressed.as_ref()).expect("valid zstd stream");
+            let plain = got.materialize("REALN");
+            assert_eq!(decoded, plain.as_ref());
+            // A gzip-envelope entry does not satisfy a zstd request (None),
+            // and a non-envelope entry never compresses.
+            assert!(got.materialize_compressed("REALN", "gzip").is_none());
+            let plain_entry = CachedResponse {
+                entry: Arc::new({
+                    let mut e = (*got.entry).clone();
+                    e.body = b"<html>no nonce here</html>".to_vec();
+                    e
+                }),
+                stale: false,
+            };
+            assert!(plain_entry.materialize_compressed("REALN", "zstd").is_none());
+        });
+    }
+
+    #[test]
+    fn plain_bodies_are_not_enveloped() {
+        // A body without a sentinel stays plain (the pipeline compresses it
+        // once; there is no per-request substitution to support).
+        let c = cache(60);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            c.put(L0Put {
+                route: "r4",
+                params: "",
+                vary: "",
+                status: 200,
+                headers: vec![],
+                body: b"<html>static</html>".to_vec(),
+                tags: vec![],
+            })
+            .await;
+            let got = c.get("r4", "", "").await.unwrap();
+            assert_eq!(got.entry.body, b"<html>static</html>");
+            assert!(!got.entry.body.starts_with(L0_ENV_MAGIC));
+        });
     }
 
     #[tokio::test]

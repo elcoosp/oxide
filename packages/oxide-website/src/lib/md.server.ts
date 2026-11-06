@@ -9,8 +9,6 @@
 // paragraphs, -/* and 1. lists, pipe tables, > blockquotes, ``` fences,
 // --- rules, inline `code`, **bold**, [links](https://… or /relative).
 import { getCollection, getEntry } from '@oxide-fw/core/server'
-import { createHighlighter } from 'shiki'
-
 
 export interface Frontmatter {
   [key: string]: string
@@ -23,6 +21,8 @@ export interface PostMeta {
   date: string
   tags: string[]
 }
+
+export type DocBlock = MdBlock
 
 export interface DocMeta {
   slug: string
@@ -50,8 +50,17 @@ function parseTags(raw: string | undefined): string[] {
     .filter(Boolean)
 }
 
+// Compiled once per process: `inline()` runs per markdown line on every
+// (re)generation of a docs/blog page — per-call regex literals re-allocate
+// the compiled regex, which is avoidable work on ISR regens.
+const SAFE_HREF_RE = /^(https?:\/\/|\/|#|mailto:)/
+const INLINE_CODE_RE = /`([^`]+)`/g
+const INLINE_CODE_RESTORE_RE = /\u0000(\d+)\u0000/g
+const BOLD_RE = /\*\*([^*]+)\*\*/g
+const LINK_RE = /\[([^\]]+)\]\(([^)\s]+)\)/g
+
 function safeHref(href: string): string {
-  return /^(https?:\/\/|\/|#|mailto:)/.test(href) ? href : '#'
+  return SAFE_HREF_RE.test(href) ? href : '#'
 }
 
 /** Inline markdown → HTML. Input is raw; output is escaped-safe. */
@@ -59,15 +68,15 @@ function inline(s: string): string {
   let out = esc(s)
   // stash inline code first so other rules can't touch it
   const codes: string[] = []
-  out = out.replace(/`([^`]+)`/g, (_m, c: string) => {
+  out = out.replace(INLINE_CODE_RE, (_m, c: string) => {
     codes.push(c)
     return `\u0000${codes.length - 1}\u0000`
   })
-  out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-  out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, text: string, href: string) => {
+  out = out.replace(BOLD_RE, '<strong>$1</strong>')
+  out = out.replace(LINK_RE, (_m, text: string, href: string) => {
     return `<a href="${safeHref(href)}">${text}</a>`
   })
-  out = out.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => `<code>${codes[Number(i)]}</code>`)
+  out = out.replace(INLINE_CODE_RESTORE_RE, (_m, i: string) => `<code>${codes[Number(i)]}</code>`)
   return out
 }
 
@@ -89,39 +98,11 @@ function mustEl<T>(arr: readonly T[], i: number): T {
 
 /** Markdown block subset → HTML string. */
 
-// Setup Shiki once per build session
-let shikiPromise: Promise<any> | null = null
-function getHighlighter() {
-  if (!shikiPromise) {
-    shikiPromise = createHighlighter({
-      themes: [
-        {
-          name: 'oxide',
-          type: 'dark',
-          colors: {
-            'editor.background': '#09090b',
-            'editor.foreground': '#fafafa',
-          },
-          tokenColors: [
-            { scope: ['keyword', 'storage.type', 'storage.modifier', 'keyword.control'], settings: { foreground: '#e45631' } },
-            { scope: ['string', 'constant.numeric', 'constant.language'], settings: { foreground: '#a1a1aa' } },
-            { scope: ['comment'], settings: { foreground: '#52525b', fontStyle: 'italic' } },
-            { scope: ['entity.name.function', 'support.function', 'entity.name.tag'], settings: { foreground: '#fafafa' } },
-            { scope: ['variable', 'variable.parameter', 'variable.other'], settings: { foreground: '#d4d4d8' } },
-            { scope: ['entity.name.type', 'support.type', 'support.class'], settings: { foreground: '#fafafa' } },
-            { scope: ['punctuation', 'meta.brace'], settings: { foreground: '#a1a1aa' } }
-          ]
-        }
-      ],
-      langs: ['tsx', 'vue', 'svelte', 'html', 'typescript', 'bash']
-    })
-  }
-  return shikiPromise
-}
+export type MdBlock = string | { type: 'framework-tabs'; data: Record<string, string> }
 
-export async function mdToHtml(md: string): Promise<string> {
+export async function mdToHtml(md: string): Promise<MdBlock[]> {
   const lines = md.replace(/\r\n/g, '\n').split('\n')
-  const out: string[] = []
+  const out: MdBlock[] = []
   let i = 0
   while (i < lines.length) {
     const line = mustEl(lines, i)
@@ -134,11 +115,7 @@ export async function mdToHtml(md: string): Promise<string> {
       i++ // closing fence
 
       if (info === 'framework-tabs') {
-        // Sections delimited by ---react / ---vue / ---svelte / ---solid.
-        // Emit static HTML: React sample rendered server-side so a
-        // no-JS reader sees real code, all four carried as JSON in a
-        // data attribute for the bootstrap island to build the tabs from.
-        const parts: Partial<Record<'react' | 'vue' | 'svelte' | 'solid', string>> = {}
+        const parts: Record<'react' | 'vue' | 'svelte' | 'solid', string> = { react: '', vue: '', svelte: '', solid: '' }
         let cur: 'react' | 'vue' | 'svelte' | 'solid' | null = null
         let sec: string[] = []
         const flush = () => {
@@ -149,38 +126,14 @@ export async function mdToHtml(md: string): Promise<string> {
           const m = /^---(react|vue|svelte|solid)\s*$/.exec(l)
           if (m) {
             flush()
-            cur = mustEl(m, 1) as 'react' | 'vue' | 'svelte' | 'solid'
+            cur = m[1] as 'react' | 'vue' | 'svelte' | 'solid'
             continue
           }
           if (cur) sec.push(l)
         }
         flush()
 
-        const LANGS = ['react', 'vue', 'svelte', 'solid'] as const
-        const missing = LANGS.filter((k) => typeof parts[k] !== 'string' || parts[k] === '')
-        if (missing.length > 0) {
-          out.push(`<p class="fw-code-error">framework-tabs: missing section(s): ${missing.join(', ')}</p>`)
-          continue
-        }
-
-        const highlighter = await getHighlighter()
-        const highlighted: Record<string, string> = {}
-        for (const lang of LANGS) {
-          const shikiLang = lang === 'react' ? 'tsx' : lang === 'solid' ? 'tsx' : lang
-          highlighted[lang] = highlighter.codeToHtml(parts[lang] ?? '', { lang: shikiLang, theme: 'oxide' })
-        }
-
-        const json = JSON.stringify(highlighted)
-          .replace(/&/g, '&amp;')
-          .replace(/"/g, '&quot;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-
-        out.push(
-          `<div class="fw-code" data-fw-snippets="${json}">` +
-            highlighted.react +
-          `</div>`
-        )
+        out.push({ type: 'framework-tabs', data: parts })
         continue
       }
 
@@ -199,9 +152,15 @@ export async function mdToHtml(md: string): Promise<string> {
       i++
       continue
     }
-    if (line.startsWith('> ')) {
+    if (line.startsWith('>')) {
+      // Blockquote: `>` + optional space (CommonMark allows `>text`). The
+      // previous `startsWith('> ')` requirement made a `>`-without-space line
+      // fall through EVERY block branch into the paragraph guard (which also
+      // refuses `>` lines) — the walk never advanced and the render looped
+      // forever at 100% CPU, wedging the SSR worker synchronously.
       const buf: string[] = []
-      while (i < lines.length && mustEl(lines, i).startsWith('> ')) buf.push(mustEl(lines, i++).slice(2))
+      while (i < lines.length && mustEl(lines, i).startsWith('>'))
+        buf.push(mustEl(lines, i++).replace(/^>[ ]?/, ''))
       out.push(`<blockquote><p>${buf.map(inline).join(' ')}</p></blockquote>`)
       continue
     }
@@ -245,9 +204,18 @@ export async function mdToHtml(md: string): Promise<string> {
     ) {
       para.push(mustEl(lines, i++))
     }
+    if (para.length === 0) {
+      // Forward-progress guarantee: a line that matched NO block branch above
+      // and is refused by the paragraph guard (a stray `|` row that is not a
+      // table, `>` handled above, …) must still be consumed — otherwise the
+      // outer while never advances and rendering hangs at 100% CPU. Consume
+      // it as literal paragraph text; the escape inside `inline()` keeps it
+      // inert.
+      para.push(mustEl(lines, i++))
+    }
     out.push(`<p>${para.map(inline).join(' ')}</p>`)
   }
-  return out.join('\n')
+  return out
 }
 
 function fmString(v: unknown, fallback = ''): string {
@@ -272,12 +240,23 @@ export async function listPosts(): Promise<PostMeta[]> {
       date: fmString(e.frontmatter.date),
       tags: fmTags(e.frontmatter.tags),
     }))
-    .sort((a, b) => (a.date < b.date ? 1 : -1))
+    // Newest first. Posts with an unparseable/missing date (`new Date('')`)
+    // sort LAST — the previous comparator treated `''` as newer than every
+    // real date, so an undated draft floated to the top of the blog index
+    // (and the RSS feed would have emitted `<pubDate>Invalid Date</pubDate>`).
+    .sort((a, b) => {
+      const ta = Date.parse(a.date)
+      const tb = Date.parse(b.date)
+      if (Number.isNaN(ta) && Number.isNaN(tb)) return 0
+      if (Number.isNaN(ta)) return 1
+      if (Number.isNaN(tb)) return -1
+      return ta < tb ? 1 : -1
+    })
 }
 
 export async function readPost(
   slug: string,
-): Promise<{ meta: PostMeta; html: string } | null> {
+): Promise<{ meta: PostMeta; html: MdBlock[] } | null> {
   if (!SLUG_RE.test(slug)) return null
   const hit = await getEntry('blog', slug)
   if (!hit) return null
@@ -307,7 +286,7 @@ export async function listDocs(): Promise<DocMeta[]> {
 
 export async function readDoc(
   slug: string,
-): Promise<{ meta: DocMeta; html: string } | null> {
+): Promise<{ meta: DocMeta; html: MdBlock[] } | null> {
   if (!SLUG_RE.test(slug)) return null
   const hit = await getEntry('docs', slug)
   if (!hit) return null

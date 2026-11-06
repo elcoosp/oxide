@@ -186,6 +186,42 @@ fn probe_extensions(p: &Path) -> Option<PathBuf> {
 /// framework runtime references without depending on Node behavior: a no-op
 /// `createRequire`, and minimal `path`/`fs`/`url` surfaces. Anything else
 /// returns an empty module so an unused import does not fail the load.
+/// §1.4: run lightningcss' CSS-modules transform on a `.module.css` source
+/// and produce a JS module whose default export is the `local → mangled`
+/// class map. The transform's side effect (mangling class names IN the CSS
+/// output) is discarded here — SSR doesn't apply styles; the CLIENT does
+/// that via `<style data-oxide-css>` injection. What SSR needs is only the
+/// map, so `styles.hero` resolves to the same scoped name the client used.
+///
+/// Config: `Pattern::default()`, matching `serve_css_module`'s call in the
+/// CLI. Both use the same lightningcss version (workspace dep), so the
+/// mangled names are deterministic and identical between the two paths —
+/// which is what React hydration needs to avoid a class-attribute mismatch.
+fn css_module_js(source: &str) -> Result<String, String> {
+    use lightningcss::stylesheet::{ParserOptions, PrinterOptions, StyleSheet};
+    let parser = ParserOptions {
+        css_modules: Some(lightningcss::css_modules::Config {
+            pattern: lightningcss::css_modules::Pattern::default(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let sheet =
+        StyleSheet::parse(source, parser).map_err(|e| format!("lightningcss parse: {e}"))?;
+    let res = sheet
+        .to_css(PrinterOptions::default())
+        .map_err(|e| format!("lightningcss serialize: {e}"))?;
+    // `exports` is `Option<HashMap<String, CssModuleExport>>` (or BTreeMap
+    // depending on the version; both serialize the same).
+    let exports = res.exports.unwrap_or_default();
+    let map: std::collections::BTreeMap<String, String> = exports
+        .into_iter()
+        .map(|(local, e)| (local, e.name))
+        .collect();
+    let json = serde_json::to_string(&map).map_err(|e| format!("serialize exports: {e}"))?;
+    Ok(format!("export default {json};\n"))
+}
+
 fn node_shim(specifier: &str) -> String {
     // `specifier` is the URL path, e.g. `/shim/module`.
     let name = specifier.rsplit('/').next().unwrap_or("");
@@ -815,10 +851,43 @@ impl ModuleLoader for TranspileLoader {
             let src = std::fs::read_to_string(&path).map_err(|e| {
                 deno_error::JsErrorBox::generic(format!("read {}: {e}", path.display()))
             })?;
-            // BUG-08: CSS is a server side-effect import — resolve to an
-            // empty module (SSR never applies styles; the client bundle's
-            // CssPlugin handles the real CSS).
+            // §1.4: `.module.css` (and `.module.scss` / `.module.sass`)
+            // require the lightningcss CSS-modules transform so the SSR
+            // worker's `import styles from './x.module.css'` gives a
+            // `{ local: mangled }` map. Without it, `styles.hero` on the
+            // SSR side evaluates to `("").hero` = undefined, producing
+            // `<h1>` with no class attribute — which hydration then fixes
+            // client-side, but the SSR paint is unstyled and the class
+            // attribute mismatch between server and client is React #418
+            // territory.
+            //
+            // Plain `.css` remains a side-effect import: empty export, no
+            // styles applied by SSR (the client `<style data-oxide-css>`
+            // injection owns that). The transforms for `.module.css` and
+            // plain `.css` are otherwise identical to what
+            // `crates/cli/src/esm_dev.rs::serve_css_module` does — same
+            // lightningcss version, same `Pattern::default()` — so the
+            // mangled names match between SSR and client (needed for
+            // hydration to reconcile without a mismatch).
             if path.extension().and_then(|e| e.to_str()) == Some("css") {
+                let file_name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+                let is_module = file_name.ends_with(".module.css")
+                    || file_name.ends_with(".module.scss")
+                    || file_name.ends_with(".module.sass");
+                if is_module {
+                    let js = css_module_js(&src).map_err(|e| {
+                        deno_error::JsErrorBox::generic(format!(
+                            "css module transform for {}: {e}",
+                            path.display()
+                        ))
+                    })?;
+                    return Ok(ModuleSource::new(
+                        ModuleType::JavaScript,
+                        deno_core::ModuleSourceCode::String(js.into()),
+                        &spec,
+                        None,
+                    ));
+                }
                 return Ok(ModuleSource::new(
                     ModuleType::JavaScript,
                     deno_core::ModuleSourceCode::String("export default \"\";".to_string().into()),

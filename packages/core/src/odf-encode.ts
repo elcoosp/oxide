@@ -74,11 +74,40 @@ function varu(out: number[], n: number): void {
   out.push(n)
 }
 
-function utf8(s: string): number[] {
-  return Array.from(new TextEncoder().encode(s))
+const UTF8_ENCODER = new TextEncoder()
+
+/** varu(len) + UTF-8 bytes — the STRING body shared by several tags. */
+function writeString(out: number[], s: string): void {
+  const bytes = UTF8_ENCODER.encode(s)
+  varu(out, bytes.length)
+  pushBytes(out, bytes)
 }
 
-const UTF8_ENCODER = new TextEncoder()
+/**
+ * Append every byte of `bytes` to `out`. A bare `out.push(...bytes)` passes
+ * the payload as call arguments and throws `RangeError: Maximum call stack
+ * size exceeded` once it exceeds the engine's argument limit (~65k-500k) —
+ * i.e. any island prop carrying a ~100 KB+ string or typed array crashed
+ * the encode. Chunked `push.apply` stays O(n) with a bounded frame.
+ */
+function pushBytes(out: number[], bytes: Uint8Array): void {
+  const CHUNK = 4096
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    const end = Math.min(i + CHUNK, bytes.length)
+    if (i === 0 && end === bytes.length) {
+      out.push(...bytes)
+    } else {
+      out.push(...bytes.subarray(i, end))
+    }
+  }
+}
+
+// Shared scratch for the f64/i64 tag bodies — the per-value `new
+// ArrayBuffer(8)` + DataView allocations showed up as GC churn on
+// prop-heavy pages.
+const SCRATCH_BUF = new ArrayBuffer(8)
+const SCRATCH_VIEW = new DataView(SCRATCH_BUF)
+const SCRATCH_BYTES = new Uint8Array(SCRATCH_BUF)
 
 /**
  * B-14: sort object keys by UTF-8 byte order, matching Rust's
@@ -98,13 +127,6 @@ function byUtf8(a: string, b: string): number {
   return ab.length - bb.length
 }
 
-/** varu(len) + UTF-8 bytes — the STRING body shared by several tags. */
-function writeString(out: number[], s: string): void {
-  const bytes = utf8(s)
-  varu(out, bytes.length)
-  out.push(...bytes)
-}
-
 function writeValue(out: number[], v: unknown): void {
   if (v === null) {
     out.push(TAG.NULL)
@@ -120,16 +142,15 @@ function writeValue(out: number[], v: unknown): void {
   }
   if (typeof v === 'number') {
     out.push(TAG.NUMBER)
-    const buf = new ArrayBuffer(8)
-    new DataView(buf).setFloat64(0, v, true)
-    out.push(...new Uint8Array(buf))
+    SCRATCH_VIEW.setFloat64(0, v, true)
+    pushBytes(out, SCRATCH_BYTES)
     return
   }
   if (typeof v === 'string') {
     out.push(TAG.STRING)
-    const bytes = utf8(v)
+    const bytes = UTF8_ENCODER.encode(v)
     varu(out, bytes.length)
-    out.push(...bytes)
+    pushBytes(out, bytes)
     return
   }
   if (Array.isArray(v)) {
@@ -143,9 +164,9 @@ function writeValue(out: number[], v: unknown): void {
     // `-?(0|[0-9]+)` shape on encode.
     const dec = v.toString(10)
     out.push(TAG.BIGINT)
-    const bytes = utf8(dec)
+    const bytes = UTF8_ENCODER.encode(dec)
     varu(out, bytes.length)
-    out.push(...bytes)
+    pushBytes(out, bytes)
     return
   }
   if (typeof v === 'object') {
@@ -185,9 +206,8 @@ function writeValue(out: number[], v: unknown): void {
         throw new TypeError('odf: cannot encode an Invalid Date')
       }
       out.push(TAG.DATE)
-      const buf = new ArrayBuffer(8)
-      new DataView(buf).setBigInt64(0, BigInt(Math.trunc(ms)), true)
-      out.push(...new Uint8Array(buf))
+      SCRATCH_VIEW.setBigInt64(0, BigInt(Math.trunc(ms)), true)
+      pushBytes(out, SCRATCH_BYTES)
       return
     }
     // MAP (0x0b): varu(pairCount) + alternating key, value records.
@@ -211,9 +231,9 @@ function writeValue(out: number[], v: unknown): void {
     if (typeof URL !== 'undefined' && v instanceof URL) {
       const s = v.toString()
       out.push(TAG.URL)
-      const bytes = utf8(s)
+      const bytes = UTF8_ENCODER.encode(s)
       varu(out, bytes.length)
-      out.push(...bytes)
+      pushBytes(out, bytes)
       return
     }
     // REGEXP (0x08): varu(srcLen) + src + varu(flagsLen) + flags.
@@ -221,12 +241,12 @@ function writeValue(out: number[], v: unknown): void {
       const source = v.source
       const flags = v.flags
       out.push(TAG.REGEXP)
-      const sb = utf8(source)
+      const sb = UTF8_ENCODER.encode(source)
       varu(out, sb.length)
-      out.push(...sb)
-      const fb = utf8(flags)
+      pushBytes(out, sb)
+      const fb = UTF8_ENCODER.encode(flags)
       varu(out, fb.length)
-      out.push(...fb)
+      pushBytes(out, fb)
       return
     }
     // TYPED_ARRAY (0x0d): kind byte + varu(byteLength) + raw little-endian
@@ -240,7 +260,7 @@ function writeValue(out: number[], v: unknown): void {
       out.push(TAG.TYPED_ARRAY)
       out.push(taKind)
       varu(out, bytes.length)
-      out.push(...bytes)
+      pushBytes(out, bytes)
       return
     }
     // Filter the reserved keys BEFORE counting: the declared count must match
@@ -251,9 +271,9 @@ function writeValue(out: number[], v: unknown): void {
     out.push(TAG.OBJECT)
     varu(out, keys.length)
     for (const k of keys) {
-      const kb = utf8(k)
+      const kb = UTF8_ENCODER.encode(k)
       varu(out, kb.length)
-      out.push(...kb)
+      pushBytes(out, kb)
       writeValue(out, (v as Record<string, unknown>)[k])
     }
     return

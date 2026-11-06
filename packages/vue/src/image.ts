@@ -8,16 +8,36 @@
 // Vue has no JSX intrinsic restriction, so `h('img', …)` renders directly.
 
 import type { VNode } from 'vue'
-import { createRequire } from 'node:module'
 import { deriveSizesFromSrcset } from '@oxide-fw/core/image-sizes'
 
-const require_ = createRequire(import.meta.url)
 type VueH = typeof import('vue').h
+
+// Resolve `h` through a top-level-await dynamic import — NOT
+// `createRequire('node:module')`. The adapter dist is served to the BROWSER
+// in dev ESM mode (and bundled for client builds); a static `node:module`
+// import killed the whole client module graph there (every page 500s at
+// boot). The dynamic form resolves identically in the browser (the dev
+// server rewrites the bare specifier to the prebundled runtime) and in the
+// SSR worker; the top-level await keeps `h` synchronously available to
+// `Image()` the way the old sync `require_` was.
 let cachedH: VueH | undefined
+let hError: string | undefined
+try {
+  const mod = (await import('vue')) as { h?: VueH }
+  if (typeof mod?.h !== 'function') {
+    hError = 'vue: module resolved but has no h() export'
+  } else {
+    cachedH = mod.h
+  }
+} catch (e) {
+  hError = e instanceof Error ? e.message : String(e)
+}
+
 function getVueH(): VueH {
   if (cachedH) return cachedH
-  cachedH = (require_('vue') as { h: VueH }).h
-  return cachedH
+  throw new Error(
+    `@oxide-fw/vue Image: vue runtime unavailable${hError ? ` (${hError})` : ''} — add vue to the project's dependencies`,
+  )
 }
 
 export interface ImageVariantModule {

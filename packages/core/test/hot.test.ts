@@ -1,0 +1,267 @@
+// Tests for the HMR runtime's `reloadModule` — the function that makes
+// React Refresh in-place updates (and CSS self-accept) actually fire.
+//
+// ## Contract this test pins
+//
+// `reloadModule(url)` clears the module's accept callbacks, re-imports the
+// URL with a cache-bust query, and then fires the accept callbacks the
+// fresh evaluation registered. That design has one non-obvious consequence:
+// **a module must re-register its accept callback on every evaluation.**
+//
+// In production that is guaranteed by the dev server, which prepends a
+// preamble (`import.meta.hot = createHotContext("/src/foo.tsx")`) and (for
+// JSX) appends an `import.meta.hot.accept(...)`. The fresh import runs the
+// preamble again, re-registering at the same key. Our fixtures do the same
+// thing manually, because a bare `.mjs` fixture would otherwise register
+// nothing on the second evaluation and the accept would never fire.
+//
+// The `createHotContext` key is the **base URL** (`import.meta.url` with
+// any query string stripped), which is exactly what the real preamble
+// passes (a fixed literal, not `import.meta.url`, because a fresh import's
+// URL carries `?t=<ms>` and would not match the original).
+
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+
+type Installed = {
+  createHotContext(url: string): {
+    url: string
+    data: Record<string, unknown>
+    accept(cb?: (mod: unknown) => void): void
+    dispose(cb?: () => void): void
+    invalidate(): void
+  }
+  reloadModule(url: string): Promise<void>
+  __debug: {
+    readonly moduleCount: number
+    readonly reloadCount: number
+    readonly MAX_MODULES: number
+    readonly MAX_URLS: number
+  }
+}
+const globals = globalThis as unknown as {
+  window?: object
+  __oxide_hmr__?: Installed
+  __oxide_refresh?: (mod: unknown) => void
+  __last_accept?: unknown
+}
+if (!globals.window) globals.window = globalThis
+
+// Imported AFTER window is set so `install()` runs.
+await import('../src/client/hot.ts')
+
+function hmr(): Installed {
+  const h = globals.__oxide_hmr__
+  assert.ok(h, '__oxide_hmr__ should be installed by importing hot.ts')
+  return h
+}
+
+// Canonicalize through the filesystem so `pathToFileURL` returns the SAME
+// URL that Node's ESM loader reports as `import.meta.url`. On macOS,
+// `tmpdir()` returns `/var/folders/...` (a symlink target), but Node's
+// loader canonicalizes to `/private/var/folders/...`. `realpathSync`
+// closes that gap. On Linux it is a no-op; on macOS it is what makes the
+// fixture's self-registration key match `reloadModule`'s lookup key.
+//
+// In production this symlink concern does not arise: served modules receive
+// a fixed-literal `createHotContext("/src/foo.tsx")` in the preamble — not
+// `import.meta.url` — so a symlinked `src/` would not desync the two sides.
+const dir = realpathSync(mkdtempSync(join(tmpdir(), 'oxide-hot-')))
+
+/** A fixture that registers an accept callback at its base URL, exactly the
+ *  way the dev server's preamble + `inject_hmr_boundary` arrangement does. */
+function writeSelfRegisteringFixture(
+  name: string,
+  body = 'export const v = 1;',
+): string {
+  const path = join(dir, name)
+  writeFileSync(
+    path,
+    `const __key = import.meta.url.split('?')[0]
+if (typeof globalThis.__oxide_hmr__ === 'object') {
+  globalThis.__oxide_hmr__.createHotContext(__key).accept((mod) => {
+    globalThis.__last_accept = mod
+  })
+}
+${body}
+`,
+  )
+  return pathToFileURL(path).href
+}
+
+test('reloadModule re-imports and fires the fresh accept callback', async () => {
+  globals.__last_accept = undefined
+  const h = hmr()
+  const url = writeSelfRegisteringFixture('counter.mjs')
+  await h.reloadModule(url)
+  assert.ok(
+    globals.__last_accept !== undefined,
+    'fresh accept must fire with the newly-evaluated module',
+  )
+  assert.equal((globals.__last_accept as { v: number }).v, 1)
+})
+
+test('reloadModule fires dispose callbacks registered before the reload', async () => {
+  const h = hmr()
+  const url = writeSelfRegisteringFixture('with-dispose.mjs')
+  // Pre-import so the fixture registers itself and we have a module entry.
+  await import(url)
+  // Register a dispose on the same key. It must fire before the re-import.
+  let disposed = false
+  h.createHotContext(url).dispose(() => {
+    disposed = true
+  })
+  await h.reloadModule(url)
+  assert.ok(disposed, 'dispose callback must fire before the re-import')
+})
+
+test('reloadModule on a never-imported URL still works', async () => {
+  const h = hmr()
+  globals.__last_accept = undefined
+  const url = writeSelfRegisteringFixture('fresh.mjs')
+  await h.reloadModule(url)
+  assert.ok(
+    globals.__last_accept !== undefined,
+    'a first-time reload must also fire the accept callback',
+  )
+})
+
+test('two reloads fire accept exactly twice (no stacking)', async () => {
+  const h = hmr()
+  // A fixture that counts its own fires so stacking would be visible.
+  const path = join(dir, 'stack.mjs')
+  writeFileSync(
+    path,
+    `const __key = import.meta.url.split('?')[0]
+if (typeof globalThis.__oxide_hmr__ === 'object') {
+  globalThis.__oxide_hmr__.createHotContext(__key).accept(() => {
+    globalThis.__reload_test_fires = (globalThis.__reload_test_fires ?? 0) + 1
+  })
+}
+export const v = 1
+`,
+  )
+  const url = pathToFileURL(path).href
+  ;(globalThis as { __reload_test_fires?: number }).__reload_test_fires = 0
+  await h.reloadModule(url)
+  await h.reloadModule(url)
+  // COALESCE_MS=100 in hot.ts: the first call executes, the second (within
+  // the window) schedules a trailing call 100+20ms out. So immediately after
+  // both promises resolve, only ONE fire has happened — the second arrives
+  // via the trailing timer. This test predates 971e9831 (the commit that
+  // added coalescing) and had been failing since. The contract this test is
+  // *really* pinning — "no stacking, one fire per reload" — still holds;
+  // it just resolves asynchronously now.
+  const beforeTrailing =
+    (globalThis as { __reload_test_fires?: number }).__reload_test_fires ?? 0
+  assert.equal(beforeTrailing, 1, `before trailing timer: only the leading call has fired, got ${beforeTrailing}`)
+  // Wait past the trailing window (COALESCE_MS + 20 = 120ms) plus slack.
+  await new Promise((r) => setTimeout(r, 200))
+  const fires =
+    (globalThis as { __reload_test_fires?: number }).__reload_test_fires ?? 0
+  assert.equal(fires, 2, `after trailing timer: each reload must fire exactly once, got ${fires}`)
+})
+
+test('data payload survives reloads for the same key', async () => {
+  const h = hmr()
+  const url = writeSelfRegisteringFixture('data.mjs')
+  h.createHotContext(url).data.setup = 'one-time'
+  await h.reloadModule(url)
+  // Same `data` object; a setup-once pattern survives a save.
+  const after = h.createHotContext(url)
+  assert.equal(after.data.setup, 'one-time')
+})
+
+test('modules map stays bounded under many distinct URLs (Tier 3.8a)', async () => {
+  const h = hmr()
+  const MAX = h.__debug.MAX_MODULES
+  assert.ok(MAX > 0 && MAX < 10_000, `MAX_MODULES sanity: got ${MAX}`)
+
+  // createHotContext is what the injected dev preamble calls for every
+  // served module — the natural entry point for `modules.set`. Fill well
+  // past the cap so eviction is guaranteed to have fired.
+  const N = MAX + 500
+  for (let i = 0; i < N; i++) {
+    h.createHotContext(`/synthetic/module-${i}.tsx`)
+  }
+
+  assert.ok(
+    h.__debug.moduleCount <= MAX,
+    `modules.size ${h.__debug.moduleCount} exceeded cap ${MAX} after ${N} inserts`,
+  )
+
+  // The most-recently-inserted URL must still be resolvable. Eviction
+  // drops oldest-first; recent entries survive.
+  const recent = h.createHotContext(`/synthetic/module-${N - 1}.tsx`)
+  assert.equal(recent.url, `/synthetic/module-${N - 1}.tsx`)
+
+  // And inserting more should not push it past the cap again.
+  for (let i = 0; i < 100; i++) {
+    h.createHotContext(`/synthetic/extra-${i}.tsx`)
+  }
+  assert.ok(h.__debug.moduleCount <= MAX, `after overflow: ${h.__debug.moduleCount} > ${MAX}`)
+})
+
+test('__oxide_refresh falls back to a full reload when the React Refresh runtime is absent (Tier 2.12)', () => {
+  // §2.12: the documented fallback when `$RefreshRuntime$` is not on the
+  // global — i.e. the dev server could not prebundle `react-refresh-runtime`
+  // (project doesn't install react-refresh). In that case `__oxide_refresh`
+  // must reload the page, because an in-place React Refresh has nothing to
+  // perform.
+  //
+  // The alternative (silently doing nothing) would leave the user staring
+  // at a stale DOM after a save. The fallback is the correct behaviour; the
+  // plan's §2.12 "HMR tests skip" assertion only holds when react-refresh
+  // is missing at the smoke-app level, which this unit test doesn't need.
+  //
+  // We exercise the fallback by (a) unsetting `$RefreshRuntime$`, (b)
+  // stubbing a fake `location.reload`, (c) calling `__oxide_refresh`. The
+  // `install()` in hot.ts sets `__oxide_refresh` at import time; it was
+  // already set by the first `import('../src/client/hot.ts')` at the top
+  // of this file.
+  const g = globalThis as unknown as {
+    __oxide_refresh?: (mod: unknown) => void
+    $RefreshRuntime$?: { performReactRefresh?: () => void } & Record<string, unknown>
+    location?: { reload?: () => void }
+  }
+  assert.ok(typeof g.__oxide_refresh === 'function', '__oxide_refresh must be installed by hot.ts')
+
+  // Save prior state so we don't break other tests in the same file.
+  const priorRuntime = g.$RefreshRuntime$
+  const priorLocation = g.location
+  let reloadCalls = 0
+  const hadLocation = 'location' in (globalThis as object)
+
+  try {
+    // Clear the runtime. hot.ts's `if (typeof g.$RefreshRuntime$ === 'undefined')`
+    // block won't re-run because `attempted`/runtime state on the closure
+    // has already executed — but the CALL to __oxide_refresh looks up
+    // `g.$RefreshRuntime$` fresh on every invocation, so clearing it is
+    // enough to force the fallback path.
+    delete g.$RefreshRuntime$
+    ;(g as { location?: { reload?: () => void } }).location = {
+      reload: () => { reloadCalls++ },
+    }
+
+    g.__oxide_refresh!({})
+
+    assert.equal(
+      reloadCalls,
+      1,
+      `__oxide_refresh must call location.reload() exactly once when the ` +
+      `runtime is absent; got ${reloadCalls} calls`,
+    )
+  } finally {
+    // Restore prior state so subsequent tests are unaffected.
+    if (priorRuntime !== undefined) g.$RefreshRuntime$ = priorRuntime
+    if (hadLocation) {
+      ;(g as { location?: { reload?: () => void } }).location = priorLocation
+    } else {
+      delete (g as { location?: { reload?: () => void } }).location
+    }
+  }
+})
