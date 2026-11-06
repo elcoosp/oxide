@@ -227,14 +227,14 @@ impl AdapterPageRenderer {
         }
         // [wr196] Force inject global tailwind CSS for routes missing from manifest
         // (e.g. docs/[page], which the bundler might not map to the global CSS chunk).
-        let has_css = input.head.get("link").and_then(|v| v.as_array()).map_or(false, |arr| {
-            arr.iter().any(|l| l.get("href").and_then(|h| h.as_str()).map_or(false, |h| h.contains("tailwind-")))
+        let has_css = input.head.get("link").and_then(|v| v.as_array()).is_some_and(|arr| {
+            arr.iter().any(|l| l.get("href").and_then(|h| h.as_str()).is_some_and(|h| h.contains("tailwind-")))
         });
 
-        if !has_css {
-            if let Some(path) = self.manifest_path.as_ref() {
-                if let Some(dir) = path.parent() {
-                    if let Ok(entries) = std::fs::read_dir(dir) {
+        if !has_css
+            && let Some(path) = self.manifest_path.as_ref()
+                && let Some(dir) = path.parent()
+                    && let Ok(entries) = std::fs::read_dir(dir) {
                         for entry in entries.flatten() {
                             let name = entry.file_name().to_string_lossy().to_string();
                             if name.starts_with("tailwind-") && name.ends_with(".css") {
@@ -245,9 +245,6 @@ impl AdapterPageRenderer {
                             }
                         }
                     }
-                }
-            }
-        }
 
     }
 }
