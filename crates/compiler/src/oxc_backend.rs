@@ -355,132 +355,6 @@ pub fn inject_react_refresh(code: &str, lang: &str, path: &str) -> Result<String
     Ok(out)
 }
 
-/// §1.2: walk a component function body and collect byte spans of every
-/// top-level `useX(...)` call. The span is the FULL call expression (from
-/// the `use` identifier's start to the closing paren's end), which is what
-/// the wrapping turns into `_s(useX)(...)` — the parenthesised args become
-/// the second call's args.
-///
-/// `_id` in the tuple is unused in the current emit (kept for future use
-/// in error messages / debug); the wrapper doesn't need a name per-hook.
-fn collect_hook_call_spans(
-    body: &oxc_ast::ast::FunctionBody<'_>,
-    code: &str,
-    out: &mut Vec<(usize, usize, String)>,
-) {
-    use oxc_ast::ast::{Expression, Statement};
-    fn is_use_call(expr: &Expression<'_>) -> Option<(u32, u32, String)> {
-        let Expression::CallExpression(call) = expr else { return None };
-        let Expression::Identifier(id) = &call.callee else { return None };
-        let name = id.name.as_str();
-        if !name.starts_with("use") || name.len() < 4 {
-            return None;
-        }
-        // React's rules: identifier chars after `use` must be uppercase
-        // (useState, useEffect, useCustom) — `userList(...)` is not a hook.
-        let after = name.chars().nth(3)?;
-        if !after.is_uppercase() {
-            return None;
-        }
-        // §1.2: return the callee span AND the hook name. The runtime's
-        // `createSignatureFunctionForTransform()` returns a function whose
-        // SECOND argument must be a STRING key (react-refresh runtime line
-        // ~130: `if ("string" === typeof key) { setSignature(type, key,
-        // ...); return type }`). Without the string key, the call returns
-        // undefined and no signature is recorded — the emission is a
-        // no-op for hook-shape tracking. Shape emitted:
-        //   `_s(useState, "useState")(0)` — the outer `_s(useState, "useState")`
-        //   records the type + name in the signature, and returns the
-        //   original `useState`; the trailing `(0)` invokes it normally.
-        Some((id.span.start, id.span.end, name.to_string()))
-    }
-    let _ = code; // byte slicing not needed; spans are already byte offsets
-    for stmt in &body.statements {
-        match stmt {
-            Statement::VariableDeclaration(v) => {
-                for d in &v.declarations {
-                    if let Some(init) = &d.init
-                        && let Some((s, e, name)) = is_use_call(init)
-                    {
-                        out.push((s as usize, e as usize, name));
-                    }
-                }
-            }
-            Statement::ExpressionStatement(es) => {
-                if let Some((s, e, name)) = is_use_call(&es.expression) {
-                    out.push((s as usize, e as usize, name));
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-/// §1.2: for a top-level statement that DECLARES a component (function,
-/// class, or `const X = () => ...`), find the function bodies and collect
-/// their hook-call spans. `_s = $RefreshSig$();` is inserted at the START
-/// of each body — see `inject_sig_prologue`.
-fn collect_component_hook_wraps(
-    stmt: &Statement<'_>,
-    code: &str,
-    out: &mut Vec<(usize, usize, String)>,
-) {
-    use oxc_ast::ast::{
-        Declaration, ExportDefaultDeclarationKind, Expression, Statement,
-    };
-    fn walk_fn_like(
-        body: &oxc_ast::ast::FunctionBody<'_>,
-        code: &str,
-        out: &mut Vec<(usize, usize, String)>,
-    ) {
-        collect_hook_call_spans(body, code, out);
-    }
-    fn walk_var_decl(v: &oxc_ast::ast::VariableDeclaration<'_>, code: &str, out: &mut Vec<(usize, usize, String)>) {
-        for d in &v.declarations {
-            let Some(init) = &d.init else { continue };
-            match init {
-                Expression::ArrowFunctionExpression(a) => {
-                    if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(b) = &a.body {
-                        walk_fn_like(b, code, out);
-                    }
-                }
-                Expression::FunctionExpression(f) => {
-                    if let Some(b) = &f.body {
-                        walk_fn_like(b, code, out);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    match stmt {
-        Statement::FunctionDeclaration(f) => {
-            if let Some(b) = &f.body {
-                walk_fn_like(b, code, out);
-            }
-        }
-        Statement::VariableDeclaration(v) => walk_var_decl(v, code, out),
-        Statement::ExportDeclaration(e) => match &e.declaration {
-            Declaration::FunctionDeclaration(f) => {
-                if let Some(b) = &f.body {
-                    walk_fn_like(b, code, out);
-                }
-            }
-            Declaration::VariableDeclaration(v) => walk_var_decl(v.as_ref(), code, out),
-            _ => {}
-        },
-        Statement::ExportDefaultDeclaration(e) => match &e.declaration {
-            ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
-                if let Some(b) = &f.body {
-                    walk_fn_like(b, code, out);
-                }
-            }
-            _ => {}
-        },
-        _ => {}
-    }
-}
-
 /// §1.2: per-component hook-signature info. Each top-level component
 /// gets a `_s(Component, "path:Name", false, function() { return [hooks]; });`
 /// call at the START of its body. That records the component's
@@ -532,14 +406,13 @@ fn build_hook_key(body: &oxc_ast::ast::FunctionBody<'_>, code: &str) -> Option<S
                     s.push_str(&code[span.start as usize..span.end as usize]);
                     s.push(')');
                 }
-            } else if hook == "useReducer" && call.arguments.len() > 1 {
-                if let Some(expr) = call.arguments[1].as_expression() {
+            } else if hook == "useReducer" && call.arguments.len() > 1
+                && let Some(expr) = call.arguments[1].as_expression() {
                     let span = expr.span();
                     s.push('(');
                     s.push_str(&code[span.start as usize..span.end as usize]);
                     s.push(')');
                 }
-            }
             s.push('}');
             parts.push(s);
         };
@@ -666,16 +539,13 @@ fn collect_components_for_sig(
             }
             _ => {}
         },
-        Statement::ExportDefaultDeclaration(e) => match &e.declaration {
-            ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
-                let name = f
-                    .id
-                    .as_ref()
-                    .map(|i| i.name.to_string())
-                    .unwrap_or_else(|| "default".to_string());
-                walk(&name, f.body.as_deref(), stmt_end, code, out);
-            }
-            _ => {}
+        Statement::ExportDefaultDeclaration(e) => if let ExportDefaultDeclarationKind::FunctionDeclaration(f) = &e.declaration {
+            let name = f
+                .id
+                .as_ref()
+                .map(|i| i.name.to_string())
+                .unwrap_or_else(|| "default".to_string());
+            walk(&name, f.body.as_deref(), stmt_end, code, out);
         },
         _ => {}
     }
@@ -1253,7 +1123,7 @@ fn ast_server_fn_stubs(
             let Some(init) = d.init.as_ref() else {
                 continue;
             };
-            let Some(call) = as_server_fn_call(init) else {
+            let Some(_call) = as_server_fn_call(init) else {
                 continue;
             };
 
