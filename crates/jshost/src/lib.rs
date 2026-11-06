@@ -65,8 +65,10 @@ pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
     OxideError(Box::new(Diagnostic::error(code, msg)))
 }
 
-/// Pool sizing (§4.3): render pool default = physical cores; each isolate interleaves
-/// up to K=64 in-flight requests at await points.
+/// Pool sizing (§4.3): the DEFAULT is 2 workers (a deliberate memory-floor
+/// choice — each Node worker is a full process with its own RSS; document the
+/// cost, ~80–150 MB per worker, and raise `size` via config on big hosts).
+/// Each isolate interleaves up to K=64 in-flight requests at await points.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PoolConfig {
     pub size: usize,
@@ -75,12 +77,26 @@ pub struct PoolConfig {
     pub recycle_after_requests: u64,
     /// Heap limit per isolate (bytes).
     pub heap_limit_bytes: u64,
+    /// P1 (readiness): per-call response timeout. Was a hardcoded 10 s, which
+    /// failed a slow loader on a streamed page even when the operator was fine
+    /// waiting. `OXIDE_CALL_TIMEOUT_MS` overrides the default.
+    #[serde(default = "PoolConfig::default_call_timeout_ms")]
+    pub call_timeout_ms: u64,
     /// §17.2: `--offline-plugins` — deny all outbound network from the
     /// worker's fetch shim. Wired via the `OXIDE_OFFLINE_PLUGINS=1` env
     /// var to each worker child; the shim refuses instead of falling
     /// back to native fetch. This is the supply-chain guard the spec's
     /// CI mode names: a plugin / tooling module cannot phone home.
     pub offline_plugins: bool,
+}
+
+impl PoolConfig {
+    fn default_call_timeout_ms() -> u64 {
+        std::env::var("OXIDE_CALL_TIMEOUT_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(10_000)
+    }
 }
 
 impl Default for PoolConfig {
@@ -90,6 +106,7 @@ impl Default for PoolConfig {
             max_in_flight_per_worker: 64,
             recycle_after_requests: 10_000,
             heap_limit_bytes: 512 * 1024 * 1024,
+            call_timeout_ms: Self::default_call_timeout_ms(),
             offline_plugins: std::env::var_os("OXIDE_OFFLINE_PLUGINS").is_some(),
         }
     }
@@ -2731,6 +2748,11 @@ impl V8Pool {
             .sum()
     }
 
+    /// P1 (readiness): per-call watchdog from config, not a hardcoded const.
+    fn call_timeout(&self) -> Duration {
+        Duration::from_millis(self.cfg.call_timeout_ms)
+    }
+
     /// Warm replacement (§4.3): spawn a fresh worker *before* the old one
     /// drains, swap it into the worker set, then signal the old worker to
     /// exit. Idempotent — the caller must win the `retiring` CAS first.
@@ -2906,7 +2928,7 @@ impl Pool for V8Pool {
             ));
         }
 
-        let res = tokio::time::timeout(CALL_TIMEOUT, rx).await;
+        let res = tokio::time::timeout(self.call_timeout(), rx).await;
         worker.in_flight.fetch_sub(1, Ordering::Relaxed);
         match res {
             Err(_) => {
@@ -2973,16 +2995,30 @@ impl Pool for V8Pool {
             }
             let id = self.next_id.fetch_add(1, Ordering::Relaxed);
             let (tx, rx) = oneshot::channel();
-            worker.pending.lock().unwrap().insert(id, Pending { tx, request_id: req.request_id.clone() });
+            worker.pending.lock().unwrap().insert(
+                id,
+                Pending {
+                    tx,
+                    request_id: req.request_id.clone(),
+                },
+            );
             worker.in_flight.fetch_add(1, Ordering::Relaxed);
             worker.served.fetch_add(1, Ordering::Relaxed);
-            if let Err(e) = worker.tx.send(V8Msg::Call { id, entry: entry.clone(), input: Box::new(req.clone()) }).await {
+            if let Err(e) = worker
+                .tx
+                .send(V8Msg::Call {
+                    id,
+                    entry: entry.clone(),
+                    input: Box::new(req.clone()),
+                })
+                .await
+            {
                 worker.pending.lock().unwrap().remove(&id);
                 worker.in_flight.fetch_sub(1, Ordering::Relaxed);
                 out.push(Err(err("JSH-CRASH", format!("worker send failed: {e}"))));
                 continue;
             }
-            let res = tokio::time::timeout(CALL_TIMEOUT, rx).await;
+            let res = tokio::time::timeout(self.call_timeout(), rx).await;
             worker.in_flight.fetch_sub(1, Ordering::Relaxed);
             match res {
                 Ok(Ok(r)) => out.push(r),
@@ -3160,8 +3196,18 @@ fn spawn_child(
     node_bin: &str,
     worker_script: &Path,
     offline_plugins: bool,
+    heap_limit_bytes: u64,
 ) -> Result<(Child, ChildStdin, ChildStdout)> {
     let mut cmd = tokio::process::Command::new(node_bin);
+    // P1 (readiness): enforce the pool's heap budget on the worker. The
+    // `PoolConfig::heap_limit_bytes` field existed but was never applied —
+    // a leaking worker could grow to the OS default and OOM the host.
+    // --max-old-space-size is in MiB and only affects the old-space heap;
+    // Node aborts (and the pool replaces the worker) on exhaustion.
+    cmd.arg(format!(
+        "--max-old-space-size={}",
+        (heap_limit_bytes / (1024 * 1024)).max(16)
+    ));
     // §17.2: --offline-plugins. Passed as an env var to the child; the
     // worker's fetch shim reads it and refuses all outbound network.
     cmd.env(
@@ -3267,12 +3313,15 @@ impl NodePool {
     }
 }
 
-/// Response timeout per call (§4.3 watchdog).
-const CALL_TIMEOUT: Duration = Duration::from_secs(10);
 /// Drain waits at most this long for in-flight calls (§12.2).
 const DRAIN_BUDGET: Duration = Duration::from_secs(1);
 
 impl NodePool {
+    /// P1 (readiness): per-call watchdog from config, not a hardcoded const.
+    fn call_timeout(&self) -> Duration {
+        Duration::from_millis(self.cfg.call_timeout_ms)
+    }
+
     /// Probe the node binary and worker script, then spawn `cfg.size` children.
     ///
     /// Synchronous (runs `node --version` and forks via `std::process::Command`,
@@ -3291,7 +3340,7 @@ impl NodePool {
                 node_bin,
                 &worker_script,
                 counters.clone(),
-                cfg.offline_plugins,
+                &cfg,
             )?);
         }
         Ok(Arc::new(NodePool {
@@ -3335,9 +3384,14 @@ impl NodePool {
         node_bin: &str,
         worker_script: &Path,
         counters: Arc<PoolCounters>,
-        offline_plugins: bool,
+        cfg: &PoolConfig,
     ) -> Result<Arc<Worker>> {
-        let (child, stdin, stdout) = spawn_child(node_bin, worker_script, offline_plugins)?;
+        let (child, stdin, stdout) = spawn_child(
+            node_bin,
+            worker_script,
+            cfg.offline_plugins,
+            cfg.heap_limit_bytes,
+        )?;
         let worker = Arc::new(Worker {
             stdin: tokio::sync::Mutex::new(stdin),
             child: tokio::sync::Mutex::new(child),
@@ -3389,6 +3443,7 @@ impl NodePool {
             &self.node_bin,
             &self.worker_script,
             self.cfg.offline_plugins,
+            self.cfg.heap_limit_bytes,
         )?;
         *worker.child.lock().await = child;
         *worker.stdin.lock().await = stdin;
@@ -3515,7 +3570,7 @@ impl Pool for NodePool {
             ));
         }
 
-        let res = tokio::time::timeout(CALL_TIMEOUT, rx).await;
+        let res = tokio::time::timeout(self.call_timeout(), rx).await;
         worker.in_flight.fetch_sub(1, Ordering::Relaxed);
         match res {
             Err(_) => {
@@ -3526,8 +3581,8 @@ impl Pool for NodePool {
                 Err(err(
                     "JSH-TIMEOUT",
                     format!(
-                        "no response from worker within 10s for call id {id} (kind `{}`)",
-                        entry.kind
+                        "no response from worker within {}ms for call id {id} (kind `{}`)",
+                        self.cfg.call_timeout_ms, entry.kind
                     ),
                 ))
             }
@@ -3557,12 +3612,25 @@ impl Pool for NodePool {
         for worker in &self.workers {
             let id = self.next_id.fetch_add(1, Ordering::Relaxed);
             let (tx, rx) = oneshot::channel();
-            worker.pending.lock().unwrap().insert(id, Pending { tx, request_id: req.request_id.clone() });
+            worker.pending.lock().unwrap().insert(
+                id,
+                Pending {
+                    tx,
+                    request_id: req.request_id.clone(),
+                },
+            );
             worker.in_flight.fetch_add(1, Ordering::Relaxed);
             worker.served.fetch_add(1, Ordering::Relaxed);
-            let framed = match frame(&WorkerMsg::Call { id, entry: entry.clone(), input: req.clone() }) {
+            let framed = match frame(&WorkerMsg::Call {
+                id,
+                entry: entry.clone(),
+                input: req.clone(),
+            }) {
                 Ok(f) => f,
-                Err(e) => { out.push(Err(err("JSH-NODE", format!("frame error: {e}")))); continue; }
+                Err(e) => {
+                    out.push(Err(err("JSH-NODE", format!("frame error: {e}"))));
+                    continue;
+                }
             };
             if let Err(e) = worker.stdin.lock().await.write_all(&framed).await {
                 worker.pending.lock().unwrap().remove(&id);
@@ -3570,7 +3638,7 @@ impl Pool for NodePool {
                 out.push(Err(err("JSH-CRASH", format!("write failed: {e}"))));
                 continue;
             }
-            let res = tokio::time::timeout(CALL_TIMEOUT, rx).await;
+            let res = tokio::time::timeout(self.call_timeout(), rx).await;
             worker.in_flight.fetch_sub(1, Ordering::Relaxed);
             match res {
                 Ok(Ok(r)) => out.push(r),
