@@ -2,8 +2,8 @@
 // Four frameworks × four shapes; templates generated programmatically so each
 // emitted project is self-contained (framework flavor + per-shape route modules).
 import { mkdir, writeFile, readdir } from 'node:fs/promises';
-import { realpathSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
+import { dirname as pathDirname, join as pathJoin, join, resolve as pathResolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export type Framework = 'react' | 'vue' | 'svelte' | 'solid';
@@ -163,15 +163,45 @@ export function layoutComponent(framework: Framework): string {
 `;
 }
 
-export function packageJson(framework: Framework): string {
+/** True when `dir` sits inside a pnpm workspace (a `pnpm-workspace.yaml`
+ *  above it), walking up to the filesystem root.
+ *
+ *  The previous check — `process.env['PWD'].includes('packages/')` — was a
+ *  bug twice over: `PWD` is whatever the parent shell had at process START
+ *  (`process.chdir()` does not update it, so tests scaffolding into a tmpdir
+ *  still "saw" the caller's cwd), and `'packages/'` is a substring of plenty
+ *  of legitimate install paths (`/home/me/packages/`, `/opt/packages/`).
+ *  The result depended on HOW the suite was invoked (`pnpm -C
+ *  packages/create-oxide test` passed, `pnpm test:packages` from the repo
+ *  root failed) — an environment-dependent test, not a behavior.
+ *  `pnpm-workspace.yaml` is the actual workspace marker, detected from the
+ *  OUTPUT directory, which is what `workspace:*` linking needs.
+ */
+export function isInsidePnpmWorkspace(dir: string): boolean {
+  let cur: string;
+  try {
+    cur = pathResolve(dir);
+  } catch {
+    return false;
+  }
+  for (;;) {
+    if (existsSync(pathJoin(cur, 'pnpm-workspace.yaml'))) return true;
+    const parent = pathDirname(cur);
+    if (parent === cur) return false;
+    cur = parent;
+  }
+}
+
+export function packageJson(framework: Framework, inWorkspace = false): string {
   const scripts = {
     dev: 'oxide dev',
     build: 'oxide build',
     start: 'oxide start',
   };
-  const inWorkspace = (process.env['PWD'] ?? '').includes('packages/');
   // P0-3 (pre-0.1 readiness): the release is 0.1.0 — the scaffold used to pin
   // 0.2.0, which does not exist, so `npm install` failed outright.
+  // Inside the oxide monorepo (the workspace dev workflow) the scaffold pins
+  // `workspace:*` instead, so pnpm links the local packages.
   const v = inWorkspace ? 'workspace:*' : '0.1.0';
   const deps: Record<string, string> = {
     '@oxide-fw/core': v,
@@ -378,9 +408,12 @@ export async function scaffold(template: string, framework: string, dir: string)
   }
   const routes = join(dir, 'src', 'routes');
   await mkdir(routes, { recursive: true });
+  // BUG-PWD: workspace detection comes from the OUTPUT directory (a
+  // `pnpm-workspace.yaml` above it), not the caller's `PWD` env var.
+  const inWorkspace = isInsidePnpmWorkspace(dir);
   const ext = framework === 'vue' ? 'vue' : framework === 'svelte' ? 'svelte' : 'tsx';
   const writes: Write[] = [
-    [join(dir, 'package.json'), packageJson(framework)],
+    [join(dir, 'package.json'), packageJson(framework, inWorkspace)],
     [join(dir, 'oxide.config.ts'), configTs(framework, template)],
     [join(dir, 'README.md'), readmeMd(framework, template)],
     // P0-3: a generated project without a tsconfig or .gitignore could not
