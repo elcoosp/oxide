@@ -117,7 +117,7 @@ export default function Page(props: Props) {
         <div className="container">
           <h2>Features</h2>
           <p className="lede">
-            Everything below ships today behind tests — over a thousand Rust test functions, a full TypeScript suite, and and a conformance gate that runs on all three platforms on every release
+            Everything below ships today behind tests — over a thousand Rust test functions, a full TypeScript suite, and a conformance gate that runs on all three platforms on every release
           </p>
           <div className="flex flex-col w-full max-w-6xl mx-auto py-4" data-reveal>
             {features.map((f) => (
