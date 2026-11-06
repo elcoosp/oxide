@@ -22,7 +22,7 @@
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    Argument, ArrowFunctionBody, ArrowFunctionExpression, AssignmentExpression,
+    ArrowFunctionBody, ArrowFunctionExpression, AssignmentExpression,
     AssignmentTarget, BlockStatement, CallExpression, Expression, Function,
     FunctionBody, ObjectExpression, ObjectPropertyKind, Program, PropertyKey,
     Statement, TryStatement,
@@ -245,21 +245,17 @@ fn assignment_target_name(t: &AssignmentTarget<'_>) -> Option<String> {
     };
     let prop = m.property.name.as_str().to_string();
     // exports.NAME
-    if let Expression::Identifier(id) = &m.object {
-        if id.name.as_str() == "exports" {
+    if let Expression::Identifier(id) = &m.object
+        && id.name.as_str() == "exports" {
             return Some(prop);
         }
-    }
     // module.exports.NAME
-    if let Expression::StaticMemberExpression(inner) = &m.object {
-        if inner.property.name.as_str() == "exports" {
-            if let Expression::Identifier(id) = &inner.object {
-                if id.name.as_str() == "module" {
+    if let Expression::StaticMemberExpression(inner) = &m.object
+        && inner.property.name.as_str() == "exports"
+            && let Expression::Identifier(id) = &inner.object
+                && id.name.as_str() == "module" {
                     return Some(prop);
                 }
-            }
-        }
-    }
     None
 }
 
