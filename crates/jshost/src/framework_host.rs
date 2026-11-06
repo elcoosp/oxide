@@ -240,7 +240,7 @@ impl FrameworkHost {
         })
     }
 
-        pub async fn invalidate_all(&self) -> Result<u64> {
+    pub async fn invalidate_all(&self) -> Result<u64> {
         // §DX-broadcast: bump __oxideGeneration on EVERY worker.
         // A plain loop of `invalidate()` hits the same worker repeatedly
         // (choose_worker picks the same least-loaded one), leaving the
@@ -270,10 +270,11 @@ impl FrameworkHost {
                 Ok(mut stream) => {
                     if let Ok(bytes) = stream.collect().await
                         && let Ok(v) = serde_json::from_slice::<Value>(&bytes)
-                            && let Some(g) = v.get("generation").and_then(|x| x.as_u64()) {
-                                max_gen = max_gen.max(g);
-                                any_ok = true;
-                            }
+                        && let Some(g) = v.get("generation").and_then(|x| x.as_u64())
+                    {
+                        max_gen = max_gen.max(g);
+                        any_ok = true;
+                    }
                 }
                 Err(e) => {
                     failed += 1;
@@ -282,10 +283,18 @@ impl FrameworkHost {
             }
         }
         if any_ok {
-            tracing::info!(workers = n_workers, failed, generation = max_gen, "framework:invalidate_all");
+            tracing::info!(
+                workers = n_workers,
+                failed,
+                generation = max_gen,
+                "framework:invalidate_all"
+            );
             Ok(max_gen)
         } else {
-            Err(crate::err("JSH-FRAMEWORK", format!("invalidate_all: all {} workers failed", n_workers)))
+            Err(crate::err(
+                "JSH-FRAMEWORK",
+                format!("invalidate_all: all {} workers failed", n_workers),
+            ))
         }
     }
 }
