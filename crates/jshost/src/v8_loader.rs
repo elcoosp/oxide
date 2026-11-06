@@ -206,8 +206,8 @@ fn css_module_js(source: &str) -> Result<String, String> {
         }),
         ..Default::default()
     };
-    let sheet = StyleSheet::parse(source, parser)
-        .map_err(|e| format!("lightningcss parse: {e}"))?;
+    let sheet =
+        StyleSheet::parse(source, parser).map_err(|e| format!("lightningcss parse: {e}"))?;
     let res = sheet
         .to_css(PrinterOptions::default())
         .map_err(|e| format!("lightningcss serialize: {e}"))?;
