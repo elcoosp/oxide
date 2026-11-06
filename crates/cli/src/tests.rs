@@ -1060,10 +1060,7 @@ fn body_of(raw: &str) -> String {
 #[allow(dead_code)]
 fn decode_chunked(mut s: &str) -> String {
     let mut out = String::with_capacity(s.len());
-    loop {
-        let Some((sz_line, rest)) = s.split_once("\r\n") else {
-            break;
-        };
+    while let Some((sz_line, rest)) = s.split_once("\r\n") {
         let Ok(sz) = usize::from_str_radix(sz_line.trim(), 16) else {
             break;
         };
