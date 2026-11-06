@@ -124,6 +124,12 @@ pub enum Command {
         root: String,
         #[arg(long)]
         port: Option<u16>,
+        /// PERF-23 (readiness): skip the renderer warm-up. Warm-up costs ~1 s
+        /// of startup (a synthetic render) so the first REAL request never
+        /// pays the cold path; short-lived benchmark/CI runs and
+        /// pre-scaled fleets use this to boot instantly.
+        #[arg(long = "no-warmup")]
+        no_warmup: bool,
     },
     /// Preview the production build locally.
     Preview {
@@ -375,6 +381,97 @@ fn build_otel_layer(
     Ok(tracing_opentelemetry::layer().with_tracer(tracer))
 }
 
+impl Command {
+    /// P1 (readiness): the `--root` argument, when this command takes one.
+    /// Read by [`apply_startup_env`] so env writes happen pre-runtime.
+    pub fn root_arg(&self) -> Option<&str> {
+        Some(match self {
+            Command::Dev { root, .. }
+            | Command::Build { root, .. }
+            | Command::Start { root, .. }
+            | Command::Preview { root, .. }
+            | Command::Routes { root, .. }
+            | Command::Analyze { root, .. }
+            | Command::Check { root, .. }
+            | Command::Why { root, .. }
+            | Command::Doctor { root, .. }
+            | Command::Secrets { root, .. }
+            | Command::Add { root, .. }
+            | Command::Generate { root, .. }
+            | Command::Cache { root, .. }
+            | Command::Audit { root, .. }
+            | Command::Migrate { root, .. }
+            | Command::Test { root, .. }
+            | Command::Mcp { root, .. }
+            | Command::Config { root, .. }
+            | Command::Render { root, .. } => root.as_str(),
+            Command::Schema => return None,
+        })
+    }
+
+    /// P1 (readiness): true for `oxide dev` — the command whose runtime
+    /// behaviour dev-mode gates.
+    pub fn is_dev_command(&self) -> bool {
+        matches!(self, Command::Dev { .. })
+    }
+}
+
+/// P1 (readiness): ALL startup-time environment writes happen HERE, in the
+/// synchronous binary entry point BEFORE the tokio runtime (and its worker
+/// threads) exist. Previously each `cmd_*` wrote `OXIDE_DEV` / `OXIDE_ROOT` /
+/// `OXIDE_DEV_MODE` mid-async — `set_var` concurrent with a `get_var` on a
+/// request thread is a data race (why edition 2024 marks `set_var` unsafe),
+/// and production behaviour could flip because someone exported
+/// `OXIDE_DEV_MODE` in a shell. Child worker processes still inherit the
+/// variables from this parent env at spawn time.
+///
+/// In-process dev-mode probes answer from the atomic
+/// (`oxide_fw_server::set_dev_mode`) instead of re-reading the env per request.
+pub fn apply_startup_env(cli: &Cli) {
+    // Dev mode is a command-level fact, decided once. `set_dev_mode` makes
+    // the atomic authoritative for the process; the env var remains only for
+    // child-process inheritance (loader hooks, workers).
+    oxide_fw_server::set_dev_mode(cli.command.is_dev_command());
+    if cli.command.is_dev_command() {
+        // SAFETY: pre-runtime — see the function doc.
+        unsafe { std::env::set_var("OXIDE_DEV", "1") };
+        if let Command::Dev { no_esm, .. } = &cli.command
+            && *no_esm
+        {
+            // SAFETY: pre-runtime — see the function doc.
+            unsafe { std::env::set_var("OXIDE_DEV_NO_ESM", "1") };
+        }
+    }
+    // PERF-23: `oxide start --no-warmup` skips the renderer warm-up. Read
+    // once by the warm-up block in `start_server_inner_full`.
+    if let Command::Start {
+        no_warmup: true, ..
+    } = &cli.command
+    {
+        // SAFETY: pre-runtime — see the function doc.
+        unsafe { std::env::set_var("OXIDE_NO_WARMUP", "1") };
+    }
+    // §17.2: deny outbound network from plugin/tooling workers (`--offline-plugins`).
+    // Read by `PoolConfig::default` for every worker pool; process-global is
+    // correct — the build is one process and the flag applies to all workers.
+    if let Command::Build {
+        offline_plugins: true,
+        ..
+    } = &cli.command
+    {
+        // SAFETY: pre-runtime — `main` calls this before `Runtime::new`, so
+        // no other thread exists to race an env read (P1 readiness).
+        unsafe { std::env::set_var("OXIDE_OFFLINE_PLUGINS", "1") };
+    }
+    // Thread the project root to worker subprocesses so `getCollection`
+    // resolves `dist/content` against the project, not the shell's cwd.
+    if let Some(root) = cli.command.root_arg() {
+        let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| std::path::PathBuf::from(root));
+        // SAFETY: pre-runtime — see above.
+        unsafe { std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref()) };
+    }
+}
+
 pub async fn run(cli: Cli) -> anyhow::Result<i32> {
     init_tracing();
     let mut buf: Vec<u8> = Vec::new();
@@ -423,17 +520,17 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
             root,
             r#static,
             mode: _,
-            offline_plugins,
+            offline_plugins: _,
         } => {
-            if offline_plugins {
-                // Read by `PoolConfig::default` for every worker pool the
-                // build spawns. Process-global is correct here: the build is
-                // one process and the flag applies to all its workers.
-                unsafe { std::env::set_var("OXIDE_OFFLINE_PLUGINS", "1") };
-            }
+            // P1 (readiness): `OXIDE_OFFLINE_PLUGINS` is written pre-runtime
+            // by `apply_startup_env` — see `apply_startup_env` and `main.rs`.
             cmd_build(&root, r#static, w).await
         }
-        Command::Start { root, port } => cmd_serve(&root, port, "oxide start", w).await,
+        Command::Start {
+            root,
+            port,
+            no_warmup: _,
+        } => cmd_serve(&root, port, "oxide start", w).await,
         Command::Preview { root } => cmd_serve(&root, None, "oxide preview", w).await,
         Command::Routes { root } => cmd_routes(&root, w).await,
         Command::Analyze { root } => cmd_analyze(&root, w).await,
@@ -1137,18 +1234,21 @@ fn bundle_env_options(args: BundleEnvArgs) -> oxide_fw_bundler::BundleOptions {
     // bundler) keeps the bundler agnostic of a project's framework — the
     // CLI is what decides a build is a production build. Without this,
     // React ships the dev build (~1 MB) into every island chunk.
-    let is_dev = std::env::var("OXIDE_DEV_MODE").is_ok();
+    // P1 (readiness): dev-mode probes answer from the atomic (set once at
+    // startup), not a racy per-call env read.
+    let is_dev = oxide_fw_server::dev_mode();
     let mut define: BTreeMap<String, String> = BTreeMap::new();
     match env {
         oxide_fw_bundler::BundleEnv::Client => {
             // [wr102] NODE_ENV must match dev/prod, not be hardcoded to
             // production. Otherwise `oxide dev` ships React's minified
             // production build and #418 becomes unreadable.
-            let env_val = if minify && !is_dev { "production" } else { "development" };
-            define.insert(
-                "process.env.NODE_ENV".to_string(),
-                format!("\"{env_val}\""),
-            );
+            let env_val = if minify && !is_dev {
+                "production"
+            } else {
+                "development"
+            };
+            define.insert("process.env.NODE_ENV".to_string(), format!("\"{env_val}\""));
         }
         oxide_fw_bundler::BundleEnv::Ssr => {
             // Server rendering must NOT bake in "production": loaders may
@@ -1248,13 +1348,12 @@ async fn hmr_route_data_update(
             // pathname `/` — the route-data-update frame arrived and was
             // silently dropped, so a loader edit never re-rendered.
             {
-                let dir = e
-                    .id
-                    .0
-                    .strip_suffix("/page")
-                    .unwrap_or(&e.id.0)
-                    .strip_prefix("routes")
-                    .unwrap_or("");
+                let dir =
+                    e.id.0
+                        .strip_suffix("/page")
+                        .unwrap_or(&e.id.0)
+                        .strip_prefix("routes")
+                        .unwrap_or("");
                 match dir {
                     "" | "/" | "/index" | "index" => "/".to_string(),
                     d => d.to_string(),
@@ -1574,24 +1673,29 @@ async fn ensure_dev_client_bundle(
         'outer: for root in scan_roots {
             let mut stack = vec![root];
             while let Some(dir) = stack.pop() {
-                let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+                let Ok(entries) = std::fs::read_dir(&dir) else {
+                    continue;
+                };
                 for entry in entries.flatten() {
                     let Ok(ft) = entry.file_type() else { continue };
                     if ft.is_dir() {
                         stack.push(entry.path());
                     } else if ft.is_file()
                         && let Ok(t) = entry.metadata().and_then(|m| m.modified())
-                            && t > manifest_mtime {
-                                needs_build = true;
-                                break 'outer;
-                            }
+                        && t > manifest_mtime
+                    {
+                        needs_build = true;
+                        break 'outer;
+                    }
                 }
             }
         }
     }
 
     if needs_build {
-        tracing::info!("ensure_dev_client_bundle: source is newer than manifest or missing — rebuilding");
+        tracing::info!(
+            "ensure_dev_client_bundle: source is newer than manifest or missing — rebuilding"
+        );
         build_client_bundle(rootp, cfg, tree, pool, bundler, None, w).await
     } else {
         Ok(())
@@ -1662,18 +1766,20 @@ async fn populate_dev_component_source(
 /// Created/Removed events.
 fn build_importers_map(
     rootp: &std::path::Path,
-) -> std::collections::BTreeMap<
-    std::path::PathBuf,
-    std::collections::BTreeSet<std::path::PathBuf>,
-> {
+) -> std::collections::BTreeMap<std::path::PathBuf, std::collections::BTreeSet<std::path::PathBuf>>
+{
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::PathBuf;
     let mut map: BTreeMap<PathBuf, BTreeSet<PathBuf>> = BTreeMap::new();
     let src = rootp.join("src");
-    let Ok(_) = std::fs::canonicalize(&src) else { return map };
+    let Ok(_) = std::fs::canonicalize(&src) else {
+        return map;
+    };
 
     fn walk(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
-        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
         for e in rd.flatten() {
             let p = e.path();
             if p.is_dir() {
@@ -1696,15 +1802,23 @@ fn build_importers_map(
     let mut files: Vec<PathBuf> = Vec::new();
     walk(&src, &mut files);
     for file in files {
-        let Ok(content) = std::fs::read_to_string(&file) else { continue };
-        let Ok(canon_file) = std::fs::canonicalize(&file) else { continue };
+        let Ok(content) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let Ok(canon_file) = std::fs::canonicalize(&file) else {
+            continue;
+        };
         for span in oxide_fw_compiler::scan_import_spans(&content) {
             let spec = &span.specifier;
             if !(spec.starts_with("./") || spec.starts_with("../")) {
                 continue;
             }
-            let Some(parent) = canon_file.parent() else { continue };
-            let Ok(target) = std::fs::canonicalize(parent.join(spec)) else { continue };
+            let Some(parent) = canon_file.parent() else {
+                continue;
+            };
+            let Ok(target) = std::fs::canonicalize(parent.join(spec)) else {
+                continue;
+            };
             map.entry(target).or_default().insert(canon_file.clone());
         }
     }
@@ -1835,49 +1949,57 @@ async fn build_client_bundle(
     use oxide_fw_bundler::Bundler as _;
     match bundler.bundle_incremental(&client_opts, changed) {
         Ok(outcome) => {
-
             // [wr115] Write compiled Tailwind CSS directly + patch manifest.
             if let Some(p) = pool
-                && let Ok(Some(tw)) = crate::tailwind::precompute(p.clone(), cfg, rootp).await {
-                    let client_dir = rootp.join("dist/client");
-                    let _ = std::fs::create_dir_all(&client_dir);
-                    let hash = oxide_fw_bundler::ChunkBundler::content_hash(&[tw.css.as_bytes()]);
-                    let filename = format!("tailwind-{hash}.css");
-                    let _ = std::fs::write(client_dir.join(&filename), &tw.css);
-                    outln!(w, "tailwind: {} ({} bytes, {} utilities)", filename, tw.css.len(),
-                        tw.css.matches('.').count());
+                && let Ok(Some(tw)) = crate::tailwind::precompute(p.clone(), cfg, rootp).await
+            {
+                let client_dir = rootp.join("dist/client");
+                let _ = std::fs::create_dir_all(&client_dir);
+                let hash = oxide_fw_bundler::ChunkBundler::content_hash(&[tw.css.as_bytes()]);
+                let filename = format!("tailwind-{hash}.css");
+                let _ = std::fs::write(client_dir.join(&filename), &tw.css);
+                outln!(
+                    w,
+                    "tailwind: {} ({} bytes, {} utilities)",
+                    filename,
+                    tw.css.len(),
+                    tw.css.matches('.').count()
+                );
 
-                    // Update the manifest: point every route's css at the
-                    // compiled file, delete any other tailwind-*.css.
-                    let manifest_path = client_dir.join("client.manifest.json");
-                    if let Ok(raw) = std::fs::read_to_string(&manifest_path)
-                        && let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&raw) {
-                            if let Some(routes) = v.get_mut("routes").and_then(|r| r.as_object_mut()) {
-                                for (_k, route) in routes.iter_mut() {
-                                    if let Some(css) = route.get_mut("css").and_then(|c| c.as_array_mut()) {
-                                        *css = vec![serde_json::Value::String(filename.clone())];
-                                    }
-                                }
-                            }
-                            if let Some(assets) = v.get_mut("assets").and_then(|a| a.as_object_mut()) {
-                                for (_k, val) in assets.iter_mut() {
-                                    *val = serde_json::Value::String(filename.clone());
-                                }
-                            }
-                            let _ = std::fs::write(&manifest_path,
-                                serde_json::to_string_pretty(&v).unwrap_or_default());
-                        }
-                    // Delete superseded CSS so exactly one exists
-                    if let Ok(entries) = std::fs::read_dir(&client_dir) {
-                        for e in entries.flatten() {
-                            let n = e.file_name().to_string_lossy().to_string();
-                            if n.starts_with("tailwind-") && n.ends_with(".css") && n != filename {
-                                let _ = std::fs::remove_file(e.path());
+                // Update the manifest: point every route's css at the
+                // compiled file, delete any other tailwind-*.css.
+                let manifest_path = client_dir.join("client.manifest.json");
+                if let Ok(raw) = std::fs::read_to_string(&manifest_path)
+                    && let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&raw)
+                {
+                    if let Some(routes) = v.get_mut("routes").and_then(|r| r.as_object_mut()) {
+                        for (_k, route) in routes.iter_mut() {
+                            if let Some(css) = route.get_mut("css").and_then(|c| c.as_array_mut()) {
+                                *css = vec![serde_json::Value::String(filename.clone())];
                             }
                         }
                     }
+                    if let Some(assets) = v.get_mut("assets").and_then(|a| a.as_object_mut()) {
+                        for (_k, val) in assets.iter_mut() {
+                            *val = serde_json::Value::String(filename.clone());
+                        }
+                    }
+                    let _ = std::fs::write(
+                        &manifest_path,
+                        serde_json::to_string_pretty(&v).unwrap_or_default(),
+                    );
                 }
-        
+                // Delete superseded CSS so exactly one exists
+                if let Ok(entries) = std::fs::read_dir(&client_dir) {
+                    for e in entries.flatten() {
+                        let n = e.file_name().to_string_lossy().to_string();
+                        if n.starts_with("tailwind-") && n.ends_with(".css") && n != filename {
+                            let _ = std::fs::remove_file(e.path());
+                        }
+                    }
+                }
+            }
+
             outln!(
                 w,
                 "dev: client bundle rebuilt ({} chunks)",
@@ -1919,8 +2041,17 @@ fn is_client_source(path: &Path, rootp: &Path) -> bool {
         tracing::info!(path = %path.display(), reason = "server-ext", "DIAG is_client_source");
         return result;
     }
-    if !matches!(path.extension().and_then(|e| e.to_str()),
-                 Some("ts") | Some("tsx") | Some("js") | Some("jsx") | Some("vue") | Some("svelte") | Some("mjs") | Some("cjs")) {
+    if !matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("ts")
+            | Some("tsx")
+            | Some("js")
+            | Some("jsx")
+            | Some("vue")
+            | Some("svelte")
+            | Some("mjs")
+            | Some("cjs")
+    ) {
         result = false;
         tracing::info!(path = %path.display(), ext = ?path.extension(), reason = "bad-ext", "DIAG is_client_source");
         return result;
@@ -1956,7 +2087,6 @@ fn content_source_changed(
     })
 }
 
-
 /// [wr200] Dev-mode fix (plan T5): keep exactly ONE `tailwind-*.css` in
 /// `dist/client/` and rewrite `client.manifest.json` to point every route's
 /// `css` array at it. Without this, HMR rebuilds leave the manifest pointing
@@ -1964,7 +2094,9 @@ fn content_source_changed(
 /// new styles (e.g. docs-shell after a wr198-style source change).
 fn consolidate_tailwind_css_and_manifest(rootp: &std::path::Path) {
     let client_dir = rootp.join("dist/client");
-    let Ok(entries) = std::fs::read_dir(&client_dir) else { return };
+    let Ok(entries) = std::fs::read_dir(&client_dir) else {
+        return;
+    };
 
     // Find all tailwind-*.css files, newest last
     let mut css_files: Vec<std::path::PathBuf> = entries
@@ -2008,8 +2140,12 @@ fn consolidate_tailwind_css_and_manifest(rootp: &std::path::Path) {
 
     // Rewrite the manifest's css arrays to point at the newest file
     let manifest_path = client_dir.join("client.manifest.json");
-    let Ok(raw) = std::fs::read_to_string(&manifest_path) else { return };
-    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&raw) else { return };
+    let Ok(raw) = std::fs::read_to_string(&manifest_path) else {
+        return;
+    };
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return;
+    };
 
     let mut changed = false;
     if let Some(routes) = v.get_mut("routes").and_then(|r| r.as_object_mut()) {
@@ -2028,21 +2164,23 @@ fn consolidate_tailwind_css_and_manifest(rootp: &std::path::Path) {
                         }
                     }
                 }
-                if had_tailwind && new_css.iter().any(|e| e.as_str() == Some(newest_name.as_str()))
-                    && (css.len() != new_css.len() || css.first() != new_css.first()) {
-                        *css = new_css;
-                        changed = true;
-                    }
+                if had_tailwind
+                    && new_css
+                        .iter()
+                        .any(|e| e.as_str() == Some(newest_name.as_str()))
+                    && (css.len() != new_css.len() || css.first() != new_css.first())
+                {
+                    *css = new_css;
+                    changed = true;
+                }
             }
         }
     }
 
-    if changed
-        && let Ok(pretty) = serde_json::to_string_pretty(&v) {
-            let _ = std::fs::write(&manifest_path, pretty);
-        }
+    if changed && let Ok(pretty) = serde_json::to_string_pretty(&v) {
+        let _ = std::fs::write(&manifest_path, pretty);
+    }
 }
-
 
 /// [wr208] Rebuild local workspace packages whose `dist/` is older than `src/`.
 /// Without this, edits to `packages/core/src/*.ts` never reach the client
@@ -2050,16 +2188,27 @@ fn consolidate_tailwind_css_and_manifest(rootp: &std::path::Path) {
 /// not from source. Diagnostics that blamed the site's own code wasted
 /// hours chasing changes that were already correct.
 fn rebuild_stale_workspace_packages(rootp: &std::path::Path) {
-    let packages_dir = rootp.parent().and_then(|p| p.parent()).map(|p| p.join("packages"));
-    let Some(packages_dir) = packages_dir else { return };
-    let Ok(entries) = std::fs::read_dir(&packages_dir) else { return };
+    let packages_dir = rootp
+        .parent()
+        .and_then(|p| p.parent())
+        .map(|p| p.join("packages"));
+    let Some(packages_dir) = packages_dir else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(&packages_dir) else {
+        return;
+    };
     let mut to_rebuild = Vec::new();
     for entry in entries.flatten() {
         let pkg = entry.path();
-        if !pkg.is_dir() { continue; }
+        if !pkg.is_dir() {
+            continue;
+        }
         let dist = pkg.join("dist");
         let src = pkg.join("src");
-        if !src.is_dir() { continue; }
+        if !src.is_dir() {
+            continue;
+        }
         let dist_time = dist.metadata().and_then(|m| m.modified()).ok();
         let src_time = src.metadata().and_then(|m| m.modified()).ok();
         // Three-way match: a package whose `dist/` doesn't exist at all
@@ -2077,8 +2226,13 @@ fn rebuild_stale_workspace_packages(rootp: &std::path::Path) {
             to_rebuild.push(pkg);
         }
     }
-    if to_rebuild.is_empty() { return; }
-    eprintln!("oxide: rebuilding {} stale workspace package(s)...", to_rebuild.len());
+    if to_rebuild.is_empty() {
+        return;
+    }
+    eprintln!(
+        "oxide: rebuilding {} stale workspace package(s)...",
+        to_rebuild.len()
+    );
     // Package build scripts call `oxide` (`packages/oxide-website`'s build is
     // `oxide build`). On a machine without a global `oxide` install — a fresh
     // clone, CI, this repo's own dev container — that resolution failed with
@@ -2091,7 +2245,9 @@ fn rebuild_stale_workspace_packages(rootp: &std::path::Path) {
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()));
     let mut paths: Vec<std::path::PathBuf> = exe_dir.into_iter().collect();
-    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()));
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
     let path_env = std::env::join_paths(&paths)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| std::env::var("PATH").unwrap_or_default());
@@ -2183,9 +2339,8 @@ fn install_dev_log_file() {
     // that initialize their own subscriber later will override it, which is
     // acceptable: the panic hook above is the critical capture path.
     use tracing_subscriber::layer::SubscriberExt as _;
-    let _ = tracing::subscriber::set_global_default(
-        tracing_subscriber::registry().with(file_layer),
-    );
+    let _ =
+        tracing::subscriber::set_global_default(tracing_subscriber::registry().with(file_layer));
     eprintln!("oxide dev: logging to {path} (OXIDE_DEV_LOG_FILE)");
 }
 
@@ -2198,9 +2353,8 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // is set here and re-read after the reload (below).
     if flags.no_esm {
         cfg.dev.esm = false;
-        // SAFETY: set_var is unsafe on 2024 edition; this is set before
-        // any thread touches the config, at startup, not on a hot path.
-        unsafe { std::env::set_var("OXIDE_DEV_NO_ESM", "1") };
+        // P1 (readiness): `OXIDE_DEV_NO_ESM` is written pre-runtime by
+        // `apply_startup_env` (the config reload below re-reads it).
         tracing::info!("oxide dev: --no-esm — using bundler path");
     }
     // SPEC-15.1 / §15.2: fail at load for an unknown `kind:"native"` plugin.
@@ -2297,15 +2451,8 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // `OXIDE_DEV` gates the versioned-resolve behavior; `OXIDE_ROOT` lets
     // the loader find `.oxide/hmr-generation` (written by the watcher on
     // each `framework:invalidate`). Both are inherited by the worker
-    // subprocess at spawn.
-    // Edition 2024 makes `set_var` unsafe (env vars are process-global and
-    // not thread-safe in general). This runs at cmd_dev entry, before any
-    // worker thread is spawned, and the only other reader is the worker
-    // subprocess after fork.
-    unsafe {
-        std::env::set_var("OXIDE_DEV", "1");
-        std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref());
-    }
+    // subprocess at spawn — both are written PRE-RUNTIME by
+    // `apply_startup_env` (P1 readiness env-race fix), so nothing to do here.
     // SPEC-15-C: write a plugin registry the loader reads. The
     // `tsx-loader.mjs` runs in the app's Node process — it does NOT have
     // access to the worker's `__oxide_op_request` bridge, so it imports
@@ -2418,7 +2565,15 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         tracing::info!("dev: ESM mode — skipping cold-start client bundle");
     } else {
         let t0 = std::time::Instant::now();
-        ensure_dev_client_bundle(&rootp, &cfg, &tree, stack.tooling_pool.as_ref(), &client_bundler, w).await?;
+        ensure_dev_client_bundle(
+            &rootp,
+            &cfg,
+            &tree,
+            stack.tooling_pool.as_ref(),
+            &client_bundler,
+            w,
+        )
+        .await?;
         tracing::info!(
             elapsed_ms = t0.elapsed().as_millis() as u64,
             "dev: initial client bundle (cold worker)"
@@ -2444,9 +2599,10 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // after a source change produces a new CSS hash.
     consolidate_tailwind_css_and_manifest(&rootp);
 
-    // [wr101] Force dev mode for React dev build
-    // SAFETY: called before worker threads spawn; env vars are process-global.
-    unsafe { std::env::set_var("OXIDE_DEV_MODE", "1"); }
+    // [wr101] Force dev mode for React dev build.
+    // P1 (readiness): `OXIDE_DEV_MODE` is written pre-runtime by
+    // `apply_startup_env` (dev command); in-process probes read the atomic
+    // via `oxide_fw_server::dev_mode()`.
 
     // [wr106] Call precompute UNCONDITIONALLY. It self-checks:
     //   `!has_tailwind(&cfg) && !css_has_tailwind_import(&rootp)` -> Ok(None)
@@ -2465,7 +2621,10 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 outln!(w, "tailwind: {} ({} bytes)", filename, out.css.len());
             }
             Ok(None) => {}
-            Err(e) => eprintln!("warn: tailwind precompute failed: {} {}", e.0.code, e.0.message),
+            Err(e) => eprintln!(
+                "warn: tailwind precompute failed: {} {}",
+                e.0.code, e.0.message
+            ),
         }
     }
     // §16.4: tell the client whether this project has message
@@ -2899,12 +3058,8 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 // against the fresh artifacts. The per-event node_modules
                 // skip below keeps every OTHER relink event silent, so this
                 // is at most ONE reload per real dependency change.
-                tracing::info!(
-                    "§3.3: node_modules/*/package.json change — re-prebundling"
-                );
-                if let Err(e) =
-                    crate::esm_dev::prebundle_cjs_deps(&rootp, &cfg.dev.prebundle)
-                {
+                tracing::info!("§3.3: node_modules/*/package.json change — re-prebundling");
+                if let Err(e) = crate::esm_dev::prebundle_cjs_deps(&rootp, &cfg.dev.prebundle) {
                     tracing::warn!(error = %e, "§3.3: prebundle invalidation failed");
                 } else {
                     // Rebuild the rewrite map even though consumers cache it
@@ -2940,11 +3095,10 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 // Treat a lockfile touch as a prebundle-invalidation trigger
                 // independent of the per-package check above.
                 if cfg.dev.esm
-                    && let Err(e) =
-                        crate::esm_dev::prebundle_cjs_deps(&rootp, &cfg.dev.prebundle)
-                    {
-                        tracing::warn!(error = %e, "§3.3: lockfile prebundle re-run failed");
-                    }
+                    && let Err(e) = crate::esm_dev::prebundle_cjs_deps(&rootp, &cfg.dev.prebundle)
+                {
+                    tracing::warn!(error = %e, "§3.3: lockfile prebundle re-run failed");
+                }
             }
 
             // §3.4: a `.env*` change invalidates `import.meta.env` values.
@@ -2969,7 +3123,9 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                     return false;
                 };
                 name.starts_with(".env")
-                    && p.parent().map(|par| par == rootp.as_path()).unwrap_or(false)
+                    && p.parent()
+                        .map(|par| par == rootp.as_path())
+                        .unwrap_or(false)
             });
             if env_file_changed {
                 // §3.4: full reload. `serve_source_file` reads the env fresh
@@ -2978,20 +3134,24 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 tracing::info!("§3.4: .env* change — full reload");
                 if let Some(hub) = started.hmr.as_ref() {
                     hub.publish(oxide_fw_dev::HmrMessage::FullReload {
-                        reason: ".env* change — import.meta.env values refreshed"
-                            .to_string(),
+                        reason: ".env* change — import.meta.env values refreshed".to_string(),
                     });
                 }
             }
             invalidate_framework_modules(&hmr_pool, &rootp).await;
-            let needs_client_rebuild = !cfg.dev.esm && events.iter().any(|e| {
-                let p = match e {
-                    oxide_fw_dev::FileEvent::Modified(p)
-                    | oxide_fw_dev::FileEvent::Created(p)
-                    | oxide_fw_dev::FileEvent::Removed(p) => p,
-                };
-                is_client_source(p, &rootp) && !matches!(oxide_fw_dev::hmr_behavior(oxide_fw_dev::classify_event(e)), oxide_fw_dev::HmrBehavior::RestartSubsystems)
-            });
+            let needs_client_rebuild = !cfg.dev.esm
+                && events.iter().any(|e| {
+                    let p = match e {
+                        oxide_fw_dev::FileEvent::Modified(p)
+                        | oxide_fw_dev::FileEvent::Created(p)
+                        | oxide_fw_dev::FileEvent::Removed(p) => p,
+                    };
+                    is_client_source(p, &rootp)
+                        && !matches!(
+                            oxide_fw_dev::hmr_behavior(oxide_fw_dev::classify_event(e)),
+                            oxide_fw_dev::HmrBehavior::RestartSubsystems
+                        )
+                });
             tracing::info!(
                 n_events = events.len(),
                 needs_client_rebuild = needs_client_rebuild,
@@ -2999,15 +3159,32 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             );
             if needs_client_rebuild {
                 let live_tree = started.swappable_tree.load();
-                let changed_paths: Vec<std::path::PathBuf> = events.iter().filter_map(|e| match e {
-                    oxide_fw_dev::FileEvent::Modified(p)
-                    | oxide_fw_dev::FileEvent::Created(p)
-                    | oxide_fw_dev::FileEvent::Removed(p) => {
-                        if is_client_source(p, &rootp) { Some(p.clone()) } else { None }
-                    }
-                }).collect();
+                let changed_paths: Vec<std::path::PathBuf> = events
+                    .iter()
+                    .filter_map(|e| match e {
+                        oxide_fw_dev::FileEvent::Modified(p)
+                        | oxide_fw_dev::FileEvent::Created(p)
+                        | oxide_fw_dev::FileEvent::Removed(p) => {
+                            if is_client_source(p, &rootp) {
+                                Some(p.clone())
+                            } else {
+                                None
+                            }
+                        }
+                    })
+                    .collect();
                 let t0 = std::time::Instant::now();
-                match build_client_bundle(&rootp, &cfg, &live_tree, hmr_tooling_pool.as_ref(), &client_bundler, Some(&changed_paths), w).await {
+                match build_client_bundle(
+                    &rootp,
+                    &cfg,
+                    &live_tree,
+                    hmr_tooling_pool.as_ref(),
+                    &client_bundler,
+                    Some(&changed_paths),
+                    w,
+                )
+                .await
+                {
                     Ok(()) => {
                         tracing::info!(
                             changed = changed_paths.len(),
@@ -3242,9 +3419,10 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                         // needed for CSS). The SSR side reads the fresh
                         // `.oxide/css-modules/<rel>.mjs` on the next render.
                         if is_module_css
-                            && let Err(e) = crate::esm_dev::precompute_css_modules(&rootp) {
-                                tracing::warn!(error = %e, "§1.4: precompute after .module.css change failed");
-                            }
+                            && let Err(e) = crate::esm_dev::precompute_css_modules(&rootp)
+                        {
+                            tracing::warn!(error = %e, "§1.4: precompute after .module.css change failed");
+                        }
                     }
                     HmrBehavior::ReloadData => {
                         // §13.3: a `page.server.ts` change re-runs the route's
@@ -3347,9 +3525,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                         std::collections::HashSet::new();
                                     in_batch.insert(pstr.clone());
                                     let importers = build_importers_map(&rootp);
-                                    if let Some(imps) =
-                                        importers.get(std::path::Path::new(&pstr))
-                                    {
+                                    if let Some(imps) = importers.get(std::path::Path::new(&pstr)) {
                                         let root_str = rootp.to_string_lossy();
                                         for imp in imps {
                                             let imp_str = imp.to_string_lossy().to_string();
@@ -3370,26 +3546,21 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                             // boundaries; the boot re-render
                                             // acts on the page boundary.
                                             let lower_imp = imp_str.to_ascii_lowercase();
-                                            let imp_is_component =
-                                                lower_imp.ends_with(".tsx")
-                                                    || lower_imp.ends_with(".jsx")
-                                                    || lower_imp.ends_with(".vue")
-                                                    || lower_imp.ends_with(".svelte");
+                                            let imp_is_component = lower_imp.ends_with(".tsx")
+                                                || lower_imp.ends_with(".jsx")
+                                                || lower_imp.ends_with(".vue")
+                                                || lower_imp.ends_with(".svelte");
                                             if !imp_is_component {
                                                 continue;
                                             }
                                             let rel = imp.to_string_lossy();
-                                            let rel_str = rel
-                                                .strip_prefix(root_str.as_ref())
-                                                .unwrap_or(&rel);
+                                            let rel_str =
+                                                rel.strip_prefix(root_str.as_ref()).unwrap_or(&rel);
                                             let rel_slash = rel_str.replace('\\', "/");
-                                            let trimmed_imp =
-                                                rel_slash.trim_start_matches('/');
+                                            let trimmed_imp = rel_slash.trim_start_matches('/');
                                             if trimmed_imp.starts_with("src/") {
-                                                adapter_hmr_batch.push((
-                                                    imp_str,
-                                                    format!("/{trimmed_imp}"),
-                                                ));
+                                                adapter_hmr_batch
+                                                    .push((imp_str, format!("/{trimmed_imp}")));
                                             }
                                         }
                                     }
@@ -3488,20 +3659,23 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                         // rewrite map only depends on the
                                         // framework exports + the prebundle
                                         // list, both fixed at dev-start.
-                                        let mut components: std::collections::BTreeMap<String, String> =
-                                            std::collections::BTreeMap::new();
+                                        let mut components: std::collections::BTreeMap<
+                                            String,
+                                            String,
+                                        > = std::collections::BTreeMap::new();
                                         let routes_root = rootp.join(&cfg.routes.dir);
                                         for entry in &live_tree.entries {
-                                            let rel_from_routes = entry
-                                                .file
-                                                .to_string_lossy()
-                                                .to_string();
+                                            let rel_from_routes =
+                                                entry.file.to_string_lossy().to_string();
                                             let id_str = entry.id.0.as_str().to_string();
                                             components.insert(
                                                 id_str,
                                                 format!(
                                                     "/src/{}/{rel_from_routes}",
-                                                    cfg.routes.dir.trim_start_matches("src/").trim_end_matches('/')
+                                                    cfg.routes
+                                                        .dir
+                                                        .trim_start_matches("src/")
+                                                        .trim_end_matches('/')
                                                 ),
                                             );
                                         }
@@ -3515,12 +3689,15 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                         // above). Cheap — it's a BTreeMap
                                         // walk over the config's already-
                                         // parsed registry.
-                                        let mut islands: std::collections::BTreeMap<String, String> =
-                                            std::collections::BTreeMap::new();
+                                        let mut islands: std::collections::BTreeMap<
+                                            String,
+                                            String,
+                                        > = std::collections::BTreeMap::new();
                                         for (name, rel_path) in &cfg.framework.islands {
                                             let full_path = rootp.join(rel_path);
                                             if full_path.is_file() {
-                                                islands.insert(name.clone(), format!("/{rel_path}"));
+                                                islands
+                                                    .insert(name.clone(), format!("/{rel_path}"));
                                             }
                                         }
                                         if let Err(e) = crate::esm_dev::generate_esm_boot_entry(
@@ -3536,9 +3713,24 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                             tracing::warn!(error = %e, "esm dev: boot entry regen failed");
                                         }
                                         let _ = &routes_root;
-                                    } else if build_client_bundle(&rootp, &cfg, &live_tree, hmr_tooling_pool.as_ref(), &client_bundler, None, w).await.is_ok() {
-                                        let manifest_path = rootp.join("dist/client/client.manifest.json");
-                                        let _ = enrich_manifest_layout_chains(&manifest_path, &live_tree);
+                                    } else if build_client_bundle(
+                                        &rootp,
+                                        &cfg,
+                                        &live_tree,
+                                        hmr_tooling_pool.as_ref(),
+                                        &client_bundler,
+                                        None,
+                                        w,
+                                    )
+                                    .await
+                                    .is_ok()
+                                    {
+                                        let manifest_path =
+                                            rootp.join("dist/client/client.manifest.json");
+                                        let _ = enrich_manifest_layout_chains(
+                                            &manifest_path,
+                                            &live_tree,
+                                        );
                                         consolidate_tailwind_css_and_manifest(&rootp);
                                     }
                                     hub.publish(HmrMessage::FullReload {
@@ -5565,14 +5757,8 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     // cannot double the prefix — `PathBuf::join` returns the RHS unchanged
     // when it is absolute.
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
-    // §16.5 / WP-r9-1: thread the project root to worker
-    // subprocesses so `getCollection` resolves `dist/content`
-    // against the project, not the shell's cwd. Edition 2024:
-    // set_var is process-global; this runs before any worker
-    // thread spawns.
-    unsafe {
-        std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref());
-    }
+    // §16.5 / WP-r9-1: OXIDE_ROOT is written PRE-RUNTIME by
+    // `apply_startup_env` (P1 readiness env-race fix); nothing to do here.
     let dist = rootp.join("dist");
 
     // §5.1 early cutoff. The fingerprint walk is only paid when the previous
@@ -5940,14 +6126,17 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
         Some(pool) => tailwind::precompute(pool, &cfg, &rootp).await?,
         None => None,
     };
-    
+
     // [Phase 2 I4] Copy public/ → dist/ so `oxide build` is standalone deployable.
     let public_dir = rootp.join("public");
     if public_dir.is_dir() {
-        let _ = copy_tree(&public_dir, &rootp.join("dist"));
+        // SEC-STATIC: propagate instead of swallowing — a build that could not
+        // copy public/ must say so (missing favicon/robots is invisible otherwise).
+        copy_tree(&public_dir, &rootp.join("dist"))
+            .map_err(|e| anyhow::anyhow!("copying public/ into dist/: {e}"))?;
     }
 
-let css_transform = build_css_transform_hook(&cfg, tw_output.map(std::sync::Arc::new));
+    let css_transform = build_css_transform_hook(&cfg, tw_output.map(std::sync::Arc::new));
 
     let client_opts = bundle_env_options(BundleEnvArgs {
         env: oxide_fw_bundler::BundleEnv::Client,
@@ -8272,10 +8461,34 @@ fn build_dispatch_swappable(
                 None => {}
             }
         }
-        // PERF-02: surface the pool's live gauges into the metrics registry.
+        // PERF-02/PERF-19 (readiness): surface the pool's live gauges into the
+        // metrics registry — but NOT per request. `stats()` copies and sorts
+        // up to 1000 wait samples under a mutex on every call, which the
+        // request path paid for nothing. A gauge needs second-scale freshness:
+        // refresh at most once per second (the atomic gate is process-global;
+        // a lost race just skips one refresh).
         if let Some(p) = pool.as_ref() {
-            let s = p.stats();
-            metrics.observe_pool(s.workers, s.in_flight, s.queue_wait_ms_p99);
+            const POOL_GAUGE_INTERVAL_MS: u64 = 1000;
+            static POOL_GAUGE_LAST_MS: std::sync::atomic::AtomicU64 =
+                std::sync::atomic::AtomicU64::new(0);
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let last = POOL_GAUGE_LAST_MS.load(std::sync::atomic::Ordering::Relaxed);
+            if now_ms.saturating_sub(last) >= POOL_GAUGE_INTERVAL_MS
+                && POOL_GAUGE_LAST_MS
+                    .compare_exchange(
+                        last,
+                        now_ms,
+                        std::sync::atomic::Ordering::Relaxed,
+                        std::sync::atomic::Ordering::Relaxed,
+                    )
+                    .is_ok()
+            {
+                let s = p.stats();
+                metrics.observe_pool(s.workers, s.in_flight, s.queue_wait_ms_p99);
+            }
         }
         let raw = req.url.split(['?', '#']).next().unwrap_or("/").to_string();
 
@@ -9074,10 +9287,31 @@ fn build_dispatch_swappable(
                     });
                 }
                 let nonce = request_nonce.as_str();
-                let body = hit.materialize(nonce);
+                // PERF-L0 (readiness): serve the COMPRESSED representation
+                // straight from the stored segment frames when the client
+                // accepts one. The stored frames are reused byte-for-byte;
+                // only the nonce is compressed fresh. The response carries
+                // Content-Encoding so the pipeline's finish step skips its
+                // own spawn_blocking compression (the old path compressed
+                // every L0 hit — the React fixture's p99 missed < 1 ms).
+                let negotiated = req_owned
+                    .header("accept-encoding")
+                    .and_then(|ae| oxide_fw_server::negotiate_encoding(ae, &["zstd", "gzip"]));
+                let (body, encoding) = match negotiated
+                    .as_deref()
+                    .and_then(|enc| hit.materialize_compressed(nonce, enc))
+                {
+                    Some(b) => (b, negotiated),
+                    None => (hit.materialize(nonce), None),
+                };
                 let mut resp = oxide_fw_server::OxideResponse::new(hit.status(), body);
                 for (k, v) in &hit.headers() {
                     resp = resp.with_header(k, v.clone());
+                }
+                if let Some(enc) = &encoding {
+                    resp = resp
+                        .with_header("content-encoding", enc.clone())
+                        .with_header("vary", "Accept-Encoding");
                 }
                 resp = resp.with_header("etag", etag);
                 // §20: an explicit cache-outcome header makes the L0
@@ -9133,9 +9367,9 @@ fn build_dispatch_swappable(
                                 .await
                         {
                             let nonce = request_nonce.as_str();
-                            let body = String::from_utf8_lossy(&entry.body)
-                                .replace(l0_cache::NONCE_SENTINEL, nonce)
-                                .into_bytes();
+                            // PERF-L0: follower path decodes plain OR envelope
+                            // bodies through the shared materializer.
+                            let body = l0_cache::materialize_entry_body(&entry, nonce);
                             let mut resp = oxide_fw_server::OxideResponse::new(entry.status, body);
                             for (k, v) in &entry.headers {
                                 resp = resp.with_header(k, v.clone());
@@ -11298,14 +11532,19 @@ fn stamp_i18n_locales(root: &Path, cfg: &oxide_fw_config::OxideConfig) {
 }
 
 fn copy_tree(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
-    if !src.is_dir() { return Ok(()); }
+    if !src.is_dir() {
+        return Ok(());
+    }
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
-        if src_path.is_dir() { copy_tree(&src_path, &dst_path)?; }
-        else if src_path.is_file() { std::fs::copy(&src_path, &dst_path)?; }
+        if src_path.is_dir() {
+            copy_tree(&src_path, &dst_path)?;
+        } else if src_path.is_file() {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
     }
     Ok(())
 }
@@ -11313,9 +11552,24 @@ fn copy_tree(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()
 fn load_client_assets(rootp: &Path) -> Option<oxide_fw_server::StaticAssets> {
     let dist = rootp.join("dist");
     let public = rootp.join("public");
-    if public.is_dir() { let _ = copy_tree(&public, &dist); }
-    if !dist.is_dir() { return None; }
-    oxide_fw_server::StaticAssets::scan(dist).ok()
+    if public.is_dir() {
+        // SEC-STATIC: a failed public/ copy used to be silently ignored
+        // (`let _ =`), which shipped a site without favicon/robots and made the
+        // failure invisible. Warn loudly, but do not fail the boot.
+        if let Err(e) = copy_tree(&public, &dist) {
+            tracing::warn!("copying public/ into dist/ failed: {e}");
+        }
+    }
+    if !dist.is_dir() {
+        return None;
+    }
+    // SEC-STATIC (P0-1): scan dist/ EXCLUDING the `server` directory. The
+    // previous unfiltered scan indexed `dist/server/ssr/index.js`,
+    // `dist/server/server.manifest.json` and `dist/server/l0-seed.json`, which
+    // made the whole SSR bundle downloadable from the production port
+    // (`curl /server/ssr/index.js`). `StaticAssets::serve` additionally
+    // hard-denies those paths for defense in depth.
+    oxide_fw_server::StaticAssets::scan_filtered(dist, &["server"]).ok()
 }
 
 /// BUG-11: turn `server.host` into a bind IP. `localhost` (and `""`) → the
@@ -11412,14 +11666,8 @@ async fn start_server_inner_full(
     // the client manifest) is absolute — the worker resolves a module path
     // against its own cwd, so a relative root breaks `action:run` / `loader:run`.
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
-    // §16.5 / WP-r9-1: thread the project root to worker
-    // subprocesses so `getCollection` resolves `dist/content`
-    // against the project, not the shell's cwd. Edition 2024:
-    // set_var is process-global; this runs before any worker
-    // thread spawns.
-    unsafe {
-        std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref());
-    }
+    // §16.5 / WP-r9-1: OXIDE_ROOT is written PRE-RUNTIME by
+    // `apply_startup_env` (P1 readiness env-race fix); nothing to do here.
     // §16.6 / WP-r10-1: the config env must match the server mode.
     // Before this fix, dev loaded "production" and so ignored
     // `security.sessionTtlSecs` set in the dev config (a common
@@ -11552,12 +11800,9 @@ async fn start_server_inner_full(
                 islands.insert(name.clone(), format!("/{rel_path}"));
             }
         }
-        if let Err(e) = crate::esm_dev::generate_esm_boot_entry(
-            &rootp,
-            &components,
-            &islands,
-            &esm_framework,
-        ) {
+        if let Err(e) =
+            crate::esm_dev::generate_esm_boot_entry(&rootp, &components, &islands, &esm_framework)
+        {
             tracing::warn!(error = %e, "esm dev: boot entry write failed");
         }
         // §6.4 / WP-C1 (ESM path): `ensure_dev_client_bundle` is skipped in
@@ -11726,6 +11971,10 @@ async fn start_server_inner_full(
         server_fns,
         actions: actions.clone(),
         limits: oxide_fw_server::Limits::default(),
+        // P1 hardening: the metrics bearer token. `OXIDE_METRICS_TOKEN` is the
+        // env seam (a config field would belong in the schema — post-v0.1);
+        // unset + non-dev → the endpoint answers 403 instead of leaking.
+        metrics_auth_token: std::env::var("OXIDE_METRICS_TOKEN").ok(),
         // SPEC-10: locale policy for the pipeline (None when unconfigured).
         i18n: {
             let c = &cfg.i18n;
@@ -12077,7 +12326,13 @@ async fn start_server_inner_full(
     // §6.4 / Wave M: warm the renderer on a background task. Socket is
     // already bound (health → 200); ready → 503 until the synthetic render
     // completes. Single-node traffic continues unaffected while this runs.
-    if let Some(renderer) = renderer_to_warm {
+    // PERF-23: `--no-warmup` skips the synthetic render. `/_oxide/ready` is
+    // gated on `render_ready`, so flip it immediately — the server is honest
+    // about being cold (ready ⇒ warm would be a lie).
+    if std::env::var_os("OXIDE_NO_WARMUP").is_some() {
+        render_ready.store(true, std::sync::atomic::Ordering::SeqCst);
+        tracing::info!("--no-warmup: skipping renderer warm-up");
+    } else if let Some(renderer) = renderer_to_warm {
         let ready = std::sync::Arc::clone(&render_ready);
         tokio::spawn(async move {
             match renderer.warm().await {
@@ -12721,6 +12976,22 @@ async fn cmd_doctor(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
         );
         all_ok = false;
     }
+    // P1 hardening (readiness): an empty `security.hostAllowList` accepts ANY
+    // Host header — a DNS-rebinding / host-header-injection vector in
+    // production. Doctor surfaces it as a warning (not a failure: dev servers
+    // legitimately run without one).
+    if cfg.security.host_allow_list.is_empty() {
+        outln!(
+            w,
+            "[--] host allow list: empty — ANY Host header is accepted; set security.hostAllowList before exposing this server publicly"
+        );
+    } else {
+        outln!(
+            w,
+            "[ok] host allow list: {} host pattern(s)",
+            cfg.security.host_allow_list.len()
+        );
+    }
     Ok(if all_ok { 0 } else { 1 })
 }
 
@@ -13318,14 +13589,8 @@ async fn cmd_render(
     use oxide_fw_jshost::{FrameworkHost, JsHost, LoaderHost, NodeHost, PoolConfig};
 
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
-    // §16.5 / WP-r9-1: thread the project root to worker
-    // subprocesses so `getCollection` resolves `dist/content`
-    // against the project, not the shell's cwd. Edition 2024:
-    // set_var is process-global; this runs before any worker
-    // thread spawns.
-    unsafe {
-        std::env::set_var("OXIDE_ROOT", rootp.to_string_lossy().as_ref());
-    }
+    // §16.5 / WP-r9-1: OXIDE_ROOT is written PRE-RUNTIME by
+    // `apply_startup_env` (P1 readiness env-race fix); nothing to do here.
     let config_path = find_config_file(&rootp)?;
     // Load the config to find `routes.dir` for the loader lookup. Non-strict:
     // a config that the Rust extractor cannot fully parse (e.g. a
