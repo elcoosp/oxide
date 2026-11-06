@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { codeToHtml } from 'rangi';
 import { githubDark } from 'rangi/themes';
 
@@ -35,18 +35,21 @@ export default function AdapterTabs({ adapters }: Props) {
              : current.id === 'svelte' ? 'html'
              : 'tsx';
 
-  let highlightedHtml = '';
-  try {
-    highlightedHtml = stripShikiStyle(codeToHtml(current.snippet, {
-      lang,
-      theme: githubDark,
-      lineNumbers: false,
-    }));
-  } catch (e) {
-    console.error('rangi highlight failed:', e);
-    const escaped = current.snippet.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    highlightedHtml = `<pre><code>${escaped}</code></pre>`;
-  }
+  // Highlighting is pure given (snippet, lang) — memo it so a parent-driven
+  // re-render (HMR replay, island remount) doesn't re-run the tokenizer.
+  const highlightedHtml = useMemo(() => {
+    try {
+      return stripShikiStyle(codeToHtml(current.snippet, {
+        lang,
+        theme: githubDark,
+        lineNumbers: false,
+      }));
+    } catch (e) {
+      console.error('rangi highlight failed:', e);
+      const escaped = current.snippet.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return `<pre><code>${escaped}</code></pre>`;
+    }
+  }, [current.snippet, lang]);
 
   return (
     <div className="max-w-[1080px] mx-auto border border-zinc-800 rounded-[10px] overflow-hidden">
