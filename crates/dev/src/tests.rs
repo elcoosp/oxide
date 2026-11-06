@@ -155,7 +155,10 @@ fn hmr_messages_roundtrip_through_json_all_variants() {
         .at(Location::file("app.tsx", 3, 5))
         .with_fix("fix it");
     let msgs = vec![
-        HmrMessage::ModuleUpdate { path: "app.tsx".into(), url: String::new() },
+        HmrMessage::ModuleUpdate {
+            path: "app.tsx".into(),
+            url: String::new(),
+        },
         HmrMessage::CssUpdate {
             path: "a.css".into(),
             code: ".a{color:red}".into(),
@@ -561,8 +564,14 @@ fn hmr_message_batch_module_update_round_trips() {
         ],
     };
     let json = msg.to_json();
-    assert!(json.contains("batch-module-update"), "kebab-case type: {json}");
-    assert!(json.contains("a.tsx") && json.contains("b.tsx"), "paths in JSON: {json}");
+    assert!(
+        json.contains("batch-module-update"),
+        "kebab-case type: {json}"
+    );
+    assert!(
+        json.contains("a.tsx") && json.contains("b.tsx"),
+        "paths in JSON: {json}"
+    );
     let back = HmrMessage::from_json(&json).unwrap();
     match back {
         HmrMessage::BatchModuleUpdate { items } => {
