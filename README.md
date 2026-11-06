@@ -7,7 +7,7 @@
     <a href="https://github.com/elcoosp/oxide/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT%20%7C%20Apache--2.0-blue?style=flat-square" alt="License"/></a>
     <a href="https://crates.io/crates/oxide-fw-cli"><img src="https://img.shields.io/badge/Rust-stable%20%7C%20edition%202024-000000?style=flat-square&logo=rust" alt="Rust"/></a>
     <a href="#framework-adapters"><img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/></a>
-    <a href="https://github.com/elcoosp/oxide/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/Tests-1239%20Rust%20%7C%20445%2F445%20TS-brightgreen?style=flat-square" alt="Tests"/></a>
+    <a href="https://github.com/elcoosp/oxide/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/Tests-1327%20Rust%20%7C%20458%2F458%20TS-brightgreen?style=flat-square" alt="Tests"/></a>
   </p>
   <p>
     <a href="#install">Install</a> ·
@@ -24,14 +24,20 @@
 > A demo GIF lands here on tag day. Until then:
 > `cargo build --release -p oxide-fw-cli && ./target/release/oxide doctor`.
 
-Oxide is a **full-stack meta-framework with a Rust core**. React, Vue, Svelte and Solid are first-class adapters over one shared engine that owns routing, data, caching, bundling, serving and deployment — so anything framework-neutral behaves identically on all four. It compiles to a single static binary and ships to twelve deploy targets.
+Oxide is a **full-stack meta-framework with a Rust core**. React, Vue, Svelte and Solid are first-class adapters over one shared engine that owns routing, data, caching, bundling, serving and deployment — so anything framework-neutral behaves identically on all four. The server is a static Rust binary (hyper + rustls); SSR runs in a worker pool of Node ≥ 24 child processes that the binary spawns and supervises. Builds ship to twelve deploy targets.
 
 ## Install
 
-Prerequisites: **Rust stable** (edition 2024) and **Node ≥ 24**.
+Prerequisites: **Rust stable** (edition 2024) to build the CLI, and **Node ≥ 24** at runtime (production SSR spawns a Node worker pool by default; `server.backend = "v8"` embeds V8 but is not yet the production default — see the deviations log).
 
 ```bash
-cargo install oxide-fw-cli       # the CLI — one static binary
+# Option A — prebuilt binary (recommended)
+npm install -g @oxide-fw/cli          # npm wrapper: downloads the release binary, verifies SHA-256
+oxide --version
+
+# Option B — from source
+cargo install oxide-fw-cli            # or: cargo build --release -p oxide-fw-cli
+
 oxide doctor                     # env check: node, cargo, config, cache, secrets
 
 pnpm create oxide my-app --framework react --template blog
@@ -40,6 +46,12 @@ oxide dev                        # dev server with HMR
 oxide build                      # production build
 oxide start --port 3000          # production server
 ```
+
+Prebuilt binaries for linux x64/arm64 (gnu + musl), macOS x64/arm64 and
+Windows x64 are attached to every GitHub Release with `SHA256SUMS`, an SBOM
+and build provenance (`.github/workflows/release-binaries.yml`). The scaffold
+adds `@oxide-fw/cli` as a dependency, so a fresh project needs no global
+install.
 
 > [!NOTE]
 > **v0.1.0 is not yet published.** Until `cargo install oxide-fw-cli` resolves on crates.io, build from source — see [Building from source](#building-from-source). Every command above works the same against `./target/release/oxide`.
@@ -54,7 +66,7 @@ oxide start --port 3000          # production server
 | **Fast paths skip JS** | Redirects, rewrites, headers, auth and rate limits evaluate natively in Rust. `oxide.config.ts` is statically extracted — the config path never runs JavaScript. |
 | **One wire format** | ODF is a devalue-compatible binary format encoded in Rust, decoded by a zero-dependency TS module. `Date`, `Map`, `Set`, `BigInt` survive a cache round trip. |
 | **Three-tier cache** | L0 in-process, L1 data cache, L2 pluggable remote (Redis, S3, HTTP). Tags, stale-while-revalidate, single-flight, MAC-sealed remote payloads. |
-| **One static binary** | hyper 1.x + rustls: HTTP/1.1, HTTP/2, HTTP/3 over QUIC. Precompressed static serving (zstd → brotli → gzip), range requests, zero-downtime reload via SO_REUSEPORT. |
+| **Static Rust server + Node SSR pool** | hyper 1.x + rustls: HTTP/1.1, HTTP/2, HTTP/3 over QUIC. Precompressed static serving (zstd → brotli → gzip), range requests, zero-downtime reload via SO_REUSEPORT. SSR runs in supervised Node ≥ 24 workers; the embedded-V8 backend is opt-in. |
 | **Twelve deploy targets** | Binary, Node, Static, Docker, Cloudflare (Workers + Pages), Lambda, Vercel (+ Functions), Netlify, Deno, Bun — behind a capability matrix that refuses at build time what the target cannot honour. |
 
 ## Architecture
@@ -80,9 +92,14 @@ Eighteen Rust crates: `server` (hyper, static, compression, TLS), `render` (stre
 | Adapter | Package | Extensions | Peer deps |
 | --- | --- | --- | --- |
 | React | [`@oxide-fw/react`](https://www.npmjs.com/package/@oxide-fw/react) | `.tsx` | `react@^19`, `react-dom@^19` |
-| Vue | [`@oxide-fw/vue`](https://www.npmjs.com/package/@oxide-fw/vue) | `.vue` | `vue@^3.6`, `@vue/server-renderer@^3.6` |
+| Vue *(preview)* | [`@oxide-fw/vue`](https://www.npmjs.com/package/@oxide-fw/vue) | `.vue` | `vue@^3.6`, `@vue/server-renderer@^3.6` |
 | Svelte | [`@oxide-fw/svelte`](https://www.npmjs.com/package/@oxide-fw/svelte) | `.svelte` | `svelte@^5` |
-| Solid | [`@oxide-fw/solid`](https://www.npmjs.com/package/@oxide-fw/solid) | `.tsx` | `solid-js@^2`, `@solidjs/web@^2` |
+| Solid *(preview)* | [`@oxide-fw/solid`](https://www.npmjs.com/package/@oxide-fw/solid) | `.tsx` | `solid-js@^2`, `@solidjs/web@^2` |
+
+> Vue and Solid are labelled **preview** because their peer ranges pin release
+> candidates (`vue@^3.6.0-rc`, `solid-js@^2.0.0-rc`). They work, but the RC
+> dependencies can churn under them — pin exact versions in production until
+> the adapters track stable releases.
 
 The loader is framework-neutral. It lives in `page.server.ts` and returns a plain object; only the component dialect differs:
 
