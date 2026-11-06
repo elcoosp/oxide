@@ -7625,21 +7625,20 @@ async fn bundle_edge_entry_uses_the_precompiled_map_for_mdx() {
 
 /// WP-J: integration-level check that a real `.mdx` file reachable from
 /// `src/edge.ts` compiles through the edge bundle. Requires
-/// `@mdx-js/mdx` installed in the workspace's node_modules and a working
-/// Node toolchain — hence `#[ignore]`. Run with:
+/// `@mdx-js/mdx` + `react` resolvable from the workspace's node_modules and a
+/// working Node toolchain — hence `#[ignore]`. Run with:
 ///
 ///     cargo test -p oxide-fw-cli --lib bundle_edge_entry_accepts_mdx -- --ignored
 ///
-/// This is currently expected to FAIL when run: `compile_mdx` in
-/// `precompile.rs` requests `{ jsx: true }` from `@mdx-js/mdx`, which
-/// emits JSX syntax rather than a `_jsx()`-call module. Rolldown then
-/// rejects the JSX (`Unexpected JSX expression`). The fix is to add a
-/// JSX-transform pass after MDX compilation (or switch to the automatic
-/// runtime option that produces JS directly); it is out of scope for the
-/// wiring change this commit ships. The test is kept (ignored) so the
-/// gap is visible and can be un-ignored once compile_mdx is fixed.
+/// It runs for real in the CI `jshost-e2e` job (the only one that pnpm-installs
+/// the workspace). The historical failure mode is fixed: `compile_mdx` used to
+/// request `{ jsx: true }`, emitting literal JSX syntax rolldown rejects with
+/// `Unexpected JSX expression`; it now compiles to the automatic runtime
+/// (`react/jsx-runtime` calls, pure JS). The temp root gets a node_modules
+/// symlink to the workspace `react` so the emitted jsx-runtime import
+/// resolves like it does in a real project.
 #[tokio::test]
-#[ignore = "requires @mdx-js/mdx + a compile_mdx fix to emit JS (not JSX)"]
+#[ignore = "requires workspace node_modules (@mdx-js/mdx + react); CI jshost-e2e job runs it"]
 async fn bundle_edge_entry_accepts_mdx_reachable_from_the_entry() {
     use oxide_fw_jshost::JsHost as _;
     use std::sync::Arc;
@@ -7653,6 +7652,22 @@ async fn bundle_edge_entry_accepts_mdx_reachable_from_the_entry() {
     )
     .unwrap();
     std::fs::write(root.join("content.mdx"), "# Hello\n\nThis is a test.\n").unwrap();
+
+    // The compiled MDX imports `react/jsx-runtime`. Give the temp project the
+    // same resolution a real scaffold has: node_modules/react from the
+    // workspace install.
+    let workspace_react = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../packages/react/node_modules/react");
+    assert!(
+        workspace_react.exists(),
+        "workspace react not installed — run `pnpm install` first (CI jshost-e2e does)"
+    );
+    std::fs::create_dir_all(root.join("node_modules")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&workspace_react, root.join("node_modules/react")).unwrap();
+    #[cfg(not(unix))]
+    copy_dir_recursive_for_test(&workspace_react, &root.join("node_modules/react"))
+        .expect("copy react into the temp project");
 
     let entry = root.join("edge.ts");
     let dist = root.join("dist");
@@ -7698,6 +7713,24 @@ async fn bundle_edge_entry_accepts_mdx_reachable_from_the_entry() {
     assert!(out.is_file(), "edge bundle emitted at {out:?}");
     let bundle = std::fs::read_to_string(&out).unwrap();
     assert!(!bundle.is_empty(), "edge bundle is non-empty");
+}
+
+/// Windows CI fallback for the MDX test's react resolution (unix uses a
+/// symlink). Only compiled off-unix, where tests.rs has no other need for it.
+#[cfg(not(unix))]
+fn copy_dir_recursive_for_test(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let target = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_recursive_for_test(&path, &target)?;
+        } else if path.is_file() {
+            std::fs::copy(&path, &target)?;
+        }
+    }
+    Ok(())
 }
 
 // ------------------------------ §18 / P0-1c: wasm32 edge compile
