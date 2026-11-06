@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 
@@ -26,14 +27,21 @@ export function pngDataUri(path: string): string {
   return `data:image/png;base64,${buf.toString("base64")}`;
 }
 
+/** The package's bundled assets dir, derived from THIS module's URL. Works
+ *  under tsx (src/) and tsc (dist/) alike — `require.main?.filename` is
+ *  always `undefined` in ESM, which made the old default-dir detection throw
+ *  "cannot determine module entrypoint" on every ESM invocation, even when an
+ *  explicit `--input` was given (the guard ran before the argument was used). */
+function defaultAssetsDir(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), "..", "assets");
+}
+
 /**
  * Resolve the five brand PNGs from an input directory (defaults to ./assets).
  * Throws with a helpful message if one is missing.
  */
 export function loadAssets(inputDir?: string): OgAssets {
-  const mainFile = require.main?.filename
-  if (mainFile === undefined) throw new Error("oxide-og: cannot determine module entrypoint")
-  const dir = resolve(inputDir ?? join(dirname(mainFile), "..", "assets"))
+  const dir = resolve(inputDir ?? defaultAssetsDir());
   const out = {} as OgAssets;
   for (const [key, file] of ICON_NAMES) {
     const p = join(dir, file);
