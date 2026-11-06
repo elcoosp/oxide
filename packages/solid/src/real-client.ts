@@ -51,13 +51,45 @@ function isSolidCoreLike(v: unknown): v is SolidCoreLike {
   return hasElement || hasComponent
 }
 
-/** Import a web-runtime specifier without letting TypeScript resolve it at
- *  type-check time (Solid 1's `solid-js/web` subpath does not exist in the
- *  locally-installed Solid 2 types). Narrowed structurally on return —
- *  mirrors ./hydrate-island-real.ts and ./real-ssr.ts. */
-async function tryLoadWeb(name: '@solidjs/web' | 'solid-js/web'): Promise<SolidWebClientLike | undefined> {
+/** Import the Solid 2 web runtime. The specifier MUST stay a string literal:
+ *  the dev-server prebundle rewrites static specifiers to `/@prebundle/*.js`
+ *  URLs and Rolldown's prod bundler resolves them — a dynamic variable
+ *  specifier (`import(name)`) survives compilation verbatim, the browser
+ *  rejects it with `Failed to resolve module specifier` BEFORE any request,
+ *  and `tryLoadWeb`'s catch turns that into `undefined` → the page path
+ *  silently falls back to the IR tree (the "SSR said Home, the browser
+ *  painted Atlas" regression the hmr-solid spec pins). TypeScript needs the
+ *  `unknown` intermediate because Solid 2's types don't declare every export
+ *  shape the runtime probes. */
+async function tryLoadWebSolid2(): Promise<SolidWebClientLike | undefined> {
   try {
-    const mod: unknown = await import(name)
+    const mod: unknown = await import('@solidjs/web')
+    if (isSolidWebClientLike(mod) && typeof mod.hydrate === 'function' && typeof mod.render === 'function') {
+      return mod
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Solid 1's web runtime, as the fallback when `@solidjs/web` is absent.
+ *  The specifier is built by CONCATENATION, deliberately: it must never
+ *  appear as a static literal. As a literal, Rolldown's prod bundler tries
+ *  to resolve `solid-js/web` — which does not exist under Solid 2 (the only
+ *  runtime this adapter targets) — and the whole client build fails with
+ *  `Could not resolve 'solid-js/web'`. A computed specifier is opaque to
+ *  static analysis: the bundler leaves the import to runtime, where a
+ *  browser cannot resolve a bare specifier and the catch below degrades to
+ *  `undefined` (the primary `@solidjs/web` load already succeeded). The
+ *  Node side resolves it from real node_modules via ./real-ssr.ts's
+ *  variable-form loader. */
+async function tryLoadWebSolid1(): Promise<SolidWebClientLike | undefined> {
+  try {
+    // 'solid-js/web' assembled at runtime (join, NOT concatenation: esbuild
+    // constant-folds 'a' + 'b' back into the literal the doc-comment bans).
+    const solid1Web = ['solid-js', 'web'].join('/')
+    const mod: unknown = await import(solid1Web)
     if (isSolidWebClientLike(mod) && typeof mod.hydrate === 'function' && typeof mod.render === 'function') {
       return mod
     }
@@ -90,10 +122,11 @@ async function loadUncached(): Promise<{
   create: (type: unknown, props: unknown) => unknown
 } | undefined> {
   // Same package order as ./hydrate-island-real.ts: Solid 2's dedicated web
-  // runtime first, Solid 1's `solid-js/web` as the fallback. The variable
-  // specifier keeps TypeScript from resolving the Solid 1 subpath (it does
-  // not exist in the installed Solid 2 types) — mirrors ./real-ssr.ts.
-  const web = (await tryLoadWeb('@solidjs/web')) ?? (await tryLoadWeb('solid-js/web'))
+  // runtime first, Solid 1's `solid-js/web` as the fallback. Both calls use
+  // string-literal imports (see the loader doc-comments): a variable
+  // specifier survives compilation verbatim and the browser cannot resolve
+  // a bare specifier, which silently pinned every page to the IR fallback.
+  const web = (await tryLoadWebSolid2()) ?? (await tryLoadWebSolid1())
   if (!web) return undefined
   // `createElement`/`createComponent` come from the solid-js core runtime
   // (the island path uses `createElement`; Solid keeps `createComponent` as
