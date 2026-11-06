@@ -22,15 +22,16 @@
 
 use crate::{Hook, Result, WasmPluginManifest, err};
 use std::path::Path;
+use std::time::Duration;
 use wasmtime::component::{Component, Linker};
-use wasmtime::{Config, Engine, Store};
+use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
 
 /// One loaded component plugin, ready to execute its hooks.
 pub struct WasmPlugin {
     manifest: WasmPluginManifest,
     engine: Engine,
     component: Component,
-    store: Store<()>,
+    store: Store<StoreLimits>,
     instance: wasmtime::component::Instance,
     /// Hook names this component actually exports (subset of `manifest.hooks`).
     available: Vec<Hook>,
@@ -65,10 +66,38 @@ impl WasmPlugin {
             )
         })?;
 
-        let mut store = Store::new(&engine, ());
-        store.set_epoch_deadline(1_000); // coarse watchdog; dropped by the caller
+        // P1 (readiness): enforce a memory cap on the guest. Previously the
+        // store had NO limiter, so a plugin could `memory.grow` until the host
+        // OOMed. 256 MiB of linear memory + a bounded table count is far more
+        // than any legitimate transform plugin needs.
+        let limits = StoreLimitsBuilder::new()
+            .memory_size(256 * 1024 * 1024)
+            .memories(1)
+            .tables(8)
+            .build();
+        let mut store = Store::new(&engine, limits);
+        // The store's data IS the limiter (StoreLimits: ResourceLimiter).
+        store.limiter(|ctx| ctx);
+        // P1 (readiness): make the watchdog REAL. `epoch_interruption(true)`
+        // was set and the deadline configured, but NOTHING ever called
+        // `engine.increment_epoch()`, so the deadline never fired and an
+        // infinite-loop plugin hung the build forever. A background thread
+        // ticks the epoch every 10 ms → the 1_000-tick deadline below is a
+        // ~10 s CPU budget per hook call. Overrun traps ("epoch deadline
+        // reached"), which `call_*_hook` maps to a PLG-WASM error.
+        let ticker_engine = engine.clone();
+        std::thread::Builder::new()
+            .name("oxide-wasm-epoch-ticker".into())
+            .spawn(move || {
+                loop {
+                    std::thread::sleep(Duration::from_millis(10));
+                    ticker_engine.increment_epoch();
+                }
+            })
+            .map_err(|e| err("PLG-WASM", format!("spawn epoch ticker: {e}")))?;
+        store.set_epoch_deadline(1_000); // 1_000 ticks × 10 ms ≈ 10 s
 
-        let linker: Linker<()> = Linker::new(&engine);
+        let linker: Linker<StoreLimits> = Linker::new(&engine);
         let instance = linker
             .instantiate(&mut store, &component)
             .map_err(|e| err("PLG-WASM", format!("failed to instantiate component: {e}")))?;
@@ -144,7 +173,7 @@ impl WasmPlugin {
     }
 
     /// Raw store accessor for callers/tests that need custom typed calls.
-    pub fn store(&mut self) -> &mut Store<()> {
+    pub fn store(&mut self) -> &mut Store<StoreLimits> {
         &mut self.store
     }
 
@@ -190,7 +219,7 @@ enum HookSig {
 /// Probe the component's typed-function signature for a hook export.
 fn probe_hook_signature(
     instance: &wasmtime::component::Instance,
-    store: &mut Store<()>,
+    store: &mut Store<StoreLimits>,
     name: &str,
 ) -> Option<HookSig> {
     if instance
