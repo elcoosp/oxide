@@ -151,7 +151,7 @@ jobs:
       - name: TS package tests (zero-dep, Node type stripping)
         run: |
           set -e
-          for d in packages/core packages/tailwind packages/react packages/vue packages/svelte packages/solid packages/create-oxide; do
+          for d in packages/core packages/tailwind packages/react packages/vue packages/svelte packages/solid packages/create-oxide packages/cli-npm packages/oxide-og; do
             pnpm -C "$d" test
           done
 
@@ -375,6 +375,9 @@ jobs:
         run: |
           cargo test -p oxide-fw-cli --lib cli_render_dispatches_real_react_ssr -- --ignored --test-threads=1
           cargo test -p oxide-fw-cli --lib cli_render_resolves_components_from_the_built_entry -- --ignored --test-threads=1
+          # WP-J regression: real .mdx reachable from the edge entry compiles
+          # to the automatic runtime (pure JS) and bundles cleanly.
+          cargo test -p oxide-fw-cli --lib bundle_edge_entry_accepts_mdx_reachable_from_the_entry -- --ignored --test-threads=1
 
   playwright:
     name: Playwright e2e (§22) — ${{ matrix.browser }} / ${{ matrix.os }}
