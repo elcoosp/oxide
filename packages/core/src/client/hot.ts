@@ -449,13 +449,29 @@ function install(): void {
       // §1.3: kept as `pendingRuntimeLoad` so `__oxide_refresh` can await a
       // still-loading runtime instead of falling into the reload path (the
       // boot-race fix above).
-      pendingRuntimeLoad = (import(/* @vite-ignore */ runtimeUrl) as Promise<{
-        default?: unknown
-        performReactRefresh?: () => void
-        injectIntoGlobalHook?: (w: unknown) => void
-        register?: (t: unknown, id: string) => void
-        createSignatureFunctionForTransform?: () => unknown
-      }>)
+      //
+      // PROBE-FIRST: a `fetch()` of the missing runtime is a silent 404; a
+      // failed module import logs a console error on EVERY page load of a
+      // non-React project (Solid / Vue / Svelte prebundle no react-refresh —
+      // the dev server warns "cannot prebundle react-refresh/runtime" and
+      // serves 404). The per-framework HMR specs assert an error-free
+      // console, so the optional runtime must be fetched before it is
+      // imported. The probe's response populates the HTTP cache, so the
+      // import on the happy path costs no second round-trip.
+      pendingRuntimeLoad = fetch(runtimeUrl)
+        .then((probe) => {
+          // Not prebundled (a non-React project): throw into the existing
+          // `.catch` so `$RefreshRuntime$` stays unset and `__oxide_refresh`
+          // keeps its full-reload fallback semantics.
+          if (!probe.ok) throw new Error('react-refresh runtime not prebundled')
+          return import(/* @vite-ignore */ runtimeUrl) as Promise<{
+            default?: unknown
+            performReactRefresh?: () => void
+            injectIntoGlobalHook?: (w: unknown) => void
+            register?: (t: unknown, id: string) => void
+            createSignatureFunctionForTransform?: () => unknown
+          }>
+        })
         .then((mod) => {
           type RuntimeShape = {
             performReactRefresh?: () => void
