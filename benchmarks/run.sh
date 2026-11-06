@@ -29,7 +29,11 @@ set -uo pipefail
 set +m   # silence 'Killed' job-control noise from kill -9
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-CLI="$ROOT/target/debug/oxide"
+# P0-6 (readiness): benchmarks must measure a RELEASE build. The 2026-10-21
+# table was produced with the debug binary, which overstated wall-clock
+# columns. OXIDE_BENCH_PROFILE=debug restores the old behaviour explicitly.
+PROFILE="${OXIDE_BENCH_PROFILE:-release}"
+CLI="$ROOT/target/$PROFILE/oxide"
 
 if [ ! -x "$CLI" ]; then
     echo "error: build the CLI first: cargo build -p oxide-fw-cli" >&2
@@ -140,7 +144,7 @@ print(len(json.loads(p.read_text())['routes']) if p.is_file() else 0)
         rss=$(server_rss_mb)
     fi
     kill -9 "$sp" 2>/dev/null
-    pkill -9 -f "target/debug/oxide" 2>/dev/null
+    pkill -9 -f "target/$PROFILE/oxide" 2>/dev/null
     sleep 0.3
 
     printf '%-22s %10s %10s %12s %12s %6s %12s %10s %8s\n' \
