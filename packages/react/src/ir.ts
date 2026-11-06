@@ -145,16 +145,20 @@ export function deferPromise(source: DeferSource): PromiseLike<unknown> {
 // ---------------------------------------------------------------------------
 
 const TEXT_ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;' }
-const ATTR_ESCAPES: Record<string, string> = { '&': '&amp;', '"': '&quot;', '<': '&lt;' }
+// SEC-07 parity with the render crate (crates/render/src/lib.rs escape_attr):
+// every injected attribute is SINGLE-quoted, so the single quote must be
+// escaped or a value containing one breaks out of the attribute. `>` is
+// escaped too, matching the Rust implementation byte for byte.
+const ATTR_ESCAPES: Record<string, string> = { '&': '&amp;', '"': '&quot;', '<': '&lt;', '>': '&gt;', "'": '&#39;' }
 
 /** Escape element text (`& < >`). */
 export function escapeText(s: string): string {
   return s.replace(/[&<>]/g, (c) => TEXT_ESCAPES[c] as string)
 }
 
-/** Escape attribute values (`& " <`). */
+/** Escape attribute values (`& " < > '`). */
 export function escapeAttr(s: string): string {
-  return s.replace(/[&"<]/g, (c) => ATTR_ESCAPES[c] as string)
+  return s.replace(/[&"'<>]/g, (c) => ATTR_ESCAPES[c] as string)
 }
 
 /** `\\u003c` escaping inside script payloads (parity with render crate). */
