@@ -54,6 +54,62 @@ run_case "js transform"     "transform-plugin"     "TRANSFORM_PLUGIN_MARKER"
 run_case "js renderChunk"   "render-chunk-plugin"  "render-chunk-fixture"
 run_case "js transformHtml" "transform-html-plugin" "transform-html-fixture"
 
+# Case 6: virtual module (§15-F resolveId/load). The page imports `#virtual`;
+# only a build where BOTH hooks ran resolves the import AND the marker value
+# reaches the SSR markup.
+root="$(mktemp -d)"
+mkdir -p "$root/src/routes" "$root/plugins"
+cp "$HERE/app/routes/page-virtual.tsx" "$root/src/routes/page.tsx"
+cp "$HERE/js/virtual-plugin.mjs" "$root/plugins/virtual-plugin.mjs"
+cat > "$root/oxide.config.json" <<JSON
+{
+  "framework": { "adapter": "react" },
+  "plugins": [ { "kind": "js", "path": "./plugins/virtual-plugin.mjs", "name": "virtual" } ]
+}
+JSON
+if "$CLI" build --root "$root" > "$root/build.log" 2>&1; then
+    if grep -rq "from-virtual-plugin" "$root/dist" 2>/dev/null; then
+        echo "PASS: js virtual module (resolveId + load)"
+        pass=$((pass+1))
+    else
+        echo "FAIL: virtual module — build ran but the fabricated value is missing from dist"
+        fail=$((fail+1))
+    fi
+else
+    echo "FAIL: virtual module — build failed:"
+    tail -5 "$root/build.log"
+    fail=$((fail+1))
+fi
+rm -rf "$root"
+
+# Case 7: generateBundle (§15-F post-emit). The hook receives the emitted
+# file list; this fixture writes a marker from inside the plugin, so the
+# marker's presence proves the post-emit pass called in during a real build.
+root="$(mktemp -d)"
+mkdir -p "$root/src/routes" "$root/plugins"
+cp "$HERE/app/routes/page.tsx" "$root/src/routes/page.tsx"
+cp "$HERE/js/generate-bundle-plugin.mjs" "$root/plugins/generate-bundle-plugin.mjs"
+cat > "$root/oxide.config.json" <<JSON
+{
+  "framework": { "adapter": "react" },
+  "plugins": [ { "kind": "js", "path": "./plugins/generate-bundle-plugin.mjs", "name": "generate-bundle" } ]
+}
+JSON
+if "$CLI" build --root "$root" > "$root/build.log" 2>&1; then
+    if [ -f "$root/plugins/.generate-bundle-ran" ]; then
+        echo "PASS: js generateBundle (post-emit hook reached)"
+        pass=$((pass+1))
+    else
+        echo "FAIL: generateBundle — build ran but the plugin never wrote its marker"
+        fail=$((fail+1))
+    fi
+else
+    echo "FAIL: generateBundle — build failed:"
+    tail -5 "$root/build.log"
+    fail=$((fail+1))
+fi
+rm -rf "$root"
+
 # Case 4: lifecycle + contribution hooks. One build, then check the effects
 # that are observable on disk.
 root="$(mktemp -d)"
