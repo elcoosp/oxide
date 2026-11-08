@@ -91,6 +91,14 @@ clap = { version = "4.6.7", features = ["derive", "string", "env"] }
 rayon = "1.12.0"
 dashmap = "6.2.1"
 
+# B02: stack-allocated URL segment buffers for the allocation-free matcher.
+smallvec = "1"
+
+# Testing / benchmarking (V2-B09)
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
+# V2-B09: heap-allocation budget tests (one dhat profiler per test binary).
+dhat = "0.3.3"
+
 # Transform / render / watch
 regex = "1.13.1"
 lol_html = "3.0.1"
