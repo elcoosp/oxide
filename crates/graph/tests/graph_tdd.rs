@@ -853,8 +853,8 @@ proptest::proptest! {
 }
 
 // silence unused warnings for items only used in some cfgs
-#[allow(unused)]
-fn _use_err() {
+#[test]
+fn cfg_only_imports_resolve() {
     let _ = err("X", "y");
     let _ = EnvTrackerImpl::new(Default::default());
     let _ = ConfigTrackerImpl::new(Default::default());
