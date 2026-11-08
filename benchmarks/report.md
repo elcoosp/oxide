@@ -207,3 +207,67 @@ verification, and the CI jobs that run them are pass/fail on
 correctness only, not regression. Gating the L0 and HMR tables by
 threshold is a documented follow-up; the L0 hit-rate regression *is*
 pinned (by `l0_hit_rate_999_of_1000_dispatches`).
+
+## Criterion microbenchmarks (V2 Wave B, 2026-11-08)
+
+Recorded by the V2-B09 harness (`cargo bench -p oxide-fw-router
+-p oxide-fw-cache --features bench-util`) on the milestone sandbox (Linux
+x64, 2 vCPU, cargo 1.99.1, dev-host noise noted below). The baseline
+(`benchmarks/baseline-v01.json`) was captured **before** the Wave B
+changes (B01/B02/B05/B06) on the same machine; the after-column is
+`benchmarks/after-wave-b.json` at the milestone HEAD. Deltas come from
+`criterion_compare.py` (median ns).
+
+| benchmark | baseline (ns) | after (ns) | Δ | target (spec V2.2.3) | verdict |
+| --- | ---: | ---: | ---: | --- | --- |
+| `match/1000_routes/static` | 5,255.7 | 271.4 | **−94.8% (19.4×)** | ≥10× faster | ✅ |
+| `match/1000_routes/param` | 6,546.9 | 978.1 | −85.1% | — | ✅ |
+| `match/1000_routes/catchall` | 5,278.2 | 110.5 | −97.9% | — | ✅ |
+| `match/1000_routes/miss` | 5,957.7 | 89.1 | −98.5% | — | ✅ |
+| `match/5000_routes/static` | 30,779.5 | 273.4 | −99.1% | — | ✅ |
+| `match/100_routes/static` | 718.1 | 270.5 | −62.3% | — | ✅ |
+| `match/10_routes/static` | 302.5 | 277.9 | −8.1% | — | ✅ (fan-out-free) |
+| `disk_set/5_tags` | 1,880,925.9 | 215,459.3 | **−88.5% (8.7×)** | ≥3× faster | ✅ |
+| `key_construction/canonical` | 214.1 | 214.3 | +0.1% | unchanged | ✅ |
+| `key_construction/key_of` (new, V2-B05) | — | 179.8 | — | cheaper than canonical | ✅ |
+| `tag_insert/10000` (per 100 inserts) | 125,940.5 | ~137,000 | +8.6% | O(1) amortized | ⚠️ deliberate |
+| `build/1000` (tree + index + 1 match) | 326,111.8 | ~501,000 | +53.9% | — | ⚠️ deliberate |
+| `build/5000` | 1,712,031.5 | ~2,790,000 | +63.0% | — | ⚠️ deliberate |
+| `context_table_build/1000` (new, V2-B01) | — | ~725,500 | — | boot-time | ℹ️ |
+| `context_table_build/5000` (new, V2-B01) | — | ~3,965,900 | — | boot-time | ℹ️ |
+
+Allocation budgets (`crates/router/tests/alloc_match.rs`, dhat):
+**0 heap blocks** across 1,000 `match_ref` calls for a static hit, a
+borrowed-param hit and a miss on a 1,000-route tree (spec §8.2: zero
+allocations on the static path). The budget holds while the candidate
+list fits the inline SmallVec (16 entries); a deeper fan-out allocates
+only the candidate buffer itself.
+
+### Why the two ⚠️ rows are accepted, not fixed
+
+- **`build/*` +53–63%**: the bench body is *inserts + one match*, and the
+  first match now constructs the V2-B02 candidate index. That is the
+  per-request O(routes) scan cost being **moved to boot** (paid once,
+  amortized over every request) — the 19.4× per-request win is the
+  return on exactly this one-time investment. A follow-up bench
+  (`tree_build`) can split inserts from index construction.
+- **`tag_insert` +8.6%**: V2-B05 adds the key→tags reverse index (one
+  `String` + one `DashMap` insert per `set`). The price buys two
+  correctness fixes: `delete` cleans tag sets eagerly (no dangling
+  members) and re-`set` under a changed tag list drops stale
+  memberships. Insert remains O(1) amortized — the 20,000-key tag test
+  (`tag_insert_scales`) passes in 60 ms release-mode, far under the
+  250 ms budget.
+
+These two rows are **re-baselined by this milestone** (same policy as the
+2026-10-28 deterministic re-baseline above): a future run compares against
+`after-wave-b.json`, not `baseline-v01.json`, for these ids.
+
+### Gate
+
+`benchmarks/criterion_summary.py` + `benchmarks/criterion_compare.py`
+implement the V2-B09 gate: exit 1 when any shared benchmark regresses
+>5% vs the committed baseline. Proven once on this milestone: a
+deliberately 2×-slowed `match/1000/static` fails the gate (exit 1,
+REGRESSION line) and was reverted. The CI wiring is a follow-up (see
+`docs/deviations.md`, Wave B entry).
