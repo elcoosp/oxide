@@ -21,10 +21,28 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 base64 = { workspace = true }
 subtle = { workspace = true }
+# V2-B02: stack-allocated segment buffers + captures (allocation-free matcher).
+smallvec = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
 proptest = { workspace = true }
+# V2-B09: benchmark harness + heap-allocation budget tests.
+criterion = { workspace = true }
+dhat = { workspace = true }
+
+# V2-B09: criterion harness (bench targets are opt-in via the bench-util
+# feature so plain `cargo test` never pays the criterion build).
+[[bench]]
+name = "match"
+harness = false
+required-features = ["bench-util"]
+
+[features]
+default = []
+# V2-B09: exposes the synthetic route generator (`testing::synthetic_entries`)
+# to benches and allocation-budget test targets.
+bench-util = []
 
 [package.metadata.docs.rs]
 all-features = true
