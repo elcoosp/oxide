@@ -23,6 +23,7 @@ pub mod schema;
 /// reaches the same result through `OxideConfig::load`; this exposes the
 /// extractor's raw output so tests can assert on it directly.
 #[doc(hidden)]
+#[must_use]
 pub fn extract_for_test(source: &str) -> Option<serde_json::Value> {
     extract::extract_public(source)
 }
@@ -131,6 +132,15 @@ pub struct OxideConfig {
     /// On by default (it is the documented product feature) but gateable.
     #[serde(default)]
     pub images_endpoint: EndpointToggle,
+    /// V2-F04 (§15.4): A/B experiments, evaluated natively per request
+    /// before the L0 lookup so an experiment is a cache-key dimension
+    /// instead of forcing the route dynamic. Off by default — with no
+    /// `experiments` configured every L0 key stays byte-identical to the
+    /// pre-F04 baseline (the WP's acceptance contract). Entries are
+    /// validated at load: `traffic` 0–100 and at least two variants
+    /// (`DSP-110`).
+    #[serde(default)]
+    pub experiments: Vec<ExperimentConfig>,
 }
 
 /// S-09: opt-in toggle for the OG rasterization endpoint.
@@ -175,9 +185,52 @@ impl Default for EndpointToggle {
     }
 }
 
+/// V2-F04 (§15.4): one A/B experiment. Evaluated natively per request before
+/// the L0 lookup, so an experiment is a cache-key dimension (`|exp:` vary
+/// suffix) instead of forcing the route dynamic. Validation: `traffic` must
+/// be a 0–100 percentage and the experiment needs at least two variants
+/// (`DSP-110`, checked at load in `layer::validate`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ExperimentConfig {
+    /// The experiment id — also the locals key and the vary-suffix name.
+    pub id: String,
+    /// Percentage of eligible identities in the experiment, 0–100 (`DSP-110`).
+    pub traffic: u8,
+    /// The identity strategy.
+    pub sticky: StickyConfig,
+    /// Variant names, in config order; at least two (`DSP-110`).
+    pub variants: Vec<String>,
+    /// URL-pattern prefixes the experiment applies to; empty = all routes.
+    #[serde(default)]
+    pub routes: Vec<String>,
+}
+
+/// V2-F04: the `sticky` identity strategy (§15.4) — internally tagged by the
+/// `sticky` string, with the strategy's storage name alongside
+/// (`cookieName` / `headerName`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "sticky", rename_all = "kebab-case")]
+pub enum StickyConfig {
+    /// Read (then mint) the named cookie.
+    Cookie {
+        /// The cookie storage key, e.g. `oxide_hero`.
+        #[serde(default, rename = "cookieName")]
+        cookie_name: String,
+    },
+    /// Read the named request header (edge/CDN cohorts).
+    Header {
+        /// The header storage key, e.g. `x-bucket`.
+        #[serde(default, rename = "headerName")]
+        header_name: String,
+    },
+    /// Hash the client IP directly — no storage, coarse-grained.
+    IpHash,
+}
+
 /// §16.3: a minimal, honest web app manifest. The fields are the ones a
 /// PWA needs to be installable; anything richer (shortcuts, screenshots,
-/// share_target) can be added without a shape change.
+/// `share_target`) can be added without a shape change.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct WebManifestConfig {
@@ -253,6 +306,7 @@ impl Default for OxideConfig {
             sw: SwConfig::default(),
             og: OgConfig::default(),
             images_endpoint: EndpointToggle::default(),
+            experiments: Vec::new(),
         }
     }
 }
@@ -680,6 +734,7 @@ impl Default for DevConfig {
 /// Returns the workspace directory, or `None` when `dir` is not inside one.
 /// Used by `extends` resolution (a preset can name a workspace package) and
 /// by the dev watcher (linked packages are watched too).
+#[must_use]
 pub fn detect_workspace_root(dir: &Path) -> Option<PathBuf> {
     let mut cur = Some(dir);
     while let Some(d) = cur {
@@ -704,6 +759,7 @@ pub fn detect_workspace_root(dir: &Path) -> Option<PathBuf> {
 /// SPEC-16: resolve an `extends` spec against the workspace. A bare package
 /// spec (`@scope/oxide-preset`) is looked up in the workspace's `node_modules`
 /// when `dir` is inside one, so a shared preset installs once at the root.
+#[must_use]
 pub fn resolve_workspace_preset(dir: &Path, spec: &str) -> Option<PathBuf> {
     if spec.starts_with('.') || spec.starts_with('/') {
         return None; // relative/absolute — the normal resolver handles it
@@ -721,6 +777,11 @@ pub fn resolve_workspace_preset(dir: &Path, spec: &str) -> Option<PathBuf> {
 
 /// Size parser: "512mb" | "64kb" | "1gb" | plain bytes → u64.
 /// Binary units (kb = 1024). Invalid input → `CFG-SIZE`.
+///
+/// # Errors
+///
+/// Fails with `CFG-SIZE` on an empty string, a bad number, a negative or
+/// non-finite value, or an unknown unit.
 pub fn parse_size(s: &str) -> Result<u64> {
     size::parse(s)
 }
@@ -732,6 +793,13 @@ pub fn parse_size(s: &str) -> Result<u64> {
 /// `oxide.config.<mode>.{ts,json}` → `OXIDE_*` env (allow-list) → `cli_overrides`.
 /// Environment files are loaded in the order `.env`, `.env.<mode>`, `.env.local`,
 /// `.env.<mode>.local`; the process environment wins over file values.
+///
+/// # Errors
+///
+/// Fails with the layering diagnostics: `CFG-IO` (unreadable file),
+/// `CFG-UNKNOWN-KEY` (unknown top-level key), `CFG-FRAMEWORK` (missing
+/// adapter), `DSP-110` (invalid `experiments` entry) or `CFG-EXTENDS`
+/// (unresolvable preset).
 pub fn load(
     dir: &Path,
     mode: &str,
@@ -742,6 +810,10 @@ pub fn load(
 }
 
 /// [`load`] with an explicit process-env map (injectable for tests).
+///
+/// # Errors
+///
+/// Same diagnostics as [`load`] — the layering and validation failures.
 pub fn load_with_env(
     dir: &Path,
     mode: &str,
@@ -764,6 +836,7 @@ pub struct LoadedConfig {
 
 impl LoadedConfig {
     /// Variables whose name starts with `PUBLIC_` — exposed to client code (§14.2).
+    #[must_use]
     pub fn public_env(&self) -> BTreeMap<String, String> {
         self.env
             .iter()
@@ -778,17 +851,19 @@ impl LoadedConfig {
 /// spread of known adapter factory calls with literal args). Anything dynamic (functions,
 /// `process.env` outside the allow-list, top-level await) returns `None` → caller falls
 /// back to V8 evaluation, cached by hash of the file + tracked env.
+#[must_use]
 pub fn extract_static_config(ts_source: &str) -> Option<serde_json::Value> {
     extract::extract(ts_source)
 }
 
 /// Env file parsing (dotenv-compatible: KEY=VALUE, quotes, comments, escapes).
+#[must_use]
 pub fn parse_env_file(content: &str) -> BTreeMap<String, String> {
     env_file::parse(content)
 }
 
 pub mod native_rule {
-    //! Re-exported mirror of router::NativeRule for config deserialization without a dep cycle.
+    //! Re-exported mirror of `router::NativeRule` for config deserialization without a dep cycle.
     use serde::{Deserialize, Serialize};
     use std::collections::BTreeMap;
 
@@ -861,7 +936,7 @@ mod spec16_tests {
     }
 
     /// SPEC-16: a bare `extends` package resolves from the workspace root's
-    /// node_modules.
+    /// `node_modules`.
     #[test]
     fn resolves_workspace_preset() {
         let ws = tempdir().unwrap();
@@ -890,7 +965,7 @@ mod tests {
 
     #[test]
     fn ssr_externals_default_is_empty() {
-        assert!(BuildConfig::default().ssr_externals.is_empty());
+        assert_eq!(BuildConfig::default().ssr_externals, Vec::<String>::new());
     }
 
     #[test]
