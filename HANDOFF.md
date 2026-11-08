@@ -1,3 +1,135 @@
+# Handoff — V2-F05 live loaders substrate landed (SSE framing + hub + runner + client); all gates green
+
+## Where things stand
+
+**Branch:** `main`
+**Working tree:** the milestone ships as uncommitted changes plus `ship.sh`
+in the resolved downloads directory (bash 3.2-compatible, executable,
+gitignored; one conventional commit per file, then idempotent PR + squash
+merge + tag + push). Run `./ship.sh <repo>` to materialize the history.
+**Verified this session (2 vCPU / 4 GB sandbox, no V8 toolchain):**
+- `cargo test --workspace --all-features` over the 15-crate V8-free graph
+  (excludes `jshost` + `cli` (V8), `plugin` + `assets` (nasm)) — all green
+  (970 tests across 76 suites; server +18 live pins incl. the five
+  spec-named hub/framing pins and the runner debounce/rate pins; router +5
+  live pins incl. the rkyv round trip; config +10 live pins incl. the
+  DSP-111 paths; dispatch's A04 pins now pin the live route's query build
+  contract; render +5 bootstrap pins; adapters +4 Live-row pins).
+- `packages/core`: `node --test test/*.test.ts` — 260/260 green (7 new
+  live pins: URL shape, data decode+apply, stale reload, jittered
+  reconnect, disposer, visibility close/reopen), `tsc --noEmit` clean.
+- `cargo fmt --all -- --check` — exit 0.
+- Workspace-lints pedantic gate `cargo clippy --no-deps
+  -p oxide-fw-config -p oxide-fw-dispatch -p oxide-fw-router
+  -p oxide-fw-schema --all-targets --all-features -- -D warnings
+  -W clippy::pedantic` — zero diagnostics (the `[lints] workspace=true`
+  crates; every site the new code added is pedantic-clean).
+- CI-style gate `cargo clippy --no-deps --workspace` over the V8-free
+  graph (`--all-targets --all-features`, `-D warnings`) — zero
+  diagnostics. Excluded: `jshost` + `cli` (V8), `plugin` + `assets`
+  (build needs `nasm`, absent here). `server`/`render`/`adapters` have not
+  adopted `[lints] workspace=true` yet (the planned dedicated hygiene
+  pass owns their pre-existing pedantic debt); all NEW code in them is
+  pedantic-clean by direct check.
+- `grep -rnE '#!?\[allow\(' crates/ tests/` — empty.
+- `cargo bench -p oxide-fw-server --features bench-util --bench live`
+  — `affected/256` ≈ 568 ns, `affected/1024` ≈ 559 ns (flat in hub size —
+  the index is per-tag), `subscribe_remove/256` ≈ 6.6 µs (one reconnect),
+  `sse_frame/ping` ≈ 124 ns, `sse_frame/data_1k` ≈ 512 ns,
+  `sse_frame/data_8_lines` ≈ 1.15 µs.
+
+## What landed
+
+V2-F05 step 1 + steps 2–5's V8-free substrate from
+`docs/spec-v0.2-draft.md`, in the A02/A05/A06/F04/A04 substrate pattern:
+
+1. **Router opt-in (`RouteEntry.live`, `RouteLive`):** the scanner reads
+   `export const config = { live: true }` / `{ live: { debounceMs: 100 } }`
+   from `page.server.ts` next to `tags`/`needs_parent`; the additive
+   `Option<RouteLive>` field round-trips the rkyv archive (ArchEntry
+   mirror) and deserializes `None` from pre-F05 `routes.json` manifests.
+2. **Config surface (`LiveConfig`, §V2-F05 step 8):** `maxSubscribers`
+   5000 / `debounceMs` 50 / `keepaliveSeconds` 20 / `maxRerunsPerSecond`
+   20 / `perIpMax` 20 / `transport: 'sse' | 'poll'` — defaults inert (no
+   opt-in route, no hub). Load validation `DSP-111` (keepalive ≥ 1 s,
+   maxSubscribers ≥ 1, maxRerunsPerSecond ≥ 1, perIpMax ≤ maxSubscribers,
+   transport enum), JSON schema section regenerated into the checked-in
+   artifact.
+3. **Server substrate (`server::live` / `server::LiveHub`):** the pure SSE
+   framing (`sse_frame`, spec-verbatim byte shapes for `data`/`ping`/
+   `stale`), `Sub` (route, url, header snapshot, BTreeSet tags, `watch`
+   latest-wins snapshot channel, seq, peer ip), `LiveHub` (exact +
+   `prefix:*` wildcard tag index, `affected` fan-out deduplicated by
+   identity, `Guard`-drop unsubscribes, global + per-IP capacity with
+   rollback, `retag` reindexing after a rerun), `live_response` (the 200
+   SSE head), `live_capacity_response` (503 + retry-after),
+   `same_origin` (Sec-Fetch-Site then Origin-vs-Host authority compare),
+   `live_stream` (current snapshot first — a fresh connection never needs
+   a replay — one `data` frame per new snapshot with base64 payloads,
+   keepalive pings one period after connect, clean end when the sender
+   drops), and the `Runner` (batch debounce, per-subscriber rate cap,
+   injected rerun closure, `None` = cleared snapshot = the stale signal).
+4. **Data plane (dispatch):** `/__oxide/live` joins `is_data_plane_path`
+   (the A04 pins reserved this flip for the route's WP) and
+   `stage_build_check` reads the `build` query parameter on the live
+   route only — `EventSource` cannot set headers (§V2-F05 step 2); a
+   stale id answers `409` + `x-oxide-build-stale: true` exactly like the
+   header spelling, absent-everywhere is still allowed.
+5. **Render advertisement:** `hydration_bootstrap_with_live` emits the
+   five-field `window.__oxide={route,build,live:true,data}`; the 3-arg and
+   4-arg spellings stay byte-identical (the V8-linked CLI call sites
+   compile unchanged); `Injector::with_live` opts a page in.
+6. **Adapters:** `Capability::Live` joins the §18 matrix — Full on
+   Binary/Docker/Node/Deno/Bun, Degraded on serverless and Workers (the
+   degradation strings name the `transport: 'poll'` fallback), Unsupported
+   on Static (`AST-LIV-001` at the future refusal-rule WP). `Target::ALL`
+   added for matrix-row completeness pins.
+7. **Client (`packages/core/src/client/live.ts`):** `connectLive(route,
+   apply, opts)` per spec step 7 — the `/__oxide/live?route&url&build`
+   EventSource URL, `data` → decode (base64 ODF; F06 swaps the one decode
+   fn) → in-place apply, `stale` → close + reload once, jittered 1–3 s
+   reconnect, the 30 s hidden-tab close and visibilitychange reconnect,
+   full disposer. Transport/document/reload injectable for the Node test
+   runner; import-safe in SSR (the `boot.ts` contract).
+
+**Pre-existing landmines found and fixed on the way (hygiene debt, both
+recorded in `docs/deviations.md`):**
+1. **The workspace did not resolve at `v0.3.0`**: the A04 ship's
+   version-bump commit (7447fb4) moved `[workspace.package] version` to
+   0.3.0 while the 18 internal `[workspace.dependencies]` entries still
+   demanded `0.1.0` — `cargo metadata`/`cargo fetch` fail on the tagged
+   tree. Fixed by dropping the version reqs from the internal entries
+   (path-only): lockstep versioning stays single-sourced in
+   `[workspace.package]`, so ship.sh's version bump can never re-break
+   the tree.
+2. **The root `package.json` was invalid JSON** (`"version": "0.3.0",,`
+   — a doubled comma left by the previous ship's version-bump edit,
+   present on the tagged tree). Fixed, and this ship's version-bump step
+   replaces the whole `"version": "…"` line value, never splicing commas.
+3. **`--all-features` flipped the schema byte-gates red**: `bundler`'s
+   feature graph pulls `serde_json/preserve_order`, which changes every
+   `serde_json::Value` map from sorted to insertion order — the generated
+   config schema emitted unsorted and `schema_stability.rs` +
+   `schema_tdd.rs` failed (proven on a tree with only the pin fix
+   applied: pre-existing). Fixed by canonicalizing `config_schema_pretty`
+   through a BTreeMap projection (sorted keys under any unification; a
+   no-op with the default map flavor).
+
+## Where to pick up, in one sentence
+
+The F05 wiring is now a call-site exercise on a V8-capable host: the
+`/__oxide/live` endpoint in the dispatch closure (same-origin via
+`server::same_origin`, build check via `stage_build_check` — the route
+already joined the data plane —, subscribe-or-503 via `LiveHub::subscribe`,
+`live_stream` as the body, the rerun closure calling the same data-route
+path as `/__data` with `Sub.headers`, and the tag revalidation hook at the
+`TieredCache::invalidate_tag` call sites plus `hub.retag`), the client
+router lifecycle (`connectLive` after hydration when `__oxide.live`,
+dispose on navigation), the A01 phase-3 split that unlocks it, then F06
+(ODF PATCH deltas — its only dependency), F10's pool side, and the F-series.
+
+---
+
 # Handoff — V2-A04 build id + generations substrate landed (V8-free); all gates green
 
 ## Where things stand
