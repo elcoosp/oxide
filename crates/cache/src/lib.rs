@@ -20,6 +20,7 @@ pub mod auth;
 pub mod codec;
 pub mod http;
 pub mod http_handler;
+pub mod keyhash;
 pub mod single_flight;
 pub mod tiers;
 
@@ -29,6 +30,7 @@ pub use http::{
     FetchMemo, cache_control, conditional_response, http_date, memo_key, parse_http_date,
 };
 pub use http_handler::HttpCacheHandler;
+pub use keyhash::{KeyStr, key_of};
 pub use single_flight::{FlightOwnerGuard, FlightSlot, SingleFlight};
 pub use tiers::{CacheStats, DiskTier, MemoryTier, TieredCache};
 
