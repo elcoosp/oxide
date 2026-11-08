@@ -44,6 +44,7 @@ const KNOWN_KEYS: &[&str] = &[
     "sw",
     "og",
     "imagesEndpoint",
+    "experiments",
 ];
 
 /// Environment variables allowed to override config (§14.2), as dotted paths.
@@ -170,19 +171,17 @@ fn read_layer(dir: &Path, stem: &str, used_dynamic_eval: &mut bool) -> Result<Op
     if ts.is_file() {
         let src = std::fs::read_to_string(&ts)
             .map_err(|e| err("CFG-IO", format!("read {}: {e}", ts.display())))?;
-        match extract_static_config(&src) {
-            Some(v) => return Ok(Some(Layer { value: v, path: ts })),
-            None => {
-                *used_dynamic_eval = true;
-                if json.is_file() {
-                    return Ok(Some(Layer {
-                        value: read_json(&json)?,
-                        path: json,
-                    }));
-                }
-                return Ok(None); // dynamic TS, nothing static to merge
-            }
+        if let Some(v) = extract_static_config(&src) {
+            return Ok(Some(Layer { value: v, path: ts }));
         }
+        *used_dynamic_eval = true;
+        if json.is_file() {
+            return Ok(Some(Layer {
+                value: read_json(&json)?,
+                path: json,
+            }));
+        }
+        return Ok(None); // dynamic TS, nothing static to merge
     }
     if json.is_file() {
         if stem == "oxide.config" {
@@ -235,21 +234,20 @@ fn load_preset(
         if !path.is_file() {
             continue;
         }
-        let mut value = if path.extension().map(|e| e == "ts").unwrap_or(false) {
+        let mut value = if path.extension().is_some_and(|e| e == "ts") {
             let src = std::fs::read_to_string(&path)
                 .map_err(|e| err("CFG-IO", format!("read {}: {e}", path.display())))?;
-            match extract_static_config(&src) {
-                Some(v) => v,
-                None => {
-                    *used_dynamic_eval = true;
-                    return Err(err(
-                        "CFG-EXTENDS",
-                        format!(
-                            "preset `{}` could not be statically extracted",
-                            path.display()
-                        ),
-                    ));
-                }
+            if let Some(v) = extract_static_config(&src) {
+                v
+            } else {
+                *used_dynamic_eval = true;
+                return Err(err(
+                    "CFG-EXTENDS",
+                    format!(
+                        "preset `{}` could not be statically extracted",
+                        path.display()
+                    ),
+                ));
             }
         } else {
             read_json(&path)?
@@ -263,8 +261,7 @@ fn load_preset(
         if !nested.is_empty() {
             let preset_dir = path
                 .parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| dir.to_path_buf());
+                .map_or_else(|| dir.to_path_buf(), Path::to_path_buf);
             let mut acc: Value = Value::Object(Map::new());
             for spec in &nested {
                 let p = load_preset(&preset_dir, spec, used_dynamic_eval, depth + 1)?;
@@ -353,8 +350,7 @@ fn validate(value: &Value, framework_source: &str) -> Result<()> {
     let adapter_missing = value
         .get("framework")
         .and_then(|f| f.get("adapter"))
-        .map(|v| v.is_null())
-        .unwrap_or(true);
+        .is_none_or(Value::is_null);
     if adapter_missing {
         let mut d = Diagnostic::error(
             "CFG-FRAMEWORK",
@@ -368,7 +364,54 @@ fn validate(value: &Value, framework_source: &str) -> Result<()> {
         );
         return Err(OxideError(Box::new(d)));
     }
+    // V2-F04 (§15.4): validate every experiment entry before the typed
+    // parse — a bad `traffic` percentage or a too-few-variants entry is a
+    // config authoring bug and gets the DSP-110 diagnostic at load time.
+    if let Some(Value::Array(entries)) = map.get("experiments") {
+        for entry in entries {
+            validate_experiment(entry)?;
+        }
+    }
     Ok(())
+}
+
+/// V2-F04 (§15.4): one `experiments` entry must declare a `traffic`
+/// percentage in 0–100 and at least two variants — the `DSP-110`
+/// diagnostic.
+fn validate_experiment(value: &Value) -> Result<()> {
+    let Value::Object(entry) = value else {
+        return Err(dsp_110("each `experiments` entry must be an object"));
+    };
+    let traffic_ok = match entry.get("traffic") {
+        Some(Value::Number(n)) => n.as_u64().is_some_and(|t| t <= 100),
+        _ => false,
+    };
+    if !traffic_ok {
+        return Err(dsp_110(
+            "`experiments[].traffic` must be an integer percentage between 0 and 100",
+        ));
+    }
+    let variants_ok = entry
+        .get("variants")
+        .and_then(Value::as_array)
+        .is_some_and(|v| v.len() >= 2);
+    if !variants_ok {
+        return Err(dsp_110(
+            "`experiments[].variants` must list at least two variant names",
+        ));
+    }
+    Ok(())
+}
+
+/// The `DSP-110` diagnostic for an invalid `experiments` entry (§V2-F04).
+fn dsp_110(msg: &str) -> OxideError {
+    let mut d = Diagnostic::error("DSP-110", msg);
+    d.fix = Some(
+        "fix the `experiments` entry — `traffic` is a 0–100 percentage and an \
+         experiment needs at least two variants"
+            .into(),
+    );
+    OxideError(Box::new(d))
 }
 
 /// Levenshtein edit distance (small strings only — config keys).
