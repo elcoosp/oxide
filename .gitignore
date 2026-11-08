@@ -60,3 +60,6 @@ commit.sh
 
 # dhat test artifact (written at profiler drop)
 dhat-heap.json
+
+# ship.sh — the milestone commit+release protocol (machine-local, like commit.sh)
+ship.sh
