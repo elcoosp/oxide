@@ -1,3 +1,77 @@
+# Handoff — V2-A06 parallel load graph landed (scanner verdict + dispatch substrate); all gates green
+
+## Where things stand
+
+**Branch:** `main`
+**Working tree:** the milestone ships as uncommitted changes plus `ship.sh`
+at the repo root (bash 3.2-compatible, executable, gitignored; one
+conventional commit per file, then idempotent tag + push). Run `./ship.sh`
+to materialize the history — the `v0.2.0` tag already exists and is skipped
+by design.
+**Verified this session (2 vCPU / 8 GB sandbox, no V8 toolchain budget):**
+- `cargo test -p oxide-fw-dispatch -p oxide-fw-router -p oxide-fw-schema`
+  — 143/143 green (dispatch 45 incl. 12 load-graph pins; router 82 incl.
+  the new token-exact `parent()` scanner pins; schema 10).
+- `cargo fmt --all -- --check` — exit 0.
+- `cargo clippy --no-deps -p oxide-fw-dispatch -p oxide-fw-router
+  -p oxide-fw-schema --all-targets --all-features -- -D warnings
+  -W clippy::pedantic` — zero diagnostics. **The lint policy is no longer
+  dispatch-only:** `router` and `schema` now declare
+  `[lints] workspace = true` (107 pedantic sites fixed this session, zero
+  `#[allow]` — the scanner walk and the typegen emitter were split into
+  helpers instead of suppressing `too_many_lines`).
+- CI-style gate over the full V8-free graph (13 crates, `-D warnings`) —
+  zero diagnostics.
+- `cargo tree -p oxide-fw-dispatch | grep -c jshost` — 0 (spec acceptance).
+- `cargo bench -p oxide-fw-dispatch --features bench-util` — 12 bench ids;
+  the new `loads/*` group pins the §9.2 win: `parallel_8` ≈ 2.10 ms vs
+  `chain_8` ≈ 16.60 ms (eight 1 ms loads: overlapped vs serialized ≈ 8×),
+  graph overhead ~1.1 ms flat from 8 to 16 nodes; `ctx_table/get` still
+  flat ~32.5 ns at 100/1000 routes.
+
+## What landed
+
+V2-A06 from `docs/spec-v0.2-draft.md` ("Parallel layout loads", §9.2), in
+the spec's two steps:
+
+1. **Scanner (`oxide-fw-router`):** the `needs_parent` verdict is now
+   token-exact (`calls_parent`, whole-identifier match — `parentDir`,
+   `grandparent()`, `parent_data` no longer serialize a load) and applies
+   to **both** pages and layouts (pre-A06 only pages were probed and
+   layouts always reported `false`, so a `parent()`-calling layout could
+   never be scheduled behind its own parent). The over-approximation note
+   from the spec is kept: a mention inside a comment/string still marks
+   the load — a false positive only makes loads sequential, never
+   incorrect. Pinned by new scanner tests (`parent_token_detected`,
+   `parentheses_not_enough_and_substrings_never_count`, layout-verdict
+   pins).
+2. **Load graph (`oxide-fw-dispatch::loads`):** `run_load_graph` takes the
+   node list (`LoadNode { input, needs_parent }`) and a shared
+   `Arc<dyn LoaderRunner>`; independent nodes start concurrently,
+   a `needs_parent` node awaits its predecessor's slot (`futures::Shared`)
+   and receives its data as `LoaderRunInput::parent_data`. Results come
+   back in **input order** (never completion order), the first
+   short-circuit **in input order** wins, a runner crash maps to
+   `LoadResult::Failed` and poisons only its dependents, and independent
+   loads still run when an outer load short-circuits (§9.2 requires
+   idempotent loaders — the over-run is pinned so cancel-on-short-circuit
+   would be a deliberate change). Time-sensitive pins run on the paused
+   tokio clock (`start_paused`) — no wall-clock flakes.
+
+The CLI `stage_loaders` wiring stays deferred (see `docs/deviations.md`):
+the closure keeps its sequential loop until the A01 phase-3 move can
+compile `oxide-fw-cli` against this crate.
+
+## Where to pick up, in one sentence
+
+A01 next: split `crates/cli/src/lib.rs` (15,555 lines) per the spec's
+`scripts/split_cli.py` plan on a machine that can link V8, then land phase
+3 stage-by-stage on top of this crate (`stage_loaders` switches to
+`run_load_graph` + the `RouteContextTable.layout_loads` verdicts that are
+already threaded), then B03/B04/B08 and the F-series.
+
+---
+
 # Handoff — V2-A02 `oxide-fw-dispatch` substrate landed; V8-free, all gates green
 
 ## Where things stand
