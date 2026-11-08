@@ -45,6 +45,7 @@ const KNOWN_KEYS: &[&str] = &[
     "og",
     "imagesEndpoint",
     "experiments",
+    "live",
 ];
 
 /// Environment variables allowed to override config (§14.2), as dotted paths.
@@ -372,6 +373,10 @@ fn validate(value: &Value, framework_source: &str) -> Result<()> {
             validate_experiment(entry)?;
         }
     }
+    // V2-F05: the live knobs carry their own load-time bounds (DSP-111).
+    if let Some(v) = map.get("live") {
+        validate_live(v)?;
+    }
     Ok(())
 }
 
@@ -409,6 +414,71 @@ fn dsp_110(msg: &str) -> OxideError {
     d.fix = Some(
         "fix the `experiments` entry — `traffic` is a 0–100 percentage and an \
          experiment needs at least two variants"
+            .into(),
+    );
+    OxideError(Box::new(d))
+}
+
+/// V2-F05 (§V2-F05 step 8): the `live` knobs must be physically usable —
+/// a 0 s keepalive would emit a `ping` per tick (busy-looping every open
+/// connection), a 0-subscriber hub rejects everyone, and a per-IP cap
+/// above the global cap is dead config. Violations fail the load with the
+/// `DSP-111` diagnostic (the DSP-110 pattern, next free code).
+fn validate_live(value: &Value) -> Result<()> {
+    let Value::Object(map) = value else {
+        return Err(dsp_111("`live` must be an object"));
+    };
+    let knob = |key: &str| -> Result<Option<u64>> {
+        match map.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::Number(n)) => n
+                .as_u64()
+                .map(Some)
+                .ok_or_else(|| dsp_111(&format!("`live.{key}` must be a non-negative integer"))),
+            Some(_) => Err(dsp_111(&format!(
+                "`live.{key}` must be a non-negative integer"
+            ))),
+        }
+    };
+    if knob("maxSubscribers")? == Some(0) {
+        return Err(dsp_111(
+            "`live.maxSubscribers` must be at least 1 — the hub must be able to hold a subscriber",
+        ));
+    }
+    if knob("keepaliveSeconds")? == Some(0) {
+        return Err(dsp_111(
+            "`live.keepaliveSeconds` must be at least 1 — a 0s keepalive busy-loops every connection",
+        ));
+    }
+    if knob("maxRerunsPerSecond")? == Some(0) {
+        return Err(dsp_111(
+            "`live.maxRerunsPerSecond` must be at least 1 — a 0 rate cap drops every rerun",
+        ));
+    }
+    let max = knob("maxSubscribers")?.unwrap_or(5_000);
+    if knob("perIpMax")?.is_some_and(|per_ip| per_ip > max) {
+        return Err(dsp_111(
+            "`live.perIpMax` cannot exceed `live.maxSubscribers` — the per-peer cap is a \
+             fraction of the global capacity",
+        ));
+    }
+    if let Some(transport) = map.get("transport") {
+        match transport {
+            Value::String(s) if s == "sse" || s == "poll" => {}
+            _ => {
+                return Err(dsp_111("`live.transport` must be `\"sse\"` or `\"poll\"`"));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The `DSP-111` diagnostic for an invalid `live` section (§V2-F05).
+fn dsp_111(msg: &str) -> OxideError {
+    let mut d = Diagnostic::error("DSP-111", msg);
+    d.fix = Some(
+        "fix the `live` section — `keepaliveSeconds` >= 1, `maxSubscribers` >= 1, \
+         `maxRerunsPerSecond` >= 1 and `perIpMax` <= `maxSubscribers`"
             .into(),
     );
     OxideError(Box::new(d))
