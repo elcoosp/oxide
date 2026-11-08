@@ -8,15 +8,23 @@
 //! committed artifact ↔ valid JSON Schema shape, plus the error-code paths
 //! (SCHEMA-001/002) the CLI surfaces.
 
-use oxide_fw_schema::{schema_pretty, schema_url, schema_value, CODE_CONFIG_FAILURE, CODE_NOT_JSON, SCHEMA_URL};
+use oxide_fw_schema::{
+    CODE_CONFIG_FAILURE, CODE_NOT_JSON, SCHEMA_URL, schema_pretty, schema_url, schema_value,
+};
 
 #[test]
 fn schema_value_is_a_valid_json_schema_object() {
     let v = schema_value().expect("schema_value");
     assert!(v.is_object());
     // Minimal JSON Schema shape an editor relies on:
-    assert!(v.get("$schema").is_some(), "must declare $schema for editor binding");
-    assert!(v.get("properties").is_some(), "config keys validate via properties");
+    assert!(
+        v.get("$schema").is_some(),
+        "must declare $schema for editor binding"
+    );
+    assert!(
+        v.get("properties").is_some(),
+        "config keys validate via properties"
+    );
     assert!(v.get("type").is_some(), "root type must be pinned");
 }
 
@@ -24,7 +32,10 @@ fn schema_value_is_a_valid_json_schema_object() {
 fn schema_pretty_is_stable_across_calls() {
     let a = schema_pretty().expect("schema_pretty a");
     let b = schema_pretty().expect("schema_pretty b");
-    assert_eq!(a, b, "the emitted schema must be deterministic (editors cache it)");
+    assert_eq!(
+        a, b,
+        "the emitted schema must be deterministic (editors cache it)"
+    );
 }
 
 #[test]
@@ -34,7 +45,10 @@ fn schema_delegates_to_the_config_crate_source_of_truth() {
     // wraps config's error into SCHEMA-001, so on success the BYTES match.
     let from_config = oxide_fw_config::config_schema_pretty().expect("config schema");
     let via_schema = schema_pretty().expect("schema_pretty");
-    assert_eq!(via_schema, from_config, "schema crate must not fork the config schema");
+    assert_eq!(
+        via_schema, from_config,
+        "schema crate must not fork the config schema"
+    );
 }
 
 #[test]

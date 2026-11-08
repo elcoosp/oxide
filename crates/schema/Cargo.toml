@@ -21,3 +21,8 @@ oxide-fw-config = { workspace = true }
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+# V2-A06: adopt the workspace lint policy (pedantic clippy) — the crate is
+# held to the same gate as `oxide-fw-dispatch` (V2-A02).
+[lints]
+workspace = true
