@@ -23,12 +23,18 @@
 //!   independent loads concurrent, `parent()`-needing loads chained, the
 //!   substrate `stage_loaders` wires (V2-A06; CLI adoption deferred, see
 //!   `docs/deviations.md`).
+//! - [`experiments`]: the §15.4 experiments assignment engine (`assign`,
+//!   `resolve`) — deterministic blake3 buckets, sticky cookie/header/ip
+//!   identities, minted `Set-Cookie`s and the L0 vary suffix the
+//!   `stage_experiments` wiring feeds into [`locals`] (V2-F04; CLI
+//!   adoption deferred, see `docs/deviations.md`).
 //!
 //! Acceptance (spec V2-A02): `cargo test -p oxide-fw-dispatch` finishes in
 //! under 20 seconds after dependencies are built, and
 //! `cargo tree -p oxide-fw-dispatch | grep -c jshost` prints 0.
 
 pub mod chain;
+pub mod experiments;
 pub mod flow;
 pub mod loads;
 pub mod locals;
