@@ -39,6 +39,23 @@ pub enum Target {
 }
 
 impl Target {
+    /// Every target, in declaration order — the capability matrix's row set
+    /// (V2-F05's `every_target_declares_the_live_cell` walks this).
+    pub const ALL: &'static [Target] = &[
+        Target::Binary,
+        Target::Node,
+        Target::Static,
+        Target::Docker,
+        Target::Cloudflare,
+        Target::CloudflarePages,
+        Target::Lambda,
+        Target::Vercel,
+        Target::VercelFunctions,
+        Target::Netlify,
+        Target::Deno,
+        Target::Bun,
+    ];
+
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s {
             "binary" => Target::Binary,
@@ -84,14 +101,20 @@ pub enum Capability {
     NativeRules,
     Snapshots,
     Tls,
+    /// V2-F05: live loaders over SSE — holding long-lived event-stream
+    /// connections to open tabs and re-running their loaders on tag
+    /// revalidation. Degraded targets fall back to the `transport: 'poll'`
+    /// client mode; Unsupported targets refuse `live: true` at build time
+    /// (`AST-LIV-001`).
+    Live,
 }
 
 /// The capability matrix: which features work per target and how absent ones degrade.
 pub fn capability_matrix(target: Target) -> BTreeMap<Capability, FeatureSupport> {
-    use Capability::{ImageOptimization, Isr, L0Cache, NativeRules, Snapshots, Sockets, Tls};
+    use Capability::{ImageOptimization, Isr, L0Cache, Live, NativeRules, Snapshots, Sockets, Tls};
     use FeatureSupport::{Degraded, Full, Unsupported};
     /// §18 table row, written as (capability, support) pairs in canonical order.
-    fn row(pairs: [(Capability, FeatureSupport); 7]) -> BTreeMap<Capability, FeatureSupport> {
+    fn row(pairs: [(Capability, FeatureSupport); 8]) -> BTreeMap<Capability, FeatureSupport> {
         pairs.into_iter().collect()
     }
     match target {
@@ -104,6 +127,7 @@ pub fn capability_matrix(target: Target) -> BTreeMap<Capability, FeatureSupport>
             (NativeRules, Full),
             (Snapshots, Full),
             (Tls, Full),
+            (Live, Full),
         ]),
         // NodeHost-backed runtimes: only snapshots degrade (code cache warms cold start).
         Target::Node | Target::Deno | Target::Bun => row([
@@ -114,6 +138,7 @@ pub fn capability_matrix(target: Target) -> BTreeMap<Capability, FeatureSupport>
             (NativeRules, Full),
             (Snapshots, Degraded),
             (Tls, Full),
+            (Live, Full),
         ]),
         // No runtime: everything dynamic is out; what remains is CDN/build-time.
         Target::Static => row([
@@ -124,6 +149,7 @@ pub fn capability_matrix(target: Target) -> BTreeMap<Capability, FeatureSupport>
             (NativeRules, Degraded),
             (Snapshots, Unsupported),
             (Tls, Unsupported),
+            (Live, Unsupported),
         ]),
         // Workers: WinterCG edge subset; KV/R2 for cache, no sockets, no images.
         Target::Cloudflare | Target::CloudflarePages => row([
@@ -134,6 +160,7 @@ pub fn capability_matrix(target: Target) -> BTreeMap<Capability, FeatureSupport>
             (NativeRules, Full),
             (Snapshots, Unsupported),
             (Tls, Full),
+            (Live, Degraded),
         ]),
         // Serverless platforms: remote cache + platform-managed TLS.
         Target::Lambda | Target::Vercel | Target::VercelFunctions | Target::Netlify => row([
@@ -144,6 +171,7 @@ pub fn capability_matrix(target: Target) -> BTreeMap<Capability, FeatureSupport>
             (NativeRules, Full),
             (Snapshots, Degraded),
             (Tls, Unsupported),
+            (Live, Degraded),
         ]),
     }
 }
@@ -152,7 +180,7 @@ pub fn capability_matrix(target: Target) -> BTreeMap<Capability, FeatureSupport>
 /// (absence is not degradation — the refusal rule §18 covers Unsupported at build
 /// time, and [`capability_matrix`] is the machine-readable source of truth).
 pub fn degradation(target: Target, cap: Capability) -> Option<&'static str> {
-    use Capability::{ImageOptimization, Isr, L0Cache, NativeRules, Snapshots};
+    use Capability::{ImageOptimization, Isr, L0Cache, Live, NativeRules, Snapshots};
     let reason: &str = match (target, cap) {
         (Target::Node | Target::Deno | Target::Bun, Snapshots) => {
             "no v8 startup snapshot on this runtime; cold start warmed via code cache"
@@ -184,6 +212,13 @@ pub fn degradation(target: Target, cap: Capability) -> Option<&'static str> {
             Target::Lambda | Target::Vercel | Target::VercelFunctions | Target::Netlify,
             Snapshots,
         ) => "snapshot-friendly cold start; isolate reuse not guaranteed",
+        // V2-F05: the Live row's Degraded cells document the poll fallback.
+        (Target::Lambda | Target::Vercel | Target::VercelFunctions | Target::Netlify, Live) => {
+            "serverless functions cannot hold long-lived SSE connections; the client falls back to transport: 'poll'"
+        }
+        (Target::Cloudflare | Target::CloudflarePages, Live) => {
+            "Workers stream responses but do not guarantee long-lived connections; the client falls back to transport: 'poll'"
+        }
         _ => return None,
     };
     Some(reason)
