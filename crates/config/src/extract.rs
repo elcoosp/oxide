@@ -207,6 +207,7 @@ fn strip_line_comments(source: &str) -> String {
     out
 }
 /// Public entry to the minimal extractor for tests and the CLI fallback.
+#[must_use]
 pub fn extract_public(source: &str) -> Option<Value> {
     extract_minimal_framework(source)
 }
@@ -347,7 +348,7 @@ struct Scanner<'a> {
     p: usize,
 }
 
-impl<'a> Scanner<'a> {
+impl Scanner<'_> {
     fn peek(&self) -> Option<char> {
         self.s[self.p..].chars().next()
     }
@@ -608,18 +609,15 @@ impl<'a> Scanner<'a> {
                     // (`None`) and the caller evaluates instead of silently
                     // substituting a default (§14.2).
                     let vstart = self.p;
-                    match self.parse_value() {
-                        Some(v) => {
-                            map.insert(key, v);
-                        }
-                        None => {
-                            self.p = vstart;
-                            self.skip_value()?;
-                            if is_function_like(&self.s[vstart..self.p]) {
-                                skipped_any = true;
-                            } else {
-                                return None;
-                            }
+                    if let Some(v) = self.parse_value() {
+                        map.insert(key, v);
+                    } else {
+                        self.p = vstart;
+                        self.skip_value()?;
+                        if is_function_like(&self.s[vstart..self.p]) {
+                            skipped_any = true;
+                        } else {
+                            return None;
                         }
                     }
                 }
@@ -792,12 +790,12 @@ mod tests {
 
     #[test]
     fn minimal_fallback_handles_component_for() {
-        let src = r#"
+        let src = r"
 const components = { 'routes/index': () => null }
 export default defineConfig({
   framework: react({ ssr: 'real', componentFor: (r) => components[r] }),
 })
-"#;
+";
         let v = extract(src).expect("fallback must produce a value");
         assert_eq!(v["framework"]["name"], "react");
         assert_eq!(v["framework"]["adapter"], "react");
@@ -805,7 +803,7 @@ export default defineConfig({
 
     #[test]
     fn full_parser_still_wins_for_static_configs() {
-        let src = r#"export default defineConfig({ framework: react({ compiler: true }) })"#;
+        let src = r"export default defineConfig({ framework: react({ compiler: true }) })";
         let v = extract(src).unwrap();
         assert_eq!(v["framework"]["name"], "react");
         assert_eq!(v["framework"]["compiler"], true);
@@ -816,12 +814,12 @@ export default defineConfig({
         // Force the full parser to bail (dynamic expression) with no
         // framework, adapter, or dir keyword in the source. The fallback
         // has nothing to pick up and returns None.
-        let src = r#"
+        let src = r"
 const x = computeDynamicValue()
 export default defineConfig({
   dynamicField: x,
 })
-"#;
+";
         assert!(
             extract_full(src).is_none(),
             "full parser must give up on the dynamic expression"
@@ -840,14 +838,14 @@ export default defineConfig({
         // even without a framework keyword. This is what the CLI's build
         // path needs — the deploy target must not silently fall back to
         // the default just because the config was dynamically shaped.
-        let src = r#"
+        let src = r"
 const x = computeDynamicValue()
 export default defineConfig({
   adapter: 'vercel',
   routes: { dir: 'src/routes' },
   dynamicField: x,
 })
-"#;
+";
         let v = extract(src).expect("fallback must return the scalars");
         assert_eq!(v["adapter"], "vercel");
         assert_eq!(v["routes"]["dir"], "src/routes");
@@ -857,11 +855,11 @@ export default defineConfig({
     fn minimal_fallback_ignores_framework_inside_strings_or_comments() {
         // `framework` appearing only in a comment / string must not trigger
         // the fallback. (The full parser also won't find a factory call.)
-        let src = r#"
+        let src = r"
 // uses framework: react( somewhere in the past
 const note = 'framework: react('
 export default defineConfig({ adapter: 'binary', dynamicField: note })
-"#;
+";
         // The full parser rejects the config (dynamic reference), then the
         // fallback scans and might match the string literal. Assert the
         // fallback's *semantics*: it produces a value only when a factory
