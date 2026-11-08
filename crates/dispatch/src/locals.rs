@@ -60,6 +60,19 @@ impl RequestLocals {
         serde_json::Value::Object(merged.into_iter().collect())
     }
 
+    /// V2-F04: install the resolved experiment assignments into the
+    /// pipeline-owned slot — the stage wiring calls this with
+    /// [`Resolved::assigned`](crate::experiments::Resolved::assigned) right
+    /// after the §V2-F04 evaluation. The slot stays pipeline-owned: a
+    /// middleware staging `experiments` is still reported (DSP-101) and the
+    /// resolved assignments win at [`to_value`](Self::to_value) time.
+    pub fn set_experiments(&mut self, assigned: BTreeMap<String, String>) {
+        self.experiments = assigned
+            .into_iter()
+            .map(|(id, variant)| (id, serde_json::Value::String(variant)))
+            .collect();
+    }
+
     /// Merge one middleware's `locals` payload into the user map
     /// (later wins). Returns the reserved keys the payload tried to set —
     /// the DSP-101 warning sites — sorted, with the staged value dropped:
