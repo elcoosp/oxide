@@ -764,22 +764,21 @@ fn json_interop() {
     assert_eq!(rt.to_json(), j);
 
     // mapping rules
-    assert_eq!(Value::Undefined.to_json(), Json_ext_null());
+    assert_eq!(Value::Undefined.to_json(), json_ext_null());
     assert_eq!(
         Value::Date(1700000000000).to_json(),
         json!(1700000000000i64)
     );
-    assert_eq!(Value::Number(f64::NAN).to_json(), Json_ext_null()); // lossy
+    assert_eq!(Value::Number(f64::NAN).to_json(), json_ext_null()); // lossy
     assert_eq!(Value::BigInt("123".into()).to_json(), json!("123"));
-    assert_eq!(Value::Null.to_json(), Json_ext_null());
+    assert_eq!(Value::Null.to_json(), json_ext_null());
 
     // reserved keys survive from_json but are rejected at encode time
     let bad = Value::from_json(&json!({ "__proto__": { "x": 1 } }));
     assert_eq!(code_of(encode(&bad)), "ODF-KEY");
 }
 
-#[allow(non_snake_case)]
-fn Json_ext_null() -> serde_json::Value {
+fn json_ext_null() -> serde_json::Value {
     serde_json::Value::Null
 }
 
