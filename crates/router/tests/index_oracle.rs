@@ -19,7 +19,10 @@ fn entry(id: &str, segments: &[&str]) -> RouteEntry {
     RouteEntry {
         id: RouteId(id.to_string()),
         kind: RouteKind::Page,
-        segments: segments.iter().map(|s| s.to_string()).collect(),
+        segments: segments
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect(),
         file: format!("{id}.tsx").into(),
         render_mode: None,
         tags: Vec::new(),
