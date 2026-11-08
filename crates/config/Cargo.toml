@@ -23,3 +23,9 @@ tempfile = { workspace = true }
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+# V2-F04: this crate now carries a pedantic-lint surface (the experiments
+# config section), so it adopts the workspace lints policy like
+# `oxide-fw-dispatch` / `oxide-fw-router` / `oxide-fw-schema` before it.
+[lints]
+workspace = true
