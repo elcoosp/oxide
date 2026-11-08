@@ -92,3 +92,48 @@ Svelte (`suspense: 'core'`): the `<Defer>` component ships as `packages/svelte/s
 The three obstacles the original entry listed: (1) VNode placeholder markup — solved by the attribute-only swapper selector `[data-ox-b]`; verified by conformance's `streaming: a non-template boundary host swaps too` assertion; (2) Svelte compiled-component requirement — solved by shipping `Defer.svelte` and testing its compiled output; (3) swapper nonce — solved earlier this session, verified in `defer-swapper-nonce.test.ts` per adapter.
 
 An export-map contract test on each adapter (`packages/{svelte,vue}/test/export-map.test.ts`) fails if a shipped component is not reachable — the specific bug class that made this deviation's status momentarily false.
+
+## V2 Wave B foundations — deferred integration points (2026-11-08)
+
+The V2-B09/B02/B01/B05/B06 milestone landed complete in the V8-free crates
+(`oxide-fw-router`, `oxide-fw-cache`). The spec wires some of their results
+into the CLI/server layer, which links V8 (~5 minutes per iteration on the
+reference host, CONVENTIONS §8) — this sandbox has no V8 toolchain budget,
+so the following integration points are **deliberately deferred** and must
+land with the A01/A02 (cli split + `oxide-dispatch` crate) milestone:
+
+1. **`match_ref` consumers (B02).** The CLI dispatch path still calls
+   `match_path` (which now internally uses the candidate index, so it is
+   already faster); switching the dispatch closure to `match_ref` +
+   `RouteContextTable::get` needs the `DispatchDeps` refactor (B01's
+   "Integration" step in spec V2).
+2. **`RouteContextTable` at boot (B01).** Built and tested in
+   `crates/router/src/context.rs` (oracle-verified against
+   `matcher::layout_chain`); `start_server_inner_full` does not construct it
+   yet. The acceptance "rg 'for candidate in &tree.entries' crates/cli
+   returns nothing" applies to that integration PR.
+3. **`KeyStr` in `L0Cache::key` (B05).** `key_of`/`KeyStr` exist and are
+   pinned to `canonical()` by `matches_canonical_prefix`; `cli/src/l0_cache.rs`
+   still builds 64-char canonical strings. The switch (plus the documented
+   `oxide cache clear` migration note, since L0 keys change length) belongs
+   to the same integration PR.
+4. **Criterion gate CI wiring (B09).** `criterion_summary.py` /
+   `criterion_compare.py` exist and the gate was proven to fail a
+   deliberately slowed matcher; extending `benchmarks/gate.sh` (or the CI
+   `bench-gate` job) to invoke them after the existing table check is left
+   as the R03 step. `benchmarks/baseline-v01.json` is committed for it.
+5. **`ArchivedTree::match_ref` shape (B02).** The spec materializes
+   `Arc<RouteEntry>` per entry at load. This milestone returns
+   `ArchivedMatchRef` (winner by index, mapped bytes stay the single source
+   of truth) instead: materializing at load would freeze pre-patch bytes and
+   break the P-01 liveness contract
+   (`archived_tree_reads_through_the_live_mmap`). The index walk falls back
+   to the exact linear scan when it cannot complete — the P-01 invariant
+   makes this a no-op in production, and it keeps the in-place-patch test
+   green.
+6. **`dispatch`/`server`/`render` benches (B09).** The spec's bench list
+   includes `crates/dispatch/benches/context.rs`,
+   `crates/server/benches/metrics.rs` and `crates/render/benches/splice.rs`.
+   `dispatch` does not exist until A02; `render`'s `NonceSplicer` lands with
+   B08 (needs A01); only `server/benches/metrics.rs` is possible today and
+   was deferred to keep the milestone's compile surface V8-free.
