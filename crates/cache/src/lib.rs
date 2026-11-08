@@ -51,6 +51,7 @@ pub use s3_handler::S3CacheHandler;
 use blake3::Hasher;
 use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -222,6 +223,114 @@ pub fn build_id(parts: &[&[u8]]) -> String {
         h.update(p);
     }
     h.finalize().to_hex().to_string()[..16].to_string()
+}
+
+/// Canonical build id of one emitted build (§V2-A04): blake3 over the
+/// sorted `relative/path<TAB>blake3-hex` manifest of every file under
+/// `dist/client/**` and `dist/server/**`, plus the route table at
+/// `<dist>/../.oxide/routes.manifest` when present — paths relative to the
+/// project root (`dist`'s parent) so the manifest lines are stable across
+/// machines, truncated to the 16-hex [`build_id`] convention.
+///
+/// Deterministic by construction: the walk is sorted by relative path, so
+/// directory-creation order never leaks into the digest; two trees holding
+/// the same bytes always agree, one changed byte always disagrees.
+///
+/// `# Errors`
+///
+/// [`OxideError`] with code `CAC-BUILDID` when `dist` itself is missing or
+/// the walk/read of a covered file fails. Missing *covered* inputs (no
+/// `routes.manifest`, no `dist/server`) are tolerated — the id only narrows
+/// to the covered set that exists, because the wiring runs this on
+/// whatever the emit phase actually produced.
+///
+/// The wiring that computes this at the end of `phase_emit` and writes
+/// `dist/build-id` / `.oxide/build-id` is deferred to the A01-phase-3 CLI
+/// adoption (V8 link); see `docs/deviations.md`.
+#[must_use = "the build id is the generation identity; dropping it loses the emit"]
+pub fn build_id_of_dist(dist: &std::path::Path) -> Result<String> {
+    use std::collections::BTreeMap;
+
+    if !dist.exists() {
+        return Err(err(
+            "CAC-BUILDID",
+            format!("dist missing: {}", dist.display()),
+        ));
+    }
+
+    // BTreeMap: relative path → file blake3 hex. Sorted by construction,
+    // which makes the walk order-independent.
+    let mut manifest: BTreeMap<String, String> = BTreeMap::new();
+    let root = dist
+        .parent()
+        .ok_or_else(|| err("CAC-BUILDID", "dist has no parent project root"))?;
+
+    let mut cover = |base: &std::path::Path| -> Result<()> {
+        if !base.exists() {
+            return Ok(());
+        }
+        let mut stack = vec![base.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            let read = fs::read_dir(&dir)
+                .map_err(|e| err("CAC-BUILDID", format!("read_dir {}: {e}", dir.display())))?;
+            for entry in read {
+                let entry = entry.map_err(|e| err("CAC-BUILDID", format!("dir entry: {e}")))?;
+                let p = entry.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.is_file() {
+                    let rel = p
+                        .strip_prefix(root)
+                        .map_err(|e| err("CAC-BUILDID", format!("strip_prefix: {e}")))?
+                        .to_string_lossy()
+                        .into_owned();
+                    let hex = blake3_hex_file(&p)?;
+                    manifest.insert(rel, hex);
+                }
+            }
+        }
+        Ok(())
+    };
+
+    cover(&dist.join("client"))?;
+    cover(&dist.join("server"))?;
+    // The route table is contract: it lives at the project root, outside
+    // dist, and participates under its root-relative name when present.
+    let routes = root.join(".oxide").join("routes.manifest");
+    if routes.is_file() {
+        let hex = blake3_hex_file(&routes)?;
+        manifest.insert(".oxide/routes.manifest".to_string(), hex);
+    }
+
+    // Lines `path<TAB>hex`, newline-joined, no trailing newline: the exact
+    // byte string the digest runs over is pinned by `build_id_tdd.rs`.
+    let lines: String = manifest
+        .iter()
+        .map(|(path, hex)| format!("{path}\t{hex}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(build_id(&[lines.as_bytes()]))
+}
+
+/// blake3 hex of one file's bytes (streamed in 64 KiB chunks; build trees
+/// hold assets well above the block size).
+fn blake3_hex_file(path: &std::path::Path) -> Result<String> {
+    use std::io::Read;
+
+    let mut f = fs::File::open(path)
+        .map_err(|e| err("CAC-BUILDID", format!("open {}: {e}", path.display())))?;
+    let mut h = Hasher::new();
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = f
+            .read(&mut buf)
+            .map_err(|e| err("CAC-BUILDID", format!("read {}: {e}", path.display())))?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
+    Ok(h.finalize().to_hex().to_string())
 }
 
 #[cfg(test)]
