@@ -36,7 +36,7 @@ fn bench_match(c: &mut Criterion) {
         let tree = tree_for(n);
         for (kind, url) in URLS {
             group.bench_with_input(BenchmarkId::new(n.to_string(), kind), &url, |b, url| {
-                b.iter(|| black_box(tree.match_path(black_box(url))))
+                b.iter(|| black_box(tree.match_path(black_box(url))));
             });
         }
     }
@@ -53,7 +53,7 @@ fn bench_build(c: &mut Criterion) {
                     t.insert(e);
                 }
                 black_box(t.match_path("/s7/p7"));
-            })
+            });
         });
     }
     group.finish();
@@ -68,10 +68,8 @@ fn bench_context_table_build(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, n| {
             b.iter(|| {
                 let entries = oxide_fw_router::testing::synthetic_entries(*n);
-                black_box(oxide_fw_router::RouteContextTable::build_with_default_pattern(
-                    &entries,
-                ))
-            })
+                black_box(oxide_fw_router::RouteContextTable::build_with_default_pattern(&entries));
+            });
         });
     }
     group.finish();
