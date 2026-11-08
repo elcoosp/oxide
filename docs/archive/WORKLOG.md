@@ -4654,3 +4654,92 @@ newly-runnable §3.6 isolation), Groups B and C green, unit suites green
 (compiler 48+56, dev 46+1, cli lib 250, jshost 78+26, packages 488/488).
 sw.spec ×2 remain the documented sandbox-only failure; webkit remains
 unrunnable here. Full details in HANDOFF.md.
+
+## Session — V2 Wave B foundations (B09 → B02 → B01 → B05 → B06), Rust core
+
+**Milestone:** the "fast core" foundations from `docs/spec-v0.2-draft.md`
+Track 2 + the B01 substrate, implemented TDD-first in the V8-free crates and
+benchmarked against a pre-change baseline. No V8 toolchain in this sandbox
+(2 vCPU / 4 GB), so the CLI/server integration points are deferred and
+recorded in `docs/deviations.md` (Wave B entry).
+
+### Landed
+
+- **B09 — benchmark harness + baseline.** criterion (0.8.2, cargo_bench_support),
+  dhat (0.3.3), smallvec (1.x) pinned in `[workspace.dependencies]`; benches
+  `crates/router/benches/match.rs` (match/{10,100,1000,5000}/{static,param,
+  catchall,miss} + build + context_table_build) and `crates/cache/benches/keys.rs`
+  (key construction, tag_insert/10k, disk_set/5_tags); the synthetic route
+  generator lives in `crates/router/src/testing.rs` behind `bench-util`.
+  `benchmarks/criterion_summary.py` + `criterion_compare.py` implement the
+  gate (exit 1 on >5% regression; proven once against a deliberately 2×
+  slowed matcher). `benchmarks/baseline-v01.json` (22 ids) captured **before**
+  the algorithm changes; results + the two deliberate cost moves documented in
+  `benchmarks/report.md` ("Criterion microbenchmarks").
+- **B02 — candidate index + allocation-free matcher.** `crates/router/src/index.rs`
+  (static-prefix trie, wild/term lists, D23 superset) + `match_ref`/
+  `ArchivedMatchRef` (borrowed captures, iterator-based priority compare — no
+  `Vec<u8>` per candidate). The linear matcher stays as the
+  `#[doc(hidden)]` `match_in_linear` oracle. Red-first tests:
+  `tests/index_oracle.rs` (10,000-case oracle proptest + 2,000-case archived
+  proptest), `tests/alloc_match.rs` (dhat: **0 heap blocks** per 1,000 static /
+  borrowed-param / miss matches), `index_candidates_superset` +
+  `unmatchable_entries_are_not_indexed` unit tests. Percent-escape URLs decode
+  per segment exactly where compared/captured (split-then-decode semantics
+  preserved; `%2F` never splits — the existing percent-decode tests stay the
+  contract). The archived tree gets an index with an exact-linear fallback on
+  an incomplete walk, keeping the P-01 mmap-liveness test green.
+- **B01 — `RouteContextTable`.** `crates/router/src/context.rs` (D22):
+  layout chain, layout loads (server module + `needs_parent`, no `stat`),
+  middleware chain, innermost error/loading, precomputed metrics pattern;
+  `unmatched()` keeps the first-NotFound tree order. Oracle tests:
+  layout-chain equality against `matcher::layout_chain` (fixture + proptest
+  over random directory trees), dispatch-index agreement, shadowing/order
+  cases. `default_pattern_of` matches the CLI's `pattern_of` byte-for-byte.
+- **B05 — heap-free keys + O(1) tag index.** `crates/cache/src/keyhash.rs`:
+  `KeyStr` (32 ASCII hex bytes on the stack, `Deref<Target=str>`) + `key_of`
+  (128-bit blake3 prefix; `matches_canonical_prefix` pins it to
+  `canonical()`). `TieredCache` gains the key→tags reverse index: idempotent
+  tag insert, eager cleanup on `delete`, stale memberships dropped on
+  re-`set` (single `DashMap::entry` op). Tests red-first in
+  `cache_tdd.rs` (`tag_insert_is_idempotent`, `delete_cleans_tag_sets`,
+  `retag_removes_stale_membership`, release-only `tag_insert_scales`:
+  20k keys under one tag in ~60 ms, budget 250 ms).
+- **B06 — disk-tier tags as a redb multimap.** `TAG_KEYS`
+  (`tag_keys_v2`, set-valued) replaces the JSON read-modify-write per tag;
+  `delete` removes one multimap pair per membership; a `meta` table pins
+  `schema=2` and the one-shot v1 → v2 migration consumes the old JSON rows
+  (`migrates_v1_tag_table` covers migrate + reopen). Disk `set` with 5 tags
+  went 1,880.9 µs → ~215 µs (−88.5%).
+
+### Numbers (2 vCPU sandbox; see report.md for the full table)
+
+`match/1000/static` 5,255.7 → 271.4 ns (**19.4×**, target ≥10×);
+`match/5000/static` −99.1%; misses −98.5%; `disk_set/5_tags` −88.5%;
+`key_of` 179.8 ns vs `canonical` 214.1 ns; alloc budgets 0/0/0.
+Deliberate costs: `build/*` +53–63% (one-time candidate-index construction
+moved to boot) and `tag_insert/10000` +8.6% (the reverse index that buys
+eager delete + retag correctness). Both re-baselined in `report.md`.
+
+### Verification
+
+- `cargo test -p oxide-fw-router` — 75 unit + alloc + oracle + integration green.
+- `cargo test -p oxide-fw-cache` — 37 lib + 35 TDD + doc green
+  (`tag_insert_scales` green in `--release`).
+- `cargo check` green for every V8-free downstream crate (odf, config, graph,
+  schema, diagnostics, adapters, plugin, render, server, dev) — no API break.
+- `cargo clippy -p oxide-fw-router -p oxide-fw-cache --all-targets
+  -- -D warnings` clean; `cargo fmt` applied.
+
+### Sandbox notes for the next session
+
+1. The V8-dependent crates (cli, jshost, bundler, compiler, assets) were NOT
+   compiled here; the deferred integration points are itemized in
+   `docs/deviations.md` — do those in the A01/A02 PR where the cli test
+   target can run.
+2. Criterion bench ids are contract: `criterion_compare.py` only gates ids
+   present in BOTH snapshots; new ids (e.g. `context_table_build/*`) are
+   informational until the next baseline promotion.
+3. dhat requires `.testing()` mode for `dhat::assert_*` and one profiler per
+   process — keep the allocation tests in their own test binary and one test
+   function (parallel test threads allocate inside the snapshot windows).
