@@ -38,6 +38,8 @@ pub(crate) struct ArchEntry {
     pub has_server_module: bool,
     pub needs_parent: bool,
     pub slot: Option<String>,
+    /// V2-F05: the per-route live opt-in (additive, like `needs_parent`).
+    pub live: Option<crate::RouteLive>,
 }
 
 impl From<&RouteEntry> for ArchEntry {
@@ -52,6 +54,7 @@ impl From<&RouteEntry> for ArchEntry {
             has_server_module: e.has_server_module,
             needs_parent: e.needs_parent,
             slot: e.slot.clone(),
+            live: e.live,
         }
     }
 }
@@ -87,6 +90,11 @@ pub(crate) fn entry_from_arch(a: &ArchivedArchEntry) -> RouteEntry {
         has_server_module: a.has_server_module,
         slot: arch_opt_to_owned(&a.slot),
         needs_parent: a.needs_parent,
+        live: a.live.as_ref().map(|l| crate::RouteLive {
+            // rkyv's `unaligned` feature archives `u32` as `u32_ule`; the
+            // little-endian type converts back losslessly.
+            debounce_ms: l.debounce_ms.as_ref().map(|v| u32::from(*v)),
+        }),
     }
 }
 
@@ -308,6 +316,7 @@ mod tests {
             has_server_module: false,
             slot: None,
             needs_parent: false,
+            live: None,
         });
         let manifest = tmp.path().join("routes.manifest");
         tree.archive_to(&manifest).unwrap();

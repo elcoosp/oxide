@@ -10,10 +10,12 @@
 //!   still accepted inside a grace window so a deploy does not cut off
 //!   clients mid-flight (the F10 skew-protection pool grows from here).
 //! - [`stage_build_check`]: the stage the dispatch closure installs before
-//!   the L0 lookup on the data plane (`/__data`, `/_oxide/fn/*`). A request
-//!   advertising an unaccepted `x-oxide-build` answers `409` +
-//!   `x-oxide-build-stale: true` with an empty body; a request without the
-//!   header (curl, tests, old clients) is allowed through.
+//!   the L0 lookup on the data plane (`/__data`, `/_oxide/fn/*`, and —
+//!   since V2-F05 — `/__oxide/live`, whose build id may also travel in the
+//!   `build` query parameter because `EventSource` cannot set headers). A
+//!   request advertising an unaccepted `x-oxide-build` answers `409` +
+//!   `x-oxide-build-stale: true` with an empty body; a request without
+//!   the header (curl, tests, old clients) is allowed through.
 //! - [`advertise_build`]: every data-plane response carries
 //!   `x-oxide-build: <current>` so the client can echo it back.
 //!
@@ -104,17 +106,18 @@ impl GenerationSet {
     }
 }
 
-/// The data plane today (§V2-A04): `/__data` and `/_oxide/fn/*`.
-/// `/__oxide/live` and `/__oxide/stream/*` join the set when those routes
-/// land (F05 / F07) — until then they must not enforce the header, because
-/// no client would send it.
+/// The data plane today (§V2-A04 + §V2-F05): `/__data`, `/_oxide/fn/*`
+/// and `/__oxide/live` (F05: the `EventSource` endpoint replays loader
+/// snapshots, so it enforces the same build contract). `/__oxide/stream/*`
+/// joins when that route lands (F07) — until then it must not enforce the
+/// header, because no client would send it.
 ///
 /// The wiring passes the request path; a query or fragment is tolerated
 /// (stripped) so both the raw target and `uri.path()` spellings work.
 #[must_use]
 pub fn is_data_plane_path(path: &str) -> bool {
     let path = path.split(['?', '#']).next().unwrap_or(path);
-    path == "/__data" || path.starts_with("/_oxide/fn/")
+    path == "/__data" || path == "/__oxide/live" || path.starts_with("/_oxide/fn/")
 }
 
 /// Case-insensitive header lookup over the request's `(name, value)` list
@@ -130,7 +133,10 @@ fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a s
 ///
 /// - Non-data-plane path: always [`Flow::Continue`] (HTML navigations are
 ///   re-rendered, not replayed — there is nothing to be stale).
-/// - Absent header: [`Flow::Continue`] (curl, tests, old clients).
+/// - Absent header: [`Flow::Continue`] — EXCEPT on `/__oxide/live`, where
+///   `EventSource` cannot set headers (§V2-F05 step 2) and the build id
+///   travels as the `build` query parameter instead; there the query value
+///   is consulted (absent there too: allowed, curl/tests/old clients).
 /// - Accepted id (current or previous-within-window): [`Flow::Continue`].
 /// - Unaccepted id: [`Flow::Respond`] with [`STALE_STATUS`], the
 ///   `x-oxide-build-stale: true` marker and an empty body.
@@ -141,10 +147,24 @@ pub fn stage_build_check(
     gens: &GenerationSet,
     now: Instant,
 ) -> Flow {
-    if !is_data_plane_path(path) {
+    let (path_only, query) = match path.split_once(['?', '#']) {
+        Some((p, q)) => (p, Some(q)),
+        None => (path, None),
+    };
+    if !is_data_plane_path(path_only) {
         return Flow::Continue;
     }
-    let Some(id) = header_value(headers, BUILD_HEADER) else {
+    let id = header_value(headers, BUILD_HEADER).or_else(|| {
+        // The query fallback is the live route's contract only: /__data
+        // has no `build` query parameter, and a stale id there must
+        // travel in the header.
+        if path_only == "/__oxide/live" {
+            query.and_then(query_build)
+        } else {
+            None
+        }
+    });
+    let Some(id) = id else {
         return Flow::Continue;
     };
     if gens.accepts(id, now).is_some() {
@@ -154,6 +174,16 @@ pub fn stage_build_check(
     resp.headers
         .push((STALE_HEADER.to_string(), "true".to_string()));
     Flow::Respond(resp)
+}
+
+/// The `build` query parameter (the live route's header-less spelling).
+/// Build ids are 16-hex (§V2-A04), so no percent-decoding is needed; the
+/// value is taken byte-exact.
+fn query_build(query: &str) -> Option<&str> {
+    query
+        .split('&')
+        .find_map(|kv| kv.strip_prefix("build="))
+        .filter(|v| !v.is_empty())
 }
 
 /// Append `x-oxide-build: <current>` to a data-plane response.

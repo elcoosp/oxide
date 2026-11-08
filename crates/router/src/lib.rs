@@ -144,6 +144,28 @@ pub struct RouteEntry {
     /// Parallel-route slot marker (§8.5): `Some("@modal")` for entries under an
     /// `@slot` directory. Slot entries reserve identity but are not URL-addressable.
     pub slot: Option<String>,
+    /// V2-F05: the `live` opt-in from `page.server.ts` config (`live: true`
+    /// or `live: { debounceMs: 100 }`). `None` (the default) keeps the route
+    /// out of the live machinery entirely — no SSE endpoint, no bootstrap
+    /// field, no hub registration. The hydration bootstrap advertises
+    /// `live:true` for opted-in routes and the hub re-runs their loaders
+    /// when one of their cache tags is revalidated.
+    #[serde(default)]
+    pub live: Option<RouteLive>,
+}
+
+/// V2-F05: the per-route live configuration read from `page.server.ts`.
+/// `live: true` scans to the default (`debounce_ms: None` — the config's
+/// `live.debounceMs` applies); `live: { debounceMs: 100 }` carries the
+/// override. Serde is only used for the `routes.json` manifest round trip.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize,
+)]
+pub struct RouteLive {
+    /// Per-route rerun debounce override in ms (`debounceMs`); `None` uses
+    /// the config default (`live.debounceMs`, 50 ms).
+    #[serde(default, rename = "debounceMs", alias = "debounce_ms")]
+    pub debounce_ms: Option<u32>,
 }
 
 /// Compiled match result (allocation-light: params into a small vec).

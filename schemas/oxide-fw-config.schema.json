@@ -422,6 +422,51 @@
       "description": "S-09: on-demand image transform endpoint (GET /_oxide/image). On by default; gateable.",
       "type": "object"
     },
+    "live": {
+      "additionalProperties": false,
+      "description": "V2-F05: live-loader transport knobs (the SSE hub's capacity, cadence and transport). Defaults are inert - with no route opting in (page.server.ts live: true) nothing listens and no hub is constructed. Validation (DSP-111): keepaliveSeconds >= 1, maxSubscribers >= 1, maxRerunsPerSecond >= 1, perIpMax <= maxSubscribers.",
+      "properties": {
+        "debounceMs": {
+          "default": 50,
+          "description": "Per-subscriber rerun debounce in ms.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "keepaliveSeconds": {
+          "default": 20,
+          "description": "SSE keepalive ping period in seconds (DSP-111 rejects 0).",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "maxRerunsPerSecond": {
+          "default": 20,
+          "description": "Per-subscriber rerun rate cap per second.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "maxSubscribers": {
+          "default": 5000,
+          "description": "The hub's total subscriber capacity; the endpoint answers 503 + retry-after above it.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "perIpMax": {
+          "default": 20,
+          "description": "Per-peer subscriber cap (security); cannot exceed maxSubscribers.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "transport": {
+          "default": "sse",
+          "description": "sse streams snapshots over GET /__oxide/live; poll is the serverless fallback.",
+          "enum": [
+            "sse",
+            "poll"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "manifest": {
       "additionalProperties": true,
       "description": "§16.3: web app manifest (PWA). Present -> oxide build emits manifest.webmanifest + a service worker.",

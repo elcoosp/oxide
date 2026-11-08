@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::{Result, RouteEntry, RouteId, RouteKind, RouteTree, ferr};
+use crate::{Result, RouteEntry, RouteId, RouteKind, RouteLive, RouteTree, ferr};
 
 /// Conventional file bases recognized by the scanner (extension-agnostic, §8.1).
 const CONVENTION_BASES: &[&str] = &[
@@ -165,10 +165,12 @@ fn route_entry_for(
     file_rel.push(name.to_string());
     let mut render_mode = None;
     let mut tags = Vec::new();
+    // V2-F05: the `live` opt-in rides the same best-effort config read.
+    let mut live = None;
     let has_server_module = match kind {
         RouteKind::Page => {
             if let Some(server) = &modules.page_server {
-                read_page_config(&dir.join(server), &mut render_mode, &mut tags);
+                read_page_config(&dir.join(server), &mut render_mode, &mut tags, &mut live);
             }
             modules.page_server.is_some()
         }
@@ -200,6 +202,7 @@ fn route_entry_for(
         has_server_module,
         slot: slot.map(str::to_string),
         needs_parent,
+        live,
     })
 }
 
@@ -467,10 +470,17 @@ fn valid_param_name(name: &str) -> bool {
 /// source spans and diagnostics); this heuristic keeps `oxide routes`,
 /// `oxide build`, and the dev inspector in agreement today. An explicit
 /// `config.render` always wins.
-fn read_page_config(path: &Path, render_mode: &mut Option<String>, tags: &mut Vec<String>) {
+fn read_page_config(
+    path: &Path,
+    render_mode: &mut Option<String>,
+    tags: &mut Vec<String>,
+    live: &mut Option<RouteLive>,
+) {
     static RENDER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     static TAGS: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     static QUOTED: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static LIVE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static DEBOUNCE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let Ok(text) = fs::read_to_string(path) else {
         return;
     };
@@ -496,6 +506,25 @@ fn read_page_config(path: &Path, render_mode: &mut Option<String>, tags: &mut Ve
         for m in q.captures_iter(&c[1]) {
             tags.push(m[1].to_string());
         }
+    }
+    // V2-F05: `live: true` or `live: { debounceMs: 100 }`. The bare-true
+    // form scans to `debounce_ms: None` (the config default applies); the
+    // object form reads the numeric override. Same best-effort literal
+    // contract as the tags regex above — the compiler pass is authoritative.
+    let re = LIVE
+        .get_or_init(|| regex::Regex::new(r"\blive\s*:\s*(true|\{[^}]*\})").expect("live regex"));
+    if let Some(c) = re.captures(&text) {
+        let mut parsed = RouteLive { debounce_ms: None };
+        if c[1].starts_with('{') {
+            let re = DEBOUNCE.get_or_init(|| {
+                regex::Regex::new(r"(?:debounceMs|debounce_ms)\s*:\s*(\d+)")
+                    .expect("debounce regex")
+            });
+            if let Some(d) = re.captures(&c[1]).and_then(|d| d[1].parse::<u32>().ok()) {
+                parsed.debounce_ms = Some(d);
+            }
+        }
+        *live = Some(parsed);
     }
 }
 

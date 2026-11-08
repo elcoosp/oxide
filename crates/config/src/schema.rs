@@ -62,6 +62,7 @@ pub fn config_schema() -> Value {
             },
 
             "experiments": experiments_schema(),
+            "live": live_schema(),
 
             "plugins": {
                 "type": "array",
@@ -516,6 +517,24 @@ fn experiments_schema() -> Value {
     })
 }
 
+/// Schema fragment for the `live` section (V2-F05 — the live-loader
+/// transport knobs: hub capacity, cadence, per-IP security cap, transport).
+fn live_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "description": "V2-F05: live-loader transport knobs (the SSE hub's capacity, cadence and transport). Defaults are inert - with no route opting in (page.server.ts live: true) nothing listens and no hub is constructed. Validation (DSP-111): keepaliveSeconds >= 1, maxSubscribers >= 1, maxRerunsPerSecond >= 1, perIpMax <= maxSubscribers.",
+        "properties": {
+            "maxSubscribers": { "type": "integer", "minimum": 1, "default": 5000, "description": "The hub's total subscriber capacity; the endpoint answers 503 + retry-after above it." },
+            "debounceMs": { "type": "integer", "minimum": 0, "default": 50, "description": "Per-subscriber rerun debounce in ms." },
+            "keepaliveSeconds": { "type": "integer", "minimum": 1, "default": 20, "description": "SSE keepalive ping period in seconds (DSP-111 rejects 0)." },
+            "maxRerunsPerSecond": { "type": "integer", "minimum": 1, "default": 20, "description": "Per-subscriber rerun rate cap per second." },
+            "perIpMax": { "type": "integer", "minimum": 1, "default": 20, "description": "Per-peer subscriber cap (security); cannot exceed maxSubscribers." },
+            "transport": { "enum": ["sse", "poll"], "default": "sse", "description": "sse streams snapshots over GET /__oxide/live; poll is the serverless fallback." }
+        }
+    })
+}
+
 /// Serialize the schema as pretty JSON with a trailing newline, ready to
 /// write to `.oxide/schema/config.json` or a project's committed schema file.
 /// The output re-parses as JSON and is deterministic (pinned by
@@ -526,10 +545,35 @@ fn experiments_schema() -> Value {
 /// Fails with `CFG-SCHEMA` when the in-memory schema cannot be serialized
 /// (`serde_json` value out of range — not reachable for this literal).
 pub fn config_schema_pretty() -> Result<String> {
-    let value = config_schema();
+    let value = sort_schema_value(config_schema());
     let s = serde_json::to_string_pretty(&value)
         .map_err(|e| crate::err("CFG-SCHEMA", format!("schema serialization failed: {e}")))?;
     Ok(format!("{s}\n"))
+}
+
+/// Canonicalize a schema `Value`: every object's keys in sorted order.
+///
+/// `serde_json::Map` is order-flavored — with the default build objects
+/// sort (`BTreeMap`), but a feature flip elsewhere in the graph (e.g.
+/// `bundler`'s `--all-features` pulling `serde_json/preserve_order`) makes
+/// every `json!` object in the workspace emit in insertion order instead,
+/// which silently desyncs the committed artifact from the generator (the
+/// byte gates in `crates/config/tests/schema_stability.rs` and
+/// `crates/schema/tests/schema_tdd.rs`). Projecting through a `BTreeMap`
+/// pins the emission to sorted keys under any feature unification; with
+/// the default map flavor this is a no-op.
+fn sort_schema_value(value: Value) -> Value {
+    match value {
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .collect::<std::collections::BTreeMap<String, Value>>()
+                .into_iter()
+                .map(|(k, v)| (k, sort_schema_value(v)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.into_iter().map(sort_schema_value).collect()),
+        other => other,
+    }
 }
 
 #[cfg(test)]

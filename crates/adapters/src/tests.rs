@@ -107,7 +107,11 @@ fn dockerfile_every_instruction_starts_its_own_line() {
 #[test]
 fn capability_matrix_binary_is_all_full() {
     let m = caps(Target::Binary);
-    assert_eq!(m.len(), 7, "all seven §18 capabilities reported");
+    assert_eq!(
+        m.len(),
+        8,
+        "all eight §18 capabilities reported (Live joins in V2-F05)"
+    );
     for (cap, sup) in &m {
         assert_eq!(*sup, FeatureSupport::Full, "{cap:?} must be Full on binary");
     }

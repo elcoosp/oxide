@@ -141,6 +141,14 @@ pub struct OxideConfig {
     /// (`DSP-110`).
     #[serde(default)]
     pub experiments: Vec<ExperimentConfig>,
+    /// V2-F05 (§V2-F05 step 8): the live-loader transport knobs (the SSE
+    /// hub's capacity, cadence and transport). Defaults are inert: with no
+    /// route opting in (`page.server.ts` `live: true`) nothing listens and
+    /// no hub is constructed. Knobs are validated at load (`DSP-111`):
+    /// the keepalive must be ≥ 1 s, the hub must hold at least one
+    /// subscriber, and the per-IP cap cannot exceed the global cap.
+    #[serde(default)]
+    pub live: LiveConfig,
 }
 
 /// S-09: opt-in toggle for the OG rasterization endpoint.
@@ -307,8 +315,64 @@ impl Default for OxideConfig {
             og: OgConfig::default(),
             images_endpoint: EndpointToggle::default(),
             experiments: Vec::new(),
+            live: LiveConfig::default(),
         }
     }
+}
+
+/// V2-F05 (§V2-F05 step 8): the live-loader transport knobs. All fields
+/// camelCase on the wire (`maxSubscribers`, `debounceMs`,
+/// `keepaliveSeconds`, `maxRerunsPerSecond`, `perIpMax`). Unknown keys are
+/// rejected (`deny_unknown_fields`) so a typo cannot silently disable a
+/// production knob.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
+pub struct LiveConfig {
+    /// The hub's total subscriber capacity; the endpoint answers `503` +
+    /// `retry-after` above it (spec step 8: 5000).
+    pub max_subscribers: u32,
+    /// Per-subscriber rerun debounce in ms (spec step 8: 50).
+    pub debounce_ms: u64,
+    /// SSE keepalive `ping` period in seconds (spec step 8: 20; `DSP-111`
+    /// rejects 0 — an immediate-tick keepalive busy-loops every
+    /// connection).
+    pub keepalive_seconds: u64,
+    /// Per-subscriber rerun rate cap per second (spec step 8: 20).
+    pub max_reruns_per_second: u32,
+    /// Per-peer subscriber cap (spec security bullet: "per-IP subscriber
+    /// cap (default 20)"); `DSP-111` rejects values above
+    /// `max_subscribers`.
+    pub per_ip_max: u32,
+    /// The transport. `sse` pushes snapshots; `poll` is the serverless
+    /// fallback (`capability_matrix(...).get(&Capability::Live)`).
+    pub transport: LiveTransport,
+}
+
+impl Default for LiveConfig {
+    fn default() -> Self {
+        Self {
+            max_subscribers: 5_000,
+            debounce_ms: 50,
+            keepalive_seconds: 20,
+            max_reruns_per_second: 20,
+            per_ip_max: 20,
+            transport: LiveTransport::Sse,
+        }
+    }
+}
+
+/// V2-F05: the live transport. `sse` (default) streams snapshots over
+/// `GET /__oxide/live`; `poll` makes the client fetch `/__data` on the
+/// keepalive cadence instead (the serverless/edge fallback — the
+/// capability matrix degrades `Live` to `Degraded` there).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LiveTransport {
+    /// Server-sent events (the spec's default transport).
+    #[default]
+    Sse,
+    /// HTTP polling fallback (`transport: 'poll'` in the spec table).
+    Poll,
 }
 
 /// Static export settings (§10.5). When `fallback` is set, the static

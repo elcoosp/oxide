@@ -20,6 +20,7 @@ fn config_schema_has_the_known_top_level_sections() {
         "framework",
         "i18n",
         "images",
+        "live",
         "modules",
         "og",
         "render",

@@ -51,9 +51,25 @@ tracing = { workspace = true }
 # P-12: hot-asset body cache (no blocking re-read per request).
 moka = { workspace = true }
 
+[features]
+# V2-F05: exposes the criterion bench harness (the V2-B09 pattern — plain
+# `cargo test` never pays the criterion build).
+bench-util = []
+
 [dev-dependencies]
 tempfile = { workspace = true }
+# V2-F05: the runner/stream pins run under tokio's paused clock
+# (`start_paused` + `advance`) so debounce and keepalive cadence are
+# deterministic; `test-util` is test-only and never reaches production.
+tokio = { workspace = true, features = ["test-util"] }
+# V2-B09/V2-F05: criterion for the live-hub and framing benches.
+criterion = { workspace = true }
 
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+[[bench]]
+name = "live"
+harness = false
+required-features = ["bench-util"]
