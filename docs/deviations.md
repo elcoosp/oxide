@@ -137,3 +137,44 @@ land with the A01/A02 (cli split + `oxide-dispatch` crate) milestone:
    `dispatch` does not exist until A02; `render`'s `NonceSplicer` lands with
    B08 (needs A01); only `server/benches/metrics.rs` is possible today and
    was deferred to keep the milestone's compile surface V8-free.
+
+## V2-A02 dispatch substrate — deferred CLI adoption (2026-11-08)
+
+The V2-A02 milestone landed the V8-free `oxide-fw-dispatch` crate complete
+per the spec's acceptance (`cargo test -p oxide-fw-dispatch` in 1.3 s;
+`cargo tree -p oxide-fw-dispatch | grep -c jshost` = 0). What is
+deliberately deferred, and why:
+
+1. **The CLI still owns duplicate copies of the moved helpers.** The spec's
+   "move, do not rewrite" applies to the phase-3 PR that splits
+   `build_dispatch` (V2-A01 phase 3), because deleting the CLI's private
+   `parse_form_urlencoded` / `action_from_query` and re-pointing the closure
+   at `oxide_fw_dispatch::url` requires compiling `oxide-fw-cli` — a V8 link
+   (~5 min per iteration, CONVENTIONS §8) this sandbox cannot pay. Until
+   then both copies exist; the dispatch copies are the tested, `pub`,
+   `#[must_use]` ones and the tests pin byte-for-byte semantics (including
+   the `"//"` and empty-input edge pins that document current closure
+   behaviour).
+2. **`chain.rs` / `loads.rs` / `deps.rs` / `ctx.rs` are absent.** The spec
+   assigns them to V2-A05, V2-A06 and the A01 phase-3 move respectively;
+   landing them now would mean inventing CLI-private state (`DispatchDeps`
+   captures `l0`, `pool`, `waterfall`, …) without a compile to check
+   against.
+3. **`[workspace.lints]` is opt-in, not workspace-wide.** The policy table
+   now exists at the root (`rust.warnings = deny`,
+   `clippy.pedantic = warn, priority = -1`), but only `oxide-fw-dispatch`
+   declares `[lints] workspace = true`. Rolling it across the other 18
+   crates is a dedicated hygiene pass (the existing crates were never held
+   to pedantic; `--no-deps`-scoped runs on `oxide-fw-diagnostics` alone
+   surface 13 pedantic diagnostics). The command-line pedantic gate for the
+   new crate is therefore run as
+   `cargo clippy --no-deps -p oxide-fw-dispatch --all-targets
+   --all-features -- -D warnings -W clippy::pedantic`.
+4. **The dispatch bench ids are not in the criterion baseline.**
+   `baseline-v01.json` / `after-wave-b.json` cover the Wave B ids only;
+   registering the new `url/*` and `ctx_table/*` ids belongs to the same
+   R03 gate-wiring step already deferred in "V2 Wave B foundations".
+
+**To unclose:** land A01 phase 3 on a V8-capable host; it deletes the CLI
+duplicates, flips the closure to the stage protocol, and switches the
+helpers to `oxide_fw_dispatch::url::*` in the same commit series.
