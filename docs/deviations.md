@@ -404,3 +404,108 @@ from an earlier session and now ignores the machine-local
 branch filter is the truncated token (`ain]`) — the tree already has the
 correct filter; the spec text predates the fix and the item is closed in
 the tree.
+
+## V2-F05 live loaders — deltas and deferrals (substrate step)
+
+**Status.** Substrate landed (`crates/server/src/live.rs`,
+`crates/router/src/lib.rs::RouteLive` + scan,
+`crates/config/src/lib.rs::LiveConfig`,
+`crates/dispatch/src/build.rs` live data-plane contract,
+`crates/render/src/lib.rs` bootstrap,
+`crates/adapters/src/lib.rs::Capability::Live`,
+`packages/core/src/client/live.ts`). Endpoint, rerun closure and the
+client-router lifecycle are the A01-phase-3 wiring (V8-linked); see the
+handoff for the one-sentence pickup list.
+
+**Deliberate deltas from the spec text (refinements, not forks):**
+
+1. **`Sub.tags` is a `BTreeSet`, not the spec's `HashSet`** — `affected`
+   fan-out order must be deterministic for the same tag set (pins, stable
+   SSE ordering); the hub indexes are `DashMap` either way.
+2. **`LiveHub::new(max, per_ip_max)` and `Result<Guard, SubscribeError>`**
+   instead of the spec's `new(max)` + `Result<Guard, ()>` — the config
+   surface carries `live.perIpMax` (the spec's own security bullet
+   "per-IP subscriber cap (default 20)"), and the endpoint needs to know
+   which limit tripped for its 503; the error type names the two.
+   `subscribe` keeps the spec's fetch-add-then-rollback capacity check.
+3. **The runner's debounce window is per received batch**, not a
+   per-subscriber timer wheel — with one notification stream a batch
+   window collapses the same burst into one rerun (the spec's own test:
+   "debounce collapses 5 notifications in 50 ms into one rerun" passes
+   verbatim under paused time); the per-subscriber rate cap carries the
+   per-connection bound (`maxRerunsPerSecond`).
+4. **`same_origin` treats missing evidence as deny** — `Sec-Fetch-Site`
+   present and not `same-origin` → deny; no `Origin`/no `Host` → deny.
+   The wiring supplies the headers verbatim; proxies that strip
+   `Sec-Fetch-Site` fall to the Origin-vs-Host authority compare (host
+   case-insensitive, port exact, scheme-default port for a port-less
+   Host header).
+5. **`live_stream` payloads are base64-encoded by the substrate** (the
+   spec's `data: <base64 ODF>` line) — the `watch` channel holds raw ODF
+   bytes; encoding at the frame boundary keeps the SSE line framing
+   byte-safe and the rerun closure payload-agnostic.
+6. **`connectLive` is transport/document/reload-injectable** — the Node
+   test runner (`node --test`, no jsdom) cannot construct an
+   `EventSource` or `document`; injection keeps the module import-safe
+   (the `boot.ts` contract) with the spec's globals as defaults.
+
+**What is deliberately deferred (A01 phase-3 / V8-capable host):**
+
+1. **No `GET /__oxide/live` endpoint in the pipeline yet** — the
+   same-origin check, the route lookup, subscribe-or-503 and the
+   `live_stream` body compose into the dispatch closure's stage list;
+   the substrate functions are reachable from tests/benches only.
+2. **No rerun closure** — the wiring calls the same data-route path as
+   `/__data` (spec step 5) with the stored header snapshot so middleware,
+   locals, layout loads and gating behave identically; `Runner` runs with
+   an injected closure in tests. The `event: stale` emission on a failed
+   rerun (redirect/error → `None` snapshot) is the wiring's watch on the
+   cleared channel.
+3. **No tag-revalidation hook** — the `TieredCache::invalidate_tag` call
+   sites (server + action handlers' `revalidate.tag`) do not call
+   `hub.affected(tag)` yet; the substrate pins the fan-out.
+4. **No client-router lifecycle** — `connectLive` is exported from
+   `client/live.ts` but the router does not call it after hydration yet
+   (an EventSource hitting a not-yet-existing endpoint would 404-retry
+   loop per page — worse than inert); the bootstrap already advertises
+   `live:true` for opted-in routes and the field is read by the wiring.
+5. **The `AST-LIV-001` refusal** (`live: true` on Static) belongs to the
+   refusal-rule WP (spec §2776 `check_config`); the matrix row it consults
+   is in place. The `tests/live.sh` integration script needs the running
+   endpoint — deferred with it.
+6. **Capability row choices the spec sentence leaves open**: Deno/Bun =
+   Full (NodeHost-backed runtimes with full §18 sockets rows); Cloudflare/
+   CloudflarePages = Degraded (Workers stream but do not guarantee
+   long-lived connections) — both documented in `degradation()`.
+
+**Hygiene rides-along (recorded because the gates demand them):**
+
+1. **Workspace resolution was broken at `v0.3.0`**: the A04 version-bump
+   commit moved `[workspace.package] version` to 0.3.0 while the 18
+   internal `[workspace.dependencies]` entries still required `0.1.0` —
+   `cargo metadata`/`cargo fetch`/any `cargo build` failed on the tagged
+   tree. Fixed by dropping the version reqs from the internal entries
+   (path-only): the version stays single-sourced in `[workspace.package]`
+   and ship.sh's next bump cannot re-break resolution.
+2. **The root `package.json` was invalid JSON**: `"version": "0.3.0",,`
+   — a doubled comma the previous ship's version-bump edit spliced in,
+   present on the tagged `v0.3.0` tree (`json.load` rejects the file).
+   Fixed; the F05 ship's version-bump step rewrites the whole
+   `"version": "…"` line instead of appending to its value.
+3. **`--all-features` flipped the schema byte-gates red** (pre-existing,
+   proven on the pin-fixed tree): `bundler`'s feature graph pulls
+   `serde_json/preserve_order`, which reorders every `serde_json::Value`
+   map in the unified build — `config_schema_pretty()` emitted unsorted
+   and both `schema_stability.rs` and `schema_tdd.rs` failed. Fixed by
+   canonicalizing the emitter through a BTreeMap projection (sorted keys
+   under any feature unification; a no-op with the default flavor); the
+   checked-in artifact regenerated (byte-identical under default flags).
+3. **`server`/`render`/`adapters` have not adopted `[lints]
+   workspace=true`** — their combined pre-existing pedantic debt
+   (~70 sites across the 6.2k-line server pipeline, render, adapters)
+   belongs to the planned dedicated hygiene pass (the workspace Cargo.toml
+   note: "the remaining V8-free crates adopt pedantic in a dedicated
+   hygiene pass"). Every site the F05 substrate added is pedantic-clean
+   by direct check; `server` gained a dev-only `tokio` `test-util`
+   feature (paused-time pins) and the `bench-util` criterion harness
+   (V2-B09 pattern).
