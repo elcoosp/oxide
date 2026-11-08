@@ -15,13 +15,13 @@
 
 Oxide's routes are files. This crate turns `routes/**` into a `RouteTree` that the server can match against in microseconds, with layout chains, nearest error boundaries, and full ancestor middleware resolution.
 
-The routing conventions follow SvelteKit: `routes/blog/[slug]/page.tsx` becomes `/blog/:slug`, `routes/(marketing)/about/page.tsx` becomes `/about` (group elided from the URL, preserved in the layout chain), `routes/@modal/login/page.tsx` becomes a slot. Each file's role (`page`, `layout`, `error`, `not-found`, `template`, `loading`, `route`, `socket`) is inferred from its filename.
+The routing conventions follow `SvelteKit`: `routes/blog/[slug]/page.tsx` becomes `/blog/:slug`, `routes/(marketing)/about/page.tsx` becomes `/about` (group elided from the URL, preserved in the layout chain), `routes/@modal/login/page.tsx` becomes a slot. Each file's role (`page`, `layout`, `error`, `not-found`, `template`, `loading`, `route`, `socket`) is inferred from its filename.
 
 ## What it provides
 
 - **`RouteTree`** — the compiled tree; `match_path` returns a `MatchResult`
 - **`RouteEntry`** — one route: `kind`, `id`, `file`, `segments`, `render_mode`, `has_server_module`, `needs_parent`
-- **`RouteKind`** — Page, Layout, Endpoint, Error, NotFound, Template, Loading, Socket
+- **`RouteKind`** — Page, Layout, Endpoint, Error, `NotFound`, Template, Loading, Socket
 - **`ArchivedTree`** — an mmap'd rkyv archive for zero-alloc route matching in production (built once per `oxide build`)
 - **`RulesEngine`** — redirects, rewrites, headers, auth, rate-limits (with token buckets)
 - **Segment parsing** — `[slug]`, `[...path]`, `[[opt]]`, `(group)`, `@slot`
