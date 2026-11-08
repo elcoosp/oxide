@@ -318,3 +318,89 @@ between prelude and the L0 lookup, threads `Resolved::assigned` into
 `RequestLocals` via the already-landed `set_experiments`, appends the vary
 suffix to the L0 key, strips minted cookies from cached entries, and adds
 the `oxide_experiment_assignment` counters.
+
+## V2-A04 build id + generations substrate — spec deltas and deferred wiring
+
+**Status.** Substrate landed (`crates/cache/src/lib.rs::build_id_of_dist`,
+`crates/dispatch/src/build.rs` — `GenerationSet`, `stage_build_check`,
+`advertise_build`, `is_data_plane_path` — plus the additive
+`render::hydration_bootstrap_with_build` / `Injector::with_build_id` and the
+`packages/core/src/client/build.ts` client helpers wired into the router,
+`enhance` and `__oxide_call_fn`). This follows the A02/A05/A06/F04 pattern:
+the V8-free surface ships complete and pinned, the V8-linked wiring is
+deferred.
+
+**Deliberate deltas from the spec text:**
+
+1. **`hydration_bootstrap` keeps its three-argument signature; the build
+   field ships as an additive overload.** The spec's "update the signature
+   to `hydration_bootstrap(odf_b64, route_id, nonce, build_id)`" assumed A01
+   phase 3 had already moved the CLI call sites (`crates/cli/src/lib.rs`
+   still calls the 3-arg form from V8-linked code this sandbox cannot
+   compile). Breaking that signature now would leave the workspace
+   un-compilable on a V8-capable host. `hydration_bootstrap_with_build` is
+   the four-field variant; `Injector::with_build_id` opts a page into it,
+   and the 3-arg shape is byte-identical to the pre-A04 output (pinned by
+   `legacy_bootstrap_has_no_build_field`).
+2. **`stage_build_check` takes the raw header list and an `Instant`.** The
+   spec's sketch lives inside the dispatch closure's `RequestCtx`, which is
+   A01-phase-3 material (it captures CLI-private state). The substrate's
+   signature is the pure shape of the same decision — path, headers,
+   generation set, now — and the wiring adapts it 1:1.
+3. **`is_data_plane_path` covers only today's data plane** (`/__data`,
+   `/_oxide/fn/*`). The spec's "later `/__oxide/live`, `/__oxide/stream/*`"
+   routes do not exist yet; adding them to the set before the routes land
+   would enforce a header no client sends. The pins reject
+   `/__oxide/stream/*` explicitly so the routes' WPs flip the predicate
+   deliberately.
+4. **`build_id_of_dist` tolerates missing covered inputs.** A missing
+   `.oxide/routes.manifest` or `dist/server/**` narrows the manifest to
+   what exists instead of erroring; only a missing `dist` root errors
+   (`CAC-BUILDID`). The wiring runs at the end of `phase_emit`, on whatever
+   the emit phase actually produced, and a narrower manifest still changes
+   the id (so a half-emitted build is never accepted as its predecessor).
+5. **`handleStale`'s reload default is `globalThis.location?.reload()`.**
+   The spec's `location.reload()` default throws in the Node test runner
+   (`packages/core` tests on the built-in runner, no jsdom); optional
+   chaining makes the module import-safe in the SSR/config-loader Node
+   environment (the `boot.ts` contract) with identical browser behaviour.
+   The storage guard treats a missing/blocked `sessionStorage` as "reload
+   once" — the server's 409 is authoritative and no-guard beats
+   stuck-stale.
+6. **`stage_build_check` runs before the L0 lookup in the wiring's plan,
+   not in this substrate.** The dispatch closure is V8-linked; the
+   substrate stage composes with the `Flow` protocol the phase-3 stages
+   return, so the wiring is a call site, not a redesign.
+
+**What is deliberately deferred (A01 phase-3 / V8-capable host):**
+
+1. **`phase_emit` does not compute or persist the id yet** — the
+   `build_id_of_dist` call at the end of emit and the writes to
+   `dist/build-id` / `.oxide/build-id` live in `cmd_build` (V8-linked).
+   Until then `build_id_of_dist` is reachable from tests/benches only.
+2. **No stage in the pipeline** — the closure does not call
+   `stage_build_check` and responses are not passed through
+   `advertise_build`; the data plane behaves byte-identically to pre-A04
+   (the acceptance "absent header allowed" holds trivially).
+3. **No generation promotion** — `cmd_dev` reload does not construct a
+   `GenerationSet`, so the window semantics are pinned but not driven.
+4. **The conformance assertion "build id advertised"** (HTML carries
+   `build:`, `/__data` answers carry `x-oxide-build`) belongs to the wiring
+   PR, together with the `packages/core` client bundle rebuild.
+
+**Hygiene rides-along (recorded because the gates demand them):** the
+workspace is now free of `#[allow(...)]` attributes — the pre-existing sites
+in `graph`/`odf`/`server` test helpers were turned into real tests or
+renamed to `snake_case`, the stale `dead_code` pair in the CLI's
+`tests.rs` (callers exist unconditionally) and the unreachable tail block in
+`jshost/src/loader_host.rs` (both match arms return) were deleted, the
+compiler's `AstBTreeMap` import+alias shim is gone, and the bundler doc
+comment no longer spells an allow attribute. The CLI and jshost edits are
+verified by reading (both crates link V8 and cannot compile in this
+sandbox); the graph/odf/server/compiler/bundler edits are test-verified.
+Also cleaned: `.gitignore` carried pasted shell output (`=== HEAD ===` …)
+from an earlier session and now ignores the machine-local
+`.github/pr-body.md`. Docs-drift note: spec A03 item 1 claims the CI push
+branch filter is the truncated token (`ain]`) — the tree already has the
+correct filter; the spec text predates the fix and the item is closed in
+the tree.
