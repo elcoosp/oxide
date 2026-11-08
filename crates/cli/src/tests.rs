@@ -1044,7 +1044,6 @@ async fn http_get(addr: std::net::SocketAddr, path: &str) -> String {
 /// use this so a substring that happens to straddle a chunk boundary
 /// (e.g. `<div id="root" data-reactroot="">` split at `data-reactro|ot`)
 /// is still found.
-#[allow(dead_code)]
 fn body_of(raw: &str) -> String {
     let body = match raw.split_once("\r\n\r\n") {
         Some((_, b)) => b,
@@ -1057,7 +1056,6 @@ fn body_of(raw: &str) -> String {
     }
 }
 
-#[allow(dead_code)]
 fn decode_chunked(mut s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     while let Some((sz_line, rest)) = s.split_once("\r\n") {
