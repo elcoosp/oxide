@@ -8,6 +8,7 @@ members = [
     "crates/bundler",
     "crates/jshost",
     "crates/router",
+    "crates/dispatch",
     "crates/server",
     "crates/render",
     "crates/cache",
@@ -30,12 +31,27 @@ repository = "https://github.com/elcoosp/oxide"
 homepage = "https://github.com/elcoosp/oxide"
 description = "Oxide: framework-agnostic, full-stack meta-framework with a Rust core (working name, spec v0.1)"
 authors = ["elcoosp <elcoosp@gmail.com>"]
+
+# V2-A02: workspace lint policy. Crates opt in per-manifest with
+# `[lints] workspace = true`; `oxide-fw-dispatch` is the first crate to
+# opt in. Command-line gates (CI `clippy -- -D warnings`) promote the
+# warn-level groups to hard failures, so a crate that opts in is held to
+# pedantic without any `#[allow]` escape hatch in its sources.
+[workspace.lints.rust]
+warnings = "deny"
+
+[workspace.lints.clippy]
+# Priority -1 so crate-local clippy attributes can still override individual
+# lints if a documented exception is ever needed (none exist today).
+pedantic = { level = "warn", priority = -1 }
+
 [workspace.dependencies]
 # Internal crates (spec §23)
 oxide-fw-diagnostics = { path = "crates/diagnostics", version = "0.1.0" }
 oxide-fw-schema = { path = "crates/schema", version = "0.1.0" }
 oxide-fw-odf = { path = "crates/odf", version = "0.1.0" }
 oxide-fw-router = { path = "crates/router", version = "0.1.0" }
+oxide-fw-dispatch = { path = "crates/dispatch", version = "0.1.0" }
 oxide-fw-graph = { path = "crates/graph", version = "0.1.0" }
 oxide-fw-config = { path = "crates/config", version = "0.1.0" }
 oxide-fw-cache = { path = "crates/cache", version = "0.1.0" }
