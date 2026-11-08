@@ -345,6 +345,67 @@ fn hydration_bootstrap_sanitizes_route_id_by_percent_encoding() {
     );
 }
 
+// --------------------------------------------- hydration bootstrap build id (§V2-A04)
+
+#[test]
+fn hydration_bootstrap_with_build_exact_shape() {
+    // §V2-A04: the bootstrap gains the fourth `build` field, between route
+    // and data, so the browser can advertise the id on data-plane fetches.
+    let out = hydration_bootstrap_with_build("T0RG", "routes/index", "n", "deadbeef0000000f");
+    assert_eq!(
+        out,
+        "<script type='application/oxide-data' nonce='n'>T0RG</script>\
+<script nonce='n'>window.__oxide={route:\"routes/index\",build:\"deadbeef0000000f\",data:document.currentScript.previousElementSibling.textContent}</script>"
+    );
+}
+
+#[test]
+fn legacy_bootstrap_has_no_build_field() {
+    // Additive substrate: the 3-arg shape is unchanged (the V8-linked CLI
+    // call site keeps compiling until the A01-phase-3 wiring lands).
+    let out = hydration_bootstrap("T0RG", "routes/index", "n");
+    assert!(!out.contains("build:"), "{out}");
+    assert!(
+        out.contains("window.__oxide={route:\"routes/index\",data:"),
+        "{out}"
+    );
+}
+
+#[test]
+fn bootstrap_build_field_is_percent_encoded_like_route_id() {
+    // The build id is pipeline-generated hex, but the field sits in a JS
+    // string literal: anything outside the route-id alphabet degrades to
+    // percent-encoding instead of breaking the script.
+    let out = hydration_bootstrap_with_build("AA", "routes/index", "n", "ABC\"DEF");
+    assert!(out.contains("build:\"%41%42%43%22%44%45%46\""), "{out}");
+}
+
+#[test]
+fn injector_with_build_id_emits_the_build_field() {
+    let html = "<html><head><title>t</title></head><body><h1>hi</h1></body></html>";
+    let mut inj = Injector::new(head(None, vec![]), "n".into(), "routes/index".into())
+        .with_build_id("deadbeef0000000f");
+    inj.odf_payload_b64 = Some("T0RG".into());
+    let out = inj.inject_into_html(html).expect("inject");
+    assert!(out.contains("build:\"deadbeef0000000f\""), "{out}");
+}
+
+#[test]
+fn injector_without_build_id_keeps_the_legacy_shape() {
+    let html = "<html><body><h1>hi</h1></body></html>";
+    let mut inj = Injector::new(head(None, vec![]), "n".into(), "routes/index".into());
+    inj.odf_payload_b64 = Some("T0RG".into());
+    let out = inj.inject_into_html(html).expect("inject");
+    assert!(
+        out.contains("window.__oxide={route:\"routes/index\",data:"),
+        "{out}"
+    );
+    assert!(
+        !out.contains("build:"),
+        "no build field without an id: {out}"
+    );
+}
+
 // ---------------------------------------------------------------- Server-Timing (§20)
 
 #[test]
