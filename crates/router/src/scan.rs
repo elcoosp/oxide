@@ -44,7 +44,7 @@ pub(crate) fn scan_impl(dir: &Path) -> Result<RouteTree> {
     // Route ids are file-derived and carry the canonical root name (§8.1):
     // `routes/blog/[slug]/page` under the Oxide conventions root, `app/...` in
     // Next-compat mode (`app/**/page.tsx`).
-    let id_prefix = if root.file_name().map(|s| s == "app").unwrap_or(false) {
+    let id_prefix = if root.file_name().is_some_and(|s| s == "app") {
         "app"
     } else {
         "routes"
@@ -109,6 +109,100 @@ fn has_top_level_module(dir: &Path) -> bool {
     names.iter().any(|n| file_role(n).is_some())
 }
 
+/// The `.server.ts` data modules found alongside a directory's page/layout
+/// (§8.1, D10): at most one `page.server.ts` and one `layout.server.ts`.
+struct ServerModules {
+    page_server: Option<String>,
+    layout_server: Option<String>,
+}
+
+impl ServerModules {
+    fn of(files: &[String]) -> Self {
+        Self {
+            page_server: files.iter().find(|f| is_server_module(f, "page")).cloned(),
+            layout_server: files
+                .iter()
+                .find(|f| is_server_module(f, "layout"))
+                .cloned(),
+        }
+    }
+}
+
+/// Build the route entry for one route-module file (`name`) in `dir`, or
+/// `None` when the file has no route role. Page config (render mode, cache
+/// tags) and the §9.2 `needs_parent` verdict are read from the adjacent
+/// `.server.ts` module here.
+fn route_entry_for(
+    walk: &Walk,
+    dir: &Path,
+    rel: &[String],
+    url_segs: &[String],
+    slot: Option<&str>,
+    name: &str,
+    modules: &ServerModules,
+) -> Option<RouteEntry> {
+    let role = file_role(name)?;
+    let base = name.split('.').next().unwrap_or(name);
+    let kind = match role {
+        FileRole::Page => RouteKind::Page,
+        FileRole::Layout => RouteKind::Layout,
+        FileRole::Loading => RouteKind::Loading,
+        FileRole::Error => RouteKind::Error,
+        FileRole::NotFound => RouteKind::NotFound,
+        FileRole::Template => RouteKind::Template,
+        FileRole::Endpoint => RouteKind::Endpoint,
+        FileRole::Middleware => RouteKind::Middleware,
+        FileRole::Socket => RouteKind::Socket,
+    };
+    let mut id = walk.id_prefix.clone();
+    for r in rel {
+        id.push('/');
+        id.push_str(r);
+    }
+    id.push('/');
+    id.push_str(base);
+    let mut file_rel = rel.to_vec();
+    file_rel.push(name.to_string());
+    let mut render_mode = None;
+    let mut tags = Vec::new();
+    let has_server_module = match kind {
+        RouteKind::Page => {
+            if let Some(server) = &modules.page_server {
+                read_page_config(&dir.join(server), &mut render_mode, &mut tags);
+            }
+            modules.page_server.is_some()
+        }
+        RouteKind::Layout => modules.layout_server.is_some(),
+        _ => false,
+    };
+    // V2-A06 step 1 (§9.2): the `parent()` verdict is token-exact and
+    // applies to BOTH the page and its layouts. Pre-A06 only pages were
+    // probed (with a substring test), and layouts always reported
+    // `false` — so the load graph substrate (`oxide-fw-dispatch`
+    // `run_load_graph`) could never schedule a `parent()`-calling
+    // layout behind its own parent. The flag threads verbatim into
+    // `RouteContext.layout_loads[i].needs_parent` (V2-B01).
+    let server_module = match kind {
+        RouteKind::Page => modules.page_server.as_ref(),
+        RouteKind::Layout => modules.layout_server.as_ref(),
+        _ => None,
+    };
+    let needs_parent = server_module
+        .and_then(|s| fs::read_to_string(dir.join(s)).ok())
+        .is_some_and(|c| calls_parent(&c));
+    Some(RouteEntry {
+        id: RouteId(id),
+        kind,
+        segments: url_segs.to_vec(),
+        file: file_rel.iter().collect(),
+        render_mode,
+        tags,
+        has_server_module,
+        slot: slot.map(str::to_string),
+        needs_parent,
+    })
+}
+
 fn walk_dir(
     walk: &mut Walk,
     dir: &Path,
@@ -140,69 +234,11 @@ fn walk_dir(
     }
 
     // `*.server.ts` modules adjacent to pages/layouts mark `has_server_module` (§8.1, D10).
-    let page_server = files.iter().find(|f| is_server_module(f, "page")).cloned();
-    let layout_server = files
-        .iter()
-        .find(|f| is_server_module(f, "layout"))
-        .cloned();
-
+    let modules = ServerModules::of(&files);
     for name in &files {
-        let Some(role) = file_role(name) else {
-            continue;
-        };
-        let base = name.split('.').next().unwrap_or(name);
-        let kind = match role {
-            FileRole::Page => RouteKind::Page,
-            FileRole::Layout => RouteKind::Layout,
-            FileRole::Loading => RouteKind::Loading,
-            FileRole::Error => RouteKind::Error,
-            FileRole::NotFound => RouteKind::NotFound,
-            FileRole::Template => RouteKind::Template,
-            FileRole::Endpoint => RouteKind::Endpoint,
-            FileRole::Middleware => RouteKind::Middleware,
-            FileRole::Socket => RouteKind::Socket,
-        };
-        let mut id = walk.id_prefix.clone();
-        for r in rel {
-            id.push('/');
-            id.push_str(r);
+        if let Some(entry) = route_entry_for(walk, dir, rel, url_segs, slot, name, &modules) {
+            walk.entries.push(entry);
         }
-        id.push('/');
-        id.push_str(base);
-        let mut file_rel = rel.to_vec();
-        file_rel.push(name.clone());
-        let mut render_mode = None;
-        let mut tags = Vec::new();
-        let has_server_module = match kind {
-            RouteKind::Page => {
-                if let Some(server) = &page_server {
-                    read_page_config(&dir.join(server), &mut render_mode, &mut tags);
-                }
-                page_server.is_some()
-            }
-            RouteKind::Layout => layout_server.is_some(),
-            _ => false,
-        };
-        let needs_parent = if matches!(kind, RouteKind::Page) {
-            page_server
-                .as_ref()
-                .and_then(|s| std::fs::read_to_string(dir.join(s)).ok())
-                .map(|c| c.contains("parent"))
-                .unwrap_or(false)
-        } else {
-            false
-        };
-        walk.entries.push(RouteEntry {
-            id: RouteId(id),
-            kind,
-            segments: url_segs.to_vec(),
-            file: file_rel.iter().collect(),
-            render_mode,
-            tags,
-            has_server_module,
-            slot: slot.map(str::to_string),
-            needs_parent,
-        });
     }
 
     for name in &subdirs {
@@ -294,6 +330,33 @@ fn is_server_module(name: &str, base: &str) -> bool {
         && parts[1] == "server"
         && parts.last().is_some_and(|e| SOURCE_EXTS.contains(e))
         && !parts[2..].iter().any(|e| DENYLIST_EXTS.contains(e))
+}
+
+/// True when the identifier `parent` appears as a whole token (spec §9.2,
+/// V2-A06 step 1): a load that mentions `parent` may call `await parent()`,
+/// so it must be scheduled after its predecessor and receive its data.
+///
+/// Deliberately an over-approximation: a whole-token mention inside a
+/// comment or a string still returns `true`, and a false positive only
+/// makes loads sequential — never incorrect. The pre-A06 heuristic
+/// (`src.contains("parent")`) was worse in the other direction: it
+/// serialized loads for `const parentDir = 1` and skipped layouts
+/// entirely.
+fn calls_parent(src: &str) -> bool {
+    let b = src.as_bytes();
+    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
+    let mut from = 0;
+    while let Some(p) = src[from..].find("parent") {
+        let s = from + p;
+        let e = s + "parent".len();
+        let before = s == 0 || !ident(b[s - 1]);
+        let after = e >= b.len() || !ident(b[e]);
+        if before && after {
+            return true;
+        }
+        from = e;
+    }
+    false
 }
 
 enum DirKind {
@@ -405,10 +468,12 @@ fn valid_param_name(name: &str) -> bool {
 /// `oxide build`, and the dev inspector in agreement today. An explicit
 /// `config.render` always wins.
 fn read_page_config(path: &Path, render_mode: &mut Option<String>, tags: &mut Vec<String>) {
+    static RENDER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static TAGS: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static QUOTED: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let Ok(text) = fs::read_to_string(path) else {
         return;
     };
-    static RENDER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let re = RENDER.get_or_init(|| {
         regex::Regex::new(r#"(?:render|renderMode|render_mode)\s*:\s*["']([A-Za-z0-9_-]+)["']"#)
             .expect("render regex")
@@ -423,11 +488,9 @@ fn read_page_config(path: &Path, render_mode: &mut Option<String>, tags: &mut Ve
         // route is eligible for prerendering at build time.
         *render_mode = Some("static".to_string());
     }
-    static TAGS: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let re =
-        TAGS.get_or_init(|| regex::Regex::new(r#"tags\s*:\s*\[([^\]]*)\]"#).expect("tags regex"));
+        TAGS.get_or_init(|| regex::Regex::new(r"tags\s*:\s*\[([^\]]*)\]").expect("tags regex"));
     if let Some(c) = re.captures(&text) {
-        static QUOTED: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
         let q = QUOTED
             .get_or_init(|| regex::Regex::new(r#"[\"']([^\"']+)[\"']"#).expect("quoted regex"));
         for m in q.captures_iter(&c[1]) {
@@ -730,7 +793,7 @@ mod tests {
         for w in a.entries.windows(2) {
             let ka = (w[0].segments.len(), prio(&w[0].segments), &w[0].id);
             let kb = (w[1].segments.len(), prio(&w[1].segments), &w[1].id);
-            assert!(ka <= kb, "entries not sorted: {:?} then {:?}", ka, kb);
+            assert!(ka <= kb, "entries not sorted: {ka:?} then {kb:?}");
         }
         // Depth-first ordering: root layout first, then 1-deep, then 2-deep.
         assert_eq!(a.entries[0].id.0, "routes/layout");
@@ -815,5 +878,167 @@ mod tests {
             ],
             "outermost layout first"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // V2-A06 step 1: token-exact `parent()` detection, pages AND layouts.
+    //
+    // The pre-A06 heuristic was `src.contains("parent")` on pages only:
+    // `const parentDir = 1` or a mention in a comment serialized the
+    // page's load behind the layout chain for no reason, and layouts
+    // always reported `false`, so the (not yet wired) parallel load
+    // graph would never schedule them behind their parent. The scanner
+    // must detect `parent` as a whole identifier token — an
+    // over-approximation is safe (a false positive only makes loads
+    // sequential) but the substring false positives are pure lost
+    // parallelism.
+    // ------------------------------------------------------------------
+
+    fn needs_parent_of(tree: &RouteTree, id: &str) -> bool {
+        tree.entries
+            .iter()
+            .find(|e| e.id.0 == id)
+            .unwrap_or_else(|| panic!("entry {id} not found"))
+            .needs_parent
+    }
+
+    #[test]
+    fn parent_token_detected() {
+        // The real fixture shape: `defineLoad(async ({ parent }) => { const p = await parent() })`.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        put(root, "layout.tsx", "l");
+        put(
+            root,
+            "page.server.ts",
+            "export const load = defineLoad(async ({ parent }) => (await parent()));",
+        );
+        put(root, "page.tsx", "p");
+        let tree = RouteTree::scan(root).unwrap();
+        assert!(
+            needs_parent_of(&tree, "routes/page"),
+            "a bare `await parent()` call must mark the page"
+        );
+        // `parent()` without `await` is still a call.
+        let tmp2 = tempfile::tempdir().unwrap();
+        put(
+            tmp2.path(),
+            "page.server.ts",
+            "export const load = () => parent();",
+        );
+        put(tmp2.path(), "page.tsx", "p");
+        let tree2 = RouteTree::scan(tmp2.path()).unwrap();
+        assert!(needs_parent_of(&tree2, "routes/page"));
+    }
+
+    #[test]
+    fn parentheses_not_enough_and_substrings_never_count() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        // `parentDir` is a different identifier: the pre-A06
+        // `contains("parent")` heuristic flagged it and lost the
+        // (layout, page) overlap on every such route.
+        put(
+            root,
+            "page.server.ts",
+            "export const load = () => { const parentDir = '../..'; return { parentDir } };",
+        );
+        put(root, "page.tsx", "p");
+        let tree = RouteTree::scan(root).unwrap();
+        assert!(
+            !needs_parent_of(&tree, "routes/page"),
+            "`parentDir` is not `parent`"
+        );
+        // Longer identifiers embedding `parent` are not calls either.
+        for src in [
+            "export const load = () => grandparent();",
+            "export const load = () => ({ parent_data: 1 });",
+            "export const load = () => ({ forParents: true });",
+        ] {
+            let tmp2 = tempfile::tempdir().unwrap();
+            put(tmp2.path(), "page.server.ts", src);
+            put(tmp2.path(), "page.tsx", "p");
+            let tree2 = RouteTree::scan(tmp2.path()).unwrap();
+            assert!(
+                !needs_parent_of(&tree2, "routes/page"),
+                "`{src}` must not count as a parent() call"
+            );
+        }
+        // Whole-token mentions that are NOT calls (comments, strings,
+        // destructured-but-unused bindings) over-approximate on purpose:
+        // a false positive only makes loads sequential, it is never a
+        // correctness bug.
+        for src in [
+            "// awaits parent() in a comment",
+            "export const load = () => 'parent';",
+            "export const load = async ({ parent }) => ({});",
+        ] {
+            let tmp3 = tempfile::tempdir().unwrap();
+            put(tmp3.path(), "page.server.ts", src);
+            put(tmp3.path(), "page.tsx", "p");
+            let tree3 = RouteTree::scan(tmp3.path()).unwrap();
+            assert!(
+                needs_parent_of(&tree3, "routes/page"),
+                "`{src}` is a whole-token over-approximation by design"
+            );
+        }
+    }
+
+    #[test]
+    fn layout_needs_parent_detected() {
+        // Pre-A06 layouts always reported `false` regardless of their
+        // `layout.server.ts` calling `await parent()`. The §9.2 load
+        // graph (V2-A06 step 2) consumes `RouteContext.layout_loads[i]
+        // .needs_parent` — which threads straight from this entry — so
+        // the inner layouts must carry the flag too.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        put(root, "layout.tsx", "l");
+        put(
+            root,
+            "layout.server.ts",
+            "export const load = defineLoad(async ({ parent }) => ({ ...(await parent()) }));",
+        );
+        put(root, "blog/layout.tsx", "l1");
+        put(
+            root,
+            "blog/layout.server.ts",
+            "export const load = defineLoad(async ({ parent }) => (await parent()));",
+        );
+        put(root, "blog/page.tsx", "p");
+        let tree = RouteTree::scan(root).unwrap();
+        assert!(
+            needs_parent_of(&tree, "routes/layout"),
+            "root layout calls parent()"
+        );
+        assert!(
+            needs_parent_of(&tree, "routes/blog/layout"),
+            "nested layout calls parent()"
+        );
+        assert!(
+            !needs_parent_of(&tree, "routes/blog/page"),
+            "the page never mentions parent"
+        );
+    }
+
+    #[test]
+    fn layout_without_parent_call_stays_parallel() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        put(root, "layout.tsx", "l");
+        put(
+            root,
+            "layout.server.ts",
+            "export const load = defineLoad(async ({ cookies }) => ({ theme: cookies.get('t') }));",
+        );
+        put(root, "page.tsx", "p");
+        let tree = RouteTree::scan(root).unwrap();
+        assert!(!needs_parent_of(&tree, "routes/layout"));
+        // No server module at all → false, unchanged.
+        let tmp2 = tempfile::tempdir().unwrap();
+        put(tmp2.path(), "layout.tsx", "l");
+        put(tmp2.path(), "page.tsx", "p");
+        let tree2 = RouteTree::scan(tmp2.path()).unwrap();
+        assert!(!needs_parent_of(&tree2, "routes/layout"));
     }
 }
