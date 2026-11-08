@@ -33,6 +33,9 @@ bytes = { workspace = true }
 # the bench-util feature so plain `cargo test` never pays the criterion build
 # (same pattern as `oxide-fw-router` and `oxide-fw-cache`, V2-B09).
 criterion = { workspace = true }
+# V2-A06: `start_paused` paused-time tests for the load graph need tokio's
+# `test-util` feature (the workspace dep ships `full`, which excludes it).
+tokio = { workspace = true, features = ["test-util"] }
 
 [[bench]]
 name = "context"
