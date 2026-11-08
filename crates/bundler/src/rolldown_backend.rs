@@ -24,7 +24,7 @@ use rolldown_common::{ModuleType, Output};
 use rolldown_plugin::{
     HookLoadArgs, HookLoadOutput, HookLoadReturn, HookResolveIdArgs, HookResolveIdOutput,
     HookResolveIdReturn, HookTransformArgs, HookTransformOutput, HookTransformReturn, HookUsage,
-    Plugin, Pluginable, PluginContext, SharedLoadPluginContext, SharedTransformPluginContext,
+    Plugin, PluginContext, Pluginable, SharedLoadPluginContext, SharedTransformPluginContext,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -1180,9 +1180,7 @@ impl OxidePassesPlugin {
         }
         let abs = PathBuf::from(bare);
         let normalized = crate::normalize(&abs);
-        if self.precompiled.contains_key(&abs)
-            || self.precompiled.contains_key(&normalized)
-        {
+        if self.precompiled.contains_key(&abs) || self.precompiled.contains_key(&normalized) {
             return None;
         }
         // The canonicalize pass resolves symlinked roots (`/var` vs
@@ -1405,10 +1403,7 @@ mod bug_mapkey_tests {
 
     fn plugin_with(key: &str) -> PrecompiledPlugin {
         let mut sources = BTreeMap::new();
-        sources.insert(
-            PathBuf::from(key),
-            "export default 'compiled'".to_string(),
-        );
+        sources.insert(PathBuf::from(key), "export default 'compiled'".to_string());
         PrecompiledPlugin::new(sources)
     }
 
@@ -1440,10 +1435,7 @@ mod bug_mapkey_tests {
     fn passes_with(keys: &[&str]) -> OxidePassesPlugin {
         let mut precompiled = BTreeMap::new();
         for k in keys {
-            precompiled.insert(
-                PathBuf::from(k),
-                "export default 'compiled'".to_string(),
-            );
+            precompiled.insert(PathBuf::from(k), "export default 'compiled'".to_string());
         }
         OxidePassesPlugin::new(
             oxide_fw_compiler::Env::Client,
@@ -1483,7 +1475,11 @@ mod bug_mapkey_tests {
     #[test]
     fn guard_passes_a_module_the_map_covers_exactly() {
         let passes = passes_with(&["/proj/src/components/a.vue"]);
-        assert!(passes.unprecompiled_sfc("/proj/src/components/a.vue").is_none());
+        assert!(
+            passes
+                .unprecompiled_sfc("/proj/src/components/a.vue")
+                .is_none()
+        );
     }
 
     #[test]
@@ -1522,7 +1518,9 @@ mod bug_mapkey_tests {
             std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         );
         assert!(
-            passes.unprecompiled_sfc(sfc.to_string_lossy().as_ref()).is_none(),
+            passes
+                .unprecompiled_sfc(sfc.to_string_lossy().as_ref())
+                .is_none(),
             "canonical map spelling must count as covered"
         );
         let _ = std::fs::remove_dir_all(&tmp);
@@ -1533,7 +1531,11 @@ mod bug_mapkey_tests {
         let passes = passes_with(&[]);
         assert!(passes.unprecompiled_sfc("/proj/src/page.tsx").is_none());
         assert!(passes.unprecompiled_sfc("/proj/src/style.css").is_none());
-        assert!(passes.unprecompiled_sfc("/proj/src/logo.svg?react").is_none());
+        assert!(
+            passes
+                .unprecompiled_sfc("/proj/src/logo.svg?react")
+                .is_none()
+        );
     }
 }
 
