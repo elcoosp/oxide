@@ -27,6 +27,9 @@ futures = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
 bytes = { workspace = true }
+# V2-F04: the deterministic §15.4 assignment hash (`id || 0x00 || sticky`
+# → bucket), already the workspace's content-addressing primitive (§5.4).
+blake3 = { workspace = true }
 
 [dev-dependencies]
 # V2-A02: criterion harness for the url/context hot-path benches. Opt-in via
@@ -45,6 +48,12 @@ required-features = ["bench-util"]
 # V2-A05: criterion bench for the middleware chain and unified locals.
 [[bench]]
 name = "middleware"
+harness = false
+required-features = ["bench-util"]
+
+# V2-F04: criterion bench for the experiments assignment engine.
+[[bench]]
+name = "experiments"
 harness = false
 required-features = ["bench-util"]
 
