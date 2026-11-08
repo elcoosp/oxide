@@ -72,10 +72,18 @@ pub(crate) fn entry_from_arch(a: &ArchivedArchEntry) -> RouteEntry {
     RouteEntry {
         id: RouteId(a.id.0.to_string()),
         kind: EntryLike::kind(a),
-        segments: a.segments.iter().map(|s| s.to_string()).collect(),
+        segments: a
+            .segments
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect(),
         file: PathBuf::from(&*a.file),
         render_mode: arch_opt_to_owned(&a.render_mode),
-        tags: a.tags.iter().map(|s| s.to_string()).collect(),
+        tags: a
+            .tags
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect(),
         has_server_module: a.has_server_module,
         slot: arch_opt_to_owned(&a.slot),
         needs_parent: a.needs_parent,
@@ -145,7 +153,7 @@ pub(crate) fn load_impl(path: &Path) -> Result<ArchivedTree> {
     let root = access(&mmap[..])?;
     let root = std::ptr::from_ref(root);
     Ok(ArchivedTree {
-        _mmap: mmap,
+        mmap,
         root,
         index: std::sync::OnceLock::new(),
     })
@@ -155,7 +163,7 @@ impl ArchivedTree {
     /// O(1) access to the validated archived root (no re-validation).
     #[inline]
     pub(crate) fn root(&self) -> &ArchivedArchiveRoot {
-        // SAFETY: struct invariant — `root` points into the read-only `_mmap`
+        // SAFETY: struct invariant — `root` points into the read-only `mmap`
         // and was validated by `access()` in `load_impl`; it is never mutated.
         unsafe { &*self.root }
     }
@@ -286,6 +294,8 @@ mod tests {
 
     #[test]
     fn archived_tree_reads_through_the_live_mmap() {
+        use std::io::{Seek, Write};
+
         let tmp = tempfile::tempdir().unwrap();
         let mut tree = RouteTree::new();
         tree.insert(RouteEntry {
@@ -317,7 +327,6 @@ mod tests {
             !offsets.is_empty(),
             "pattern bytes must appear in the archive"
         );
-        use std::io::{Seek, Write};
         let mut f = std::fs::OpenOptions::new()
             .write(true)
             .open(&manifest)
