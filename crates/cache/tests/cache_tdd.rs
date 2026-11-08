@@ -1003,3 +1003,192 @@ fn s3_client_error_does_not_name_the_bucket() {
         "the s3 client error is bucket-free",
     );
 }
+
+// ─── V2-B05: O(1) tag index with reverse map + eager cleanup ──────────────
+
+fn simple_entry(body: &[u8], tags: &[&str]) -> Entry {
+    Entry {
+        body: body.to_vec(),
+        status: 200,
+        headers: vec![],
+        tags: tags.iter().map(|s| s.to_string()).collect(),
+        policy: Policy {
+            ttl: Duration::from_secs(60),
+            swr: None,
+            stale_if_error: None,
+            soft_tags: true,
+        },
+        stored_at: now_ms(),
+        etag: "\"v1\"".into(),
+    }
+}
+
+/// Re-setting the same key under the same tag must not grow the tag set.
+#[tokio::test]
+async fn tag_insert_is_idempotent() {
+    let cache = TieredCache::new_memory();
+    for _ in 0..3 {
+        cache
+            .set("k", simple_entry(b"x", &["t"]))
+            .await
+            .expect("set");
+    }
+    let keys = cache.tag_keys("t").await.expect("tag_keys");
+    assert_eq!(
+        keys,
+        vec!["k".to_string()],
+        "idempotent insert keeps one member"
+    );
+}
+
+/// Deleting a key must clean every tag set eagerly — no dangling members.
+#[tokio::test]
+async fn delete_cleans_tag_sets() {
+    let cache = TieredCache::new_memory();
+    cache
+        .set("k", simple_entry(b"x", &["t1", "t2"]))
+        .await
+        .expect("set");
+    cache.delete("k").await.expect("delete");
+    assert!(
+        cache.tag_keys("t1").await.expect("tag_keys").is_empty(),
+        "delete must remove the key from tag t1"
+    );
+    assert!(
+        cache.tag_keys("t2").await.expect("tag_keys").is_empty(),
+        "delete must remove the key from tag t2"
+    );
+}
+
+/// A re-set whose tag list changed must drop memberships it no longer has.
+#[tokio::test]
+async fn retag_removes_stale_membership() {
+    let cache = TieredCache::new_memory();
+    cache
+        .set("k", simple_entry(b"x", &["a", "b"]))
+        .await
+        .expect("set");
+    cache
+        .set("k", simple_entry(b"x", &["b", "c"]))
+        .await
+        .expect("re-set");
+    assert!(
+        cache.tag_keys("a").await.expect("tag_keys").is_empty(),
+        "stale tag membership must be removed on re-set"
+    );
+    let b = cache.tag_keys("b").await.expect("tag_keys");
+    assert_eq!(b, vec!["k".to_string()]);
+    let c = cache.tag_keys("c").await.expect("tag_keys");
+    assert_eq!(c, vec!["k".to_string()]);
+}
+
+/// O(1) amortized tag insert (D25): 20,000 keys under one tag must complete
+/// well under 250 ms in release builds (ignored in debug — opt-level 0 would
+/// make the assertion flaky for the wrong reason).
+#[tokio::test]
+#[cfg_attr(debug_assertions, ignore)]
+async fn tag_insert_scales() {
+    let cache = TieredCache::new_memory();
+    let start = std::time::Instant::now();
+    for i in 0..20_000u32 {
+        let key = format!("routes/{i}/page");
+        cache
+            .set(&key, simple_entry(b"x", &["hot"]))
+            .await
+            .expect("set");
+    }
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(250),
+        "20k tag inserts took {elapsed:?}; the O(1) index regressed to O(n)"
+    );
+}
+
+// ─── V2-B06: disk-tier tags as a redb multimap ────────────────────────────
+
+/// Disk-tier tag membership must be a set: set, observe, delete, observe.
+#[tokio::test]
+async fn disk_tag_keys_track_set_and_delete() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cache = TieredCache::new(1 << 20)
+        .with_disk(tmp.path().join("cache"))
+        .expect("disk tier");
+    cache
+        .set("k1", simple_entry(b"x", &["t"]))
+        .await
+        .expect("set k1");
+    cache
+        .set("k2", simple_entry(b"x", &["t"]))
+        .await
+        .expect("set k2");
+    let keys = cache.tag_keys("t").await.expect("tag_keys");
+    assert_eq!(keys.len(), 2, "both keys indexed under the tag");
+    cache.delete("k1").await.expect("delete k1");
+    let keys = cache.tag_keys("t").await.expect("tag_keys");
+    assert_eq!(
+        keys,
+        vec!["k2".to_string()],
+        "deleted key must leave the tag set"
+    );
+}
+
+/// A v1 (JSON list) tag table migrates to the multimap on open, in place.
+#[tokio::test]
+async fn migrates_v1_tag_table() {
+    use redb::{Database, TableDefinition};
+    const V1_TAG_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("oxide-fw-cache-tags");
+    const V1_ENTRY_TABLE: TableDefinition<&[u8], &[u8]> =
+        TableDefinition::new("oxide-fw-cache-entries");
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let db_path = tmp.path().join("cache").join("index.redb");
+    std::fs::create_dir_all(tmp.path().join("cache")).expect("dir");
+    {
+        let db = Database::create(&db_path).expect("create v1 db");
+        let txn = db.begin_write().expect("txn");
+        {
+            let mut tags = txn.open_table(V1_TAG_TABLE).expect("tag table");
+            let list = serde_json::to_vec(&vec!["k1".to_string(), "k2".to_string()]).expect("json");
+            tags.insert(b"t".as_slice(), list.as_slice())
+                .expect("insert");
+            let mut entries = txn.open_table(V1_ENTRY_TABLE).expect("entry table");
+            // Minimal v1 index rows so get() works after migration: the
+            // DiskIndexEntry JSON shape (tags are what migration reads).
+            let idx = serde_json::json!({
+                "path": "blobs/00/missing.bin", "size": 10, "tags": ["t"],
+                "stored_at": 0, "hash": "h"
+            });
+            let bytes = serde_json::to_vec(&idx).expect("json");
+            entries
+                .insert(b"k1".as_slice(), bytes.as_slice())
+                .expect("insert");
+            entries
+                .insert(b"k2".as_slice(), bytes.as_slice())
+                .expect("insert");
+        }
+        txn.commit().expect("commit");
+    }
+
+    // Open with the new code: migration runs, tag membership survives.
+    let cache = TieredCache::new(1 << 20)
+        .with_disk(tmp.path().join("cache"))
+        .expect("open migrates");
+    let keys = cache.tag_keys("t").await.expect("tag_keys");
+    assert_eq!(
+        keys,
+        vec!["k1".to_string(), "k2".to_string()],
+        "v1 rows migrated"
+    );
+    drop(cache); // release the redb file lock before reopening
+
+    // Reopen: migration must not duplicate or lose rows.
+    let cache2 = TieredCache::new(1 << 20)
+        .with_disk(tmp.path().join("cache"))
+        .expect("reopen");
+    let keys = cache2.tag_keys("t").await.expect("tag_keys");
+    assert_eq!(
+        keys,
+        vec!["k1".to_string(), "k2".to_string()],
+        "migration runs once"
+    );
+}
