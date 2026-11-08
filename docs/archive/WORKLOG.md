@@ -4781,3 +4781,60 @@ four per-request scans.
 and the Node packages were not compiled — same scoping as the Wave B
 session, now also forced by disk (CI measures "tens of GB" of target/ for
 the full workspace).
+
+## Session — V2-A06 parallel load graph (V8-free)
+
+**Milestone:** the spec's A06 in its two steps, both green: (1) the router
+scanner's `needs_parent` verdict is token-exact (`calls_parent`) and now
+covers layouts as well as pages — the pre-A06 `contains("parent")` on pages
+alone serialized `const parentDir = 1` loads for nothing and never
+scheduled a `parent()`-calling layout behind its own parent; (2)
+`oxide-fw-dispatch::loads::run_load_graph` — the §9.2 substrate
+`stage_loaders` wires in phase 3. Along the way the pedantic lint policy
+(`[lints] workspace = true`) was extended from dispatch-only to router and
+schema: 107 sites fixed mechanically (must_use, `# Errors` docs, checked
+conversions, `write!` emitters, helper extraction for the two
+`too_many_lines` functions) with zero `#[allow]` anywhere.
+
+**TDD order kept:** the dispatch pins were written first
+(`crates/dispatch/tests/loads_tdd.rs`, red on unresolved
+`LoadNode`/`LoadResult`/`run_load_graph`), the scanner pins exercise the
+verdict through the public `RouteTree::scan` (substring false positives and
+layout verdicts pinned before/with the fix), and every time-sensitive
+assertion runs on the paused tokio clock so the overlap claim
+("three 50 ms loads finish within one delay") cannot flake on wall clock.
+
+**Criterion (2 vCPU shared sandbox, criterion 0.8.2):**
+
+| bench id | median |
+| --- | --- |
+| loads/overhead/8 | 1.0915 ms |
+| loads/overhead/16 | 1.1076 ms |
+| loads/parallel_8 | 2.1012 ms |
+| loads/chain_8 | 16.596 ms |
+| url/path_of | 18.6 ns |
+| url/normalize_path | 20.9 ns |
+| url/data_route_of | 64.4 ns |
+| url/action_from_query | 55.7 ns |
+| url/parse_form_urlencoded | 427.9 ns |
+| ctx_table/build/1000 | 435.5 µs |
+| ctx_table/get/100 | 32.6 ns |
+| ctx_table/get/1000 | 32.5 ns |
+
+`parallel_8` vs `chain_8` is the headline: eight 1 ms loads overlap into
+~2.1 ms (≈ 2 delay slots incl. runtime noise) where the sequential loop the
+CLI ships today pays 16.6 ms ≈ 8× — the shape `stage_loaders` will inherit
+once the A01 phase-3 move lands. Graph overhead is flat 8→16 nodes
+(~1.1 ms of that number is the shared sandbox's `block_on` cost, not the
+graph: the zero-delay runner is what it schedules).
+
+**Gates:** `cargo fmt --all -- --check` exit 0; pedantic clippy
+(`--all-targets --all-features -- -D warnings -W clippy::pedantic`) clean
+for dispatch + router + schema with the policy now declared in all three
+Cargo.tomls; CI-style `-D warnings` clean over the 13-crate V8-free graph;
+143/143 tests green; `cargo tree -p oxide-fw-dispatch | grep -c jshost` = 0.
+
+**Environment note:** unchanged scoping — no V8 toolchain (2 vCPU / 8 GB);
+`crates/cli`, `jshost`, `bundler`, `compiler`, `core-wasm` and the Node
+packages were not compiled; their fmt reflow came from
+`cargo fmt --all` and is behavior-neutral.
