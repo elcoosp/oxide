@@ -28,11 +28,17 @@
 //!   identities, minted `Set-Cookie`s and the L0 vary suffix the
 //!   `stage_experiments` wiring feeds into [`locals`] (V2-F04; CLI
 //!   adoption deferred, see `docs/deviations.md`).
+//! - [`build`]: the build id + generations substrate ([`GenerationSet`],
+//!   the `stage_build_check` data-plane 409 gate and the
+//!   `x-oxide-build` advertise step) — the keystone the F10/F11/F13/F14
+//!   skew/deploy features grow from (V2-A04; CLI adoption deferred, see
+//!   `docs/deviations.md`).
 //!
 //! Acceptance (spec V2-A02): `cargo test -p oxide-fw-dispatch` finishes in
 //! under 20 seconds after dependencies are built, and
 //! `cargo tree -p oxide-fw-dispatch | grep -c jshost` prints 0.
 
+pub mod build;
 pub mod chain;
 pub mod experiments;
 pub mod flow;
