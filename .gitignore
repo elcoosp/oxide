@@ -52,3 +52,11 @@ packages/*/src/**/*.d.ts.map
 # The @oxide-fw/cli postinstall downloads the prebuilt binary into this
 # cache dir next to install.js. It is machine-local state, never source.
 packages/cli-npm/.oxide-bin/
+
+# commit.sh — the milestone's commit protocol script is machine-local
+# tooling, not source (one conventional commit per file, never committed
+# itself).
+commit.sh
+
+# dhat test artifact (written at profiler drop)
+dhat-heap.json
