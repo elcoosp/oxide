@@ -6,24 +6,30 @@
 //! logic moves here so its tests compile in seconds against fakes, while the
 //! V8-linked CLI keeps only the wiring.
 //!
-//! Initial surface (V2-A02 + V2-A06):
+//! Initial surface (V2-A02 + V2-A05 + V2-A06):
 //! - [`url`]: the URL/query helpers the dispatch prelude needs —
 //!   `path_of`, `normalize_path`, `data_route_of`, plus the §9.3 form and
 //!   form-action pair `parse_form_urlencoded` / `action_from_query`.
 //! - [`flow`]: the stage protocol (`Flow`) that the phase-3 stage functions
 //!   (`stage_prelude` … `stage_finish`) will return.
+//! - [`chain`]: the §8.5 middleware chain runner (`run_chain`) — outer to
+//!   inner, later-wins locals, last-writer-wins headers, short-circuit /
+//!   redirect / rewrite directives with the B-22 resume marker (V2-A05;
+//!   CLI adoption deferred, see `docs/deviations.md`).
+//! - [`locals`]: the unified request locals ([`RequestLocals`]) with the
+//!   pipeline-owned reserved keys `session` / `locale` / `experiments`
+//!   and the DSP-101 collision report (V2-A05; CLI adoption deferred).
 //! - [`loads`]: the §9.2 parallel load graph (`run_load_graph`) —
 //!   independent loads concurrent, `parent()`-needing loads chained, the
 //!   substrate `stage_loaders` wires (V2-A06; CLI adoption deferred, see
 //!   `docs/deviations.md`).
 //!
-//! `chain.rs` (middleware chain) remains deliberately absent: the spec
-//! assigns it to V2-A05.
-//!
 //! Acceptance (spec V2-A02): `cargo test -p oxide-fw-dispatch` finishes in
 //! under 20 seconds after dependencies are built, and
 //! `cargo tree -p oxide-fw-dispatch | grep -c jshost` prints 0.
 
+pub mod chain;
 pub mod flow;
 pub mod loads;
+pub mod locals;
 pub mod url;
