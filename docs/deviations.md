@@ -259,3 +259,62 @@ What is deliberately deferred, and why:
 **To unclose:** A01 phase 3 on a V8-capable host replaces the loop body
 with `run_chain`, builds `RequestLocals` in `stage_prelude`, and deletes
 the closure's ad-hoc locals special-casing in the same series.
+
+## V2-F04 experiments substrate — spec pseudocode deltas and deferred wiring
+
+**Status.** Substrate landed (`crates/dispatch/src/experiments.rs`,
+`crates/dispatch/src/locals.rs::set_experiments`, `crates/config`
+`experiments` section + DSP-110 load validation + JSON schema). This is the
+V8-free step 1 of §V2-F04 (cache-safe personalization); it follows the
+A02/A05/A06 pattern: substrate + outside-the-crate pins first, CLI wiring
+deferred.
+
+**Deliberate deltas from the spec pseudocode:**
+
+1. **`Resolved.set_cookie` is a `Vec<String>`, not `Option<String>`.** The
+   spec's single slot silently drops every minted cookie except the last
+   when two cookie-sticky experiments both need a fresh identity for one
+   request — and two `Set-Cookie` values can never legally share one header
+   (each needs its own header line). The wiring appends one header per
+   minted identity after the L0 lookup and strips them from the cached
+   entry, which satisfies the spec's intent (cookie identities in
+   different buckets see their own variant) for the many-experiment case.
+   Pinned by `two_cookie_experiments_each_get_their_own_minted_cookie`.
+2. **The suffix join is `;` with no space** (spec-verbatim
+   `join(";")`): the suffix feeds an L0 cache key (`|exp:` + suffix), so
+   the exact bytes are pinned by `vary_suffix_lists_assignments_id_sorted`
+   — `id=variant` pairs, id-sorted (BTreeMap), byte-stable across config
+   orderings.
+
+**What is deliberately deferred (A01 phase-3 / V8-capable host):**
+
+1. **`stage_experiments` is not wired into the CLI pipeline** — the
+   `resolve(..)` call between `stage_prelude` and the L0 lookup, the
+   `|exp:` + `vary_suffix` L0-key dimension in `l0_cache.rs`, and the
+   `set-cookie` strip in `make_entry` all live in V8-linked code. The
+   substrate's acceptance contract ("with no `experiments` configured, L0
+   keys and hit rate equal the pre-F04 baseline") holds trivially at the
+   substrate level: `Resolved::vary_suffix` is `""` without experiments,
+   and the wiring appends a key dimension only when it is non-empty.
+2. **Metrics (`oxide_experiment_assignment{experiment,variant}`) and the
+   `oxide why <route>` key breakdown** are CLI/server surfaces, deferred
+   with the stage wiring.
+3. **Config → engine conversion is wiring code**, not a dependency: the
+   config crate does not (and must not) depend on dispatch, so
+   `ExperimentConfig` → `experiments::Experiment` is a field-by-field
+   mapping at the stage site; both shapes are pinned by their own crates.
+
+**Also landed with this session (hygiene debt retired):** `oxide-fw-config`
+adopted the workspace lints policy (`[lints] workspace = true`) and its
+sources are pedantic-clean with zero `#[allow]`; the 213-line
+`config_schema()` json! literal was split into per-section helpers (the
+`scripts/split_cli.py`-style codemod `split_schema.py` — the JSON bytes are
+unchanged and the stability test still pins them), and the `size.rs`
+percentage math avoids the flagged float→int casts with an exact
+decimal round-trip that preserves the old truncating/saturating semantics.
+
+**To unclose:** A01 phase 3 on a V8-capable host wires `stage_experiments`
+between prelude and the L0 lookup, threads `Resolved::assigned` into
+`RequestLocals` via the already-landed `set_experiments`, appends the vary
+suffix to the L0 key, strips minted cookies from cached entries, and adds
+the `oxide_experiment_assignment` counters.
