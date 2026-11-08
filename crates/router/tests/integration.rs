@@ -168,7 +168,10 @@ fn decode_seg(s: &str) -> String {
             let hi = (bytes[i + 1] as char).to_digit(16);
             let lo = (bytes[i + 2] as char).to_digit(16);
             if let (Some(h), Some(l)) = (hi, lo) {
-                out.push((h * 16 + l) as u8);
+                // `to_digit` yields u32 nibbles 0..=15, so the byte value is
+                // 0..=255 by construction — the checked conversion replaces
+                // the truncating cast.
+                out.push(u8::try_from(h * 16 + l).expect("hex byte fits u8"));
                 i += 3;
                 continue;
             }
