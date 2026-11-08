@@ -174,6 +174,95 @@
       "description": "§14.2: per-environment Rolldown overrides (client / ssr).",
       "type": "object"
     },
+    "experiments": {
+      "description": "V2-F04 / §15.4: A/B experiments evaluated natively per request before the L0 lookup, so an experiment is a cache-key dimension (the |exp: vary suffix) instead of forcing the route dynamic. Validation (DSP-110): traffic is a 0-100 percentage and each experiment needs at least two variants. Off by default - with no experiments configured every L0 key stays byte-identical to the pre-F04 baseline.",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "The experiment id - also the locals key and the vary-suffix name.",
+            "type": "string"
+          },
+          "routes": {
+            "description": "URL-pattern prefixes the experiment applies to; empty = all routes.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "sticky": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "cookieName": {
+                    "description": "The cookie storage key, e.g. oxide_hero.",
+                    "type": "string"
+                  },
+                  "sticky": {
+                    "const": "cookie"
+                  }
+                },
+                "required": [
+                  "sticky"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "headerName": {
+                    "description": "The request header storage key, e.g. x-bucket.",
+                    "type": "string"
+                  },
+                  "sticky": {
+                    "const": "header"
+                  }
+                },
+                "required": [
+                  "sticky"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "sticky": {
+                    "const": "ip-hash"
+                  }
+                },
+                "required": [
+                  "sticky"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "traffic": {
+            "description": "Percentage of eligible identities in the experiment (DSP-110).",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "variants": {
+            "description": "Variant names, in config order (DSP-110: at least two).",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 2,
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "traffic",
+          "sticky",
+          "variants"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
     "extends": {
       "description": "§14.2: shared configs to merge before this file.",
       "items": {
