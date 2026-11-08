@@ -68,12 +68,14 @@ fn prefixes(id: &str) -> Vec<&str> {
 }
 
 /// The base of a scoped module id: `routes/blog/layout` → `routes/blog`.
+#[must_use]
 fn base<'a>(id: &'a str, suffix: &str) -> &'a str {
     id.strip_suffix(suffix).unwrap_or("")
 }
 
 /// The metrics pattern for an entry — matches the CLI's `pattern_of` exactly
 /// (§20): `/` for the root, `/<segments joined by />` otherwise.
+#[must_use]
 pub fn default_pattern_of(e: &RouteEntry) -> String {
     if e.segments.is_empty() {
         "/".to_string()
@@ -185,11 +187,13 @@ impl RouteContextTable {
     }
 
     /// The context for a matched route id.
+    #[must_use]
     pub fn get(&self, route_id: &str) -> Option<&Arc<RouteContext>> {
         self.by_id.get(route_id)
     }
 
     /// The context for unmatched requests (the first `NotFound` entry).
+    #[must_use]
     pub fn unmatched(&self) -> Option<&Arc<RouteContext>> {
         self.unmatched.as_ref()
     }
@@ -205,7 +209,10 @@ mod tests {
         RouteEntry {
             id: RouteId(id.to_string()),
             kind,
-            segments: segments.iter().map(|s| s.to_string()).collect(),
+            segments: segments
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
             file: format!("{id}.tsx").into(),
             render_mode: None,
             tags: Vec::new(),
