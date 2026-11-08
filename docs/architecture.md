@@ -27,7 +27,7 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `bundler` | `Bundler` trait (D3) + functional ESM bundler: resolution with `exports` conditions, route-based splitting, shared-chunk heuristic, content hashing, client/server manifests | §6.4 |
 | `jshost` | `JsHost`/`Pool` traits (§4.2), NodeHost with real child workers speaking the op protocol (§4.5), ScriptedHost, V8Host (deno_core, full dispatch + `compile_module`) | §4, D2 |
 | `plugin` | Hook model, pre/post ordering, JS bridge messages, WASM plugin manifest validation, module manifests | §15 |
-| `dispatch` | V8-free request orchestration: URL/query helpers, stage `Flow` protocol, §8.5 middleware chain + unified locals (A05), §9.2 parallel load graph (A06) | §4.1, §8.4, §8.5, §9.2, §9.3, V2-A02 |
+| `dispatch` | V8-free request orchestration: URL/query helpers, stage `Flow` protocol, §8.5 middleware chain + unified locals (A05), §9.2 parallel load graph (A06), §15.4 experiments assignment engine (F04) | §4.1, §8.4, §8.5, §9.2, §9.3, §15.4, V2-A02 |
 | `render` | Streaming pipeline, head merge, HTML injection (lol_html), deferred-boundary protocol (§7.1), islands markup (§10.3), hydration bootstrap, error recovery | §7.1, §10 |
 | `server` | Hyper 1.x pipeline, static assets (range/304/precompressed), dynamic compression, security defaults (§17.1), CSRF/SSRF/host checks, rate limiting, cookies, RFC6455 codec, graceful shutdown | §12, §17, D7 |
 | `assets` | CSS pipeline (nesting/modules/minify/prefix), image backend (resize/encode/LQIP), font bundles, metadata/SEO, sitemap/robots, markdown/content, OG model | §6.6–6.7, §16, D19 |
@@ -36,6 +36,19 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `core-wasm` | Edge subset: cache keys, head merge, ODF re-encode (D18) | §2 D18 |
 | `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/add/generate/cache/audit/migrate/test | §19 |
 ## What changed since 2026-10-12
+
+- **`config`**: the `experiments` config section (V2-F04, §15.4) — typed
+  `ExperimentConfig`/`StickyConfig` (internally-tagged `sticky`:
+  `cookie`/`header`/`ip-hash`), DSP-110 load validation (traffic 0–100, ≥2
+  variants), JSON schema + checked-in `schemas/oxide-fw-config.schema.json`
+  regenerated. `config` also adopted the workspace pedantic-lints policy.
+- **`dispatch`**: the §15.4 experiments assignment engine
+  (`experiments::assign`/`resolve`) — deterministic blake3 buckets, sticky
+  cookie (mint on miss)/header/ip-hash, route-prefix eligibility, and the
+  id-sorted vary suffix the L0 key appends only when non-empty;
+  `RequestLocals::set_experiments` feeds `Resolved.assigned` into the
+  pipeline-owned slot (DSP-101 still guards it). CLI stage wiring deferred
+  (`docs/deviations.md`).
 
 - **`jshost`**: V8Host is no longer a fail-fast stub — `compile_module` runs
   the Oxc passes in-process (through `transform_handler`) so the V8 backend
