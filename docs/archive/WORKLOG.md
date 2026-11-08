@@ -4896,3 +4896,44 @@ green (26 unit + 3 flow + 5 url + 11 loads + 13 chain + 9 locals);
 **Environment note:** unchanged scoping — no V8 toolchain (2 vCPU / 8 GB);
 `crates/cli`, `jshost`, `bundler`, `compiler`, `core-wasm` and the Node
 packages were not compiled.
+## Session — V2-F04 experiments substrate + config hygiene (2026-11-09)
+
+Landed V2-F04 step 1 (cache-safe personalization, §15.4) in the
+A02/A05/A06 substrate pattern, plus the config-crate hygiene pass:
+
+| Item | What | Result |
+| --- | --- | --- |
+| F04 engine | `dispatch::experiments` (`assign`, `resolve`, `Sticky`, `Resolved`) | blake3 buckets; cookie mint / header / ip-hash; prefix eligibility; 14 outside-pins incl. the spec's six named ones |
+| F04 locals | `RequestLocals::set_experiments` | `Resolved.assigned` → pipeline-owned slot; DSP-101 guard pinned |
+| F04 config | `experiments` section + DSP-110 | typed `ExperimentConfig`/`StickyConfig`; schema + checked-in file regenerated |
+| Hygiene | `config` adopts `[lints] workspace = true` | 27 pedantic sites fixed, zero `#[allow]`; `config_schema()` split 213 → ~100-line body via `split_schema.py`; `size.rs` cast-free with byte-identical behavior |
+
+**Benchmarks** (`cargo bench -p oxide-fw-dispatch --features bench-util --bench experiments`, criterion):
+
+| id | time |
+| --- | --- |
+| assign/2 | 10.3 µs (100 assigns) |
+| assign/8 | 10.1 µs |
+| assign/16 | 10.2 µs |
+| resolve/3 | 665 ns |
+| resolve/24 | 6.57 µs |
+
+Per-assignment cost is ~103 ns and flat across variant counts (the blake3
+bucket dominates; variant indexing is free). `resolve` scales linearly
+(~220 ns per experiment): a 24-experiment list costs ~6.6 µs once per
+request — noise against any loader/middleware hop.
+
+**Gates:** `cargo fmt --all -- --check` exit 0; pedantic clippy over
+dispatch+config+router+schema (`--all-targets --all-features -- -D
+warnings -W clippy::pedantic`) zero diagnostics; CI-style `-D warnings`
+gate over the 15 compilable crates zero diagnostics (excluded: jshost,
+cli — V8; plugin, assets — `nasm` absent in this sandbox, rav1e/wasmtime
+build scripts fail before Rust code); 240 tests green across
+dispatch+config+router+schema; `cargo tree -p oxide-fw-dispatch | grep -c
+jshost` = 0; zero `#[allow(clippy::*)]` / `#![allow(...)]` in the touched
+crates.
+
+**Deliberate deltas** (see `docs/deviations.md`): `set_cookie: Vec<String>`
+(the spec's `Option<String>` drops all but the last mint when two
+cookie-sticky experiments miss together); CLI wiring deferred to the A01
+phase-3 move.
