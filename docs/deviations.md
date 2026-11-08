@@ -178,3 +178,40 @@ deliberately deferred, and why:
 **To unclose:** land A01 phase 3 on a V8-capable host; it deletes the CLI
 duplicates, flips the closure to the stage protocol, and switches the
 helpers to `oxide_fw_dispatch::url::*` in the same commit series.
+
+## V2-A06 parallel load graph — deferred CLI adoption, pedantic adoption scope (2026-11-08)
+
+The V2-A06 milestone landed both spec steps V8-free (token-exact
+`needs_parent` for pages AND layouts in `oxide-fw-router`; the
+`run_load_graph` substrate in `oxide-fw-dispatch::loads`). What is
+deliberately deferred, and why:
+
+1. **The CLI's `stage_loaders` still runs the sequential loop.** Switching
+   the dispatch closure to `run_load_graph` + the
+   `RouteContextTable.layout_loads[i].needs_parent` verdicts requires
+   compiling `oxide-fw-cli` (a V8 link, CONVENTIONS §8) — impossible in
+   this sandbox. The substrate is complete and pinned from outside the
+   crate (12 integration tests, paused-clock timing pins); the wiring is
+   code-only once A01 phase 3 can compile the CLI. Until then the dispatch
+   comment naming the gap stays accurate, and the bench pair
+   `loads/parallel_8` (2.10 ms) vs `loads/chain_8` (16.60 ms) documents
+   exactly what the wiring buys.
+2. **The pedantic lint policy now covers `router` and `schema`, not yet
+   the whole workspace.** A02 introduced `[workspace.lints]` with
+   `oxide-fw-dispatch` opted in; this session fixed 107 pedantic sites and
+   opted in `oxide-fw-router` + `oxide-fw-schema` (the crates A06
+   substantively touches). The remaining V8-free crates (cache, odf,
+   config, graph, diagnostics, adapters, plugin, render, server, dev) are
+   still held to plain `-D warnings` (verified clean over the 13-crate
+   graph) and adopt pedantic in a dedicated hygiene pass; the V8 crates
+   (cli, jshost, bundler, compiler, assets) cannot be linted here at all.
+   Zero `#[allow(clippy::*)]` exists anywhere; the two long functions
+   (`walk_dir`, `typegen_impl`) were split into helpers rather than
+   suppressing `too_many_lines`.
+3. **`loads/*` bench ids are informational.** As with the A02 ids,
+   `criterion_compare.py` only gates ids present in BOTH snapshots; the
+   new group joins the baseline at the next promotion (R03, deferred).
+
+**To unclose:** A01 phase 3 on a V8-capable host deletes the CLI's
+sequential loop in favor of `run_load_graph`, adopts the layout verdicts,
+and runs the remaining-crate pedantic hygiene pass in the same series.
