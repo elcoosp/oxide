@@ -1,3 +1,55 @@
+# Handoff — V2-A02 `oxide-fw-dispatch` substrate landed; V8-free, all gates green
+
+## Where things stand
+
+**Branch:** `main`
+**Working tree:** NOT committed — the milestone ships as uncommitted changes
+plus `ship.sh` at the repo root (bash 3.2-compatible, executable,
+gitignored; one conventional commit per file, then tag + push). Run
+`./ship.sh` to materialize the history and publish the `v0.2.0` tag.
+**Verified this session (2 vCPU / 8 GB sandbox, no V8 toolchain budget):**
+- `cargo test -p oxide-fw-dispatch` — 33/33 green, 1.3 s wall after deps
+  (spec acceptance: < 20 s).
+- `cargo fmt --all -- --check` — exit 0.
+- `cargo clippy --no-deps -p oxide-fw-dispatch --all-targets --all-features
+  -- -D warnings -W clippy::pedantic` — zero diagnostics. The crate opts
+  into the new `[workspace.lints]` policy (`[lints] workspace = true`), so
+  pedantic also holds on every future plain `cargo clippy` of the crate.
+- `cargo clippy -p oxide-fw-dispatch -p oxide-fw-router -p oxide-fw-cache
+  --all-targets -- -D warnings` — zero diagnostics (CI-style gate over the
+  V8-free graph).
+- `cargo tree -p oxide-fw-dispatch | grep -c jshost` — 0 (spec acceptance).
+- `cargo bench -p oxide-fw-dispatch --features bench-util` — 8 bench ids;
+  `ctx_table/get` is flat ~33 ns from 100 to 1000 routes (O(1) dispatch
+  answers), `url/*` helpers 8.8–431 ns (numbers in `docs/archive/WORKLOG.md`).
+
+## What landed
+
+V2-A02 from `docs/spec-v0.2-draft.md`: the V8-free `oxide-dispatch` crate
+(package name `oxide-fw-dispatch`, matching the repo's `oxide-fw-*`
+convention the spec text predates). `crates/dispatch/{src/url.rs,src/flow.rs}`
++ a criterion bench target gated behind `bench-util` (the router/cache
+convention). `url.rs` carries the spec's prelude helpers (`path_of`,
+`normalize_path`, `data_route_of`, `MAX_REWRITE_HOPS`) plus the §9.3 pair
+`parse_form_urlencoded` / `action_from_query` moved verbatim from
+`crates/cli/src/lib.rs:8133`. `flow.rs` carries the stage protocol
+(`Flow::Continue | Respond(OxideResponse)`). TDD evidence: the tests were
+written first and the red run captured (unresolved-symbol errors for every
+symbol under test), then implementation, then bench.
+
+The CLI keeps its private copies until phase 3 (see `docs/deviations.md`,
+"V2-A02 dispatch substrate — deferred CLI adoption"). `crates/cli/Cargo.toml`
+already declares the dependency so the integration PR is code-only.
+
+## Where to pick up, in one sentence
+
+A01 next: split `crates/cli/src/lib.rs` (15,555 lines) per the spec's
+`scripts/split_cli.py` plan on a machine that can link V8, then land phase 3
+stage-by-stage on top of this crate (the stages' pure halves are already
+here and tested), then B03/B04/B08 and the F-series.
+
+---
+
 # Handoff — V2 Wave B foundations landed (B09/B02/B01/B05/B06); CLI integration deferred
 
 ## Where things stand
