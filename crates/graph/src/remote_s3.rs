@@ -6,6 +6,7 @@
 use crate::{RemoteCache, Result, err};
 use async_trait::async_trait;
 use object_store::ObjectStore;
+use object_store::ObjectStoreExt;
 use object_store::PutPayload;
 use object_store::path::Path as ObjPath;
 use std::sync::Arc;
