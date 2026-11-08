@@ -476,6 +476,32 @@ pub fn hydration_bootstrap_with_build(
     )
 }
 
+/// §V2-F05 step 1: the five-field hydration bootstrap — the A04 shape plus
+/// the `live` flag. Opted-in routes (`page.server.ts` `live: true`) get
+/// `live:true` so the client router connects to `GET /__oxide/live` after
+/// hydration; `live: false` is byte-identical to
+/// [`hydration_bootstrap_with_build`] (additive, the V8-linked CLI call
+/// sites compile unchanged).
+pub fn hydration_bootstrap_with_live(
+    odf_b64: &str,
+    route_id: &str,
+    nonce: &str,
+    build_id: &str,
+    live: bool,
+) -> String {
+    if !live {
+        return hydration_bootstrap_with_build(odf_b64, route_id, nonce, build_id);
+    }
+    let n = escape_attr(nonce);
+    format!(
+        "<script type='application/oxide-data' nonce='{n}'>{b64}</script>\
+<script nonce='{n}'>window.__oxide={{route:\"{route}\",build:\"{build}\",live:true,data:document.currentScript.previousElementSibling.textContent}}</script>",
+        b64 = odf_b64,
+        route = sanitize_route_id(route_id),
+        build = sanitize_route_id(build_id),
+    )
+}
+
 /// Percent-encode every byte outside the route-id alphabet `[a-z0-9-/]`.
 fn sanitize_route_id(route_id: &str) -> String {
     let mut out = String::with_capacity(route_id.len());
@@ -560,6 +586,13 @@ pub struct Injector {
     /// (the V8-linked CLI call site compiles unchanged until the
     /// A01-phase-3 wiring lands; see `docs/deviations.md`).
     pub build_id: Option<String>,
+    /// V2-F05 (§V2-F05 step 1): the route opted into live loaders
+    /// (`page.server.ts` `live: true`). When set together with
+    /// `build_id`, the bootstrap advertises the fifth `window.__oxide`
+    /// field (`live:true`) and the client router connects to
+    /// `GET /__oxide/live` after hydration. `false` keeps the A04 shape
+    /// byte-identical.
+    pub live: bool,
     /// Extra HTML appended to the body injection fragment, AFTER the
     /// hydration bootstrap. The CLI uses it for the resolved-deferred
     /// `<script type="application/oxide-deferred">` on prerendered pages
@@ -579,6 +612,7 @@ impl Injector {
             odf_payload_b64: None,
             route_id,
             build_id: None,
+            live: false,
             body_extra: String::new(),
         }
     }
@@ -587,6 +621,13 @@ impl Injector {
     /// Chainable: `Injector::new(..).with_build_id(id)`.
     pub fn with_build_id(mut self, build_id: impl Into<String>) -> Self {
         self.build_id = Some(build_id.into());
+        self
+    }
+
+    /// Advertise the `live` flag as the fifth `window.__oxide` field
+    /// (§V2-F05 step 1). Chainable: `Injector::new(..).with_live(true)`.
+    pub fn with_live(mut self, live: bool) -> Self {
+        self.live = live;
         self
     }
 
@@ -612,15 +653,17 @@ impl Injector {
             let mut body = String::new();
             if let Some(b64) = self.odf_payload_b64.as_ref() {
                 match self.build_id.as_ref() {
-                    // §V2-A04: with a build id the bootstrap carries the
-                    // fourth `build` field the client echoes on the data
-                    // plane.
+                    // §V2-A04 + §V2-F05: with a build id the bootstrap
+                    // carries the fourth `build` field the client echoes
+                    // on the data plane; opted-in live routes add the
+                    // fifth `live:true` field the router connects from.
                     Some(id) => {
-                        body.push_str(&hydration_bootstrap_with_build(
+                        body.push_str(&hydration_bootstrap_with_live(
                             b64,
                             &self.route_id,
                             &self.nonce,
                             id,
+                            self.live,
                         ));
                     }
                     None => body.push_str(&hydration_bootstrap(b64, &self.route_id, &self.nonce)),
