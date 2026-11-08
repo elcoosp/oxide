@@ -15,6 +15,7 @@ use crate::{RouteEntry, RouteId, RouteKind};
 /// URLs both have plenty of candidates at every scale); the rest are fully
 /// static. Ids and segments are derived from the index, so the same `n` always
 /// produces the same tree (bench comparability, V2-B09).
+#[must_use]
 pub fn synthetic_entries(n: usize) -> Vec<RouteEntry> {
     (0..n)
         .map(|i| {
