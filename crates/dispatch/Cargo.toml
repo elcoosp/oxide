@@ -1,0 +1,49 @@
+[package]
+description = "V8-free request orchestration: URL helpers, stage flow, middleware chain, load graph (V2-A02)"
+keywords = ["http", "dispatch", "request", "web-framework"]
+categories = ["web-programming::http-server"]
+authors.workspace = true
+name = "oxide-fw-dispatch"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+# Per spec V2-A02: `oxide-server` already owns the dispatch traits
+# (`LoaderRunner`, `PageRenderer`, `ActionDispatcher`, `EndpointDispatcher`,
+# `MiddlewareDispatcher`) and depends only on cache/router/render/config/odf —
+# not on `oxide-jshost`. This crate must never link V8: its tests have to
+# compile in seconds (CONVENTIONS §8). `diagnostics` and `router` back the
+# stage types that phases 3+ move here; `futures`/`async-trait`/`tokio`/
+# `bytes` back the async stage protocol (`Flow`, future stage modules).
+oxide-fw-diagnostics = { workspace = true }
+oxide-fw-router = { workspace = true }
+oxide-fw-server = { workspace = true }
+serde_json = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+bytes = { workspace = true }
+
+[dev-dependencies]
+# V2-A02: criterion harness for the url/context hot-path benches. Opt-in via
+# the bench-util feature so plain `cargo test` never pays the criterion build
+# (same pattern as `oxide-fw-router` and `oxide-fw-cache`, V2-B09).
+criterion = { workspace = true }
+
+[[bench]]
+name = "context"
+harness = false
+required-features = ["bench-util"]
+
+[features]
+# V2-A02: exposes the criterion bench harness (bench-support feature). The
+# synthetic route fixtures for the `ctx_table` group live behind the same
+# feature in `oxide-fw-router` (V2-B09), so enabling one enables both.
+bench-util = ["oxide-fw-router/bench-util"]
+
+[lints]
+workspace = true
