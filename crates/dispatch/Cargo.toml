@@ -42,6 +42,12 @@ name = "context"
 harness = false
 required-features = ["bench-util"]
 
+# V2-A05: criterion bench for the middleware chain and unified locals.
+[[bench]]
+name = "middleware"
+harness = false
+required-features = ["bench-util"]
+
 [features]
 # V2-A02: exposes the criterion bench harness (bench-support feature). The
 # synthetic route fixtures for the `ctx_table` group live behind the same
