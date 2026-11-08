@@ -23,6 +23,9 @@ Concurrent misses for the same key run one render — the rest await the result 
 - **`TieredCache`** — L0 + L1 + optional remote, sharing one handler
 - **`SingleFlight`** — concurrent misses for the same key run one render
 - **`CacheKey::canonical_parts`** — stable, prefix-free cache keys
+- **`key_of` / `KeyStr`** (V2-B05) — the same 128-bit digest built on the stack (no `String`, no heap) for hot L0 lookups
+- **O(1) tag index** (V2-B05) — `HashSet` tag sets plus a key→tags reverse index: idempotent inserts, eager cleanup on `delete`, stale memberships dropped on re-`set`
+- **Disk-tier tag multimap** (V2-B06) — tags live in a redb multimap (set-valued, one insert per membership) with a one-time v1 → v2 migration on open
 - **Tag and path invalidation** — `invalidate_tag`, `invalidate_path`
 - **Stale-while-revalidate and stale-if-error** — configurable policy windows
 - **Nonce sentinel handling** — a cached body serves any request without leaking another request's CSP nonce
