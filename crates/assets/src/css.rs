@@ -81,8 +81,13 @@ mod tests {
 
     #[test]
     fn multiple_sources_merge_deduped_and_sorted() {
-        let out = scan_tailwind_candidates(&["<div class=\"b a\"></div>", "<span class=\"a c\"></span>"]);
-        assert_eq!(out, vec!["a", "b", "c"], "BTreeSet: deduped + sorted output");
+        let out =
+            scan_tailwind_candidates(&["<div class=\"b a\"></div>", "<span class=\"a c\"></span>"]);
+        assert_eq!(
+            out,
+            vec!["a", "b", "c"],
+            "BTreeSet: deduped + sorted output"
+        );
     }
 
     #[test]
@@ -136,7 +141,11 @@ mod tests {
     fn adjacent_attributes_each_yield_their_tokens() {
         let src = "<div class=\"a1\" data-x=\"junk\" className=\"b2\"></div>";
         let out = scan_tailwind_candidates(&[src]);
-        assert_eq!(out, vec!["a1", "b2"], "data-x must not leak into candidates");
+        assert_eq!(
+            out,
+            vec!["a1", "b2"],
+            "data-x must not leak into candidates"
+        );
     }
 
     #[test]
