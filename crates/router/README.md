@@ -26,6 +26,8 @@ The routing conventions follow SvelteKit: `routes/blog/[slug]/page.tsx` becomes 
 - **`RulesEngine`** — redirects, rewrites, headers, auth, rate-limits (with token buckets)
 - **Segment parsing** — `[slug]`, `[...path]`, `[[opt]]`, `(group)`, `@slot`
 - **Prefix indexes** — `middleware_files_for`, `error_route_for`, `not_found_route`
+- **Candidate index** (V2-B02) — `match_ref` returns the winning route by reference with borrowed captures; matching cost scales with URL depth, not route count (19× faster at 1,000 routes, zero heap allocations on the static path)
+- **`RouteContextTable`** (V2-B01) — every dispatch answer that is a pure function of the route id (layout chain, layout loads, middleware chain, error/loading routes, metrics label), computed once at boot
 
 ## Usage
 
