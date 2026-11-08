@@ -14,10 +14,10 @@ use rkyv::option::ArchivedOption;
 use rkyv::string::ArchivedString;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize, rancor};
 
-use crate::matcher::{EntryLike, layout_chain, match_in};
+use crate::matcher::{self, EntryLike, layout_chain};
 use crate::{
-    ArchivedRouteKind, ArchivedTree, MatchResult, Result, RouteEntry, RouteId, RouteKind,
-    RouteTree, ferr,
+    ArchivedMatchRef, ArchivedRouteKind, ArchivedTree, MatchResult, Result, RouteEntry, RouteId,
+    RouteKind, RouteTree, ferr,
 };
 
 /// Shadow DTO written to the archive (see module docs).
@@ -144,7 +144,11 @@ pub(crate) fn load_impl(path: &Path) -> Result<ArchivedTree> {
     // cannot change underneath the pointer.
     let root = access(&mmap[..])?;
     let root = std::ptr::from_ref(root);
-    Ok(ArchivedTree { _mmap: mmap, root })
+    Ok(ArchivedTree {
+        _mmap: mmap,
+        root,
+        index: std::sync::OnceLock::new(),
+    })
 }
 
 impl ArchivedTree {
@@ -163,11 +167,42 @@ pub(crate) fn arch_match_impl(tree: &ArchivedTree, path: &str) -> Option<MatchRe
     // materialized into an owned `RouteEntry`.
     let root = tree.root();
     let entries = root.entries.as_slice();
-    let (idx, params, score) = match_in(entries, path)?;
-    let a = &entries[idx];
+    // V2-B02: the hot path goes through the candidate index + allocation-free
+    // scorer; the winner is identified by index and materialized once here.
+    let m = arch_match_ref_impl(tree, path)?;
+    let a = &entries[m.route_index];
     Some(MatchResult {
         route: entry_from_arch(a),
         layout_chain: layout_chain(entries, a.id_str()),
+        params: m
+            .params
+            .into_iter()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect(),
+        score: m.score,
+    })
+}
+
+/// V2-B02: zero-copy match over the mmap. The candidate index serves the
+/// walk; when it cannot complete (see `index` module docs) the exact linear
+/// scan over all entries takes over, so behavior never diverges from the
+/// linear oracle on unmutated or in-place-patched mappings.
+pub(crate) fn arch_match_ref_impl<'a>(
+    tree: &'a ArchivedTree,
+    path: &'a str,
+) -> Option<ArchivedMatchRef<'a>> {
+    let (segs, escaped) = matcher::match_segments(path);
+    let entries = tree.root().entries.as_slice();
+    let mut cands = smallvec::SmallVec::<[u32; 16]>::new();
+    let complete = tree
+        .candidate_index()
+        .candidates(&segs, escaped, &mut cands);
+    if !complete {
+        cands = crate::index::CandidateIndex::all(entries.len());
+    }
+    let (idx, params, score) = matcher::match_candidates_ref(entries, &cands, &segs, escaped)?;
+    Some(ArchivedMatchRef {
+        route_index: idx,
         params,
         score,
     })
