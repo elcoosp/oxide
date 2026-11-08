@@ -126,8 +126,8 @@ mod tests {
 
     #[test]
     fn split_path_strips_query_and_tolerates_slashes() {
-        assert!(split_path("/").is_empty());
-        assert!(split_path("").is_empty());
+        assert_eq!(split_path("/"), [] as [String; 0]);
+        assert_eq!(split_path(""), [] as [String; 0]);
         assert_eq!(split_path("/blog"), vec!["blog"]);
         assert_eq!(split_path("/blog/"), vec!["blog"]);
         assert_eq!(split_path("//blog//x//"), vec!["blog", "x"]);
@@ -148,7 +148,7 @@ mod tests {
         ] {
             let raw = split_raw_path(p);
             let decoded = split_path(p);
-            let raw_eq: Vec<String> = raw.iter().map(|s| s.to_string()).collect();
+            let raw_eq: Vec<String> = raw.iter().map(std::string::ToString::to_string).collect();
             assert_eq!(
                 raw_eq, decoded,
                 "raw split must equal decoded split for {p:?}"
