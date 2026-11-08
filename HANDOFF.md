@@ -1,3 +1,70 @@
+# Handoff — V2-A05 middleware chain + unified locals substrate landed (V8-free); all gates green
+
+## Where things stand
+
+**Branch:** `main`
+**Working tree:** the milestone ships as uncommitted changes plus `ship.sh`
+at the repo root (bash 3.2-compatible, executable, gitignored; one
+conventional commit per file, then idempotent tag + push). Run `./ship.sh`
+to materialize the history — the `v0.2.0` tag already exists and is skipped
+by design.
+**Verified this session (2 vCPU / 8 GB sandbox, no V8 toolchain budget):**
+- `cargo test -p oxide-fw-dispatch` — 67/67 green (26 unit; flow 3; url 5;
+  loads 11; chain 13; locals 9).
+- `cargo fmt --all -- --check` — exit 0.
+- `cargo clippy --no-deps -p oxide-fw-dispatch --all-targets --all-features
+  -- -D warnings -W clippy::pedantic` — zero diagnostics. Zero
+  `#[allow(clippy::*)]` / `#![allow(...)]` anywhere.
+- `cargo tree -p oxide-fw-dispatch | grep -c jshost` — 0 (spec acceptance).
+- `cargo bench -p oxide-fw-dispatch --features bench-util --bench
+  middleware` — 5 new ids: `chain/noop/{1,2,4}` ≈ 139/176/250 ns (the
+  substrate costs ~40 ns per extra layer), `chain/locals_merge_4` ≈
+  0.76 µs, `locals/to_value` ≈ 1.13 µs, `locals/apply_middleware` ≈ 126 ns.
+
+## What landed
+
+V2-A05 step 1 from `docs/spec-v0.2-draft.md`, in the A02/A06 pattern:
+
+1. **Chain runner (`oxide-fw-dispatch::chain`):** `run_chain` walks the
+   route's ancestor `middleware.ts` chain outer to inner through the real
+   `MiddlewareDispatcher::dispatch(MiddlewareDispatchArgs)` seam. It
+   mirrors the inline loop's production semantics: locals merge
+   later-wins, each layer sees `None` while nothing has accumulated,
+   headers accumulate last-writer-wins per case-insensitive name (B-06),
+   `short`/`redirect` stop the walk with the raw `MiddlewareRunResult`
+   (the caller keeps the location-header and session write-back mapping),
+   a rewrite returns the target with the rewriting layer as the B-22
+   resume marker, and the resumed pass skips everything before (and
+   including) the marker. Pinned by 13 tests in `tests/chain_tdd.rs`.
+2. **Unified locals (`oxide-fw-dispatch::locals`):** `RequestLocals`
+   composes the one JSON value loaders, actions, endpoints and render
+   receive; the reserved keys `session` / `locale` / `experiments` are
+   pipeline-owned and win over user-set keys in `to_value()`, and
+   `apply_middleware_locals` reports every reserved key a middleware
+   staged (the DSP-101 warning sites) without letting it land. Pinned by
+   9 tests in `tests/locals_tdd.rs`.
+
+**Docs drift corrected by this milestone:** the spec's A05 "evidence"
+(nearest-only middleware) predates the inline loop's full-chain §8.5 fix;
+its `run_chain` pseudocode predates both the args-struct dispatcher seam
+and the B-06/B-22 fixes — the substrate implements production, and
+`docs/deviations.md` records the deltas as deliberate.
+
+The CLI `stage_middleware` / `stage_prelude` wiring stays deferred (see
+`docs/deviations.md`): the closure keeps its inline loop until the A01
+phase-3 move can compile `oxide-fw-cli` against this crate.
+
+## Where to pick up, in one sentence
+
+A01 next: split `crates/cli/src/lib.rs` (15,555 lines) per the spec's
+`scripts/split_cli.py` plan on a machine that can link V8, then land phase
+3 stage-by-stage on top of this crate (`stage_middleware` switches to
+`run_chain` + `RouteContextTable.middleware_chain`, `stage_prelude` builds
+`RequestLocals`, `stage_loaders` switches to `run_load_graph`), then
+B03/B04/B08 and the F-series.
+
+---
+
 # Handoff — V2-A06 parallel load graph landed (scanner verdict + dispatch substrate); all gates green
 
 ## Where things stand
