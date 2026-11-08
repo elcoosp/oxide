@@ -4743,3 +4743,41 @@ eager delete + retag correctness). Both re-baselined in `report.md`.
 3. dhat requires `.testing()` mode for `dhat::assert_*` and one profiler per
    process — keep the allocation tests in their own test binary and one test
    function (parallel test threads allocate inside the snapshot windows).
+
+## Session — V2-A02 `oxide-fw-dispatch` substrate (V8-free)
+
+**Milestone:** the spec's A02 crate extracted and green: 33/33 tests,
+pedantic-clippy clean with zero `#[allow]`, `jshost` absent from the dep
+tree, criterion harness for the url helpers + the `RouteContextTable`
+dispatch answers. The CLI split (A01) and the phase-3 adoption stay open on
+V8-capable hardware; `docs/deviations.md` itemizes the seams.
+
+**TDD order kept:** red first — the tests alone failed with unresolved
+symbols (`super::MAX_REWRITE_HOPS`, `super::path_of`,
+`super::normalize_path`, `super::data_route_of`,
+`super::parse_form_urlencoded`, `super::action_from_query`,
+`super::Flow`, plus both integration targets), then implementation, then
+bench.
+
+**Criterion (2 vCPU shared sandbox, criterion 0.8.2):**
+
+| bench id | median |
+| --- | --- |
+| url/path_of | 8.82 ns |
+| url/normalize_path | 21.1 ns |
+| url/data_route_of | 65.3 ns |
+| url/action_from_query | 60.7 ns |
+| url/parse_form_urlencoded | 430.7 ns |
+| ctx_table/build/1000 | 432.8 µs |
+| ctx_table/get/100 (hit+miss) | 32.9 ns |
+| ctx_table/get/1000 (hit+miss) | 32.7 ns |
+
+`ctx_table/get` is flat across the 10× route growth — the O(1) by-id
+dispatch answer the `stage_match` integration will consume instead of the
+four per-request scans.
+
+**Environment note:** no V8 toolchain in this sandbox (2 vCPU / 8 GB /
+8.7 GB free disk); `crates/cli`, `jshost`, `bundler`, `compiler`, `core-wasm`
+and the Node packages were not compiled — same scoping as the Wave B
+session, now also forced by disk (CI measures "tens of GB" of target/ for
+the full workspace).
