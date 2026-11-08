@@ -46,7 +46,7 @@ pub(crate) fn compile_impl(rules: Vec<NativeRule>) -> Result<RulesEngine> {
         }
     }
     let mut rules = rules;
-    for r in rules.iter_mut() {
+    for r in &mut rules {
         if r.rate_limit.is_some() && r.rule_type.is_none() {
             r.rule_type = Some("ratelimit".to_string());
         }
@@ -80,22 +80,41 @@ impl Clone for TokenBuckets {
     }
 }
 
+/// `u64` seconds → `f64` for rate math, keeping the conversion exact:
+/// `u64`→`f64` loses mantissa bits above 2^52, so windows beyond `u32::MAX`
+/// (~136 years — far outside any meaningful rate-limit window) clamp to it
+/// and `u32`→`f64` stays lossless.
+fn window_f64(secs: u64) -> f64 {
+    f64::from(u32::try_from(secs).unwrap_or(u32::MAX))
+}
+
+/// Whole seconds until a token refills: the input is the `ceil().max(1.0)`
+/// of a finite tokens/rate ratio, so it is ≥ 1 and far below `u64::MAX`.
+/// The checked `Duration` conversion keeps a degenerate (NaN/negative)
+/// rate bounded at 1 s instead of casting.
+fn secs_until_refill(after: f64) -> u64 {
+    std::time::Duration::try_from_secs_f64(after.max(1.0)).map_or(1, |d| d.as_secs().max(1))
+}
+
 impl TokenBuckets {
     /// Consume one token for `key`. Returns `Ok(())` when allowed, or
     /// `Err(retry_after_secs)` when the bucket is empty.
     pub fn take(&self, key: &str, max: u32, window_secs: u64) -> std::result::Result<(), u64> {
-        let mut map = self.map.lock().unwrap_or_else(|p| p.into_inner());
+        let mut map = self
+            .map
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if map.len() > RATE_LIMITER_MAX_KEYS {
             // Sweep full buckets (no pending state).
-            map.retain(|_, (tokens, _, m, _)| *tokens < *m as f64 - 0.001);
+            map.retain(|_, (tokens, _, m, _)| *tokens < f64::from(*m) - 0.001);
         }
         let now = std::time::Instant::now();
-        let rate = max as f64 / window_secs.max(1) as f64;
+        let rate = f64::from(max) / window_f64(window_secs);
         let entry = map
             .entry(key.to_string())
-            .or_insert((max as f64, now, max, window_secs));
+            .or_insert((f64::from(max), now, max, window_secs));
         let elapsed = now.duration_since(entry.1).as_secs_f64();
-        entry.0 = (entry.0 + elapsed * rate).min(max as f64);
+        entry.0 = (entry.0 + elapsed * rate).min(f64::from(max));
         entry.1 = now;
         if entry.0 >= 1.0 {
             entry.0 -= 1.0;
@@ -103,7 +122,7 @@ impl TokenBuckets {
         } else {
             // Seconds until one token refills.
             let deficit = 1.0 - entry.0;
-            Err((deficit / rate).ceil().max(1.0) as u64)
+            Err(secs_until_refill((deficit / rate).ceil().max(1.0)))
         }
     }
 }
@@ -120,7 +139,7 @@ fn resolve_bucket_key(
         return format!("ip:{client_key}");
     }
     if let Some(name) = rule_key.strip_prefix(':') {
-        let v = params.get(name).map(String::as_str).unwrap_or(client_key);
+        let v = params.get(name).map_or(client_key, String::as_str);
         return format!("{name}:{v}");
     }
     format!("lit:{rule_key}")
@@ -267,12 +286,11 @@ pub(crate) fn substitute(destination: &str, params: &BTreeMap<String, String>) -
             .sum();
         if name_len > 0 {
             let name = &after[..name_len];
-            match params.get(name) {
-                Some(v) => out.push_str(v),
-                None => {
-                    out.push(':');
-                    out.push_str(name);
-                }
+            if let Some(v) = params.get(name) {
+                out.push_str(v);
+            } else {
+                out.push(':');
+                out.push_str(name);
             }
             rest = &after[name_len..];
         } else {
