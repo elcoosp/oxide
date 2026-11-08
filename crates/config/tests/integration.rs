@@ -28,8 +28,8 @@ fn fixture(files: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
     (tmp, dir)
 }
 
-fn json_file(v: serde_json::Value) -> String {
-    serde_json::to_string_pretty(&v).unwrap()
+fn json_file(v: &serde_json::Value) -> String {
+    serde_json::to_string_pretty(v).unwrap()
 }
 
 fn cli(pairs: &[(&str, serde_json::Value)]) -> BTreeMap<String, serde_json::Value> {
@@ -47,7 +47,7 @@ fn envmap(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
 }
 
 /// The exact §14.1 example from the spec (byte-for-byte).
-const SPEC_EXAMPLE: &str = r#"// oxide.config.ts
+const SPEC_EXAMPLE: &str = r"// oxide.config.ts
 import { defineConfig } from '@oxide-fw/core'
 import react from '@oxide-fw/react'       // or @oxide-fw/vue | @oxide-fw/svelte | @oxide-fw/solid
 import tailwind from '@oxide-fw/tailwind'
@@ -68,7 +68,7 @@ export default defineConfig({
   adapter: 'binary',                       // binary | node | static | docker | cloudflare | ...
   plugins: [tailwind()],
   modules: [],
-})"#;
+})";
 
 // ---------------------------------------------------------------------------
 // parse_env_file
@@ -294,7 +294,7 @@ fn load_layers_six_sources_in_order() {
     let (_t, dir) = fixture(&[
         (
             "preset.json",
-            json_file(serde_json::json!({
+            json_file(&serde_json::json!({
                 "adapter": "node",
                 "server": { "port": 4100 },
                 "budgets": { "clientJs": "100kb" }
@@ -303,7 +303,7 @@ fn load_layers_six_sources_in_order() {
         ),
         (
             "oxide.config.json",
-            json_file(serde_json::json!({
+            json_file(&serde_json::json!({
                 "extends": ["./preset.json"],
                 "framework": { "adapter": "react" },
                 "server": { "host": "base.example" },
@@ -313,7 +313,7 @@ fn load_layers_six_sources_in_order() {
         ),
         (
             "oxide.config.production.json",
-            json_file(serde_json::json!({
+            json_file(&serde_json::json!({
                 "server": { "port": 4200 },
                 "build": { "target": "es2022" }
             }))
@@ -381,14 +381,14 @@ fn load_layers_six_sources_in_order() {
 #[test]
 fn load_resolves_nested_extends_and_errors_on_missing_preset() {
     let (_t, dir) = fixture(&[
-        ("presets/common.json", json_file(serde_json::json!({ "security": { "csp": "hash" } })).as_str()),
+        ("presets/common.json", json_file(&serde_json::json!({ "security": { "csp": "hash" } })).as_str()),
         (
             "presets/base.json",
-            json_file(serde_json::json!({ "extends": ["./common.json"], "adapter": "node" })).as_str(),
+            json_file(&serde_json::json!({ "extends": ["./common.json"], "adapter": "node" })).as_str(),
         ),
         (
             "oxide.config.json",
-            json_file(serde_json::json!({ "extends": ["./presets/base.json"], "framework": { "adapter": "vue" } }))
+            json_file(&serde_json::json!({ "extends": ["./presets/base.json"], "framework": { "adapter": "vue" } }))
                 .as_str(),
         ),
     ]);
@@ -400,7 +400,7 @@ fn load_resolves_nested_extends_and_errors_on_missing_preset() {
     let (_t2, dir2) = fixture(&[(
         "oxide.config.json",
         json_file(
-            serde_json::json!({ "extends": ["./nope.json"], "framework": { "adapter": "vue" } }),
+            &serde_json::json!({ "extends": ["./nope.json"], "framework": { "adapter": "vue" } }),
         )
         .as_str(),
     )]);
@@ -455,7 +455,7 @@ fn load_dynamic_ts_falls_back_to_json_and_flags_dynamic_eval() {
         ),
         (
             "oxide.config.json",
-            json_file(serde_json::json!({
+            json_file(&serde_json::json!({
                 "framework": { "adapter": "svelte" },
                 "server": { "port": 5100 }
             }))
@@ -476,7 +476,7 @@ fn load_dynamic_ts_falls_back_to_json_and_flags_dynamic_eval() {
 fn load_json_only_base_sets_dynamic_flag_but_loads() {
     let (_t, dir) = fixture(&[(
         "oxide.config.json",
-        json_file(serde_json::json!({ "framework": { "adapter": "solid" } })).as_str(),
+        json_file(&serde_json::json!({ "framework": { "adapter": "solid" } })).as_str(),
     )]);
     let loaded = load_with_env(&dir, "dev", BTreeMap::new(), &EMPTY_ENV).unwrap();
     assert!(
@@ -568,7 +568,7 @@ fn load_unknown_key_is_rejected_with_typo_suggestion() {
     let (_t, dir) = fixture(&[(
         "oxide.config.json",
         json_file(
-            serde_json::json!({ "servr": { "port": 1 }, "framework": { "adapter": "react" } }),
+            &serde_json::json!({ "servr": { "port": 1 }, "framework": { "adapter": "react" } }),
         )
         .as_str(),
     )]);
@@ -591,7 +591,7 @@ fn load_unknown_key_is_rejected_with_typo_suggestion() {
 fn load_unknown_key_without_close_match_has_no_suggestion() {
     let (_t, dir) = fixture(&[(
         "oxide.config.json",
-        json_file(serde_json::json!({ "zzzzzzz": 1, "framework": { "adapter": "react" } }))
+        json_file(&serde_json::json!({ "zzzzzzz": 1, "framework": { "adapter": "react" } }))
             .as_str(),
     )]);
     let e = load_with_env(&dir, "dev", BTreeMap::new(), &EMPTY_ENV).unwrap_err();
@@ -607,7 +607,7 @@ fn load_unknown_key_without_close_match_has_no_suggestion() {
 fn load_missing_framework_adapter_errors_naming_file_and_key() {
     let (_t, dir) = fixture(&[(
         "oxide.config.json",
-        json_file(serde_json::json!({ "framework": { "name": "react" } })).as_str(),
+        json_file(&serde_json::json!({ "framework": { "name": "react" } })).as_str(),
     )]);
     let e = load_with_env(&dir, "dev", BTreeMap::new(), &EMPTY_ENV).unwrap_err();
     assert_eq!(e.0.code, "CFG-FRAMEWORK");
@@ -742,7 +742,7 @@ fn typed_config_serializes_camel_case_and_roundtrips() {
 
 #[test]
 fn islands_extractor_reads_a_simple_map() {
-    let src = r#"
+    let src = r"
 import react from '@oxide-fw/react'
 export default {
   framework: react({
@@ -752,7 +752,7 @@ export default {
     },
   }),
 }
-"#;
+";
     let v = oxide_fw_config::extract_for_test(src).expect("should extract something");
     let islands = v
         .get("framework")
@@ -770,7 +770,7 @@ fn islands_extractor_ignores_the_word_in_comments() {
     // `src/islands/counter.tsx` inside a comment, and has a separate
     // `components = { ... }` map. A naive `find("islands")` picked up
     // that comment, walked to the next `{`, and grabbed `components`.
-    let src = r#"
+    let src = r"
 // The home page renders a `<ox-island>` for the Counter component
 // (see src/islands/counter.tsx). The Playwright suite in tests/playwright/
 // asserts the SSR'd island markup end-to-end.
@@ -785,7 +785,7 @@ export default {
     islands: { Counter: 'src/islands/counter.tsx' },
   }),
 }
-"#;
+";
     let v = oxide_fw_config::extract_for_test(src).expect("should extract something");
     let islands = v
         .get("framework")
@@ -819,13 +819,13 @@ fn islands_extractor_no_block_yields_none() {
 #[test]
 fn islands_extractor_handles_path_with_brace() {
     // A string containing `{` must not throw off brace counting.
-    let src = r#"
+    let src = r"
 export default {
   framework: react({
     islands: { Weird: 'src/a{b/c.tsx' },
   }),
 }
-"#;
+";
     let v = oxide_fw_config::extract_for_test(src).expect("should extract something");
     let islands = v
         .get("framework")
