@@ -16,7 +16,9 @@ use serde_json::{Value, json};
 pub const CONFIG_SCHEMA_URI: &str = "https://oxide.dev/schema/oxide-fw-config-v1.json";
 
 /// Produce the JSON Schema document. Deterministic; identical bytes for a
-/// given crate version, so it can be committed to a repo and diffed.
+/// given crate version (pinned by `tests/schema_stability.rs` and the
+/// checked-in `schemas/oxide-fw-config.schema.json`).
+#[must_use]
 pub fn config_schema() -> Value {
     json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -26,214 +28,18 @@ pub fn config_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "framework": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "name": { "type": "string" },
-                    "adapter": {
-                        "type": "string",
-                        "enum": ["react", "vue", "svelte", "solid"]
-                    },
-                    "compiler": { "type": "boolean" },
-                    "islands": {
-                        "type": "object",
-                        "additionalProperties": { "type": "string" },
-                        "description": "§10.3 islands registry: component name → source file. The CLI emits a synthetic __boot__ client entry that imports each entry; `<Island chunk=\"X\">` on a page resolves to X in this map."
-                    }
-                }
-            },
-            "routes": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "dir": { "type": "string", "default": "src/routes" }
-                }
-            },
-            "server": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "port": { "type": "integer", "minimum": 0, "maximum": 65535, "default": 3000 },
-                    "host": { "type": "string", "default": "localhost" },
-                    "compression": {
-                        "type": "array",
-                        "items": { "type": "string", "enum": ["zstd", "br", "gzip"] }
-                    },
-                    "http3": { "type": "boolean", "default": false },
-                    "h3Advertise": { "type": "boolean", "default": true, "description": "§12.1 / C3: emit the `Alt-Svc: h3` header on the TLS listener. Default true when http3 is enabled; set false to keep the QUIC listener silent while browsers are not ready for it." },
-                    "backend": { "type": "string", "enum": ["node", "v8"], "default": "node" }
-                }
-            },
-            "render": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "default": {
-                        "type": "string",
-                        "enum": ["auto", "static", "isr", "dynamic", "spa", "islands"]
-                    },
-                    "ppr": {
-                        "type": "boolean",
-                        "default": false,
-                        "description": "§10.8 partial prerendering: serve the cached static shell instantly and stream holes live"
-                    }
-                }
-            },
-            "cache": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "handler": {
-                        "type": "object",
-                        "properties": {
-                            "type": { "type": "string", "enum": ["memory", "disk", "redis", "s3", "http"] },
-                            "url": { "type": "string", "description": "Remote base URL for `type: \"http\"` or `type: \"redis\"`." },
-                            "bucket": { "type": "string", "description": "Bucket name for `type: \"s3\"`." }
-                        },
-                        "required": ["type"]
-                    },
-                    "l0": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                            "maxSize": { "type": "string", "pattern": "^[0-9]+(kb|mb|gb)$", "default": "512mb" },
-                            "vary": {
-                                "type": "array",
-                                "items": { "type": "string" },
-                                "description": "Request headers the L0 fingerprint varies on. The primary language tag of accept-language is normalized automatically."
-                            },
-                            "ttlSecs": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "description": "P-05: L0 freshness window in seconds (default 300)."
-                            }
-                        }
-                    }
-                }
-            },
-            "images": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "formats": {
-                        "type": "array",
-                        "items": { "type": "string", "enum": ["avif", "webp", "jpeg", "png"] }
-                    },
-                    "remotePatterns": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": { "host": { "type": "string" } },
-                            "required": ["host"]
-                        }
-                    },
-                    "maxConcurrency": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "default": 4,
-                        "description": "§16.1: maximum concurrent rasterizations. Each transform is CPU-bound; unbounded concurrency lets a few clients saturate every core."
-                    },
-                    "maxDimension": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "default": 8192,
-                        "description": "§16.1: largest accepted `w`/`h`. A user-supplied size is not trusted to allocate an arbitrarily large canvas."
-                    }
-                }
-            },
-            "fonts": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "providers": { "type": "array", "items": { "type": "string" } },
-                    "subset": { "type": "array", "items": { "type": "string" } },
-                    "families": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "properties": {
-                                "family": { "type": "string" },
-                                "provider": { "type": "string" },
-                                "weights": { "type": "array", "items": { "type": "integer" } },
-                                "styles": { "type": "array", "items": { "type": "string" } },
-                                "localPaths": { "type": "array", "items": { "type": "string" } }
-                            }
-                        }
-                    }
-                }
-            },
-            "i18n": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "locales": { "type": "array", "items": { "type": "string" } },
-                    "default": { "type": "string" },
-                    "strategy": {
-                        "type": "string",
-                        "enum": ["prefix", "prefix-except-default", "none"],
-                        "description": "Locale routing strategy: `prefix` (always), `prefix-except-default` (omit the default locale), `none` (no path prefix; cookie/Accept-Language only)."
-                    }
-                }
-            },
-            "security": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                        "sessionTtlSecs": { "type": "integer", "minimum": 60, "default": 1800, "description": "§16.6: session cookie lifetime in seconds." },
-                    "csp": { "type": "string", "enum": ["strict", "hash", "off"] },
-                    "csrf": { "type": "string", "enum": ["origin", "token", "off"] },
-                    "hostAllowList": { "type": "array", "items": { "type": "string" } },
-                    "ssrfAllowList": { "type": "array", "items": { "type": "string" } },
-                    "trustedProxies": { "type": "array", "items": { "type": "string" } },
-                    "cookieKeys": { "type": "array", "items": { "type": "string" } },
-                    "sessionKeys": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "minItems": 1,
-                        "description": "≥32-byte base64 keys for the ChaCha20-Poly1305 session codec; first seals, all decrypt (rotation)."
-                    },
-                    "exposeCacheHeader": {
-                        "type": "boolean",
-                        "description": "S-21.3: emit the `x-oxide-fw-cache` status header. Default true."
-                    }
-                }
-            },
-            "rules": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": true,
-                    "properties": {
-                        "source": { "type": "string" },
-                        "destination": { "type": "string" },
-                        "redirect": { "type": "string" },
-                        "status": { "type": "integer" }
-                    }
-                }
-            },
-            "budgets": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "clientJs": { "type": "string" },
-                    "routeJs": { "type": "string" }
-                }
-            },
-            "build": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "target": { "type": "string" },
-                    "sourcemap": { "type": "string", "enum": ["hidden", "inline", "external", "off"] },
-                    "ssrExternals": { "type": "array", "items": { "type": "string" } },
-                    "edgeExternals": { "type": "array", "items": { "type": "string" }, "description": "§18 / D18: specifiers left external in the edge bundle. Empty by default — the Worker must be self-contained unless it declares a node-compat layer." },
-                    "remoteCache": { "type": "string", "description": "§5.4: remote build-cache URL (http://). Read-through on a local miss, write-back on store." },
-                    "writeBranches": { "type": "array", "items": { "type": "string" }, "description": "§5.4 / SPEC-5D: git branches trusted to write the shared remote cache. Default main/master + release/* when remoteCache is set." },
-                    "routeSearch": { "type": "boolean", "default": true, "description": "§16.5: emit the route-search index (dist/client/search-index.json). On by default when prerendered pages exist; set false for projects that do not ship a client-side search UI." }
-                }
-            },
+            "framework": framework_schema(),
+            "routes": routes_schema(),
+            "server": server_schema(),
+            "render": render_schema(),
+            "cache": cache_schema(),
+            "images": images_schema(),
+            "fonts": fonts_schema(),
+            "i18n": i18n_schema(),
+            "security": security_schema(),
+            "rules": rules_schema(),
+            "budgets": budgets_schema(),
+            "build": build_schema(),
             "adapter": {
                 "type": "string",
                 "enum": ["binary", "node", "static", "docker", "cloudflare", "lambda", "vercel", "netlify", "deno", "bun"]
@@ -247,37 +53,15 @@ pub fn config_schema() -> Value {
                 "additionalProperties": true,
                 "description": "§16.3: web app manifest (PWA). Present -> oxide build emits manifest.webmanifest + a service worker."
             },
-            "sw": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                        "enabled": { "type": "boolean", "description": "§16.6: emit the service worker at build. Default true when `manifest` is present; an explicit `false` disables emission even with a manifest." },
-                        "offlineFallback": { "type": "string", "description": "§16.6: the offline-fallback route the worker serves for a navigation miss. Default `/offline` when the build produced that route; otherwise `/`." }
-                    },
-                    "description": "§16.6: service worker configuration. Present only when the project wants to control emission beyond the default (manifest presence)."
-                },
-            "og": {
-                "type": "object",
-                "additionalProperties": true,
-                "description": "S-09: on-demand OG-image endpoint (GET /_oxide/og). Off by default; opt in with og.enabled = true.",
-                "properties": {
-                    "enabled": { "type": "boolean", "default": false },
-                    "rateLimit": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "description": "A3: per-peer token-bucket limit applied before rasterization.",
-                        "properties": {
-                            "max": { "type": "integer", "minimum": 0, "default": 10 },
-                            "windowSecs": { "type": "integer", "minimum": 0, "default": 60 }
-                        }
-                    }
-                }
-            },
+            "sw": sw_schema(),
+            "og": og_schema(),
             "imagesEndpoint": {
                 "type": "object",
                 "additionalProperties": true,
                 "description": "S-09: on-demand image transform endpoint (GET /_oxide/image). On by default; gateable."
             },
+
+            "experiments": experiments_schema(),
 
             "plugins": {
                 "type": "array",
@@ -304,28 +88,7 @@ pub fn config_schema() -> Value {
                 "additionalProperties": true,
                 "description": "§13.5: dev-server options (https, host, qr, open, proxy)."
             },
-            "content": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "collections": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "required": ["name", "dir"],
-                            "properties": {
-                                "name": { "type": "string" },
-                                "dir": { "type": "string" },
-                                "indexedFields": {
-                                    "type": "array",
-                                    "items": { "type": "string" }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
+            "content": content_schema(),
             "static": {
                 "type": "object",
                 "additionalProperties": false,
@@ -336,12 +99,432 @@ pub fn config_schema() -> Value {
                     }
                 }
             }
+                }
+    })
+}
+
+/// Schema fragment for the `framework` section (extracted so
+/// [`config_schema`] stays legible; the JSON is identical to
+/// the inline literal it replaced).
+#[must_use]
+fn framework_schema() -> Value {
+    json!({
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+                "name": { "type": "string" },
+                "adapter": {
+                    "type": "string",
+                    "enum": ["react", "vue", "svelte", "solid"]
+                },
+                "compiler": { "type": "boolean" },
+                "islands": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" },
+                    "description": "§10.3 islands registry: component name → source file. The CLI emits a synthetic __boot__ client entry that imports each entry; `<Island chunk=\"X\">` on a page resolves to X in this map."
+                }
+            }
+        })
+}
+
+/// Schema fragment for the `routes` section (extracted so
+/// [`config_schema`] stays legible; the JSON is identical to
+/// the inline literal it replaced).
+#[must_use]
+fn routes_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "dir": { "type": "string", "default": "src/routes" }
+        }
+    })
+}
+
+/// Schema fragment for the `server` section (extracted so
+/// [`config_schema`] stays legible; the JSON is identical to
+/// the inline literal it replaced).
+#[must_use]
+fn server_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "port": { "type": "integer", "minimum": 0, "maximum": 65535, "default": 3000 },
+            "host": { "type": "string", "default": "localhost" },
+            "compression": {
+                "type": "array",
+                "items": { "type": "string", "enum": ["zstd", "br", "gzip"] }
+            },
+            "http3": { "type": "boolean", "default": false },
+            "h3Advertise": { "type": "boolean", "default": true, "description": "§12.1 / C3: emit the `Alt-Svc: h3` header on the TLS listener. Default true when http3 is enabled; set false to keep the QUIC listener silent while browsers are not ready for it." },
+            "backend": { "type": "string", "enum": ["node", "v8"], "default": "node" }
+        }
+    })
+}
+
+/// Schema fragment for the `render` section (extracted so
+/// [`config_schema`] stays legible; the JSON is identical to
+/// the inline literal it replaced).
+#[must_use]
+fn render_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "default": {
+                "type": "string",
+                "enum": ["auto", "static", "isr", "dynamic", "spa", "islands"]
+            },
+            "ppr": {
+                "type": "boolean",
+                "default": false,
+                "description": "§10.8 partial prerendering: serve the cached static shell instantly and stream holes live"
+            }
+        }
+    })
+}
+
+/// Schema fragment for the `cache` section (extracted so
+/// [`config_schema`] stays legible; the JSON is identical to
+/// the inline literal it replaced).
+#[must_use]
+fn cache_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "handler": {
+                "type": "object",
+                "properties": {
+                    "type": { "type": "string", "enum": ["memory", "disk", "redis", "s3", "http"] },
+                    "url": { "type": "string", "description": "Remote base URL for `type: \"http\"` or `type: \"redis\"`." },
+                    "bucket": { "type": "string", "description": "Bucket name for `type: \"s3\"`." }
+                },
+                "required": ["type"]
+            },
+            "l0": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "maxSize": { "type": "string", "pattern": "^[0-9]+(kb|mb|gb)$", "default": "512mb" },
+                    "vary": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Request headers the L0 fingerprint varies on. The primary language tag of accept-language is normalized automatically."
+                    },
+                    "ttlSecs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "P-05: L0 freshness window in seconds (default 300)."
+                    }
+                }
+            }
+        }
+    })
+}
+
+/// Schema fragment for the `images` section (extracted so
+/// [`config_schema`] stays legible; the JSON is identical to
+/// the inline literal it replaced).
+#[must_use]
+fn images_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "formats": {
+                "type": "array",
+                "items": { "type": "string", "enum": ["avif", "webp", "jpeg", "png"] }
+            },
+            "remotePatterns": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": { "host": { "type": "string" } },
+                    "required": ["host"]
+                }
+            },
+            "maxConcurrency": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 4,
+                "description": "§16.1: maximum concurrent rasterizations. Each transform is CPU-bound; unbounded concurrency lets a few clients saturate every core."
+            },
+            "maxDimension": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 8192,
+                "description": "§16.1: largest accepted `w`/`h`. A user-supplied size is not trusted to allocate an arbitrarily large canvas."
+            }
+        }
+    })
+}
+
+/// Schema fragment for the `fonts` section (extracted so
+/// [`config_schema`] stays legible; the JSON is identical to
+/// the inline literal it replaced).
+#[must_use]
+fn fonts_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "providers": { "type": "array", "items": { "type": "string" } },
+            "subset": { "type": "array", "items": { "type": "string" } },
+            "families": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "family": { "type": "string" },
+                        "provider": { "type": "string" },
+                        "weights": { "type": "array", "items": { "type": "integer" } },
+                        "styles": { "type": "array", "items": { "type": "string" } },
+                        "localPaths": { "type": "array", "items": { "type": "string" } }
+                    }
+                }
+            }
+        }
+    })
+}
+
+/// Schema fragment for the `i18n` section (extracted so
+/// [`config_schema`] stays legible; the JSON is identical to
+/// the inline literal it replaced).
+#[must_use]
+fn i18n_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "locales": { "type": "array", "items": { "type": "string" } },
+            "default": { "type": "string" },
+            "strategy": {
+                "type": "string",
+                "enum": ["prefix", "prefix-except-default", "none"],
+                "description": "Locale routing strategy: `prefix` (always), `prefix-except-default` (omit the default locale), `none` (no path prefix; cookie/Accept-Language only)."
+            }
+        }
+    })
+}
+
+/// Schema fragment for the `security` section (extracted so
+/// [`config_schema`] stays legible; the JSON is identical to
+/// the inline literal it replaced).
+#[must_use]
+fn security_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+                "sessionTtlSecs": { "type": "integer", "minimum": 60, "default": 1800, "description": "§16.6: session cookie lifetime in seconds." },
+            "csp": { "type": "string", "enum": ["strict", "hash", "off"] },
+            "csrf": { "type": "string", "enum": ["origin", "token", "off"] },
+            "hostAllowList": { "type": "array", "items": { "type": "string" } },
+            "ssrfAllowList": { "type": "array", "items": { "type": "string" } },
+            "trustedProxies": { "type": "array", "items": { "type": "string" } },
+            "cookieKeys": { "type": "array", "items": { "type": "string" } },
+            "sessionKeys": {
+                "type": "array",
+                "items": { "type": "string" },
+                "minItems": 1,
+                "description": "≥32-byte base64 keys for the ChaCha20-Poly1305 session codec; first seals, all decrypt (rotation)."
+            },
+            "exposeCacheHeader": {
+                "type": "boolean",
+                "description": "S-21.3: emit the `x-oxide-fw-cache` status header. Default true."
+            }
+        }
+    })
+}
+
+/// Schema fragment for the `rules` section (extracted so
+/// [`config_schema`] stays legible; the JSON is identical to
+/// the inline literal it replaced).
+#[must_use]
+fn rules_schema() -> Value {
+    json!({
+        "type": "array",
+        "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+                "source": { "type": "string" },
+                "destination": { "type": "string" },
+                "redirect": { "type": "string" },
+                "status": { "type": "integer" }
+            }
+        }
+    })
+}
+
+/// Schema fragment for the `budgets` section (extracted so
+/// [`config_schema`] stays legible; the JSON is identical to
+/// the inline literal it replaced).
+#[must_use]
+fn budgets_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "clientJs": { "type": "string" },
+            "routeJs": { "type": "string" }
+        }
+    })
+}
+
+/// Schema fragment for the `build` section (extracted so
+/// [`config_schema`] stays legible; the JSON is identical to
+/// the inline literal it replaced).
+#[must_use]
+fn build_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "target": { "type": "string" },
+            "sourcemap": { "type": "string", "enum": ["hidden", "inline", "external", "off"] },
+            "ssrExternals": { "type": "array", "items": { "type": "string" } },
+            "edgeExternals": { "type": "array", "items": { "type": "string" }, "description": "§18 / D18: specifiers left external in the edge bundle. Empty by default — the Worker must be self-contained unless it declares a node-compat layer." },
+            "remoteCache": { "type": "string", "description": "§5.4: remote build-cache URL (http://). Read-through on a local miss, write-back on store." },
+            "writeBranches": { "type": "array", "items": { "type": "string" }, "description": "§5.4 / SPEC-5D: git branches trusted to write the shared remote cache. Default main/master + release/* when remoteCache is set." },
+            "routeSearch": { "type": "boolean", "default": true, "description": "§16.5: emit the route-search index (dist/client/search-index.json). On by default when prerendered pages exist; set false for projects that do not ship a client-side search UI." }
+        }
+    })
+}
+
+/// Schema fragment for the `sw` section (extracted so
+/// [`config_schema`] stays legible; the JSON is identical to
+/// the inline literal it replaced).
+#[must_use]
+fn sw_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "enabled": { "type": "boolean", "description": "§16.6: emit the service worker at build. Default true when `manifest` is present; an explicit `false` disables emission even with a manifest." },
+            "offlineFallback": { "type": "string", "description": "§16.6: the offline-fallback route the worker serves for a navigation miss. Default `/offline` when the build produced that route; otherwise `/`." }
+        },
+        "description": "§16.6: service worker configuration. Present only when the project wants to control emission beyond the default (manifest presence)."
+    })
+}
+
+/// Schema fragment for the `og` section (extracted so
+/// [`config_schema`] stays legible; the JSON is identical to
+/// the inline literal it replaced).
+#[must_use]
+fn og_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": true,
+        "description": "S-09: on-demand OG-image endpoint (GET /_oxide/og). Off by default; opt in with og.enabled = true.",
+        "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "rateLimit": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "A3: per-peer token-bucket limit applied before rasterization.",
+                "properties": {
+                    "max": { "type": "integer", "minimum": 0, "default": 10 },
+                    "windowSecs": { "type": "integer", "minimum": 0, "default": 60 }
+                }
+            }
+        }
+    })
+}
+
+/// Schema fragment for the `content` section (extracted so
+/// [`config_schema`] stays legible; the JSON is identical to
+/// the inline literal it replaced).
+#[must_use]
+fn content_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "collections": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["name", "dir"],
+                    "properties": {
+                        "name": { "type": "string" },
+                        "dir": { "type": "string" },
+                        "indexedFields": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                        }
+                    }
+                }
+            }
+        }
+    })
+}
+
+/// Schema fragment for the `experiments` section (V2-F04, §15.4 — the
+/// oneOf mirror of the internally-tagged [`StickyConfig`](crate::StickyConfig)
+/// serde shape).
+#[must_use]
+fn experiments_schema() -> Value {
+    json!({
+        "type": "array",
+        "description": "V2-F04 / §15.4: A/B experiments evaluated natively per request before the L0 lookup, so an experiment is a cache-key dimension (the |exp: vary suffix) instead of forcing the route dynamic. Validation (DSP-110): traffic is a 0-100 percentage and each experiment needs at least two variants. Off by default - with no experiments configured every L0 key stays byte-identical to the pre-F04 baseline.",
+        "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "traffic", "sticky", "variants"],
+            "properties": {
+                "id": { "type": "string", "description": "The experiment id - also the locals key and the vary-suffix name." },
+                "traffic": { "type": "integer", "minimum": 0, "maximum": 100, "description": "Percentage of eligible identities in the experiment (DSP-110)." },
+                "sticky": {
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["sticky"],
+                            "properties": {
+                                "sticky": { "const": "cookie" },
+                                "cookieName": { "type": "string", "description": "The cookie storage key, e.g. oxide_hero." }
+                            }
+                        },
+                        {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["sticky"],
+                            "properties": {
+                                "sticky": { "const": "header" },
+                                "headerName": { "type": "string", "description": "The request header storage key, e.g. x-bucket." }
+                            }
+                        },
+                        {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["sticky"],
+                            "properties": {
+                                "sticky": { "const": "ip-hash" }
+                            }
+                        }
+                    ]
+                },
+                "variants": { "type": "array", "minItems": 2, "items": { "type": "string" }, "description": "Variant names, in config order (DSP-110: at least two)." },
+                "routes": { "type": "array", "items": { "type": "string" }, "description": "URL-pattern prefixes the experiment applies to; empty = all routes." }
+            }
         }
     })
 }
 
 /// Serialize the schema as pretty JSON with a trailing newline, ready to
 /// write to `.oxide/schema/config.json` or a project's committed schema file.
+/// The output re-parses as JSON and is deterministic (pinned by
+/// `tests/schema_stability.rs`).
+///
+/// # Errors
+///
+/// Fails with `CFG-SCHEMA` when the in-memory schema cannot be serialized
+/// (`serde_json` value out of range — not reachable for this literal).
 pub fn config_schema_pretty() -> Result<String> {
     let value = config_schema();
     let s = serde_json::to_string_pretty(&value)
