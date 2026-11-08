@@ -219,7 +219,7 @@ where
                     Cow::Owned(join_range(url, ui, k, escaped)),
                 ));
                 if let Some(rest) = match_entry_ref(e, pi + 1, k, url, escaped, acc) {
-                    return Some(rest + (k - ui) as i64);
+                    return Some(rest + consumed_i64(ui, k));
                 }
                 acc.pop();
             }
@@ -333,7 +333,7 @@ fn match_entry<E: EntryLike>(
             for k in (ui..=url.len()).rev() {
                 acc.push((name.to_string(), url[ui..k].join("/")));
                 if let Some(rest) = match_entry(e, pi + 1, k, url, acc) {
-                    return Some(rest + (k - ui) as i64);
+                    return Some(rest + consumed_i64(ui, k));
                 }
                 acc.pop();
             }
@@ -342,12 +342,19 @@ fn match_entry<E: EntryLike>(
     }
 }
 
+/// Consumed-URL-segment count (`k - ui`, always ≥ 0 and URL-bounded) as the
+/// match-score increment, without a lossy `as` cast on the hot path.
+#[inline]
+fn consumed_i64(ui: usize, k: usize) -> i64 {
+    i64::try_from(k - ui).unwrap_or(i64::MAX)
+}
+
 /// Layout chain ids for a route, outermost first (§8.1 nesting).
 ///
 /// Route ids encode the module directory (scanner: `routes/blog/[slug]/page`), so a
 /// layout guards every route whose id lives at or under the layout's own directory:
 /// layout id `routes/blog/[slug]/layout` → base `routes/blog/[slug]`; the root layout
-/// `routes/layout` → base `` (wraps everything). A layout is in the chain of route id
+/// `routes/layout` → base `""` (wraps everything). A layout is in the chain of route id
 /// `R` iff its base is empty or `R == base + "/…"` (i.e. `R` starts with the base at a
 /// path boundary, or equals it). This works identically for owned and archived
 /// entries and mirrors directory containment for scanner-produced ids.
@@ -409,7 +416,10 @@ mod tests {
         RouteEntry {
             id: RouteId(id.to_string()),
             kind,
-            segments: segments.iter().map(|s| s.to_string()).collect(),
+            segments: segments
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
             file: format!("{id}.tsx").into(),
             render_mode: None,
             tags: Vec::new(),
@@ -551,14 +561,14 @@ mod tests {
     #[test]
     fn trailing_slash_query_and_double_slashes_are_tolerated() {
         let t = tree(vec![page("blog/:slug", &["blog", ":slug"])]);
-        let a = t.match_path("/blog/x");
-        let b = t.match_path("/blog/x/");
-        let c = t.match_path("/blog/x?utm=1");
-        let d = t.match_path("//blog//x");
-        assert_eq!(a, b);
-        assert_eq!(a, c);
-        assert_eq!(a, d);
-        assert!(a.is_some());
+        let plain = t.match_path("/blog/x");
+        let trailing = t.match_path("/blog/x/");
+        let query = t.match_path("/blog/x?utm=1");
+        let doubled = t.match_path("//blog//x");
+        assert_eq!(plain, trailing);
+        assert_eq!(plain, query);
+        assert_eq!(plain, doubled);
+        assert!(plain.is_some());
     }
 
     #[test]
