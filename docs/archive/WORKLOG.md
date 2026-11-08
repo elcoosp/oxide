@@ -4988,3 +4988,52 @@ Stage summary:
   `advertise_build` in the dispatch closure, `Injector::with_build_id`
   from the render stage, generation promotion in `cmd_dev`, conformance
   assertion. Recorded in `docs/deviations.md`.
+
+
+## Session — V2-F05 live loaders substrate (SSE + hub + runner + client)
+
+- Picked V2-F05 (Live loaders over SSE) as the next architectural
+  milestone: both dependencies (A04 build id + generations, A05 chain +
+  locals) are landed, the keystone track's next unblocked node (A04 → F05
+  → F06), and its substance (server hub + endpoint substrate + router
+  field + config surface + TS client) is exactly the V8-free substrate
+  shape this repo's last five milestones landed.
+- TDD red first: `server/tests/live_tdd.rs` (18 pins incl. the spec's
+  five named hub/framing pins + paused-time runner pins),
+  `router/tests/live_tdd.rs` (5), `config/tests/live_config.rs` (10),
+  `dispatch/tests/build_tdd.rs` (+7 flipped/new query-build pins),
+  `render/tests/live_tdd.rs` (5), `adapters/tests/live_matrix_tdd.rs`
+  (4), `packages/core/test/live.test.ts` (7) — all failed on
+  unresolved-symbol/missing-module errors before the implementations.
+- Implemented: `server::live` (Sub/Hub/Guard/Runner/sse_frame/
+  live_response/live_capacity_response/same_origin/live_stream),
+  `RouteEntry.live` + scanner + rkyv mirror, `LiveConfig` + DSP-111 +
+  schema section, the `/__oxide/live` data-plane build-query contract,
+  the five-field bootstrap + `Injector::with_live`, `Capability::Live` +
+  `Target::ALL`, and the client `connectLive`.
+- Criterion bench `server/benches/live.rs` (bench-util gated): affected
+  flat ~560 ns at 256/1024 subscribers, reconnect cycle 6.6 µs, frames
+  124 ns–1.15 µs.
+- Found and fixed three pre-existing landmines: (c) the root
+  `package.json` carried a doubled comma (`"0.3.0",,`) — invalid JSON on
+  the tagged tree, left by the previous ship's version-bump edit. the workspace did not
+  resolve at v0.3.0 (internal version pins left at 0.1.0 by the A04
+  version bump — dropped the reqs, path-only), and `--all-features`
+  flipped the schema byte-gates (bundler pulls serde_json/
+  preserve_order — the emitter now canonicalizes through a BTreeMap).
+- Gates: fmt clean; workspace-lints pedantic clean on the four opted-in
+  crates; CI-style `clippy --no-deps --workspace -D warnings` green over
+  the V8-free graph; allow-grep empty; 970 Rust tests + 260 core TS
+  tests green.
+
+Stage summary:
+- Branch (ship.sh): `feat/live-loaders-sse`.
+- Version trace: last tag `v0.3.0`; the branch commits carry `feat:` (no
+  `!:`/BREAKING CHANGE) → minor → **v0.4.0** (ship.sh derives the same at
+  run time from `v0.3.0..HEAD` and bumps `Cargo.toml` + `package.json`
+  as the version-bump commit; predicted tag `v0.4.0`).
+- Deferred wiring (A01 phase 3, V8-capable host): the `/__oxide/live`
+  endpoint stage, the rerun closure (same data-route path as `/__data`),
+  the revalidate-tag hook, the client-router lifecycle, the AST-LIV-001
+  refusal (R02 `check_config`), the `tests/live.sh` integration script.
+  Recorded in `docs/deviations.md`.
