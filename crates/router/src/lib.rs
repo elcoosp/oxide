@@ -25,11 +25,24 @@ use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 pub type Result<T> = std::result::Result<T, OxideError>;
 
 pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
     OxideError(Box::new(Diagnostic::error(code, msg)))
+}
+
+/// V2-B02 test oracle: the original linear matcher, retained (D23) so the
+/// candidate-index matcher can be pinned to identical behavior by property
+/// tests (`tests/index_oracle.rs`). `#[doc(hidden)]`: not part of the
+/// documented API surface; additive and behaviorally unchanged.
+#[doc(hidden)]
+pub fn match_in_linear(
+    entries: &[RouteEntry],
+    path: &str,
+) -> Option<(usize, BTreeMap<String, String>, i64)> {
+    matcher::match_in(entries, path)
 }
 
 /// Internal helper: an error with a known fix attached (§19.4).
@@ -42,11 +55,20 @@ pub(crate) fn ferr(
 }
 
 mod archive;
+mod index;
 mod matcher;
 mod rules;
 mod scan;
 mod segment;
 mod typegen;
+
+/// V2-B01: precomputed per-route dispatch answers (`RouteContextTable`, D22).
+pub mod context;
+pub use context::{LayoutLoad, RouteContext, RouteContextTable, default_pattern_of};
+
+/// V2-B09: synthetic route sets for benches + allocation-budget tests.
+/// Compiled only under `cfg(any(test, feature = "bench-util"))`.
+pub mod testing;
 
 /// Lowercase kind name used by `table()` and the routes manifest (§19.1).
 pub(crate) fn kind_str(k: &RouteKind) -> &'static str {
@@ -134,6 +156,31 @@ pub struct MatchResult {
     pub score: i64,
 }
 
+/// V2-B02: zero-copy match result — the winning entry by reference plus
+/// borrowed captures. Params are `(Cow<str>, Cow<str>)`: borrowed from the
+/// pattern and the URL on the common (no percent-escape) path, owned only for
+/// catch-all joins and decoded escapes. Use [`RouteTree::match_ref`] on the
+/// hot path; [`RouteTree::match_path`] stays for callers that need owned data.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchRef<'a> {
+    pub route: &'a RouteEntry,
+    pub params: smallvec::SmallVec<[(std::borrow::Cow<'a, str>, std::borrow::Cow<'a, str>); 4]>,
+    /// Match score (higher wins), identical to [`MatchResult::score`].
+    pub score: i64,
+}
+
+/// V2-B02: zero-copy match over a memory-mapped archive. Unlike the owned
+/// [`MatchRef`], the winning entry is identified by index — archived entries
+/// live in the mmap and are materialized on demand (see `entry_from_arch`),
+/// keeping the mapped bytes the single source of truth.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArchivedMatchRef<'a> {
+    /// Index into the archive's entry list.
+    pub route_index: usize,
+    pub params: smallvec::SmallVec<[(std::borrow::Cow<'a, str>, std::borrow::Cow<'a, str>); 4]>,
+    pub score: i64,
+}
+
 /// Builder: scan a routes directory, build the tree, match, archive.
 #[derive(Debug, Clone, Default)]
 pub struct RouteTree {
@@ -145,6 +192,10 @@ pub struct RouteTree {
         std::sync::Arc<std::sync::RwLock<std::collections::HashMap<String, Vec<RouteId>>>>,
     /// P-06: middleware/error/not-found indexes, built once on first use.
     dispatch: std::sync::Arc<std::sync::RwLock<Option<std::sync::Arc<DispatchIndex>>>>,
+    /// V2-B02: candidate index, built once on first match; cleared by
+    /// [`RouteTree::insert`]. Cost of a match scales with URL depth, not with
+    /// the number of routes (D23).
+    index: std::sync::Arc<std::sync::RwLock<Option<std::sync::Arc<index::CandidateIndex>>>>,
 }
 
 /// P-06: per-prefix indexes for the middleware chain, error boundary and the
@@ -187,13 +238,30 @@ impl RouteTree {
     /// Insert a pre-built entry (used by tests, plugins' `routes` hook §15.2).
     pub fn insert(&mut self, entry: RouteEntry) {
         self.entries.push(entry);
-        // P-02/P-06: derived caches; drop them on mutation.
+        // P-02/P-06/V2-B02: derived caches; drop them on mutation.
         if let Ok(mut c) = self.layout_chains.write() {
             c.clear();
         }
         if let Ok(mut c) = self.dispatch.write() {
             *c = None;
         }
+        if let Ok(mut c) = self.index.write() {
+            *c = None;
+        }
+    }
+
+    /// V2-B02: build (once) the candidate index over the current entries.
+    pub(crate) fn candidate_index(&self) -> std::sync::Arc<index::CandidateIndex> {
+        if let Ok(c) = self.index.read()
+            && let Some(idx) = c.as_ref()
+        {
+            return std::sync::Arc::clone(idx);
+        }
+        let idx = std::sync::Arc::new(index::CandidateIndex::build(&self.entries));
+        if let Ok(mut c) = self.index.write() {
+            *c = Some(std::sync::Arc::clone(&idx));
+        }
+        idx
     }
 
     /// P-02: cached layout chain for `route_id` (outermost first). Computed
@@ -310,6 +378,15 @@ impl RouteTree {
         matcher::match_impl(self, path)
     }
 
+    /// V2-B02: zero-copy match over the candidate index — the hot path.
+    /// Behaviorally identical to [`Self::match_path`] (pinned by the oracle
+    /// property test in `tests/index_oracle.rs`), but the winning entry is
+    /// borrowed and captures stay borrowed unless a catch-all join or a
+    /// percent-escape forces an owned copy.
+    pub fn match_ref<'a>(&'a self, path: &'a str) -> Option<MatchRef<'a>> {
+        matcher::match_ref_impl(self, path)
+    }
+
     /// Serialize to an rkyv archive (§8.2) written to `out.manifest`.
     pub fn archive_to(&self, out: &Path) -> Result<()> {
         archive::archive_impl(self, out)
@@ -377,6 +454,11 @@ pub struct ArchivedTree {
     /// INVARIANT: points into `_mmap`, which is read-only and was validated by
     /// `access()` at construction, so the pointee cannot change invalidly.
     root: *const archive::ArchivedArchiveRoot,
+    /// V2-B02: candidate index over the archived entries, built once on first
+    /// match (see `index` module docs for the archived-tree caveats: static
+    /// prefixes are owned copies, and any incomplete walk falls back to the
+    /// exact linear scan over the mapped bytes).
+    index: OnceLock<index::CandidateIndex>,
 }
 
 // SAFETY: the mapping is read-only and the root pointer is immutable; the
@@ -403,6 +485,21 @@ impl ArchivedTree {
     pub fn match_path(&self, path: &str) -> Option<MatchResult> {
         archive::arch_match_impl(self, path)
     }
+
+    /// V2-B02: zero-copy match over the memory-mapped archive (hot path).
+    /// The winning entry is identified by [`ArchivedMatchRef::route_index`];
+    /// materialize it with `archive::entry_from_arch` only if owned data is
+    /// needed — matching itself reads the mapped bytes in place.
+    pub fn match_ref<'a>(&'a self, path: &'a str) -> Option<ArchivedMatchRef<'a>> {
+        archive::arch_match_ref_impl(self, path)
+    }
+
+    /// V2-B02: the lazily built candidate index over the archived entries.
+    pub(crate) fn candidate_index(&self) -> &index::CandidateIndex {
+        self.index
+            .get_or_init(|| index::CandidateIndex::build(self.root().entries.as_slice()))
+    }
+
     pub fn len(&self) -> usize {
         archive::arch_len_impl(self)
     }
