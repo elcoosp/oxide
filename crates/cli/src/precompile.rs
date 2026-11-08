@@ -424,8 +424,8 @@ mod bug_mapkey_tests {
         std::fs::create_dir_all(&tmp).unwrap();
         let page = write_tree(&tmp);
 
-        let got = resolve_relative(&page, "../../components/hmr-target.vue")
-            .expect("import resolves");
+        let got =
+            resolve_relative(&page, "../../components/hmr-target.vue").expect("import resolves");
         assert_eq!(
             got,
             tmp.join("src/components/hmr-target.vue"),

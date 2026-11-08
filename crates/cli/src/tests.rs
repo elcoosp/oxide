@@ -7718,7 +7718,10 @@ async fn bundle_edge_entry_accepts_mdx_reachable_from_the_entry() {
 /// Windows CI fallback for the MDX test's react resolution (unix uses a
 /// symlink). Only compiled off-unix, where tests.rs has no other need for it.
 #[cfg(not(unix))]
-fn copy_dir_recursive_for_test(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+fn copy_dir_recursive_for_test(
+    src: &std::path::Path,
+    dst: &std::path::Path,
+) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
