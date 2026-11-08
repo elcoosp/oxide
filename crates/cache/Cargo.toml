@@ -34,10 +34,21 @@ futures = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# V2-B09: benchmark harness for key construction, tag insert and disk writes.
+criterion = { workspace = true }
+
+# V2-B09: criterion harness (opt-in via the bench-util feature so plain
+# `cargo test` never pays the criterion build).
+[[bench]]
+name = "keys"
+harness = false
+required-features = ["bench-util"]
 
 [features]
 redis = ["dep:redis"]
 s3 = ["dep:object_store"]
+# V2-B09: exposes the bench fixtures helper (`benches support module`).
+bench-util = []
 
 [package.metadata.docs.rs]
 all-features = true
