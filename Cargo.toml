@@ -33,10 +33,13 @@ description = "Oxide: framework-agnostic, full-stack meta-framework with a Rust 
 authors = ["elcoosp <elcoosp@gmail.com>"]
 
 # V2-A02: workspace lint policy. Crates opt in per-manifest with
-# `[lints] workspace = true`; `oxide-fw-dispatch` is the first crate to
-# opt in. Command-line gates (CI `clippy -- -D warnings`) promote the
-# warn-level groups to hard failures, so a crate that opts in is held to
-# pedantic without any `#[allow]` escape hatch in its sources.
+# `[lints] workspace = true`; `oxide-fw-dispatch` opted in first, then
+# `oxide-fw-router` and `oxide-fw-schema` (V2-A06). The remaining V8-free
+# crates adopt pedantic in a dedicated hygiene pass; the V8 crates cannot
+# be linted without a V8-capable host. Command-line gates (CI
+# `clippy -- -D warnings`) promote the warn-level groups to hard failures,
+# so a crate that opts in is held to pedantic without any `#[allow]`
+# escape hatch in its sources.
 [workspace.lints.rust]
 warnings = "deny"
 
