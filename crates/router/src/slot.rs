@@ -59,6 +59,7 @@ pub struct SlotMatch {
 }
 
 /// Parse a slot directory name: `@modal` → `"modal"`, `@` alone → error.
+#[must_use]
 pub fn parse_slot_name(dir: &str) -> Option<String> {
     dir.strip_prefix('@')
         .filter(|s| !s.is_empty())
@@ -66,6 +67,7 @@ pub fn parse_slot_name(dir: &str) -> Option<String> {
 }
 
 /// Parse an intercept marker at the start of a route segment.
+#[must_use]
 pub fn parse_intercept_marker(segment: &str) -> Option<(InterceptLevel, &str)> {
     if let Some(rest) = segment.strip_prefix("(...)") {
         return Some((InterceptLevel::FromRoot, rest));
@@ -98,6 +100,7 @@ pub fn parse_intercept_marker(segment: &str) -> Option<(InterceptLevel, &str)> {
 /// path the user came *from* (or `None` for a full-page load). If an intercept
 /// matches, the intercept's slot renders in place of the intercepted page for
 /// the primary slot.
+#[must_use]
 pub fn resolve_slots(
     slots: &[SlotSpec],
     intercepts: &[InterceptSpec],
@@ -208,9 +211,8 @@ fn intercept_anchor(source: &str) -> String {
 
 fn parent_path(p: &str) -> String {
     match p.rfind('/') {
-        Some(0) => "/".into(),
-        Some(i) => p[..i].into(),
-        None => "/".into(),
+        Some(i) if i > 0 => p[..i].into(),
+        _ => "/".into(),
     }
 }
 
