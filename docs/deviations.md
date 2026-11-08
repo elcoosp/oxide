@@ -159,7 +159,10 @@ deliberately deferred, and why:
    assigns them to V2-A05, V2-A06 and the A01 phase-3 move respectively;
    landing them now would mean inventing CLI-private state (`DispatchDeps`
    captures `l0`, `pool`, `waterfall`, …) without a compile to check
-   against.
+   against. *(Status: partially closed since — `loads.rs` landed with
+   V2-A06 and `chain.rs` + `locals.rs` landed with V2-A05; `deps.rs` /
+   `ctx.rs` remain A01-phase-3 material because they capture CLI-private
+   state.)*
 3. **`[workspace.lints]` is opt-in, not workspace-wide.** The policy table
    now exists at the root (`rust.warnings = deny`,
    `clippy.pedantic = warn, priority = -1`), but only `oxide-fw-dispatch`
@@ -215,3 +218,44 @@ deliberately deferred, and why:
 **To unclose:** A01 phase 3 on a V8-capable host deletes the CLI's
 sequential loop in favor of `run_load_graph`, adopts the layout verdicts,
 and runs the remaining-crate pedantic hygiene pass in the same series.
+
+## V2-A05 middleware chain + unified locals — deferred CLI adoption (2026-11-08)
+
+The V2-A05 milestone landed the spec's step 1 complete and V8-free:
+`oxide-fw-dispatch::chain` (`run_chain`, the §8.5 chain runner with the
+production semantics — later-wins locals, last-writer-wins headers per
+case-insensitive name, short-circuit / redirect stop the walk, rewrite
+returns the target with the B-22 resume marker) and
+`oxide-fw-dispatch::locals` (`RequestLocals` with the pipeline-owned
+reserved keys `session` / `locale` / `experiments` and the DSP-101
+collision report). 22 integration tests pin both from outside the crate.
+What is deliberately deferred, and why:
+
+1. **The CLI's `stage_middleware` keeps its inline loop.** Replacing the
+   ~200-line closure body with `run_chain(.., &ctx.middleware_chain, ..)`
+   requires compiling `oxide-fw-cli` — a V8 link (CONVENTIONS §8) this
+   sandbox cannot pay, exactly as with the A02 helpers and the A06 load
+   graph. The wiring is code-only once A01 phase 3 can compile the CLI;
+   the substrate already mirrors the loop's behaviour (the CLI's own
+   `middleware_chain_runs_outer_to_inner_and_threads_locals` test pins the
+   end-to-end shape the substrate matches).
+2. **`stage_prelude` does not build `RequestLocals` yet.** The session
+   decode, locale resolution and experiments staging stay in the closure;
+   `to_value()`'s reserved-key precedence and the DSP-101 report are
+   pinned but not yet consumed by loaders/actions/render.
+3. **`/__data` middleware parity is unchanged.** The §8.4 parity the spec
+   asks for in step 3 (the data endpoint running the same chain) is a
+   property of the closure wiring, not the substrate; today's behaviour
+   (the data branch runs after the middleware phase with the same
+   locals/headers) is preserved verbatim by the deferral.
+4. **Spec-sketch deltas are deliberate.** The substrate's signature
+   follows the real `MiddlewareDispatcher::dispatch(MiddlewareDispatchArgs)`
+   seam (the spec's positional sketch predates the args struct), and the
+   rewrite outcome carries a resume marker because the CLI's B-22 fix
+   postdates the spec text. `ChainOutcome::Respond` keeps the raw
+   `MiddlewareRunResult` so the caller's session write-back and location
+   -header mapping stay where they are today.
+
+**To unclose:** A01 phase 3 on a V8-capable host replaces the loop body
+with `run_chain`, builds `RequestLocals` in `stage_prelude`, and deletes
+the closure's ad-hoc locals special-casing in the same series.
