@@ -59,28 +59,26 @@ impl CandidateIndex {
             let mut cur = 0usize;
             let mut placed = false;
             for k in 0..e.seg_len() {
-                match classify(e.seg(k)) {
-                    SegKind::Static(s) => {
-                        let next = match nodes[cur].stat.get(s) {
-                            Some(&n) => n as usize,
-                            None => {
-                                nodes.push(Node::default());
-                                let n = nodes.len() - 1;
-                                nodes[cur].stat.insert(s.into(), n as u32);
-                                n
-                            }
-                        };
-                        cur = next;
-                    }
-                    _ => {
-                        nodes[cur].wild.push(i as u32);
-                        placed = true;
-                        break;
-                    }
+                if let SegKind::Static(s) = classify(e.seg(k)) {
+                    let next = if let Some(&n) = nodes[cur].stat.get(s) {
+                        n as usize
+                    } else {
+                        nodes.push(Node::default());
+                        let n = nodes.len() - 1;
+                        nodes[cur]
+                            .stat
+                            .insert(s.into(), u32::try_from(n).expect("node id"));
+                        n
+                    };
+                    cur = next;
+                } else {
+                    nodes[cur].wild.push(u32::try_from(i).expect("entry id"));
+                    placed = true;
+                    break;
                 }
             }
             if !placed {
-                nodes[cur].term.push(i as u32);
+                nodes[cur].term.push(u32::try_from(i).expect("entry id"));
             }
         }
         Self { nodes }
@@ -133,7 +131,7 @@ impl CandidateIndex {
 
     /// All matchable entry indices (linear fallback, ascending).
     pub(crate) fn all(entries_len: usize) -> smallvec::SmallVec<[u32; 16]> {
-        (0..entries_len as u32).collect()
+        (0..u32::try_from(entries_len).expect("entry count fits u32")).collect()
     }
 }
 
@@ -147,7 +145,10 @@ mod tests {
         RouteEntry {
             id: RouteId(id.to_string()),
             kind: RouteKind::Page,
-            segments: segments.iter().map(|s| s.to_string()).collect(),
+            segments: segments
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
             file: format!("{id}.tsx").into(),
             render_mode: None,
             tags: Vec::new(),
@@ -222,7 +223,7 @@ mod tests {
                 index.candidates(&segs, escaped, &mut cands);
                 if let Some((idx, _, _)) = match_in(entries, url) {
                     assert!(
-                        cands.contains(&(idx as u32)),
+                        cands.contains(&(u32::try_from(idx).expect("entry id"))),
                         "linear winner {idx} ({:?}) missing from candidates {cands:?} for {url:?}",
                         entries[idx].segments
                     );
