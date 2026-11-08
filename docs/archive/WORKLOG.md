@@ -4838,3 +4838,61 @@ Cargo.tomls; CI-style `-D warnings` clean over the 13-crate V8-free graph;
 `crates/cli`, `jshost`, `bundler`, `compiler`, `core-wasm` and the Node
 packages were not compiled; their fmt reflow came from
 `cargo fmt --all` and is behavior-neutral.
+
+## Session — V2-A05 middleware chain + unified locals substrate (V8-free)
+
+**Milestone:** the spec's A05 step 1, the same V8-free pattern A02 and A06
+used: `oxide-fw-dispatch::chain::run_chain` (the §8.5 runner `stage_middleware`
+wires in phase 3) and `oxide-fw-dispatch::locals::RequestLocals` (the unified
+locals `stage_prelude` composes, with the pipeline-owned reserved keys
+`session` / `locale` / `experiments` and the DSP-101 collision report). The
+CLI adoption stays deferred — `stage_middleware` keeps its ~200-line inline
+loop until the A01 phase-3 move can compile `oxide-fw-cli` against this crate
+(see `docs/deviations.md`).
+
+**Why the substrate matches production, not the spec sketch:** the spec's
+`run_chain` pseudocode predates two fixes the inline loop already ships, so
+the substrate carries them: headers accumulate last-writer-wins per
+case-insensitive name (B-06 — appending both produced duplicate header
+lines), and a rewrite returns the rewriting layer as a resume marker the
+next pass honours (B-22 — the layers that already ran, and the rewriting
+layer itself, must not run twice). The dispatcher seam is the real
+`MiddlewareDispatcher::dispatch(MiddlewareDispatchArgs)` (the spec sketch's
+positional signature predates the args struct). Docs drift this session
+corrected by landing code, not prose: the spec's A05 "evidence" still says
+the dispatch runs nearest-only middleware, but the inline loop has run the
+full chain since the §8.5 fix (`cli/src/tests.rs` pins it end to end).
+
+**TDD order kept:** the pins were written first
+(`crates/dispatch/tests/chain_tdd.rs`, `crates/dispatch/tests/locals_tdd.rs`,
+red on unresolved `oxide_fw_dispatch::chain` / `::locals` — 13 + 9 tests),
+then the modules, then the criterion group.
+
+**Criterion (2 vCPU shared sandbox, criterion 0.8.2):**
+
+| bench id | median |
+| --- | --- |
+| chain/noop/1 | 138.8 ns |
+| chain/noop/2 | 176.3 ns |
+| chain/noop/4 | 250.0 ns |
+| chain/locals_merge_4 | 761.3 ns |
+| locals/to_value | 1.1311 µs |
+| locals/apply_middleware | 126.0 ns |
+
+The substrate's own cost is ~40 ns per extra layer (137 → 176 → 250 ns for
+1 → 2 → 4 zero-work layers) — noise against any real middleware round trip
+(the JS worker hop the loop pays per layer is ~10⁵× this). `locals_merge_4`
+shows the per-hop clone + merge path at ~0.76 µs; `locals/to_value` composes
+a representative request (session + locale + two experiments + eight user
+keys) in ~1.13 µs, which a per-request pipeline pays once per stage call.
+
+**Gates:** `cargo fmt --all -- --check` exit 0; pedantic clippy
+(`cargo clippy --no-deps -p oxide-fw-dispatch --all-targets --all-features
+-- -D warnings -W clippy::pedantic`) zero diagnostics; 67/67 dispatch tests
+green (26 unit + 3 flow + 5 url + 11 loads + 13 chain + 9 locals);
+`cargo tree -p oxide-fw-dispatch | grep -c jshost` = 0; zero
+`#[allow(clippy::*)]` / `#![allow(...)]` anywhere in the crate.
+
+**Environment note:** unchanged scoping — no V8 toolchain (2 vCPU / 8 GB);
+`crates/cli`, `jshost`, `bundler`, `compiler`, `core-wasm` and the Node
+packages were not compiled.
