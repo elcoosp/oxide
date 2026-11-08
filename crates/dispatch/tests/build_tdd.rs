@@ -6,8 +6,10 @@
 //! accepts answers `409` + `x-oxide-build-stale: true` with an empty body;
 //! a request without the header (curl, tests, old clients) is allowed; a
 //! data-plane response always advertises the current id. The stage runs
-//! ONLY for the data plane (`/__data`, `/_oxide/fn/*`; `/__oxide/live` and
-//! `/__oxide/stream/*` join when those routes land).
+//! ONLY for the data plane (`/__data`, `/_oxide/fn/*`, and — since V2-F05 —
+//! `/__oxide/live`, whose build id may also travel in the `build` query
+//! parameter because `EventSource` cannot set headers; `/__oxide/stream/*`
+//! joins when that route lands (F07).
 //!
 //! Written FIRST (red), per the spec's agent contract V2.0 item 3. The
 //! pipeline wiring (calling `stage_build_check` from the dispatch closure
@@ -109,10 +111,14 @@ fn data_plane_paths() {
     assert!(!is_data_plane_path("/"));
     assert!(!is_data_plane_path("/about"));
     assert!(!is_data_plane_path("/_oxide/fn")); // exact fn prefix only
-    // Future data-plane routes are NOT in the set yet (spec: "later
-    // /__oxide/live, /__oxide/stream/*") — a not-yet-existing route must
-    // not start enforcing the header.
+    // V2-F05: the live route joins the data plane (the spec's "later
+    // /__oxide/live" is now landed — the A04 pins rejected it until the
+    // route's WP flipped the predicate deliberately).
+    assert!(is_data_plane_path("/__oxide/live"));
+    assert!(is_data_plane_path("/__oxide/live?route=routes/index")); // query tolerated
+    // F07's stream route is still future: it must not enforce the header.
     assert!(!is_data_plane_path("/__oxide/stream/abc"));
+    assert!(!is_data_plane_path("/__oxide/livex")); // no prefix bleed
     assert!(!is_data_plane_path("/__datax")); // no prefix bleed
 }
 
@@ -215,6 +221,104 @@ fn stage_rejection_only_short_circuits_data_plane() {
     let stale = vec![(BUILD_HEADER.to_string(), "old".to_string())];
     assert!(matches!(
         stage_build_check("/_oxide/fn/thumb", &stale, &g, now()),
+        Flow::Respond(_)
+    ));
+}
+
+// ------------------------------------------------- live query build (V2-F05)
+
+#[test]
+fn live_route_read_build_from_the_query_parameter() {
+    // EventSource cannot set headers (spec §V2-F05 step 2): the build id
+    // travels as `?build=<id>` on the live route. An unaccepted one answers
+    // 409 exactly like a stale header.
+    let g = gens("new", Duration::from_secs(60));
+    let flow = stage_build_check("/__oxide/live?route=routes/index&build=old", &[], &g, now());
+    match flow {
+        Flow::Respond(resp) => {
+            assert_eq!(resp.status, 409);
+            assert!(
+                resp.headers
+                    .iter()
+                    .any(|(k, v)| k == STALE_HEADER && v == "true")
+            );
+        }
+        Flow::Continue => panic!("a stale query build id must short-circuit the live route"),
+    }
+}
+
+#[test]
+fn live_route_accepts_the_current_build_in_the_query() {
+    let g = gens("new", Duration::from_secs(60));
+    assert!(matches!(
+        stage_build_check("/__oxide/live?route=r&build=new", &[], &g, now()),
+        Flow::Continue
+    ));
+    // Inside the demotion window the previous id is accepted too.
+    let t0 = now();
+    let mut g = gens("b", Duration::from_secs(60));
+    g.promote("c".into(), t0);
+    assert!(matches!(
+        stage_build_check(
+            "/__oxide/live?build=b",
+            &[],
+            &g,
+            t0 + Duration::from_secs(10)
+        ),
+        Flow::Continue
+    ));
+}
+
+#[test]
+fn live_route_without_build_param_allows_through() {
+    // Absent header AND absent query param (curl, tests): allowed — the
+    // spec's "absent header allowed" contract carries over to the query.
+    let g = gens("new", Duration::from_secs(60));
+    assert!(matches!(
+        stage_build_check("/__oxide/live?route=routes/index", &[], &g, now()),
+        Flow::Continue
+    ));
+    assert!(matches!(
+        stage_build_check("/__oxide/live", &[], &g, now()),
+        Flow::Continue
+    ));
+}
+
+#[test]
+fn header_wins_over_the_live_query_param() {
+    // A client that CAN set headers (the router's /__data fetch) sends
+    // both only by mistake; the header is the canonical spelling.
+    let g = gens("new", Duration::from_secs(60));
+    let hs = vec![(BUILD_HEADER.to_string(), "new".to_string())];
+    assert!(matches!(
+        stage_build_check("/__oxide/live?build=old", &hs, &g, now()),
+        Flow::Continue
+    ));
+}
+
+#[test]
+fn query_build_fallback_applies_to_the_live_route_only() {
+    // /__data has no `build` query contract: the param is ignored there,
+    // a stale id must travel in the header.
+    let g = gens("new", Duration::from_secs(60));
+    assert!(matches!(
+        stage_build_check("/__data?build=old", &[], &g, now()),
+        Flow::Continue
+    ));
+}
+
+#[test]
+fn live_query_rejects_expired_previous_build() {
+    let t0 = now();
+    let mut g = gens("a", Duration::from_secs(60));
+    g.promote("b".into(), t0);
+    assert!(matches!(
+        stage_build_check(
+            "/__oxide/live?build=a",
+            &[],
+            &g,
+            t0 + Duration::from_secs(61)
+        ),
         Flow::Respond(_)
     ));
 }
