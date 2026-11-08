@@ -58,6 +58,144 @@ fn ts_lit(pattern: &str) -> String {
     }
 }
 
+/// One deduped route row for type emission: (ts pattern, encoded pattern,
+/// param names, sibling `page.server.ts` path).
+type RouteRow = (String, String, Vec<String>, PathBuf);
+
+/// `fmt::Write` to a `String` is infallible; every generated-type append
+/// goes through `write!` so the emitters read like the code they produce.
+fn w(dts: &mut String, args: std::fmt::Arguments<'_>) {
+    use std::fmt::Write as _;
+    dts.write_fmt(args).expect("String writes are infallible");
+}
+
+/// The non-empty `OxideRoutes` union, `RouteParams`, `LoaderEvent`,
+/// `LoaderInput` and `href` overload declarations (§8.3, §16.4).
+fn push_route_type_decls(
+    dts: &mut String,
+    rows: &[RouteRow],
+    locales: Option<&[String]>,
+    default_locale: Option<&str>,
+) {
+    w(dts, format_args!("export type OxideRoutes =\n"));
+    // TS union members are `|`-separated; only the LAST member carries
+    // the statement's terminating `;` (a `;` after every member is a
+    // syntax error and broke `tsc` on the generated file).
+    let last = rows.len() - 1;
+    for (i, (ts, _, _, _)) in rows.iter().enumerate() {
+        let lit = ts_lit(ts);
+        if i == last {
+            w(dts, format_args!("  | {lit};\n"));
+        } else {
+            w(dts, format_args!("  | {lit}\n"));
+        }
+    }
+    w(dts, format_args!("\nexport type RouteParams = {{\n"));
+    for (ts, _, params, _) in rows {
+        let lit = ts_lit(ts);
+        let val = params_object(params);
+        w(dts, format_args!("  {lit}: {val};\n"));
+    }
+    w(dts, format_args!("}};\n"));
+    // §8.3: loaders receive the request's parsed search params
+    // (URLSearchParams-like: a repeated key becomes `string[]`).
+    w(
+        dts,
+        format_args!("\nexport type LoaderSearchParams = Record<string, string | string[]>;\n"),
+    );
+    // §8.3 / §9.1: the `load(event)` input per route — route identity,
+    // params, parsed search params, url and method.
+    w(dts, format_args!("\nexport type LoaderEvent = {{\n"));
+    for (ts, _, params, _) in rows {
+        let lit = ts_lit(ts);
+        let val = params_object(params);
+        w(dts, format_args!("  {lit}: {{\n"));
+        w(dts, format_args!("    route: {lit};\n"));
+        w(dts, format_args!("    params: {val};\n"));
+        w(dts, format_args!("    searchParams: LoaderSearchParams;\n"));
+        w(dts, format_args!("    url: string;\n"));
+        w(dts, format_args!("    method: string;\n"));
+        w(dts, format_args!("  }};\n"));
+    }
+    w(dts, format_args!("}};\n"));
+    w(
+        dts,
+        format_args!("\nexport type LoaderInput<R extends OxideRoutes> = LoaderEvent[R];\n"),
+    );
+    // SPEC-16.4 / §16-D: emit a `locale` variant of each `href`
+    // overload when the project has i18n enabled. The locale parameter
+    // sits LAST so an existing `href('/blog', {slug})` call still
+    // compiles — no breaking change to non-i18n projects.
+    let locales_literal: Option<String> = locales
+        .filter(|l| !l.is_empty())
+        .map(|l| l.iter().map(|s| ts_lit(s)).collect::<Vec<_>>().join(" | "));
+    let default_literal: Option<String> = default_locale.map(ts_lit);
+    for (ts, _, params, _) in rows {
+        let lit = ts_lit(ts);
+        if params.is_empty() {
+            w(
+                dts,
+                format_args!("export declare function href(route: {lit}): string;\n"),
+            );
+            if let Some(loc) = &locales_literal {
+                w(
+                    dts,
+                    format_args!(
+                        "export declare function href(route: {lit}, locale: {loc}): string;\n"
+                    ),
+                );
+            }
+        } else {
+            let val = params_object(params);
+            w(
+                dts,
+                format_args!(
+                    "export declare function href(route: {lit}, params: {val}): string;\n"
+                ),
+            );
+            if let Some(loc) = &locales_literal {
+                w(
+                    dts,
+                    format_args!(
+                        "export declare function href(route: {lit}, params: {val}, locale: {loc}): string;\n"
+                    ),
+                );
+            }
+        }
+    }
+    // If i18n is enabled, also export a `Locale` union + `DefaultLocale`
+    // alias for the project to reference directly.
+    if let (Some(loc), Some(def)) = (&locales_literal, &default_literal) {
+        w(dts, format_args!("\nexport type Locale = {loc};\n"));
+        w(dts, format_args!("export type DefaultLocale = {def};\n"));
+    }
+}
+
+/// SPEC-09: per-route loader data. A `page.server.ts` that exports
+/// `export type LoaderData = …` contributes that type; a route with no
+/// annotation is `unknown` (honest — we do not infer from arbitrary TS).
+fn push_route_data(dts: &mut String, rows: &[RouteRow]) {
+    w(dts, format_args!("\nexport type RouteData = {{\n"));
+    for (ts, _, _, server) in rows {
+        let data_ty = std::fs::read_to_string(server)
+            .ok()
+            .and_then(|src| {
+                // A user-declared `export type LoaderData = X;` names X.
+                src.lines().find_map(|l| {
+                    let t = l.trim();
+                    t.strip_prefix("export type LoaderData").and_then(|r| {
+                        r.split_once('=')
+                            .map(|(_, x)| x.trim().trim_end_matches(';').to_string())
+                    })
+                })
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+        let lit = ts_lit(ts);
+        w(dts, format_args!("  {lit}: {data_ty};\n"));
+    }
+    w(dts, format_args!("}};\n"));
+}
+
 pub(crate) fn typegen_impl(
     tree: &RouteTree,
     out_dir: &Path,
@@ -89,7 +227,7 @@ pub(crate) fn typegen_impl(
     // entry by encoded pattern could grab a same-pattern sibling (a `(group)`
     // duplicate, or a layout at the same depth), which made per-route
     // `LoaderData` extraction miss (SPEC-09 follow-up).
-    let mut rows: Vec<(String, String, Vec<String>, PathBuf)> = Vec::new();
+    let mut rows: Vec<RouteRow> = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     for e in nav {
         let ts = pattern_ts(&e.segments);
@@ -122,105 +260,13 @@ pub(crate) fn typegen_impl(
         dts.push_str("\nexport type LoaderInput<R extends OxideRoutes> = LoaderEvent[R];\n");
         dts.push_str("\nexport declare function href(route: string): string;\n");
     } else {
-        dts.push_str("export type OxideRoutes =\n");
-        // TS union members are `|`-separated; only the LAST member carries
-        // the statement's terminating `;` (a `;` after every member is a
-        // syntax error and broke `tsc` on the generated file).
-        let last = rows.len() - 1;
-        for (i, (ts, _, _, _)) in rows.iter().enumerate() {
-            if i == last {
-                dts.push_str(&format!("  | {};\n", ts_lit(ts)));
-            } else {
-                dts.push_str(&format!("  | {}\n", ts_lit(ts)));
-            }
-        }
-        dts.push_str("\nexport type RouteParams = {\n");
-        for (ts, _, params, _) in &rows {
-            let val = params_object(params);
-            dts.push_str(&format!("  {}: {};\n", ts_lit(ts), val));
-        }
-        dts.push_str("};\n");
-        // §8.3: loaders receive the request's parsed search params
-        // (URLSearchParams-like: a repeated key becomes `string[]`).
-        dts.push_str("\nexport type LoaderSearchParams = Record<string, string | string[]>;\n");
-        // §8.3 / §9.1: the `load(event)` input per route — route identity,
-        // params, parsed search params, url and method.
-        dts.push_str("\nexport type LoaderEvent = {\n");
-        for (ts, _, params, _) in &rows {
-            dts.push_str(&format!("  {}: {{\n", ts_lit(ts)));
-            dts.push_str(&format!("    route: {};\n", ts_lit(ts)));
-            dts.push_str(&format!("    params: {};\n", params_object(params)));
-            dts.push_str("    searchParams: LoaderSearchParams;\n");
-            dts.push_str("    url: string;\n");
-            dts.push_str("    method: string;\n");
-            dts.push_str("  };\n");
-        }
-        dts.push_str("};\n");
-        dts.push_str("\nexport type LoaderInput<R extends OxideRoutes> = LoaderEvent[R];\n");
-        // SPEC-16.4 / §16-D: emit a `locale` variant of each `href`
-        // overload when the project has i18n enabled. The locale parameter
-        // sits LAST so an existing `href('/blog', {slug})` call still
-        // compiles — no breaking change to non-i18n projects.
-        let locales_literal: Option<String> = locales
-            .filter(|l| !l.is_empty())
-            .map(|l| l.iter().map(|s| ts_lit(s)).collect::<Vec<_>>().join(" | "));
-        let default_literal: Option<String> = default_locale.map(ts_lit);
-        for (ts, _, params, _) in &rows {
-            if params.is_empty() {
-                dts.push_str(&format!(
-                    "export declare function href(route: {}): string;\n",
-                    ts_lit(ts)
-                ));
-                if let Some(loc) = &locales_literal {
-                    dts.push_str(&format!(
-                        "export declare function href(route: {}, locale: {}): string;\n",
-                        ts_lit(ts),
-                        loc
-                    ));
-                }
-            } else {
-                dts.push_str(&format!(
-                    "export declare function href(route: {}, params: {}): string;\n",
-                    ts_lit(ts),
-                    params_object(params)
-                ));
-                if let Some(loc) = &locales_literal {
-                    dts.push_str(&format!(
-                        "export declare function href(route: {}, params: {}, locale: {}): string;\n",
-                        ts_lit(ts),
-                        params_object(params),
-                        loc
-                    ));
-                }
-            }
-        }
-        // If i18n is enabled, also export a `Locale` union + `DefaultLocale`
-        // alias for the project to reference directly.
-        if let (Some(loc), Some(def)) = (&locales_literal, &default_literal) {
-            dts.push_str(&format!("\nexport type Locale = {};\n", loc));
-            dts.push_str(&format!("export type DefaultLocale = {};\n", def));
-        }
+        push_route_type_decls(&mut dts, &rows, locales, default_locale);
     }
+
     // SPEC-09: per-route loader data. A `page.server.ts` that exports
     // `export type LoaderData = …` contributes that type; a route with no
     // annotation is `unknown` (honest — we do not infer from arbitrary TS).
-    dts.push_str("\nexport type RouteData = {\n");
-    for (ts, _, _, server) in &rows {
-        let data_ty = std::fs::read_to_string(server)
-            .ok()
-            .and_then(|src| {
-                // A user-declared `export type LoaderData = X;` names X.
-                src.lines().find_map(|l| {
-                    let t = l.trim();
-                    t.strip_prefix("export type LoaderData").and_then(|r| {
-                        r.split_once('=')
-                            .map(|(_, x)| x.trim().trim_end_matches(';').to_string())
-                    })
-                })
-            })
-            .unwrap_or_else(|| "unknown".to_string());
-        dts.push_str(&format!("  {}: {};\n", ts_lit(ts), data_ty));
-    }
+    push_route_data(&mut dts, &rows);
     dts.push_str("};\n");
     dts.push_str(
         "\nexport type PageProps<R extends OxideRoutes> = {\n  data: RouteData[R];\n  params: RouteParams[R];\n};\n",
@@ -317,7 +363,10 @@ mod tests {
         RouteEntry {
             id: RouteId(id.to_string()),
             kind,
-            segments: segments.iter().map(|s| s.to_string()).collect(),
+            segments: segments
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
             file: format!("{id}.tsx").into(),
             render_mode: None,
             tags: Vec::new(),
