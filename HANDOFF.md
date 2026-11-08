@@ -1,3 +1,91 @@
+# Handoff — V2-F04 cache-safe personalization substrate landed (experiments engine + config surface); all gates green
+
+## Where things stand
+
+**Branch:** `main`
+**Working tree:** the milestone ships as uncommitted changes plus `ship.sh`
+in the resolved downloads directory (bash 3.2-compatible, executable,
+gitignored; one conventional commit per file, then idempotent tag + push).
+Run `./ship.sh <repo>` to materialize the history — the `v0.2.0` tag
+already exists on origin and is skipped by design (no force, no re-push).
+**Verified this session (2 vCPU / 4 GB sandbox, no V8 toolchain):**
+- `cargo test -p oxide-fw-dispatch -p oxide-fw-config -p oxide-fw-router
+  -p oxide-fw-schema` — all green (240 tests; dispatch 89 incl. 14 new
+  experiments pins; config 61 incl. 7 new; router 79; schema 12+).
+- `cargo fmt --all -- --check` — exit 0.
+- `cargo clippy --no-deps -p oxide-fw-dispatch -p oxide-fw-config
+  -p oxide-fw-router -p oxide-fw-schema --all-targets --all-features
+  -- -D warnings -W clippy::pedantic` — zero diagnostics. **The lint
+  policy is no longer dispatch/router/schema-only:** `config` now declares
+  `[lints] workspace = true` (27 pedantic sites fixed, zero `#[allow]` —
+  the 213-line `config_schema()` literal was split into per-section
+  helpers instead of suppressing `too_many_lines`; `size.rs` avoids the
+  flagged float→int casts with an exact decimal round-trip that preserves
+  the old truncating/saturating semantics).
+- CI-style gate `cargo clippy --no-deps` over the 15 crates compilable in
+  this sandbox (`-D warnings`, all targets) — zero diagnostics. Excluded:
+  `jshost` + `cli` (V8), `plugin` + `assets` (build needs `nasm`, absent
+  here — the rav1e/wasmtime build scripts fail before Rust code runs).
+- `cargo tree -p oxide-fw-dispatch | grep -c jshost` — 0 (spec acceptance).
+- Zero `#[allow(clippy::*)]` / `#![allow(...)]` in the touched crates.
+- `cargo bench -p oxide-fw-dispatch --features bench-util --bench
+  experiments` — 5 ids: `assign/{2,8,16}` ≈ 10.2-10.4 µs per 100 assigns
+  (~103 ns per assignment, flat in variant count — the blake3 bucket
+  dominates), `resolve/3` (one experiment per sticky strategy) ≈ 665 ns,
+  `resolve/24` (8×3) ≈ 6.6 µs (~220 ns per experiment, linear).
+
+## What landed
+
+V2-F04 step 1 from `docs/spec-v0.2-draft.md`, in the A02/A05/A06 pattern:
+
+1. **Experiments engine (`oxide-fw-dispatch::experiments`):** the §15.4
+   deterministic assignment — blake3 over `id || 0x00 || sticky_value`,
+   `n % 100` traffic gate, `(n/100) % variants` variant pick; sticky
+   cookie (mint on miss, `Path=/; Max-Age=2592000; SameSite=Lax;
+   HttpOnly`), header, and ip-hash strategies; route-prefix eligibility
+   (empty = all); `Resolved { assigned: BTreeMap<id, variant>,
+   set_cookie: Vec<String>, vary_suffix: String }` with the id-sorted
+   `;`-joined suffix. Pinned by 14 tests in `tests/experiments_tdd.rs`
+   (spec's named pins: `assignment_is_deterministic`,
+   `traffic_zero_assigns_nobody`, `traffic_100_assigns_everyone`,
+   `distribution_within_5_percent_over_10000_ids` (empirically ≤ 1.2%
+   deviation, well inside the 5% bound),
+   `cookie_minted_when_absent_and_stable_when_present`,
+   `vary_suffix_empty_without_experiments`).
+2. **Locals integration:** `RequestLocals::set_experiments` feeds
+   `Resolved.assigned` into the pipeline-owned slot; the DSP-101
+   reserved-key report still guards it (pinned: a middleware staging
+   `experiments` is reported and dropped; the resolved assignment wins).
+3. **Config surface:** top-level `experiments: [{ id, traffic, sticky:
+   {sticky: 'cookie'|'header'|'ip-hash', cookieName?, headerName?},
+   variants, routes? }]` typed as `ExperimentConfig`/`StickyConfig`
+   (internally-tagged, camelCase, `deny_unknown_fields`); load-time
+   validation emits **DSP-110** for traffic outside 0–100 and fewer than
+   two variants; the JSON schema declares the section and the checked-in
+   `schemas/oxide-fw-config.schema.json` was regenerated (stability test
+   green).
+
+**Docs drift corrected by this milestone:** the spec's A03-hygiene item 2
+claimed `benchmarks/report.md` is stale and feeds `gate.sh` — the report
+now carries the B09-baseline table (verified); the spec's F04 pseudocode
+predates the `Vec` set-cookie requirement (recorded in
+`docs/deviations.md` as deliberate); the workspace-lints comment in the
+root `Cargo.toml` said "the remaining V8-free crates adopt pedantic in a
+dedicated hygiene pass" — `config`'s adoption this session is that pass
+for the crate the milestone touched.
+
+## Where to pick up, in one sentence
+
+A01 remains the unblocked-milestone bottleneck: split
+`crates/cli/src/lib.rs` (15,555 lines) per the spec's `scripts/split_cli.py`
+plan on a machine that can link V8, then land phase 3 stage-by-stage
+(`stage_experiments` between prelude and the L0 lookup is now a
+substrate-only wiring: `resolve` + `set_experiments` + vary suffix +
+set-cookie strip — see `docs/deviations.md`), then B03/B04/B08 and the
+F-series.
+
+---
+
 # Handoff — V2-A05 middleware chain + unified locals substrate landed (V8-free); all gates green
 
 ## Where things stand
