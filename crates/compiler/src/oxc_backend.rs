@@ -804,8 +804,6 @@ fn build_scan(spans: &[ImportSpan]) -> ImportScan {
 
 // ---------------- Oxc-AST-driven passes ----------------
 
-use std::collections::BTreeMap as AstBTreeMap;
-
 /// Extract the raw text of a directive's string value (`"use cache"` → `use cache`).
 fn directive_text(d: &oxc_ast::ast::Directive<'_>) -> String {
     d.expression.value.as_str().unwrap_or_default().to_string()
@@ -1390,10 +1388,6 @@ fn collect_cache_options(
 fn code_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
-
-// Silence the unused-import warnings from `AstBTreeMap`.
-#[allow(dead_code)]
-type _UnusedAstMap = AstBTreeMap<String, String>;
 
 /// Build a `Location` for a 1-based (line, column) in `path`.
 fn oxidation_location(path: &str, line: usize, col: usize) -> oxide_fw_diagnostics::Location {

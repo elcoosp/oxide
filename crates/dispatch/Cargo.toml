@@ -57,6 +57,12 @@ name = "experiments"
 harness = false
 required-features = ["bench-util"]
 
+# V2-A04: criterion bench for the build id + generations substrate.
+[[bench]]
+name = "build"
+harness = false
+required-features = ["bench-util"]
+
 [features]
 # V2-A02: exposes the criterion bench harness (bench-support feature). The
 # synthetic route fixtures for the `ctx_table` group live behind the same

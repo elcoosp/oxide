@@ -13,6 +13,8 @@
 // the worker — a browser has no access to it. A JSON fallback is enough
 // for the common case and matches what the server currently accepts.
 
+import { handleStale, withBuild } from './client/build.ts'
+
 /** The response body shape the endpoint returns for a resolved fn. */
 interface FnOk {
   ok: true
@@ -34,7 +36,9 @@ interface FnErr {
  * server-fn POST from a form action POST in a log.
  */
 export async function __oxide_call_fn(id: string, args: unknown[]): Promise<unknown> {
-  const r = await fetch(`/_oxide/fn/${encodeURIComponent(id)}`, {
+  // §V2-A04: the fn endpoint is data plane — advertise the build id and
+  // hand a stale-generation 409 to the one-shot reload before parsing.
+  const r = await fetch(`/_oxide/fn/${encodeURIComponent(id)}`, withBuild({
     method: 'POST',
     headers: { 'content-type': 'application/oxide-fn' },
     // The body is the bare argument array. The server's worker op
@@ -42,7 +46,8 @@ export async function __oxide_call_fn(id: string, args: unknown[]): Promise<unkn
     // the argument list directly — wrapping it in `{args: …}` would make
     // the worker reject a valid call with "arguments must be a JSON array".
     body: JSON.stringify(args),
-  })
+  }))
+  if (handleStale(r)) throw new Error(`oxide: stale build — reloading (server fn ${id})`)
   // 404 → the id is not registered (a stale client bundle, or a fn that
   // was tree-shaken away). Any non-2xx carries the same body shape so the
   // caller gets a useful message instead of a bare fetch failure.

@@ -22,13 +22,13 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `router` | Route scanning (§8.1), radix matcher with priority rules (§8.2), rkyv archive (D8), typegen (§8.3), native rules engine | §8, §12.1, D8, D13 |
 | `graph` | Demand-driven incremental engine, early cutoff (§5.1), tracked inputs (§5.2), CAS (blake3+redb+zstd, §5.4), cancellation (§5.6), RemoteCache trait | §5, D6 |
 | `config` | Typed config, layering (defaults→preset→file→mode→env→CLI), env files, `PUBLIC_` split, static extraction with V8 fallback flag, typo diagnostics | §14, D14 |
-| `cache` | L0/L1/L2 tiers, weighted LRU memory tier, redb disk tier, tags, TTL/SWR/stale-if-error, single-flight, build seeding, HTTP conditional semantics | §11 |
+| `cache` | L0/L1/L2 tiers, weighted LRU memory tier, redb disk tier, tags, TTL/SWR/stale-if-error, single-flight, build seeding, HTTP conditional semantics, canonical `build_id_of_dist` (A04) | §11, V2-A04 |
 | `compiler` | Transform passes behind `Transformer` (D4): import scan, `'use cache'` (§9.3), server-fn stubs (§9.4), forbidden-import guard (§6.4), HMR injection | §6.2–6.4, §9 |
 | `bundler` | `Bundler` trait (D3) + functional ESM bundler: resolution with `exports` conditions, route-based splitting, shared-chunk heuristic, content hashing, client/server manifests | §6.4 |
 | `jshost` | `JsHost`/`Pool` traits (§4.2), NodeHost with real child workers speaking the op protocol (§4.5), ScriptedHost, V8Host (deno_core, full dispatch + `compile_module`) | §4, D2 |
 | `plugin` | Hook model, pre/post ordering, JS bridge messages, WASM plugin manifest validation, module manifests | §15 |
-| `dispatch` | V8-free request orchestration: URL/query helpers, stage `Flow` protocol, §8.5 middleware chain + unified locals (A05), §9.2 parallel load graph (A06), §15.4 experiments assignment engine (F04) | §4.1, §8.4, §8.5, §9.2, §9.3, §15.4, V2-A02 |
-| `render` | Streaming pipeline, head merge, HTML injection (lol_html), deferred-boundary protocol (§7.1), islands markup (§10.3), hydration bootstrap, error recovery | §7.1, §10 |
+| `dispatch` | V8-free request orchestration: URL/query helpers, stage `Flow` protocol, §8.5 middleware chain + unified locals (A05), §9.2 parallel load graph (A06), §15.4 experiments assignment engine (F04), build id + generations substrate (A04) | §4.1, §8.4, §8.5, §9.2, §9.3, §15.4, V2-A02, V2-A04 |
+| `render` | Streaming pipeline, head merge, HTML injection (lol_html), deferred-boundary protocol (§7.1), islands markup (§10.3), hydration bootstrap (+ the §V2-A04 `build` field), error recovery | §7.1, §10, V2-A04 |
 | `server` | Hyper 1.x pipeline, static assets (range/304/precompressed), dynamic compression, security defaults (§17.1), CSRF/SSRF/host checks, rate limiting, cookies, RFC6455 codec, graceful shutdown | §12, §17, D7 |
 | `assets` | CSS pipeline (nesting/modules/minify/prefix), image backend (resize/encode/LQIP), font bundles, metadata/SEO, sitemap/robots, markdown/content, OG model | §6.6–6.7, §16, D19 |
 | `dev` | Hash-confirmed watcher (§5.5), HMR message protocol + per-kind behavior table (§13.3), update boundaries, inspector model (§13.4), prebundle keys | §13 |
@@ -36,6 +36,19 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `core-wasm` | Edge subset: cache keys, head merge, ODF re-encode (D18) | §2 D18 |
 | `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/add/generate/cache/audit/migrate/test | §19 |
 ## What changed since 2026-10-12
+
+- **`dispatch` + `cache` + `render` + `packages/core`**: the build id +
+  generations substrate (V2-A04) — `cache::build_id_of_dist` computes the
+  canonical id (blake3 over the sorted `path<TAB>hash` manifest of
+  `dist/client/**`, `dist/server/**` and `.oxide/routes.manifest`),
+  `dispatch::build` holds the `GenerationSet` acceptance window, the
+  `stage_build_check` data-plane 409 gate and the `advertise_build` step,
+  `render` advertises the id as the fourth `window.__oxide` field, and the
+  core client (`build.ts`) stamps `x-oxide-build` on the `/__data`,
+  action and server-fn fetches and reloads once per generation on a stale
+  409. CLI wiring (computing the id at the end of `phase_emit`, installing
+  the stage, promoting generations on reload) deferred — see
+  `docs/deviations.md`.
 
 - **`config`**: the `experiments` config section (V2-F04, §15.4) — typed
   `ExperimentConfig`/`StickyConfig` (internally-tagged `sticky`:

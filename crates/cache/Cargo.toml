@@ -44,6 +44,12 @@ name = "keys"
 harness = false
 required-features = ["bench-util"]
 
+# V2-A04: criterion bench for the canonical `build_id_of_dist` walk+hash.
+[[bench]]
+name = "build_id"
+harness = false
+required-features = ["bench-util"]
+
 [features]
 redis = ["dep:redis"]
 s3 = ["dep:object_store"]

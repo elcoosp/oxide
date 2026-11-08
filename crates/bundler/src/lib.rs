@@ -173,7 +173,7 @@ pub struct BundleOptions {
 /// exists because `BundleOptions` derives `Debug`.
 /// The callback type `CssTransformHook` wraps. Named so the closure
 /// signature lives in one place; previously it was inlined in the struct
-/// field, forcing a `#[allow(clippy::type_complexity)]` that hid the shape.
+/// field, forcing a type-complexity allow attribute that hid the shape.
 pub type CssTransformFn =
     dyn Fn(&str, &str, bool, bool) -> Result<(String, BTreeMap<String, String>)> + Send + Sync;
 

@@ -4,6 +4,7 @@
 // Without JavaScript the same form POSTs natively — progressive enhancement.
 
 import { decodeOdf } from './odf-decode.ts'
+import { handleStale, withBuild } from './build.ts'
 
 /** Structural form surface (real element or test fake). */
 export interface EnhanceForm {
@@ -56,11 +57,14 @@ export function enhance(form: EnhanceForm, opts: EnhanceOptions = {}): () => voi
       : new URLSearchParams([...formData.entries()].map(([k, v]) => [k, String(v)]))
     try {
       await opts.onSubmit?.(formData, form)
-      const res = await doFetch(target, {
+      // §V2-A04: the action POST is a data-plane request — advertise the
+      // build id and hand a stale-generation 409 to the one-shot reload.
+      const res = await doFetch(target, withBuild({
         method: 'POST',
         body,
         headers: { accept: 'application/oxide+odf, application/json, text/plain' },
-      })
+      }))
+      if (handleStale(res)) return // reload in flight; the action result is moot
       if (!res.ok) throw new Error(`action failed: ${res.status}`)
       const result = await parseResult(res)
       if (opts.applyResult) opts.applyResult(result, form)

@@ -1,3 +1,98 @@
+# Handoff — V2-A04 build id + generations substrate landed (V8-free); all gates green
+
+## Where things stand
+
+**Branch:** `main`
+**Working tree:** the milestone ships as uncommitted changes plus `ship.sh`
+in the resolved downloads directory (bash 3.2-compatible, executable,
+gitignored; one conventional commit per file, then idempotent PR + squash
+merge + tag + push). Run `./ship.sh <repo>` to materialize the history.
+**Verified this session (2 vCPU / 4 GB sandbox, no V8 toolchain):**
+- `cargo test --all-features -p oxide-fw-cache -p oxide-fw-dispatch
+  -p oxide-fw-render` — all green (248 tests across 16 suites; cache 82
+  incl. 9 new build-id pins; dispatch 99 incl. 16 new build pins; render
+  67 incl. 5 new bootstrap pins).
+- `cargo fmt --all -- --check` — exit 0.
+- `cargo clippy --no-deps -p oxide-fw-dispatch --all-targets
+  --all-features -- -D warnings -W clippy::pedantic` — zero diagnostics.
+- CI-style gate `cargo clippy --no-deps` over the 15-crate V8-free graph
+  (`--all-targets`, `-D warnings`) — zero diagnostics. Excluded: `jshost`
+  + `cli` (V8), `plugin` + `assets` (build needs `nasm`, absent here).
+- `cargo test -p oxide-fw-graph -p oxide-fw-odf -p oxide-fw-server
+  -p oxide-fw-compiler -p oxide-fw-bundler` — green (the allow-attribute
+  sweep touched their test files).
+- `cargo tree -p oxide-fw-dispatch | grep -c jshost` — 0 (spec acceptance).
+- `packages/core`: `pnpm -C packages/core test` — 253/253 green (11 new
+  build-contract pins), `tsgo --noEmit` clean.
+- `cargo bench -p oxide-fw-cache --features bench-util --bench build_id`
+  — `build_id/10` ≈ 72 µs, `/50` ≈ 297 µs, `/200` ≈ 1.22 ms (linear in
+  covered-file count, ~6 µs/file: one open + blake3 pass per file).
+- `cargo bench -p oxide-fw-dispatch --features bench-util --bench build`
+  — `build_data_plane/*` 7–16 ns, `stage_build_check/{current,absent}`
+  ≈ 14/11 ns, `advertise_build/{fresh,already_set}` ≈ 57/55 ns — the
+  data-plane stage the wiring installs costs a string compare.
+- Zero `#[allow(...)]` anywhere (`grep -rnE '#!?\[allow\(' crates/ tests/`
+  is empty — pre-existing sites in graph/odf/server/cli/jshost/compiler
+  test + lib files were removed properly, see `docs/deviations.md`).
+
+## What landed
+
+V2-A04 from `docs/spec-v0.2-draft.md` (build id and generations — the
+keystone for F10 skew protection, F11 delta deploys, F13 learned prefetch,
+F14 offline-first and F20 attested builds), in the A02/A05/A06/F04
+substrate pattern:
+
+1. **Canonical id (`oxide-fw-cache::build_id_of_dist`):** blake3 over the
+   sorted `relative/path<TAB>blake3-hex` manifest of every file under
+   `dist/client/**` and `dist/server/**` plus `.oxide/routes.manifest`
+   (paths relative to the project root), truncated to the 16-hex
+   `build_id` convention. Order-independent by construction (BTreeMap
+   walk), tolerant of missing covered inputs, `CAC-BUILDID` on a missing
+   dist. Pinned by 9 tests in `tests/build_id_tdd.rs` (the spec's named
+   `build_id_of_dist_is_stable_and_order_independent` included).
+2. **Generations + stage (`oxide-fw-dispatch::build`):** `GenerationSet`
+   (current + the 1-deep demoted build accepted inside its window),
+   `stage_build_check` (data-plane only: unaccepted `x-oxide-build` →
+   `409` + `x-oxide-build-stale: true` + empty body; absent header
+   allowed; case-insensitive lookup per B-06), `advertise_build`
+   (idempotent, first-writer-wins), `is_data_plane_path` (today's data
+   plane only — `/__oxide/live`/`stream` join when those routes land).
+   Pinned by 16 tests in `tests/build_tdd.rs` (the spec's three
+   `GenerationSet` pins verbatim).
+3. **Browser surface (additive):** `render::hydration_bootstrap_with_build`
+   emits `window.__oxide={route,build,data}`; the 3-arg bootstrap is
+   byte-identical to pre-A04 (the V8-linked CLI call site compiles
+   unchanged). `Injector::with_build_id` opts a page in.
+4. **Client (`packages/core/src/client/build.ts`):** `buildId` /
+   `withBuild` / `handleStale`, wired into the router's `/__data` fetch,
+   the action POST (`enhance`) and `__oxide_call_fn` — every data-plane
+   fetch advertises `x-oxide-build`, a stale 409 triggers one guarded
+   reload per build id (sessionStorage, storage-blocked degrades to
+   reload-once, Node-test-safe via `globalThis.location?.reload()`).
+   11 pins in `test/build.test.ts` + the router/enhance/fn wiring pins.
+
+**Docs drift recorded:** spec A03 item 1 claims the CI push branch filter
+is the truncated `ain]` token — the tree already carries the correct
+filter (verified byte-wise); the item is closed in the tree and the spec
+text predates it. `.gitignore` carried pasted shell output from an earlier
+session (`=== HEAD ===` …) — removed, and `.github/pr-body.md` is now
+gitignored like `ship.sh`.
+
+## Where to pick up, in one sentence
+
+A01 remains the unblocked-milestone bottleneck: split
+`crates/cli/src/lib.rs` (15,555 lines) per the spec's `scripts/split_cli.py`
+plan on a machine that can link V8, then land phase 3 stage-by-stage — the
+A04 wiring is now a call-site exercise (`build_id_of_dist` at the end of
+`phase_emit` + writes to `dist/build-id`/`.oxide/build-id`,
+`stage_build_check` before the L0 lookup, `advertise_build` on data-plane
+responses, `Injector::with_build_id` from the render stage, and generation
+promotion in `cmd_dev`'s reload), alongside the stage_middleware /
+stage_prelude / stage_loaders / stage_experiments wirings, then
+B03/B04/B08 and the F-series.
+
+---
+
 # Handoff — V2-F04 cache-safe personalization substrate landed (experiments engine + config surface); all gates green
 
 ## Where things stand

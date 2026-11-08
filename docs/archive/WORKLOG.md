@@ -4937,3 +4937,54 @@ crates.
 (the spec's `Option<String>` drops all but the last mint when two
 cookie-sticky experiments miss together); CLI wiring deferred to the A01
 phase-3 move.
+
+
+---
+
+## Session — V2-A04 build id + generations substrate (2026-11-09)
+
+Task: pick and land the next architectural milestone from
+`docs/spec-v0.2-draft.md` in the V8-free substrate pattern; all gates green
+at hand-off; ship.sh materializes the history (no commits from the agent).
+
+Work log:
+- Read `CONVENTIONS.md`, `docs/deviations.md`, the spec's execution order
+  and the A01/A03/A04/A10/C01/F07/F16 WP texts; `git log -50`; every
+  handoff in `HANDOFF.md`.
+- A01 (the handoff's pick-up point) requires a V8 link this sandbox cannot
+  pay (2 vCPU / 4 GB; the repo's own notes record V8 exclusion three
+  times). A10 is largely landed (redis/s3 handlers, 304+317 lines); A03 is
+  hygiene, not architecture; C01's selection half lives in V8-linked
+  `precompile.rs`/`inspect.rs`. A04's substrate is exactly the A02/A05/A06
+  shape and is the spec's keystone — chosen.
+- TDD red captured: `unresolved import oxide_fw_cache::build_id_of_dist`,
+  `unresolved import oxide_fw_dispatch::build`, `cannot find function
+  hydration_bootstrap_with_build`, `no method named with_build_id` — then
+  implementation, then green (247 Rust tests; 253 TS tests incl. 11 new).
+- One TDD iteration: `two_generations_never_share_a_window` initially
+  asserted exclusive-boundary rejection at exactly the window edge; the
+  spec's own 60s pin accepts at 60s — the test was fixed to the spec's
+  inclusive semantics, not the implementation.
+- allow-attribute sweep: graph's `_use_err` became a real `#[test]`;
+  odf/server test helpers renamed to snake_case; cli's stale `dead_code`
+  pair and jshost's unreachable tail (both match arms return) deleted;
+  compiler's `AstBTreeMap` shim removed; bundler doc comment reworded.
+  grep `#!?[allow(` over crates/tests is empty.
+- Discovered and reverted a self-inflicted ci.yml corruption: the terminal
+  mangles `[m` byte sequences, which had faked a truncated `ain]` branch
+  filter; od-verified the tree always had `[main]` (spec A03 item 1 is
+  stale) and restored the file byte-identical to HEAD.
+- Criterion benches added (cache `build_id`, dispatch `build`) and run;
+  numbers recorded in HANDOFF.md.
+
+Stage summary:
+- Branch (ship.sh): `feat/build-id-generations-substrate`.
+- Version trace: last tag `v0.2.0`; `v0.2.0..HEAD` holds 61 commits, 9
+  `feat:`, no `!:`/BREAKING CHANGE → minor → **v0.3.0** (ship.sh derives
+  the same at run time and bumps `Cargo.toml` + `package.json` as the
+  version-bump commit; predicted tag `v0.3.0`).
+- Deferred wiring (A01 phase 3, V8-capable host): `phase_emit` id compute +
+  `dist/build-id`/`.oxide/build-id` writes, `stage_build_check` +
+  `advertise_build` in the dispatch closure, `Injector::with_build_id`
+  from the render stage, generation promotion in `cmd_dev`, conformance
+  assertion. Recorded in `docs/deviations.md`.

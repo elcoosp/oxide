@@ -446,6 +446,36 @@ pub fn hydration_bootstrap(odf_b64: &str, route_id: &str, nonce: &str) -> String
     )
 }
 
+/// §V2-A04: the four-field hydration bootstrap — the legacy shape plus the
+/// canonical build id as the second `window.__oxide` field, which the
+/// client echoes back on data-plane fetches (`withBuild`) so the server
+/// can reject stale generations (`stage_build_check`).
+///
+/// `build_id` sits in a JS string literal like `route_id`: bytes outside
+/// the `[a-z0-9-/]` alphabet are percent-encoded, so a hostile or
+/// non-hex id degrades deterministically instead of breaking the script.
+/// The pipeline passes `build_id_of_dist`'s 16-hex output, which the
+/// alphabet already covers.
+///
+/// The V8-linked CLI keeps calling the three-field [`hydration_bootstrap`]
+/// until the A01-phase-3 wiring lands (additive substrate; see
+/// `docs/deviations.md`).
+pub fn hydration_bootstrap_with_build(
+    odf_b64: &str,
+    route_id: &str,
+    nonce: &str,
+    build_id: &str,
+) -> String {
+    let n = escape_attr(nonce);
+    format!(
+        "<script type='application/oxide-data' nonce='{n}'>{b64}</script>\
+<script nonce='{n}'>window.__oxide={{route:\"{route}\",build:\"{build}\",data:document.currentScript.previousElementSibling.textContent}}</script>",
+        b64 = odf_b64,
+        route = sanitize_route_id(route_id),
+        build = sanitize_route_id(build_id),
+    )
+}
+
 /// Percent-encode every byte outside the route-id alphabet `[a-z0-9-/]`.
 fn sanitize_route_id(route_id: &str) -> String {
     let mut out = String::with_capacity(route_id.len());
@@ -523,6 +553,13 @@ pub struct Injector {
     pub css_links: Vec<String>,
     pub odf_payload_b64: Option<String>,
     pub route_id: String,
+    /// The canonical build id (§V2-A04). When set, the hydration bootstrap
+    /// advertises it as the fourth `window.__oxide` field (`build`), which
+    /// the client echoes back on data-plane fetches so the server can
+    /// reject stale generations. `None` keeps the legacy three-field shape
+    /// (the V8-linked CLI call site compiles unchanged until the
+    /// A01-phase-3 wiring lands; see `docs/deviations.md`).
+    pub build_id: Option<String>,
     /// Extra HTML appended to the body injection fragment, AFTER the
     /// hydration bootstrap. The CLI uses it for the resolved-deferred
     /// `<script type="application/oxide-deferred">` on prerendered pages
@@ -541,8 +578,16 @@ impl Injector {
             css_links: Vec::new(),
             odf_payload_b64: None,
             route_id,
+            build_id: None,
             body_extra: String::new(),
         }
+    }
+
+    /// Advertise `build_id` as the fourth `window.__oxide` field (§V2-A04).
+    /// Chainable: `Injector::new(..).with_build_id(id)`.
+    pub fn with_build_id(mut self, build_id: impl Into<String>) -> Self {
+        self.build_id = Some(build_id.into());
+        self
     }
 
     /// The head and body injection fragments (shared by the batch and streaming paths).
@@ -566,7 +611,20 @@ impl Injector {
         let body = if self.odf_payload_b64.is_some() || !self.body_extra.is_empty() {
             let mut body = String::new();
             if let Some(b64) = self.odf_payload_b64.as_ref() {
-                body.push_str(&hydration_bootstrap(b64, &self.route_id, &self.nonce));
+                match self.build_id.as_ref() {
+                    // §V2-A04: with a build id the bootstrap carries the
+                    // fourth `build` field the client echoes on the data
+                    // plane.
+                    Some(id) => {
+                        body.push_str(&hydration_bootstrap_with_build(
+                            b64,
+                            &self.route_id,
+                            &self.nonce,
+                            id,
+                        ));
+                    }
+                    None => body.push_str(&hydration_bootstrap(b64, &self.route_id, &self.nonce)),
+                }
             }
             body.push_str(&self.body_extra);
             Some(body)
