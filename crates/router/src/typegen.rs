@@ -373,6 +373,7 @@ mod tests {
             has_server_module: false,
             slot: None,
             needs_parent: false,
+            live: None,
         }
     }
 

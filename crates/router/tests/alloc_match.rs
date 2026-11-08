@@ -35,6 +35,7 @@ fn synthetic_tree(n: usize) -> RouteTree {
             tags: vec![],
             has_server_module: false,
             needs_parent: false,
+            live: None,
             slot: None,
         });
     }

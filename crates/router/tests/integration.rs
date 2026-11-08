@@ -213,6 +213,7 @@ proptest! {
                 has_server_module: false,
                 slot: None,
                 needs_parent: false,
+                live: None,
             });
         }
         let path = if segs.is_empty() { "/".to_string() } else { format!("/{}", segs.join("/")) };
@@ -240,6 +241,7 @@ proptest! {
             has_server_module: false,
             slot: None,
             needs_parent: false,
+            live: None,
         });
         let path = format!("/{}", segs.join("/"));
         let m = tree
