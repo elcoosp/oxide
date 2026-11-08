@@ -85,12 +85,11 @@ fn unescape(inner: &str, quote: char) -> String {
             ('"', '`') => Some('`'),
             _ => None,
         };
-        match mapped {
-            Some(m) => out.push(m),
-            None => {
-                out.push('\\');
-                out.push(e);
-            }
+        if let Some(m) = mapped {
+            out.push(m);
+        } else {
+            out.push('\\');
+            out.push(e);
         }
     }
     out
