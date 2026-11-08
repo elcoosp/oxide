@@ -97,6 +97,16 @@ pub(crate) fn split_path(path: &str) -> Vec<String> {
         .collect()
 }
 
+/// V2-B02: structural split without decoding — borrowed, non-empty segments,
+/// query/fragment stripped, slashes tolerated. Callers that need decoded
+/// segments per-segment-decode the borrowed pieces only when they contain `%`
+/// (decode is the identity otherwise), which keeps the static path
+/// allocation-free while staying byte-identical to [`split_path`]'s output.
+pub(crate) fn split_raw_path(path: &str) -> smallvec::SmallVec<[&str; 8]> {
+    let bare = path.split(['?', '#']).next().unwrap_or(path);
+    bare.split('/').filter(|s| !s.is_empty()).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,6 +133,34 @@ mod tests {
         assert_eq!(split_path("//blog//x//"), vec!["blog", "x"]);
         assert_eq!(split_path("/blog?x=1#frag"), vec!["blog"]);
         assert_eq!(split_path("/a%20b"), vec!["a b"]);
+    }
+
+    #[test]
+    fn split_raw_path_matches_split_path_without_escapes() {
+        for p in [
+            "",
+            "/",
+            "/blog",
+            "/blog/",
+            "//blog//x//",
+            "/blog?x=1#frag",
+            "/a/b/c",
+        ] {
+            let raw = split_raw_path(p);
+            let decoded = split_path(p);
+            let raw_eq: Vec<String> = raw.iter().map(|s| s.to_string()).collect();
+            assert_eq!(
+                raw_eq, decoded,
+                "raw split must equal decoded split for {p:?}"
+            );
+        }
+        // With escapes, the raw split keeps the escaped bytes; per-segment
+        // decode reproduces split_path exactly (splitting happens before
+        // decoding, so %2F never splits).
+        let raw = split_raw_path("/blog/a%2Fb");
+        assert_eq!(raw.as_slice(), ["blog", "a%2Fb"]);
+        let decoded: Vec<String> = raw.iter().map(|s| percent_decode(s)).collect();
+        assert_eq!(decoded, split_path("/blog/a%2Fb"));
     }
 
     #[test]
