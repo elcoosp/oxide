@@ -4,7 +4,7 @@
 //!
 //! The route tree is compiled at build into a radix tree (static > param > optional >
 //! catch-all priority), stored as an `rkyv` archive, memory-mapped at boot; match is
-//! allocation-free on the hot path. URLPattern semantics preserved for the edge build.
+//! allocation-free on the hot path. `URLPattern` semantics preserved for the edge build.
 //!
 //! This file is the crate contract: public types and their signatures live here; the
 //! implementations live in the private submodules (`scan`, `matcher`, `archive`,
@@ -38,6 +38,7 @@ pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
 /// tests (`tests/index_oracle.rs`). `#[doc(hidden)]`: not part of the
 /// documented API surface; additive and behaviorally unchanged.
 #[doc(hidden)]
+#[must_use]
 pub fn match_in_linear(
     entries: &[RouteEntry],
     path: &str,
@@ -212,6 +213,7 @@ pub struct DispatchIndex {
 }
 
 impl RouteTree {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -225,12 +227,21 @@ impl RouteTree {
     /// modules of its own, the scanner rebases into `dir/app` so `app/**/page.tsx` maps
     /// identically. Route ids are file-derived: `routes/<relative path w/o ext>`
     /// (`app/...` in Next-compat mode).
+    ///
+    /// # Errors
+    ///
+    /// A scan/diagnostic error when the routes tree violates the §8
+    /// conventions (colliding slots, unreadable modules, bad segment syntax).
     pub fn scan(dir: &Path) -> Result<Self> {
         scan::scan_impl(dir)
     }
 
     /// Resolve the routes directory for a project root (`dir`): an explicit override
     /// wins, else `dir/src/routes`, else Next-compat detection inside [`RouteTree::scan`].
+    ///
+    /// # Errors
+    ///
+    /// Same error class as [`Self::scan`]; the override path must exist.
     pub fn scan_with_config(dir: &Path, routes_dir_override: Option<&Path>) -> Result<Self> {
         scan::scan_with_config_impl(dir, routes_dir_override)
     }
@@ -342,6 +353,7 @@ impl RouteTree {
     }
 
     /// P-06: middleware files wrapping `route_id`, outermost first.
+    #[must_use]
     pub fn middleware_files_for(&self, route_id: &str) -> Vec<std::path::PathBuf> {
         let idx = self.dispatch_index();
         idx.middleware
@@ -352,6 +364,7 @@ impl RouteTree {
     }
 
     /// P-06: nearest ancestor `error.tsx` route id for `route_id`.
+    #[must_use]
     pub fn error_route_for(&self, route_id: &str) -> Option<String> {
         let idx = self.dispatch_index();
         idx.errors
@@ -361,6 +374,7 @@ impl RouteTree {
     }
 
     /// P-06: the not-found route id and its layout chain, if declared.
+    #[must_use]
     pub fn not_found_route(&self) -> Option<(String, Vec<RouteId>)> {
         self.dispatch_index().not_found.clone()
     }
@@ -374,6 +388,7 @@ impl RouteTree {
     /// catch-all) or 0 (catch-all); ties break on per-position segment priority, then on
     /// longer patterns, then on scan order. Trailing slashes and query strings are
     /// tolerated; params are percent-decoded.
+    #[must_use]
     pub fn match_path(&self, path: &str) -> Option<MatchResult> {
         matcher::match_impl(self, path)
     }
@@ -383,17 +398,28 @@ impl RouteTree {
     /// property test in `tests/index_oracle.rs`), but the winning entry is
     /// borrowed and captures stay borrowed unless a catch-all join or a
     /// percent-escape forces an owned copy.
+    #[must_use]
     pub fn match_ref<'a>(&'a self, path: &'a str) -> Option<MatchRef<'a>> {
         matcher::match_ref_impl(self, path)
     }
 
     /// Serialize to an rkyv archive (§8.2) written to `out.manifest`.
+    ///
+    /// # Errors
+    ///
+    /// When the archive cannot be written (unwritable path, serialization
+    /// failure — a bug class, not user input).
     pub fn archive_to(&self, out: &Path) -> Result<()> {
         archive::archive_impl(self, out)
     }
 
     /// Load zero-copy: memory-map the archive and build an accessor.
     /// Accessing matches through the mapping must not allocate.
+    ///
+    /// # Errors
+    ///
+    /// When `path` cannot be opened/mapped, or the archive fails its one-time
+    /// validation (corrupt or foreign manifest).
     pub fn load_archived(path: &Path) -> Result<ArchivedTree> {
         archive::load_impl(path)
     }
@@ -402,6 +428,11 @@ impl RouteTree {
     /// search params, loader data and action I/O per route + typed `href()`.
     /// Also writes a machine-readable `.oxide/types/routes.json` manifest used by
     /// `oxide routes` (§19.1). Returns the path of the generated `.d.ts`.
+    ///
+    /// # Errors
+    ///
+    /// When `out_dir` cannot be created or the generated files cannot be
+    /// written.
     pub fn typegen(&self, out_dir: &Path) -> Result<String> {
         typegen::typegen_impl(self, out_dir, None, None, None)
     }
@@ -409,6 +440,10 @@ impl RouteTree {
     /// §8.3 like `typegen`, but with the routes root so a
     /// per-route `page.server.ts` `LoaderData` annotation can be read (the
     /// entry's `file` is routes-root-relative).
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::typegen`].
     pub fn typegen_with_root(&self, out_dir: &Path, routes_root: &Path) -> Result<String> {
         typegen::typegen_impl(self, out_dir, Some(routes_root), None, None)
     }
@@ -418,6 +453,10 @@ impl RouteTree {
     /// parameter (`href(route, params, locale)`), and every `loc` annotation
     /// documents the supported set. When `None`, behavior matches
     /// [`Self::typegen_with_root`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::typegen`].
     pub fn typegen_with_i18n(
         &self,
         out_dir: &Path,
@@ -428,6 +467,10 @@ impl RouteTree {
     }
 
     /// Locale-aware variant of [`Self::typegen_with_root`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::typegen`].
     pub fn typegen_with_root_and_i18n(
         &self,
         out_dir: &Path,
@@ -439,6 +482,7 @@ impl RouteTree {
     }
 
     /// Sorted deterministic listing for `oxide routes` (§19.1) incl. inferred modes.
+    #[must_use]
     pub fn table(&self) -> Vec<(String, String, Vec<String>)> {
         typegen::table_impl(self)
     }
@@ -450,8 +494,8 @@ impl RouteTree {
 /// bytes for the process lifetime so a match is O(route-fanout), not
 /// O(archive-bytes).
 pub struct ArchivedTree {
-    _mmap: memmap2::Mmap,
-    /// INVARIANT: points into `_mmap`, which is read-only and was validated by
+    mmap: memmap2::Mmap,
+    /// INVARIANT: points into `mmap`, which is read-only and was validated by
     /// `access()` at construction, so the pointee cannot change invalidly.
     root: *const archive::ArchivedArchiveRoot,
     /// V2-B02: candidate index over the archived entries, built once on first
@@ -468,16 +512,23 @@ unsafe impl Sync for ArchivedTree {}
 
 impl std::fmt::Debug for ArchivedTree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Manual impl: the mapping is opaque bytes; only the mapped length is shown
-        // (decoding entry metadata would force validation on every Debug call).
+        // Manual impl: the mapping is opaque bytes — only the mapped length,
+        // the root pointer and the index cell are shown (decoding entry
+        // metadata would force validation on every Debug call).
         f.debug_struct("ArchivedTree")
-            .field("mapped_len", &self._mmap.len())
+            .field("mapped_len", &self.mmap.len())
+            .field("root", &self.root)
+            .field("index", &self.index)
             .finish()
     }
 }
 
 impl ArchivedTree {
     /// Load an archive from disk (alias of [`RouteTree::load_archived`], §8.2).
+    ///
+    /// # Errors
+    ///
+    /// Same conditions as [`RouteTree::load_archived`].
     pub fn load_archived(path: &Path) -> Result<Self> {
         archive::load_impl(path)
     }
@@ -552,6 +603,12 @@ impl RulesEngine {
     /// `*` wildcard (if any) is the last segment; rewrites need a destination;
     /// rate-limit rules need a token-bucket config. A rule carrying `rate_limit`
     /// without an explicit `type` is normalized to `type: "ratelimit"` (§17.1).
+    ///
+    /// # Errors
+    ///
+    /// A diagnostic naming the offending rule (relative index + reason):
+    /// relative `source`, missing `destination` on a rewrite, a `rate_limit`
+    /// rule without a bucket config.
     pub fn compile(rules: Vec<NativeRule>) -> Result<Self> {
         rules::compile_impl(rules)
     }
@@ -566,6 +623,7 @@ impl RulesEngine {
     /// non-terminal: their maps merge across all matching rules and are returned as
     /// [`RuleOutcome::Headers`] only when no terminal outcome fired. `:param` captures
     /// (and `:splat` for `*`) substitute into destinations.
+    #[must_use]
     pub fn evaluate(&self, path: &str) -> RuleOutcome {
         rules::evaluate_impl(self, path, "", None)
     }
@@ -573,6 +631,7 @@ impl RulesEngine {
     /// SEC-01: like `evaluate`, but with the request's rate-limit key
     /// material (e.g. the client IP). A `rate_limit.key` of `ip` (or an empty
     /// key) uses `client_key`; a `:param` uses the captured route param.
+    #[must_use]
     pub fn evaluate_with_key(&self, path: &str, client_key: &str) -> RuleOutcome {
         rules::evaluate_impl(self, path, client_key, None)
     }
@@ -580,6 +639,7 @@ impl RulesEngine {
     /// B-16: evaluate the rules with the request's `Authorization` header so a
     /// `basic_auth` rule verifies credentials in constant time instead of
     /// emitting a permanent 401. `authorization` is the raw header value.
+    #[must_use]
     pub fn evaluate_with_auth(
         &self,
         path: &str,
