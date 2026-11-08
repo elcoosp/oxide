@@ -9,6 +9,7 @@
 // with plain fakes — no jsdom.
 
 import { decodeOdf } from './odf-decode.ts'
+import { handleStale, withBuild } from './build.ts'
 import { layoutChunksFor, type ClientManifestLike } from './route-manifest.ts'
 import type { ClientInput, ClientManifest, FrameworkAdapter } from '../types.ts'
 
@@ -209,10 +210,14 @@ export function createRouter(opts: RouterOptions): Router {
   }
 
   async function fetchRouteData(path: string, signal?: AbortSignal): Promise<unknown> {
-    const res = await doFetch(`/__data?route=${encodeURIComponent(path)}`, {
+    // §V2-A04: the data-plane fetch advertises the build id this page was
+    // rendered by; a stale generation answers 409 + stale marker and the
+    // client reloads once (handleStale) instead of decoding a dead payload.
+    const res = await doFetch(`/__data?route=${encodeURIComponent(path)}`, withBuild({
       signal,
       headers: { accept: 'application/oxide+odf, application/json' },
-    })
+    }))
+    if (handleStale(res)) throw new Error(`router: stale build — reloading for ${path}`)
     if (!res.ok) throw new Error(`router: /__data responded ${res.status} for ${path}`)
     const bytes = new Uint8Array(await res.arrayBuffer())
     return decodeOdf(bytes) // §9.5: route data arrives as ODF bytes
