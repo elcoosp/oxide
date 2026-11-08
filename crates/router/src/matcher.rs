@@ -1,13 +1,15 @@
 //! Matcher (spec §8.2): priority static > param > optional > catch-all, percent-decoded
 //! params, layout chains, and i18n-prefix behavior (§16.4).
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{OnceLock, RwLock};
 
 use regex::Regex;
+use smallvec::SmallVec;
 
-use crate::segment::{SegKind, classify, seg_priority, split_path};
-use crate::{MatchResult, RouteEntry, RouteId, RouteKind, RouteTree};
+use crate::segment::{SegKind, classify, percent_decode, seg_priority, split_path, split_raw_path};
+use crate::{MatchRef, MatchResult, RouteEntry, RouteId, RouteKind, RouteTree};
 
 type BestMatch = (usize, i64, Vec<u8>, usize, BTreeMap<String, String>);
 
@@ -46,15 +48,208 @@ impl EntryLike for RouteEntry {
 }
 
 pub(crate) fn match_impl(tree: &RouteTree, path: &str) -> Option<MatchResult> {
-    let (idx, params, score) = match_in(&tree.entries, path)?;
-    let route = &tree.entries[idx];
+    // V2-B02: the owned-tree hot path goes through the candidate index and the
+    // allocation-free scorer; `match_path` keeps its owned shape for callers.
+    let m = match_ref_impl(tree, path)?;
+    let route = m.route.clone();
     Some(MatchResult {
-        route: route.clone(),
-        // P-02: served from the per-tree cache (computed once per route id).
         layout_chain: tree.layout_chain_cached(&route.id.0),
+        params: m
+            .params
+            .into_iter()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect(),
+        route,
+        score: m.score,
+    })
+}
+
+/// V2-B02: allocation-free match over the candidate index. Returns the winning
+/// entry by reference plus borrowed captures (owned only for catch-all joins
+/// and for URLs carrying percent-escapes, where decoded captures are materialized).
+pub(crate) fn match_ref_impl<'a>(tree: &'a RouteTree, path: &'a str) -> Option<MatchRef<'a>> {
+    let (segs, escaped) = match_segments(path);
+    let index = tree.candidate_index();
+    let mut cands = SmallVec::<[u32; 16]>::new();
+    // Owned trees are immutable between inserts (which invalidate the index),
+    // so the candidate set is an exact superset and no linear fallback is
+    // needed.
+    index.candidates(&segs, escaped, &mut cands);
+    let (idx, params, score) = match_candidates_ref(&tree.entries, &cands, &segs, escaped)?;
+    Some(MatchRef {
+        route: &tree.entries[idx],
         params,
         score,
     })
+}
+
+/// URL segments for matching: always the raw (borrowed) pieces of `path`, plus
+/// whether any of them carries a percent-escape. When `escaped` is `false` the
+/// raw form is byte-identical to the decoded form, so comparison and captures
+/// stay borrowed; when `true`, the scorer decodes per segment exactly where it
+/// compares or captures — semantically identical to [`split_path`], which
+/// splits first and decodes each piece (`%2F` never splits).
+pub(crate) fn match_segments(path: &str) -> (Segments<'_>, bool) {
+    let raw = split_raw_path(path);
+    let escaped = raw.iter().any(|s| s.contains('%'));
+    (raw, escaped)
+}
+
+/// V2-B02: borrowed captures from the exact scorer — `(name, value)` pairs.
+pub(crate) type Captures<'a> = SmallVec<[(Cow<'a, str>, Cow<'a, str>); 4]>;
+
+/// V2-B02: the raw URL segment split.
+pub(crate) type Segments<'a> = SmallVec<[&'a str; 8]>;
+
+/// V2-B02: run the exact scorer over candidate entries only. Candidates must
+/// be ascending (original order) so tie-breaking matches the linear oracle.
+pub(crate) fn match_candidates_ref<'a, 'e, E: EntryLike>(
+    entries: &'e [E],
+    cands: &[u32],
+    url: &[&'a str],
+    escaped: bool,
+) -> Option<(usize, Captures<'a>, i64)>
+where
+    'e: 'a,
+{
+    let mut best: Option<(usize, i64, Captures<'a>)> = None;
+    for &i in cands {
+        let e = &entries[i as usize];
+        if !e.matchable() {
+            continue;
+        }
+        let mut acc = SmallVec::<[(Cow<'a, str>, Cow<'a, str>); 4]>::new();
+        if let Some(score) = match_entry_ref(e, 0, 0, url, escaped, &mut acc) {
+            // Lazily compared per-position priorities: no `Vec<u8>` per candidate
+            // (lexicographic semantics identical to the oracle's `Vec` compare).
+            let better = match &best {
+                None => true,
+                Some((bi, bs, _)) => {
+                    let be = &entries[*bi];
+                    score > *bs
+                        || (score == *bs
+                            && match (0..e.seg_len())
+                                .map(|k| seg_priority(e.seg(k)))
+                                .cmp((0..be.seg_len()).map(|k| seg_priority(be.seg(k))))
+                            {
+                                std::cmp::Ordering::Less => true,
+                                std::cmp::Ordering::Greater => false,
+                                std::cmp::Ordering::Equal => e.seg_len() > be.seg_len(),
+                            })
+                }
+            };
+            if better {
+                best = Some((i as usize, score, acc));
+            }
+        }
+    }
+    best.map(|(i, score, acc)| (i, acc, score))
+}
+
+/// Recursive segment matcher with backtracking over borrowed segments (the
+/// allocation-free twin of [`match_entry`]). `acc` holds captured params; it is
+/// fully unwound on failure, so only successful paths leave captures behind.
+fn match_entry_ref<'a, 'e, E: EntryLike>(
+    e: &'e E,
+    pi: usize,
+    ui: usize,
+    url: &[&'a str],
+    escaped: bool,
+    acc: &mut Captures<'a>,
+) -> Option<i64>
+where
+    'e: 'a,
+{
+    if pi == e.seg_len() {
+        return if ui == url.len() { Some(0) } else { None };
+    }
+    match classify(e.seg(pi)) {
+        SegKind::Static(s) => {
+            if ui < url.len() && seg_is(url[ui], s, escaped) {
+                match_entry_ref(e, pi + 1, ui + 1, url, escaped, acc).map(|rest| rest + 4)
+            } else {
+                None
+            }
+        }
+        SegKind::Param { name, constraint } => {
+            if ui < url.len() {
+                let raw = url[ui];
+                if escaped {
+                    let decoded = percent_decode(raw);
+                    if constraint_ok(constraint, &decoded) {
+                        acc.push((Cow::Borrowed(name), Cow::Owned(decoded)));
+                        let r = match_entry_ref(e, pi + 1, ui + 1, url, escaped, acc)
+                            .map(|rest| rest + 2);
+                        if r.is_none() {
+                            acc.pop();
+                        }
+                        return r;
+                    }
+                } else if constraint_ok(constraint, raw) {
+                    acc.push((Cow::Borrowed(name), Cow::Borrowed(raw)));
+                    let r =
+                        match_entry_ref(e, pi + 1, ui + 1, url, escaped, acc).map(|rest| rest + 2);
+                    if r.is_none() {
+                        acc.pop();
+                    }
+                    return r;
+                }
+            }
+            None
+        }
+        SegKind::CatchAll(name) => {
+            // Greedy: longest capture first. Only catch-all captures allocate
+            // (the join).
+            for k in (ui + 1..=url.len()).rev() {
+                acc.push((
+                    Cow::Borrowed(name),
+                    Cow::Owned(join_range(url, ui, k, escaped)),
+                ));
+                if let Some(rest) = match_entry_ref(e, pi + 1, k, url, escaped, acc) {
+                    return Some(rest);
+                }
+                acc.pop();
+            }
+            None
+        }
+        SegKind::OptionalCatchAll(name) => {
+            for k in (ui..=url.len()).rev() {
+                acc.push((
+                    Cow::Borrowed(name),
+                    Cow::Owned(join_range(url, ui, k, escaped)),
+                ));
+                if let Some(rest) = match_entry_ref(e, pi + 1, k, url, escaped, acc) {
+                    return Some(rest + (k - ui) as i64);
+                }
+                acc.pop();
+            }
+            None
+        }
+    }
+}
+
+/// Static-segment comparison: raw equality, or (when the URL carries escapes)
+/// decoded equality. Decode is the identity without escapes, so the common
+/// path never allocates.
+#[inline]
+fn seg_is(raw: &str, static_seg: &str, escaped: bool) -> bool {
+    raw == static_seg || (escaped && percent_decode(raw) == static_seg)
+}
+
+/// Join URL segments `ui..k` into a catch-all capture (always allocates, as in
+/// the oracle). With escapes the pieces decode first — matching `split_path`.
+fn join_range(url: &[&str], ui: usize, k: usize, escaped: bool) -> String {
+    if !escaped {
+        return url[ui..k].join("/");
+    }
+    let mut out = String::new();
+    for (i, seg) in url[ui..k].iter().enumerate() {
+        if i > 0 {
+            out.push('/');
+        }
+        out.push_str(&percent_decode(seg));
+    }
+    out
 }
 
 /// Best match over all entries: score (higher wins) is summed per matched URL segment
