@@ -8,7 +8,92 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Oxide is pre-1.0: the API is not yet frozen, and releases before v1.0 may
 include breaking changes announced in the relevant section below.
 
-## [0.1.0] — 2026-10-24
+## [0.3.0] — 2026-11-08
+
+### Added
+
+- **dispatch**: The §9.2 parallel load graph substrate (V2-A06)
+- **router**: Token-exact parent() verdict on pages and layouts
+- **dispatch**: The §8.5 middleware chain runner (V2-A05)
+- **dispatch**: The unified request locals substrate (V2-A05)
+- **dispatch**: Expose the chain and locals modules
+- **dispatch**: The §15.4 experiments assignment engine (V2-F04)
+- **dispatch**: Locals accept resolved experiment assignments
+- **config**: The experiments config section types (V2-F04)
+- **config**: DSP-110 validation for the experiments section
+- The V2-A04 build id + generations substrate (#3)
+
+### Chores
+
+- Lock
+- **assets**: Rustfmt reflow in css tests
+- **bundler**: Rustfmt reflow in the rolldown backend
+- **cache**: Rustfmt reflow in the keys benches
+- **cli**: Rustfmt reflow in precompile and tests
+- **dispatch**: Add the blake3 dependency for the F04 engine
+- **config**: Regenerate the checked-in config schema
+- Trait add
+
+### Documentation
+
+- **router**: Backtick SvelteKit and NotFound in the readme
+- **deviations**: Record the A06 deferred wiring and lint scope
+- **worklog**: Append the A06 parallel load graph session
+- **handoff**: Hand off the A06 parallel load graph milestone
+- **workspace**: Correct the lints-policy opt-in note
+- **architecture**: Mark the dispatch chain and locals landed
+- **deviations**: Record the A05 deferred CLI adoption
+- **worklog**: Append the A05 chain + locals session
+- **handoff**: Hand off the A05 chain + locals milestone
+- **dispatch**: Expose the experiments module in the crate map
+- **handoff**: Hand off the F04 substrate milestone
+- **architecture**: Mark the experiments engine landed
+- **deviations**: Record the F04 deltas and deferrals
+- **worklog**: Append the F04 substrate session
+
+### Refactored
+
+- **router**: Pedantic must_use and # Errors docs on the contract
+- **router**: Pedantic must_use + method-ref map in the table
+- **router**: Checked conversions in the candidate index
+- **router**: Score cast helper, docs backticks, named locals
+- **router**: Exact rate-limit float math, map_or, if-let
+- **router**: Write!-based typegen emitters, row type alias
+- **router**: Must_use + merged parent_path arms in slots
+- **router**: Assert_eq! for empties, method-ref map
+- **router**: Rename _mmap, hoist use, method-ref maps
+- **router**: Must_use on synthetic_entries
+- **schema**: Satisfy pedantic clippy, borrow the error wrap
+- **config**: Split the schema literal, declare experiments
+- **config**: Cast-free size math with identical semantics
+- **config**: If-let escape handling in the env unescape loop
+- **config**: Pedantic cleanups in the static extractor
+
+### Testing
+
+- **dispatch**: Pin the §9.2 load graph contract from outside
+- **router**: Method-ref map in the oracle fixture
+- **router**: Checked hex byte in the mmap fixture
+- **dispatch**: Pin the §8.5 chain contract from outside (V2-A05)
+- **dispatch**: Pin the unified locals contract from outside
+- **dispatch**: Pin the F04 experiments contract from outside
+- **config**: Pin the experiments config contract
+- **config**: Expect the experiments schema section
+- **config**: Pedantic reflow in the integration suite
+
+### Bench
+
+- **dispatch**: Criterion for the load graph (V2-A06)
+- **router**: Statement-terminated iter closures
+- **dispatch**: Criterion for the chain and locals substrate
+- **dispatch**: Criterion for experiments assign and resolve
+
+### Build
+
+- **router**: Adopt the workspace lints policy (pedantic clean)
+- **config**: Adopt the workspace lints policy (pedantic)
+
+## [0.2.0] — 2026-11-08
 
 ### Added
 
@@ -755,6 +840,78 @@ include breaking changes announced in the relevant section below.
 - **react**: <Image> derives sizes from srcset when absent (§16.1)
 - **cli**: Thread precompiled sources into the edge bundle (WP-J)
 - **jshost/socket**: Expose the socket's own id via ctx.id
+- **modules**: @oxide-fw/tailwind — Tailwind v4 native plugin (real Scanner + compile)
+- **jshost**: Tailwind_scan + tailwind_build delegating to @oxide-fw/tailwind/runtime.mjs
+- **cli**: Precompute Tailwind v4 CSS when @oxide-fw/tailwind plugin is active
+- **cli**: Wire tailwind::precompute into cmd_build (fix 148c369)
+- **tailwind**: End-to-end working — .flex/.bg-red-500/@theme emit to dist CSS (root dep + has_tailwind fix)
+- **cli**: Tailwind HMR — rebuild CSS on source change (Phase 4)
+- **cli**: Cmd_dev fires the same 6 JS plugin hooks as cmd_build
+- **schema**: Add oxide-fw-schema crate to workspace
+- **deferred**: Close the streaming loop — resolved values reach the DOM
+- **website**: Mount AdapterTabs — interactive per-framework snippet
+- **website**: Use logo.png as favicon
+- **website**: Add logo and framework PNGs to public
+- **website**: Add types for image imports
+- **website**: Import local jetbrains mono font
+- **website**: Self-host JetBrains Mono woff2 files
+- **core**: Support data-ox-reload to force full-page navigation
+- **dev**: Scaffold Native ESM dev server (Phase 1)
+- **dev**: Scaffold esm_dev module (types, manifest, importmap, handler)
+- **dev**: Import rewriting + framework dist prebundle in esm_dev
+- **dev**: Publish ModuleUpdate.url in ESM mode; hmr.ts routes through __oxide_hmr__ (Phase 2)
+- **dev**: React Refresh AST transform + runtime hookup (Phase 3)
+- **dev**: Phase 4 — flip dev.esm default to true, RestartSubsystems ESM branch, docs
+- **dev**: Install react-refresh in smoke-app + website; E2E prebundle test
+- **dev**: /@css/ handler + CSS import rewriting in ESM mode (Phase 5b.1)
+- **dev**: ReloadModule actually re-imports; CSS HMR publishes ModuleUpdate (Phase 5b.2)
+- **compiler**: Cjs-module-lexer-style AST walk for CJS named exports
+- **bundler**: Prebundle CJS deps as ESM with named exports
+- **config**: Default prebundle includes react-refresh
+- **cli**: /@server-fn/ URL family + boot entry fixes
+- **cli**: Populate component_source from start_server_inner_full
+- **client**: Wire connectHmr() in bootWithRouter
+- **dev**: Overlay-without-reload for broken edits (Tier 2.5 + 2.8)
+- **dev**: Classify_event unblocks in-place layout HMR (Tier 3.9 + 2.2)
+- **client**: Bound modules + lastReloadAt maps (Tier 3.8a)
+- **hmr**: Batch distinct-file changes into one wire message (Tier 3.2)
+- **cli**: --no-esm flag + bundler-path E2E test (Tier 2.9)
+- **dev**: Prebundle invalidation on node_modules/lockfile change (Tier 3.3)
+- **dev**: Import.meta.env injection + .env-change FullReload (Tier 3.4)
+- **client**: Worker-side import.meta.hot + HMR WS (Tier 3.5)
+- **css**: CSS Modules end-to-end (Tier 1.4)
+- **refresh**: $RefreshSig$ emit + runtime wiring (Tier 1.2 — partial)
+- WIP HMR
+- **compiler**: Re-enable §1.2 $RefreshSig$ emit
+- **jshost**: Pure-JS babel-preset-solid fallback for Solid JSX
+- **jshost**: Project-root tooling resolution and Solid babel fallback
+- **jshost**: Solid SSR babel fallback and project-root tooling retry
+- **cli**: Re-anchor dev temp component imports to file URLs
+- **cli**: Pool-compile SFC client modules and framework-aware boot entry
+- **cli**: Framework prebundle extras, watcher fan-out, route root fix
+- **core/hot**: Fresh module map and __oxide_on_module_updated hook
+- **core/boot**: Replay last input through adapter.update on HMR
+- **vue**: Swap the root when the component reference changes on HMR
+- **solid**: Swap the root when the component reference changes on HMR
+- **solid**: Install the _$HY hydration state client-side
+- **svelte**: Use the dedicated hydrate() entry point
+- **svelte**: Swap the root when the component reference changes on HMR
+- **cli-npm**: Deliver wrapper shim routing execution to cached binaries
+- **cli-npm**: Construct download installer validating checksum assets
+- **cli-npm**: Draft triple-target routing mappings verifying platforms
+- **create**: Rewrite template scaffolding tool to deploy operational architectures
+- **router**: Add split_raw_path for borrowed, undecoded URL segments
+- **router**: Add the candidate index (D23) with superset and oracle tests
+- **router**: Allocation-free match_ref with lazily decoded escapes (V2-B02)
+- **router**: Zero-copy archived matching with exact-linear fallback (V2-B02)
+- **router**: Precompute per-route dispatch answers in RouteContextTable (V2-B01, D22)
+- **router**: Synthetic route generator behind bench-util (V2-B09)
+- **router**: Export match_ref, RouteContextTable and the match_in_linear oracle
+- **cache**: Stack-allocated KeyStr and key_of (V2-B05, D24)
+- **cache**: Reverse tag index and redb multimap disk tags (V2-B05/B06)
+- **cache**: Export keyhash (KeyStr, key_of) from the crate root
+- **dispatch**: Url prelude helpers and the 9.3 form pair (V2-A02)
+- **dispatch**: The stage Flow protocol (V2-A02)
 
 ### CI
 
@@ -773,6 +930,24 @@ include breaking changes announced in the relevant section below.
 - Miri on the pure-Rust crates (§22)
 - **conformance**: Run D20 suite on Linux, macOS, Windows
 - **wasm32-edge**: Fail when edge.wasm imports glue that isn't committed (B3)
+- **node**: Build workspace packages before TS tests
+- **bench**: Drop continue-on-error from bench-gate
+- Bump actions/checkout to v5 (Node 20 deprecation)
+- Run workspace tests with --no-fail-fast
+- Run tests under nextest to enforce the 90s per-test timeout
+- Fix Windows dead-code, conformance build step, Node 20 warning, macos cache
+- Bump actions to Node-24-native majors; drop FORCE_JAVASCRIPT_ACTIONS_TO_NODE24
+- Bump every action to latest major; fix publish-npm to build before publish
+- **publish-npm**: Include tailwind in version-check and tarball-verify loops
+- Pin pnpm/action-setup to v6.1.0 for pnpm 12 support
+- Restore 'with:' wrapper on pnpm/action-setup steps
+- Re-trigger workflow (no code change)
+- **node**: Build the website as part of the workspace build
+- **bench**: Introduce dedicated release benchmarks workflow
+- **core**: Expand test matrix and secure pre-runtime env setup
+- **release**: Automate target matrix prebuilt binary compilation
+- **scaffold**: Safeguard installation quickstart against registry rot
+- **workflow**: Run new package tests and include MDX bundle test
 
 ### Chores
 
@@ -892,6 +1067,97 @@ include breaking changes announced in the relevant section below.
 - **playwright**: Add test:dev-rescan script
 - Readme
 - **cli/tests**: Drop the ignored edge_wasm_executes_its_exports test
+- **release**: Add release mechanics (B7)
+- **release**: Add scripts/bump-version.sh
+- **release**: Add publish-npm.yml with OIDC + fix release body + document setup
+- **ts**: Strict typecheck — core, create-oxide, playwright clean
+- **ts**: Enable noUncheckedIndexedAccess + strict flags in core
+- **react**: Strict-mode typecheck fixes in index.ts
+- **solid**: Strict-mode typecheck fixes in index.ts
+- **svelte**: Strict-mode typecheck fixes in index.ts
+- **vue**: Strict-mode typecheck fixes in index.ts
+- **schemas**: Rename oxide-config.schema.json -> oxide-fw-config.schema.json and regenerate
+- Cargo fix across workspace — remove unused imports/vars/mut
+- **cli**: Delete dead JsPluginChain cluster (obsolete predecessor)
+- **cli**: Resolve 7 remaining dead_code warnings — wire or delete
+- Clippy --fix on the 5 crates touched this session
+- Second cargo clippy --fix pass
+- Span-accurate application of provably-safe clippy suggestions
+- Collapse nested ifs to let-chains (edition 2024)
+- Collapsible_if residue cleanup — exhaustive safe-fix pass
+- Clippy safe-fix pass with placeholder + tiers.rs filters
+- Batch-fix mechanical clippy warnings (serial cli tests)
+- Clippy batch — manual_strip + 4 type aliases (self-ref-safe)
+- Clippy residue — type_complexity aliases
+- Clippy batch — 5 safe categories via exact-match patterns
+- Fix cli type_complexity — SelfDispatch + LoaderInputs
+- Clippy fix pass — write_prerender, map_flatten, orphaned allows
+- Apply partial clippy --fix (redundant_field_names)
+- **adapters**: Add [package.metadata.docs.rs] all-features
+- **assets**: Add [package.metadata.docs.rs] all-features
+- **bundler**: Add [package.metadata.docs.rs] all-features
+- **cache**: Add [package.metadata.docs.rs] all-features
+- **cli**: Add [package.metadata.docs.rs] all-features
+- **compiler**: Add [package.metadata.docs.rs] all-features
+- **config**: Add [package.metadata.docs.rs] all-features
+- **core-wasm**: Add [package.metadata.docs.rs] all-features
+- **dev**: Add [package.metadata.docs.rs] all-features
+- **diagnostics**: Add [package.metadata.docs.rs] all-features
+- **graph**: Add [package.metadata.docs.rs] all-features
+- **jshost**: Add [package.metadata.docs.rs] all-features
+- **odf**: Add [package.metadata.docs.rs] all-features
+- **plugin**: Add [package.metadata.docs.rs] all-features
+- **render**: Add [package.metadata.docs.rs] all-features
+- **router**: Add [package.metadata.docs.rs] all-features
+- **server**: Add [package.metadata.docs.rs] all-features
+- **packages**: Add repository/license/publishConfig metadata
+- **jshost**: V8 pre-resolve hardening + buffer/events/stream arms
+- **fmt**: Cargo fmt on framework_host_e2e.rs
+- **fmt**: Cargo fmt on v8_lazy_entry_tdd.rs
+- **cli**: Add ring for cross-platform build-secret randomness
+- **react/hydrate**: Log real-render failure points
+- **core/route-manifest**: Log componentFor's internal failures
+- **readme**: Bump Rust test count 1231 -> 1237
+- Silence 18 unused-import/unused-variable warnings
+- **cli/tests**: Drop unused `futures::StreamExt as _` import
+- **clippy**: Apply `cargo clippy --fix` across the workspace
+- **clippy**: Refactor the last 2 warnings properly — no `#[allow]`
+- **bundler**: Extract type aliases for the 7 hook fn types
+- **npm**: Bump TypeScript workspace to 7.0.2; pin @types/node policy
+- **pnpm**: Pin pnpm 12.15.0; migrate config to pnpm-workspace.yaml
+- **release**: Pnpm 12.16.1, per-crate READMEs, crate metadata, community files
+- **npm**: Fix package metadata — access + license
+- WIP tailwind dev
+- Swap shiki for rangi and add JetBrains Mono
+- Remove old copy-install css
+- Update lockfile for rangi and lucide-react
+- Add @fontsource/jetbrains-mono
+- Remove dead shiki dependency
+- Update lockfile after removing shiki
+- Restore shiki for md.server.ts (migration deferred)
+- Update lockfile
+- Remove shiki dependency entirely
+- Update lockfile after removing shiki
+- **website**: Remove broken @fontsource imports
+- **react**: Remove CSR 404 diagnostic traces (root cause fixed in 636e77b)
+- **dev**: Clean up timing logs, add user-facing rebuild messages
+- Readme & logo
+- **plan**: Tick completed Tier 1.1, 2.4, 2.5, 2.8, 4.2
+- **plan**: §2.10 already covered by global-setup + smoke/island specs
+- **plan**: Add §3.11 tracking checkbox (ticked)
+- **plan**: Refresh header + execution order; tick 4.3
+- Rm dist
+- **cli**: Drop unused tailwind source collector
+- **dev**: Drop unused Watcher import
+- Archive development log track inside docs workspace
+- **git**: Ignore cached oxide prebuilt binary directory
+- **cli**: Append full error chain tracking to client/server bundle diagnostic reporting
+- **smoke-app**: Clean up text references from react hmr fixture
+- **repo**: Update test harness paths and package targeting commands
+- **cli-npm**: Expand automation scripts for test execution and syntax validation
+- **oxide-og**: Configure internal test runners using native node test tools
+- **repo**: Gitignore commit.sh and the dhat-heap.json test artifact
+- **repo**: Gitignore ship.sh, the milestone commit protocol
 
 ### Dependencies
 
@@ -902,6 +1168,12 @@ include breaking changes announced in the relevant section below.
 - **deps**: Tokio-stream for the blocking-codec bridge (P-15)
 - **deps**: Cargo.lock — proptest for oxide-odf fuzz target
 - **deps**: Declare the playwright-family override
+- **deps**: Refresh Cargo.lock after ring dep on cli
+- **deps**: Upgrade Rust deps; add cargo-audit config
+- **deps**: Align oxc chain to 0.155.0; handle StringLiteral value as Option<&str>
+- **deps**: Bump socket2 to 0.6.5 in oxide-fw-server (redis still pins 0.5 transitive)
+- **deps**: Bump redis 0.27 -> 1.8.0 (also collapses socket2 0.5 duplicate)
+- **deps**: Pin rolldown ecosystem to oxc 0.155
 
 ### Documentation
 
@@ -1168,6 +1440,115 @@ include breaking changes announced in the relevant section below.
 - **audit**: B3 verdict — CONFIRMED, payload is inert
 - **deviations**: Deviation 6 → partially closed (payload inert)
 - **audit**: Remove reference to the deleted ignored test in B3
+- **publishing**: Document the irreducible first-publish risk
+- **packages**: Add READMEs for oxide and create-oxide
+- **design**: Tailwind v4 native plugin — verified facts, architecture, 6 implementation phases
+- **adapters**: Rustdoc link + fmt fixes in lib.rs
+- **assets**: Rustdoc link + fmt fixes in content_collection.rs
+- **assets**: Rustdoc link + fmt fixes in content_typegen.rs
+- **assets**: Rustdoc link + fmt fixes in font_subset.rs
+- **assets**: Rustdoc link + fmt fixes in i18n.rs
+- **assets**: Rustdoc link + fmt fixes in lib.rs
+- **bundler**: Rustdoc link + fmt fixes in lib.rs
+- **bundler**: Rustdoc link + fmt fixes in rolldown_backend.rs
+- **cache**: Rustdoc link + fmt fixes in auth.rs
+- **cache**: Rustdoc link + fmt fixes in http.rs
+- **cache**: Rustdoc link + fmt fixes in http_handler.rs
+- **cache**: Rustdoc link + fmt fixes in redis_handler.rs
+- **cache**: Rustdoc link + fmt fixes in s3_handler.rs
+- **cache**: Rustdoc link + fmt fixes in single_flight.rs
+- **cache**: Rustdoc link + fmt fixes in tiers.rs
+- **cli**: Rustdoc link + fmt fixes in audit.rs
+- **cli**: Rustdoc link + fmt fixes in build_cache.rs
+- **cli**: Rustdoc link + fmt fixes in build_graph.rs
+- **cli**: Rustdoc link + fmt fixes in framework_shim.rs
+- **cli**: Rustdoc link + fmt fixes in lib.rs
+- **cli**: Rustdoc link + fmt fixes in mcp.rs
+- **cli**: Rustdoc link + fmt fixes in migrate.rs
+- **cli**: Rustdoc link + fmt fixes in modules_loader.rs
+- **cli**: Rustdoc link + fmt fixes in tests.rs
+- **compiler**: Rustdoc link + fmt fixes in framework.rs
+- **compiler**: Rustdoc link + fmt fixes in lib.rs
+- **compiler**: Rustdoc link + fmt fixes in oxc_backend.rs
+- **config**: Rustdoc link + fmt fixes in extract.rs
+- **config**: Rustdoc link + fmt fixes in lib.rs
+- **core-wasm**: Rustdoc link + fmt fixes in lib.rs
+- **dev**: Rustdoc link + fmt fixes in dev_server.rs
+- **dev**: Rustdoc link + fmt fixes in lib.rs
+- **diagnostics**: Rustdoc link + fmt fixes in lib.rs
+- **graph**: Rustdoc link + fmt fixes in artifacts.rs
+- **graph**: Rustdoc link + fmt fixes in demand.rs
+- **graph**: Rustdoc link + fmt fixes in lib.rs
+- **graph**: Rustdoc link + fmt fixes in remote_s3.rs
+- **jshost**: Rustdoc link + fmt fixes in framework_host.rs
+- **jshost**: Rustdoc link + fmt fixes in framework_renderer.rs
+- **jshost**: Rustdoc link + fmt fixes in lib.rs
+- **jshost**: Rustdoc link + fmt fixes in snapshot.rs
+- **jshost**: Rustdoc link + fmt fixes in tooling_pool.rs
+- **odf**: Rustdoc link + fmt fixes in encode.rs
+- **render**: Rustdoc link + fmt fixes in lib.rs
+- **router**: Rustdoc link + fmt fixes in archive.rs
+- **router**: Rustdoc link + fmt fixes in lib.rs
+- **router**: Rustdoc link + fmt fixes in matcher.rs
+- **router**: Rustdoc link + fmt fixes in rules.rs
+- **router**: Rustdoc link + fmt fixes in segment.rs
+- **router**: Rustdoc link + fmt fixes in slot.rs
+- **server**: Rustdoc link + fmt fixes in lib.rs
+- **server**: Rustdoc link + fmt fixes in page_renderer.rs
+- **server**: Rustdoc link + fmt fixes in trace_context.rs
+- 17 crate READMEs on docs.rs landing pages
+- Real READMEs for adapters, assets, bundler, cache, cli
+- Real READMEs for config, core-wasm, dev, diagnostics
+- Real READMEs for graph, jshost, odf, plugin
+- Real READMEs for render, router, server — final batch
+- Strip GitHub admonitions + centered logo on crate READMEs
+- For-the-badge style + expanded badge set on crate READMEs
+- **packages**: Fix @oxide/ scope (all .md, excl node_modules) + create-oxide name
+- **readme**: Sync Rust test badge with measured count
+- **readme**: Sync test-count table row (1,214 -> 1,227)
+- **readme**: Sync test counts to 1231 after §8 regression tests
+- **bench**: Re-baseline deterministic byte counts; document gate policy
+- **bundler**: Fence the strip_windows_verbatim error example as text
+- **readme**: Rewrite for v0.1 release; ci: add clippy gate
+- **readme**: Clarify the Rust test count
+- **readme**: Rewrite for v0.1 release
+- **meta**: Per-crate descriptions, keywords and categories; npm metadata
+- Link root README badges; add FUNDING.yml; fix rot-prone state claim
+- Correct deploy-target count; add Overview to compiler README
+- **site**: Local development, CI, release, and security pages
+- **website**: Rewrite adapters.md with verified line numbers
+- **readme**: Registry-first install; link every referenced doc
+- **readme**: Rewrite — hero, feature table, honest status
+- Add image pipeline guide
+- Add tailwind v4 guide
+- Update worklog with dx rescue plan and fixes
+- Clarify rangi emits shiki-compatible classes
+- **dev**: Native ESM dev server + known gaps
+- Replace deviation-esm with plan-esm-hmr
+- **plan**: §2.7 blocked by client-unmount bug; file §3.10
+- **plan**: Mark §1.2 and §1.3 done — plan complete at 33/33
+- **handoff**: Rewrite for the plan-complete state
+- Multi-framework HMR handoff
+- Log the multi-framework HMR session
+- **worklog**: Full-tree bug hunt + performance pass
+- **website**: Fix duplicated conjunction in features lede
+- Announce prebuilt installer wrappers and clarify server architecture
+- Resolve and close streaming core adapter component deviations
+- Build installation wrapper ecosystem manual documentation
+- Describe robust flag routing parameters on create interface
+- **handoff**: Document fixes for BUG-MAPKEY, BUG-SOLID-CLIENT, and create-oxide workspace logic
+- **router**: Document the candidate index and RouteContextTable
+- **cache**: Document KeyStr, the O(1) tag index and the disk multimap
+- **benchmarks**: Record the Wave B criterion table, budgets and re-baseline policy
+- **benchmarks**: Document the criterion harness commands and snapshots
+- **deviations**: Record the deferred V8-side integration points for Wave B
+- **worklog**: Append the V2 Wave B foundations session
+- **handoff**: Hand off the Wave B milestone and the next integration steps
+- **dispatch**: Crate charter for the orchestration substrate
+- **architecture**: Add the dispatch crate row
+- **deviations**: Record the A02 deferred CLI adoption seams
+- **handoff**: Hand off the A02 dispatch substrate milestone
+- **worklog**: Append the A02 dispatch substrate session
 
 ### Fixed
 
@@ -1367,6 +1748,253 @@ include breaking changes announced in the relevant section below.
 - **solid/protocol**: Dispatch {id, value} on ox:swap
 - **oxide/i18n**: ICU exact-match uses post-offset n; threads # into exact branches
 - **cli**: Forward action Set-Cookie headers on 200 re-render (B6)
+- **release**: Correct publish order + inherit repository in crates
+- **ci**: Rustfmt + nasm install for rav1e on CI runners
+- **ci**: Rustfmt + nasm install for rav1e on CI runners
+- **ci**: Move nasm install after checkout
+- **website**: Refresh stale counts and phantom scorecard pointers (B4)
+- **ci**: Install deps before TS tests + relax B3 gate to documented state
+- **npm**: Remaining @oxide-fw/oxide -> @oxide-fw/core references
+- **ts**: Clear remaining core src/ strict errors (hmr, messages, router)
+- **ts**: Boot.ts strict narrowing under noUncheckedIndexedAccess
+- **ts**: Enhance.ts split .at(0) narrowing under noUncheckedIndexedAccess
+- **ts**: Islands.ts media-query + schedule types
+- **ts**: Odf-decode.ts readU32BE/typed-array narrowing
+- **ts**: Route-manifest.ts undefined narrowing
+- **ts**: Scripts.ts el undefined check
+- **ts**: Odf-encode.ts byte comparison narrowing
+- **react**: Clean escapeScript import in render.ts
+- **solid**: Real-client.ts dynamic-import default narrowing
+- **solid**: Clean escapeScript import in render.ts
+- **svelte**: Clean escapeScript import in render.ts
+- **vue**: Real-client.ts app.mount widening
+- **vue**: Render-loading.ts app.mount widening
+- **vue**: Clean escapeScript import in render.ts
+- **react**: Real-client.ts layout[i] narrowing under noUncheckedIndexedAccess
+- **react**: Render-loading.ts widen root type (render method)
+- **react**: Widen ComponentFn props to any (heterogeneous component registry)
+- **react**: Widen real-ssr Component param to unknown (matches renderBody/renderStream slots)
+- **react**: Use (props: never) for ComponentFn (contravariant bottom, no any)
+- **react**: CallComponent helper + remove unnecessary as ComponentFn casts
+- **react**: Universal Record props + runtime type guards, no any/never/casts
+- **react**: PageTreeFor uses Record<string, unknown> (no as-unknown-as cast)
+- **react**: ComponentFn props is Record<string, unknown> (no any, no never)
+- **react**: Page/layout bodies use narrowed locals (initialCount, page, children)
+- **react**: Rename page param raw->input (no shadow of raw() helper)
+- **vue**: Universal Record props + runtime type guards (mirror react)
+- **vue**: MountFresh returns the createSSRApp object (has mount + unmount)
+- **svelte**: Universal Record props + runtime type guards (mirror react/vue)
+- **solid**: Structural runtime narrowing of solid-js module (no as-unknown-as)
+- **solid**: Universal Record props + runtime type guards (mirror react/vue/svelte)
+- **react**: CounterIsland narrows only its own props (no parsePageProps on island path)
+- **vue**: CounterIsland narrows only its own props (mirror react fix)
+- **svelte**: CounterIsland narrows only its own props (mirror react fix)
+- **solid**: CounterIsland narrows only its own props (mirror react fix)
+- **react**: IslandProps.children optional (resolves createElement TS2769)
+- **react**: OxElement.ownerDocument widened to OxDoc | null (DOM-faithful)
+- **vue**: OxElement.ownerDocument widened to OxDoc | null (DOM-faithful)
+- **svelte**: OxElement.ownerDocument widened to OxDoc | null (DOM-faithful)
+- **solid**: OxElement.ownerDocument widened to OxDoc | null (DOM-faithful)
+- **core**: Messages.ts use charAt() instead of non-null assertion
+- **core**: RouteIdFor(routeRef: unknown) — signature accepts unknown, guard narrows
+- **ci**: Publish-npm.yml loops use package folder 'core' not 'oxide'
+- **oxide-website**: Add jsx: react-jsx to tsconfig (fixes 179 JSX TS17004 errors)
+- **jshost**: Remove broken tailwind_compile (called nonexistent @tailwindcss/oxide::compile API)
+- **jshost**: Test mods use standard `#[cfg(test)] + use super::*`; ship dev banner
+- **cli**: Promote render_stream_to_body_stream to pub fn (SPEC §serve/stream)
+- **graph**: Cas test uses unique tempdir, not fixed /tmp path
+- **server**: Box<Diagnostic> in csrf return type (result_large_err)
+- **docs**: Remove misplaced docsrs badges + enable doc_cfg feature
+- **ci**: Serialize env-mutating cli tests + document edge wasm
+- **ci**: Correct stale wasm32 package + artifact name
+- **test**: Replace serial_test with tokio::sync::Mutex
+- **tailwind**: Stale references after modules/ → top-level move
+- **tailwind**: Full README + explain known test failure
+- **tailwind**: Ensure tailwindcss CSS files in the resolved package
+- **tailwind**: Resolve Tailwind's own CSS via createRequire
+- **tailwind**: Use createRequire for Tailwind's built-in CSS resolution
+- **tailwind**: Actually wire _require.resolve into resolveStylesheet
+- **ci**: Add concurrency control + fix stale script refs
+- **scripts**: Count-tests.sh packages/oxide → packages/core (regex, not str.replace)
+- **packaging**: Lazy-load optional peer deps in @oxide-fw/{react,solid}
+- **ci**: Doctests, vue export-map, NASM, pnpm build before oxide build
+- **ci**: Residual doctests, bundler Windows path, worker message, ci.yml
+- **doc**: Mark illustrative README doctests as ignore
+- **ci**: Bench-gate is continue-on-error pending baseline regen
+- **jshost**: Type-strip .ts post-plugin; URL polyfill; diagnostic check-v8
+- **jshost**: ASCII-only URL polyfill (deno_core extension source requirement)
+- **jshost**: URL polyfill accepts bare paths
+- **jshost**: Kind-aware V8 dispatch — middleware gets (request, ctx)
+- **bundler**: Inline react for SSR so V8 can load route modules
+- **core**: Robust ESM namespace unwrap + shape diagnostic in resolveComponent
+- Baseline for V8 SSR — pass-through in resolveComponent + bundler unwrap emission
+- **cli**: Restore react entries to default_ssr_externals
+- **react,jshost**: CJS interop, remove createRequire, emit stack in OX-500
+- **jshost**: V8 pre-resolve lazy route loaders — closes [object Module]
+- **cli,jshost,react,core**: V8 SSR fully green — layered fix set
+- **cli**: Use ring::rand for cross-platform build_secret
+- **bundler**: Strip Windows verbatim prefix from rolldown entries
+- **core/route-manifest**: Share component source via globalThis
+- **react/hydrate**: Preserve SSR markup on initial load; fresh-mount on nav
+- **bench/gate**: Gate only deterministic metrics; wall-clock is info-only
+- **jshost**: Windows-aware path->file:// URL construction
+- **cli**: Slash-normalize graph keys and migrate output
+- **jshost**: File:// URL only for --import; path for positional script
+- **jshost**: URL-parse the referrer too; hoist path_url_tests to file scope
+- **jshost**: Strip Windows verbatim prefix at every from_file_path site
+- **jshost**: Count a worker crash exactly once, before fail_all unblocks
+- **jshost**: V8Pool also counts worker crashes
+- **router tests**: Windows-portable scan fixtures and typegen assertion
+- **hmr harness**: Single in-place write per iteration
+- **oxide-og**: TS 7 native-compiler compatibility
+- **cache**: Redis 1.8 ConnectionManagerConfig timeouts are Option<Duration>
+- **build**: Clean tsgo declaration leak into packages/*/src via postbuild hook (preserve ambient env.d.ts)
+- **jshost**: Break Worker↔reader cycle via Weak ref + NodePool Drop
+- **website**: Typecheck clean, conformance claim verified
+- **website**: Adapters.md cites definition lines, not first mentions
+- **website**: /docs and /blog serve their index pages
+- **core**: Defer-glue typecheck — narrow doc, import the exported types
+- **cli,core,router**: Route CSS on both render paths; dynamic keys; scanner
+- **website**: Correct mdToHtml declaration broken by regex
+- **website**: Add Apache-2.0 license link to footer
+- **server**: Allow Google Fonts in CSP (style-src + font-src)
+- **website**: Safe-default reveal animation (no black features)
+- **website**: Force rangi pre styles via !important
+- **website**: Strip rangi inline styles before DOM insert
+- **website**: Remove duplicate command text in terminal mockup
+- **website**: Rebuild header with Tailwind utilities + fix favicon
+- **website**: Safe default reveal animations + copy button spacing
+- **website**: Ensure Google Fonts link is present
+- **website**: Simplify terminal wrapper
+- **website**: Move $ prompt inside terminal input
+- **cli**: Patch dev NODE_ENV, copy public dir, and direct-write tailwind CSS
+- **cli**: Unify tailwind_active gate and enforce loud failures
+- **cli**: Lazy manifest loading for dev CSS injection
+- **website**: Deterministic number formatting for SSR hydration
+- **website**: Absolute rangi margin reset and font lock
+- **website**: Properly strip rangi inline style attributes
+- **website**: Remove broken strip hack, use lineNumbers:false
+- **website**: Target .shiki div directly (rangi actual output)
+- **website**: Correct .shiki CSS targeting with white-space:pre
+- **website**: Correct rangi import + define oxideTheme from githubDark
+- **website**: Strip shiki inline style attr properly
+- **website**: Strip shiki inline style in server renderer
+- **website**: Clean shiki CSS + self-hosted font-face
+- **website**: Strip style from shj-* divs (rangi actual output)
+- **website**: Strip shj-* inline styles in server renderer
+- **website**: Target shj-lang-* CSS class, not shiki
+- **website**: Wrap logo in light tile so it is visible on dark bg
+- **cli**: Force global tailwind CSS injection for all routes (fixes docs styling)
+- **cli**: Consolidate tailwind CSS + sync manifest in dev (T5)
+- **website**: Docs sidebar links use full-page nav
+- **website**: Header + footer links use full-page nav
+- **website**: Blog links use full-page nav
+- **cli**: Call enrich_manifest_layout_chains in cmd_dev (was build-only)
+- **cli**: Rebuild stale workspace packages before dev bundles
+- **core**: Popstate forces full reload (SSR destination) — back button works
+- **react**: TryRealRender uses manifest layout_chain when inp.layouts empty
+- **react**: Dispose+remount on CSR nav when layout chain changes
+- **server**: No-cache for /client/* in dev (immutable was pinning stale JS)
+- **website**: Finish framework-tabs rangi migration (drop orphaned shiki highlighter)
+- **website**: Migrate code-highlight island from shiki to rangi
+- **core**: Normalize dynamic route segments in routeIdFor (CSR 404 fix)
+- **react**: Hoist declaredLayouts above wr215 chain-key read (TDZ crash)
+- **website**: Preserve rangi wrapper styles and send raw source to framework-tabs island
+- **website**: Align docs framework-tabs UI with index page AdapterTabs
+- **website**: Disable md.server line numbers and watch for SPA nav in tabs island
+- **website**: Portal AdapterTabs React component into docs for 1:1 parity and safe highlighting
+- **website**: Parse markdown into structured blocks to render real React components natively
+- **website**: Correctly parse markdown into structured blocks for AdapterTabs
+- **react**: Hydrate real SSR on initial load and fix tab logo background
+- **core**: Attach popstate listener to window, not document
+- **dev**: Scope client_rebuilt correctly + rename gen to gen_val
+- **dev**: Classify route component edits as Component, pass changed paths to incremental rebuild
+- **dev**: Wire incremental bundler into watcher, fix path canonicalization, prevent flash on bundle failure
+- **dev**: Wire incremental bundler into watcher, stop reloading on module-update
+- **dev**: Invalidate ALL V8 workers + return Err on bundle failure (root cause of flash)
+- **dev**: True broadcast invalidate — force-dispatch per-worker via route hint (root cause of hydration flash)
+- **dev**: Ensure_dev_client_bundle checks mtimes, build_client_bundle fails hard on CSS errors
+- **server**: Bypass StaticAssets moka cache + recompute etag in dev (root cause of flash-then-revert)
+- **server**: StaticAssets serve() falls back to disk on index miss in dev (root cause of chunk 404s)
+- **dev**: RouteId key + OxideError field access in esm_dev wiring
+- **test**: Decode chunked body in dev_server_serves_smoke_app_over_http
+- **dev**: Populate component_source in start_server_inner_full (root cause of Phase 5a smoke 500)
+- **core**: FakeDoc gains defaultView so popstate tests reach the router
+- **tailwind**: Merge scan() disk + scanFiles() in-memory candidates
+- **cli**: Set OXIDE_ROOT in build_framework_stack before pool spawn; website E2E
+- **core**: ReloadModule uses monotonic cache-bust; test pins contract; docs — Phase 5b closed
+- **compiler**: Emit @oxide-fw/core/fn so server-fn stubs resolve in the browser
+- **core**: Reconcile deferred markers after framework hydration (#418 clobber)
+- **core**: Merge marker reconcile into existing MutationObserver (single observer per glue)
+- **compiler**: Stop infinite loop in scan_import_spans on local re-exports
+- **compiler**: Stable $RefreshReg$ id (path:Name)
+- **compiler**: Strip dead serverFn import from client stubs
+- **client**: Buffer refresh registrations + coalesce rapid reloads
+- **client**: ComponentFor reads entry.component first
+- **compiler**: Rewrite strip_server_fn_imports via scan_import_spans
+- **client**: Catch lazy imports that fail during outage (Tier 3.10 partial)
+- **client**: Gate /@prebundle runtime fetch on ESM mode + file §3.11
+- **cli,client**: Staleness scan covers packages/*/dist + strict §2.9 test
+- **refresh**: Un-break 22680499 — compile fix + emit disabled
+- **client**: Plain .server.ts edit no longer reloads (Tier 1.5)
+- **client**: Drop route-data-update for routes the viewer is not on
+- **client**: Await a pending refresh-runtime load instead of reloading
+- **dev**: Watch-budget + boot baseline + self-healing dirs
+- **cli**: PATH for workspace rebuild, OXIDE_DEV_LOG_FILE, boot seed, node_modules filters
+- **bundler**: Bundle the svelte family as one multi-entry rolldown run
+- **bundler**: Pass the project root to the incremental plugin
+- **compiler**: Give server-fn client stubs an id and rewrite SSR to id-first
+- **vue**: Resolve the vue runtime with a dynamic import instead of node:module
+- **solid**: Install _$HY hydration state before island hydrate
+- **solid**: Invoke the component inside the render root
+- **solid**: Resolve @solidjs/web with a dynamic import instead of node:module
+- **svelte**: Use hydrate() for island hydration
+- **core/ssr**: Escape inline scripts with \u003c, not HTML entities
+- **core/odf**: Chunk pushBytes and share the f64/i64 scratch buffer
+- **core/hmr**: Narrow msg to a records-items shape before the cast
+- **core/hot**: Declare createSignatureFunctionForTransform on RuntimeShape
+- **react/render**: Split page (p<n>) and island (h<n>) handler-marker scopes
+- **react/hydrate**: Unbind the previous generation; island markers stay in h<n>
+- **react/real-client**: Retry on transient optional-peer load failures
+- **vue/render**: Split page (p<n>) and island (h<n>) handler-marker scopes
+- **vue/hydrate**: Unbind previous generation; island markers stay in h<n>
+- **vue/real-client**: Retry on transient optional-peer load failures
+- **svelte/render**: Split page (p<n>) and island (h<n>) handler-marker scopes
+- **svelte/hydrate**: Unbind previous generation; island markers stay in h<n>
+- **svelte/real-client**: Retry on transient optional-peer load failures
+- **svelte/hydrate-island-real**: Declare hydrate on the SvelteLike interface
+- **solid/render**: Split page (p<n>) and island (h<n>) handler-marker scopes
+- **solid/hydrate**: Unbind previous generation; island markers stay in h<n>
+- **solid/real-client**: Solid 1.x web fallback + retry on transient failures
+- **solid/hydrate-island-real**: Try the OTHER specifier on Solid 1.x
+- **create-oxide**: Detect main via resolved entry URL, not source filename
+- **oxide-website/md**: Terminate the blockquote/paragraph loop; hoist regexes; sort undated posts last
+- **oxide-website/docs**: Type the doc html as MdBlock[]
+- **oxide-website/docs**: Wrap AdapterTabs in an Island so it hydrates
+- **oxide-website/rss**: Escape slugs in link/guid; skip invalid dates
+- **oxide-website/css**: Restore scroll-reveal and scroll-progress rules
+- **oxide-website/code-highlight**: Stop the observer from re-triggering on its own writes
+- **oxide-website/framework-tabs**: Clear the SSR placeholder before createPortal
+- **oxide-website/FrameworkAdapters**: Switch the adapter table to a keyed record
+- **oxide-website/env**: Declare *.css side-effect imports
+- **playwright/cssmodules**: Non-null assert the regex match group
+- **website**: Make blog tag keys unique per post
+- **cli**: Isolate process startup environment initialization pre-runtime
+- **cli**: Shift startup environment initialization onto early process entryway
+- **jshost**: Apply heap ceiling thresholds and flexible call watchdogs
+- **plugin**: Enforce hard memory ceilings and introduce background epoch watchdogs
+- **server**: Introduce connection ceilings, cache partitioning, and route hardening
+- **bundler**: Address BUG-MAPKEY lookup failures and add plugin hook bridges
+- **cli**: Normalize paths in resolve_relative and compile MDX to automatic runtime
+- **core**: Quiet console noise via probe-first fetch strategy on React Refresh runtime
+- **create-oxide**: Eliminate environment-dependent workspace resolution flake
+- **oxide-og**: Address ESM context resolution crashes inside require paths
+- **react**: Match rendering engine attribute escaping criteria safely
+- **solid**: Map rewritable string literals targeting web compilation targets
+- **solid**: Synchronize layout criteria with core attribute sanitizers
+- **solid**: Address silent fallback bugs via literal compilation definitions
+- **svelte**: Realign string escape configurations with rendering outputs
+- **vue**: Extend single-quote attribute serialization patterns safely
 
 ### Performance
 
@@ -1385,6 +2013,21 @@ include breaking changes announced in the relevant section below.
 - **jshost**: Cache compiled modules by hash
 - **router**: Cache layout chains behind an RwLock
 - **jshost**: Cache the framework config per module generation
+- **dev**: Instrument build_client_bundle to measure rolldown vs precompute time
+- **dev**: Incremental Rolldown rebuilds (Path A of DX rescue)
+- **dev**: Wire Rolldown incremental worker into watcher (1.5s → target 200-400ms)
+- **dev**: Incremental bundler (2.0s → 1.45s warm rebuild, ~30%) + fix bundler tracing dep
+- **dev**: Write→DOM-update HMR latency + two real fixes (Tier 3.7)
+- **core/bytes**: Drop the unescape round-trip in toBase64
+- **cache**: Index tags with a HashSet (P-18b)
+- **cli**: Cache request nonce and lazily build params JSON
+- **website**: Memoize adapter snippet highlighting
+- **bench**: Direct cache benchmarks against the release profile binary
+- **bench**: Route coldstart timing analysis through release binary profiles
+- **bench**: Lock HMR tracking scripts to release binary execution
+- **bench**: Flip baseline instrumentation target to release target binary
+- **cache**: Overhaul disk tier throughput and offload blocking IO
+- **cache**: Execute zero-allocation segment-compressed envelope slicing
 
 ### Refactored
 
@@ -1407,10 +2050,142 @@ include breaking changes announced in the relevant section below.
 - **cli**: Rename the parallel arm's stage to `overlap-saved`
 - **oxide**: Extract resolveDeferredPlaceholders into a shared module
 - **ssr**: Import the shared placeholder resolver
+- Rename oxide-cli -> oxide-fw-cli and oxide-graph -> oxide-fw-graph
+- **npm**: Rename to @oxide-fw scope, core is @oxide-fw/core
+- **react**: OxElement/OxDoc dispatchEvent(ev: unknown) — structurally compatible with DOM+fake
+- **react**: Remove 'as never' on hydrate/mount/hydrateIsland — interface now matches
+- **vue**: OxElement/OxDoc dispatchEvent(ev: unknown) — structurally compatible with DOM+fake
+- **vue**: Remove 'as never' on hydrate/mount/hydrateIsland — interface now matches
+- **vue**: Remove 'as never' on hydrateIsland/renderLoading — interface now matches
+- **svelte**: OxElement/OxDoc dispatchEvent(ev: unknown) — structurally compatible with DOM+fake
+- **svelte**: Remove 'as never' on hydrate/mount/hydrateIsland — interface now matches
+- **svelte**: Remove 'as never' on hydrateIsland/renderLoading — interface now matches
+- **solid**: OxElement/OxDoc dispatchEvent(ev: unknown) — structurally compatible with DOM+fake
+- **solid**: Remove 'as never' on hydrate/mount/hydrateIsland — interface now matches
+- **solid**: Remove 'as never' on hydrateIsland/renderLoading — interface now matches
+- **vue**: Type PageProps (type alias) — eliminates as-unknown-as Record cast
+- **svelte**: Type PageProps (type alias) — eliminates as-unknown-as Record cast
+- **solid**: Type PageProps (type alias) — eliminates as-unknown-as Record cast
+- **core**: CacheSweeper.unref via typeof narrowing (no as-unknown-as)
+- **core**: Boundary registry via declare global (4 as-unknown-as eliminated)
+- **core**: DeferGlueDoc structural interface — eliminates cast at every caller
+- **react**: Drop Document cast on attachDeferGlue (DeferGlueDoc)
+- **vue**: Drop Document cast on attachDeferGlue (DeferGlueDoc)
+- **svelte**: Drop Document cast on attachDeferGlue (DeferGlueDoc)
+- **solid**: Drop Document cast on attachDeferGlue (DeferGlueDoc)
+- **core**: Boot.ts drops Document cast on attachDeferGlue (DeferGlueDoc)
+- **vue**: Drop no-op self-cast (container: Element) in mountXxxPageRoot
+- **svelte**: Drop no-op self-cast (container: Element) in mountXxxPageRoot
+- **solid**: Drop no-op self-cast (container: Element) in mountXxxPageRoot
+- **core**: RouterOptions.manifest widened to ClientManifestLike (what the router reads)
+- **core**: Boot.ts drops 4 stale 'as never' casts (loadScripts/hydrateIslands/createRouter)
+- **core**: Boot.ts drop stale IslandsOptions/adapter casts (types already match)
+- **core**: Vitals.ts returns globalThis (VitalsGlobal is a lib.dom subset)
+- **react**: RenderLoading _input: unknown matches FrameworkAdapter signature
+- **react**: Drop FrameworkAdapter['hydrateIsland'/'renderLoading'] casts
+- **vue**: RenderLoading _input: unknown matches FrameworkAdapter signature
+- **vue**: Drop FrameworkAdapter['hydrateIsland'/'renderLoading'] casts
+- **svelte**: RenderLoading _input: unknown matches FrameworkAdapter signature
+- **svelte**: Drop FrameworkAdapter['hydrateIsland'/'renderLoading'] casts
+- **solid**: RenderLoading _input: unknown matches FrameworkAdapter signature
+- **solid**: Drop FrameworkAdapter['hydrateIsland'/'renderLoading'] casts
+- **core**: Bytes.ts Buffer.from overload eliminates as-unknown-as cast
+- **vue**: Defer.ts use Vue's built-in PropType<T> | null (drop as-unknown-as)
+- **react**: Hydrate-island-real.ts drops stale as-unknown-as cast
+- **react**: Render-loading.ts drops stale as-unknown-as cast
+- **vue**: Real-ssr.ts drops stale as-unknown-as cast
+- **solid**: Real-ssr.ts SolidWebLike gains renderToStream? (drops as-unknown-as)
+- **react**: Hydrate-island-real narrows island mod via typeof (no as-unknown-as)
+- **react**: Hydrate-island-real.ts drops as-unknown-as via honest narrowing
+- **vue**: Defer.ts drops as-unknown-as via honest narrowing
+- **react**: Hydrate-island-real.ts drops as-unknown-as via real module type
+- **core**: Odf-decode typed-array read split bigint|number (no as-unknown-as)
+- **solid**: Declare module @solidjs/web (ssrElement) — drops image.ts cast
+- **react**: Hydrate-island-real assert-narrow (no as FunctionComponent cast)
+- **react**: Render-loading.ts assert-narrow (no as-unknown-as, no cast)
+- **packages/react**: Real-ssr.ts drop dynamic-import cast (react real-ssr reactMod)
+- **packages/react**: Real-ssr.ts drop dynamic-import cast (react real-ssr serverMod)
+- **packages/svelte**: Real-client.ts drop dynamic-import cast (svelte real-client mod)
+- **packages/svelte**: Hydrate-island-real.ts drop dynamic-import cast (svelte hydrate-island-real mod)
+- **packages/svelte**: Real-ssr.ts drop dynamic-import cast (svelte real-ssr serverMod)
+- **packages/solid**: Real-ssr.ts drop dynamic-import cast (solid real-ssr dynamic mod)
+- **react**: Hydrate.ts replace as-unknown-as Element with asDomElement runtime guard
+- **vue**: Hydrate.ts replace as-unknown-as Element with asDomElement runtime guard
+- **svelte**: Hydrate.ts replace as-unknown-as Element with asDomElement runtime guard
+- **solid**: Hydrate.ts replace as-unknown-as Element with asDomElement runtime guard
+- **vue**: Hydrate-island-real.ts replace as-unknown-as Element with asDomElement runtime guard
+- **svelte**: Hydrate-island-real.ts replace as-unknown-as Element with asDomElement runtime guard
+- **solid**: Hydrate-island-real.ts replace as-unknown-as Element with asDomElement runtime guard
+- **packages/solid**: Hydrate-island-real.ts drop dynamic-import cast (hydrate-island-real @solidjs/web)
+- **packages/svelte**: Render-loading.ts drop dynamic-import cast (render-loading svelte mod)
+- **vue**: Hydrate-island-real interop helper narrows without as-unknown-as
+- **vue**: Real-client.ts isVueClientLike guard replaces dead .default ?? mod
+- **vue**: Render-loading.ts isVueLikeForLoading guard replaces dead .default ?? mod
+- **vue**: Real-ssr.ts isVueAppLike/isVueServerRendererLike guards replace dead .default ?? mod
+- **svelte**: Real-ssr.ts isSvelteSnippetFactory guard replaces dead .default ?? mod
+- **react**: Real-ssr.ts pickInteropDefault + isReactLike/isReactDomServerLike (no casts)
+- **solid**: Real-client.ts isSolidWebClientLike guard + drop dead retry
+- **solid**: Render-loading.ts type guards replace 3 casts
+- **solid**: Hydrate-island-real.ts isSolidFactoryForIsland guard replaces cast
+- **solid**: Real-ssr.ts isSolidCoreFactory guard replaces dead .default ?? mod
+- **core**: BootWithRouter accepts BootAdapter (minimum needed, FrameworkAdapter satisfies)
+- **core**: DeferredClient covariant via #resolveUnknown (drop variance casts)
+- **core**: DeferredClient covariant via #resolveUnknown (drop variance casts)
+- **core**: Hmr.ts drop non-null assertions (narrowed input / captured el)
+- **core**: Last non-null assertion cleanup
+- **crates**: Rename 15 crates oxide-* -> oxide-fw-* (Cargo.toml only; use-statements in next commit)
+- **crates**: Rename 15 crates oxide-* -> oxide-fw-* (Cargo.toml only; use-statements in next commit)
+- **crates**: Bulk-rewrite oxide_X -> oxide_fw_X in all .rs (148 use statements + fixtures + comments)
+- **crates**: Finish oxide_graph -> oxide_fw_graph in .rs comments
+- **crates**: Hyphen names oxide-X -> oxide-fw-X in .rs string fixtures + fuzz/Cargo.toml
+- **conformance**: Zero TS errors via satisfies, mustEl, asElement, typed ClientInput[] (no hacks)
+- **oxide-og**: Zero TS errors — requireString + runtime main guard (no bangs)
+- **oxide-website**: Md.server.ts bulk mustEl narrowing (32 -> 9 errors)
+- **oxide-website**: Zero TS errors — runtime-narrowed meta + ReactNode children (no as-never)
+- **workspace**: Replace relative cross-package imports with @oxide-fw/* specifiers (proper workspace deps + exports)
+- **oxide-website**: Merge global.css into tailwind.css — single 15.8KB CSS entry (preflight + @theme vars + legacy classes)
+- **cli/tailwind**: Extract has_tailwind + add is_source_file + rebuild_for_dev
+- **diagnostics**: Box<Diagnostic> inside OxideError to kill result_large_err
+- Box large_enum_variant payloads (StreamEncoder::Gzip, V8Msg::Call)
+- **cli**: Bundle_env_options takes BundleEnvArgs struct
+- Bundle too_many_arguments fns into param structs
+- Parametrize too_many_arguments fns + privacy fix
+- Parametrize too_many_arguments (4 applied)
+- Parametrize too_many_arguments — 5 more targets
+- Parametrize trait dispatch methods with struct args
+- **packages**: Promote tailwind out of modules/ to top level
+- **packages**: Replace cross-package relative imports with @oxide-fw/core subpaths
+- **website**: Restore 2-col hero, vertical pipeline, and blog grid
+- **website**: Use rangi for syntax highlighting and restore logos
+- **website**: Remove repetitive header from orbital section
+- **website**: Md.server.ts import state
+- **website**: Fully migrate md.server.ts to rangi
+- **dev**: Move rolldown prebundle into bundler crate (separation of concerns)
+- **bundler**: Use struct update and strip_prefix
+- **bundler**: Collapse render_chunk_hook nesting with let-chains
+- **cli**: Flatten esm_dev guards with let-chains
+- **cli**: Use is_some_and and let-chains in shim
+- **cli**: Decode chunked bodies with while-let
+- **compiler**: Flatten export target matching with let-chains
+- **compiler**: Remove unused hook-wrap collectors
+- **jshost**: Flatten generation probe with let-chains
+- **jshost**: Build css-module parser options in one literal
+- **server**: Flatten if-none-match guard with let-chain
+- **bundler**: Sanitize module re-exports mapping style
+- **cli**: Scrub line splits and match arms across local ESM dev paths
+- **cli**: Align layout manifest structures and clean racy env probes
+- **bundler**: Re-export path normalization function
+- **schema**: Introduce semantic constants for error codes and test wrapping logic
 
 ### Reverted
 
 - Declare the playwright override (untested in pnpm 10)
+- Remove #![warn(missing_docs)] — defer to v0.2
+- Bundling React for SSR causes two-React — restore external
+- **core**: Restore real CSR onPopstate (remove location.reload hack)
+- **website**: Remove data-ox-reload attributes
+- **website**: Remove data-ox-reload attributes
+- **website**: Remove data-ox-reload attributes
 
 ### Style
 
@@ -1419,6 +2194,46 @@ include breaking changes announced in the relevant section below.
 - **jshost**: Cargo fmt in the offline-plugins test
 - **server**: Cargo fmt on the image-endpoint additions
 - **cli**: Cargo fmt on the trace/meta additions
+- **jshost**: Rustfmt loader_host.rs
+- **jshost**: Rustfmt v8_loader.rs
+- **jshost**: Rustfmt v8_ops.rs
+- **bundler**: Cargo fmt rolldown_backend
+- **cache**: Apply cargo fmt to object_store 0.14 migration
+- **website**: Rust palette, remove kicker/gradient, ship shiki
+- **website**: Safely apply typography polish after layout regression
+- **website**: Restore orbital animation constraints
+- **website**: Add JetBrains Mono and orbital CSS
+- **website**: Add subtle spring entrance animations
+- **website**: Ensure reveal attributes on sections
+- **website**: Native scroll-driven spring animation
+- **website**: Heavy spring on features/pipeline + force JetBrains Mono
+- **website**: Restore reliable fade-in animations
+- **website**: Redesign copy button with lucide icons and tailwind
+- **website**: Integrate prompt into copy button
+- **website**: Absolute jetbrains mono override
+- **website**: Add @font-face for JetBrains Mono
+- **website**: Add lucide GitHub icon to header and footer
+- **website**: Restore code block padding
+- **website**: Force mono font on install prompt
+- **website**: Remove !important hacks, clean shiki CSS
+- **website**: Enlarge logo tile to 40px with 32px logo in header+footer
+- **website**: Tighten footer brand spacing
+- **website**: Add mt-4 to footer description
+- **website**: Force JetBrains Mono on ALL mono elements (@theme static + explicit rules)
+- **website**: Restore docs layout CSS (docs-shell, sidebar, prose)
+- **bundler**: Format prebundle extraction routines cleanly
+- **bundler**: Run cleaner lint and line formatting over incremental bundler worker
+- **cli**: Polish directory scans evaluating tailwind styling anchors
+- **cli**: Remove spacing artifacts separating integration test declarations
+- **compiler**: Format CJS export extraction ast nodes cleanly
+- **compiler**: Formatting cleanup for sever fn stripping logic
+- **compiler**: Clean indentation formatting across transformer signatures
+- **compiler**: Reformat unit tracking assertions inside test suites
+- **dev**: Polish line breaks across file event classification rules
+- **dev**: Structural formatting refinement over HMR unit cases
+- **jshost**: Clean tab matching alignments over worker invalidations
+- **jshost**: Clean spacing profiles binding lightningcss parsing
+- **smoke-app**: Add smoke test fixture CSS module layer
 
 ### Testing
 
@@ -1807,6 +2622,192 @@ include breaking changes announced in the relevant section below.
 - **oxide/i18n**: ICU offset×exact and # in =N branches
 - **smoke-app**: Setcookie action fixture
 - **cli**: B6 helper unit test + dispatch integration test
+- **core**: Nav-deferred fakeHistory.state narrows stack[idx] under noUncheckedIndexedAccess
+- **core**: Odf.test.ts every() pulls be[i] to a guarded local
+- **core**: Boot-hmr pulls updates[0] to a guarded local
+- **core**: Enhance test narrows optimistic[0], calls[0], applied[0]
+- **core**: Hmr test uses mustEl for dispatched[0] access (noUncheckedIndexedAccess)
+- **core**: Content test uses mustEl for posts/first/second[0] access
+- **core**: Scripts test uses mustEl for head[0] access
+- **core**: Search test uses mustEl for results/a/b/r/s[0] access
+- **core**: Router test narrows history.stack[history.idx] via mustEl
+- **core**: Islands test mustEl/mustCall + getAttribute strictly string|null
+- **react**: Image test uses mustEl for kids[N] access
+- **react**: Adapter-factory drop stale @ts-expect-error (resolve accepted)
+- **react**: Nest-layouts test uses mustEl for r.calls[N] access
+- **react**: Fake-dom narrows destructures, adds innerHTML/textContent literal fields
+- **react**: Adapter test mustEl + m[1] narrowing + OxDoc casts
+- **vue**: Fake-dom narrows destructures, adds innerHTML/textContent literal fields
+- **vue**: Adapter-factory drop stale @ts-expect-error (resolve accepted)
+- **vue**: Adapter test mustEl + m[1] narrowing + OxDoc casts
+- **vue**: Image test uses mustEl for out[N] access
+- **svelte**: Fake-dom narrows destructures, adds innerHTML/textContent literal fields
+- **svelte**: Adapter-factory drop stale @ts-expect-error
+- **svelte**: Adapter test mustEl + m[1] narrowing + OxDoc casts
+- **solid**: Fake-dom narrows destructures, adds innerHTML/textContent literal fields
+- **solid**: Adapter-factory drop stale @ts-expect-error
+- **solid**: Adapter test mustEl + m[1] narrowing + OxDoc casts
+- **svelte**: Defer-component uses Component<Record<string,unknown>, Record<string,unknown>, string>
+- **svelte**: Image test uses Component<Record<string,unknown>, Record<string,unknown>, string>
+- **core**: Route-manifest.test drop @ts-expect-error (signature now accepts unknown)
+- **core**: Defer-glue.test uses DeferGlueDoc (structural) instead of as-unknown-as Document
+- **core**: Defer-script.test drops Document casts (DeferGlueDoc accepts fake)
+- **core**: Nav-deferred.test drops Document cast (DeferGlueDoc accepts fake)
+- **core**: Hmr.test drops BodyInit cast (odf string is Response init)
+- **core**: Nav-deferred.test drops BodyInit cast (odf Uint8Array is BodyInit)
+- **core**: Router.test.ts uses structural RouterDoc (no as-unknown-as)
+- **core**: Client-messages.test uses Reflect.set (no as-unknown-as globalThis)
+- **core**: Enhance.test narrow fetch stub casts (as fetch, not as-unknown-as)
+- **core**: Nested-layouts uses typed Disposer stubs (no as never)
+- **core**: Boot-hmr typed BootAdapter stubs + FakeDoc/FakeRoot
+- **core**: Boot.test typed BootAdapter stubs (drop 10 as-any + 1 as-never)
+- **core**: Loading-boundary typed BootAdapter stubs (drop 2 as-any + 4 as-never)
+- **react**: Ir-nested-layouts drop stale input() as-never
+- **vue**: Ir-nested-layouts drop stale input() as-never
+- **svelte**: Ir-nested-layouts drop stale input() as-never
+- **solid**: Ir-nested-layouts drop stale input() as-never
+- **react**: Nest-layouts uses nameOf/childrenOf/componentOf (no as any)
+- **core**: Nav-deferred runtime-narrow .status (no as any)
+- **react**: Real-adapter drop 3 dynamic-import casts (@types/react present)
+- **react**: Image.test.ts drop as-unknown-as
+- **react**: Real-ssr.test.ts drop as-unknown-as
+- **core**: Defer-glue Reflect.get/set for MutationObserver (no as-unknown-as)
+- **react**: Adapter.test.ts drop stale as-unknown-as / as-never
+- **vue**: Adapter.test.ts drop stale as-unknown-as / as-never
+- **svelte**: Adapter.test.ts drop stale as-unknown-as / as-never
+- **solid**: Adapter.test.ts drop stale as-unknown-as / as-never
+- **react**: Ir-layouts.test.ts drop stale as-unknown-as / as-never
+- **core**: Router.test narrow fetch casts (as fetch, not as-unknown-as)
+- **core**: Scripts.test use Reflect.set for globalThis stubs (no as-unknown-as)
+- **core**: Scripts.test use direct doc.querySelectorAll (no as-unknown-as)
+- **core**: Nested-layouts.test.ts drop as-never / as-unknown-as via structural typing
+- **core**: Nav-deferred.test.ts drop as-never / as-unknown-as via structural typing
+- **core**: Islands.test.ts drop as-never / as-unknown-as via structural typing
+- **vue**: Real-adapter.test.ts drop as-never / as-unknown-as
+- **vue**: Image.test.ts drop as-never / as-unknown-as
+- **svelte**: Real-adapter.test.ts drop stale as-unknown-as
+- **svelte**: Real-ssr.test.ts drop stale as-unknown-as
+- **svelte**: Defer-resolve.test.ts drop stale as-unknown-as
+- **core**: Server.test.ts drop stale as-unknown-as
+- **core**: Error-boundary typed Disposer stubs (drop 7 as-never)
+- **core**: Enhance.test.ts drop stale as-unknown-as
+- **solid**: Real-ssr.test.ts drop stale as-unknown-as
+- **core**: Loading-boundary.test.ts drop stale casts (WeakSet for prevented; widen fetchResult)
+- **core**: Boot.test.ts drop stale casts (WeakSet for prevented; widen fetchResult)
+- **core**: Nav-deferred.test.ts drop stale casts (WeakSet for prevented; widen fetchResult)
+- **core**: Router.test.ts drop stale casts (WeakSet for prevented; widen fetchResult)
+- **core**: Loading-boundary.test.ts drop stale casts (BodyInit / variance / spread)
+- **core**: Boot.test.ts drop stale casts (BodyInit / variance / spread)
+- **solid**: Real-ssr.test.ts drop stale casts (BodyInit / variance / spread)
+- **core**: Scripts.test replace as-never with as-unknown-as-Document (specific boundary assertion)
+- **core**: Scripts.test consolidate to asDoc/asIO helpers (2 casts in helper bodies)
+- **adapters**: Update snapshots for oxide-fw-* rename
+- **compiler**: Page-server e2e asserts @oxide-fw/core/server (matches current fixture)
+- **config**: Semantic Value comparison for schema stability (immune to serde_json feature unification)
+- **assets**: Rustdoc link + fmt fixes in test/lightningcss_tdd.rs
+- **bundler**: Rustdoc link + fmt fixes in test/bundler_rolldown_tdd.rs
+- **compiler**: Rustdoc link + fmt fixes in test/compiler_tdd.rs
+- **config**: Rustdoc link + fmt fixes in test/integration.rs
+- **jshost**: Rustdoc link + fmt fixes in test/integration.rs
+- **jshost**: Node_shim unit tests — lock the V8 shim contract
+- **svelte**: Accept {types, default} export shapes; chore: fmt
+- **jshost**: V8_lazy_entry_tdd — regression lock for bbae744
+- **fixtures**: §8.3 config-bundle externals tripwire
+- **fixtures**: Tighten config-externals assertion; revert pnpm-workspace cruft
+- **fixtures**: Check-v8.sh match side-effect react import
+- **jshost**: §8.4 Node worker drift tripwire for lazy loaders
+- **playwright**: Warm dev server before baseline in rescan spec
+- **playwright**: Surface mount-failure warnings + widen timing on loading spec
+- **jshost**: Use e2e_base() in resolver-without-component-for test
+- **playwright**: Probe manifest serving + log browser network
+- **playwright/deferred**: Express "shell not held for slow" as a margin
+- **jshost**: Pin path_to_file_url against Windows-shaped inputs
+- **ci**: Add per-test 90s timeout via nextest config (bounds hang class)
+- **cli**: Serialize the six run_with_writer env-mutating tests under TEST_SERIAL_LOCK
+- **cli**: Document dev_once_prints_banner_and_ready's notify-watcher leak
+- Add tailwind integration fixture
+- **server**: Update csp_header_modes for wasm-unsafe-eval directive
+- **dev**: Integration tests for esm_dev handlers (Phase 1 verified)
+- **dev**: E2E for /src, /@boot, and /@prebundle; boot-entry prebundle assertion
+- **cli**: Disk-scan CSS injection — proves tailwind CSS reaches the browser in ESM mode
+- **playwright**: Widen SSE tick interval to 100ms to deflake chunk-count assertion
+- **playwright**: Cap workers to 3 — bound process concurrency, deflake under load
+- **playwright**: Warm up SSR path in island beforeAll + bounded request retry
+- **cli**: Assert single-slash boot URL
+- **dev**: HMR regression suite (browser + HTTP invariants)
+- **dev**: State preservation across HMR edit (Tier 2.4)
+- **dev**: Island HMR (Tier 2.1) + loader HMR (Tier 2.3)
+- **dev**: Multi-client broadcast (Tier 2.6)
+- **dev**: Pin layout-edit reload behavior (Tier 2.2 gap documentation)
+- **ci**: Verify HMR coverage on CI, fail fast on silent skip (Tier 4.1)
+- **dev**: Cold-start HMR in dedicated spec (Tier 2.13)
+- **dev**: §3.1 acceptance — one save yields one module-update
+- **dev**: Pin per-event dispatch for burst writes (Tier 3.2 diagnostic)
+- **dev**: Cross-browser HMR (Tier 2.14) — fix WS race, verify 3 engines
+- **core**: Two-reload test honors COALESCE_MS (pre-existing red)
+- **dev**: Cold-start bound (Tier 2.15)
+- **dev**: WS reconnect end-to-end; §3.10 catches verified (Tier 2.7 + 3.10)
+- **dev**: CSS HMR end-to-end (Tier 2.11)
+- **core**: __oxide_refresh reloads when runtime absent (Tier 2.12)
+- **dev**: Pin dev-server HMR isolation (Tier 3.6)
+- **smoke**: Make the shape-target heading a <p>
+- **smoke**: Mount HmrShapeTarget on the home page
+- **playwright**: Un-skip §1.2 acceptance; sync fixtures to h1->p
+- **core**: Pass the route URL pattern to route-data-update
+- **examples**: Vue HMR target fixture
+- **examples**: Import the vue HMR target in the index page
+- **examples**: Solid HMR target fixture
+- **examples**: Import the solid HMR target in the index page
+- **examples**: Svelte HMR target fixture
+- **examples**: Import the svelte HMR target in the index page
+- **e2e**: Shared multi-framework HMR harness
+- **e2e**: Vue HMR end-to-end gates
+- **e2e**: Solid HMR end-to-end gates
+- **e2e**: Svelte HMR end-to-end gates
+- **e2e**: Scope the home h1 locator by role and name
+- **e2e**: Scope the home h1 locator by role and name
+- **oxide-website/md**: Forward-progress guarantee and escaping contract
+- **server**: Verify server filtration boundaries and token auth security
+- **create**: Evaluate advanced CLI flag parsing configurations and assets
+- **assets**: Add comprehensive unit testing for scan_tailwind_candidates
+- **cli**: Resolve react dependency layout for integration MDX edge bundle check
+- **schema**: Introduce test suite checking config schema contracts
+- **cli-npm**: Add binary execution orchestration tests
+- **cli-npm**: Implement postinstall script test harness
+- **cli-npm**: Add platform matrix mapping test assertions
+- **core**: Add extensive unit testing for resolveDeferredPlaceholders
+- **core**: Map test scenarios covering client call parameters of server functions
+- **create-oxide**: Map workspace detection validation checks
+- **oxide-og**: Introduce verification coverage tracking asset managers
+- **oxide-og**: Introduce e2e testing logic covering tool execution arguments
+- **oxide-og**: Evaluate HTML render pipelines and escape strings safely
+- **react**: Verify hydration structure exception reporting rules
+- **react**: Enforce strict stream layout matching with backend definitions
+- **react**: Check mount boundaries and functional cleanups
+- **solid**: Ensure structural stream definition integrity matches backend layouts
+- **solid**: Validate island configuration interfaces and edge cleanups
+- **svelte**: Maintain exact structural consistency with main protocol files
+- **svelte**: Ensure hydration adapters flag errors when processing mock elements
+- **vue**: Validate template formats with server specifications
+- **vue**: Enforce interface specifications when loading client boundaries
+- **plugins**: Introduce page element for testing custom build steps
+- **plugins**: Expand coverage validation gates with advanced module metrics
+- **plugins**: Write validation signatures during production building cycles
+- **router**: 12k-case oracle property tests for owned and archived matchers
+- **router**: Dhat allocation budgets — zero heap blocks on static matching
+- **cache**: Tag-index semantics and the v1-to-v2 disk migration (red-first)
+- **dispatch**: Pin the url helper contract before implementation
+- **dispatch**: Pin the stage Flow protocol from outside the crate
+
+### Bench
+
+- **cache**: Key construction, tag insert at 10k and disk 5-tag writes (V2-B09)
+- **router**: Match scales, tree build and context-table build (V2-B09)
+- **benchmarks**: Median-ns summary over target/criterion (V2-B09)
+- **benchmarks**: Regression gate — exit 1 past a 5 percent delta
+- **benchmarks**: Pre-Wave-B baseline (22 ids, captured before the algorithm changes)
+- **benchmarks**: Post-milestone snapshot with the Wave B numbers
+- **dispatch**: Criterion for url helpers and ctx_table (V2-A02)
 
 ### Build
 
@@ -1871,5 +2872,33 @@ include breaking changes announced in the relevant section below.
 - **pnpm**: Lockfile refresh for examples/smoke-app
 - **pnpm**: Add examples/* to the workspace
 - **smoke-app**: Declare the app as a workspace member with local deps
+- **core**: Rebuild dist/client-hot from the client source fixes
+- **deps**: Incorporate flate2 and zstd into cli crate footprint
+- **cli**: Link zstd and flate2 compression features to workspace profile
+- **server**: Incorporate concurrent sharded dashmap structure dependencies
+- **ci**: Author workspace license allowances and dependency parameters
+- **cli-npm**: Provision npm prebuilt binary installer footprint properties
+- **deps**: Pin criterion, dhat and smallvec for the V2 Wave B harness
+- **deps**: Lock criterion, dhat and smallvec versions
+- **router**: Add smallvec dep, criterion/dhat dev-deps and the bench target
+- **cache**: Add criterion dev-dep and the keys bench target
+- **workspace**: Add dispatch member, dep alias and the lints policy
+- **dispatch**: Scaffold the V8-free crate (V2-A02)
+- **cli**: Declare the dispatch dependency for phase 3
+
+### Doc
+
+- **bundler**: Fix README usage sample against real API
+- **assets**: Mark illustrative doctest as ignore
+- **config**: Mark illustrative doctest as ignore
+- **diagnostics**: Mark illustrative doctest as ignore
+- **graph**: Mark illustrative doctest as ignore
+- **jshost**: Mark illustrative doctest as ignore
+- **odf**: Mark illustrative doctest as ignore
+- **plugin**: Mark illustrative doctest as ignore
+- **render**: Mark illustrative doctest as ignore
+- **router**: Mark illustrative doctest as ignore
+- **schema**: Mark illustrative doctest as ignore
+- **server**: Mark ALL illustrative doctests as ignore
 
 <!-- generated by git-cliff -->
