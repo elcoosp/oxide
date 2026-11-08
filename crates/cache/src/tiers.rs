@@ -36,6 +36,14 @@ pub(crate) fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+/// V2-B06: disk-tier tag → keys as a redb multimap (set-valued, one insert
+/// per membership — no JSON read-modify-write of a whole list per tag).
+const TAG_KEYS: redb::MultimapTableDefinition<&str, &str> =
+    redb::MultimapTableDefinition::new("tag_keys_v2");
+/// V2-B06: schema marker so the v1 → v2 migration runs exactly once.
+const META_TABLE: redb::TableDefinition<&str, u64> = redb::TableDefinition::new("meta");
+const META_SCHEMA_VERSION: u64 = 2;
+
 /// Byte weight of an entry (see module docs): body + header key/value bytes + 32.
 pub(crate) fn entry_weight(e: &Entry) -> u64 {
     e.body.len() as u64
@@ -185,6 +193,48 @@ const BLOB_MAGIC: &[u8; 4] = b"OXD1";
 pub const DEFAULT_DISK_MAX_BYTES: u64 = 1024 * 1024 * 1024;
 pub const DEFAULT_DISK_MAX_ENTRY: u64 = 32 * 1024 * 1024;
 
+/// V2-B06: migrate the v1 `TAG_TABLE` (tag → JSON key list) into the
+/// `TAG_KEYS` multimap, then record `schema=2` in the meta table so it runs
+/// exactly once. Fresh stores carry no v1 rows, so this is a no-op for them.
+fn migrate_tag_table_v1_to_v2(index: &Database) -> Result<()> {
+    let schema: Option<u64> = {
+        let rtxn = index.begin_read().map_err(dberr)?;
+        let meta = rtxn.open_table(META_TABLE).map_err(dberr)?;
+        meta.get("schema").map_err(dberr)?.map(|g| g.value())
+    };
+    if schema == Some(META_SCHEMA_VERSION) {
+        return Ok(());
+    }
+    let txn = index.begin_write().map_err(dberr)?;
+    {
+        // One binding for the whole txn: redb forbids opening the same table
+        // twice. Read every v1 row first (one pass), then consume them.
+        let mut old = txn.open_table(TAG_TABLE).map_err(dberr)?;
+        let mut pairs: Vec<(String, Vec<String>)> = Vec::new();
+        for row in old.iter().map_err(dberr)?.flatten() {
+            let list: Vec<String> = serde_json::from_slice(row.1.value()).unwrap_or_default();
+            pairs.push((String::from_utf8_lossy(row.0.value()).into_owned(), list));
+        }
+        let mut mm = txn.open_multimap_table(TAG_KEYS).map_err(dberr)?;
+        for (tag, keys) in &pairs {
+            for key in keys {
+                // Multimap insert is set-valued: duplicates are no-ops, so a
+                // partial prior migration cannot corrupt the table.
+                mm.insert(tag.as_str(), key.as_str()).map_err(dberr)?;
+            }
+        }
+        drop(mm);
+        // V1 rows are consumed; drop them so the old table stays empty.
+        for (tag, _) in &pairs {
+            old.remove(tag.as_bytes()).map_err(dberr)?;
+        }
+        let mut meta = txn.open_table(META_TABLE).map_err(dberr)?;
+        meta.insert("schema", META_SCHEMA_VERSION).map_err(dberr)?;
+    }
+    txn.commit().map_err(dberr)?;
+    Ok(())
+}
+
 impl DiskTier {
     /// Open (creating dirs + redb index as needed) at `root`.
     pub fn open(root: std::path::PathBuf) -> Result<Self> {
@@ -207,11 +257,15 @@ impl DiskTier {
         let index = Database::create(root.join("index.redb")).map_err(dberr)?;
         let txn = index.begin_write().map_err(dberr)?;
         {
-            // Ensure both tables exist so reads never fail on a fresh store.
+            // Ensure all tables exist so reads never fail on a fresh store.
             txn.open_table(ENTRY_TABLE).map_err(dberr)?;
             txn.open_table(TAG_TABLE).map_err(dberr)?;
+            txn.open_multimap_table(TAG_KEYS).map_err(dberr)?;
+            txn.open_table(META_TABLE).map_err(dberr)?;
         }
         txn.commit().map_err(dberr)?;
+        // V2-B06: migrate the v1 JSON-list tag table into the multimap once.
+        migrate_tag_table_v1_to_v2(&index)?;
         // S-08: seed the current-size counter from the existing index, and the
         // PERF-L1 stored_at order index alongside it (one scan instead of a
         // per-eviction scan later).
@@ -324,19 +378,11 @@ impl DiskTier {
             let idx_bytes = serde_json::to_vec(&idx).map_err(jsonerr)?;
             t.insert(key.as_bytes(), idx_bytes.as_slice())
                 .map_err(dberr)?;
-            let mut tags = txn.open_table(TAG_TABLE).map_err(dberr)?;
+            // V2-B06: one multimap insert per tag — set-valued (idempotent),
+            // replacing the v1 JSON read-modify-write of the whole key list.
+            let mut mm = txn.open_multimap_table(TAG_KEYS).map_err(dberr)?;
             for tag in &entry.tags {
-                let list: Vec<String> = match tags.get(tag.as_bytes()).map_err(dberr)? {
-                    Some(v) => serde_json::from_slice(v.value()).unwrap_or_default(),
-                    None => Vec::new(),
-                };
-                let mut list = list;
-                if !list.iter().any(|k| k == key) {
-                    list.push(key.to_string());
-                }
-                let bytes = serde_json::to_vec(&list).map_err(jsonerr)?;
-                tags.insert(tag.as_bytes(), bytes.as_slice())
-                    .map_err(dberr)?;
+                mm.insert(tag.as_str(), key).map_err(dberr)?;
             }
         }
         txn.commit().map_err(dberr)?;
@@ -493,19 +539,11 @@ impl DiskTier {
         };
         let idx: Option<DiskIndexEntry> = removed.and_then(|b| serde_json::from_slice(&b).ok());
         if let Some(idx) = &idx {
-            let mut tags = txn.open_table(TAG_TABLE).map_err(dberr)?;
+            // V2-B06: one multimap remove per membership (was a JSON
+            // read-filter-write of the whole list per tag).
+            let mut mm = txn.open_multimap_table(TAG_KEYS).map_err(dberr)?;
             for tag in &idx.tags {
-                let current: Option<Vec<u8>> = tags
-                    .get(tag.as_bytes())
-                    .map_err(dberr)?
-                    .map(|g| g.value().to_vec());
-                if let Some(current) = current {
-                    let list: Vec<String> = serde_json::from_slice(&current).unwrap_or_default();
-                    let filtered: Vec<String> = list.into_iter().filter(|k| k != key).collect();
-                    let bytes = serde_json::to_vec(&filtered).map_err(jsonerr)?;
-                    tags.insert(tag.as_bytes(), bytes.as_slice())
-                        .map_err(dberr)?;
-                }
+                mm.remove(tag.as_str(), key).map_err(dberr)?;
             }
         }
         txn.commit().map_err(dberr)?;
@@ -527,14 +565,15 @@ impl DiskTier {
         self.cur_bytes.load(Ordering::Relaxed)
     }
 
-    /// Keys tagged with `tag` (from the durable tag table).
+    /// Keys tagged with `tag` (from the durable tag multimap).
     pub fn tag_keys(&self, tag: &str) -> Result<Vec<String>> {
         let txn = self.index.begin_read().map_err(dberr)?;
-        let table = txn.open_table(TAG_TABLE).map_err(dberr)?;
-        match table.get(tag.as_bytes()).map_err(dberr)? {
-            Some(v) => Ok(serde_json::from_slice(v.value()).unwrap_or_default()),
-            None => Ok(Vec::new()),
+        let mm = txn.open_multimap_table(TAG_KEYS).map_err(dberr)?;
+        let mut out = Vec::new();
+        for v in mm.get(tag).map_err(dberr)? {
+            out.push(v.map_err(dberr)?.value().to_string());
         }
+        Ok(out)
     }
 }
 
@@ -593,6 +632,10 @@ pub struct TieredCache {
     /// readers need no order — [`TieredCache::tag_keys`] sorts for
     /// determinism before returning.
     pub tags: DashMap<String, HashSet<String>>,
+    /// V2-B05: reverse index — key → its tag list. Keeps `delete` eager (no
+    /// dangling tag members) and re-`set` under a changed tag list removes
+    /// stale memberships. Private; the `tags` map stays the read API.
+    key_tags: DashMap<String, Vec<String>>,
     hits: AtomicU64,
     misses: AtomicU64,
     stale_served: AtomicU64,
@@ -607,6 +650,7 @@ impl TieredCache {
             disk: None,
             remote: None,
             tags: DashMap::new(),
+            key_tags: DashMap::new(),
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
             stale_served: AtomicU64::new(0),
@@ -621,6 +665,7 @@ impl TieredCache {
             disk: None,
             remote: None,
             tags: DashMap::new(),
+            key_tags: DashMap::new(),
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
             stale_served: AtomicU64::new(0),
@@ -768,6 +813,22 @@ impl TieredCache {
                 .or_default()
                 .insert(key.to_string());
         }
+        // V2-B05: one hash-map entry op maintains the reverse index — a
+        // re-set whose tag list changed must drop memberships the entry no
+        // longer has (stale members would survive invalidation).
+        match self.key_tags.entry(key.to_string()) {
+            dashmap::mapref::entry::Entry::Occupied(mut o) => {
+                let old = o.insert(entry.tags.clone());
+                for t in old.iter().filter(|t| !entry.tags.contains(t)) {
+                    if let Some(mut s) = self.tags.get_mut(t) {
+                        s.remove(key);
+                    }
+                }
+            }
+            dashmap::mapref::entry::Entry::Vacant(v) => {
+                v.insert(entry.tags.clone());
+            }
+        }
         Ok(())
     }
 
@@ -782,8 +843,8 @@ impl TieredCache {
         self.set(key, entry).await
     }
 
-    /// Delete from every tier. Tag index rows for the key are cleaned lazily on the
-    /// next tag invalidation (a dangling key never matches a live entry).
+    /// Delete from every tier and clean the tag indexes eagerly (V2-B05) —
+    /// a deleted key never dangles in a tag set.
     pub async fn delete(&self, key: &str) -> Result<()> {
         self.memory.remove(key);
         if let Some(disk) = &self.disk {
@@ -791,6 +852,13 @@ impl TieredCache {
         }
         if let Some(remote) = &self.remote {
             remote.delete(key).await?;
+        }
+        if let Some((_, tags)) = self.key_tags.remove(key) {
+            for t in tags {
+                if let Some(mut s) = self.tags.get_mut(&t) {
+                    s.remove(key);
+                }
+            }
         }
         Ok(())
     }
