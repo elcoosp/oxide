@@ -1,3 +1,54 @@
+# Handoff — V2 Wave B foundations landed (B09/B02/B01/B05/B06); CLI integration deferred
+
+## Where things stand
+
+**Branch:** `main`
+**Working tree:** NOT committed — the milestone ships as uncommitted changes
+plus `commit.sh` at the repo root (one conventional commit per file; the
+script is executable and gitignored by design — see "Commit protocol"
+below). Run `./commit.sh` to materialize the history.
+**V8-free crates:** `cargo test -p oxide-fw-router -p oxide-fw-cache` green;
+clippy-clean at `-D warnings`.
+**V8 crates:** untouched, not compiled in the milestone sandbox (no V8
+toolchain budget: 2 vCPU / 4 GB). The deferred integration points are
+itemized in `docs/deviations.md` ("V2 Wave B foundations — deferred
+integration points").
+
+This session implemented the next architecture milestone identified from
+`docs/spec-v0.2-draft.md` (Track 2 "algorithms" + the B01 substrate, which
+the spec's own execution order puts first):
+
+| WP | What landed | Result |
+| --- | --- | --- |
+| B09 | criterion harness + `baseline-v01.json` + gate scripts | 22-ids baseline; gate proven (slowed matcher → exit 1) |
+| B02 | `CandidateIndex` + zero-copy `match_ref` (D23) | 19.4× at 1k static routes; 0 heap allocs; 10k-case oracle proptest |
+| B01 | `RouteContextTable` (D22) | boot-time dispatch answers; oracle-verified vs `layout_chain` |
+| B05 | `KeyStr`/`key_of` + reverse tag index (D24/D25) | stack keys; idempotent tags; eager delete; retag fix |
+| B06 | redb multimap disk tags + v1→v2 migration | disk 5-tag set 8.7× faster; migration covered by test |
+
+Numbers and the two deliberate cost moves (`build/*` one-time index
+construction, `tag_insert` reverse-index price) are in
+`benchmarks/report.md` ("Criterion microbenchmarks"); the session log is
+appended to `docs/archive/WORKLOG.md`.
+
+## Commit protocol (this milestone only)
+
+`./commit.sh` (repo root, bash 3.2-compatible, executable, gitignored):
+walks the changed/new files in dependency order and creates **one
+conventional commit per file** with a scoped, descriptive subject
+(`feat(router): ...`, `feat(cache): ...`, `bench(benchmarks): ...`,
+`docs(...): ...`). Nothing is committed until you run it.
+
+## Where to pick up, in one sentence
+
+Next work per the spec's order: A01 (split `crates/cli/src/lib.rs`, now
+15,555 lines) → A02 (`oxide-dispatch` crate) → wire `match_ref` +
+`RouteContextTable` + `KeyStr` into the dispatch/L0 paths (the exact
+integration points are listed in `docs/deviations.md`), then B03/B04/B07/B08
+and the F-series.
+
+---
+
 # Handoff — BUG-MAPKEY + BUG-SOLID-CLIENT fixed; every gate green
 
 ## Where things stand
