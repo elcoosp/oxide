@@ -4986,6 +4986,7 @@ dependencies = [
  "oxide-fw-config",
  "oxide-fw-dev",
  "oxide-fw-diagnostics",
+ "oxide-fw-dispatch",
  "oxide-fw-graph",
  "oxide-fw-jshost",
  "oxide-fw-odf",
@@ -5081,6 +5082,21 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "oxide-fw-dispatch"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "criterion",
+ "futures",
+ "oxide-fw-diagnostics",
+ "oxide-fw-router",
+ "oxide-fw-server",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
