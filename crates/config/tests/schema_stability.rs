@@ -15,6 +15,7 @@ fn config_schema_has_the_known_top_level_sections() {
         "build",
         "cache",
         "dev",
+        "experiments",
         "fonts",
         "framework",
         "i18n",
