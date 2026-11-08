@@ -26,6 +26,11 @@ async-trait = { workspace = true }
 oxide-fw-diagnostics = { workspace = true }
 oxide-fw-config = { workspace = true }
 oxide-fw-router = { workspace = true }
+# V2-A02: the V8-free dispatch substrate. Consumed by the phase-3 dispatch
+# split (stage extraction from build_dispatch); until that PR lands the
+# dependency is declared but unused, which keeps the future integration
+# commit manifest-only.
+oxide-fw-dispatch = { workspace = true }
 oxide-fw-graph = { workspace = true }
 oxide-fw-compiler = { workspace = true }
 oxide-fw-bundler = { workspace = true }
