@@ -75,30 +75,31 @@ fn bench_tag_insert(c: &mut Criterion) {
         .enable_all()
         .build()
         .expect("tokio runtime");
-    for n in [10_000usize] {
-        let cache = TieredCache::new_memory();
-        rt.block_on(async {
-            for i in 0..n {
-                let e = entry(&["hot-tag"]);
-                cache
-                    .set(&format!("routes/{i}/page"), e)
-                    .await
-                    .expect("seed set");
-            }
-        });
-        g.bench_with_input(BenchmarkId::from_parameter(n), &cache, |b, cache| {
-            b.iter(|| {
-                rt.block_on(async {
-                    for i in 0..100 {
-                        let e = entry(&["hot-tag"]);
-                        let _ = cache
-                            .set(&format!("insert/{i}"), black_box(e.clone()))
-                            .await;
-                    }
-                })
+    // Single fixed size (10k preloaded keys). The former `for n in [10_000]`
+    // loop over a one-element array is `clippy::single_element_loop`.
+    let n = 10_000usize;
+    let cache = TieredCache::new_memory();
+    rt.block_on(async {
+        for i in 0..n {
+            let e = entry(&["hot-tag"]);
+            cache
+                .set(&format!("routes/{i}/page"), e)
+                .await
+                .expect("seed set");
+        }
+    });
+    g.bench_with_input(BenchmarkId::from_parameter(n), &cache, |b, cache| {
+        b.iter(|| {
+            rt.block_on(async {
+                for i in 0..100 {
+                    let e = entry(&["hot-tag"]);
+                    let _ = cache
+                        .set(&format!("insert/{i}"), black_box(e.clone()))
+                        .await;
+                }
             })
-        });
-    }
+        })
+    });
     g.finish();
 }
 
