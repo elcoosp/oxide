@@ -800,12 +800,6 @@ impl EndpointHost {
                 });
             }
         }
-        // (unreachable) — kept for the compiler.
-        #[allow(unreachable_code)]
-        {
-            let v: Value = Value::Null;
-            Self::from_complete_json(v)
-        }
     }
 
     fn parse_headers(v: &Value) -> Vec<(String, String)> {
