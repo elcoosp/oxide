@@ -1426,7 +1426,7 @@ async fn pipeline_serves_static_with_security_and_rule_headers() {
     assert_eq!(resp.header("x-rule"), None);
     assert_eq!(
         resp.header("server-timing"),
-        Some(RequestTimings_default_server_timing().as_str())
+        Some(request_timings_default_server_timing().as_str())
     );
 
     // /_oxide/static prefix serves without an extension
@@ -1448,8 +1448,7 @@ async fn pipeline_serves_static_with_security_and_rule_headers() {
     assert_eq!(resp.body.as_ref(), b"BIN");
 }
 
-#[allow(non_snake_case)]
-fn RequestTimings_default_server_timing() -> String {
+fn request_timings_default_server_timing() -> String {
     use oxide_fw_render::RequestTimings;
     RequestTimings::default().server_timing()
 }
