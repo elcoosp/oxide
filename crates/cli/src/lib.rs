@@ -151,11 +151,18 @@ pub enum Command {
         #[arg(long, default_value = ".")]
         root: String,
     },
-    /// Explain importers and chunks of a module (§13.4).
+    /// Explain importers and chunks of a module (§13.4), or — with
+    /// `--route` — why a route is dynamic, with OX-DYN diagnostics (§V2-F16).
     Why {
         #[arg(long, default_value = ".")]
         root: String,
-        module: String,
+        /// Module path whose importers are reported (the §13.4 surface).
+        module: Option<String>,
+        /// Route id (e.g. `routes/dashboard`) whose dynamic reads are
+        /// reported (the §V2-F16 surface). Mutually exclusive with the
+        /// module argument.
+        #[arg(long)]
+        route: Option<String>,
     },
     /// Environment and config health (§19.1).
     Doctor {
@@ -535,7 +542,11 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
         Command::Routes { root } => cmd_routes(&root, w).await,
         Command::Analyze { root } => cmd_analyze(&root, w).await,
         Command::Check { root } => cmd_check(&root, w).await,
-        Command::Why { root, module } => cmd_why(&root, &module, w).await,
+        Command::Why {
+            root,
+            module,
+            route,
+        } => cmd_why(&root, module.as_deref(), route.as_deref(), w).await,
         Command::Doctor { root } => cmd_doctor(&root, w).await,
         Command::Secrets { root, op } => cmd_secrets(&root, op, w).await,
         Command::Add { root, module } => cmd_add(&root, &module, w).await,
@@ -654,7 +665,12 @@ fn has_explicit_render_config(source: &str) -> bool {
 }
 
 fn refine_render_modes_from_ast(root: &Path, cfg: &OxideConfig, mut tree: RouteTree) -> RouteTree {
+    let _span = tracing::debug_span!("cli_refine_render_modes").entered();
     let routes_root = root.join(&cfg.routes.dir);
+    // V2-F16: reasons are collected while the loader source is already in
+    // hand, then written to the `.oxide/routes.reasons.json` side-car (never
+    // the rkyv archive the request hot path reads).
+    let mut reasons: BTreeMap<String, Vec<oxide_fw_compiler::RouteReasonRow>> = BTreeMap::new();
     for e in &mut tree.entries {
         if !matches!(e.kind, oxide_fw_router::RouteKind::Page) {
             continue;
@@ -693,10 +709,46 @@ fn refine_render_modes_from_ast(root: &Path, cfg: &OxideConfig, mut tree: RouteT
         if !inferred_by_scanner {
             continue;
         }
+        let route_id = e.id.0.strip_suffix("/page").unwrap_or(&e.id.0).to_string();
+        let rows: Vec<oxide_fw_compiler::RouteReasonRow> =
+            oxide_fw_compiler::infer_reasons(&source, &server.to_string_lossy())
+                .iter()
+                .map(|r| r.row())
+                .collect();
+        if !rows.is_empty() {
+            reasons.insert(route_id, rows);
+        }
         let m = oxide_fw_compiler::infer_render_mode(&source, &server.to_string_lossy());
         e.render_mode = Some(m.mode.to_string());
     }
+    write_routes_reasons(root, &reasons);
     tree
+}
+
+/// V2-F16: write the per-route why-dynamic reasons side-car
+/// (`.oxide/routes.reasons.json`), the JSON map inspectors and the MCP
+/// `routes.list` tool consume instead of re-running the AST pass. A failure
+/// to write is a loud warning, not a build failure — the side-car is
+/// advisory, the request path never reads it.
+fn write_routes_reasons(
+    root: &Path,
+    reasons: &BTreeMap<String, Vec<oxide_fw_compiler::RouteReasonRow>>,
+) {
+    let dir = root.join(".oxide");
+    let body = serde_json::to_string_pretty(reasons).unwrap_or_else(|_| "{}".to_string());
+    match std::fs::create_dir_all(&dir)
+        .and_then(|()| std::fs::write(dir.join("routes.reasons.json"), body))
+    {
+        Ok(()) => {
+            tracing::debug!(routes = reasons.len(), "wrote .oxide/routes.reasons.json");
+        }
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "could not write .oxide/routes.reasons.json (advisory side-car; build continues)"
+            );
+        }
+    }
 }
 
 /// Scan routes with a tooling pool when a plugin declares `routes` or
@@ -12858,13 +12910,111 @@ fn which(bin: &str) -> Option<PathBuf> {
     None
 }
 
-/// `oxide why <module>` (§13.4): importers (routes) and chunks referencing the module,
-/// derived from the client manifest + chunk bodies. `not found` on a clean miss.
-async fn cmd_why(root: &str, module: &str, w: Writer<'_>) -> anyhow::Result<i32> {
+/// `oxide why` dispatcher (§13.4 module surface, §V2-F16 route surface): the
+/// two are mutually exclusive — exactly one of module argument / `--route`.
+async fn cmd_why(
+    root: &str,
+    module: Option<&str>,
+    route: Option<&str>,
+    w: Writer<'_>,
+) -> anyhow::Result<i32> {
+    match (module, route) {
+        (Some(_), Some(_)) | (None, None) => Err(anyhow::anyhow!(
+            "specify either a module argument (importers of a module, §13.4) \
+             or --route <id> (why the route is dynamic, §V2-F16) — exactly one"
+        )),
+        (Some(m), None) => cmd_why_module(root, m, w).await,
+        (None, Some(r)) => cmd_why_route(root, r, w).await,
+    }
+}
+
+/// `oxide why --route <id>` (§V2-F16): print the route's render mode and
+/// every request-scoped read (or uncached fetch) as an `OX-DYN` diagnostic
+/// with a code frame and the fix help text. Works without a build — the
+/// walk runs on the current `page.server.ts` source.
+async fn cmd_why_route(root: &str, route_id: &str, w: Writer<'_>) -> anyhow::Result<i32> {
+    let _span = tracing::info_span!("cli_why_route", route = %route_id).entered();
+    let rootp = PathBuf::from(root);
+    let cfg = load_config_or_default(&rootp, "development");
+    let tree = scan_routes_with_plugins(&rootp, &cfg).await?;
+    let entry = find_route_entry(&tree, route_id).ok_or_else(|| {
+        anyhow::anyhow!("no route matches `{route_id}` (run `oxide routes` to list the route ids)")
+    })?;
+    let routes_root = rootp.join(&cfg.routes.dir);
+    let server = routes_root.join(entry.file.with_file_name("page.server.ts"));
+    let display_path = server
+        .strip_prefix(&rootp)
+        .unwrap_or(&server)
+        .to_string_lossy()
+        .into_owned();
+    let Ok(source) = std::fs::read_to_string(&server) else {
+        // §10.1: a page route with no `page.server.ts` has no loader and
+        // therefore reads no request state — it is `static`.
+        outln!(w, "route {route_id} — mode: static");
+        outln!(
+            w,
+            "no page.server.ts loader — the route reads no request state"
+        );
+        return Ok(0);
+    };
+    let mode = oxide_fw_compiler::infer_render_mode(&source, &display_path);
+    outln!(w, "route {route_id} — mode: {}", mode.mode);
+    let reasons = oxide_fw_compiler::infer_reasons(&source, &display_path);
+    tracing::debug!(
+        route = %route_id,
+        reasons = reasons.len(),
+        "why-route reason walk complete"
+    );
+    if reasons.is_empty() {
+        outln!(w, "no dynamic reads found in {display_path}");
+        return Ok(0);
+    }
+    for reason in &reasons {
+        outln!(w, "{}", reason.diagnostic(&display_path, &source));
+    }
+    Ok(0)
+}
+
+/// Resolve a `--route` id against the scanned tree. Accepts the canonical
+/// id (`routes/dashboard`) or the directory form without the `routes/`
+/// prefix (`dashboard`).
+fn find_route_entry<'a>(
+    tree: &'a RouteTree,
+    route_id: &str,
+) -> Option<&'a oxide_fw_router::RouteEntry> {
+    // Accept the scanner id (`routes/dash/page`), the canonical directory
+    // form (`routes/dash` — the form the architecture map and the reasons
+    // side-car use) and the bare directory (`dash`).
+    let dir_id = route_id
+        .strip_prefix("routes/")
+        .unwrap_or(route_id)
+        .strip_suffix("/page")
+        .unwrap_or(route_id.strip_prefix("routes/").unwrap_or(route_id));
+    tree.entries.iter().find(|e| {
+        let dir_form = e.id.0.strip_suffix("/page").unwrap_or(&e.id.0);
+        let dir_bare = dir_form.strip_prefix("routes/").unwrap_or(dir_form);
+        e.id.0 == route_id || dir_bare == dir_id
+    })
+}
+
+/// `oxide why <module>` (§13.4): importers and chunks of a module.
+async fn cmd_why_module(root: &str, module: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = PathBuf::from(root);
     let client_dir = rootp.join("dist/client");
-    let manifest =
-        read_json(&client_dir.join("client.manifest.json")).unwrap_or(serde_json::json!({}));
+    // A missing manifest means "no build yet" and keeps the friendly hint
+    // below; a manifest that does not parse is a real failure and must not
+    // be silently swallowed into the same message (micro-debt: the old
+    // `read_json(..).unwrap_or(json!({}))` conflated the two).
+    let manifest_path = client_dir.join("client.manifest.json");
+    let manifest = match std::fs::read_to_string(&manifest_path) {
+        Ok(body) => serde_json::from_str::<serde_json::Value>(&body).map_err(|e| {
+            anyhow::anyhow!(
+                "cannot parse {} ({e}) — delete dist/ and re-run `oxide build`",
+                manifest_path.display()
+            )
+        })?,
+        Err(_) => serde_json::json!({}),
+    };
     let mut hits: Vec<(String, String)> = Vec::new();
     if let Some(routes) = manifest.get("routes").and_then(|r| r.as_object()) {
         for (route, row) in routes {
