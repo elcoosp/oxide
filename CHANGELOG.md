@@ -8,6 +8,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Oxide is pre-1.0: the API is not yet frozen, and releases before v1.0 may
 include breaking changes announced in the relevant section below.
 
+## [0.6.1] — 2026-11-09
+
+### Added
+
+- **compiler**: The V2-F16 why-dynamic reason engine
+- **cli**: Why --route prints OX-DYN reasons with code frames
+
+### Chores
+
+- **packages**: Sync package.json versions to 0.6.0
+- **release**: V0.6.1
+
+### Documentation
+
+- **changelog**: Regenerate for v0.6.0
+- **deviations**: Record the V2-F16 deltas and deferrals
+- **architecture**: Map the V2-F16 why-dynamic substrate
+- **readme**: Correct the crate, test, tag and CI job counts
+- **contributing**: The toolchain tracks stable, not a 1.98 pin
+- **benchmarks**: List every criterion crate in the bench command
+- **spec**: Refresh the V2.O status table for the landed WPs
+- **why**: The why-dynamic walkthrough example
+
+### Testing
+
+- **compiler**: Pin the V2-F16 reason contract
+- **cli**: Pin the why-route surface and the reasons side-car
+
 ## [0.6.0] — 2026-11-09
 
 ### Added
