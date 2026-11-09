@@ -7,9 +7,18 @@
 //! and promises (as streamed deferred slots). The same bytes go to the cache and to the wire.
 //! HTML embeds data in `<script type='application/oxide-data' nonce='...'>`.
 //!
-//! Wire layout (version byte + typed records, ref tables for shared/cyclic values):
-//! see `docs/format.md`. The JS decoder (`packages/oxide`) is a ~1 KB module that
-//! consumes the same bytes — golden fixtures keep both sides in lockstep.
+//! Wire layout (magic + version bytes, typed records, ref tables for
+//! shared/cyclic values): the authoritative description is the decoder's own
+//! header — `packages/core/src/client/odf-decode.ts` (the JS decoder, package
+//! `@oxide-fw/core`) — which consumes the same bytes; golden fixtures
+//! (`crates/odf/tests/fixtures/`) keep both sides in lockstep, and the F06
+//! patch goldens (`fixtures/patch/`) do the same for the ODP1 patch
+//! transport.
+//!
+//! Note (V2-F06 session): this header previously pointed at a
+//! nonexistent `docs/format.md` and a nonexistent `packages/oxide` package —
+//! both references are now corrected to the real paths above (drift noted in
+//! the handoff).
 
 use bytes::Bytes;
 use oxide_fw_diagnostics::{Diagnostic, OxideError};
@@ -19,10 +28,12 @@ use std::collections::BTreeMap;
 mod decode;
 mod encode;
 pub mod fixtures;
+pub mod patch;
 mod refs;
 mod wire;
 
 pub use decode::decode_with_shared;
+pub use patch::PATCH_MAX_OPS;
 pub use refs::{resolve_refs, resolve_refs_with};
 pub use wire::bitexact_eq;
 

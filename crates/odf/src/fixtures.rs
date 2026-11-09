@@ -5,6 +5,14 @@
 //!
 //! `tests/fixtures/<name>.odf.bin` holds the encoded bytes and
 //! `tests/fixtures/<name>.expected.json` the `Value::to_json()` output.
+//!
+//! The F06 patch goldens (`patch_golden`, spec §V2-F06 / D30) live in the
+//! `tests/fixtures/patch/` subdirectory — `patch_<name>.base.odf.bin` (the
+//! full ODF base bytes), `patch_<name>.odp.bin` (the ODP1 patch bytes) and
+//! `patch_<name>.expected.json` (`Value::to_json()` of the applied value, or
+//! `{"error":"ODP-BASE"}` for the mismatch case). They are consumed by both
+//! the Rust suite (`tests/patch_tdd.rs`) and the TS suite
+//! (`packages/core/test/odf-patch.test.ts`).
 
 use crate::TypedArrayKind as K;
 use crate::Value;
@@ -291,6 +299,294 @@ pub fn write_all(dir: &str) -> std::io::Result<()> {
             format!("{dir}/{name}.expected.json"),
             value.to_json().to_string(),
         )?;
+    }
+    Ok(())
+}
+
+// ------------------------------------------------------------- F06 patches
+
+/// One committed F06 patch golden case (D30's 12-case list).
+pub struct PatchGolden {
+    /// Fixture stem: `patch_<name>.{base.odf.bin,odp.bin,expected.json}`.
+    pub name: &'static str,
+    /// The full snapshot the patch chains from.
+    pub base: Value,
+    /// The next snapshot: `ops = diff(base, new)` at generation time.
+    pub new: Value,
+    /// `true` for the `base-mismatch` case: the committed patch carries a
+    /// deliberately wrong base id, and both implementations must refuse to
+    /// apply it (the reconnect trigger, not an applied value).
+    pub expect_mismatch: bool,
+}
+
+/// The 12 spec-named patch cases (§V2-F06: "set, nested set, delete, append,
+/// prepend, middle splice, truncate, type change, Map untouched, deep array
+/// of objects, no-op, base mismatch"). Order is stable; keep names in sync
+/// with the committed files under `tests/fixtures/patch/`.
+pub fn patch_golden() -> Vec<PatchGolden> {
+    let mut rows: Vec<Value> = (0..6)
+        .map(|k| {
+            Value::Object(
+                [
+                    ("i".to_string(), Value::Number(k as f64)),
+                    ("name".to_string(), Value::String(format!("row-{k}"))),
+                ]
+                .into_iter()
+                .collect(),
+            )
+        })
+        .collect();
+    rows[3] = Value::Object(
+        [
+            ("i".to_string(), Value::Number(3.0)),
+            (
+                "name".to_string(),
+                Value::String("row-3-renamed".to_string()),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    vec![
+        PatchGolden {
+            name: "set",
+            base: Value::Object(
+                [
+                    ("a".into(), Value::Number(1.0)),
+                    ("keep".into(), Value::Bool(true)),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            new: Value::Object(
+                [
+                    ("a".into(), Value::Number(2.0)),
+                    ("keep".into(), Value::Bool(true)),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            expect_mismatch: false,
+        },
+        PatchGolden {
+            name: "nested-set",
+            base: Value::Object(
+                [(
+                    "deep".into(),
+                    Value::Object(
+                        [(
+                            "x".into(),
+                            Value::Object([("c".into(), Value::Number(1.0))].into_iter().collect()),
+                        )]
+                        .into_iter()
+                        .collect(),
+                    ),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            // The new leaf is a Date: rich values ride inside Set ops.
+            new: Value::Object(
+                [(
+                    "deep".into(),
+                    Value::Object(
+                        [(
+                            "x".into(),
+                            Value::Object(
+                                [("c".into(), Value::Date(1_234_567_890_123))]
+                                    .into_iter()
+                                    .collect(),
+                            ),
+                        )]
+                        .into_iter()
+                        .collect(),
+                    ),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            expect_mismatch: false,
+        },
+        PatchGolden {
+            name: "delete",
+            base: Value::Object(
+                [
+                    ("a".into(), Value::Number(1.0)),
+                    ("gone".into(), Value::String("bye".into())),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            new: Value::Object([("a".into(), Value::Number(1.0))].into_iter().collect()),
+            expect_mismatch: false,
+        },
+        PatchGolden {
+            name: "append",
+            base: Value::Array(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0),
+            ]),
+            new: Value::Array(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0),
+                Value::Number(4.0),
+            ]),
+            expect_mismatch: false,
+        },
+        PatchGolden {
+            name: "prepend",
+            base: Value::Array(vec![Value::Number(1.0), Value::Number(2.0)]),
+            new: Value::Array(vec![
+                Value::Number(0.0),
+                Value::Number(1.0),
+                Value::Number(2.0),
+            ]),
+            expect_mismatch: false,
+        },
+        PatchGolden {
+            name: "middle-splice",
+            base: Value::Array(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0),
+            ]),
+            new: Value::Array(vec![
+                Value::Number(1.0),
+                Value::Number(9.0),
+                Value::Number(3.0),
+            ]),
+            expect_mismatch: false,
+        },
+        PatchGolden {
+            name: "truncate",
+            base: Value::Array(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0),
+            ]),
+            new: Value::Array(vec![Value::Number(1.0)]),
+            expect_mismatch: false,
+        },
+        PatchGolden {
+            name: "type-change",
+            base: Value::Object(
+                [(
+                    "v".into(),
+                    Value::Object([("k".into(), Value::Number(1.0))].into_iter().collect()),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            new: Value::Object(
+                [("v".into(), Value::Array(vec![Value::Number(1.0)]))]
+                    .into_iter()
+                    .collect(),
+            ),
+            expect_mismatch: false,
+        },
+        PatchGolden {
+            name: "map-untouched",
+            base: Value::Object(
+                [
+                    (
+                        "m".into(),
+                        Value::Map(vec![(Value::String("k".into()), Value::Number(1.0))]),
+                    ),
+                    ("x".into(), Value::Number(1.0)),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            new: Value::Object(
+                [
+                    (
+                        "m".into(),
+                        Value::Map(vec![(Value::String("k".into()), Value::Number(1.0))]),
+                    ),
+                    ("x".into(), Value::Number(2.0)),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            expect_mismatch: false,
+        },
+        PatchGolden {
+            name: "deep-array-of-objects",
+            base: Value::Object(
+                [("rows".into(), Value::Array(rows.clone()))]
+                    .into_iter()
+                    .collect(),
+            ),
+            new: Value::Object([("rows".into(), Value::Array(rows))].into_iter().collect()),
+            expect_mismatch: false,
+        },
+        PatchGolden {
+            name: "no-op",
+            base: Value::Object(
+                [
+                    ("a".into(), Value::Number(1.0)),
+                    ("b".into(), Value::String("x".into())),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            new: Value::Object(
+                [
+                    ("a".into(), Value::Number(1.0)),
+                    ("b".into(), Value::String("x".into())),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            expect_mismatch: false,
+        },
+        PatchGolden {
+            name: "base-mismatch",
+            base: Value::Object([("a".into(), Value::Number(1.0))].into_iter().collect()),
+            new: Value::Object([("a".into(), Value::Number(2.0))].into_iter().collect()),
+            expect_mismatch: true,
+        },
+    ]
+}
+
+/// Write every patch golden into `dir` (the `tests/fixtures/patch`
+/// subdirectory): `<stem>.base.odf.bin`, `<stem>.odp.bin` and
+/// `<stem>.expected.json`. Byte-stable across releases (the TS patch suite
+/// consumes the committed files).
+///
+/// # Panics
+///
+/// Panics if a base or patch fails to encode (fixtures are compile-time
+/// constants; a failure is a bug in `patch`, not bad input).
+pub fn write_patch_all(dir: &str) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    for case in patch_golden() {
+        let base_bytes = crate::encode(&case.base).expect("patch golden base must encode cleanly");
+        let ops = crate::patch::diff(&case.base, &case.new);
+        let applied =
+            crate::patch::apply(&case.base, &ops).expect("patch golden ops must apply cleanly");
+        // The base id hashes the FULL ODF bytes of the base (D30). The
+        // mismatch case deliberately carries a wrong 16-hex id.
+        let b = if case.expect_mismatch {
+            "deadbeefdeadbeef".to_string()
+        } else {
+            crate::patch::base_id(&base_bytes)
+        };
+        let patch_bytes =
+            crate::patch::encode_patch(&b, &ops).expect("patch golden ops must encode cleanly");
+        let expected = if case.expect_mismatch {
+            serde_json::json!({ "error": "ODP-BASE" }).to_string()
+        } else {
+            applied.to_json().to_string()
+        };
+        std::fs::write(
+            format!("{dir}/patch_{}.base.odf.bin", case.name),
+            &base_bytes,
+        )?;
+        std::fs::write(format!("{dir}/patch_{}.odp.bin", case.name), &patch_bytes)?;
+        std::fs::write(format!("{dir}/patch_{}.expected.json", case.name), expected)?;
     }
     Ok(())
 }

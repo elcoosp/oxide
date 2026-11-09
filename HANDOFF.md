@@ -1,3 +1,132 @@
+# Handoff — V2-F06 ODF patch deltas landed (odf::patch + server policy + TS transport); all gates green
+
+## Where things stand
+
+**Branch:** `main`
+**Working tree:** the milestone ships as uncommitted changes plus `ship.sh`
+in the resolved downloads directory (bash 3.2-compatible, executable,
+gitignored; one conventional commit per file, then idempotent PR + squash
+merge + tag + push). Run `./ship.sh <repo>` to materialize the history.
+**Verified this session (2 vCPU / 4 GB sandbox, no V8 toolchain):**
+- `cargo test --all-features` over the 15-crate V8-free graph
+  (excludes `jshost` + `cli` (V8), `plugin` + `assets` (nasm)) — all green
+  (1004 tests across 77 suites, baseline 970/76; +34 F06 pins: odf
+  `patch_tdd` 25 incl. the 512-case apply∘diff proptest and the
+  2000-row-append-under-5% acceptance bound; server `live_tdd` +9 incl.
+  the base-chain and runner-patch pins).
+- `packages/core`: `node --test test/*.test.ts` — 283/283 green (baseline
+  260; +23 F06 pins: the 12 committed cross-language goldens, the
+  cross-language base-id parity, the chain and stale-base reconnect pins),
+  `tsc --noEmit` NOT run (no `node_modules` in this sandbox; the test
+  runner needs none).
+- `cargo fmt --all -- --check` — exit 0.
+- Workspace-lints pedantic gate `cargo clippy --no-deps -p oxide-fw-config
+  -p oxide-fw-dispatch -p oxide-fw-router -p oxide-fw-schema --all-targets
+  --all-features -- -D warnings -W clippy::pedantic` — zero diagnostics.
+- CI-style gate `cargo clippy --no-deps` over the V8-free graph
+  (`--all-targets --all-features`, `-D warnings`) — zero diagnostics.
+  Excluded: `jshost` + `cli` (V8), `plugin` + `assets` (build needs
+  `nasm`, absent here). `odf`/`server` remain un-opted (pre-existing
+  pedantic debt belongs to the planned hygiene pass); all NEW code is
+  pedantic-clean by direct check (no pedantic finding touches
+  `patch.rs`, the new fixtures code, `benches/patch.rs`, or the new
+  `live.rs` additions).
+- `grep -rnE '#!?\[allow\(' crates/ tests/` — empty.
+- `cargo bench -p oxide-fw-odf --features bench-util --bench patch` —
+  diff+encode 24 µs @256 / 305 µs @2000 rows; apply 67 µs / 746 µs; the
+  full server policy (decode×2 + diff + encode + decision) 234 µs @256 /
+  2.06 ms @2000. `cargo bench -p oxide-fw-server --features bench-util
+  --bench live` re-run green (sse_frame ~430 ns on this host).
+
+## What landed
+
+V2-F06 from `docs/spec-v0.2-draft.md` (decision refinement D30), in the
+A02/A05/A06/F04/A04/F05 substrate pattern:
+
+1. **`odf::patch` (`crates/odf/src/patch.rs`):** the spec-verbatim
+   `Seg`/`Op` model, the structural `diff` (objects recurse by key; arrays
+   trim common prefix/suffix so append/prepend/middle-replace/truncate are
+   each one `Splice`; everything else is a whole-value `Set`), `apply`
+   (create-missing-leaf Set, object-key-only Del, bounds-checked Splice,
+   reserved-key rejection), and the D30 envelope — `ODP1` prefix + an
+   ordinary ODF1 payload whose root is `{ b: <base id>, o: [ops] }`, so the
+   existing encoder/decoder is reused byte for byte. `base_id` is the first
+   16 hex of the SHA-256 of the full ODF base bytes (`sha2`, not blake3 —
+   the client hashes the same bytes with the same algorithm).
+2. **Cross-language goldens (`crates/odf/tests/fixtures/patch/`):** the 12
+   spec-named cases (set, nested set, delete, append, prepend, middle
+   splice, truncate, type change, Map untouched, deep array of objects,
+   no-op, base mismatch) committed as `patch_<name>.{base.odf.bin,odp.bin,
+   expected.json}` triples — the Rust suite (`tests/patch_tdd.rs`) and the
+   TS suite (`packages/core/test/odf-patch.test.ts`) both load the same
+   bytes, so encode/decode/apply AND the base-id hashing are pinned
+   cross-implementation. Regenerate with
+   `cargo run -p oxide-fw-odf --example odf_fixture`.
+3. **Server sending policy (`server::live::delta_payload` +
+   `Sub::prepare_rerun`):** the rerun worker's `Option<Bytes>` result now
+   flows through the D30 policy — decode old/new, diff, encode, ship
+   `ODP1` only while `patch.len() * 2 < full.len()` and
+   `ops.len() <= 64`; everything else (no base yet, undecodable bytes,
+   oversized diffs, encode failure) ships the full payload. Each `Sub`
+   keeps its last FULL snapshot as the patch base (`last_full`); the
+   connect path (`push_snapshot`) seeds it, so the first rerun can already
+   patch. A fresh connection always gets a full snapshot (the F05
+   invariant, preserved).
+4. **Client patch transport (`packages/core/src/client/odf-decode.ts`):**
+   `decodeOdfOrPatch(b64, last)` sniffs `ODP1` vs `ODF1`, applies wire ops
+   (`applyPatch` — same semantics as the Rust `apply`, deep-cloned with
+   identity preserved, reserved keys rejected anywhere in a path) against
+   the value this stream last decoded (a WeakMap side table keyed by the
+   previous value), verifies `b` against the stored truncated SHA-256
+   (`sha256Hex16`, a compact synchronous implementation — the decode hook
+   is sync; the vectors + goldens pin parity with the server), and
+   advances the base by re-encoding the applied value with the canonical
+   TS encoder. `connectLive`'s default decode is now the patch transport
+   (the F05 `decode?: LiveDecode` seam); any decode failure — including a
+   refused base — closes the stream and takes the existing jittered
+   reconnect, and the server answers a fresh connection with a full
+   snapshot.
+5. **Acceptance bound pinned:** a 2,000-row list with one appended row
+   encodes to a patch under 5% of the full payload (test-asserted; the
+   bench shows the same shapes: 305 µs diff+encode vs 2.06 ms full-policy
+   path at 2000 rows).
+
+**Substrate landmine found and fixed on the way (recorded in
+`docs/deviations.md`):**
+1. **The ODF encoder aliases bit-exact-equal containers into `Ref(i)`
+   slots** — an empty Splice `insert` aliases an empty `path` array, so a
+   naive `decode_patch` that ignored refs failed to parse its own
+   re-encoded output (the truncate/no-op goldens caught it). Fixed:
+   `decode_patch` decodes with the shared table and resolves refs before
+   parsing the ops shape.
+
+## Docs drift noted this session
+
+- Fixed in-scope: `crates/odf/src/lib.rs` pointed at a nonexistent
+  `docs/format.md` and a nonexistent `packages/oxide` package — corrected
+  to the real paths (`packages/core/src/client/odf-decode.ts`, the
+  fixtures directories).
+- Noted for the doc owners (unchanged): README's crate count (says 18,
+  19 members — missing `dispatch`) and its contradictory test-count badge
+  vs the "1,239 test functions" line; the "v0.1.0 is not yet tagged"
+  claims vs `v0.3.1`; the CI job-count claims (22/21 vs the 20 defined);
+  the spec Appendix V2.O status table (all `todo` for landed substrates);
+  CONTRIBUTING's "Rust 1.98 pinned by rust-toolchain.toml" vs
+  `channel = "stable"` (and CONVENTIONS' "1.99"); `benchmarks/README.md`
+  omitting the `dispatch`/`server` benches; `odf-decode.ts`'s "~1 KB"
+  size claim in `client/index.ts`'s comment.
+
+## Where to pick up, in one sentence
+
+The F06 transport is active end-to-end inside the F05 substrate, so the
+next milestone is the A01 phase-3 wiring on a V8-capable host (the rerun
+closure's `Option<Bytes>` now flows through `prepare_rerun` automatically —
+the endpoint, the revalidate-tag hook, and the client-router lifecycle
+activate patching with zero further changes), then F10's pool side, the
+`tests/live.sh` e2e (assert `ODP1` after the first full), and the F-series.
+
+---
+
 # Handoff — V2-F05 live loaders substrate landed (SSE framing + hub + runner + client); all gates green
 
 ## Where things stand

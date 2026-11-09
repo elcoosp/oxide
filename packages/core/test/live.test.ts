@@ -11,6 +11,8 @@
 
 import { test, mock } from 'node:test'
 import assert from 'node:assert/strict'
+import { sha256Hex16 } from '../src/client/odf-decode.ts'
+import { encodeOdf } from '../src/odf-encode.ts'
 import { connectLive } from '../src/client/live.ts'
 import { encodeLite } from './helpers/odf-lite.ts'
 
@@ -223,6 +225,66 @@ test('hidden briefly does not close the stream', () => {
     mock.timers.tick(60_000)
     assert.equal(es.closed, false, 'a short hide never closes')
     assert.equal(FakeEventSource.instances.length, 1, 'no reconnect churn')
+  } finally {
+    restore()
+  }
+})
+
+// ----------------------------------------------------------------- §V2-F06
+
+// Written FIRST (red): these pins failed before `decodeOdfOrPatch` existed.
+// The F06 patch transport is the default decode: the first `data` payload is
+// a full ODF snapshot (the client hashes its bytes), later payloads may be
+// ODP1 patches chained from that base; a wrong base id refuses to apply and
+// falls back to the jittered reconnect (the server answers a fresh
+// connection with a full snapshot).
+
+/** ODP1 payload: the patch magic + the ODF-encoded `{ b, o }` root. */
+function patchPayload(baseId: string, ops: unknown[][]): string {
+  const inner = encodeLite({ b: baseId, o: ops })
+  return Buffer.concat([Buffer.from('ODP1', 'ascii'), Buffer.from(inner)]).toString('base64')
+}
+
+test('patch transport: data events chain a full snapshot then patches', () => {
+  const restore = advertise('routes/index')
+  try {
+    const seen: unknown[] = []
+    connectLive('routes/index', (v) => seen.push(v), {
+      EventSource: FakeEventSource as unknown as typeof EventSource,
+    })
+    const es = FakeEventSource.instances[0]
+    const full = Buffer.from(encodeLite({ count: 1, rows: ['a'] })).toString('base64')
+    es.emit('data', full)
+    assert.deepEqual(seen[0], { count: 1, rows: ['a'] }, 'the full snapshot applies')
+    // The server patches from the base the client hashed (the full bytes).
+    const id = sha256Hex16(Buffer.from(encodeLite({ count: 1, rows: ['a'] })))
+    es.emit('data', patchPayload(id, [[0, ['count'], 2]]))
+    assert.deepEqual(seen[1], { count: 2, rows: ['a'] }, 'the patch applies in place')
+    // A second patch chains from the RE-ENCODED applied value.
+    const nextId = sha256Hex16(encodeOdf(seen[1]))
+    es.emit('data', patchPayload(nextId, [[2, ['rows'], 1, 0, ['b']]]))
+    assert.deepEqual(seen[2], { count: 2, rows: ['a', 'b'] }, 'the chain advances')
+  } finally {
+    restore()
+  }
+})
+
+test('a patch with a stale base id closes and reconnects for a fresh snapshot', () => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  const restore = advertise('routes/index')
+  try {
+    const seen: unknown[] = []
+    connectLive('routes/index', (v) => seen.push(v), {
+      EventSource: FakeEventSource as unknown as typeof EventSource,
+    })
+    const es = FakeEventSource.instances[0]
+    es.emit('data', Buffer.from(encodeLite({ count: 1 })).toString('base64'))
+    es.emit('data', patchPayload('deadbeefdeadbeef', [[0, ['count'], 2]]))
+    assert.equal(es.closed, true, 'the refused patch closes the stream')
+    mock.timers.tick(999)
+    assert.equal(FakeEventSource.instances.length, 1, 'no reopen before the jitter floor')
+    mock.timers.tick(2_001)
+    assert.equal(FakeEventSource.instances.length, 2, 'reconnects for a fresh snapshot')
   } finally {
     restore()
   }

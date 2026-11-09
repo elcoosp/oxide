@@ -23,6 +23,9 @@
 //!   `rerun` closure and pushes the result into the subscriber's channel.
 //!   A `None` result (redirect/error) clears the snapshot: the wiring
 //!   watches for the cleared channel to emit `event: stale` and close.
+//! - [`delta_payload`] (F06, spec §V2-F06 / D30): the sending policy that
+//!   turns a rerun's full snapshot into an `ODP1` patch when the diff is
+//!   small enough — the payload the client's `decodeOdfOrPatch` sniffs.
 //!
 //! The endpoint itself (`GET /__oxide/live`: route lookup, same-origin
 //! enforcement via [`same_origin`], the build check via
@@ -53,8 +56,45 @@ pub const PING_EVENT: &str = "ping";
 /// The stale event name: the build changed; the client reloads once (A04).
 pub const STALE_EVENT: &str = "stale";
 
-/// The data event name: a full ODF snapshot for the route's loader data.
+/// The data event name: an ODF1 full snapshot or — since F06 — an `ODP1`
+/// patch chained from the subscriber's previous full snapshot (§V2-F06).
 pub const DATA_EVENT: &str = "data";
+
+/// The F06 sending rule (D30): ship a patch only while it stays under half
+/// the full payload's size and the diff produces at most this many ops.
+pub const MAX_PATCH_OPS: usize = oxide_fw_odf::patch::PATCH_MAX_OPS;
+
+// ------------------------------------------------------------------- deltas
+
+/// The F06 sending policy (§V2-F06 / D30): diff the previous full snapshot
+/// against the new one and encode the patch — shipped only while
+/// `patch.len() * 2 < full.len()` and `ops.len() <= MAX_PATCH_OPS`.
+/// Everything else ships the full payload: no base yet, undecodable bytes
+/// (the rerun closure may return an error page), oversized diffs, or an
+/// encode failure. Total — it always returns something sendable.
+#[must_use]
+pub fn delta_payload(prev: Option<&[u8]>, next: &[u8]) -> Bytes {
+    let full = || Bytes::copy_from_slice(next);
+    let Some(prev) = prev else {
+        return full();
+    };
+    let (Ok(old), Ok(new)) = (oxide_fw_odf::decode(prev), oxide_fw_odf::decode(next)) else {
+        return full();
+    };
+    let ops = oxide_fw_odf::patch::diff(&old, &new);
+    if ops.len() > MAX_PATCH_OPS {
+        return full();
+    }
+    let Ok(patch) = oxide_fw_odf::patch::encode_patch(&oxide_fw_odf::patch::base_id(prev), &ops)
+    else {
+        return full();
+    };
+    if patch.len() * 2 < next.len() {
+        Bytes::from(patch)
+    } else {
+        full()
+    }
+}
 
 // ------------------------------------------------------------------- framing
 
@@ -168,6 +208,11 @@ pub struct Sub {
     /// The peer address for the per-IP subscriber cap (the spec's security
     /// bullet); `None` where the wiring has no peer (unix socket, tests).
     pub ip: Option<IpAddr>,
+    /// The last FULL snapshot bytes (F06): the patch base the next rerun
+    /// diffs against — the client hashes the payload it last decoded, so
+    /// every shipped patch chains from this. The channel itself may hold
+    /// patches; this always holds fulls.
+    last_full: std::sync::Mutex<Option<Bytes>>,
 }
 
 impl Sub {
@@ -189,6 +234,7 @@ impl Sub {
             _rx: rx,
             seq: AtomicUsize::new(0),
             ip,
+            last_full: std::sync::Mutex::new(None),
         }
     }
 
@@ -198,13 +244,40 @@ impl Sub {
         self.tx.borrow().clone()
     }
 
-    /// Push a new loader snapshot (the rerun worker's happy path).
+    /// The last FULL snapshot (the F06 patch base for the next rerun).
+    #[must_use]
+    pub fn last_full_snapshot(&self) -> Option<Bytes> {
+        self.last_full
+            .lock()
+            .expect("patch base mutex poisoned")
+            .clone()
+    }
+
+    /// Push a new loader snapshot (the connect path and direct pushes).
+    /// The full bytes seed the patch base: a fresh connection hashes them,
+    /// so the first rerun can already ship a patch (F06).
     pub fn push_snapshot(&self, snapshot: Bytes) {
+        *self.last_full.lock().expect("patch base mutex poisoned") = Some(snapshot.clone());
         let _ = self.tx.send(Some(snapshot));
     }
 
+    /// Compute the payload for a rerun result WITHOUT sending it (the
+    /// runner sends — one send point, as before). `Some(full)` becomes the
+    /// F06 delta payload (patch-or-full per [`delta_payload`]) and stores
+    /// the full as the next patch base; `None` (the stale signal) passes
+    /// through untouched.
+    #[must_use]
+    pub fn prepare_rerun(&self, full: Option<Bytes>) -> Option<Bytes> {
+        let full = full?;
+        let prev = self.last_full_snapshot();
+        let payload = delta_payload(prev.as_deref(), &full);
+        *self.last_full.lock().expect("patch base mutex poisoned") = Some(full);
+        Some(payload)
+    }
+
     /// Clear the snapshot (the rerun worker's redirect/error path — the
-    /// stale signal).
+    /// stale signal). The patch base stays: the reconnecting client hashes
+    /// a fresh full snapshot either way.
     pub fn clear_snapshot(&self) {
         let _ = self.tx.send(None);
     }
@@ -494,7 +567,10 @@ impl Runner {
                 }
                 last.insert(key, now);
                 let out = (self.rerun)(Arc::clone(&s)).await;
-                let _ = s.tx.send(out);
+                // F06: the rerun returns the full snapshot; the wire payload
+                // is the delta policy's output (ODP1 patch or the full).
+                let payload = s.prepare_rerun(out);
+                let _ = s.tx.send(payload);
             }
         }
     }
@@ -510,7 +586,10 @@ impl Runner {
 /// end when the subscriber's sender is dropped.
 ///
 /// Payloads are base64 (the spec's `data: <base64 ODF>` line) so the SSE
-/// line-based framing is byte-safe for any snapshot.
+/// line-based framing is byte-safe for any snapshot. Since F06 the payload
+/// bytes are either an `ODF1` full snapshot or an `ODP1` patch chained from
+/// this connection's previous full ([`delta_payload`]) — the client sniffs
+/// the magic and applies accordingly.
 #[must_use = "the stream is the response body — dropping it ends the SSE response"]
 pub fn live_stream(
     mut rx: watch::Receiver<Option<Bytes>>,

@@ -465,3 +465,226 @@ async fn failed_rerun_clears_the_snapshot_for_the_stale_signal() {
         "the failed rerun cleared the snapshot"
     );
 }
+
+// --------------------------------------------------------------------- F06
+
+/// Written FIRST (red): these pins failed on unresolved-symbol errors before
+/// the F06 delta policy existed. The spec's sending rule (§V2-F06 / D30):
+/// keep, per live subscriber, the last full encoded snapshot and its id; on
+/// a rerun diff old against new and ship `ODP1` only when
+/// `patch.len() * 2 < full.len()` and `ops.len() <= 64` — otherwise the
+/// full payload. A fresh connection (no base yet) always gets the full.
+mod f06 {
+    use super::*;
+
+    use oxide_fw_odf::Value;
+    use oxide_fw_odf::patch::{apply as patch_apply, base_id, decode_patch};
+
+    fn v(j: serde_json::Value) -> Value {
+        Value::from_json(&j)
+    }
+
+    /// ODF bytes of a JSON value (the rerun closure's return shape).
+    fn enc(j: serde_json::Value) -> Bytes {
+        Bytes::from(oxide_fw_odf::encode(&v(j)).expect("test value encodes"))
+    }
+
+    fn rows(n: usize) -> serde_json::Value {
+        serde_json::Value::Array(
+            (0..n)
+                .map(|k| {
+                    serde_json::json!({
+                        "i": k,
+                        "name": format!("row-{k}"),
+                        "body": format!("The body text of row {k}, long enough to dominate the payload."),
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    /// The two-row list with one row appended — the smallest patching shape.
+    fn rows_appended(n: usize) -> serde_json::Value {
+        let mut r = rows(n);
+        r.as_array_mut()
+            .expect("rows is an array")
+            .push(serde_json::json!({ "i": n, "name": format!("row-{n}"), "body": "appended" }));
+        r
+    }
+
+    #[test]
+    fn delta_payload_first_push_is_the_full_snapshot() {
+        let next = enc(rows(2));
+        let out = oxide_fw_server::live::delta_payload(None, &next);
+        assert_eq!(out, next, "no base yet: the full snapshot ships unchanged");
+    }
+
+    #[test]
+    fn delta_payload_small_change_sends_odp1() {
+        let prev = enc(rows(2));
+        let next = enc(rows_appended(2));
+        let out = oxide_fw_server::live::delta_payload(Some(&prev), &next);
+        assert_eq!(&out[..4], b"ODP1", "a one-row append patches");
+        let (b, ops) = decode_patch(&out).expect("the patch decodes");
+        assert_eq!(b, base_id(&prev), "the base id hashes the previous full");
+        assert_eq!(ops.len(), 1, "an append is exactly one Splice");
+        let applied = patch_apply(&oxide_fw_odf::decode(&prev).expect("prev decodes"), &ops)
+            .expect("the ops apply to the previous snapshot");
+        assert_eq!(
+            applied,
+            oxide_fw_odf::decode(&next).expect("next decodes"),
+            "apply(prev, diff) == next"
+        );
+    }
+
+    #[test]
+    fn delta_payload_large_change_sends_the_full_payload() {
+        // Every row's body changes: one Splice whose insert is nearly as
+        // large as the payload — `patch.len() * 2 < full.len()` fails.
+        let prev = enc(rows(40));
+        let mut next = rows(40);
+        for row in next.as_array_mut().expect("rows is an array") {
+            row["body"] =
+                serde_json::json!("completely rewritten body text for the large-change pin");
+        }
+        let next = enc(next);
+        let out = oxide_fw_server::live::delta_payload(Some(&prev), &next);
+        assert_eq!(out, next, "an almost-rewrite ships the full payload");
+    }
+
+    #[test]
+    fn delta_payload_over_the_op_cap_sends_the_full_payload() {
+        // 65 independent key changes → 65 Set ops → over the D30 cap (64).
+        let prev = enc(serde_json::Value::Object(
+            (0..65)
+                .map(|k| (format!("k{k:02}"), serde_json::json!(k)))
+                .collect(),
+        ));
+        let next = enc(serde_json::Value::Object(
+            (0..65)
+                .map(|k| (format!("k{k:02}"), serde_json::json!(k + 1)))
+                .collect(),
+        ));
+        let out = oxide_fw_server::live::delta_payload(Some(&prev), &next);
+        assert_eq!(out, next, "more than 64 ops ships the full payload");
+    }
+
+    #[test]
+    fn delta_payload_undecodable_bytes_pass_through() {
+        // The rerun closure may hand back anything (e.g. an error page);
+        // a payload that does not decode is forwarded untouched — the
+        // client's decoder refuses it and reconnects, never corrupts.
+        let garbage = Bytes::from_static(b"not-odf");
+        let out = oxide_fw_server::live::delta_payload(None, &garbage);
+        assert_eq!(out, garbage);
+        let prev = enc(rows(2));
+        let out = oxide_fw_server::live::delta_payload(Some(&prev), &garbage);
+        assert_eq!(out, garbage);
+    }
+
+    #[test]
+    fn prepare_rerun_chains_the_patch_base_across_reruns() {
+        let s = sub("routes/a", &["t"], None);
+        // 40-row lists: the patch envelope overhead is amortized, so the
+        // D30 size predicate genuinely holds for both steps of the chain.
+        let full1 = enc(rows(40));
+        let full2 = enc(rows_appended(40));
+        let full3 = enc(rows(41));
+        // First rerun on a fresh subscriber: full.
+        let p1 = s.prepare_rerun(Some(full1.clone()));
+        assert_eq!(p1, Some(full1.clone()));
+        assert_eq!(s.last_full_snapshot(), Some(full1.clone()));
+        // Second rerun: a patch chained from full1.
+        let p2 = s.prepare_rerun(Some(full2.clone())).expect("a payload");
+        assert_eq!(&p2[..4], b"ODP1");
+        let (b2, _) = decode_patch(&p2).expect("p2 decodes");
+        assert_eq!(b2, base_id(&full1));
+        // Third rerun: chained from full2 (the FULL snapshot, not the patch).
+        let p3 = s.prepare_rerun(Some(full3.clone())).expect("a payload");
+        assert_eq!(&p3[..4], b"ODP1");
+        let (b3, _) = decode_patch(&p3).expect("p3 decodes");
+        assert_eq!(b3, base_id(&full2));
+        assert_eq!(s.last_full_snapshot(), Some(full3));
+    }
+
+    #[test]
+    fn prepare_rerun_none_leaves_the_base_and_returns_none() {
+        let s = sub("routes/a", &["t"], None);
+        let full1 = enc(rows(2));
+        let _ = s.prepare_rerun(Some(full1.clone()));
+        assert_eq!(
+            s.prepare_rerun(None),
+            None,
+            "the stale signal passes through"
+        );
+        assert_eq!(
+            s.last_full_snapshot(),
+            Some(full1),
+            "a failed rerun keeps the base for the reconnecting client"
+        );
+    }
+
+    #[test]
+    fn push_snapshot_seeds_the_patch_base() {
+        // The connect path ships the current snapshot as a full payload and
+        // the client hashes it — the base for the FIRST rerun patch.
+        let s = sub("routes/a", &["t"], None);
+        let full1 = enc(rows(2));
+        s.push_snapshot(full1.clone());
+        let next = enc(rows_appended(2));
+        let payload = s.prepare_rerun(Some(next)).expect("a payload");
+        assert_eq!(
+            &payload[..4],
+            b"ODP1",
+            "the seeded base patches immediately"
+        );
+        let (b, _) = decode_patch(&payload).expect("decodes");
+        assert_eq!(b, base_id(&full1));
+    }
+
+    // Real time (not the paused clock): the rerun batches must be spaced
+    // far enough apart that each clears the 5 ms debounce window AND the
+    // 50 ms rate interval — 60 ms spacing makes all three reruns land.
+    #[tokio::test]
+    async fn the_runner_streams_patches_after_the_first_full() {
+        let fulls = vec![enc(rows(40)), enc(rows_appended(40)), enc(rows(41))];
+        let idx = Arc::new(AtomicUsize::new(0));
+        let rerun: Rerun = {
+            let idx = Arc::clone(&idx);
+            let fulls = fulls.clone();
+            Arc::new(move |_| {
+                let i = idx.fetch_add(1, Ordering::SeqCst).min(fulls.len() - 1);
+                let full = fulls[i].clone();
+                Box::pin(async move { Some(full) })
+            })
+        };
+        let (tx, rx) = tokio::sync::mpsc::channel::<Arc<Sub>>(64);
+        let s = sub("routes/a", &["t"], None);
+        let runner = LiveRunner::new(rx, Duration::from_millis(5), 20, rerun);
+        let handle = tokio::spawn(runner.run());
+        tx.send(Arc::clone(&s)).await.expect("send");
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        tx.send(Arc::clone(&s)).await.expect("send");
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        tx.send(Arc::clone(&s)).await.expect("send");
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        drop(tx);
+        handle.await.expect("runner ends");
+        // The channel holds what the CLIENT receives: the first rerun ships
+        // fulls[0] as-is; every later rerun patches from the previous full.
+        assert_eq!(idx.load(Ordering::SeqCst), 3, "three spaced reruns ran");
+        let current = s.snapshot_now().expect("a payload in the channel");
+        assert_eq!(
+            &current[..4],
+            b"ODP1",
+            "the last shipped payload is a patch"
+        );
+        let (b, _) = decode_patch(&current).expect("decodes");
+        assert_eq!(b, base_id(&fulls[1]), "chained from the previous full");
+        assert_eq!(
+            s.last_full_snapshot(),
+            Some(fulls[2].clone()),
+            "the base tracks the fulls"
+        );
+    }
+}
