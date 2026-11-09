@@ -12,11 +12,16 @@
 pub use page_renderer::EndpointDispatchArgs;
 pub use page_renderer::MiddlewareDispatchArgs;
 
+pub mod governor;
 pub mod live;
 pub mod loader;
 pub mod metrics;
 pub mod page_renderer;
 pub mod stream_store;
+// V2-F12: the brownout-mode substrate at the crate root (the spec names
+// `Governor`; `Level`/`Signals`/`Thresholds`/`raw_level`/`next_level` and
+// the enforcement seam live in the `governor` module).
+pub use governor::Governor;
 /// §12.1: the QUIC server config the CLI passes to `serve_http3`. Re-exported
 /// so the CLI does not depend on `quinn` directly.
 pub use quinn::ServerConfig as H3ServerConfig;
