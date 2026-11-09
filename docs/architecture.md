@@ -21,9 +21,9 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `odf` | Wire-format encoder/decoder, shared/ref tables, deferred slots, hardening limits; F06 patch substrate (`patch::diff`/`apply`, `ODP1` envelope, truncated-SHA-256 base ids, cross-language goldens) | §9.5, §17.1, D11, V2-F06 |
 | `router` | Route scanning (§8.1), radix matcher with priority rules (§8.2), rkyv archive (D8), typegen (§8.3), native rules engine, per-route `live` opt-in (`RouteEntry.live`, §V2-F05) | §8, §12.1, D8, D13, V2-F05 |
 | `graph` | Demand-driven incremental engine, early cutoff (§5.1), tracked inputs (§5.2), CAS (blake3+redb+zstd, §5.4), cancellation (§5.6), RemoteCache trait | §5, D6 |
-| `config` | Typed config, layering (defaults→preset→file→mode→env→CLI), env files, `PUBLIC_` split, static extraction with V8 fallback flag, typo diagnostics, `live` transport knobs + DSP-111 (§V2-F05), `experiments` + DSP-110 (§V2-F04), `stream.resume` bounds + DSP-112 (§V2-F07) | §14, D14, V2-F04, V2-F05, V2-F07 |
+| `config` | Typed config, layering (defaults→preset→file→mode→env→CLI), env files, `PUBLIC_` split, static extraction with V8 fallback flag, typo diagnostics, `live` transport knobs + DSP-111 (§V2-F05), `experiments` + DSP-110 (§V2-F04), `stream.resume` bounds + DSP-112 (§V2-F07), `brownout` thresholds + DSP-113 (§V2-F12), `interactionReplay` + DSP-114 (§V2-F03) | §14, D14, V2-F03, V2-F04, V2-F05, V2-F07, V2-F12 |
 | `cache` | L0/L1/L2 tiers, weighted LRU memory tier, redb disk tier, tags, TTL/SWR/stale-if-error, single-flight, build seeding, HTTP conditional semantics, canonical `build_id_of_dist` (A04) | §11, V2-A04 |
-| `compiler` | Transform passes behind `Transformer` (D4): import scan, `'use cache'` (§9.3), server-fn stubs (§9.4), forbidden-import guard (§6.4), HMR injection | §6.2–6.4, §9 |
+| `compiler` | Transform passes behind `Transformer` (D4): import scan, `'use cache'` (§9.3), server-fn stubs (§9.4), forbidden-import guard (§6.4), HMR injection, why-dynamic reason engine (`infer_reasons`, §V2-F16) | §6.2–6.4, §9, V2-F16 |
 | `bundler` | `Bundler` trait (D3) + functional ESM bundler: resolution with `exports` conditions, route-based splitting, shared-chunk heuristic, content hashing, client/server manifests | §6.4 |
 | `jshost` | `JsHost`/`Pool` traits (§4.2), NodeHost with real child workers speaking the op protocol (§4.5), ScriptedHost, V8Host (deno_core, full dispatch + `compile_module`) | §4, D2 |
 | `plugin` | Hook model, pre/post ordering, JS bridge messages, WASM plugin manifest validation, module manifests | §15 |
@@ -34,8 +34,25 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `dev` | Hash-confirmed watcher (§5.5), HMR message protocol + per-kind behavior table (§13.3), update boundaries, inspector model (§13.4), prebundle keys | §13 |
 | `adapters` | Deploy targets + capability matrix + refusal rule, `_headers`/`_redirects`, Dockerfile, Worker/node/serverless entries | §18 |
 | `core-wasm` | Edge subset: cache keys, head merge, ODF re-encode (D18) | §2 D18 |
-| `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/add/generate/cache/audit/migrate/test | §19 |
+| `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/add/generate/cache/audit/migrate/test; `why --route` prints the V2-F16 OX-DYN reasons and `routes`/`build` write `.oxide/routes.reasons.json` | §19, V2-F16 |
 ## What changed since 2026-10-12
+
+- **`compiler` + `cli` + `diagnostics`**: the why-dynamic substrate
+  (V2-F16) — `compiler::infer_reasons` (`DynamicReason`/`ReasonKind`, the
+  collect-all sibling of `infer_render_mode`'s first-hit visitor, plus the
+  `UncachedFetch` kind for `fetch(` calls outside a `'use cache'`
+  function), the `OX-DYN` diagnostics with code frames and the fix help
+  text per reason kind, `oxide why --route <id>` (mutually exclusive with
+  the module surface), and the `.oxide/routes.reasons.json` side-car
+  written by `oxide routes`/`oxide build` (never the rkyv archive the hot
+  path reads). Codemods (`--fix`) are deferred — see
+  `docs/deviations.md`.
+
+- **`config` + `render` + `cli` + `jshost`**: the F03 Rust config
+  surface — `interactionReplay` boolean key with DSP-114 validation, the
+  hydration bootstrap advertising the opt-out to the client, the CLI
+  threading the key through its call sites, and the loader host adapted
+  to the endpoint outcome shapes. Landed with v0.6.0.
 
 - **`packages/core`**: the interaction-replay substrate (V2-F03) —
   `src/client/replay.ts` (capture-phase listeners for `click`/`input`/
