@@ -17,9 +17,13 @@ wrk/oha load generation, CI regression gate at 5%.
 Wave B added a criterion harness over the V8-free core crates. Commands:
 
 ```bash
-# benches (router + cache; bench-util exposes the synthetic route generator)
-cargo bench -p oxide-fw-router -p oxide-fw-cache \
-  --features oxide-fw-router/bench-util --features oxide-fw-cache/bench-util
+# benches (router, cache, dispatch, odf, render, server — every criterion
+# target is feature-gated behind that crate's `bench-util`)
+cargo bench -p oxide-fw-router -p oxide-fw-cache -p oxide-fw-dispatch \
+  -p oxide-fw-odf -p oxide-fw-render -p oxide-fw-server \
+  --features oxide-fw-router/bench-util --features oxide-fw-cache/bench-util \
+  --features oxide-fw-dispatch/bench-util --features oxide-fw-odf/bench-util \
+  --features oxide-fw-render/bench-util --features oxide-fw-server/bench-util
 
 # summarize target/criterion into a JSON snapshot
 python3 benchmarks/criterion_summary.py benchmarks/after-wave-b.json
