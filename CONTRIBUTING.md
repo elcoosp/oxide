@@ -6,7 +6,8 @@ contributor would otherwise trip over.
 
 ## Prerequisites
 
-- Rust **1.98** (the `rust-toolchain.toml` pins it; `rustup` picks it up)
+- Rust **stable** (the `rust-toolchain.toml` tracks the `stable` channel;
+  `rustup` picks it up — `edition = "2024"` needs a recent stable)
 - Node **>= 24**
 - pnpm **12.16.1** — exact pin in `package.json#packageManager`. Corepack
   activates it: `corepack enable && corepack prepare pnpm@12.16.1 --activate`
