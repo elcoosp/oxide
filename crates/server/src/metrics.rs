@@ -3,6 +3,7 @@
 //! process-level counter. Text exposition format; no client library required.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -66,6 +67,11 @@ pub struct Metrics {
     pub pool_workers: AtomicU64,
     pub pool_in_flight: AtomicU64,
     pub pool_queue_wait_p99_us: AtomicU64,
+    /// §V2-F12: the brownout governor's published level (0 Normal … 3
+    /// Emergency). Updated by the sampler tick task; a gauge, not a
+    /// counter. The enforcement stage and dashboards read the exposition
+    /// to correlate shed responses with the level that caused them.
+    pub brownout_level: AtomicU64,
     /// §16.6 / §20: Core Web Vitals reported by browsers, keyed by
     /// `"<metric>/<route>"` (e.g. `"LCP//home"`). A count plus a sum of the
     /// raw value (milliseconds for the time metrics, unitless for CLS) — the
@@ -112,6 +118,14 @@ impl Metrics {
             (queue_wait_p99_ms.max(0.0) * 1000.0) as u64,
             Ordering::Relaxed,
         );
+    }
+
+    /// §V2-F12: publish the governor's level after each sampler tick. The
+    /// numeric level is the same payload the `x-oxide-brownout` header
+    /// carries (0 Normal … 3 Emergency).
+    pub fn set_brownout_level(&self, level: u8) {
+        self.brownout_level
+            .store(u64::from(level), Ordering::Relaxed);
     }
 
     /// §16.6: record one browser web-vital sample. `name` is the metric
@@ -175,6 +189,14 @@ impl Metrics {
             "oxide_pool_queue_wait_p99_us {}\n",
             self.pool_queue_wait_p99_us.load(Ordering::Relaxed)
         ));
+
+        out.push_str("# HELP oxide_brownout_level The governor's current brownout level (0 Normal, 1 Stale, 2 Shed, 3 Emergency)\n");
+        out.push_str("# TYPE oxide_brownout_level gauge\n");
+        let _ = writeln!(
+            out,
+            "oxide_brownout_level {}",
+            self.brownout_level.load(Ordering::Relaxed)
+        );
 
         out.push_str("# HELP oxide_isolates_recycled_total Isolate recycle events\n");
         out.push_str("# TYPE oxide_isolates_recycled_total counter\n");
@@ -275,6 +297,17 @@ mod tests {
             m.observe("/x", Duration::from_millis(1), 200);
         }
         assert!(m.render().contains("route=\"/x\",le=\"+Inf\"} 5"));
+    }
+
+    /// §V2-F12: the governor's level travels the exposition as a gauge.
+    #[test]
+    fn brownout_level_gauge_round_trips() {
+        let m = Metrics::new();
+        assert!(m.render().contains("oxide_brownout_level 0"));
+        m.set_brownout_level(2);
+        assert!(m.render().contains("oxide_brownout_level 2"));
+        m.set_brownout_level(3);
+        assert!(m.render().contains("oxide_brownout_level 3"));
     }
 }
 
