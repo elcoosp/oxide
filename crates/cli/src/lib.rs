@@ -771,6 +771,7 @@ async fn scan_routes(
                 continue;
             }
             tree.insert(oxide_fw_router::RouteEntry {
+                live: None,
                 // A root middleware: base dir `routes`, so it wraps every
                 // route (the chain rule is a prefix match).
                 id: oxide_fw_router::RouteId(format!("routes/{safe}.plugin-middleware")),
@@ -865,6 +866,7 @@ async fn scan_routes(
                     })
                     .unwrap_or_default();
                 tree.insert(oxide_fw_router::RouteEntry {
+                    live: None,
                     id: oxide_fw_router::RouteId(id.to_string()),
                     kind,
                     segments,
