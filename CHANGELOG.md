@@ -8,6 +8,51 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Oxide is pre-1.0: the API is not yet frozen, and releases before v1.0 may
 include breaking changes announced in the relevant section below.
 
+## [0.5.0] — 2026-11-09
+
+### Added
+
+- **server**: The §V2-F12 brownout governor substrate
+- **server**: Publish the brownout level gauge
+- **config**: The brownout config section types (V2-F12)
+- **config**: DSP-113 validation for the brownout section
+- **config**: Declare the brownout schema section
+- **router**: Rules carry the brownout route priority
+- **cli**: Pass rule priority to the router manifest
+- **core**: The V2-F03 interaction replay substrate
+- **core**: Replay pending interactions when an island hydrates
+- **core**: Start the replay capture at boot behind interactionReplay
+
+### Chores
+
+- **config**: Regenerate the checked-in config schema
+- **release**: V0.4.2
+- **release**: V0.5.0
+
+### Documentation
+
+- **changelog**: Regenerate for v0.4.1
+- **architecture**: Mark the brownout governor landed
+- **deviations**: Record the F12 deltas and deferrals
+- **handoff**: Hand off the F12 substrate milestone
+- **deviations**: Record the F03 deltas and deferrals
+- **architecture**: Mark the F03 replay substrate landed
+- **handoff**: Hand off the F03 replay substrate milestone
+
+### Testing
+
+- **server**: Pin the F12 governor contract from outside
+- **config**: Pin the brownout config contract
+- **config**: Expect the brownout and stream schema sections
+- Server tests
+- **core**: Pin the F03 interaction replay contract
+- **core**: Behavioral router-absence pins under the replay capture
+- **core**: Micro-bench the replay capture and dispatch paths
+
+### Bench
+
+- **server**: Criterion for the brownout governor
+
 ## [0.4.1] — 2026-11-09
 
 ### Added
