@@ -19,6 +19,93 @@
       ],
       "type": "string"
     },
+    "brownout": {
+      "additionalProperties": false,
+      "description": "V2-F12: brownout mode. Under overload the governor degrades deliberately - stale content past the SWR window behind warning 110, low-priority routes shed with 503 + x-oxide-brownout, readiness flips to 503 at Emergency. Off by default - with enabled false no governor is constructed. Validation (DSP-113): ascending threshold ladders, a staleCeiling multiplier >= 1, hedge.afterFactor > 1.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Master switch; false keeps the request path at its pre-F12 shape.",
+          "type": "boolean"
+        },
+        "hedge": {
+          "additionalProperties": false,
+          "description": "The opt-in hedger: duplicate a still-running idempotent GET render after afterFactor x the route's recent p95; first response wins. Idempotency is the user's responsibility.",
+          "properties": {
+            "afterFactor": {
+              "default": 2.0,
+              "description": "Hedge after this multiple of the recent p95 (DSP-113 rejects <= 1).",
+              "exclusiveMinimum": 1,
+              "type": "number"
+            },
+            "enabled": {
+              "default": false,
+              "description": "Off by default.",
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "staleCeiling": {
+          "default": "10x",
+          "description": "How far past the TTL an L0 entry may serve at level Stale, as a multiplier: '10x', plain '10', or fractional '1.5x' (DSP-113 rejects < 1).",
+          "type": "string"
+        },
+        "thresholds": {
+          "additionalProperties": false,
+          "description": "The three breach ladders; rung i is the level-(i+1) threshold, a signal at or above it breaches that level. Ladders must be ascending (DSP-113).",
+          "properties": {
+            "loopLagMs": {
+              "default": [
+                20,
+                100,
+                300
+              ],
+              "description": "Event-loop lag rungs in ms (spec defaults).",
+              "items": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "maxItems": 3,
+              "minItems": 3,
+              "type": "array"
+            },
+            "queueWaitMs": {
+              "default": [
+                50,
+                200,
+                500
+              ],
+              "description": "Pool queue-wait p99 rungs in ms (spec defaults).",
+              "items": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "maxItems": 3,
+              "minItems": 3,
+              "type": "array"
+            },
+            "rssMb": {
+              "default": [
+                0,
+                0,
+                0
+              ],
+              "description": "Resident-memory rungs in MiB; 0 disables the RSS gate (the spec default is never).",
+              "items": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "maxItems": 3,
+              "minItems": 3,
+              "type": "array"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
     "budgets": {
       "additionalProperties": false,
       "properties": {
@@ -552,6 +639,16 @@
         "additionalProperties": true,
         "properties": {
           "destination": {
+            "type": "string"
+          },
+          "priority": {
+            "default": "normal",
+            "description": "V2-F12: the route's overload priority; low-priority routes shed at brownout level Shed, everything but critical at Emergency (DSP-113 rejects other spellings).",
+            "enum": [
+              "low",
+              "normal",
+              "critical"
+            ],
             "type": "string"
           },
           "redirect": {
