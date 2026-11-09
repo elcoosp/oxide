@@ -788,3 +788,52 @@ sandbox has no Rust toolchain):**
   real browser plus a built smoke app. The Node pins cover the same
   contract with fakes; `tests/playwright` gains the block-release spec
   when the browser harness is available.
+
+## V2-F16 why-dynamic — deltas and deferrals (substrate step)
+
+**What the spec asks.** `infer_reasons(source, path) -> Vec<DynamicReason>`
+beside `infer_render_mode`, the `.oxide/routes.reasons.json` side-car,
+`oxide why <route>` printing each reason with a code frame, and `--fix`
+codemods verified by re-running the same engine.
+
+**What lands.** The full Rust substrate: `ReasonKind` (the four §10.1 kinds
+plus `UncachedFetch`), the collect-all visitor that reuses the same walk the
+mode inference uses, the `OX-DYN` diagnostics with `render_code_frame`
+frames and the per-kind fix help text, `oxide why --route <id>` (mutually
+exclusive with the module argument, id accepted in scanner, canonical and
+bare directory form), and the side-car written by `oxide routes` and
+`oxide build` — keyed by the canonical directory-form route id.
+
+**Spec deltas:**
+
+1. **A destructured bind and its member use are two reasons.** The spec's
+   example treats "why is this route dynamic" as one answer per read; the
+   walk reports the params bind (`({ cookies })`, the span `oxide routes`
+   has always pointed at) *and* each member use, in pre-order. The first
+   non-`UncachedFetch` reason is exactly the mode trigger, so the report
+   and the route table never disagree.
+2. **An `UncachedFetch` never flips the render mode.** The spec lists
+   `UncachedFetch` as a reason kind but does not say whether it affects
+   `InferredMode`; the mode contract is frozen (§10.1 reads request-scoped
+   *state*, a fetch reads none), so `fetch.server.ts` reports `static` with
+   one reason. `infer_render_mode` scans past fetch hits to preserve its
+   first-hit behavior bit-for-bit.
+3. **Reasons are only collected where the mode is actually inferred.** A
+   route with an explicit `config.render` skips the AST inference and the
+   side-car row — the why report accompanies the *inferred* decision, and
+   the scanner's `render_mode` value is the authority there.
+4. **The side-car write failure is a `tracing::warn!`, not a build error.**
+   The file is advisory (never on the request hot path, never in the rkyv
+   archive); failing a deploy over a report file would invert the priority.
+
+**What is deliberately deferred (`--fix` codemods):**
+
+- The four codemods (cookie/header read → loader data, `searchParams` →
+  declared `searchSchema`, uncached fetch → `'use cache'`) run in the
+  tooling pool as TS transforms (§6.2) and need the Node tooling host; the
+  Rust substrate ships the verification surface they will reuse
+  (`infer_reasons` re-run + mode re-check, the "refuse if the mode did not
+  improve" guard). The `OX-DYN` fix help text already states each codemod's
+  contract, so the registry row and the deferred flag agree.
+- The inspector route-table `why` column (E08) and the MCP `routes.list`
+  reasons field read the side-car; both are deferred with their surfaces.
