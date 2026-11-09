@@ -509,3 +509,83 @@ handoff for the one-sentence pickup list.
    by direct check; `server` gained a dev-only `tokio` `test-util`
    feature (paused-time pins) and the `bench-util` criterion harness
    (V2-B09 pattern).
+
+## V2-F06 ODF patch deltas — deltas and deferrals (substrate step)
+
+**Status.** Substrate landed (`crates/odf/src/patch.rs` — `Seg`/`Op`, `diff`,
+`apply`, the `ODP1` envelope (`ops_to_value`/`value_to_ops`,
+`encode_patch`/`decode_patch`, `base_id`), `crates/odf/tests/fixtures/patch/`
+(12 committed cross-language goldens), `crates/odf/benches/patch.rs`,
+`crates/server/src/live.rs::delta_payload` + `Sub::prepare_rerun` (the D30
+sending policy on the F05 runner path), `packages/core/src/client/
+odf-decode.ts` (`decodeOdfOrPatch`/`applyPatch`/`sha256Hex16`) and
+`packages/core/src/client/live.ts` (the default decode swap +
+reconnect-on-refusal)). The endpoint/rerun-closure wiring stays with the
+A01-phase-3 work (V8-capable host) — the F06 patch transport ships inside
+the existing F05 substrate and activates there with zero further changes.
+
+**Deliberate deltas from the spec text:**
+
+1. **`apply`/`decode_patch` return `Result<_, OxideError>` with `ODP-*`
+   codes** (`ODP-MAGIC`, `ODP-SHAPE`, `ODP-OP`, `ODP-PATH`, `ODP-DEL`,
+   `ODP-SPLICE`, `ODP-KEY`) instead of the spec's `Result<Value, String>` —
+   the crate's error type is the diagnostics `OxideError`, and callers
+   (server policy, client reconnect) branch on codes, not strings.
+2. **Reserved keys are rejected at decode time, not apply time.** The spec
+   pins the TS `applyPatch` rejection of `__proto__`/`constructor` paths;
+   the Rust side rejects them in `path_from_wire` (`ODP-KEY`) — a patch that
+   writes a reserved key is malformed at the parse boundary, and the TS side
+   matches (`applyPatch` checks every segment before walking).
+3. **The client hashes with a compact synchronous SHA-256**, not the spec's
+   "sha-256 Web Crypto": the live decode hook is synchronous
+   (`LiveDecode = (payload, last) => unknown`), and `crypto.subtle.digest`
+   is async. The implementation is pinned by the RFC vectors plus every
+   committed golden (the `b` field inside each `ODP1` file was produced by
+   Rust's `sha2`, so the fixture suite IS the cross-language hash parity
+   test). The spec's "do not use blake3 on the client" constraint is kept.
+4. **Wire integers run through the exact-integer range (≤ 2^53) and a
+   cast-free parse** (`f64 → decimal string → u64 → usize`); encode-side
+   indices convert through `u32` — unreachable in practice (a 256 MiB
+   payload holds ≤ 2^28 elements) and encoded failures surface as
+   `ODP-SHAPE` rather than silent truncation. No f64↔int casts anywhere
+   (the workspace is cast-free by policy, and `#[allow]` is unavailable).
+5. **`decode_patch` resolves container dedup refs before parsing ops.** The
+   ODF encoder aliases bit-exact-equal containers into `Ref(i)` slots
+   (e.g. an empty Splice `insert` aliases an empty `path`), so the patch
+   decoder decodes with the shared table and resolves — without this the
+   truncate/no-op goldens do not even parse.
+6. **The patch base lives on the subscriber as the last FULL snapshot**
+   (`Sub::last_full`); the `watch` channel carries whatever the policy
+   produced (patch or full), and `push_snapshot` (the connect path) seeds
+   the base so the first rerun can already patch. A fresh connection always
+   receives a full snapshot — the F05 invariant — because a fresh `Sub`
+   starts with no base.
+7. **The client re-encodes the applied value with the canonical TS encoder
+   to compute its next base id** (the server's next patch chains from the
+   full it would have sent). For the value domain the goldens pin
+   (`encodeOdf` ≡ Rust `encode`), ids advance in lockstep; any drift (a
+   resolved-ref cycle, an exotic type) registers no base and the next patch
+   refuses with `ODP-BASE` — reconnect, fresh snapshot, graceful
+   degradation, never corruption.
+
+**What is deliberately deferred (A01 phase-3 / V8-capable host):**
+
+- Nothing F06-specific: the transport is active end-to-end inside the
+  substrate (server policy ⇄ SSE frames ⇄ client decode). The deferred
+  wiring list from F05 (endpoint, rerun closure, revalidation hook, client
+  router lifecycle, `AST-LIV-001` refusal, `tests/live.sh`) is unchanged.
+- The `transport: 'poll'` fallback still polls full snapshots; converting
+  poll responses to patches is pointless while ETags gate the round trip.
+
+**Hygiene rides-along:** the `odf` crate-module doc pointed at a
+nonexistent `docs/format.md` and a nonexistent `packages/oxide` package —
+corrected to the real paths (`packages/core/src/client/odf-decode.ts`, the
+fixtures directories), with a note recording the drift. The other drift
+found this session (README crate count, CI job counts, spec Appendix V2.O's
+all-`todo` table, CONTRIBUTING's toolchain claim) is listed in the handoff
+and left to the doc owners.
+
+**To unclose:** the A01 phase-3 wiring (the rerun closure already calls the
+data-route path; its `Option<Bytes>` result now flows through
+`prepare_rerun` automatically) — then the `tests/live.sh` e2e, which should
+assert `event: data` frames carry `ODP1` after the first full snapshot.
