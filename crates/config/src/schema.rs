@@ -64,6 +64,7 @@ pub fn config_schema() -> Value {
             "experiments": experiments_schema(),
             "live": live_schema(),
             "stream": stream_schema(),
+            "brownout": brownout_schema(),
 
             "plugins": {
                 "type": "array",
@@ -356,7 +357,8 @@ fn rules_schema() -> Value {
                 "source": { "type": "string" },
                 "destination": { "type": "string" },
                 "redirect": { "type": "string" },
-                "status": { "type": "integer" }
+                "status": { "type": "integer" },
+                "priority": { "type": "string", "enum": ["low", "normal", "critical"], "default": "normal", "description": "V2-F12: the route's overload priority; low-priority routes shed at brownout level Shed, everything but critical at Emergency (DSP-113 rejects other spellings)." }
             }
         }
     })
@@ -552,6 +554,39 @@ fn stream_schema() -> Value {
                     "ttlSecs": { "type": "integer", "minimum": 1, "default": 60, "description": "How long a buffer stays reattachable, in seconds (DSP-112 rejects 0)." },
                     "maxBytesEach": { "type": "string", "default": "4mb", "description": "Per-stream replay cap; past it the buffer loses replay and the client falls back to a fresh fetch." },
                     "maxBytesTotal": { "type": "string", "default": "256mb", "description": "Store-wide cap; the accounting evicts the oldest completed buffer first, then the oldest buffer." }
+                }
+            }
+        }
+    })
+}
+
+/// Schema fragment for the `brownout` section (V2-F12 — the governor's
+/// breach ladders, the stale ceiling and the opt-in hedger).
+fn brownout_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "description": "V2-F12: brownout mode. Under overload the governor degrades deliberately - stale content past the SWR window behind warning 110, low-priority routes shed with 503 + x-oxide-brownout, readiness flips to 503 at Emergency. Off by default - with enabled false no governor is constructed. Validation (DSP-113): ascending threshold ladders, a staleCeiling multiplier >= 1, hedge.afterFactor > 1.",
+        "properties": {
+            "enabled": { "type": "boolean", "default": false, "description": "Master switch; false keeps the request path at its pre-F12 shape." },
+            "staleCeiling": { "type": "string", "default": "10x", "description": "How far past the TTL an L0 entry may serve at level Stale, as a multiplier: '10x', plain '10', or fractional '1.5x' (DSP-113 rejects < 1)." },
+            "thresholds": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "The three breach ladders; rung i is the level-(i+1) threshold, a signal at or above it breaches that level. Ladders must be ascending (DSP-113).",
+                "properties": {
+                    "queueWaitMs": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "minItems": 3, "maxItems": 3, "default": [50, 200, 500], "description": "Pool queue-wait p99 rungs in ms (spec defaults)." },
+                    "loopLagMs": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "minItems": 3, "maxItems": 3, "default": [20, 100, 300], "description": "Event-loop lag rungs in ms (spec defaults)." },
+                    "rssMb": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "minItems": 3, "maxItems": 3, "default": [0, 0, 0], "description": "Resident-memory rungs in MiB; 0 disables the RSS gate (the spec default is never)." }
+                }
+            },
+            "hedge": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "The opt-in hedger: duplicate a still-running idempotent GET render after afterFactor x the route's recent p95; first response wins. Idempotency is the user's responsibility.",
+                "properties": {
+                    "enabled": { "type": "boolean", "default": false, "description": "Off by default." },
+                    "afterFactor": { "type": "number", "exclusiveMinimum": 1, "default": 2.0, "description": "Hedge after this multiple of the recent p95 (DSP-113 rejects <= 1)." }
                 }
             }
         }
