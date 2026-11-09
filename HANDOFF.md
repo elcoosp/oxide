@@ -1,3 +1,118 @@
+# Handoff — V2-F07 resumable streams substrate landed (stream_store + data-plane seam + config + client); all gates green
+
+## Where things stand
+
+**Branch:** `main`
+**Working tree:** the milestone ships as uncommitted changes plus `ship.sh`
+in the resolved downloads directory (bash 3.2-compatible, executable,
+gitignored; one conventional commit per file, then idempotent PR + squash
+merge + tag + push). Run `./ship.sh <repo>` to materialize the history.
+**Verified this session (2 vCPU / 4 GB sandbox, no V8 toolchain):**
+- `cargo test --all-features` over the 15-crate V8-free graph
+  (excludes `jshost` + `cli` (V8), `plugin` + `assets` (nasm)) — all green
+  (1037 tests, baseline 1004; +33 F07 pins: server `stream_tdd` 18 incl.
+  the spec-named `read_from` offsets / overflow-disables-replay /
+  ttl-expiry / reattach-after-complete / concurrent-append-and-read pins,
+  dispatch `stream_tdd` 6 incl. the data-plane flip and the build-check
+  pins, config `stream_config` 10 incl. the DSP-112 and CFG-SIZE pins,
+  and the A04 `data_plane_paths` pin updated to the landed world).
+- `packages/core`: `node --test test/*.test.ts` — 289/289 green (baseline
+  283; +6 F07 pins: pass-through, first-pass/onChunk, the mid-stream drop
+  reattaching with `Range: bytes=<n>-` at the exact count, the 410 →
+  `stream expired` throw, the 5-try backoff ladder ending in `stream
+  lost`, and the non-ok-without-body reattach spending a try).
+- `cargo fmt --all -- --check` — exit 0.
+- Workspace-lints pedantic gate `cargo clippy --no-deps -p oxide-fw-config
+  -p oxide-fw-dispatch -p oxide-fw-router -p oxide-fw-schema --all-targets
+  --all-features -- -D warnings -W clippy::pedantic` — zero diagnostics.
+- CI-style gate `cargo clippy --no-deps` over the V8-free graph
+  (`--all-targets --all-features`, `-D warnings`) — zero diagnostics.
+  Excluded: `jshost` + `cli` (V8), `plugin` + `assets` (build needs
+  `nasm`, absent here). `server` remains un-opted (pre-existing pedantic
+  debt belongs to the planned hygiene pass); all NEW code is
+  pedantic-clean by direct check.
+- `grep -rnE '#!?\[allow\(' crates/ tests/` — empty.
+- `cargo bench -p oxide-fw-server --features bench-util --bench stream` —
+  `append/{256,8192}` ≈ 14.7 ns (flat in chunk size: one lock + push +
+  atomic + watch send), `read_from/{full,mid,tail}` on a 1 MiB buffer ≈
+  42 µs / 12.8 µs / 314 ns, `store_get/{hit,miss}` ≈ 59 / 21 ns,
+  `stream_id/mint` ≈ 113 ns.
+
+## What landed
+
+V2-F07 from `docs/spec-v0.2-draft.md` (the spec's last "M, no
+dependencies" item), in the A02/A05/F04/F05/F06 substrate pattern:
+
+1. **`server::stream_store` (`crates/server/src/stream_store.rs`):** the
+   spec-verbatim `StreamBuf`/`StreamStore` model — `begin`/`append`/
+   `finish`/`get`/`sweep`, the pure `read_from` replay (backlog from any
+   offset, `Some(empty)` at the exact end, `None` past it), `stream_id`
+   (blake3(request_id, counter) → 16 lowercase hex, the A04 convention),
+   `parse_range_offset` (`bytes=<n>-` only; absent header defaults to 0;
+   every other spelling is refused), the response builders (`206` +
+   `content-range: bytes n-*/*` with backlog-then-live-tail, `200` +
+   `x-oxide-stream-complete: 1`, `410`), and `tee_stream` (the body
+   wrapper: every consumer-visible byte lands in the buffer; end and
+   producer error both mark done). Bounds: per-buffer ttl + `max_each`
+   (overflow drops replay instead of eating memory) + store-wide
+   `max_total` (evicts oldest completed first, then oldest).
+2. **Data-plane seam (`dispatch::build`):** `/__oxide/stream/` joins
+   `is_data_plane_path` — the flip the A04 comment explicitly reserved —
+   and `stream_resume_id` parses the id segment (query/fragment
+   tolerated, traversal refused). The A04 `stage_build_check` therefore
+   guards the reattach route with the same 409 contract.
+3. **Config surface (`StreamConfig`/`StreamResumeConfig`):** `stream:
+   { resume: { ttlSecs: 60, maxBytesEach: "4mb", maxBytesTotal: "256mb" } }`
+   (camelCase, `deny_unknown_fields`, size literals in the §14 grammar);
+   load validation emits **DSP-112** (ttl ≥ 1 s, each ≥ 1 byte, total ≥
+   each) and **CFG-SIZE** on a bad literal; the JSON schema declares the
+   section and the checked-in `schemas/oxide-fw-config.schema.json` was
+   regenerated (stability test green).
+4. **Client (`packages/core/src/client/resume.ts`):** `resumableFetch(
+   input, init?, onChunk?, opts?)` per spec step "Client" — the first
+   pass pumps the body, a mid-stream drop reattaches
+   `/__oxide/stream/<id>` with `Range: bytes=<got>-` up to five tries on
+   the 200 ms doubling ladder, `410` throws `stream expired`, five
+   failures throw `stream lost`. fetch + sleep injectable (Node-test-safe,
+   the `live.ts` contract); `onChunk` sees each chunk exactly once, in
+   order, across the drop.
+
+**Spec deviation found and recorded in `docs/deviations.md`:** the spec's
+`Notify::notify_waiters` wait loses chunks appended between a reader's
+backlog check and the waiter's first poll (waiters register on poll, not
+on creation) — the reattach stream would hang mid-stream on a multithread
+runtime. `StreamBuf` carries a `watch` channel over `Progress { len, done }`
+instead (the F05 `Sub` pattern): every state transition sends, `changed()`
+never misses, the held primary receiver makes sends infallible.
+
+## Docs drift noted this session
+
+- Fixed in-scope: the A04 `data_plane_paths` pin (and the `build.rs`
+  comment) documented the pre-F07 data plane; updated to the landed world
+  with the F07 pins beside them. `docs/architecture.md` crate table +
+  changelog updated. `docs/deviations.md` carries the F07 record.
+- Noted for the doc owners (unchanged from F06's list): README's crate
+  count (says 18, 19 members — missing `dispatch`) and its contradictory
+  test-count badge vs the "1,239 test functions" line; the "v0.1.0 is not
+  yet tagged" claims vs `v0.4.0`; the CI job-count claims (22/21 vs the 20
+  defined); the spec Appendix V2.O status table (all `todo` for landed
+  substrates — F07 now included); CONTRIBUTING's "Rust 1.98 pinned by
+  rust-toolchain.toml" vs `channel = "stable"` (and CONVENTIONS' "1.99");
+  `benchmarks/README.md` omitting the `dispatch`/`server` benches.
+
+## Where to pick up, in one sentence
+
+A01 phase-3 on a V8-capable host remains the bottleneck and now also
+uncloses F07's wiring (tee resumable response bodies with `tee_stream`,
+mount the `/__oxide/stream/*` handler from `stream_resume_id` +
+`parse_range_offset` + `StreamStore::get` + `stream_resume_response`,
+flow the `stream.resume` knobs into `StreamStore::new`, add the per-IP
+reattach rate limit and the 30 s `sweep` task), then F10's pool side, the
+`tests/live.sh` e2e (assert `ODP1` after the first full), and the
+F-series.
+
+---
+
 # Handoff — V2-F06 ODF patch deltas landed (odf::patch + server policy + TS transport); all gates green
 
 ## Where things stand
