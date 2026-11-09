@@ -12,6 +12,7 @@ fn config_schema_has_the_known_top_level_sections() {
         .expect("schema must have a 'properties' object");
     for expected in [
         "adapter",
+        "brownout",
         "build",
         "cache",
         "dev",
@@ -27,6 +28,7 @@ fn config_schema_has_the_known_top_level_sections() {
         "routes",
         "security",
         "server",
+        "stream",
         "sw",
         "siteUrl",
     ] {
