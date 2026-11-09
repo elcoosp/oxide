@@ -941,6 +941,9 @@ fn config_rules_to_router(
                 max: rl.max,
                 window_secs: rl.window_secs,
             }),
+            // V2-F12: the rule's overload priority travels to the route
+            // manifest (the enforcement stage consults it at brownout).
+            priority: r.priority.clone(),
         })
         .collect()
 }
