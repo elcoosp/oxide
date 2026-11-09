@@ -8,6 +8,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Oxide is pre-1.0: the API is not yet frozen, and releases before v1.0 may
 include breaking changes announced in the relevant section below.
 
+## [0.4.1] — 2026-11-09
+
+### Added
+
+- The V2-F07 resumable streams substrate (#6)
+
+### Documentation
+
+- **changelog**: Regenerate for v0.4.0
+
 ## [0.4.0] — 2026-11-09
 
 ### Added
