@@ -599,6 +599,13 @@ pub struct NativeRule {
     /// Token-bucket rate limit (§17.1): requests per key per window seconds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_limit: Option<RateLimit>,
+    /// V2-F12: the route's overload priority (`low | normal | critical`);
+    /// the enforcement stage sheds `low` routes at brownout level `Shed`
+    /// and everything but `critical` at `Emergency`. Default `normal`. The
+    /// config side validates the spelling at load (`DSP-113`); the wiring
+    /// maps the value through `oxide_fw_server::governor::parse_priority`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

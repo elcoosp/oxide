@@ -124,6 +124,7 @@ fn rules_engine_pipeline_position_smoke() {
         headers: None,
         basic_auth: None,
         rate_limit: None,
+        priority: None,
     }])
     .unwrap();
     redirect.rules.push(oxide_fw_router::NativeRule {
@@ -138,6 +139,7 @@ fn rules_engine_pipeline_position_smoke() {
             max: 10,
             window_secs: 60,
         }),
+        priority: None,
     });
     assert_eq!(
         redirect.evaluate("/old/docs"),

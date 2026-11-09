@@ -316,6 +316,7 @@ mod tests {
             headers: None,
             basic_auth: None,
             rate_limit: None,
+            priority: None,
         }
     }
 
