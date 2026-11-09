@@ -8742,3 +8742,246 @@ async fn dev_server_serves_website_with_tailwind_css() {
         css_resp.len()
     );
 }
+
+// --------------------------------------------- V2-F16 why-dynamic routes
+
+/// A fixture project with one cookie-dynamic route (`routes/dash`), one
+/// fetch-only route (`routes/feed`, mode stays static but carries an
+/// UncachedFetch reason) and one static route (`routes/home`, no loader).
+fn why_fixture_project() -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let routes = root.join("src/routes");
+    for name in ["dash", "feed", "home"] {
+        std::fs::create_dir_all(routes.join(name)).unwrap();
+    }
+    std::fs::write(
+        routes.join("dash/page.tsx"),
+        "export default function Dash() {\n  return <main>dash</main>;\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        routes.join("dash/page.server.ts"),
+        "export async function load({ cookies }) {\n  const theme = await cookies.get('theme');\n  return { theme };\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        routes.join("feed/page.tsx"),
+        "export default function Feed() {\n  return <main>feed</main>;\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        routes.join("feed/page.server.ts"),
+        "export async function load() {\n  const res = await fetch('https://example.com/api');\n  return { res };\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        routes.join("home/page.tsx"),
+        "export default function Home() {\n  return <main>home</main>;\n}\n",
+    )
+    .unwrap();
+    write_config(&root, "{}");
+    (dir, root)
+}
+
+#[tokio::test]
+async fn why_route_prints_ox_dyn_reasons_with_code_frames() {
+    let (_d, root) = why_fixture_project();
+    let cli = Cli::try_parse_from([
+        "oxide",
+        "why",
+        "--root",
+        root.to_str().unwrap(),
+        "--route",
+        "routes/dash",
+    ])
+    .unwrap();
+    let mut buf: Vec<u8> = Vec::new();
+    let code = run_with_writer(cli, &mut buf).await.unwrap();
+    let out = String::from_utf8_lossy(&buf);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("routes/dash"), "names the route: {out}");
+    assert!(out.contains("dynamic"), "states the mode: {out}");
+    assert!(
+        out.contains("OX-DYN"),
+        "diagnostics carry the registry code: {out}"
+    );
+    assert!(
+        out.contains("page.server.ts:1"),
+        "the bind reason points at line 1: {out}"
+    );
+    assert!(
+        out.contains("page.server.ts:2"),
+        "the member-read reason points at line 2: {out}"
+    );
+    assert!(
+        out.contains("fix:"),
+        "the miette help text is printed: {out}"
+    );
+}
+
+#[tokio::test]
+async fn why_route_fetch_only_route_is_static_with_a_reason() {
+    // §V2-F16: an uncached fetch feeds the why report without flipping the
+    // render mode — the route prints `static` *and* an OX-DYN diagnostic.
+    let (_d, root) = why_fixture_project();
+    let cli = Cli::try_parse_from([
+        "oxide",
+        "why",
+        "--root",
+        root.to_str().unwrap(),
+        "--route",
+        "routes/feed",
+    ])
+    .unwrap();
+    let mut buf: Vec<u8> = Vec::new();
+    let code = run_with_writer(cli, &mut buf).await.unwrap();
+    let out = String::from_utf8_lossy(&buf);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("static"), "mode unchanged by a fetch: {out}");
+    assert!(out.contains("OX-DYN"), "{out}");
+    assert!(
+        out.contains("use cache"),
+        "the fix names the codemod: {out}"
+    );
+}
+
+#[tokio::test]
+async fn why_route_static_route_reports_no_reasons() {
+    let (_d, root) = why_fixture_project();
+    let cli = Cli::try_parse_from([
+        "oxide",
+        "why",
+        "--root",
+        root.to_str().unwrap(),
+        "--route",
+        "routes/home",
+    ])
+    .unwrap();
+    let mut buf: Vec<u8> = Vec::new();
+    let code = run_with_writer(cli, &mut buf).await.unwrap();
+    let out = String::from_utf8_lossy(&buf);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("static"), "{out}");
+    assert!(
+        !out.contains("OX-DYN"),
+        "no diagnostics for a static route: {out}"
+    );
+}
+
+#[tokio::test]
+async fn why_route_unknown_route_is_a_loud_error() {
+    let (_d, root) = why_fixture_project();
+    let cli = Cli::try_parse_from([
+        "oxide",
+        "why",
+        "--root",
+        root.to_str().unwrap(),
+        "--route",
+        "routes/nope",
+    ])
+    .unwrap();
+    let mut buf: Vec<u8> = Vec::new();
+    let err = run_with_writer(cli, &mut buf)
+        .await
+        .expect_err("an unknown route id must fail loudly");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("routes/nope"), "{msg}");
+    assert!(
+        msg.contains("oxide routes"),
+        "points at the discovery command: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn why_route_and_module_are_mutually_exclusive() {
+    let (_d, root) = why_fixture_project();
+    let mut buf: Vec<u8> = Vec::new();
+    let both = Cli::try_parse_from([
+        "oxide",
+        "why",
+        "--root",
+        root.to_str().unwrap(),
+        "some/module.ts",
+        "--route",
+        "routes/dash",
+    ])
+    .unwrap();
+    let err = run_with_writer(both, &mut buf)
+        .await
+        .expect_err("module + --route together must fail loudly");
+    assert!(
+        format!("{err:#}").contains("either"),
+        "names the exclusivity: {err:#}"
+    );
+
+    let neither = Cli::try_parse_from(["oxide", "why", "--root", root.to_str().unwrap()]).unwrap();
+    let err = run_with_writer(neither, &mut buf)
+        .await
+        .expect_err("no target at all must fail loudly");
+    assert!(
+        format!("{err:#}").contains("either"),
+        "names the exclusivity: {err:#}"
+    );
+}
+
+#[tokio::test]
+async fn routes_command_writes_the_reasons_side_car() {
+    let (_d, root) = why_fixture_project();
+    let cli = Cli::try_parse_from(["oxide", "routes", "--root", root.to_str().unwrap()]).unwrap();
+    let mut buf: Vec<u8> = Vec::new();
+    let code = run_with_writer(cli, &mut buf).await.unwrap();
+    assert_eq!(code, 0, "{}", String::from_utf8_lossy(&buf));
+
+    let side_car = root.join(".oxide/routes.reasons.json");
+    let raw = std::fs::read_to_string(&side_car)
+        .expect("the V2-F16 side-car is written by `oxide routes`");
+    let v: serde_json::Value = serde_json::from_str(&raw).expect("valid JSON");
+    let dash = v
+        .get("routes/dash")
+        .and_then(|r| r.as_array())
+        .expect("the dash route carries reasons");
+    assert!(
+        dash.iter()
+            .any(|r| r.get("kind").and_then(|k| k.as_str()) == Some("cookieRead")),
+        "cookieRead rows on the dash route: {raw}"
+    );
+    let feed = v
+        .get("routes/feed")
+        .and_then(|r| r.as_array())
+        .expect("the feed route carries its fetch reason");
+    assert!(
+        feed.iter()
+            .any(|r| r.get("kind").and_then(|k| k.as_str()) == Some("uncachedFetch")),
+        "uncachedFetch rows on the feed route: {raw}"
+    );
+    assert!(
+        v.get("routes/home").is_none(),
+        "a route with no loader has no reasons row: {raw}"
+    );
+}
+
+#[tokio::test]
+async fn why_module_with_a_corrupt_manifest_fails_loud() {
+    // Micro-debt: `read_json(..).unwrap_or(json!({}))` used to make a corrupt
+    // manifest indistinguishable from a missing build — `oxide why` now
+    // refuses loudly instead of hinting at a rebuild that cannot help.
+    let (_d, root) = why_fixture_project();
+    let client = root.join("dist/client");
+    std::fs::create_dir_all(&client).unwrap();
+    std::fs::write(client.join("client.manifest.json"), "{ not json").unwrap();
+    let cli = Cli::try_parse_from([
+        "oxide",
+        "why",
+        "--root",
+        root.to_str().unwrap(),
+        "src/routes/dash/page.tsx",
+    ])
+    .unwrap();
+    let mut buf: Vec<u8> = Vec::new();
+    let err = run_with_writer(cli, &mut buf)
+        .await
+        .expect_err("a malformed manifest must fail loudly");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("client.manifest.json"), "{msg}");
+}
