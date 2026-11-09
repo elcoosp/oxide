@@ -187,14 +187,20 @@ test('bootWithRouter: does NOT attach the router when hydrate throws', () => {
       oxide: { route: '/home', data: '' },
       oxideBoot: { loadChunk: async () => ({}) },
     })
+    let updates = 0
     const adapter: BootAdapter = {
       hydrate() { throw new Error('hydrate boom') },
-      update(): void {},
+      update(): void { updates++ },
       hydrateIsland(): Disposer { return () => {} },
     }
-    const clicksBefore = doc._clickCount()
+    // §V2-F03: the interaction-replay capture also registers a document
+    // `click` listener (page-lifetime glue, independent of the router), so
+    // the router-absence pin is behavioral: a same-origin click must not
+    // drive `adapter.update` when hydration failed (URL without a DOM swap).
+    const before = updates
     const dispose = bootWithRouter(adapter)
-    assert.equal(doc._clickCount(), clicksBefore, 'no router click listener when hydrate throws')
+    doc._fireClick(makeLink('/other'))
+    assert.equal(updates, before, 'no router navigation when hydrate throws')
     dispose()
   } finally {
     restoreGlobals(saved)
@@ -230,14 +236,19 @@ test('bootWithRouter: does NOT attach the router when window.__oxide is missing'
       root,
       oxideBoot: { loadChunk: async () => ({}) },
     })
+    let updates = 0
     const adapter: BootAdapter = {
       hydrate(): Disposer { return () => {} },
-      update(): void {},
+      update(): void { updates++ },
       hydrateIsland(): Disposer { return () => {} },
     }
-    const clicksBefore = doc._clickCount()
+    // Behavioral pin (see the hydrate-throws test): the replay capture owns
+    // a click listener of its own, so absence of the ROUTER is asserted by
+    // a click not reaching `adapter.update`, not by listener counts.
+    const before = updates
     const dispose = bootWithRouter(adapter)
-    assert.equal(doc._clickCount(), clicksBefore, 'no router click listener without window.__oxide')
+    doc._fireClick(makeLink('/other'))
+    assert.equal(updates, before, 'no router click handling without window.__oxide')
     dispose()
   } finally {
     restoreGlobals(saved)
