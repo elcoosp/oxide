@@ -5037,3 +5037,76 @@ Stage summary:
   the revalidate-tag hook, the client-router lifecycle, the AST-LIV-001
   refusal (R02 `check_config`), the `tests/live.sh` integration script.
   Recorded in `docs/deviations.md`.
+
+
+## Session — V2-F06 ODF patch deltas substrate (odf::patch + server policy + TS transport)
+
+- Picked V2-F06 (ODF PATCH deltas, spec §V2-F06 / D30) as the next
+  architectural milestone: F05 is its only dependency and landed last
+  session, the handoff names it explicitly ("then F06 — its only
+  dependency"), and its substance (pure `odf::patch` + a policy on the
+  existing runner path + one TS decode swap) is exactly the V8-free
+  substrate shape; A01 phase-3 and F10's pool side both need a V8 host.
+- TDD red first: `crates/odf/tests/patch_tdd.rs` (25 pins — the spec's
+  diff cases, apply hardening, the 512-case `apply(a, diff(a,b)) == b`
+  proptest, the wire round trip, the SHA-256 base-id vectors, the 12
+  committed goldens, and the 2000-row-append-under-5% acceptance bound),
+  `crates/server/tests/live_tdd.rs` (+9 F06 pins — the delta policy, the
+  base chain across reruns, the connect-time seeding, the runner
+  streaming patches), `packages/core/test/odf-patch.test.ts` (9 pins incl.
+  the fixture drift check), `packages/core/test/live.test.ts` (+2 — the
+  full→patch→patch chain and the stale-base reconnect). All failed on
+  unresolved-symbol/missing-export errors before the implementations.
+- Implemented: `odf::patch` (spec-verbatim `Seg`/`Op`/`diff`/`apply`, the
+  `ODP1` envelope around an ordinary ODF1 `{ b, o }` payload, cast-free
+  wire-integer parsing, `base_id` via `sha2`), the 12 D30 goldens under
+  `crates/odf/tests/fixtures/patch/` (regenerable via
+  `cargo run -p oxide-fw-odf --example odf_fixture`), `server::live`
+  `delta_payload` + `Sub::prepare_rerun`/`last_full` (the D30 policy:
+  patch only while `patch.len()*2 < full.len()` and `ops.len() <= 64`;
+  fulls seed the base; undecodable bytes pass through), and the TS
+  `decodeOdfOrPatch`/`applyPatch`/`sha256Hex16` (sync SHA-256 — the decode
+  hook is sync; vectors + goldens pin cross-language parity) with the
+  `connectLive` default swap and reconnect-on-refusal.
+- Criterion bench `crates/odf/benches/patch.rs` (bench-util gated):
+  diff+encode 24 µs @256 / 305 µs @2000 rows, apply 67 µs / 746 µs, the
+  full server policy 234 µs @256 / 2.06 ms @2000 (two decodes dominate);
+  `server/benches/live.rs` re-run green (sse_frame ~430 ns — this host is
+  faster than the F05 session's).
+- Substrate landmine found on the way: the ODF encoder aliases
+  bit-exact-equal containers into `Ref(i)` slots, so an empty Splice
+  `insert` aliases an empty `path` — `decode_patch` now decodes with the
+  shared table and resolves refs before parsing ops (pinned by the
+  truncate/no-op goldens). Recorded as delta 5 in `docs/deviations.md`.
+- Docs drift noted this session (fixes where in-scope): `odf`'s module doc
+  pointed at a nonexistent `docs/format.md` and `packages/oxide` —
+  corrected; also found and left to the doc owners: README's crate count
+  (18 vs 19, missing `dispatch`), the "v0.1.0 not yet tagged" claims vs
+  `v0.3.1`, CI job-count claims (22/21 vs 20), the spec Appendix V2.O
+  status table (all `todo` for landed substrates), CONTRIBUTING's "Rust
+  1.98 pinned by rust-toolchain.toml" vs `channel = "stable"`, and
+  `benchmarks/README.md` omitting the dispatch/server benches.
+- Gates: `cargo fmt --all --check` exit 0; workspace-lints pedantic clean
+  on the four opted-in crates (`config`/`dispatch`/`router`/`schema`,
+  `--no-deps`, zero diagnostics); CI-style `clippy --no-deps` over the
+  15-crate V8-free graph (`--all-targets --all-features -D warnings`)
+  zero diagnostics (excluded: `jshost` + `cli` — V8, `plugin` + `assets`
+  — `nasm` absent in this sandbox); new-code pedantic clean by direct
+  check (`odf` non-opted debt is pre-existing `decode.rs`/fixtures sites);
+  allow-grep empty; `cargo test --all-features` over the V8-free graph —
+  1004 tests / 77 suites, 0 failed (baseline 970/76; +34 F06 pins);
+  `packages/core` `node --test test/*.test.ts` 283/283 green (baseline
+  260; +23 F06 pins); benches green (`tsc --noEmit` not run — no
+  `node_modules` in this sandbox; `node --test` needs none).
+
+Stage summary:
+- Branch (ship.sh): `feat/odf-patch-deltas`.
+- Version trace: last tag `v0.3.1`; the branch commits carry `feat:` (no
+  `!:`/BREAKING CHANGE) → minor → **v0.4.0** (ship.sh derives the same at
+  run time from `v0.3.1..HEAD` and bumps `Cargo.toml` + `package.json`
+  as the version-bump commit; predicted tag `v0.4.0`).
+- Deferred wiring: none F06-specific — the transport is active end-to-end
+  inside the F05 substrate; the A01-phase-3 list (endpoint, rerun closure,
+  revalidate hook, client-router lifecycle, `tests/live.sh`) is unchanged
+  and now patches automatically once the rerun closure lands. Recorded in
+  `docs/deviations.md`.
