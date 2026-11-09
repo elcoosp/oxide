@@ -349,6 +349,7 @@ fn swappable_route_tree_store_and_load_round_trip() {
     // isolation - the scanner is covered by oxide-fw-router's own tests.
     let mut tree_a_inner = oxide_fw_router::RouteTree::new();
     tree_a_inner.insert(oxide_fw_router::RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId("routes/index".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
@@ -363,6 +364,7 @@ fn swappable_route_tree_store_and_load_round_trip() {
 
     let mut tree_b_inner = oxide_fw_router::RouteTree::new();
     tree_b_inner.insert(oxide_fw_router::RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId("routes/about".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec!["about".into()],
@@ -613,6 +615,7 @@ impl oxide_fw_server::LoaderRunner for ScriptedLoader {
 fn tree_with_server_route() -> std::sync::Arc<oxide_fw_router::RouteTree> {
     let mut tree = oxide_fw_router::RouteTree::new();
     tree.insert(oxide_fw_router::RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId("routes/index".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
@@ -755,6 +758,7 @@ async fn no_server_module_skips_loader() {
     // Tree with `has_server_module: false`.
     let mut tree = oxide_fw_router::RouteTree::new();
     tree.insert(oxide_fw_router::RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId("routes/index".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
@@ -3564,6 +3568,7 @@ impl oxide_fw_server::LoaderRunner for LocalsCapturingLoader {
 fn tree_with_page_and_middleware() -> std::sync::Arc<oxide_fw_router::RouteTree> {
     let mut tree = oxide_fw_router::RouteTree::new();
     tree.insert(oxide_fw_router::RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId("routes/index".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
@@ -3575,6 +3580,7 @@ fn tree_with_page_and_middleware() -> std::sync::Arc<oxide_fw_router::RouteTree>
         needs_parent: false,
     });
     tree.insert(oxide_fw_router::RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId("routes/middleware".into()),
         kind: oxide_fw_router::RouteKind::Middleware,
         segments: vec![],
@@ -3711,6 +3717,7 @@ impl oxide_fw_server::MiddlewareDispatcher for LayerMiddleware {
 fn tree_with_two_middleware_layers() -> std::sync::Arc<oxide_fw_router::RouteTree> {
     let mut tree = oxide_fw_router::RouteTree::new();
     let page = |id: &str, segments: Vec<&str>, file: &str| oxide_fw_router::RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId(id.into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: segments.into_iter().map(str::to_string).collect(),
@@ -3723,6 +3730,7 @@ fn tree_with_two_middleware_layers() -> std::sync::Arc<oxide_fw_router::RouteTre
     };
     tree.insert(page("routes/shop/page", vec!["shop"], "shop/page.tsx"));
     let mw = |id: &str, segments: Vec<&str>, file: &str| oxide_fw_router::RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId(id.into()),
         kind: oxide_fw_router::RouteKind::Middleware,
         segments: segments.into_iter().map(str::to_string).collect(),
@@ -3868,6 +3876,7 @@ async fn middleware_headers_ride_page_and_data_responses() {
 fn tree_with_layout_and_parentless_page() -> std::sync::Arc<oxide_fw_router::RouteTree> {
     let mut tree = oxide_fw_router::RouteTree::new();
     tree.insert(oxide_fw_router::RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId("routes/layout".into()),
         kind: oxide_fw_router::RouteKind::Layout,
         segments: vec![],
@@ -3879,6 +3888,7 @@ fn tree_with_layout_and_parentless_page() -> std::sync::Arc<oxide_fw_router::Rou
         needs_parent: false,
     });
     tree.insert(oxide_fw_router::RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId("routes/index/page".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
@@ -3895,6 +3905,7 @@ fn tree_with_layout_and_parentless_page() -> std::sync::Arc<oxide_fw_router::Rou
 fn tree_with_page_and_server_module() -> std::sync::Arc<oxide_fw_router::RouteTree> {
     let mut tree = oxide_fw_router::RouteTree::new();
     tree.insert(oxide_fw_router::RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId("routes/index".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
@@ -3911,6 +3922,7 @@ fn tree_with_page_and_server_module() -> std::sync::Arc<oxide_fw_router::RouteTr
 fn tree_with_static_page_and_middleware() -> std::sync::Arc<oxide_fw_router::RouteTree> {
     let mut tree = oxide_fw_router::RouteTree::new();
     tree.insert(oxide_fw_router::RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId("routes/index".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
@@ -3922,6 +3934,7 @@ fn tree_with_static_page_and_middleware() -> std::sync::Arc<oxide_fw_router::Rou
         needs_parent: false,
     });
     tree.insert(oxide_fw_router::RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId("routes/middleware".into()),
         kind: oxide_fw_router::RouteKind::Middleware,
         segments: vec![],
@@ -4374,6 +4387,7 @@ fn tree_with_page_and_middleware_chain() -> std::sync::Arc<oxide_fw_router::Rout
     use std::sync::Arc;
     let mut tree = oxide_fw_router::RouteTree::new();
     tree.insert(oxide_fw_router::RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId("routes/blog/post/page".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec!["blog".into(), "post".into()],
@@ -4385,6 +4399,7 @@ fn tree_with_page_and_middleware_chain() -> std::sync::Arc<oxide_fw_router::Rout
         needs_parent: false,
     });
     tree.insert(oxide_fw_router::RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId("routes/middleware".into()),
         kind: oxide_fw_router::RouteKind::Middleware,
         segments: vec![],
@@ -4396,6 +4411,7 @@ fn tree_with_page_and_middleware_chain() -> std::sync::Arc<oxide_fw_router::Rout
         needs_parent: false,
     });
     tree.insert(oxide_fw_router::RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId("routes/blog/middleware".into()),
         kind: oxide_fw_router::RouteKind::Middleware,
         segments: vec![],
@@ -6534,6 +6550,7 @@ fn compute_layout_chain_finds_root_and_nested_layouts() {
 
     // Root layout
     tree.insert(RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId("routes/layout".into()),
         kind: oxide_fw_router::RouteKind::Layout,
         segments: vec![],
@@ -6546,6 +6563,7 @@ fn compute_layout_chain_finds_root_and_nested_layouts() {
     });
     // Nested layout
     tree.insert(RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId("routes/nested/layout".into()),
         kind: oxide_fw_router::RouteKind::Layout,
         segments: vec!["nested".into()],
@@ -6558,6 +6576,7 @@ fn compute_layout_chain_finds_root_and_nested_layouts() {
     });
     // Page at nested/
     tree.insert(RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId("routes/nested/page".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec!["nested".into()],
@@ -6581,6 +6600,7 @@ fn compute_layout_chain_finds_root_and_nested_layouts() {
 
     // A top-level page sees only the root layout.
     tree.insert(RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId("routes/page".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
@@ -7828,6 +7848,7 @@ impl oxide_fw_server::LoaderRunner for MutateSessionLoader {
 fn tree_with_layout_and_page_server_modules() -> std::sync::Arc<oxide_fw_router::RouteTree> {
     let mut tree = oxide_fw_router::RouteTree::new();
     tree.insert(oxide_fw_router::RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId("routes/layout".into()),
         kind: oxide_fw_router::RouteKind::Layout,
         segments: vec![],
@@ -7839,6 +7860,7 @@ fn tree_with_layout_and_page_server_modules() -> std::sync::Arc<oxide_fw_router:
         slot: None,
     });
     tree.insert(oxide_fw_router::RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId("routes/index".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
@@ -8344,6 +8366,7 @@ async fn action_set_cookie_survives_200_rerender() {
     .unwrap();
     let mut tree_inner = oxide_fw_router::RouteTree::new();
     tree_inner.insert(oxide_fw_router::RouteEntry {
+        live: None,
         id: oxide_fw_router::RouteId("routes/comment".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec!["comment".into()],
