@@ -6,6 +6,8 @@
 //! and a fix hint when one is known. Serialized as JSON over the JS boundary.
 
 use serde::{Deserialize, Serialize};
+// `write!` into a String for the code frame (clippy format_push_string).
+use std::fmt::Write as _;
 
 /// Stable diagnostic codes, namespaced per subsystem (`ODF-*`, `RT-*`, `CFG-*`, ...).
 pub type Code = &'static str;
@@ -33,6 +35,8 @@ pub struct Location {
 }
 
 impl Location {
+    /// A location pointing nowhere (a diagnostic without source mapping).
+    #[must_use]
     pub fn unknown() -> Self {
         Self {
             file: None,
@@ -91,25 +95,47 @@ impl Diagnostic {
             ..Self::error(code, message)
         }
     }
+    /// Attach the source location (builder style: `Diagnostic::error(..).at(loc)`).
+    #[must_use]
     pub fn at(mut self, loc: Location) -> Self {
         self.location = Some(loc);
         self
     }
+    /// Attach the known fix (the miette help text).
+    #[must_use]
     pub fn with_fix(mut self, fix: impl Into<String>) -> Self {
         self.fix = Some(fix.into());
         self
     }
+    /// Append a cause (the diagnostic's why-chain).
+    #[must_use]
     pub fn with_cause(mut self, cause: impl Into<String>) -> Self {
         self.causes.push(cause.into());
         self
     }
+    /// Attach the rendered code frame.
+    #[must_use]
     pub fn with_code_frame(mut self, frame: impl Into<String>) -> Self {
         self.code_frame = Some(frame.into());
         self
     }
+    /// Serialize the diagnostic to JSON (the §19.4 wire shape).
+    ///
+    /// # Panics
+    ///
+    /// Panics if serialization fails, which cannot happen for this
+    /// plain-data struct (string fields only — no maps with non-string
+    /// keys, no custom serializers).
+    #[must_use]
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).expect("diagnostic serializes")
     }
+    /// Deserialize a diagnostic from JSON (the §19.4 wire shape).
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying `serde_json` error when `s` is not a
+    /// diagnostic document (bad shape, wrong types).
     pub fn from_json(s: &str) -> serde_json::Result<Self> {
         serde_json::from_str(s)
     }
@@ -119,6 +145,7 @@ impl Diagnostic {
 /// marker (`^`) under the offending line + a 1-based line number gutter. The
 /// `source` is the whole module; the `line` is 1-based. `col` is optional (a
 /// diagnostic with only a line produces a line gutter with no underline).
+#[must_use]
 pub fn render_code_frame(source: &str, line: usize, col: Option<usize>) -> String {
     let lines: Vec<&str> = source.lines().collect();
     if lines.is_empty() || line == 0 || line > lines.len() {
@@ -126,12 +153,9 @@ pub fn render_code_frame(source: &str, line: usize, col: Option<usize>) -> Strin
     }
     let target = lines[line - 1];
     let gutter_width = line.to_string().len();
+    let gutter = " ".repeat(gutter_width);
     let mut out = String::new();
-    out.push_str(&format!(
-        "{:width$} | {target}\n",
-        line,
-        width = gutter_width
-    ));
+    let _ = writeln!(out, "{line:gutter_width$} | {target}");
     if let Some(c) = col {
         // Column is 1-based; underline the character at that column.
         let prefix_width = c.saturating_sub(1);
@@ -141,11 +165,7 @@ pub fn render_code_frame(source: &str, line: usize, col: Option<usize>) -> Strin
             .take(prefix_width)
             .map(|ch| if ch == '\t' { '\t' } else { ' ' })
             .collect();
-        out.push_str(&format!(
-            "{:width$} | {spaces}^\n",
-            "",
-            width = gutter_width
-        ));
+        let _ = writeln!(out, "{gutter} | {spaces}^");
     }
     out
 }
@@ -234,7 +254,7 @@ fn render_code_frame_formats_with_gutter() {
     let src = "line one\nline two\nline three\n";
     let frame = render_code_frame(src, 2, Some(5));
     assert!(frame.contains("2 | line two"), "gutter line: {frame}");
-    assert!(frame.contains("^"), "caret present: {frame}");
+    assert!(frame.contains('^'), "caret present: {frame}");
 }
 
 #[test]
@@ -242,7 +262,7 @@ fn render_code_frame_line_only_has_no_caret() {
     let src = "a\nb\n";
     let frame = render_code_frame(src, 1, None);
     assert!(frame.contains("1 | a"));
-    assert!(!frame.contains("^"));
+    assert!(!frame.contains('^'));
 }
 
 #[test]
