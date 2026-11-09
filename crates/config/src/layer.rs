@@ -47,6 +47,7 @@ const KNOWN_KEYS: &[&str] = &[
     "experiments",
     "live",
     "stream",
+    "brownout",
 ];
 
 /// Environment variables allowed to override config (§14.2), as dotted paths.
@@ -383,6 +384,27 @@ fn validate(value: &Value, framework_source: &str) -> Result<()> {
     if let Some(v) = map.get("stream") {
         validate_stream(v)?;
     }
+    // V2-F12: the brownout knobs carry their own load-time bounds
+    // (DSP-113) — ascending ladders, a stale-ceiling multiplier ≥ 1 and a
+    // hedger factor > 1. A rule's `priority` rides the same diagnostic.
+    if let Some(v) = map.get("brownout") {
+        validate_brownout(v)?;
+    }
+    if let Some(Value::Array(rules)) = map.get("rules") {
+        for rule in rules {
+            match rule.get("priority") {
+                None | Some(Value::Null) => {}
+                Some(Value::String(s)) if matches!(s.as_str(), "low" | "normal" | "critical") => {}
+                _ => {
+                    return Err(dsp_113(
+                        "`rules[].priority` must be one of `\"low\"`, `\"normal\"`, \
+                         `\"critical\"` — the brownout enforcement sheds `low` routes at \
+                         level Shed and everything but `critical` at Emergency",
+                    ));
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -547,6 +569,94 @@ fn dsp_112(msg: &str) -> OxideError {
     d.fix = Some(
         "fix the `stream.resume` section — `ttlSecs` >= 1, `maxBytesEach` >= 1 byte and \
          `maxBytesTotal` >= `maxBytesEach`"
+            .into(),
+    );
+    OxideError(Box::new(d))
+}
+
+/// V2-F12: the `brownout` knobs must be physically usable — each threshold
+/// ladder ascending (a higher rung below a lower one would de-escalate into
+/// a breach), the `staleCeiling` multiplier parseable and ≥ 1 (a 0× ceiling
+/// would serve entries infinitely past their TTL), and the hedger's
+/// `afterFactor` > 1 (a factor of 1 would hedge every render). Violations
+/// fail the load with the `DSP-113` diagnostic (the DSP-110/111/112
+/// pattern, next free code).
+fn validate_brownout(value: &Value) -> Result<()> {
+    let Value::Object(map) = value else {
+        return Err(dsp_113("`brownout` must be an object"));
+    };
+    match map.get("enabled") {
+        None | Some(Value::Null | Value::Bool(_)) => {}
+        Some(_) => return Err(dsp_113("`brownout.enabled` must be a boolean")),
+    }
+    if let Some(c) = map.get("staleCeiling") {
+        match c {
+            Value::Null => {}
+            Value::String(s) if crate::parse_stale_ceiling(s).is_some() => {}
+            _ => {
+                return Err(dsp_113(
+                    "`brownout.staleCeiling` must be a multiplier of at least 1, e.g. `\"10x\"` \
+                     or `\"10\"` — a 0× ceiling would serve entries infinitely past their TTL",
+                ));
+            }
+        }
+    }
+    if let Some(Value::Object(thresholds)) = map.get("thresholds") {
+        for (key, value) in thresholds {
+            let Value::Array(rungs) = value else {
+                return Err(dsp_113(&format!(
+                    "`brownout.thresholds.{key}` must be an array of three numbers"
+                )));
+            };
+            if rungs.len() != 3 {
+                return Err(dsp_113(&format!(
+                    "`brownout.thresholds.{key}` must hold exactly three rungs \
+                     (levels Stale/Shed/Emergency), got {}",
+                    rungs.len()
+                )));
+            }
+            let mut prev = None;
+            for (i, r) in rungs.iter().enumerate() {
+                let Some(n) = r.as_u64() else {
+                    return Err(dsp_113(&format!(
+                        "`brownout.thresholds.{key}[{i}]` must be a non-negative number"
+                    )));
+                };
+                if prev.is_some_and(|p: u64| n < p) {
+                    return Err(dsp_113(&format!(
+                        "`brownout.thresholds.{key}` must be ascending — a rung below the \
+                         previous one would de-escalate into a breach"
+                    )));
+                }
+                prev = Some(n);
+            }
+        }
+    }
+    if let Some(Value::Object(hedge)) = map.get("hedge") {
+        match hedge.get("enabled") {
+            None | Some(Value::Null | Value::Bool(_)) => {}
+            Some(_) => return Err(dsp_113("`brownout.hedge.enabled` must be a boolean")),
+        }
+        match hedge.get("afterFactor") {
+            None | Some(Value::Null) => {}
+            Some(Value::Number(n)) if n.as_f64().is_some_and(|f| f > 1.0) => {}
+            _ => {
+                return Err(dsp_113(
+                    "`brownout.hedge.afterFactor` must be a number greater than 1 — a factor \
+                     of 1 (or less) would hedge every render",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The `DSP-113` diagnostic for an invalid `brownout` section (§V2-F12).
+fn dsp_113(msg: &str) -> OxideError {
+    let mut d = Diagnostic::error("DSP-113", msg);
+    d.fix = Some(
+        "fix the `brownout` section — ascending threshold ladders, `staleCeiling` >= 1 \
+         (e.g. `\"10x\"`) and `hedge.afterFactor` > 1"
             .into(),
     );
     OxideError(Box::new(d))
