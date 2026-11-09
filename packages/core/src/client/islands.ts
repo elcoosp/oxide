@@ -6,6 +6,7 @@
 // Pages with no islands ship no framework JavaScript.
 
 import { decodeOdf } from './odf-decode.ts'
+import { replayFor } from './replay.ts'
 
 /** Structural island host (real element or test fake). */
 export interface IslandHost {
@@ -121,6 +122,11 @@ export async function hydrateIsland(el: IslandHost, ctx: IslandCtx): Promise<(()
       disposer = adapter.hydrate(el as Element, { props, mod })
     }
     host.setAttribute?.('data-ox-hydrated', 'done')
+    // §V2-F03: interactions that landed on this island while it was pending
+    // replay now — after the framework listeners are attached, before the
+    // caller's microtask continues. No log, no replay: a no-op when capture
+    // never started (SSR, tests without startReplay).
+    replayFor(el)
     return disposer
   } catch (e) {
     host.setAttribute?.('data-ox-hydrated', 'error')
