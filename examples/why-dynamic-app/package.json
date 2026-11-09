@@ -1,0 +1,13 @@
+{
+  "name": "why-dynamic-app",
+  "private": true,
+  "version": "0.6.0",
+  "type": "module",
+  "description": "V2-F16 consumer example: four routes whose loaders read request state in different ways, exercised by `oxide why --route` and the `.oxide/routes.reasons.json` side-car.",
+  "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "@oxide-fw/react": "workspace:*",
+    "@oxide-fw/core": "workspace:*"
+  }
+}
