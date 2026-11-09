@@ -1,3 +1,125 @@
+# Handoff — V2-F12 brownout-mode substrate landed (governor + enforcement seam + config surface + gauge); all gates green
+
+## Where things stand
+
+**Branch:** `main`
+**Working tree:** the milestone ships as uncommitted changes plus `ship.sh`
+in the resolved downloads directory (bash 3.2-compatible, executable,
+gitignored; one conventional commit per file, then idempotent PR + squash
+merge + tag + push). Run `./ship.sh <repo>` to materialize the history.
+**Verified this session (2 vCPU sandbox, no V8 toolchain, no nasm):**
+- `cargo test --all-features` over the 15-crate V8-free graph
+  (excludes `jshost` + `cli` (V8), `plugin` + `assets` (nasm)) — all green
+  (1070 tests, baseline 1037; +33 F12 pins: server `governor_tdd` 18
+  incl. the spec table's raw_level breach matrix, immediate escalation,
+  the 6-tick hysteresis drop, the band that holds, the serve_decision ×
+  priority matrix, the shed header spelling and the Emergency-only
+  readiness flip; config `brownout_config` 14 incl. the DSP-113 rejections
+  and the schema-section shape; plus the metrics
+  `brownout_level_gauge_round_trips` pin).
+- `cargo fmt --all -- --check` — exit 0.
+- Workspace-lints pedantic gate `cargo clippy --no-deps -p oxide-fw-config
+  -p oxide-fw-dispatch -p oxide-fw-router -p oxide-fw-schema
+  --all-targets --all-features -- -D warnings -W clippy::pedantic` — zero
+  diagnostics (the CLI `-W` does not defeat the `[lints.clippy]`
+  `priority = -1` override; the gate fired and was fixed during the
+  session, proving it enforces).
+- CI-style gate `cargo clippy --no-deps` over the V8-free graph
+  (`--all-targets --all-features`, `-D warnings`) — zero diagnostics.
+  Excluded: `jshost` + `cli` (V8), `plugin` + `assets` (nasm absent).
+  `server` remains un-opted (pre-existing pedantic debt belongs to the
+  planned hygiene pass); all NEW code is pedantic-clean by direct check
+  (zero diagnostics point at `governor.rs`, the metrics gauge or the
+  brownout config lines).
+- `grep -rnE '#!?\[(allow|expect)\(|cfg_attr\([^)]_allow\('` over
+  `crates/ tests/ examples/ conformance/ packages/` — empty.
+- `cargo test --all-features --benches` over the graph — exit 0; the new
+  `governor` criterion bench reports `next_level` steady-state
+  1.3–5.0 ns, `raw_level` ≈ 1.0–1.4 ns, `governor/level_read` ≈ 372 ps
+  (the acceptance contract: one relaxed atomic load), `serve_decision`
+  ≈ 330 ps.
+
+## What landed
+
+V2-F12 from `docs/spec-v0.2-draft.md` (the brownout-mode governor), in
+the A02/A05/F04/F05/F06/F07 substrate pattern:
+
+1. **`server::governor` (`crates/server/src/governor.rs`):** the
+   spec-verbatim model — `Level` (Normal/Stale/Shed/Emergency with the
+   numeric header payload), `Signals`, `Thresholds`, the pure
+   `raw_level` breach scan (`>=`, inclusive), the pure `next_level`
+   transition (escalate immediately, hold in the hysteresis band,
+   de-escalate one level after `calm_ticks` calm ticks), and `Governor`
+   (the `AtomicU8` the sampler publishes and the request path reads).
+   The enforcement seam beside it: `Priority` (`low|normal|critical`),
+   `serve_decision` (level × priority → `Serve`/`ServeStale`/`Shed`),
+   `shed_response` (`503` + `retry-after: 5` + `x-oxide-brownout:
+   <level>`), `ready_status` (`503` only at `Emergency`).
+2. **Gauge (`crates/server/src/metrics.rs`):** `brownout_level: AtomicU64`
+   + `Metrics::set_brownout_level` + the `oxide_brownout_level` gauge in
+   the Prometheus exposition (the F05 pool-gauge pattern), pinned.
+3. **Config surface (`BrownoutConfig`/`BrownoutThresholdsConfig`/
+   `HedgeConfig`):** `brownout: { enabled: false, staleCeiling: "10x",
+   thresholds: { queueWaitMs: [50,200,500], loopLagMs: [20,100,300],
+   rssMb: [0,0,0] }, hedge: { enabled: false, afterFactor: 2.0 } }`
+   (camelCase, `deny_unknown_fields`); load validation emits **DSP-113**
+   (ascending ladders, a `staleCeiling` multiplier ≥ 1, a hedger
+   `afterFactor` > 1, and the `rules[].priority` grammar); `parse_stale_
+   ceiling` is public; the JSON schema declares the section and the
+   checked-in `schemas/oxide-fw-config.schema.json` was regenerated
+   (stability test green; its known-sections list also gained the
+   missing `stream` entry — F07 drift fixed in scope).
+4. **Route priority (`NativeRule.priority`):** the router struct and the
+   config mirror both carry `priority: Option<String>`; the CLI's
+   `config_rules_to_router` passes it through; the spelling validates at
+   load under DSP-113 and parses via `governor::parse_priority` (pinned
+   both sides). `page.server.ts` `config.priority` adoption rides the
+   compiler-side wiring.
+
+**Spec deltas recorded in `docs/deviations.md` (6):** the
+`exit_ratio: f64` hysteresis ratio is an integer percent
+(`exit_ratio_pct: u64`, default 60 — the zero-`#[allow]` policy forbids
+the lossy `u64`→`f64` casts; the comparison is exact `u128` math);
+config ladders are milliseconds (§14 human units); DSP-113 validates
+what the spec leaves unchecked; `ServeStale` is "eligible", not
+"forced"; `Governor::set` clamps to 3; the `rssMb: [0,0,0]` config
+spelling maps to the spec's never-breach `u64::MAX` sentinel.
+
+## Docs drift noted this session
+
+- Fixed in-scope: `crates/config/tests/schema_stability.rs`'s
+  known-sections list was missing `stream` (the F07 session regenerated
+  the schema but did not update the list); added, plus `brownout`.
+  `docs/architecture.md`'s `server` crate row + what-changed list
+  updated; `docs/deviations.md` carries the F12 record.
+- Noted for the doc owners (carried from F06/F07, unchanged): README's
+  crate count (says 18, 19 members — missing `dispatch`) and its
+  contradictory test-count badge vs the "1,239 test functions" line; the
+  "v0.1.0 is not yet tagged" claims vs `v0.4.1`; the CI job-count claims
+  (22/21 vs the 20 defined); the spec Appendix V2.O status table (all
+  `todo` for landed substrates — F12 now included); CONTRIBUTING's
+  "Rust 1.98 pinned by rust-toolchain.toml" vs `channel = "stable"`;
+  `benchmarks/README.md` omitting the `dispatch`/`server` benches. New
+  this session: `scripts/bump-version.sh`'s drift guard refuses to run
+  today — the `packages/*/package.json` versions are 0.1.0 while the
+  workspace is 0.4.1, so the script's "every surface at CURRENT" check
+  fails before any bump (its `oxide-*` workspace-dependency pins and the
+  root `package.json` are the only version surfaces that still agree).
+
+## Where to pick up, in one sentence
+
+A01 phase-3 on a V8-capable host remains the bottleneck and now also
+uncloses F12's wiring (the 500 ms sampler task over `pool.stats()` /
+loop-lag / RSS, the enforcement stage after prelude calling
+`serve_decision` + `shed_response`, the `warning: 110` header on stale L0
+service, `ready_status` on `/_oxide/ready`, the opt-in hedger and the
+`benchmarks/overload.sh` load test), then F10's pool side (whose early
+drop consults the brownout threshold), the `tests/live.sh` e2e, and the
+F-series (F08/F09 need R02's crates; F03/F16/F18 are the next
+no-dependency candidates).
+
+---
+
 # Handoff — V2-F07 resumable streams substrate landed (stream_store + data-plane seam + config + client); all gates green
 
 ## Where things stand
