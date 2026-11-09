@@ -16,11 +16,16 @@ pub mod live;
 pub mod loader;
 pub mod metrics;
 pub mod page_renderer;
+pub mod stream_store;
 /// §12.1: the QUIC server config the CLI passes to `serve_http3`. Re-exported
 /// so the CLI does not depend on `quinn` directly.
 pub use quinn::ServerConfig as H3ServerConfig;
 
 pub use loader::{LoaderOutput, LoaderRunInput, LoaderRunner};
+// V2-F07: the resumable-streams substrate (the types at the crate root;
+// the pure helpers — `read_from`, `stream_id`, `parse_range_offset`, the
+// response builders, `tee_stream` — live in the `stream_store` module).
+pub use stream_store::{Reattach as StreamReattach, StreamBuf, StreamStore};
 // V2-F05: the live-loaders substrate — spec names at the crate root
 // (`Hub`/`Runner` live in the `live` module; the crate surface keeps the
 // spec's `LiveHub`/`LiveRunner` spellings).

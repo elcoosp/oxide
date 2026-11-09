@@ -106,18 +106,44 @@ impl GenerationSet {
     }
 }
 
-/// The data plane today (§V2-A04 + §V2-F05): `/__data`, `/_oxide/fn/*`
-/// and `/__oxide/live` (F05: the `EventSource` endpoint replays loader
-/// snapshots, so it enforces the same build contract). `/__oxide/stream/*`
-/// joins when that route lands (F07) — until then it must not enforce the
-/// header, because no client would send it.
+/// The data plane today (§V2-A04 + §V2-F05 + §V2-F07): `/__data`,
+/// `/_oxide/fn/*`, `/__oxide/live` (F05: the `EventSource` endpoint
+/// replays loader snapshots, so it enforces the same build contract) and —
+/// since F07 — the `/__oxide/stream/` reattach route, which replays a
+/// response body's bytes and therefore enforces the same contract. The
+/// A04 note that reserved this flip ("joins when that route lands (F07)")
+/// is closed by the prefix match below.
 ///
 /// The wiring passes the request path; a query or fragment is tolerated
 /// (stripped) so both the raw target and `uri.path()` spellings work.
 #[must_use]
 pub fn is_data_plane_path(path: &str) -> bool {
     let path = path.split(['?', '#']).next().unwrap_or(path);
-    path == "/__data" || path == "/__oxide/live" || path.starts_with("/_oxide/fn/")
+    path == "/__data"
+        || path == "/__oxide/live"
+        || path.starts_with("/_oxide/fn/")
+        || path.starts_with("/__oxide/stream/")
+}
+
+/// The stream id of a reattach request (§V2-F07 wiring step 2): the path
+/// segment after the `/__oxide/stream/` prefix. `None` for every other
+/// path — and for the bare prefix, whose id segment is empty. The same
+/// query/fragment tolerance as [`is_data_plane_path`] applies; the id
+/// itself is 16-hex (the A04 convention — see
+/// `oxide_fw_server::stream_store::stream_id`), so no percent-decoding is
+/// needed — the value is taken byte-exact.
+#[must_use]
+pub fn stream_resume_id(path: &str) -> Option<&str> {
+    let path = path.split(['?', '#']).next().unwrap_or(path);
+    let id = path.strip_prefix("/__oxide/stream/")?;
+    if id.is_empty() {
+        return None;
+    }
+    // One segment only: a `/` inside would be a traversal, not an id.
+    if id.contains('/') {
+        return None;
+    }
+    Some(id)
 }
 
 /// Case-insensitive header lookup over the request's `(name, value)` list

@@ -116,8 +116,11 @@ fn data_plane_paths() {
     // route's WP flipped the predicate deliberately).
     assert!(is_data_plane_path("/__oxide/live"));
     assert!(is_data_plane_path("/__oxide/live?route=routes/index")); // query tolerated
-    // F07's stream route is still future: it must not enforce the header.
-    assert!(!is_data_plane_path("/__oxide/stream/abc"));
+    // V2-F07: the stream reattach route joins the same way (the A04 pins
+    // rejected it until F07's route landed — it replays response bytes, so
+    // it enforces the build contract; the old pins are in stream_tdd.rs).
+    assert!(is_data_plane_path("/__oxide/stream/abc"));
+    assert!(is_data_plane_path("/__oxide/stream/")); // bare prefix too
     assert!(!is_data_plane_path("/__oxide/livex")); // no prefix bleed
     assert!(!is_data_plane_path("/__datax")); // no prefix bleed
 }

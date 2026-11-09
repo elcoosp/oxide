@@ -589,3 +589,66 @@ and left to the doc owners.
 data-route path; its `Option<Bytes>` result now flows through
 `prepare_rerun` automatically) — then the `tests/live.sh` e2e, which should
 assert `event: data` frames carry `ODP1` after the first full snapshot.
+
+## V2-F07 resumable streams — deltas and deferrals (substrate step)
+
+The V2-F07 substrate (`server::stream_store`, the `/__oxide/stream/<id>`
+data-plane seam, the `stream.resume` config surface, the client
+`resumableFetch`) landed V8-free in the A02/A05/F04/F05/F06 pattern.
+
+**Deliberate spec deviations:**
+
+1. **The reattach wait is a `watch` channel over a `Progress { len, done }`
+   value, not the spec's `Notify::notify_waiters`.** `Notify` waiters
+   register only on their first poll, so a chunk appended between a
+   reader's backlog check and that first poll is missed — on a multithread
+   runtime the reader then sleeps forever and the reattach hangs
+   mid-stream. The `watch` channel (the F05 `Sub` pattern) stores the
+   latest value and resolves `changed()` for any send after the last seen
+   one, so no state transition can be missed; the buffer holds a primary
+   receiver, making every send infallible.
+2. **Overflow removes the buffer from the store immediately** (chunks
+   cleared, bytes paid back to the total accounting) instead of leaving a
+   shell to be swept. The spec's `get` already answered `Gone` for
+   overflowed buffers, so the observable behavior is identical; removing
+   at overflow time keeps the total accounting exact and the memory bound
+   hard.
+3. **The total-accounting eviction protects the buffer being appended
+   to.** "Evicts oldest completed first, then the oldest buffer" otherwise
+   holds; an in-flight stream never loses its own replay mid-write (the
+   per-stream `maxBytesEach` cap is the bound that stops a single runaway
+   buffer). The bound is therefore `maxBytesTotal` + the one active
+   stream's bytes, which the soak's memory bound still satisfies with one
+   in-flight response per connection.
+4. **`pump` constructs the body reader inside its `try`.** The spec's
+   client pseudocode does `r.body!.getReader()` outside the try — a
+   reattach answered with a body-less `503` escapes as a `TypeError`
+   instead of counting as a failed try. (Caught by the non-ok-status pin.)
+
+**What is deliberately deferred (A01 phase-3 / V8-capable host):**
+
+- The tee: wrapping resumable endpoint/server-fn response bodies with
+  `tee_stream` in the dispatch closure, minting `stream_id` per response
+  (the wiring owns the per-request counter), and adding
+  `x-oxide-stream: <id>` to the response head.
+- The route handler in the CLI server: `stream_resume_id` +
+  `parse_range_offset` + `StreamStore::get` + `stream_resume_response` are
+  the whole handler; the CLI closure assembles them on
+  `/__oxide/stream/*`.
+- The per-IP reattach rate limit (the spec's step-3 limit) rides the
+  existing rate-limit table the pipeline already owns (`server`'s
+  sharded buckets, PERF-22).
+- The housekeeping task calling `StreamStore::sweep` on a 30 s cadence,
+  and the `stream.resume` knobs flowing from config into
+  `StreamStore::new(ttl, max_each, max_total)`.
+
+**Hygiene rides-along:** `crates/dispatch/src/build.rs`'s A04 note
+("`/__oxide/stream/*` joins when that route lands (F07) — until then it
+must not enforce the header") is closed: the route joined the data plane
+and the A04 pins that documented the pre-F07 world were updated in place
+(the F07 pins live in `crates/dispatch/tests/stream_tdd.rs`).
+
+**To unclose:** the A01 phase-3 wiring above, then the e2e: an endpoint
+emitting numbered lines, `curl --max-time` dropping the first connection,
+a reattach with the byte offset, and the concatenation equal to the full
+stream byte for byte.

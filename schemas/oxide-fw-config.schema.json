@@ -693,6 +693,36 @@
       },
       "type": "object"
     },
+    "stream": {
+      "additionalProperties": false,
+      "description": "V2-F07: resumable-stream bounds. A streamed response marked x-oxide-stream stays replayable for the ttl at GET /__oxide/stream/<id> with Range: bytes=<n>-. Defaults are inert - the store only exists while a resumable response is being teed. Size literals use the section-14 grammar (b|kb|mb|gb|tb, plain digits are bytes). Validation (DSP-112): ttlSecs >= 1, maxBytesEach >= 1 byte, maxBytesTotal >= maxBytesEach; a bad literal fails with CFG-SIZE.",
+      "properties": {
+        "resume": {
+          "additionalProperties": false,
+          "description": "The reattach/replay bounds.",
+          "properties": {
+            "maxBytesEach": {
+              "default": "4mb",
+              "description": "Per-stream replay cap; past it the buffer loses replay and the client falls back to a fresh fetch.",
+              "type": "string"
+            },
+            "maxBytesTotal": {
+              "default": "256mb",
+              "description": "Store-wide cap; the accounting evicts the oldest completed buffer first, then the oldest buffer.",
+              "type": "string"
+            },
+            "ttlSecs": {
+              "default": 60,
+              "description": "How long a buffer stays reattachable, in seconds (DSP-112 rejects 0).",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
     "sw": {
       "additionalProperties": false,
       "description": "§16.6: service worker configuration. Present only when the project wants to control emission beyond the default (manifest presence).",
