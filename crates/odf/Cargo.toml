@@ -16,10 +16,24 @@ oxide-fw-diagnostics = { workspace = true }
 bytes = { workspace = true }
 thiserror = { workspace = true }
 serde_json = { workspace = true }
+# V2-F06 (D30): patch base ids = truncated SHA-256, shared with the TS client.
+sha2 = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+# V2-F06: the patch benches (the V2-B09 pattern — plain `cargo test` never
+# pays the criterion build).
+criterion = { workspace = true }
+
+[features]
+# V2-F06: exposes the criterion bench harness.
+bench-util = []
 
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+[[bench]]
+name = "patch"
+harness = false
+required-features = ["bench-util"]
