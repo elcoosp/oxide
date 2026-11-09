@@ -731,3 +731,60 @@ against a slow dynamic route with a `critical` L0 route alongside — the
 critical route's p99 stays within 2× its idle p99 while the slow route
 sheds with `503` + `x-oxide-brownout: 2`, the exposition shows
 `oxide_brownout_level 2`, and `/_oxide/ready` stays 200 until Emergency.
+
+## V2-F03 interaction replay — deltas and deferrals (substrate step)
+
+**What lands.** The full client substrate in `packages/core`:
+`src/client/replay.ts` (capture in the DOM capture phase against pending
+`<ox-island>` hosts, the 100-record drop-oldest log, host-relative child
+paths, replay-on-`done` with node-identity verification), the
+`hydrateIsland` wiring (replays the island's records immediately after
+`data-ox-hydrated` becomes `done`), and the boot wiring (`boot()` and
+`bootWithRouter()` both start the capture before any island hydrates; the
+payload's `interactionReplay: false` opts out). 15 Node pins in
+`packages/core/test/replay.test.ts` + the `replay.bench.ts` micro-bench.
+
+**Spec pseudocode deltas (4):**
+
+1. **Records carry the captured `target`; replay drops when the resolved
+   node is not the captured one.** The spec's `!el || !host.contains(el)`
+   guard cannot detect a same-slot replacement: after a defer swap the
+   recorded path resolves to the NEW node occupying the index, which IS
+   contained in the host — the spec sketch would replay the click onto the
+   wrong element. Node identity (the element the event actually hit)
+   survives in-place hydration and fails across a content swap, which is
+   the invariant the spec states ("element replaced by hydration or a
+   defer swap: drop").
+2. **`pathOf` refuses paths that do not terminate at the island host**
+   (returns `null`; capture skips the record). The spec sketch walks
+   `parentElement` unguarded and records a truncated path for detached /
+   template-fallback targets; the observable contract is identical (the
+   record can never replay) without materializing garbage.
+3. **Replay restores `checked` for `change` records.** The spec sketch
+   records `checked` but never applies it, so a pre-hydration checkbox
+   toggle would lose the user's input on replay.
+4. **`startReplay` is idempotent per document** — a second call for the
+   same document returns the existing stop handle instead of installing
+   duplicate capture listeners. `boot()` can run more than once across
+   duplicate module evaluations (bundler dedup failure, SPA reimport);
+   the spec sketch would double-record every interaction and replay each
+   one twice. The module-global log also carries `resetReplay()` /
+   `replayPending()` hooks for the Node test runner and devtools;
+   production boot never calls them.
+
+**What is deliberately deferred (Rust config surface — this session's
+sandbox has no Rust toolchain):**
+
+- The `interactionReplay` config section end-to-end:
+  `oxide.config.ts` → typed section in `crates/config` (+ load validation
+  under a DSP number) → regenerated `schemas/oxide-fw-config.schema.json`
+  → the hydration bootstrap emitting the field into `window.__oxide`.
+  The client side of the seam is already live and spec-shaped: the boot
+  runtime honors `payload.interactionReplay === false` today, so emitting
+  the field is the only remaining change and defaults stay ON (flag
+  absent = enabled).
+- The Playwright acceptance (block the island chunk request, click the
+  SSR button, release, assert the handler count is exactly 1) — needs a
+  real browser plus a built smoke app. The Node pins cover the same
+  contract with fakes; `tests/playwright` gains the block-release spec
+  when the browser harness is available.
