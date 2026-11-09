@@ -10,6 +10,10 @@
 //! 3. import scan for the graph + preload hints (§6.2 step 7)
 //! 4. forbidden-import guard (§6.4) — server-only modules unreachable from client
 //! 5. HMR/refresh boundary injection (dev only, §6.2 step 6)
+//! 6. why-dynamic reason engine (§V2-F16) — [`infer_reasons`] reports every
+//!    request-scoped read (and every uncached `fetch(`) as a [`DynamicReason`]
+//!    with a source span; the unit behind `oxide why --route`, the `OX-DYN`
+//!    diagnostics and the `.oxide/routes.reasons.json` side-car
 //!
 //! **Backends (D4):** [`OxcTransformer`] uses the real `oxc_parser` + `oxc_ast`
 //! (spec D4) for syntax validation and top-level import/exports; [`ScannerTransformer`]
@@ -1196,6 +1200,253 @@ pub struct InferredMode {
     pub trigger: Option<&'static str>,
 }
 
+/// V2-F16: one request-specific read in a loader module — the unit the
+/// `oxide why --route` report and the `.oxide/routes.reasons.json` side-car
+/// are built from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DynamicReason {
+    /// Which request-scoped read this is.
+    pub kind: ReasonKind,
+    /// Byte span of the read (`source.get(span.0..span.1)` always works).
+    pub span: (usize, usize),
+    /// 1-based line of `span.0`.
+    pub line: u32,
+    /// The trimmed source line containing `span.0`.
+    pub snippet: String,
+}
+
+/// V2-F16: the kind of request-scoped read (Appendix V2.K code `OX-DYN`).
+///
+/// The four §10.1 kinds map 1:1 onto the trigger strings
+/// [`infer_render_mode`] has always reported. `UncachedFetch` is the F16
+/// addition and deliberately does **not** flip the render mode: a `fetch`
+/// call reads no request state, so it only feeds the why report and the
+/// side-car (the `compiler_tdd` §10.1 pins must keep passing).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ReasonKind {
+    /// A `cookies` read (the bind or the accessor).
+    CookieRead,
+    /// A `request.headers` read (the bind or the accessor).
+    HeaderRead,
+    /// A `locals` read (the bind or the accessor).
+    LocalsRead,
+    /// A `searchParams` read (the bind or the accessor).
+    SearchParamRead,
+    /// A `fetch(` call outside any `'use cache'` function.
+    UncachedFetch,
+}
+
+impl ReasonKind {
+    /// The scanner vocabulary `oxide routes` already prints (the §10.1
+    /// trigger names; `fetch` is the V2-F16 addition).
+    #[must_use]
+    pub fn trigger(self) -> &'static str {
+        match self {
+            Self::CookieRead => "cookies",
+            Self::HeaderRead => "request.headers",
+            Self::LocalsRead => "locals",
+            Self::SearchParamRead => "searchParams",
+            Self::UncachedFetch => "fetch",
+        }
+    }
+
+    /// The diagnostic headline (the OX-DYN message).
+    #[must_use]
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::CookieRead => "route is dynamic: cookies read",
+            Self::HeaderRead => "route is dynamic: request headers read",
+            Self::LocalsRead => "route is dynamic: locals read",
+            Self::SearchParamRead => "route is dynamic: searchParams read",
+            Self::UncachedFetch => "uncached fetch: the response cannot be cached",
+        }
+    }
+
+    /// The fix help text (the miette `help` of the OX-DYN diagnostic, and
+    /// the contract the deferred `--fix` codemods must verify against).
+    #[must_use]
+    pub fn help(self) -> &'static str {
+        match self {
+            Self::CookieRead => {
+                "Move the cookie read into the loader and return it as data; \
+                 components consume props, never the request."
+            }
+            Self::HeaderRead => {
+                "Read the header in the loader (or set it via `setHeaders`) \
+                 and return it as data; components consume props, never the request."
+            }
+            Self::LocalsRead => {
+                "Return the locals value from the loader as data so the route \
+                 can be cached without its middleware dependency."
+            }
+            Self::SearchParamRead => {
+                "Declare a `searchSchema` so the listed keys become cache \
+                 dimensions instead of a dynamic read."
+            }
+            Self::UncachedFetch => {
+                "Wrap the fetch in a `'use cache'` function so the loader \
+                 result is cacheable."
+            }
+        }
+    }
+
+    /// The why-chain cause attached under the headline.
+    #[must_use]
+    pub fn cause(self) -> &'static str {
+        match self {
+            Self::CookieRead => "`cookies` is request-scoped state (§10.1)",
+            Self::HeaderRead => "`request.headers` is request-scoped state (§10.1)",
+            Self::LocalsRead => "`locals` is middleware-owned request state (§10.1)",
+            Self::SearchParamRead => "`searchParams` is request-scoped state (§10.1)",
+            Self::UncachedFetch => {
+                "the `fetch(` call is not inside a `'use cache'` function (§9.3)"
+            }
+        }
+    }
+}
+
+/// The `OX-DYN` code (spec Appendix V2.K): "Route is dynamic; reasons
+/// attached (F16)".
+const OX_DYN: &str = "OX-DYN";
+
+impl DynamicReason {
+    /// Build the source-mapped `OX-DYN` diagnostic for this read: headline,
+    /// location, rendered code frame, the why-chain cause and the fix help
+    /// text (the miette help of the diagnostic).
+    #[must_use]
+    pub fn diagnostic(&self, path: &str, source: &str) -> Diagnostic {
+        let prefix = source.get(..self.span.0).unwrap_or("");
+        let col = prefix
+            .rfind('\n')
+            .map_or(self.span.0 + 1, |i| self.span.0 - i);
+        let frame = oxide_fw_diagnostics::render_code_frame(source, self.line as usize, Some(col));
+        Diagnostic::info(OX_DYN, self.kind.message())
+            .at(oxide_fw_diagnostics::Location::file(
+                path,
+                self.line,
+                u32::try_from(col).unwrap_or(u32::MAX),
+            ))
+            .with_code_frame(frame)
+            .with_fix(self.kind.help())
+            .with_cause(self.kind.cause())
+    }
+
+    /// The side-car row (`.oxide/routes.reasons.json` entry shape:
+    /// `{ kind, line, snippet, span }`).
+    #[must_use]
+    pub fn row(&self) -> RouteReasonRow {
+        RouteReasonRow {
+            kind: self.kind,
+            line: self.line,
+            snippet: self.snippet.clone(),
+            span: [self.span.0, self.span.1],
+        }
+    }
+}
+
+/// One row of the `.oxide/routes.reasons.json` side-car (V2-F16) — the
+/// JSON map of route id to reasons that inspectors and the MCP
+/// `routes.list` tool consume instead of re-running the AST pass.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RouteReasonRow {
+    /// The read kind (camelCase in JSON: `cookieRead`, `uncachedFetch`, ...).
+    pub kind: ReasonKind,
+    /// 1-based line of the read.
+    pub line: u32,
+    /// The trimmed source line containing the read.
+    pub snippet: String,
+    /// Byte span `[start, end]` of the read.
+    pub span: [usize; 2],
+}
+
+/// §V2-F16: every request-specific read in a loader module, in pre-order —
+/// the collect-all sibling of [`infer_render_mode`]'s first-hit visitor.
+///
+/// A read counts when it is a *member access* on a request-scoped object,
+/// when a loader-shaped function binds one of the request-scoped names out
+/// of its params, or — the F16 addition — when a `fetch(` call sits outside
+/// any `'use cache'` function ([`ReasonKind::UncachedFetch`]). A destructured
+/// bind and its member use are two hits, so `({ cookies })` plus
+/// `cookies.get(...)` reports two [`DynamicReason`]s.
+///
+/// A module that does not parse reports no reasons (the conservative mode
+/// answer stays `dynamic` via [`infer_render_mode`]; there is no span to
+/// point a diagnostic at).
+#[must_use]
+pub fn infer_reasons(source: &str, path: &str) -> Vec<DynamicReason> {
+    let _span = tracing::debug_span!("infer_reasons", path = %path).entered();
+    match collect_request_hits(source, path) {
+        Some(hits) => hits.iter().map(|hit| hit.reason(source)).collect(),
+        None => Vec::new(),
+    }
+}
+
+/// One request-scoped read found by the AST walk, before line/snippet
+/// enrichment.
+struct Hit {
+    span: (usize, usize),
+    kind: ReasonKind,
+}
+
+impl Hit {
+    /// Enrich the span with its 1-based line and trimmed source line.
+    fn reason(&self, source: &str) -> DynamicReason {
+        let start = self.span.0;
+        let prefix = source.get(..start).unwrap_or("");
+        let line = 1u32
+            + prefix
+                .bytes()
+                .filter(|b| *b == b'\n')
+                .count()
+                .try_into()
+                .unwrap_or(u32::MAX - 1);
+        let line_start = prefix.rfind('\n').map_or(0, |i| i + 1);
+        let rest = source.get(start..).unwrap_or("");
+        let line_end = rest
+            .find('\n')
+            .map_or(source.len(), |i| start.saturating_add(i));
+        let snippet = source
+            .get(line_start..line_end)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        DynamicReason {
+            kind: self.kind,
+            span: self.span,
+            line,
+            snippet,
+        }
+    }
+}
+
+/// Parse the module and collect **every** request-scoped read in pre-order.
+/// `None` when the module does not parse (the caller decides between the
+/// conservative `dynamic` mode answer and the empty reasons list).
+fn collect_request_hits(source: &str, path: &str) -> Option<Vec<Hit>> {
+    let allocator = oxc_allocator::Allocator::default();
+    // `.server.ts` files are TypeScript.
+    let source_type = oxc_span::SourceType::ts();
+    let parsed = oxc_parser::Parser::new(&allocator, source, source_type).parse();
+    if !parsed.diagnostics.is_empty() {
+        // The module does not parse. It is a build error the transform pass
+        // will surface with a proper diagnostic; the inference's job is to
+        // not crash, and the conservative answer is "dynamic". The path is
+        // named here so the inference is observable in traces (it used to be
+        // discarded with a bare `let _ = path`).
+        tracing::debug!(
+            path = %path,
+            "loader module does not parse: mode falls back to dynamic, no reason spans exist"
+        );
+        return None;
+    }
+    let mut hits = Vec::new();
+    for stmt in &parsed.program.body {
+        walk_stmt_for_request_reads(stmt, source, false, &mut hits);
+    }
+    Some(hits)
+}
+
 /// §10.1: does this loader module read anything request-specific?
 ///
 /// Runs a real Oxc parse and walks the AST — not a line scan. A read counts
@@ -1215,135 +1466,97 @@ pub struct InferredMode {
 /// Falls back to the line-based scan when the module does not parse (a
 /// `.server.ts` the parser rejects is a build error reported elsewhere, and
 /// the conservative answer here is `dynamic`).
+///
+/// V2-F16: this stays the cheap first-hit entry point — its contract is
+/// frozen (the §10.1 pins must not change). Every hit, including the
+/// `UncachedFetch` kind that never flips the mode, comes from
+/// [`infer_reasons`] instead.
+#[must_use]
 pub fn infer_render_mode(source: &str, path: &str) -> InferredMode {
-    let allocator = oxc_allocator::Allocator::default();
-    // `.server.ts` files are TypeScript.
-    let source_type = oxc_span::SourceType::ts();
-    let parsed = oxc_parser::Parser::new(&allocator, source, source_type).parse();
-    if !parsed.diagnostics.is_empty() {
-        // The module does not parse. It is a build error the transform pass
-        // will surface with a proper diagnostic; the inference's job is to
-        // not crash, and the conservative answer is "dynamic".
-        let _ = path;
-        return InferredMode {
-            mode: "dynamic",
-            trigger_span: None,
-            trigger: None,
-        };
-    }
-
-    let mut found: Option<((usize, usize), &'static str)> = None;
-    walk_for_request_reads(&parsed.program, source, &mut found);
-    match found {
-        Some(((start, end), trigger)) => InferredMode {
-            mode: "dynamic",
-            trigger_span: Some((start, end)),
-            trigger: Some(trigger),
-        },
+    match collect_request_hits(source, path) {
         None => InferredMode {
-            mode: "static",
+            mode: "dynamic",
             trigger_span: None,
             trigger: None,
+        },
+        Some(hits) => match hits
+            .iter()
+            .find(|hit| hit.kind != ReasonKind::UncachedFetch)
+        {
+            // An UncachedFetch never flips the mode (it reads no request
+            // state): the first-hit contract scans past it, exactly what
+            // the pre-F16 visitor answered.
+            Some(hit) => InferredMode {
+                mode: "dynamic",
+                trigger_span: Some(hit.span),
+                trigger: Some(hit.kind.trigger()),
+            },
+            None => InferredMode {
+                mode: "static",
+                trigger_span: None,
+                trigger: None,
+            },
         },
     }
 }
 
-/// Recursively scan every expression for a request-scoped read. Returns the
-/// first one found (top-down, so the outermost access wins) — its span is
-/// what a diagnostic points at.
-fn walk_for_request_reads<'a>(
-    program: &oxc_ast::ast::Program<'a>,
+fn walk_stmt_for_request_reads(
+    stmt: &oxc_ast::ast::Statement<'_>,
     source: &str,
-    found: &mut Option<((usize, usize), &'static str)>,
-) {
-    for stmt in &program.body {
-        walk_stmt_for_request_reads(stmt, source, found);
-        if found.is_some() {
-            return;
-        }
-    }
-}
-
-fn walk_stmt_for_request_reads<'a>(
-    stmt: &oxc_ast::ast::Statement<'a>,
-    source: &str,
-    found: &mut Option<((usize, usize), &'static str)>,
+    in_cache: bool,
+    hits: &mut Vec<Hit>,
 ) {
     use oxc_ast::ast::Statement;
-    if found.is_some() {
-        return;
-    }
     match stmt {
-        Statement::ExpressionStatement(es) => walk_expr(&es.expression, source, found),
+        Statement::ExpressionStatement(es) => walk_expr(&es.expression, source, in_cache, hits),
         Statement::ReturnStatement(r) => {
             if let Some(arg) = &r.argument {
-                walk_expr(arg, source, found);
+                walk_expr(arg, source, in_cache, hits);
             }
         }
         Statement::VariableDeclaration(v) => {
             for d in &v.declarations {
                 if let Some(init) = &d.init {
-                    walk_expr(init, source, found);
+                    walk_expr(init, source, in_cache, hits);
                 }
             }
         }
         Statement::IfStatement(i) => {
-            walk_expr(&i.test, source, found);
-            walk_stmt_for_request_reads(&i.consequent, source, found);
+            walk_expr(&i.test, source, in_cache, hits);
+            walk_stmt_for_request_reads(&i.consequent, source, in_cache, hits);
             if let Some(alt) = &i.alternate {
-                walk_stmt_for_request_reads(alt, source, found);
+                walk_stmt_for_request_reads(alt, source, in_cache, hits);
             }
         }
         Statement::BlockStatement(b) => {
             for s in &b.body {
-                walk_stmt_for_request_reads(s, source, found);
-                if found.is_some() {
-                    return;
-                }
+                walk_stmt_for_request_reads(s, source, in_cache, hits);
             }
         }
         Statement::ExportDeclaration(e) => {
-            walk_decl(&e.declaration, source, found);
+            walk_decl(&e.declaration, source, in_cache, hits);
         }
         Statement::ExportDefaultDeclaration(e) => {
             if let oxc_ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(f) =
                 &e.declaration
                 && let Some(body) = &f.body
             {
+                let cached = in_cache || has_use_cache_directive(body);
                 for s in &body.statements {
-                    walk_stmt_for_request_reads(s, source, found);
-                    if found.is_some() {
-                        return;
-                    }
+                    walk_stmt_for_request_reads(s, source, cached, hits);
                 }
             }
         }
         Statement::FunctionDeclaration(f) => {
-            if check_fn_params_for_request_read(&f.params, source, found) {
-                return;
-            }
-            if let Some(body) = &f.body {
-                for s in &body.statements {
-                    walk_stmt_for_request_reads(s, source, found);
-                    if found.is_some() {
-                        return;
-                    }
-                }
-            }
+            walk_fn_like(&f.params, f.body.as_deref(), source, in_cache, hits);
         }
         Statement::TryStatement(t) => {
             for s in &t.block.body {
-                walk_stmt_for_request_reads(s, source, found);
-                if found.is_some() {
-                    return;
-                }
+                walk_stmt_for_request_reads(s, source, in_cache, hits);
             }
             if let Some(h) = &t.handler {
                 for s in &h.body.body {
-                    walk_stmt_for_request_reads(s, source, found);
-                    if found.is_some() {
-                        return;
-                    }
+                    walk_stmt_for_request_reads(s, source, in_cache, hits);
                 }
             }
         }
@@ -1351,46 +1564,25 @@ fn walk_stmt_for_request_reads<'a>(
     }
 }
 
-fn walk_decl<'a>(
-    d: &oxc_ast::ast::Declaration<'a>,
-    source: &str,
-    found: &mut Option<((usize, usize), &'static str)>,
-) {
+fn walk_decl(d: &oxc_ast::ast::Declaration<'_>, source: &str, in_cache: bool, hits: &mut Vec<Hit>) {
     use oxc_ast::ast::Declaration;
     match d {
         Declaration::VariableDeclaration(v) => {
             for d in &v.declarations {
                 if let Some(init) = &d.init {
-                    walk_expr(init, source, found);
+                    walk_expr(init, source, in_cache, hits);
                 }
             }
         }
         Declaration::FunctionDeclaration(f) => {
-            if check_fn_params_for_request_read(&f.params, source, found) {
-                return;
-            }
-            if let Some(body) = &f.body {
-                for s in &body.statements {
-                    walk_stmt_for_request_reads(s, source, found);
-                    if found.is_some() {
-                        return;
-                    }
-                }
-            }
+            walk_fn_like(&f.params, f.body.as_deref(), source, in_cache, hits);
         }
         _ => {}
     }
 }
 
-fn walk_expr<'a>(
-    e: &oxc_ast::ast::Expression<'a>,
-    source: &str,
-    found: &mut Option<((usize, usize), &'static str)>,
-) {
-    use oxc_ast::ast::{Argument, Expression};
-    if found.is_some() {
-        return;
-    }
+fn walk_expr(e: &oxc_ast::ast::Expression<'_>, source: &str, in_cache: bool, hits: &mut Vec<Hit>) {
+    use oxc_ast::ast::Expression;
     match e {
         Expression::StaticMemberExpression(m) => {
             // The property name is the read. `cookies.get(...)` — the
@@ -1403,124 +1595,141 @@ fn walk_expr<'a>(
             // whose object is `request` and property is `headers`.
             if let Expression::Identifier(obj) = &m.object {
                 let n = obj.name.as_str();
-                if let Some(name) = request_scoped_name(n) {
-                    *found = Some(((m.span.start as usize, m.span.end as usize), name));
-                    return;
+                if let Some(kind) = request_scoped_kind(n) {
+                    hits.push(Hit {
+                        span: (m.span.start as usize, m.span.end as usize),
+                        kind,
+                    });
                 }
             }
             if let Expression::Identifier(obj) = &m.object
                 && obj.name.as_str() == "request"
                 && m.property.name.as_str() == "headers"
             {
-                *found = Some((
-                    (m.span.start as usize, m.span.end as usize),
-                    "request.headers",
-                ));
-                return;
+                hits.push(Hit {
+                    span: (m.span.start as usize, m.span.end as usize),
+                    kind: ReasonKind::HeaderRead,
+                });
             }
-            walk_expr(&m.object, source, found);
+            walk_expr(&m.object, source, in_cache, hits);
         }
         Expression::ComputedMemberExpression(m) => {
             if let Expression::Identifier(obj) = &m.object
-                && let Some(name) = request_scoped_name(obj.name.as_str())
+                && let Some(kind) = request_scoped_kind(obj.name.as_str())
             {
-                *found = Some(((m.span.start as usize, m.span.end as usize), name));
-                return;
+                hits.push(Hit {
+                    span: (m.span.start as usize, m.span.end as usize),
+                    kind,
+                });
             }
-            walk_expr(&m.object, source, found);
-            walk_expr(&m.expression, source, found);
+            walk_expr(&m.object, source, in_cache, hits);
+            walk_expr(&m.expression, source, in_cache, hits);
         }
         Expression::CallExpression(call) => {
-            walk_expr(&call.callee, source, found);
-            for a in &call.arguments {
-                match a {
-                    Argument::SpreadElement(s) => walk_expr(&s.argument, source, found),
-                    _ => {
-                        if let Some(e) = a.as_expression() {
-                            walk_expr(e, source, found);
-                        }
-                    }
-                }
-                if found.is_some() {
-                    return;
-                }
-            }
+            walk_call_expression(call, source, in_cache, hits);
         }
-        Expression::AwaitExpression(a) => walk_expr(&a.argument, source, found),
-        Expression::ParenthesizedExpression(p) => walk_expr(&p.expression, source, found),
-        Expression::AssignmentExpression(a) => walk_expr(&a.right, source, found),
+        Expression::AwaitExpression(a) => walk_expr(&a.argument, source, in_cache, hits),
+        Expression::ParenthesizedExpression(p) => walk_expr(&p.expression, source, in_cache, hits),
+        Expression::AssignmentExpression(a) => walk_expr(&a.right, source, in_cache, hits),
         Expression::ConditionalExpression(c) => {
-            walk_expr(&c.test, source, found);
-            walk_expr(&c.consequent, source, found);
-            walk_expr(&c.alternate, source, found);
+            walk_expr(&c.test, source, in_cache, hits);
+            walk_expr(&c.consequent, source, in_cache, hits);
+            walk_expr(&c.alternate, source, in_cache, hits);
         }
         Expression::BinaryExpression(b) => {
-            walk_expr(&b.left, source, found);
-            walk_expr(&b.right, source, found);
+            walk_expr(&b.left, source, in_cache, hits);
+            walk_expr(&b.right, source, in_cache, hits);
         }
         Expression::LogicalExpression(l) => {
-            walk_expr(&l.left, source, found);
-            walk_expr(&l.right, source, found);
+            walk_expr(&l.left, source, in_cache, hits);
+            walk_expr(&l.right, source, in_cache, hits);
         }
         Expression::ObjectExpression(o) => {
             for p in &o.properties {
                 if let oxc_ast::ast::ObjectPropertyKind::ObjectProperty(op) = p {
-                    walk_expr(&op.value, source, found);
-                    if found.is_some() {
-                        return;
-                    }
+                    walk_expr(&op.value, source, in_cache, hits);
                 }
             }
         }
         Expression::ArrayExpression(arr) => {
             for el in &arr.elements {
                 if let Some(e) = el.as_expression() {
-                    walk_expr(e, source, found);
-                }
-                if found.is_some() {
-                    return;
+                    walk_expr(e, source, in_cache, hits);
                 }
             }
         }
         Expression::ArrowFunctionExpression(a) => {
-            // §10.1: destructured request state in params counts as a read:
-            // `load = async ({ cookies }) => ...` observes request state
-            // without ever producing a member expression on it.
-            if check_fn_params_for_request_read(&a.params, source, found) {
-                return;
-            }
             // `ArrowFunctionBody` is `FunctionBody | INHERIT(Expression)`;
             // the inherited variant's accessor is `as_expression`.
             match &a.body {
                 oxc_ast::ast::ArrowFunctionBody::FunctionBody(b) => {
-                    for s in &b.statements {
-                        walk_stmt_for_request_reads(s, source, found);
-                        if found.is_some() {
-                            return;
-                        }
-                    }
+                    walk_fn_like(&a.params, Some(b), source, in_cache, hits);
                 }
                 other => {
+                    // §10.1: destructured request state in params counts as
+                    // a read: `load = async ({ cookies }) => ...` observes
+                    // request state without a member expression on it.
+                    check_fn_params_for_request_read(&a.params, source, hits);
                     if let Some(expr) = other.as_expression() {
-                        walk_expr(expr, source, found);
+                        walk_expr(expr, source, in_cache, hits);
                     }
                 }
             }
         }
         Expression::FunctionExpression(f) => {
-            if check_fn_params_for_request_read(&f.params, source, found) {
-                return;
-            }
-            if let Some(body) = &f.body {
-                for s in &body.statements {
-                    walk_stmt_for_request_reads(s, source, found);
-                    if found.is_some() {
-                        return;
-                    }
+            walk_fn_like(&f.params, f.body.as_deref(), source, in_cache, hits);
+        }
+        _ => {}
+    }
+}
+
+/// The shared shape of the function-like arms: the formal params are checked
+/// for a request-event bind (§10.1), then the body is walked with the
+/// `'use cache'` scope threaded through (a cached function's fetches are
+/// not `UncachedFetch` reasons, V2-F16).
+fn walk_fn_like(
+    params: &oxc_ast::ast::FormalParameters<'_>,
+    body: Option<&oxc_ast::ast::FunctionBody>,
+    source: &str,
+    in_cache: bool,
+    hits: &mut Vec<Hit>,
+) {
+    check_fn_params_for_request_read(params, source, hits);
+    if let Some(body) = body {
+        let cached = in_cache || has_use_cache_directive(body);
+        for s in &body.statements {
+            walk_stmt_for_request_reads(s, source, cached, hits);
+        }
+    }
+}
+
+/// The call arm, extracted to keep [`walk_expr`] under the pedantic
+/// function-length budget: a `fetch(` call outside any `'use cache'`
+/// function is an `UncachedFetch` reason (V2-F16), recorded in pre-order
+/// (before the arguments are walked) and never flipping the render mode.
+fn walk_call_expression(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    source: &str,
+    in_cache: bool,
+    hits: &mut Vec<Hit>,
+) {
+    use oxc_ast::ast::Argument;
+    if !in_cache && is_fetch_callee(&call.callee) {
+        hits.push(Hit {
+            span: (call.span.start as usize, call.span.end as usize),
+            kind: ReasonKind::UncachedFetch,
+        });
+    }
+    walk_expr(&call.callee, source, in_cache, hits);
+    for a in &call.arguments {
+        match a {
+            Argument::SpreadElement(s) => walk_expr(&s.argument, source, in_cache, hits),
+            _ => {
+                if let Some(e) = a.as_expression() {
+                    walk_expr(e, source, in_cache, hits);
                 }
             }
         }
-        _ => {}
     }
 }
 
@@ -1532,23 +1741,25 @@ fn walk_expr<'a>(
 fn check_fn_params_for_request_read(
     params: &oxc_ast::ast::FormalParameters<'_>,
     source: &str,
-    found: &mut Option<((usize, usize), &'static str)>,
-) -> bool {
+    hits: &mut Vec<Hit>,
+) {
     let (start, end) = (params.span.start as usize, params.span.end as usize);
     let text = source.get(start..end).unwrap_or("");
     for name in ["cookies", "locals", "searchParams", "request"] {
         if has_word(text, name) {
-            let trigger: &'static str = match name {
-                "cookies" => "cookies",
-                "locals" => "locals",
-                "searchParams" => "searchParams",
-                _ => "request.headers",
+            let kind: ReasonKind = match name {
+                "cookies" => ReasonKind::CookieRead,
+                "locals" => ReasonKind::LocalsRead,
+                "searchParams" => ReasonKind::SearchParamRead,
+                _ => ReasonKind::HeaderRead,
             };
-            *found = Some(((start, end), trigger));
-            return true;
+            hits.push(Hit {
+                span: (start, end),
+                kind,
+            });
+            return;
         }
     }
-    false
 }
 
 /// Word-boundary substring search without pulling in a regex.
@@ -1574,13 +1785,36 @@ fn has_word(haystack: &str, needle: &str) -> bool {
 }
 
 /// The four request-scoped names the spec (§10.1) treats as dynamic.
-fn request_scoped_name(n: &str) -> Option<&'static str> {
+fn request_scoped_kind(n: &str) -> Option<ReasonKind> {
     match n {
-        "cookies" => Some("cookies"),
-        "locals" => Some("locals"),
-        "searchParams" => Some("searchParams"),
+        "cookies" => Some(ReasonKind::CookieRead),
+        "locals" => Some(ReasonKind::LocalsRead),
+        "searchParams" => Some(ReasonKind::SearchParamRead),
         _ => None,
     }
+}
+
+/// V2-F16: is this call expression's callee a `fetch` call — the bare
+/// identifier `fetch` or a member whose property is `fetch`
+/// (`globalThis.fetch`, `window.fetch`)?
+fn is_fetch_callee(callee: &oxc_ast::ast::Expression) -> bool {
+    match callee {
+        oxc_ast::ast::Expression::Identifier(id) => id.name.as_str() == "fetch",
+        oxc_ast::ast::Expression::StaticMemberExpression(m) => m.property.name.as_str() == "fetch",
+        _ => false,
+    }
+}
+
+/// V2-F16: does this function body carry the `'use cache'` directive?
+/// Mirrors the directive pass's check (`value.trim() == "use cache"`) at
+/// the AST level, so a fetch inside a cached function is not reported.
+fn has_use_cache_directive(body: &oxc_ast::ast::FunctionBody) -> bool {
+    body.directives.iter().any(|d| {
+        d.expression
+            .value
+            .as_str()
+            .is_some_and(|s| s.trim() == "use cache")
+    })
 }
 
 #[cfg(test)]
