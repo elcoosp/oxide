@@ -9,7 +9,7 @@ use oxide_fw_render::*;
 
 fn head(title: Option<&str>, meta: Vec<(&str, &str)>) -> HeadTags {
     HeadTags {
-        title: title.map(|t| t.to_string()),
+        title: title.map(std::string::ToString::to_string),
         meta: meta
             .into_iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -92,14 +92,18 @@ fn merge_links_scripts_jsonld_concatenate_outer_first() {
         "o.css".into(),
         [("rel".to_string(), "stylesheet".to_string())].into(),
     ));
-    outer.scripts.push(("outer()".into(), Default::default()));
+    outer
+        .scripts
+        .push(("outer()".into(), std::collections::BTreeMap::default()));
     outer.json_ld.push("{\"o\":1}".into());
     let mut inner = head(Some("I"), vec![]);
     inner.links.push((
         "i.css".into(),
         [("rel".to_string(), "stylesheet".to_string())].into(),
     ));
-    inner.scripts.push(("inner()".into(), Default::default()));
+    inner
+        .scripts
+        .push(("inner()".into(), std::collections::BTreeMap::default()));
     inner.json_ld.push("{\"i\":2}".into());
     let m = outer.merge(inner);
     assert_eq!(
@@ -155,8 +159,10 @@ fn to_html_scripts_carry_nonce_and_sort_attrs() {
         "console.log(1)".into(),
         [("type".to_string(), "module".to_string())].into(),
     ));
-    h.scripts
-        .push(("var a = '</SCRIPT>'".into(), Default::default()));
+    h.scripts.push((
+        "var a = '</SCRIPT>'".into(),
+        std::collections::BTreeMap::default(),
+    ));
     let html = h.to_html("abc123");
     assert!(
         html.contains("<script type=\"module\" nonce=\"abc123\">console.log(1)</script>"),
@@ -639,6 +645,7 @@ fn script_placeholder_src_carries_strategy_and_nonce() {
 
 #[test]
 fn script_placeholder_inline_is_base64_and_marks_module() {
+    use base64::Engine as _;
     let attrs = std::collections::BTreeMap::new();
     let out = script_placeholder("idle", None, Some("console.log(1)"), true, &attrs, "n").unwrap();
     assert!(out.contains("data-ox-strategy=\"idle\""), "{out}");
@@ -647,7 +654,6 @@ fn script_placeholder_inline_is_base64_and_marks_module() {
     // Decode and confirm round-trip.
     let b64 = out.split("data-ox-inline=\"").nth(1).unwrap();
     let b64 = b64.split('"').next().unwrap();
-    use base64::Engine as _;
     let raw = base64::engine::general_purpose::STANDARD
         .decode(b64)
         .unwrap();

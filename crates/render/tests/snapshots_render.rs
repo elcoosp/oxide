@@ -15,7 +15,7 @@ fn sample_head() -> HeadTags {
     let mut link_attrs = std::collections::BTreeMap::new();
     link_attrs.insert("rel".to_string(), "stylesheet".to_string());
     let mut script_attrs = std::collections::BTreeMap::new();
-    script_attrs.insert("defer".to_string(), "".to_string());
+    script_attrs.insert("defer".to_string(), String::new());
     HeadTags {
         title: Some("Hello & <World>".to_string()),
         meta: vec![
