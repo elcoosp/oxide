@@ -756,7 +756,7 @@ impl EndpointHost {
                         format!("endpoint:run returned invalid JSON: {e}"),
                     )
                 })?;
-                return Self::from_complete_json(v);
+                Self::from_complete_json(v)
             }
             crate::CallStream::Chunked(rx) => {
                 // The first chunk carries the header JSON.
@@ -792,12 +792,12 @@ impl EndpointHost {
                     crate::CallStream::Chunked(rx) => rx,
                     _ => unreachable!(),
                 };
-                return Ok(EndpointOutcome {
+                Ok(EndpointOutcome {
                     status,
                     headers,
                     body: Vec::new(),
                     stream: Some(rx),
-                });
+                })
             }
         }
     }
