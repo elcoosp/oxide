@@ -11,7 +11,7 @@
 //! remaining typed defaults. Validation rejects unknown top-level keys with a
 //! Levenshtein ≤ 2 "did you mean" hint and requires `framework.adapter`.
 
-use crate::{OxideConfig, Result, err, extract_static_config, parse_env_file};
+use crate::{OxideConfig, Result, err, extract_static_config, parse_env_file, parse_size};
 use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -46,6 +46,7 @@ const KNOWN_KEYS: &[&str] = &[
     "imagesEndpoint",
     "experiments",
     "live",
+    "stream",
 ];
 
 /// Environment variables allowed to override config (§14.2), as dotted paths.
@@ -377,6 +378,11 @@ fn validate(value: &Value, framework_source: &str) -> Result<()> {
     if let Some(v) = map.get("live") {
         validate_live(v)?;
     }
+    // V2-F07: the stream-resume knobs carry their own load-time bounds
+    // (DSP-112) and the size literals are the §14 grammar (CFG-SIZE).
+    if let Some(v) = map.get("stream") {
+        validate_stream(v)?;
+    }
     Ok(())
 }
 
@@ -479,6 +485,68 @@ fn dsp_111(msg: &str) -> OxideError {
     d.fix = Some(
         "fix the `live` section — `keepaliveSeconds` >= 1, `maxSubscribers` >= 1, \
          `maxRerunsPerSecond` >= 1 and `perIpMax` <= `maxSubscribers`"
+            .into(),
+    );
+    OxideError(Box::new(d))
+}
+
+/// V2-F07 (§V2-F07 wiring step 3): the `stream.resume` knobs must be
+/// physically usable — a 0 s ttl expires every buffer before the reattach
+/// arrives, a 0-byte per-stream bound disables replay entirely, and a
+/// total bound below the per-stream bound would evict the first buffer
+/// before it ever replays. The size literals are the §14 grammar
+/// (`CFG-SIZE`). Violations fail the load with the `DSP-112` diagnostic
+/// (the DSP-110/111 pattern, next free code).
+fn validate_stream(value: &Value) -> Result<()> {
+    let Value::Object(map) = value else {
+        return Err(dsp_112("`stream` must be an object"));
+    };
+    // An absent (or null) `resume` section is the typed defaults — valid.
+    let Some(Value::Object(resume)) = map.get("resume") else {
+        return Ok(());
+    };
+    match resume.get("ttlSecs") {
+        None | Some(Value::Null) => {}
+        Some(Value::Number(n)) if n.as_u64().is_some_and(|t| t >= 1) => {}
+        Some(_) => {
+            return Err(dsp_112(
+                "`stream.resume.ttlSecs` must be an integer >= 1 — a 0s ttl expires every \
+                 buffer before the reattach arrives",
+            ));
+        }
+    }
+    let size = |key: &str| -> Result<u64> {
+        match resume.get(key) {
+            None | Some(Value::Null) => Ok(0), // absent: the typed default applies
+            Some(Value::String(s)) => parse_size(s),
+            Some(_) => Err(dsp_112(&format!(
+                "`stream.resume.{key}` must be a size literal (e.g. `\"4mb\"`)"
+            ))),
+        }
+    };
+    let each = size("maxBytesEach")?;
+    if resume.get("maxBytesEach").is_some() && each == 0 {
+        return Err(dsp_112(
+            "`stream.resume.maxBytesEach` must be at least 1 byte — a 0-byte bound disables \
+             replay entirely",
+        ));
+    }
+    let total = size("maxBytesTotal")?;
+    if each > 0 && total > 0 && total < each {
+        return Err(dsp_112(
+            "`stream.resume.maxBytesTotal` cannot be below `stream.resume.maxBytesEach` — \
+             the total bound is the sum of the per-stream bounds",
+        ));
+    }
+    Ok(())
+}
+
+/// The `DSP-112` diagnostic for an invalid `stream.resume` section (§V2-F07).
+fn dsp_112(msg: &str) -> OxideError {
+    let mut d = Diagnostic::error("DSP-112", msg);
+    d.fix = Some(
+        "fix the `stream.resume` section — `ttlSecs` >= 1, `maxBytesEach` >= 1 byte and \
+         `maxBytesTotal` >= `maxBytesEach`"
             .into(),
     );
     OxideError(Box::new(d))
