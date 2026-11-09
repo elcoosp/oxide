@@ -2994,15 +2994,25 @@ Copy into `WORKLOG.md` and update as WPs merge. Status values: `todo`, `doing`, 
 
 | WP | Status | PR | Notes |
 | --- | --- | --- | --- |
-| B09 | todo |  | baseline recorded in `benchmarks/baseline-v01.json` |
-| A03 | todo |  |  |
+| B09 | merged |  | baseline recorded in `benchmarks/baseline-v01.json`; dhat allocation budgets and the `bench-util` criterion harness landed across the V8-free crates |
+| A03 | doing |  | hygiene bundle in progress — the README/CONTRIBUTING/benchmarks/V2.O drift is fixed in the V2-F16 milestone; the WORKLOG dedup remains |
 | R02 | todo |  |  |
 | A01 | todo |  |  |
-| A02 | todo |  |  |
+| A02 | merged |  | `crates/dispatch` extracted (V8-free request orchestration) |
 | B01 to B08 | todo |  |  |
-| A04 to A10 | todo |  |  |
+| A04 | merged | #3 | build id + generations substrate |
+| A05 | merged |  | middleware chain + unified locals (landed as direct commits) |
+| A06 | merged |  | parallel load graph (landed as direct commits) |
+| A07 to A10 | todo |  |  |
 | C01 to C11 | todo |  |  |
-| F01 to F20 | todo |  |  |
+| F03 | merged |  | interaction replay — client substrate plus the v0.6.0 Rust config surface (`interactionReplay`, DSP-114) |
+| F04 | merged |  | experiments engine + config surface (landed as direct commits) |
+| F05 | merged | #4 | live loaders (SSE hub, data-plane contract, client) |
+| F06 | merged | #5 | ODF patch deltas (ODP1, policy, client) |
+| F07 | merged | #6 | resumable streams (`stream_store`, reattach route, client) |
+| F12 | merged |  | brownout governor substrate (landed as direct commits) |
+| F16 | doing |  | the Rust substrate (engine, OX-DYN diagnostics, `why --route`, reasons side-car) lands in the why-dynamic milestone; the `--fix` codemods are deferred — see `docs/deviations.md` |
+| F01, F02, F08 to F11, F13 to F15, F17 to F20 | todo |  |  |
 | E01 to E13 | todo |  |  |
 | R01, R03 to R06 | todo |  |  |
 
