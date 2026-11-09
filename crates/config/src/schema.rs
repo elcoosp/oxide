@@ -65,6 +65,11 @@ pub fn config_schema() -> Value {
             "live": live_schema(),
             "stream": stream_schema(),
             "brownout": brownout_schema(),
+            "interactionReplay": {
+                "type": "boolean",
+                "default": true,
+                "description": "V2-F03: the pre-hydration interaction replay opt-out. Default true (flag absent = enabled): the boot capture records interactions until each island hydrates and replays them on done. false advertises interactionReplay:false in window.__oxide so boot skips startReplay. A non-boolean value fails the load (DSP-114)."
+            },
 
             "plugins": {
                 "type": "array",

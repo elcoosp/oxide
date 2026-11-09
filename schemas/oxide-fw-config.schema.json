@@ -509,6 +509,11 @@
       "description": "S-09: on-demand image transform endpoint (GET /_oxide/image). On by default; gateable.",
       "type": "object"
     },
+    "interactionReplay": {
+      "default": true,
+      "description": "V2-F03: the pre-hydration interaction replay opt-out. Default true (flag absent = enabled): the boot capture records interactions until each island hydrates and replays them on done. false advertises interactionReplay:false in window.__oxide so boot skips startReplay. A non-boolean value fails the load (DSP-114).",
+      "type": "boolean"
+    },
     "live": {
       "additionalProperties": false,
       "description": "V2-F05: live-loader transport knobs (the SSE hub's capacity, cadence and transport). Defaults are inert - with no route opting in (page.server.ts live: true) nothing listens and no hub is constructed. Validation (DSP-111): keepaliveSeconds >= 1, maxSubscribers >= 1, maxRerunsPerSecond >= 1, perIpMax <= maxSubscribers.",

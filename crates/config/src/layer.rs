@@ -48,6 +48,7 @@ const KNOWN_KEYS: &[&str] = &[
     "live",
     "stream",
     "brownout",
+    "interactionReplay",
 ];
 
 /// Environment variables allowed to override config (§14.2), as dotted paths.
@@ -390,6 +391,14 @@ fn validate(value: &Value, framework_source: &str) -> Result<()> {
     if let Some(v) = map.get("brownout") {
         validate_brownout(v)?;
     }
+    // V2-F03: the interaction-replay opt-out is a boolean (DSP-114). The
+    // raw-`Value` pass runs before the typed parse, so a quoted `"false"`
+    // (the TS-import shape) or a `0`/`1` gets the DSP diagnostic — naming
+    // the key and carrying the fix hint — instead of a bare serde type
+    // error at the typed boundary.
+    if let Some(v) = map.get("interactionReplay") {
+        validate_interaction_replay(v)?;
+    }
     if let Some(Value::Array(rules)) = map.get("rules") {
         for rule in rules {
             match rule.get("priority") {
@@ -657,6 +666,30 @@ fn dsp_113(msg: &str) -> OxideError {
     d.fix = Some(
         "fix the `brownout` section — ascending threshold ladders, `staleCeiling` >= 1 \
          (e.g. `\"10x\"`) and `hedge.afterFactor` > 1"
+            .into(),
+    );
+    OxideError(Box::new(d))
+}
+
+/// V2-F03: `interactionReplay` must be a boolean — the `DSP-114`
+/// diagnostic (the DSP-110/111/112/113 pattern, next free code).
+fn validate_interaction_replay(value: &Value) -> Result<()> {
+    if !value.is_boolean() {
+        return Err(dsp_114(&format!(
+            "`interactionReplay` must be a boolean (true or false) — got {value}. The flag \
+             opts the page out of the pre-hydration interaction replay; quoting it \
+             (\"false\") or passing a number (0/1) does not opt out"
+        )));
+    }
+    Ok(())
+}
+
+/// The `DSP-114` diagnostic for a non-boolean `interactionReplay` (§V2-F03).
+fn dsp_114(msg: &str) -> OxideError {
+    let mut d = Diagnostic::error("DSP-114", msg);
+    d.fix = Some(
+        "set `interactionReplay` to the unquoted boolean `true` or `false` — \
+         `false` skips the pre-hydration interaction capture"
             .into(),
     );
     OxideError(Box::new(d))

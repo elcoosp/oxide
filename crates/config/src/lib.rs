@@ -165,6 +165,17 @@ pub struct OxideConfig {
     /// `afterFactor` > 1.
     #[serde(default)]
     pub brownout: BrownoutConfig,
+    /// V2-F03: the interaction-replay opt-out (`interactionReplay`,
+    /// spec Appendix V2.L, default `true` — flag absent = enabled). When
+    /// `true` (or absent) the pre-hydration interaction capture stays on
+    /// and the emitted hydration bootstrap is byte-identical to the
+    /// pre-F03 shapes; `false` makes the bootstrap advertise
+    /// `interactionReplay:false` in `window.__oxide` so the boot runtime
+    /// skips `startReplay`. A non-boolean value fails the load with
+    /// `DSP-114` (the raw-`Value` validation pass runs before the typed
+    /// parse).
+    #[serde(default = "default_true")]
+    pub interaction_replay: bool,
 }
 
 /// S-09: opt-in toggle for the OG rasterization endpoint.
@@ -334,6 +345,7 @@ impl Default for OxideConfig {
             live: LiveConfig::default(),
             stream: StreamConfig::default(),
             brownout: BrownoutConfig::default(),
+            interaction_replay: true,
         }
     }
 }
