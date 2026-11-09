@@ -41,6 +41,7 @@ fn rule(source: &str) -> NativeRule {
         headers: None,
         basic_auth: None,
         rate_limit: None,
+        priority: None,
     }
 }
 
