@@ -73,3 +73,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 name = "live"
 harness = false
 required-features = ["bench-util"]
+
+[[bench]]
+name = "stream"
+harness = false
+required-features = ["bench-util"]
