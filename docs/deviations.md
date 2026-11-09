@@ -652,3 +652,82 @@ and the A04 pins that documented the pre-F07 world were updated in place
 emitting numbered lines, `curl --max-time` dropping the first connection,
 a reattach with the byte offset, and the concatenation equal to the full
 stream byte for byte.
+
+## V2-F12 brownout mode — deltas and deferrals (substrate step)
+
+The V2-F12 substrate (`server::governor`, the `Priority`/`serve_decision`
+enforcement seam, the `oxide_brownout_level` gauge, the `brownout` config
+surface, `NativeRule.priority`) landed V8-free in the
+A02/A05/F04/F05/F06/F07 pattern: the pure model and its pins, the seams
+the wiring plugs into, the config + schema surface, the criterion bench.
+
+**Deliberate spec deltas:**
+
+1. **The `rss_mb` config rungs use `0` as the documented "no RSS gate"
+   spelling** (JSON cannot carry the spec's `u64::MAX` sentinel without
+   precision loss); the wiring maps `0` → `u64::MAX` when it builds
+   `Thresholds` from the config section.
+2. **The threshold ladders are milliseconds in config, microseconds in
+   code.** The spec's `Thresholds::default` and `Signals` are
+   microseconds (`queue_wait_p99_us`, `loop_lag_us`); the config section
+   carries whole milliseconds (`queueWaitMs: [50, 200, 500]`,
+   `loopLagMs: [20, 100, 300]`) because §14 config knobs are human units
+   (the F07 ttl is seconds, the size bounds bytes). The conversion is the
+   wiring's, and `next_level`/`raw_level` stay spec-verbatim.
+3. **Ladders are validated ascending at load (`DSP-113`)** — the spec's
+   code does not check, but a rung below the previous one would
+   de-escalate into a breach and oscillate; refusing it at load is the
+   config crate's established contract (DSP-110/111/112 precedent).
+   `hedge.afterFactor` must be > 1 and `staleCeiling` must parse to a
+   multiplier ≥ 1 under the same diagnostic.
+4. **The hysteresis ratio is an integer percent (`exit_ratio_pct: u64`,
+   default 60), not the spec's `exit_ratio: f64` 0.6.** The zero-allow
+   lints policy forbids both `#[allow]` escapes and the `u64`→`f64` casts
+   the float version would need (`cast_precision_loss`); the percent form
+   compares in lossless `u128` (`signal × 100 < rung × pct`), keeps
+   `next_level` allocation-free, and makes `Thresholds` `Eq`. The spec's
+   default 0.6 is exactly 60%, and the hysteresis-band pins cover the
+   same boundary.
+5. **`serve_decision` treats `Stale`-level service as `ServeStale` for
+   every priority** — the header attaches when the caller actually serves
+   past the SWR window, so `ServeStale` is "eligible", not "forced"; the
+   cache wiring decides per lookup (the spec's `Stale` step is a
+   permission granted to the L0 lookup, not a mandate).
+6. **`Governor::set` clamps to 3.** The spec's `set` stores the raw byte;
+   a sampler bug writing 4 would map to `Emergency` on read anyway, and
+   clamping keeps the `x-oxide-brownout` payload and the gauge in the
+   documented 0–3 range.
+
+**What is deliberately deferred (A01 phase-3 / V8-capable host):**
+
+- The sampler task: a 500 ms tick reading `pool.stats()`
+  (`oxide_pool_queue_wait_p99_us`), the loop-lag probe (sleep 100 ms,
+  record the overshoot) and RSS (`/proc/self/statm`), running
+  `next_level` and publishing through `Governor::set` +
+  `Metrics::set_brownout_level`. All of it is cli-side wiring around the
+  landed model.
+- The enforcement stage after prelude: `serve_decision` +
+  `shed_response` per request, the `warning: 110` header on stale
+  L0 service, and the `brownout.staleCeiling` multiplier flowing into the
+  L0 lookup's SWR window.
+- The readiness flip (`ready_status` → `/_oxide/ready`) and the
+  `/_oxide/health` level report — both are cli-side response assembly.
+- The hedger (opt-in, off by default): duplicating a still-running
+  idempotent GET render after `afterFactor` × p95 and racing the results.
+- The load test (`benchmarks/overload.sh` with `oha -c 500`) that proves
+  the critical route's p99 stays flat while the slow route sheds.
+- The brownout shrink of F10's previous-generation pool (the F10 expiry
+  consults `oxide_pool_queue_wait_p99_us` against the brownout threshold).
+
+**Grammar note:** the `priority` grammar (`low | normal | critical`) is
+validated in the config crate (a literal match in `validate`) and parsed
+again by `governor::parse_priority` in the server crate — the NativeRule
+mirror already duplicates the struct across the dep boundary (config
+cannot depend on server), so the grammar is pinned by tests on both sides
+(`brownout_config.rs` load pins, `governor_tdd.rs` parser pins).
+
+**To unclose:** the A01 phase-3 wiring above, then the e2e: `oha -c 500`
+against a slow dynamic route with a `critical` L0 route alongside — the
+critical route's p99 stays within 2× its idle p99 while the slow route
+sheds with `503` + `x-oxide-brownout: 2`, the exposition shows
+`oxide_brownout_level 2`, and `/_oxide/ready` stays 200 until Emergency.
