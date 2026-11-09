@@ -1,3 +1,106 @@
+# Handoff — V2-F03 interaction replay landed (capture engine + islands/boot wiring + opt-out seam); core package gates green
+
+## Where things stand
+
+**Branch:** `main`
+**Working tree:** the milestone ships as uncommitted changes plus `ship.sh`
+in the resolved downloads directory (bash 3.2-compatible, executable,
+gitignored; one conventional commit per file, then idempotent PR + rebase
+merge + tag + push). Run `./ship.sh <repo>` to materialize the history.
+**Verified this session (no Rust toolchain, no `node_modules`):**
+- `packages/core`: `node --test test/*.test.ts` — 304/304 green (baseline
+  289; +15 F03 pins: the spec's click-before-hydrate-replays-once,
+  click-after-hydrate-not-recorded, input value + event replay, capacity
+  drop-oldest at 100, unresolvable-path drop, and focus replay; the
+  mid-flight double-replay guard; the checkbox `checked` restore; the
+  islands `hydrateIsland` wiring pin; and the boot `interactionReplay:
+  false` opt-out pin). The two `bootWithRouter` router-absence pins moved
+  from listener-count proxies to behavioral assertions (a click must not
+  reach `adapter.update`) because the replay capture legitimately owns a
+  document `click` listener of its own.
+- `node test/replay.bench.ts` — capture/miss 12.8 ns (click outside any
+  island, 5-level `closest` walk), capture/record ≈ 148 ns at the
+  100-record bound, replay/dispatch ≈ 13.3 µs per 100-record replay
+  (≈ 133 ns/record: resolve + identity check + dispatch).
+- `cargo fmt --all --check`, the clippy gates and `cargo nextest` were
+  NOT run — no Rust toolchain in this sandbox. The diff touches no Rust
+  file (packages/core TS + docs only), so the F12 session's green Rust
+  gates are the standing baseline. `tsc --noEmit` NOT run (needs
+  `node_modules`; same as the F06/F07 sessions). Adapter-package suites
+  (`packages/{react,vue,svelte,solid}`) fail at module resolution without
+  `pnpm install` — pre-existing, unchanged by this diff.
+- `grep -rnE '#!?\[(allow|expect)\(|cfg_attr\([^)]_allow\('` over
+  `crates/ tests/ examples/ conformance/ packages/` — empty.
+
+## What landed
+
+V2-F03 from `docs/spec-v0.2-draft.md` (the spec's next S-sized
+no-dependency item, and the only candidate whose full gate surface is
+runnable without a Rust toolchain), in the F05/F06/F07 substrate pattern:
+
+1. **`replay.ts` (`packages/core/src/client/replay.ts`):** the
+   spec-verbatim capture engine — `startReplay(doc?)` installs
+   capture-phase listeners (`focus` rides `focusin`), records
+   `{ type, island, path, value?, checked? }` only while the island host
+   is pending (`data-ox-hydrated !== 'done'`), caps the log at 100 with
+   drop-oldest, and `replayFor(host)` replays the host's records in
+   order, exactly once, right after hydration. Structurally typed like
+   `IslandHost`/`IslandsDoc` so real DOM and test fakes satisfy the same
+   surface; import-safe under the SSR module-safety contract.
+2. **Islands wiring (`islands.ts`):** `hydrateIsland` calls
+   `replayFor(el)` immediately after `data-ox-hydrated` becomes `done` —
+   framework listeners are attached, so the replayed interactions land on
+   live handlers.
+3. **Boot wiring (`boot.ts`):** both `boot()` (via `__oxideBootRun`) and
+   `bootWithRouter()` start the capture BEFORE any island hydrates. The
+   payload's `interactionReplay: false` opts out; capture is
+   page-lifetime glue (like `loadScripts`), and `startReplay` is
+   idempotent per document so a double boot cannot double-record.
+4. **Pins + bench:** `test/replay.test.ts` (15 pins incl. the wiring and
+   opt-out integration tests) and `test/replay.bench.ts` (the numbers
+   above; not part of the CI test glob).
+
+**Spec deltas recorded in `docs/deviations.md` (4):** records carry the
+captured `target` and replay verifies node identity (the spec's
+contains-guard cannot catch a same-slot replacement after a defer swap);
+`pathOf` refuses paths that do not terminate at the island host (no
+truncated-garbage records); replay restores `checked` for `change`
+records (the sketch recorded but dropped it); `startReplay` is
+idempotent per document. **Deferred:** the Rust config surface
+(`interactionReplay` in `crates/config` + schema regen + hydration
+bootstrap emission — the client already honors the payload field) and
+the Playwright block-release acceptance; see `docs/deviations.md`.
+
+## Docs drift noted this session
+
+- Fixed in-scope: `docs/architecture.md` (TS `oxide` package row +
+  what-changed list) and `docs/deviations.md` carry the F03 record.
+- Noted for the doc owners (carried from F12, unchanged): README's crate
+  count (says 18, 19 members — missing `dispatch`) and its contradictory
+  test-count badge vs the "1,239 test functions" line; the "v0.1.0 is
+  not yet tagged" claims vs `v0.4.1`; the CI job-count claims (22/21 vs
+  the 20 defined); the spec Appendix V2.O status table (all `todo` for
+  landed substrates — F03 now included); CONTRIBUTING's "Rust 1.98
+  pinned by rust-toolchain.toml" vs `channel = "stable"`;
+  `benchmarks/README.md` omitting the `dispatch`/`server` benches.
+  Also: the `v0.4.2` release commit is on `main` but NO `v0.4.2` tag
+  exists — the next tag per the tag+conventional-commits rule lands on
+  `v0.5.0` (feat commits exist in `v0.4.1..HEAD`); and
+  `packages/*/package.json` remain at 0.1.0 vs workspace 0.4.2, which
+  keeps `scripts/bump-version.sh`'s drift guard refusing to run.
+
+## Where to pick up, in one sentence
+
+A01 phase-3 on a V8-capable host remains the bottleneck (it also
+uncloses F12's sampler/enforcement wiring and F07's tee/endpoint
+wiring); then F10's pool side, the `tests/live.sh` e2e, and the F-series
+(F16 "why dynamic?" and F18 perf bisect are the remaining
+no-dependency candidates — both Rust-side, so they need a toolchain;
+F03's Rust config surface is a small add-on to the landed client
+substrate).
+
+---
+
 # Handoff — V2-F12 brownout-mode substrate landed (governor + enforcement seam + config surface + gauge); all gates green
 
 ## Where things stand
