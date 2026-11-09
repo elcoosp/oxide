@@ -26,7 +26,8 @@ pub use loader::{LoaderOutput, LoaderRunInput, LoaderRunner};
 // spec's `LiveHub`/`LiveRunner` spellings).
 pub use live::{
     CAPACITY_RETRY_AFTER_SECS, DATA_EVENT, Guard, PING_EVENT, Rerun, STALE_EVENT, Sub,
-    SubscribeError, live_capacity_response, live_response, live_stream, same_origin, sse_frame,
+    SubscribeError, delta_payload, live_capacity_response, live_response, live_stream, same_origin,
+    sse_frame,
 };
 pub use live::{Hub as LiveHub, Runner as LiveRunner};
 pub use page_renderer::{
