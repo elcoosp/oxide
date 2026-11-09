@@ -18,7 +18,7 @@
 // `EventSource` constructor and the `document` visibility hook are
 // injectable so the Node test runner can pin the behavior without a DOM.
 
-import { decodeOdf } from './odf-decode.ts'
+import { decodeOdfOrPatch } from './odf-decode.ts'
 import { buildId } from './build.ts'
 
 /** Decode one SSE `data:` payload into a JS value (see `decodeOdf`). */
@@ -44,8 +44,10 @@ type VisibilityDocument = {
 export type ConnectLiveOptions = {
   /**
    * Decode an SSE `data:` payload against the previously applied value.
-   * Defaults to the base64 ODF snapshot decode; the F06 patch transport
-   * swaps this single function.
+   * Defaults to the F06 `decodeOdfOrPatch`: an `ODF1` full snapshot or an
+   * `ODP1` patch chained from this stream's previously decoded base — a
+   * refused patch throws and the listener reconnects (the server answers
+   * a fresh connection with a full snapshot).
    */
   decode?: LiveDecode
   /** The EventSource constructor (default: `globalThis.EventSource`). */
@@ -56,24 +58,8 @@ export type ConnectLiveOptions = {
   reload?: () => void
 }
 
-/** Node-test-safe base64 → bytes (the islands.ts pattern). */
-function b64Bytes(b64: string): Uint8Array {
-  const g = globalThis as {
-    atob?: (s: string) => string
-    Buffer?: { from(s: string, enc: string): Uint8Array }
-  }
-  if (typeof g.atob === 'function') {
-    const bin = g.atob(b64)
-    const out = new Uint8Array(bin.length)
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
-    return out
-  }
-  if (g.Buffer) return new Uint8Array(g.Buffer.from(b64, 'base64'))
-  throw new TypeError('live: no base64 decoder available (atob or Buffer)')
-}
-
-/** The default decode: every snapshot is a full base64 ODF payload. */
-const decodeOdfSnapshot: LiveDecode = (payload) => decodeOdf(b64Bytes(payload))
+/** The default decode: ODF1 full snapshots and ODP1 patches (§V2-F06). */
+const decodeLive: LiveDecode = decodeOdfOrPatch
 
 function currentUrl(): string {
   const g = globalThis as { location?: { pathname: string; search: string } }
@@ -92,7 +78,7 @@ export function connectLive(
   apply: (data: unknown) => void,
   opts: ConnectLiveOptions = {},
 ): () => void {
-  const decode = opts.decode ?? decodeOdfSnapshot
+  const decode = opts.decode ?? decodeLive
   const Ctor = opts.EventSource ??
     (globalThis as { EventSource?: EventSourceLike }).EventSource
   const doc = opts.document ??
@@ -118,7 +104,18 @@ export function connectLive(
       encodeURIComponent(buildId() ?? '')
     es = new Ctor(url)
     es.addEventListener('data', (e) => {
-      last = decode(e.data ?? '', last)
+      // A decode failure (an undecodable payload, or an F06 patch whose
+      // base id no longer matches what this connection last decoded) is a
+      // transport-level problem: close and reconnect — the fresh connection
+      // receives a full snapshot, so no client-side replay is needed.
+      try {
+        last = decode(e.data ?? '', last)
+      } catch {
+        es?.close()
+        if (closed) return
+        reconnect = setTimeout(open, 1000 + Math.random() * 2000)
+        return
+      }
       apply(last)
     })
     es.addEventListener('stale', () => {

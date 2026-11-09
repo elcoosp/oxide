@@ -11,7 +11,10 @@ export {
   type DeferGlue, type DeferGlueOptions, type SwapDetail, type WireOptions,
 } from './defer-glue.ts'
 export { enhance, type EnhanceForm, type EnhanceOptions, type EnhanceSubmitEvent } from './enhance.ts'
-export { decodeOdf, decodeOdfToJson, OdfError, MAX_BYTES, MAX_DEPTH, MAX_REFS } from './odf-decode.ts'
+export {
+  decodeOdf, decodeOdfToJson, decodeOdfOrPatch, applyPatch, sha256Hex16,
+  OdfError, MAX_BYTES, MAX_DEPTH, MAX_REFS,
+} from './odf-decode.ts'
 export { reportWebVitals, type VitalSample, type VitalsOptions } from './vitals.ts'
 export { loadMessages, setMessageLocales, t, type Messages } from './messages.ts'
 export { scheduleScript, loadScripts, type ScriptStrategy, type ScriptOptions } from './scripts.ts'

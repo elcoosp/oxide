@@ -426,3 +426,356 @@ export function decodeOdfToJson(bytes: Uint8Array): unknown {
   }
   return walk(decodeOdf(bytes))
 }
+
+// ---- F06: the ODP1 patch transport (spec §V2-F06 / D30) ----
+//
+// A patch payload is the outer magic `ODP1` followed by an ordinary ODF1
+// payload whose root value is `{ b: <base id>, o: [ops] }` — the existing
+// decoder consumes the inner body unchanged; only the outer 4-byte prefix is
+// new. `b` is the first 16 hex chars of the SHA-256 digest of the FULL ODF
+// bytes of the base snapshot: the client hashes the payload bytes it last
+// decoded (a compact synchronous SHA-256 — the live decode hook is
+// synchronous, so the async Web Crypto digest does not fit; the test vectors
+// and the committed goldens pin it byte-for-byte against the server's `sha2`).
+//
+// The client applies a patch only when `b` equals the id of its stored base;
+// a mismatch throws `ODP-BASE` — the live connection treats any decode
+// failure as a transport error and reconnects (a fresh connection receives
+// a full snapshot). After a patch applies, the new base id is the hash of
+// the canonical re-encoding (`encodeOdf`, byte-identical to the Rust
+// encoder), so the chain advances in lockstep with the server's fulls.
+
+import { encodeOdf } from '../odf-encode.ts'
+
+const PATCH_MAGIC = 0x4f445031 // "ODP1" as a u32 (big-endian read of the 4 bytes)
+
+/** Base-id state per decoded value (objects only — loader data is an object). */
+const BASE_IDS = new WeakMap<object, string>()
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return false
+  const proto: unknown = Object.getPrototypeOf(v)
+  return proto === Object.prototype || proto === null
+}
+
+/** Node-test-safe base64 → bytes (the live.ts pattern, needed here first). */
+function b64ToBytes(b64: string): Uint8Array {
+  const g = globalThis as {
+    atob?: (s: string) => string
+    Buffer?: { from(s: string, enc: string): Uint8Array }
+  }
+  if (typeof g.atob === 'function') {
+    const bin = g.atob(b64)
+    const out = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+    return out
+  }
+  if (g.Buffer) return new Uint8Array(g.Buffer.from(b64, 'base64'))
+  throw new TypeError('odf: no base64 decoder available (atob or Buffer)')
+}
+
+/**
+ * Decode one live `data:` payload: an `ODF1` full snapshot (registers the
+ * base for future patches) or an `ODP1` patch applied against the value
+ * previously returned for this stream. `last` is the previously applied
+ * value (the base-state key); a patch with no registered or matching base
+ * throws `ODP-BASE` — the caller reconnects for a fresh snapshot.
+ */
+export function decodeOdfOrPatch(b64: string, last: unknown): unknown {
+  const bytes = b64ToBytes(b64)
+  if (bytes.length >= 4 && readU32BE(bytes, 0) === PATCH_MAGIC) {
+    return decodePatchPayload(bytes, last)
+  }
+  const value = decodeOdf(bytes)
+  if (value !== null && typeof value === 'object') {
+    BASE_IDS.set(value, sha256Hex16(bytes))
+  }
+  return value
+}
+
+function decodePatchPayload(bytes: Uint8Array, last: unknown): unknown {
+  // The inner body is an ordinary ODF1 payload (existing decoder, hardening
+  // included); its root is `{ b: <base id>, o: [ops] }`.
+  const root = decodeOdf(bytes.subarray(4)) as Record<string, unknown>
+  const b = root.b
+  const ops = root.o
+  if (typeof b !== 'string' || !Array.isArray(ops)) {
+    throw new OdfError('ODP-SHAPE', 'patch root is missing `b` (string) and `o` (array)')
+  }
+  const stateId = last !== null && typeof last === 'object' ? BASE_IDS.get(last) : undefined
+  if (stateId === undefined || stateId !== b) {
+    throw new OdfError(
+      'ODP-BASE',
+      `patch base id ${JSON.stringify(b)} does not match the stored base`,
+    )
+  }
+  const applied = applyPatch(last, ops as unknown[])
+  // The next base id hashes the canonical re-encoding of the applied value
+  // (encodeOdf is byte-identical to the Rust encoder). A value that cannot
+  // re-encode (a cycle through resolved refs, say) registers no base: the
+  // next patch refuses with ODP-BASE and the stream reconnects — graceful
+  // degradation, never corruption.
+  if (applied !== null && typeof applied === 'object') {
+    try {
+      BASE_IDS.set(applied, sha256Hex16(encodeOdf(applied)))
+    } catch {
+      /* no base for exotic values — patches fall back to reconnect */
+    }
+  }
+  return applied
+}
+
+/**
+ * Apply wire ops (`[0, path, value]` Set · `[1, path]` Del ·
+ * `[2, path, at, remove, insert]` Splice) to a value, mirroring the Rust
+ * `patch::apply`: objects recurse by string key, arrays by index, Maps/Sets
+ * and everything exotic are not walkable, missing intermediates are errors,
+ * and reserved keys (`__proto__`, `constructor`) are rejected anywhere in a
+ * path (`ODP-KEY`). The base is never mutated — the ops land on a deep
+ * clone (identity-preserving, cycles included).
+ */
+export function applyPatch(base: unknown, ops: unknown[]): unknown {
+  let v = deepClone(base)
+  for (const op of ops) {
+    v = applyOp(v, op)
+  }
+  return v
+}
+
+function applyOp(v: unknown, op: unknown): unknown {
+  if (!Array.isArray(op) || op.length < 2) {
+    throw new OdfError('ODP-SHAPE', 'each op is a [code, path, …] array')
+  }
+  const [code, path, ...rest] = op as [number, unknown[], ...unknown[]]
+  checkPath(path)
+  switch (code) {
+    case 0: {
+      if (rest.length !== 1) throw new OdfError('ODP-SHAPE', 'Set is [0, path, value]')
+      if (path.length === 0) return deepClone(rest[0]) // whole-root Set
+      return assignAt(v, path, rest[0])
+    }
+    case 1: {
+      if (rest.length !== 0) throw new OdfError('ODP-SHAPE', 'Del is [1, path]')
+      if (path.length === 0) throw new OdfError('ODP-PATH', 'del path is empty')
+      const parent = slotOf(v, path.slice(0, -1))
+      const lastSeg = path[path.length - 1]
+      if (typeof lastSeg === 'number' || !isPlainObject(parent)) {
+        throw new OdfError('ODP-DEL', 'del target is not an object key')
+      }
+      delete parent[lastSeg]
+      return v
+    }
+    case 2: {
+      if (rest.length !== 3) {
+        throw new OdfError('ODP-SHAPE', 'Splice is [2, path, at, remove, insert]')
+      }
+      const [at, remove, insert] = rest as [number, number, unknown[]]
+      if (!Number.isInteger(at) || at < 0 || !Number.isInteger(remove) || remove < 0) {
+        throw new OdfError('ODP-SHAPE', 'splice bounds must be exact non-negative integers')
+      }
+      if (!Array.isArray(insert)) {
+        throw new OdfError('ODP-SHAPE', 'Splice insert must be an array')
+      }
+      const target = slotOf(v, path)
+      if (!Array.isArray(target)) {
+        throw new OdfError('ODP-SPLICE', 'splice target is not an array')
+      }
+      if (at + remove > target.length) {
+        throw new OdfError(
+          'ODP-SPLICE',
+          `splice range ${at}..${at + remove} exceeds the array length ${target.length}`,
+        )
+      }
+      target.splice(at, remove, ...insert)
+      return v
+    }
+    default:
+      throw new OdfError('ODP-OP', `unknown op code ${String(code)}`)
+  }
+}
+
+function checkPath(path: unknown[]): void {
+  if (!Array.isArray(path)) throw new OdfError('ODP-SHAPE', 'an op path is an array')
+  for (const seg of path) {
+    if (typeof seg === 'string') {
+      if (seg === '__proto__' || seg === 'constructor') {
+        throw new OdfError('ODP-KEY', `reserved key "${seg}" cannot appear in a patch path`)
+      }
+    } else if (typeof seg === 'number') {
+      if (!Number.isInteger(seg) || seg < 0) {
+        throw new OdfError('ODP-SHAPE', 'a path index must be an exact non-negative integer')
+      }
+    } else {
+      throw new OdfError('ODP-SHAPE', 'a path segment is a string or an integer')
+    }
+  }
+}
+
+/** Walk `path` from a walkable root (plain objects by key, arrays by index). */
+function slotOf(v: unknown, path: unknown[]): unknown {
+  let cur: unknown = v
+  for (const seg of path) {
+    if (typeof seg === 'string') {
+      if (!isPlainObject(cur)) {
+        throw new OdfError('ODP-PATH', `key "${seg}" cannot walk this value`)
+      }
+      const obj = cur as Record<string, unknown>
+      if (!Object.prototype.hasOwnProperty.call(obj, seg)) {
+        throw new OdfError('ODP-PATH', `missing key "${seg}"`)
+      }
+      cur = obj[seg]
+    } else {
+      if (!Array.isArray(cur)) {
+        throw new OdfError('ODP-PATH', `index ${String(seg)} cannot walk this value`)
+      }
+      if (seg >= cur.length) {
+        throw new OdfError('ODP-PATH', `missing index ${String(seg)}`)
+      }
+      cur = cur[seg]
+    }
+  }
+  return cur
+}
+
+/** Assign `value` at `path` (the parent must exist; Set creates the leaf key). */
+function assignAt(v: unknown, path: unknown[], value: unknown): unknown {
+  const parent = slotOf(v, path.slice(0, -1))
+  const lastSeg = path[path.length - 1]
+  if (typeof lastSeg === 'string') {
+    if (!isPlainObject(parent)) {
+      throw new OdfError('ODP-PATH', `key "${lastSeg}" cannot walk this value`)
+    }
+    ;(parent as Record<string, unknown>)[lastSeg] = value
+    return v
+  }
+  if (!Array.isArray(parent)) {
+    throw new OdfError('ODP-PATH', `index ${String(lastSeg)} cannot walk this value`)
+  }
+  if (lastSeg >= parent.length) {
+    throw new OdfError('ODP-PATH', `missing index ${String(lastSeg)}`)
+  }
+  parent[lastSeg] = value
+  return v
+}
+
+/** Deep clone with identity preservation (cycles close; URLs survive —
+ * `structuredClone` refuses them). Exotic host objects rethrow naturally. */
+function deepClone(v: unknown, seen = new Map<unknown, unknown>()): unknown {
+  if (v === null || typeof v !== 'object') return v
+  const memo = seen.get(v)
+  if (memo !== undefined) return memo
+  if (v instanceof Date) return new Date(v.getTime())
+  if (v instanceof URL) return new URL(v.href)
+  if (v instanceof RegExp) return new RegExp(v.source, v.flags)
+  if (v instanceof Error) {
+    const e = new Error(v.message)
+    e.name = v.name
+    e.stack = v.stack
+    seen.set(v, e)
+    return e
+  }
+  if (ArrayBuffer.isView(v)) {
+    // Typed arrays (and DataView): copy the bytes at the same element type.
+    const Ctor: Uint8ArrayConstructor = v.constructor as unknown as Uint8ArrayConstructor
+    const out = new Ctor(v.byteLength / (v as Uint8Array).BYTES_PER_ELEMENT)
+    new Uint8Array(out.buffer).set(new Uint8Array(v.buffer, v.byteOffset, v.byteLength))
+    seen.set(v, out)
+    return out
+  }
+  if (v instanceof Map) {
+    const out = new Map()
+    seen.set(v, out)
+    for (const [k, val] of v) out.set(deepClone(k, seen), deepClone(val, seen))
+    return out
+  }
+  if (v instanceof Set) {
+    const out = new Set()
+    seen.set(v, out)
+    for (const item of v) out.add(deepClone(item, seen))
+    return out
+  }
+  if (Array.isArray(v)) {
+    const out: unknown[] = []
+    seen.set(v, out)
+    for (const item of v) out.push(deepClone(item, seen))
+    return out
+  }
+  if (isPlainObject(v)) {
+    const out: Record<string, unknown> = {}
+    seen.set(v, out)
+    for (const [k, val] of Object.entries(v)) out[k] = deepClone(val, seen)
+    return out
+  }
+  return v
+}
+
+// ---- compact synchronous SHA-256 (FIPS 180-4) ----
+//
+// The live decode hook is synchronous, so the async Web Crypto digest does
+// not fit here. The test vectors ("abc", the empty input) and the committed
+// goldens pin it against the server's sha2 output.
+
+const K = [
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+]
+
+function rotr(x: number, n: number): number {
+  return (x >>> n) | (x << (32 - n))
+}
+
+function sha256(bytes: Uint8Array): Uint8Array {
+  const len = bytes.length
+  const bitLenLo = (len << 3) >>> 0
+  const bitLenHi = Math.floor(len / 0x20000000)
+  // message + 0x80 + zeros + 8-byte big-endian bit length, multiple of 64
+  const paddedLen = Math.ceil((len + 1 + 8) / 64) * 64
+  const buf = new Uint8Array(paddedLen)
+  buf.set(bytes, 0)
+  buf[len] = 0x80
+  const dv = new DataView(buf.buffer)
+  dv.setUint32(paddedLen - 8, bitLenHi, false)
+  dv.setUint32(paddedLen - 4, bitLenLo, false)
+  let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a
+  let h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19
+  const w = new Int32Array(64)
+  for (let off = 0; off < paddedLen; off += 64) {
+    for (let i = 0; i < 16; i++) w[i] = dv.getInt32(off + i * 4, false)
+    for (let i = 16; i < 64; i++) {
+      const s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3)
+      const s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10)
+      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0
+    }
+    let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7
+    for (let i = 0; i < 64; i++) {
+      const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)
+      const ch = (e & f) ^ (~e & g)
+      const t1 = (h + S1 + ch + K[i] + w[i]) | 0
+      const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)
+      const maj = (a & b) ^ (a & c) ^ (b & c)
+      const t2 = (S0 + maj) | 0
+      h = g; g = f; f = e; e = (d + t1) | 0
+      d = c; c = b; b = a; a = (t1 + t2) | 0
+    }
+    h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0
+    h4 = (h4 + e) | 0; h5 = (h5 + f) | 0; h6 = (h6 + g) | 0; h7 = (h7 + h) | 0
+  }
+  const out = new Uint8Array(32)
+  const odv = new DataView(out.buffer)
+  for (let i = 0; i < 8; i++) odv.setInt32(i * 4, [h0, h1, h2, h3, h4, h5, h6, h7][i], false)
+  return out
+}
+
+/** The patch base id: the first 16 hex chars of the SHA-256 of `bytes`. */
+export function sha256Hex16(bytes: Uint8Array): string {
+  const digest = sha256(bytes)
+  let out = ''
+  for (let i = 0; i < 8; i++) out += digest[i].toString(16).padStart(2, '0')
+  return out
+}
