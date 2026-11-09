@@ -8,6 +8,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Oxide is pre-1.0: the API is not yet frozen, and releases before v1.0 may
 include breaking changes announced in the relevant section below.
 
+## [0.4.0] — 2026-11-09
+
+### Added
+
+- The V2-F06 ODF patch deltas substrate (ODP1, policy, client) (#5)
+
+### Documentation
+
+- **changelog**: Regenerate for v0.3.1
+
 ## [0.3.1] — 2026-11-08
 
 ### Added
