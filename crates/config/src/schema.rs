@@ -63,6 +63,7 @@ pub fn config_schema() -> Value {
 
             "experiments": experiments_schema(),
             "live": live_schema(),
+            "stream": stream_schema(),
 
             "plugins": {
                 "type": "array",
@@ -531,6 +532,28 @@ fn live_schema() -> Value {
             "maxRerunsPerSecond": { "type": "integer", "minimum": 1, "default": 20, "description": "Per-subscriber rerun rate cap per second." },
             "perIpMax": { "type": "integer", "minimum": 1, "default": 20, "description": "Per-peer subscriber cap (security); cannot exceed maxSubscribers." },
             "transport": { "enum": ["sse", "poll"], "default": "sse", "description": "sse streams snapshots over GET /__oxide/live; poll is the serverless fallback." }
+        }
+    })
+}
+
+/// Schema fragment for the `stream` section (V2-F07 — the resumable-stream
+/// bounds: ttl, per-stream cap, store-wide cap).
+fn stream_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "description": "V2-F07: resumable-stream bounds. A streamed response marked x-oxide-stream stays replayable for the ttl at GET /__oxide/stream/<id> with Range: bytes=<n>-. Defaults are inert - the store only exists while a resumable response is being teed. Size literals use the section-14 grammar (b|kb|mb|gb|tb, plain digits are bytes). Validation (DSP-112): ttlSecs >= 1, maxBytesEach >= 1 byte, maxBytesTotal >= maxBytesEach; a bad literal fails with CFG-SIZE.",
+        "properties": {
+            "resume": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "The reattach/replay bounds.",
+                "properties": {
+                    "ttlSecs": { "type": "integer", "minimum": 1, "default": 60, "description": "How long a buffer stays reattachable, in seconds (DSP-112 rejects 0)." },
+                    "maxBytesEach": { "type": "string", "default": "4mb", "description": "Per-stream replay cap; past it the buffer loses replay and the client falls back to a fresh fetch." },
+                    "maxBytesTotal": { "type": "string", "default": "256mb", "description": "Store-wide cap; the accounting evicts the oldest completed buffer first, then the oldest buffer." }
+                }
+            }
         }
     })
 }
