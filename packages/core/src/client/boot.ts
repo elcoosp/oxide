@@ -16,6 +16,7 @@ import { loadScripts } from './scripts.ts'
 import { setRouteComponentSource, isParamSegment, type ClientManifestLike } from './route-manifest.ts'
 import { attachDeferGlue, type DeferGlue } from './defer-glue.ts'
 import { connectHmr } from './hmr.ts'
+import { startReplay } from './replay.ts'
 import type { FrameworkAdapter } from '../types.ts'
 import { loadMessages, setMessageLocales } from './messages.ts'
 // Side-effect import: installs `globalThis.__oxide_hmr__` in
@@ -33,6 +34,10 @@ interface BootWindow extends Window {
   __oxideBoot?: BootState
   __oxideRegisterAdapter?: (adapter: FrameworkAdapter, loadChunk: BootState['loadChunk']) => void
   __oxideBootRun?: () => void
+  /** §V2-F03: the hydration-bootstrap payload. `interactionReplay: false`
+   *  (from `oxide.config.ts`) disables the pre-hydration interaction
+   *  capture; absent/true keeps it on (the default). */
+  __oxide?: { interactionReplay?: boolean }
 }
 
 /** A `Window` shaped object, or `undefined` in a non-browser environment. */
@@ -80,6 +85,11 @@ function ensureInstalled(w: BootWindow): void {
     if (!state?.adapter) return
     const doc = (globalThis as { document?: Document }).document
     if (!doc) return
+    // §V2-F03: the capture must be live BEFORE any island hydrates — the
+    // island scan below runs synchronously. `interactionReplay: false`
+    // (hydration bootstrap / oxide.config.ts) opts out; startReplay is
+    // idempotent per document, so a re-run never double-installs.
+    if (w.__oxide?.interactionReplay !== false) startReplay(doc)
     const opts: IslandsOptions = {
       doc,
       adapter: state.adapter,
@@ -207,7 +217,7 @@ export function bootWithRouter(
   )
   void loadMessages()
   const w = globalThis as {
-    __oxide?: { route?: string; data?: string; layouts?: string[] }
+    __oxide?: { route?: string; data?: string; layouts?: string[]; interactionReplay?: boolean }
     __oxideBoot?: BootState
     location?: { pathname: string; search: string }
   }
@@ -271,6 +281,17 @@ export function bootWithRouter(
   // one) → the adapters stay on the IR fallback, unchanged.
   setRouteComponentSource(opts.manifest ? { manifest: opts.manifest, loadChunk } : undefined)
 
+  const payload = w.__oxide
+
+  // §V2-F03: the capture must be live BEFORE any island hydrates — the
+  // island scan runs in the microtask below, and hydration itself can
+  // replace content. Started for every page (payload or not: islands
+  // hydrate without one too). `interactionReplay: false` on the payload
+  // (hydration bootstrap / oxide.config.ts) opts out; capture is
+  // page-lifetime glue (like loadScripts), NOT torn down by the returned
+  // disposer. `startReplay` is idempotent per document.
+  if (payload?.interactionReplay !== false) startReplay(doc)
+
   // (a) Root hydration — the router-independent part of boot. On a click the
   // router calls `adapter.update(input)`, which on the client side resolves
   // to the module-level `active?.update(input)` in each adapter's
@@ -285,7 +306,6 @@ export function bootWithRouter(
   // below still finds them.
   let hydratedRoot = false
   const root = doc.getElementById?.('root')
-  const payload = w.__oxide
   let payloadData: unknown
   if (root && payload) {
     let data: unknown = {}
