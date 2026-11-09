@@ -149,6 +149,14 @@ pub struct OxideConfig {
     /// subscriber, and the per-IP cap cannot exceed the global cap.
     #[serde(default)]
     pub live: LiveConfig,
+    /// V2-F07 (§V2-F07 wiring step 3): the resumable-stream bounds. The
+    /// store only exists when the wiring has a resumable response to tee,
+    /// so the defaults are inert the same way the `live` ones are. Knobs
+    /// are validated at load (`DSP-112`): the ttl must be ≥ 1 s, the
+    /// per-stream bound ≥ 1 byte, and the total bound cannot be below the
+    /// per-stream bound; the size literals are the §14 grammar.
+    #[serde(default)]
+    pub stream: StreamConfig,
 }
 
 /// S-09: opt-in toggle for the OG rasterization endpoint.
@@ -316,6 +324,7 @@ impl Default for OxideConfig {
             images_endpoint: EndpointToggle::default(),
             experiments: Vec::new(),
             live: LiveConfig::default(),
+            stream: StreamConfig::default(),
         }
     }
 }
@@ -373,6 +382,48 @@ pub enum LiveTransport {
     Sse,
     /// HTTP polling fallback (`transport: 'poll'` in the spec table).
     Poll,
+}
+
+/// V2-F07 (§V2-F07 wiring step 3): the resumable-stream settings. The
+/// spec's `stream.resume` object: a streamed response marked
+/// `x-oxide-stream: <id>` stays replayable for the ttl, each buffer
+/// holding at most `maxBytesEach`, all buffers together at most
+/// `maxBytesTotal`.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
+pub struct StreamConfig {
+    /// The reattach/replay bounds.
+    pub resume: StreamResumeConfig,
+}
+
+/// V2-F07: the `stream.resume` knobs. The size knobs carry the §14 size
+/// literal grammar (`"4mb"`, `"64kb"`, plain bytes) — parsed by
+/// [`parse_size`] at the wiring, validated at load (`CFG-SIZE` on a bad
+/// literal, `DSP-112` on a physically useless bound).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
+pub struct StreamResumeConfig {
+    /// How long a buffer stays reattachable, in seconds (spec: `ttl:
+    /// '60s'`; `DSP-112` rejects 0 — the buffer would expire before the
+    /// reattach arrives).
+    pub ttl_secs: u64,
+    /// The per-stream replay cap, e.g. `"4mb"` (spec default). Past it the
+    /// buffer loses replay instead of eating memory: the client falls back
+    /// to a fresh fetch.
+    pub max_bytes_each: String,
+    /// The store-wide cap, e.g. `"256mb"` (spec default). The accounting
+    /// evicts the oldest completed buffer first, then the oldest buffer.
+    pub max_bytes_total: String,
+}
+
+impl Default for StreamResumeConfig {
+    fn default() -> Self {
+        Self {
+            ttl_secs: 60,
+            max_bytes_each: "4mb".into(),
+            max_bytes_total: "256mb".into(),
+        }
+    }
 }
 
 /// Static export settings (§10.5). When `fallback` is set, the static
