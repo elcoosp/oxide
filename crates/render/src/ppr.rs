@@ -16,6 +16,7 @@
 
 use crate::{Result, err};
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 /// The static shell of a PPR response — the HTML with each deferred boundary
 /// replaced by a stable `<ox-hole id="…"></ox-hole>` placeholder.
@@ -29,6 +30,12 @@ pub struct Shell {
 
 /// Split a fully-rendered page (with `data-ox-b` boundaries) into a cacheable
 /// shell and a list of hole IDs.
+///
+/// # Errors
+///
+/// Returns `RND-PPR` when a boundary marker is malformed: an unterminated
+/// `<template data-ox-b=` tag, an unquoted or unclosed id, or a missing
+/// `</template>` closer.
 pub fn split_shell(html: &str) -> Result<Shell> {
     let mut out = String::with_capacity(html.len());
     let mut holes = Vec::new();
@@ -61,7 +68,7 @@ pub fn split_shell(html: &str) -> Result<Shell> {
             .find("</template>")
             .ok_or_else(|| err("RND-PPR", format!("boundary `{id}` has no closing tag")))?;
         // Emit an opaque placeholder in the shell.
-        out.push_str(&format!("<ox-hole id=\"{id}\"></ox-hole>"));
+        let _ = write!(out, "<ox-hole id=\"{id}\"></ox-hole>");
         holes.push(id);
         cursor =
             open + "<template data-ox-b=".len() + 1 + close_q + 1 + close_rel + "</template>".len();
@@ -76,6 +83,11 @@ pub fn split_shell(html: &str) -> Result<Shell> {
 
 /// Assemble the final HTML from a cached shell and the per-request resolved
 /// boundary content. `resolved` maps hole id → resolved HTML.
+///
+/// # Errors
+///
+/// Returns `RND-PPR` when a cached-shell hole marker is malformed (missing
+/// quote or missing the `></ox-hole>` closer).
 pub fn assemble(shell: &Shell, resolved: &BTreeMap<String, String>) -> Result<String> {
     let mut out = String::with_capacity(shell.html.len() + 256);
     let mut cursor = 0usize;
@@ -108,6 +120,7 @@ pub fn assemble(shell: &Shell, resolved: &BTreeMap<String, String>) -> Result<St
 ///
 /// CSP-safe (nonce-carrying, no eval); ids are compared by attribute, never
 /// interpolated into a selector.
+#[must_use]
 pub fn client_resolver(nonce: &str) -> String {
     let mut out = String::with_capacity(900);
     out.push_str("<script nonce=\"");
@@ -140,6 +153,7 @@ pub fn client_resolver(nonce: &str) -> String {
 
 /// Cache key for a shell (§10.4): route + params + build id + Vary dims. Any
 /// static shell from the same build for the same route shares one entry.
+#[must_use]
 pub fn shell_cache_key(
     route: &str,
     params: &BTreeMap<String, String>,
@@ -193,7 +207,7 @@ mod tests {
         );
 
         let plain = split_shell("<p>static</p>").unwrap();
-        assert!(plain.hole_ids.is_empty());
+        assert_eq!(plain.hole_ids, Vec::<String>::new());
         assert_eq!(plain.html, "<p>static</p>");
     }
 
