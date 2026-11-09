@@ -78,3 +78,10 @@ required-features = ["bench-util"]
 name = "stream"
 harness = false
 required-features = ["bench-util"]
+
+# V2-F12: criterion bench for the brownout governor (level transitions and
+# the one-atomic-load request-path cost).
+[[bench]]
+name = "governor"
+harness = false
+required-features = ["bench-util"]
