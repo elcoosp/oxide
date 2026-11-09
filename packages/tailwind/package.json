@@ -1,6 +1,6 @@
 {
   "name": "@oxide-fw/tailwind",
-  "version": "0.1.0",
+  "version": "0.6.0",
   "description": "Tailwind CSS integration for Oxide: content scanning and build-time extraction.",
   "type": "module",
   "main": "./dist/index.js",
