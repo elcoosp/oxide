@@ -37,6 +37,16 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/add/generate/cache/audit/migrate/test | §19 |
 ## What changed since 2026-10-12
 
+- **`packages/core`**: the interaction-replay substrate (V2-F03) —
+  `src/client/replay.ts` (capture-phase listeners for `click`/`input`/
+  `change`/`focusin` against pending `<ox-island>` hosts, the 100-record
+  drop-oldest log, host-relative child paths, replay with node-identity
+  verification), wired into `hydrateIsland` (replay right after
+  `data-ox-hydrated` becomes `done`) and both boot paths (capture starts
+  before any island hydrates; payload `interactionReplay: false` opts
+  out). Spec deltas and the deferred Rust config surface — see
+  `docs/deviations.md`.
+
 - **`server` + `config` + `router`**: the brownout-mode substrate
   (V2-F12) — `server::governor` (the spec-verbatim `Level`/`Signals`/
   `Thresholds` model, the pure `raw_level` breach scan and `next_level`
@@ -173,7 +183,7 @@ build's route scan owns the component graph:
 
 | Package | Owns |
 | --- | --- |
-| `oxide` | Server APIs (`defineLoad/Action/Meta`, `cache`, `serverFn`, `defer`, `redirect/error`), ODF JS decoder (byte-compatible with Rust fixtures), core client router (§8.4), island loader (§10.3), form `enhance`, `createTestApp` (§16.6) |
+| `oxide` | Server APIs (`defineLoad/Action/Meta`, `cache`, `serverFn`, `defer`, `redirect/error`), ODF JS decoder (byte-compatible with Rust fixtures), core client router (§8.4), island loader (§10.3) + interaction replay (§V2-F03), form `enhance`, `createTestApp` (§16.6) |
 | `@oxide/{react,vue,svelte,solid}` | FrameworkAdapter implementations (§7): capabilities manifest, IR-based SSR with streaming boundary protocol, hydration, HMR strategy |
 | `create-oxide` | Starters: 4 frameworks × minimal/blog/dashboard/storefront (§19.2) |
 | `conformance` | Atlas reference app + one assertion set run against all four adapters (§22, D20) |
