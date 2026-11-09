@@ -157,6 +157,14 @@ pub struct OxideConfig {
     /// per-stream bound; the size literals are the §14 grammar.
     #[serde(default)]
     pub stream: StreamConfig,
+    /// V2-F12: the brownout-mode knobs (the governor's breach ladders, the
+    /// stale ceiling, the opt-in hedger). Inert by default — with
+    /// `enabled: false` no governor is constructed and the request path
+    /// gains nothing. Knobs are validated at load (`DSP-113`): ascending
+    /// threshold ladders, a `staleCeiling` multiplier ≥ 1, and a hedger
+    /// `afterFactor` > 1.
+    #[serde(default)]
+    pub brownout: BrownoutConfig,
 }
 
 /// S-09: opt-in toggle for the OG rasterization endpoint.
@@ -325,6 +333,7 @@ impl Default for OxideConfig {
             experiments: Vec::new(),
             live: LiveConfig::default(),
             stream: StreamConfig::default(),
+            brownout: BrownoutConfig::default(),
         }
     }
 }
@@ -423,6 +432,113 @@ impl Default for StreamResumeConfig {
             max_bytes_each: "4mb".into(),
             max_bytes_total: "256mb".into(),
         }
+    }
+}
+
+/// V2-F12: the brownout-mode knobs. The spec's `brownout` object —
+/// `enabled`, `staleCeiling`, the three breach ladders (`thresholds`) and
+/// the opt-in hedger. Off by default: with `enabled: false` no governor is
+/// constructed and the request path keeps its pre-F12 shape (the inert
+/// defaults contract the `live`/`stream` sections set). Knobs are
+/// validated at load (`DSP-113`): each threshold ladder must be ascending
+/// (a higher rung below a lower one makes the hysteresis nonsensical), the
+/// `staleCeiling` multiplier must parse and be ≥ 1, and the hedger's
+/// `afterFactor` must be > 1.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
+pub struct BrownoutConfig {
+    /// Master switch. `false` (the default) means no governor is
+    /// constructed — the request path reads nothing new.
+    pub enabled: bool,
+    /// How long past the TTL an L0 entry may still serve at level `Stale`,
+    /// as a multiplier on the entry's TTL (`"10x"`, plain `"10"`, `"1.5x"`).
+    /// Parsed by [`parse_stale_ceiling`]; the spec's default is 10×.
+    pub stale_ceiling: String,
+    /// The three breach ladders, in milliseconds for the latency knobs and
+    /// MiB for `rssMb`. Rung `i` is the level-`i+1` threshold; a signal at
+    /// or above it breaches that level.
+    pub thresholds: BrownoutThresholdsConfig,
+    /// The opt-in hedger (§V2-F12, off by default): a still-running
+    /// idempotent GET render is duplicated after `afterFactor` × the
+    /// route's recent p95, first response wins.
+    pub hedge: HedgeConfig,
+}
+
+impl Default for BrownoutConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            stale_ceiling: "10x".into(),
+            thresholds: BrownoutThresholdsConfig::default(),
+            hedge: HedgeConfig::default(),
+        }
+    }
+}
+
+/// V2-F12: the three breach ladders. `0` on an `rssMb` rung is the
+/// documented "no RSS gate" spelling (the wiring maps it to the spec's
+/// never-breach `u64::MAX` sentinel — JSON cannot carry `u64::MAX` without
+/// precision loss). The latency ladders default to the §V2-F12
+/// `Thresholds::default` code block converted to whole milliseconds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
+pub struct BrownoutThresholdsConfig {
+    /// Pool queue-wait p99 breach rungs, ms (spec: 50 / 200 / 500).
+    pub queue_wait_ms: [u64; 3],
+    /// Event-loop lag breach rungs, ms (spec: 20 / 100 / 300).
+    pub loop_lag_ms: [u64; 3],
+    /// Resident-memory breach rungs, MiB (spec default: never).
+    pub rss_mb: [u64; 3],
+}
+
+impl Default for BrownoutThresholdsConfig {
+    fn default() -> Self {
+        Self {
+            queue_wait_ms: [50, 200, 500],
+            loop_lag_ms: [20, 100, 300],
+            rss_mb: [0, 0, 0],
+        }
+    }
+}
+
+/// V2-F12: the hedger's knobs (opt-in, off by default — the spec documents
+/// the idempotency requirement an enabled hedger imposes).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
+pub struct HedgeConfig {
+    /// `false` (the default) disables the hedger entirely.
+    pub enabled: bool,
+    /// Hedge a still-running render after this multiple of the route's
+    /// recent p95 (`> 1`, spec default 2.0 — `DSP-113` rejects ≤ 1: a
+    /// factor of 1 would hedge every render).
+    pub after_factor: f64,
+}
+
+impl Default for HedgeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            after_factor: 2.0,
+        }
+    }
+}
+
+/// Parse a [`BrownoutConfig::stale_ceiling`] multiplier: `"10x"` (the
+/// spec's default spelling), a plain `"10"`, or a fractional `"1.5x"`.
+/// Returns `None` on an unparseable literal, a zero or negative
+/// multiplier, or a non-finite value — the load validation turns `None`
+/// into the `DSP-113` diagnostic.
+#[must_use]
+pub fn parse_stale_ceiling(s: &str) -> Option<f64> {
+    let digits = s.strip_suffix('x').unwrap_or(s);
+    if digits.is_empty() {
+        return None;
+    }
+    let n: f64 = digits.parse().ok()?;
+    if n.is_finite() && n >= 1.0 {
+        Some(n)
+    } else {
+        None
     }
 }
 
@@ -997,6 +1113,12 @@ pub mod native_rule {
         pub basic_auth: Option<(String, String)>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub rate_limit: Option<RateLimitSpec>,
+        /// V2-F12: the route's overload priority (`low | normal |
+        /// critical`, default `normal`). The spelling is validated at load
+        /// (`DSP-113`); the CLI passes it through to the router's
+        /// `NativeRule` for the brownout enforcement stage.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub priority: Option<String>,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
