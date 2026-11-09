@@ -29,13 +29,27 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `plugin` | Hook model, pre/post ordering, JS bridge messages, WASM plugin manifest validation, module manifests | §15 |
 | `dispatch` | V8-free request orchestration: URL/query helpers, stage `Flow` protocol, §8.5 middleware chain + unified locals (A05), §9.2 parallel load graph (A06), §15.4 experiments assignment engine (F04), build id + generations substrate (A04) with the live route on the data plane (`/__oxide/live` build query contract, §V2-F05) and the F07 reattach route (`/__oxide/stream/<id>` + `stream_resume_id`) | §4.1, §8.4, §8.5, §9.2, §9.3, §15.4, V2-A02, V2-A04, V2-F05, V2-F07 |
 | `render` | Streaming pipeline, head merge, HTML injection (lol_html), deferred-boundary protocol (§7.1), islands markup (§10.3), hydration bootstrap (+ the §V2-A04 `build` field), error recovery | §7.1, §10, V2-A04 |
-| `server` | Hyper 1.x pipeline, static assets (range/304/precompressed), dynamic compression, security defaults (§17.1), CSRF/SSRF/host checks, rate limiting, cookies, RFC6455 codec, graceful shutdown; §V2-F05 live substrate: SSE framing, tag hub (`LiveHub`/`Sub`/`Guard`), snapshot stream, rerun runner, same-origin gate; §V2-F06 delta policy (`delta_payload`, per-connection patch base); §V2-F07 resumable-stream substrate (`stream_store`: `StreamBuf`/`StreamStore`, `read_from` replay, `stream_id`, Range parse, 206/200/410 reattach responses, `tee_stream`) | §12, §17, D7, V2-F05, V2-F07 |
+| `server` | Hyper 1.x pipeline, static assets (range/304/precompressed), dynamic compression, security defaults (§17.1), CSRF/SSRF/host checks, rate limiting, cookies, RFC6455 codec, graceful shutdown; §V2-F05 live substrate: SSE framing, tag hub (`LiveHub`/`Sub`/`Guard`), snapshot stream, rerun runner, same-origin gate; §V2-F06 delta policy (`delta_payload`, per-connection patch base); §V2-F07 resumable-stream substrate (`stream_store`: `StreamBuf`/`StreamStore`, `read_from` replay, `stream_id`, Range parse, 206/200/410 reattach responses, `tee_stream`); §V2-F12 brownout substrate (`governor`: `Level`/`Signals`/`Thresholds`, `raw_level`/`next_level` hysteresis, `Governor` atomic, `serve_decision` × route `Priority`, `shed_response`, `ready_status`) | §12, §17, D7, V2-F05, V2-F07, V2-F12 |
 | `assets` | CSS pipeline (nesting/modules/minify/prefix), image backend (resize/encode/LQIP), font bundles, metadata/SEO, sitemap/robots, markdown/content, OG model | §6.6–6.7, §16, D19 |
 | `dev` | Hash-confirmed watcher (§5.5), HMR message protocol + per-kind behavior table (§13.3), update boundaries, inspector model (§13.4), prebundle keys | §13 |
 | `adapters` | Deploy targets + capability matrix + refusal rule, `_headers`/`_redirects`, Dockerfile, Worker/node/serverless entries | §18 |
 | `core-wasm` | Edge subset: cache keys, head merge, ODF re-encode (D18) | §2 D18 |
 | `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/add/generate/cache/audit/migrate/test | §19 |
 ## What changed since 2026-10-12
+
+- **`server` + `config` + `router`**: the brownout-mode substrate
+  (V2-F12) — `server::governor` (the spec-verbatim `Level`/`Signals`/
+  `Thresholds` model, the pure `raw_level` breach scan and `next_level`
+  hysteresis transition, the `Governor` atomic the request path reads),
+  the enforcement seam (`Priority` with the `low|normal|critical` grammar,
+  `serve_decision` level × priority → `Decision`, `shed_response` with
+  `retry-after: 5` + `x-oxide-brownout`, `ready_status` flipping only at
+  `Emergency`), the `oxide_brownout_level` Prometheus gauge, the
+  `brownout` config section (`enabled`, `staleCeiling`, the three
+  threshold ladders, the opt-in `hedge`; DSP-113 + `rules[].priority`
+  validation, JSON schema regenerated), and `NativeRule.priority` (router
+  + config mirror). Sampler/enforcement-stage wiring deferred — see
+  `docs/deviations.md`.
 
 - **`server` + `dispatch` + `config` + `packages/core`**: the
   resumable-streams substrate (V2-F07) — `server::stream_store`
