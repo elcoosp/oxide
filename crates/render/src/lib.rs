@@ -3,7 +3,7 @@
 //! oxide-fw-render — streaming pipeline, html injection, boundary protocol (spec §7.1, §10, D12).
 //!
 //! The render sequence (§10.2): route matched + L0 checked → loads in isolate →
-//! adapter.render() streams the shell → Rust injects head/CSS/modulepreload/CSP nonces/
+//! `adapter.render()` streams the shell → Rust injects head/CSS/modulepreload/CSP nonces/
 //! ODF data/hydration bootstrap via html rewriting → deferred boundaries stream as they
 //! resolve → eligible responses stored in L0 with recorded tags. Early Hints (103) are
 //! sent for known critical assets before loads finish.
@@ -33,6 +33,7 @@ use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -57,6 +58,7 @@ pub enum RenderMode {
 }
 
 impl RenderMode {
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             RenderMode::Static => "static",
@@ -66,6 +68,7 @@ impl RenderMode {
             RenderMode::Islands => "islands",
         }
     }
+    #[must_use]
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s {
             "static" => RenderMode::Static,
@@ -107,6 +110,7 @@ impl HeadTags {
     /// with the same normalized (`name`/`property`) key — the outer entry keeps its
     /// position for keys untouched by inner, new keys append in inner order. Links,
     /// scripts and JSON-LD are concatenated (outer first).
+    #[must_use]
     pub fn merge(self, inner: HeadTags) -> HeadTags {
         let title = inner.title.or(self.title);
         let inner_keys: std::collections::BTreeSet<String> =
@@ -133,6 +137,7 @@ impl HeadTags {
     }
 
     /// Serialize into `<head>` markup with CSP nonce on injected scripts (§17.1).
+    #[must_use]
     pub fn to_html(&self, nonce: &str) -> String {
         let mut out = String::new();
         if let Some(t) = &self.title {
@@ -142,34 +147,36 @@ impl HeadTags {
         }
         for (key, content) in &self.meta {
             let (kind, ident) = meta_kind_and_ident(key);
-            out.push_str(&format!(
+            let _ = write!(
+                out,
                 "<meta {kind}=\"{}\" content=\"{}\">",
                 escape_attr(ident),
                 escape_attr(content)
-            ));
+            );
         }
         for (href, attrs) in &self.links {
-            out.push_str(&format!("<link href=\"{}\"", escape_attr(href)));
+            let _ = write!(out, "<link href=\"{}\"", escape_attr(href));
             for (k, v) in attrs {
-                out.push_str(&format!(" {k}=\"{}\"", escape_attr(v)));
+                let _ = write!(out, " {k}=\"{}\"", escape_attr(v));
             }
             out.push('>');
         }
         for (body, attrs) in &self.scripts {
             out.push_str("<script");
             for (k, v) in attrs {
-                out.push_str(&format!(" {k}=\"{}\"", escape_attr(v)));
+                let _ = write!(out, " {k}=\"{}\"", escape_attr(v));
             }
-            out.push_str(&format!(" nonce=\"{}\"", escape_attr(nonce)));
+            let _ = write!(out, " nonce=\"{}\"", escape_attr(nonce));
             out.push('>');
             out.push_str(&guard_script(body));
             out.push_str("</script>");
         }
         for json in &self.json_ld {
-            out.push_str(&format!(
+            let _ = write!(
+                out,
                 "<script type=\"application/ld+json\" nonce=\"{}\">",
                 escape_attr(nonce)
-            ));
+            );
             out.push_str(&escape_json_script(json));
             out.push_str("</script>");
         }
@@ -195,6 +202,7 @@ fn meta_norm_key(key: &str) -> String {
 
 /// Escape an HTML attribute value minimally: `& < > " '`.
 /// All injected attributes are single-quoted (SEC-07), so `'` must escape.
+#[must_use]
 pub fn escape_attr(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -212,6 +220,7 @@ pub fn escape_attr(s: &str) -> String {
 
 /// Escape HTML text content minimally: `& < >`.
 /// SEC-07: 500 pages interpolate worker error text — escape it.
+#[must_use]
 pub fn escape_text(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -238,8 +247,7 @@ fn guard_script(s: &str) -> String {
         let after_ok = lower[at + pat.len()..]
             .chars()
             .next()
-            .map(|c| !c.is_ascii_alphanumeric())
-            .unwrap_or(true);
+            .is_some_and(|c| !c.is_ascii_alphanumeric());
         if !after_ok {
             out.push_str(&s[rest..at + pat.len()]);
             rest = at + pat.len();
@@ -266,6 +274,7 @@ fn escape_json_script(s: &str) -> String {
 pub const BOUNDARY_FALLBACK_ATTR: &str = "data-ox-b";
 pub const BOUNDARY_CONTENT_ATTR: &str = "data-ox-c";
 
+#[must_use]
 pub fn boundary_fallback(id: u32, fallback_html: &str) -> String {
     format!("<template {BOUNDARY_FALLBACK_ATTR}='{id}'>{fallback_html}</template>")
 }
@@ -274,7 +283,7 @@ pub fn boundary_fallback(id: u32, fallback_html: &str) -> String {
 /// parameterized by the boundary id. ~350 bytes, CSP-safe (no eval, DOM APIs only):
 /// finds `template[data-ox-c='<id>']`, moves its content over the matching
 /// `template[data-ox-b='<id>']` placeholder via `replaceWith`, then dispatches the
-/// `ox:swap` CustomEvent (`detail: {id, value}`) that triggers adapter hydration.
+/// `ox:swap` `CustomEvent` (with `detail: {id, value}`) that triggers adapter hydration.
 ///
 /// `detail.value` is the resolved boundary's content (the `innerHTML` of the
 /// content template — the HTML the server streamed). Before this carried a
@@ -304,6 +313,7 @@ pub const SWAPPER_SRC: &str = r#"function(id){var t=document.querySelector("[dat
 /// Streamed boundary resolution (§7.1): the content template plus a self-contained
 /// swapper IIFE with `id` baked in. The script does not depend on `window.__oxSwap`
 /// (see the module docs for the split between this and [`swapper_script`]).
+#[must_use]
 pub fn boundary_content(id: u32, html: &str, nonce: &str) -> String {
     boundary_content_with_id(&id.to_string(), html, nonce)
 }
@@ -319,6 +329,7 @@ fn boundary_content_with_id(id: &str, html: &str, nonce: &str) -> String {
 /// The shared swapper bootstrap (§7.1): installs `window.__oxSwap` (from the same
 /// [`SWAPPER_SRC`] used by [`boundary_content`]) plus an `ox:defer` listener used by the
 /// hydration bootstrap to replay deferred boundaries queued before hydration.
+#[must_use]
 pub fn swapper_script(nonce: &str) -> String {
     format!(
         "<script nonce='{n}'>window.__oxSwap={src};window.addEventListener('ox:defer',function(e){{window.__oxSwap(e.detail.id)}});</script>",
@@ -346,6 +357,7 @@ pub enum IslandStrategy {
     Media(String),
 }
 
+#[must_use]
 pub fn island_element(directive: &IslandDirective, ssr_html: &str) -> String {
     let strategy = match &directive.strategy {
         IslandStrategy::Load => "load".to_string(),
@@ -387,6 +399,11 @@ pub fn island_element(directive: &IslandDirective, ssr_html: &str) -> String {
 /// Attribute order is deterministic so golden tests and diff-based CI are
 /// stable: marker, strategy, src|inline, module flag, user attrs (sorted by
 /// `BTreeMap`), nonce.
+///
+/// # Errors
+///
+/// Returns `RND-SCRIPT` when `src` and `content` are both absent (nothing
+/// to load) or both present (ambiguous).
 pub fn script_placeholder(
     strategy: &str,
     src: Option<&str>,
@@ -411,20 +428,20 @@ pub fn script_placeholder(
         _ => {}
     }
     let mut out = String::from("<script data-ox-script data-ox-script-placeholder");
-    out.push_str(&format!(" data-ox-strategy=\"{}\"", escape_attr(strategy)));
+    let _ = write!(out, " data-ox-strategy=\"{}\"", escape_attr(strategy));
     if let Some(s) = src {
-        out.push_str(&format!(" data-ox-src=\"{}\"", escape_attr(s)));
+        let _ = write!(out, " data-ox-src=\"{}\"", escape_attr(s));
     } else if let Some(c) = content {
         let b64 = base64::engine::general_purpose::STANDARD.encode(c.as_bytes());
-        out.push_str(&format!(" data-ox-inline=\"{}\"", b64));
+        let _ = write!(out, " data-ox-inline=\"{b64}\"");
     }
     if module {
         out.push_str(" data-ox-module");
     }
     for (k, v) in attrs {
-        out.push_str(&format!(" {k}=\"{}\"", escape_attr(v)));
+        let _ = write!(out, " {k}=\"{}\"", escape_attr(v));
     }
-    out.push_str(&format!(" nonce=\"{}\"", escape_attr(nonce)));
+    let _ = write!(out, " nonce=\"{}\"", escape_attr(nonce));
     out.push_str("></script>");
     Ok(out)
 }
@@ -436,6 +453,7 @@ pub fn script_placeholder(
 /// percent-encoded (byte-wise, uppercase hex) so the output is always safe and
 /// deterministic. Percent-encoding (rather than an error) keeps this total — a hostile
 /// route id degrades to an encoded form instead of failing the render.
+#[must_use]
 pub fn hydration_bootstrap(odf_b64: &str, route_id: &str, nonce: &str) -> String {
     let n = escape_attr(nonce);
     format!(
@@ -460,6 +478,7 @@ pub fn hydration_bootstrap(odf_b64: &str, route_id: &str, nonce: &str) -> String
 /// The V8-linked CLI keeps calling the three-field [`hydration_bootstrap`]
 /// until the A01-phase-3 wiring lands (additive substrate; see
 /// `docs/deviations.md`).
+#[must_use]
 pub fn hydration_bootstrap_with_build(
     odf_b64: &str,
     route_id: &str,
@@ -482,6 +501,7 @@ pub fn hydration_bootstrap_with_build(
 /// hydration; `live: false` is byte-identical to
 /// [`hydration_bootstrap_with_build`] (additive, the V8-linked CLI call
 /// sites compile unchanged).
+#[must_use]
 pub fn hydration_bootstrap_with_live(
     odf_b64: &str,
     route_id: &str,
@@ -502,13 +522,57 @@ pub fn hydration_bootstrap_with_live(
     )
 }
 
+/// §V2-F03: the interaction-replay-advertising hydration bootstrap — the
+/// F05 shape plus the `interactionReplay` field, the last leg of the
+/// deferral contract (`docs/deviations.md`): the boot runtime honors
+/// `payload.interactionReplay === false` today, so emitting the field is
+/// the only remaining change and defaults stay ON (flag absent =
+/// enabled).
+///
+/// `interaction_replay: true` (or the flag absent) keeps the emitted
+/// bytes identical to the pre-F03 spellings — [`hydration_bootstrap_with_build`]
+/// for non-live routes, [`hydration_bootstrap_with_live`] for live ones —
+/// so the V8-linked CLI call sites compile unchanged until the
+/// A01-phase-3 wiring lands (additive substrate). `false` inserts
+/// `interactionReplay:false` between the optional `live` field and the
+/// `data` reference — exactly the spelling the boot runtime's
+/// `!== false` check reads (`packages/core` boot.ts).
+pub fn hydration_bootstrap_with_replay(
+    odf_b64: &str,
+    route_id: &str,
+    nonce: &str,
+    build_id: &str,
+    live: bool,
+    interaction_replay: bool,
+) -> String {
+    if interaction_replay {
+        // Flag absent = enabled: byte-identical to the pre-F03 shapes.
+        return hydration_bootstrap_with_live(odf_b64, route_id, nonce, build_id, live);
+    }
+    let n = escape_attr(nonce);
+    let live_field = if live { "live:true," } else { "" };
+    tracing::debug!(
+        route = %route_id,
+        "interaction replay disabled by config; advertising interactionReplay:false"
+    );
+    format!(
+        "<script type='application/oxide-data' nonce='{n}'>{b64}</script>\
+<script nonce='{n}'>window.__oxide={{route:\"{route}\",build:\"{build}\",{live_field}interactionReplay:false,data:document.currentScript.previousElementSibling.textContent}}</script>",
+        b64 = odf_b64,
+        route = sanitize_route_id(route_id),
+        build = sanitize_route_id(build_id),
+    )
+}
+
 /// Percent-encode every byte outside the route-id alphabet `[a-z0-9-/]`.
 fn sanitize_route_id(route_id: &str) -> String {
     let mut out = String::with_capacity(route_id.len());
     for b in route_id.as_bytes() {
         match b {
             b'a'..=b'z' | b'0'..=b'9' | b'-' | b'/' => out.push(*b as char),
-            _ => out.push_str(&format!("%{b:02X}")),
+            _ => {
+                let _ = write!(out, "%{b:02X}");
+            }
         }
     }
     out
@@ -520,7 +584,9 @@ fn sanitize_boundary_id(id: &str) -> String {
     for b in id.as_bytes() {
         match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' => out.push(*b as char),
-            _ => out.push_str(&format!("%{b:02X}")),
+            _ => {
+                let _ = write!(out, "%{b:02X}");
+            }
         }
     }
     out
@@ -538,6 +604,10 @@ pub struct RenderStream {
 
 impl RenderStream {
     /// Drain the stream into one string (test/inspection helper).
+    ///
+    /// # Errors
+    ///
+    /// Returns `RND-UTF8` when the concatenated stream is not valid UTF-8.
     pub async fn collect_to_string(self) -> Result<String> {
         let mut rx = self.rx;
         let mut buf: Vec<u8> = Vec::new();
@@ -561,6 +631,7 @@ pub struct RequestTimings {
 
 impl RequestTimings {
     /// `Server-Timing` header value (§12.1 step 8): match, cache, load, render, inject.
+    #[must_use]
     pub fn server_timing(&self) -> String {
         format!(
             "match;dur={:.2}, cache;dur={:.2}, load;dur={:.2}, render;dur={:.2}, inject;dur={:.2}",
@@ -571,7 +642,7 @@ impl RequestTimings {
 
 /// Injection pass: given a streamed HTML shell chunk-stream, inject head tags, CSS +
 /// modulepreload links (critical order, §10.2 step 4), CSP nonces, ODF data and the
-/// hydration bootstrap — using lol_html streaming rewrites (D: lol_html behind render crate).
+/// hydration bootstrap — using `lol_html` streaming rewrites (D: `lol_html` behind render crate).
 pub struct Injector {
     pub head: HeadTags,
     pub nonce: String,
@@ -593,6 +664,13 @@ pub struct Injector {
     /// `GET /__oxide/live` after hydration. `false` keeps the A04 shape
     /// byte-identical.
     pub live: bool,
+    /// V2-F03: the interaction-replay opt-out. Defaults to `true` (flag
+    /// absent = enabled), which keeps the emitted bootstrap byte-identical
+    /// to the pre-F03 shapes; `false` — set via
+    /// [`Injector::with_interaction_replay`] from the typed config —
+    /// advertises `interactionReplay:false` as the sixth `window.__oxide`
+    /// field so the boot runtime skips `startReplay`.
+    pub interaction_replay: bool,
     /// Extra HTML appended to the body injection fragment, AFTER the
     /// hydration bootstrap. The CLI uses it for the resolved-deferred
     /// `<script type="application/oxide-deferred">` on prerendered pages
@@ -603,6 +681,7 @@ pub struct Injector {
 }
 
 impl Injector {
+    #[must_use]
     pub fn new(head: HeadTags, nonce: String, route_id: String) -> Self {
         Self {
             head,
@@ -613,12 +692,14 @@ impl Injector {
             route_id,
             build_id: None,
             live: false,
+            interaction_replay: true,
             body_extra: String::new(),
         }
     }
 
     /// Advertise `build_id` as the fourth `window.__oxide` field (§V2-A04).
     /// Chainable: `Injector::new(..).with_build_id(id)`.
+    #[must_use]
     pub fn with_build_id(mut self, build_id: impl Into<String>) -> Self {
         self.build_id = Some(build_id.into());
         self
@@ -626,8 +707,20 @@ impl Injector {
 
     /// Advertise the `live` flag as the fifth `window.__oxide` field
     /// (§V2-F05 step 1). Chainable: `Injector::new(..).with_live(true)`.
+    #[must_use]
     pub fn with_live(mut self, live: bool) -> Self {
         self.live = live;
+        self
+    }
+
+    /// Advertise the `interactionReplay` opt-out as the sixth
+    /// `window.__oxide` field (§V2-F03). Chainable:
+    /// `Injector::new(..).with_interaction_replay(false)`. The default is
+    /// `true` (flag absent = enabled), which never changes the emitted
+    /// bytes; only `false` alters the bootstrap.
+    #[must_use]
+    pub fn with_interaction_replay(mut self, interaction_replay: bool) -> Self {
+        self.interaction_replay = interaction_replay;
         self
     }
 
@@ -635,16 +728,18 @@ impl Injector {
     fn injection_fragments(&self) -> (String, Option<String>) {
         let mut head = self.head.to_html(&self.nonce);
         for url in &self.preload {
-            head.push_str(&format!(
+            let _ = write!(
+                head,
                 "<link rel=\"modulepreload\" href=\"{}\">",
                 escape_attr(url)
-            ));
+            );
         }
         for url in &self.css_links {
-            head.push_str(&format!(
+            let _ = write!(
+                head,
                 "<link rel=\"stylesheet\" href=\"{}\">",
                 escape_attr(url)
-            ));
+            );
         }
         // The body fragment is the hydration bootstrap (when a payload is
         // set) plus any pipeline-supplied extra. Emitted when EITHER is
@@ -653,17 +748,21 @@ impl Injector {
             let mut body = String::new();
             if let Some(b64) = self.odf_payload_b64.as_ref() {
                 match self.build_id.as_ref() {
-                    // §V2-A04 + §V2-F05: with a build id the bootstrap
-                    // carries the fourth `build` field the client echoes
-                    // on the data plane; opted-in live routes add the
-                    // fifth `live:true` field the router connects from.
+                    // §V2-A04 + §V2-F05 + §V2-F03: with a build id the
+                    // bootstrap carries the fourth `build` field the client
+                    // echoes on the data plane; opted-in live routes add the
+                    // fifth `live:true` field the router connects from; and
+                    // `interaction_replay: false` adds the sixth
+                    // `interactionReplay:false` field boot's `!== false`
+                    // check reads. `true` keeps the pre-F03 bytes.
                     Some(id) => {
-                        body.push_str(&hydration_bootstrap_with_live(
+                        body.push_str(&hydration_bootstrap_with_replay(
                             b64,
                             &self.route_id,
                             &self.nonce,
                             id,
                             self.live,
+                            self.interaction_replay,
                         ));
                     }
                     None => body.push_str(&hydration_bootstrap(b64, &self.route_id, &self.nonce)),
@@ -678,13 +777,17 @@ impl Injector {
     }
 
     /// Inject into a complete HTML document (tests use this; the streaming variant
-    /// drives lol_html per chunk).
+    /// drives `lol_html` per chunk).
     ///
     /// Head tags + preload/stylesheet links are appended to the existing `<head>`
     /// content (before `</head>`); the hydration bootstrap + ODF payload script are
     /// appended right before `</body>`. Documents without `<head>` get one inserted
     /// (after `<html>` when present, else at the start); documents without a `<body>`
     /// element get the payload appended at the very end of the document.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RND-INJECT` when the `lol_html` rewrite fails.
     pub fn inject_into_html(&self, html: &str) -> Result<String> {
         let (head_inject, body_inject) = self.injection_fragments();
         let html = ensure_head(html);
@@ -712,6 +815,12 @@ impl Injector {
     /// The `<head>` insertion (documents lacking one) is decided once the streamed
     /// prologue reveals a `<head>`/`<body>` open tag (or `HEAD_DECISION_LIMIT` bytes
     /// have arrived), so shells must start their head within that window.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the output sink mutex is poisoned (a prior writer panicked
+    /// mid-chunk).
+    #[must_use]
     pub fn streaming(self) -> InjectStream {
         let (head_inject, body_inject) = self.injection_fragments();
         let body_seen = Arc::new(AtomicBool::new(false));
@@ -738,7 +847,7 @@ impl Injector {
     }
 }
 
-/// lol_html 1.2 element handlers shared by the batch and streaming paths.
+/// `lol_html` 1.2 element handlers shared by the batch and streaming paths.
 fn element_handlers(
     head_inject: String,
     body_inject: Option<String>,
@@ -790,6 +899,15 @@ const HEAD_DECISION_LIMIT: usize = 8192;
 
 impl InjectStream {
     /// Transform one streamed chunk; returns the output bytes emitted so far.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RND-INJECT` when the streaming rewrite fails on this chunk,
+    /// or when the stream was already finished.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the output sink mutex is poisoned.
     pub fn push(&mut self, chunk: &[u8]) -> Result<Vec<u8>> {
         let rewriter = self
             .rewriter
@@ -825,6 +943,14 @@ impl InjectStream {
     }
 
     /// Flush the tail and finish the rewrite.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RND-INJECT` when the final rewrite bytes cannot be flushed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the output sink mutex is poisoned.
     pub fn finish(mut self) -> Result<Vec<u8>> {
         let rewriter = self
             .rewriter
@@ -870,8 +996,7 @@ fn find_tag_open(hay: &str, tag: &str) -> Option<usize> {
         let ok = lower[at + pat.len()..]
             .chars()
             .next()
-            .map(|c| c.is_whitespace() || c == '>' || c == '/')
-            .unwrap_or(false);
+            .is_some_and(|c| c.is_whitespace() || c == '>' || c == '/');
         if ok {
             return Some(at);
         }
@@ -901,6 +1026,7 @@ fn ensure_head(html: &str) -> String {
 /// Reuses the [`boundary_content`] swapper with an `ox-error` class on the boundary
 /// markup; the diagnostic code and message are HTML-escaped, and a hostile boundary id
 /// is percent-encoded so it can never break out of the attribute/JS string contexts.
+#[must_use]
 pub fn stream_error_recovery(boundary_id: &str, diagnostic: &Diagnostic, nonce: &str) -> String {
     let id = sanitize_boundary_id(boundary_id);
     let code = escape_attr(&diagnostic.code);
