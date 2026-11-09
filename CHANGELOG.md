@@ -8,6 +8,42 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Oxide is pre-1.0: the API is not yet frozen, and releases before v1.0 may
 include breaking changes announced in the relevant section below.
 
+## [0.6.0] — 2026-11-09
+
+### Added
+
+- **config**: InteractionReplay boolean key with DSP-114 validation
+- **render**: Advertise interactionReplay opt-out via hydration bootstrap
+- **cli**: Thread interactionReplay through CLI call sites
+
+### Chores
+
+- **release**: V0.6.0
+
+### Dependencies
+
+- **deps**: Refresh Cargo.lock for the interaction-replay milestone
+
+### Documentation
+
+- **changelog**: Regenerate for v0.5.0
+- **render**: Interaction-replay walkthrough example
+
+### Refactored
+
+- **diagnostics**: Adopt workspace lints; must_use contracts and write! micro-debt
+- **render**: Emit boundary markers via write!; document RND-PPR errors
+- **jshost**: Adapt loader host to endpoint outcome shapes
+
+### Testing
+
+- **config**: InteractionReplay parsing and DSP-114 coverage
+- **render**: Interaction-replay TDD coverage and snapshot updates
+
+### Bench
+
+- **render**: Criterion bootstrap bench behind bench-util
+
 ## [0.5.0] — 2026-11-09
 
 ### Added
