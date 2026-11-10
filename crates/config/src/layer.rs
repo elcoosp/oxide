@@ -48,6 +48,7 @@ const KNOWN_KEYS: &[&str] = &[
     "live",
     "stream",
     "brownout",
+    "search",
     "interactionReplay",
 ];
 
