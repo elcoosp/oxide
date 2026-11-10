@@ -120,7 +120,7 @@ fn each_target_emits_its_characteristic_files() {
             );
             // Non-empty check: a zero-byte placeholder would silently
             // deploy as an empty artifact.
-            let len = fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+            let len = fs::metadata(&p).map_or(0, |m| m.len());
             assert!(
                 len > 0,
                 "target {target:?}: file `{name}` is empty (0 bytes)"
@@ -158,8 +158,7 @@ fn vercel_json_uses_rewrites_and_handler_is_under_api() {
         rewrites.iter().any(|r| {
             r.get("destination")
                 .and_then(|d| d.as_str())
-                .map(|d| d.contains("/api/handler"))
-                .unwrap_or(false)
+                .is_some_and(|d| d.contains("/api/handler"))
         }),
         "rewrites must route to /api/handler; got:\n{cfg}"
     );
@@ -218,6 +217,21 @@ fn netlify_toml_has_functions_dir_and_consistent_redirect_indent() {
 
 #[test]
 fn dockerfile_healthcheck_uses_the_oxide_path() {
+    // Common instruction prefixes in our Dockerfile (used by the
+    // directive-layout check below).
+    const KNOWN: &[&str] = &[
+        "FROM ",
+        "WORKDIR ",
+        "COPY ",
+        "RUN ",
+        "USER ",
+        "ENV ",
+        "EXPOSE ",
+        "HEALTHCHECK ",
+        "ENTRYPOINT ",
+        "CMD ",
+        "ARG ",
+    ];
     let tmp = TempDir::new().unwrap();
     let out = tmp.path().join("deploy");
     fs::create_dir_all(&out).unwrap();
@@ -260,20 +274,6 @@ fn dockerfile_healthcheck_uses_the_oxide_path() {
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        // Common instruction prefixes in our Dockerfile.
-        const KNOWN: &[&str] = &[
-            "FROM ",
-            "WORKDIR ",
-            "COPY ",
-            "RUN ",
-            "USER ",
-            "ENV ",
-            "EXPOSE ",
-            "HEALTHCHECK ",
-            "ENTRYPOINT ",
-            "CMD ",
-            "ARG ",
-        ];
         assert!(
             KNOWN.iter().any(|p| trimmed.starts_with(p)),
             "line looks malformed (glued directives?): {trimmed:?}"
