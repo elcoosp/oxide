@@ -2995,15 +2995,16 @@ Copy into `WORKLOG.md` and update as WPs merge. Status values: `todo`, `doing`, 
 | WP | Status | PR | Notes |
 | --- | --- | --- | --- |
 | B09 | merged |  | baseline recorded in `benchmarks/baseline-v01.json`; dhat allocation budgets and the `bench-util` criterion harness landed across the V8-free crates |
-| A03 | doing |  | hygiene bundle in progress — the README/CONTRIBUTING/benchmarks/V2.O drift is fixed in the V2-F16 milestone; the WORKLOG dedup remains |
+| A03 | merged |  | hygiene bundle landed — the README/CONTRIBUTING/benchmarks drift was fixed in the V2-F16 milestone and `WORKLOG.md` itself was retired to `docs/archive/`, which retires the dedup item; the stale-string/launch-content/spec-anchor doc gates are CI jobs now |
 | R02 | todo |  |  |
 | A01 | todo |  |  |
 | A02 | merged |  | `crates/dispatch` extracted (V8-free request orchestration) |
-| B01 to B08 | todo |  |  |
+| B01 to B08 | partial |  | **B01** (`RouteContextTable` + the archived zero-copy match in `oxide-fw-router`), **B02** (candidate index + allocation-free matcher), **B05** (heap-free cache keys + the O(1) tag index in `oxide-fw-cache/src/keyhash.rs`) and **B06** (the disk-tier tag multimap with the once-only v1→v2 migration in `oxide-fw-cache/src/tiers.rs`) landed with the V2 Wave B foundations (integration deferred — see HANDOFF); **B03, B04, B07, B08 remain todo** |
 | A04 | merged | #3 | build id + generations substrate |
 | A05 | merged |  | middleware chain + unified locals (landed as direct commits) |
 | A06 | merged |  | parallel load graph (landed as direct commits) |
-| A07 to A10 | todo |  |  |
+| A07 | merged |  | the prerender error-status sidecar substrate — `server::static_status` (`StatusSidecars::scan`, the spec's serve-start walk, plus `write_status_sidecar`, the write half of the contract), the `StaticAssets` scan/serve integration (the walk skips `*.status`, `serve` hard-denies them and applies the sidecar status to 200 responses), the CLI write sites (`write_prerender`'s four emit paths + the two incremental-reuse branches, write-or-clear so a return to 200 removes a stale sidecar), the criterion bench (`status_sidecars_scan` — the serve-start walk at a 256-page dist with 0 and 64 sidecars; `status_for` — the per-request probe hit/miss) and the `crates/server/examples/status_sidecars.rs` walkthrough; the L0-seed silent-write failure is a `tracing::warn` now |
+| A08 to A10 | todo |  |  |
 | C01 to C11 | todo |  |  |
 | F03 | merged |  | interaction replay — client substrate plus the v0.6.0 Rust config surface (`interactionReplay`, DSP-114) |
 | F04 | merged |  | experiments engine + config surface (landed as direct commits) |

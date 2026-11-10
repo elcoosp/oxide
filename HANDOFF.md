@@ -1,3 +1,101 @@
+# Handoff — V2-A07 prerender error-status sidecar landed (a prerendered error page is no longer served as a 200); all Rust gates RUN for the first time in five sessions — the compile breaks the "pending a toolchain" sessions left behind are repaired, the workspace is fmt/clippy/test green on rustc 1.99.1
+
+## Where things stand
+
+**Branch:** `main` (the milestone ships as uncommitted changes plus
+`ship.toml` / `.github/pr-body.md` at the repo root, both gitignored;
+`ship.toml` groups the diff into conventional commits — one per
+reviewer-visible intent — for the ship tooling to materialize).
+**Verified this session (rustc 1.99.1 stable, 2-core/10 GB sandbox):**
+- `cargo fmt --all --check` clean; `cargo clippy --workspace --all-targets
+  --all-features -- -D warnings` clean (the CI bar). Pedantic holds for the
+  six `[lints] workspace = true` crates and for every file this milestone
+  touches; the rest of the workspace is the declared future hygiene pass —
+  the command-line `-W clippy::pedantic` sweep measures ~hundreds of
+  findings in the non-opted-in crates (odf alone ~75), which is why the
+  policy is per-manifest opt-in.
+- Runtime test suites RAN green for 16 crates (server 9/9 suites incl. the
+  9 new A07 pins, cli's write_prerender section 8/8 incl. the 4 new
+  sidecar pins, dev 76/76, cache, render, odf, router, config, dispatch,
+  graph, schema, diagnostics, plugin partially, …). The remaining suites
+  (assets, compiler, bundler, jshost, core-wasm, adapters, the FULL cli
+  lib run beyond the write_prerender filter) are compile-verified by the
+  clippy gate but their runtime runs did not fit the sandbox's disk
+  ceiling — see the not-run list in `.github/pr-body.md`.
+- The zero-`#[allow]` gate: `grep -rnE '#!\[(allow|expect)\(|cfg_attr\([^)]*_allow\('`
+  over `src/ crates/ tests/ examples/ build.rs` — empty.
+- Doc-drift fixes are IN this diff: the spec's V2.O table (A03 merged —
+  WORKLOG.md retired; the B01/B02/B05/B06 rows corrected from a stale
+  "todo" to partial with the landed substrates named; A07 merged),
+  `docs/architecture.md` (the server row + the what-changed bullet),
+  `docs/deviations.md` (the A07 record, 5 deltas), `README.md` (the
+  badge re-measured 1,756→1,775 via `scripts/count-tests.sh`),
+  `crates/server/README.md` (the provides list gains the sidecar seam),
+  and `HANDOFF.md` (this header).
+
+## What landed
+
+V2-A07's prerender error-status sidecar substrate from
+`docs/spec-v0.2-draft.md`, in the F16/F18/F20/E01 substrate pattern:
+
+1. **`static_status.rs` (`crates/server/src/static_status.rs`):**
+   `StatusSidecars` (`scan` — the spec's stack walk, `*.status` only,
+   malformed content ignored, a missing root an empty map; `status_for`;
+   `len`/`is_empty`), `is_status_sidecar`, `parse_status`, and
+   `write_status_sidecar` — the write half of the contract lives next to
+   the read half: non-200 writes the decimal sidecar, a 200 write clears a
+   stale one. `status_sidecars_scan` tracing spans; a sidecar application
+   logs on the serve path.
+2. **The serve seam (`crates/server/src/lib.rs`):** `StaticAssets` owns a
+   `status_sidecars` map filled by the same `scan_filtered` call the CLI
+   already makes at serve start (no second walk, no per-request I/O);
+   `serve` applies the sidecar status to every 200 response (identity,
+   precompressed variant, HEAD) and hard-denies `*.status` paths (the
+   SEC-STATIC shape, alongside the walk skip that keeps them out of the
+   index).
+3. **CLI wiring (`crates/cli/src/lib.rs`):** all four `write_prerender`
+   emit paths (two loader short-circuits, two error bodies, the final
+   injected page) plus BOTH incremental-reuse branches call
+   `write_status_sidecar`, so a status that flips to 200 across builds
+   removes the previous build's sidecar. The L0-seed write's silent
+   `let _ =` failure is a `tracing::warn!` now (the micro-debt retirement)
+   and the five `precompile.rs` worker-class `eprintln!`s are
+   `tracing::warn!`s (the e81d0464 convention).
+4. **Bench + example + pins:** the `status_sidecars` criterion group behind
+   `bench-util` (`status_sidecars_scan` at 0/64-of-256 sidecars +
+   `status_for` hit/miss), `crates/server/examples/status_sidecars.rs`
+   (the walkthrough consumer the seam never had — runs in milliseconds),
+   9 TDD pins in `crates/server/tests/status_sidecars_tdd.rs` and 4 CLI
+   pins in `crates/cli/src/tests.rs` (1,756→1,775 Rust test functions).
+
+**State repair this session (the "Rust gates pending a toolchain" debt):**
+the tree at `16bce246` did not compile on rustc 1.99.1. Fixed and
+documented in-diff: the wire-v1 seam's shadowed-`Result` signatures and a
+`Duration::as_millis` fn-path misuse (`crates/dev/src/lib.rs`), a
+`double_must_use` (`crates/dev/src/boundary.rs`), a never-run pin that
+round-tripped a bare (envelope-less) frame (`crates/dev/src/tests.rs`),
+the ring-0.17 ed25519 API surface (`sign` returns the signature,
+`public_key` is trait-only), a `BisectError::git_spawn_error` receiver
+typo, two by-value `git(...)` array args, a moved-capture `revs` clone,
+the `Probe` trait scope at the bisect call site, four collapsible-ifs, an
+HRTB closure spelling in `perf_bisect_tdd`, the never-updated
+`Command::Build` test fixtures, and four files `cargo fmt` had never
+seen. **Deferred:** the full-workspace pedantic hygiene pass, the
+Playwright sidecar proof on a browser host, and the E01 remainder (state
+preservation, Vue/Solid refresh wiring).
+
+## Where to pick up, in one sentence
+
+Run the remaining runtime suites on a roomier host (`cargo test
+--workspace --all-features` — assets, compiler, bundler, jshost,
+core-wasm, adapters and the full cli lib run are compile-verified only
+here), then the E01 remainder (state preservation — consumes
+`Plan`/`ClassifiedPlan` unchanged — or the Vue/Solid refresh wiring), or
+the F18/F20 deferrals (the release-CI double-build + `verify --rebuild`
+acceptance job is still the cheapest F20 item to close).
+
+---
+
 # Handoff — V2-E01 phase 3 message-schema v1 wire flip landed (the §13.3 v1 envelope: `update` entries + `ox:data` + the typed `DEV-HMR-003` gate); client gates green, Rust gates pending a toolchain
 
 ## Where things stand

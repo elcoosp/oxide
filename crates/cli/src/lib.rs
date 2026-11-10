@@ -36,11 +36,11 @@ use oxide_fw_router::RouteTree;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-mod audit;
 pub mod attest;
+mod audit;
 pub mod mcp;
-pub mod perf_bisect;
 mod native_plugins;
+pub mod perf_bisect;
 
 mod build_cache;
 mod build_graph;
@@ -1943,7 +1943,7 @@ struct HmrModuleGraph {
 /// `scan_import_spans` and resolves relative imports against the
 /// filesystem.
 fn build_hmr_graph(rootp: &std::path::Path, routes_dir: &std::path::Path) -> HmrModuleGraph {
-    use std::collections::{BTreeMap, BTreeSet, HashSet};
+    use std::collections::{BTreeMap, HashSet};
     use std::path::PathBuf;
     let canonical_routes =
         std::fs::canonicalize(routes_dir).unwrap_or_else(|_| routes_dir.to_path_buf());
@@ -1973,8 +1973,15 @@ fn build_hmr_graph(rootp: &std::path::Path, routes_dir: &std::path::Path) -> Hmr
                     .to_ascii_lowercase();
                 if matches!(
                     ext.as_str(),
-                    "ts" | "tsx" | "js" | "jsx" | "mjs" | "vue" | "svelte"
-                        | "css" | "scss" | "sass"
+                    "ts" | "tsx"
+                        | "js"
+                        | "jsx"
+                        | "mjs"
+                        | "vue"
+                        | "svelte"
+                        | "css"
+                        | "scss"
+                        | "sass"
                 ) {
                     out.push(p);
                 }
@@ -2003,10 +2010,7 @@ fn build_hmr_graph(rootp: &std::path::Path, routes_dir: &std::path::Path) -> Hmr
             || lower_name.ends_with(".svelte");
         let is_server = lower_name.ends_with(".server.ts") || lower_name.ends_with(".server.tsx");
         let is_stylesheet = oxide_fw_dev::boundary::css_self_accepts(&canon_file);
-        if is_component
-            || is_server
-            || is_stylesheet
-            || oxide_fw_dev::source_self_accepts(&content)
+        if is_component || is_server || is_stylesheet || oxide_fw_dev::source_self_accepts(&content)
         {
             graph.accepting.insert(canon_file.clone());
         }
@@ -2040,7 +2044,11 @@ fn build_hmr_graph(rootp: &std::path::Path, routes_dir: &std::path::Path) -> Hmr
             let Ok(target) = std::fs::canonicalize(parent.join(spec)) else {
                 continue;
             };
-            graph.importers.entry(target).or_default().insert(canon_file.clone());
+            graph
+                .importers
+                .entry(target)
+                .or_default()
+                .insert(canon_file.clone());
         }
     }
     graph
@@ -3628,10 +3636,9 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                             // verdict collapses to the in-place swap of the
                             // changed sheet — and the emitted frames below
                             // stay byte-identical to the pre-substrate wire.
-                            let changed_pb = std::fs::canonicalize(path)
-                                .unwrap_or_else(|_| path.to_path_buf());
-                            let graph =
-                                build_hmr_graph(&rootp, &rootp.join(&cfg.routes.dir));
+                            let changed_pb =
+                                std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+                            let graph = build_hmr_graph(&rootp, &rootp.join(&cfg.routes.dir));
                             let classified = {
                                 let importers: std::collections::HashMap<
                                     std::path::PathBuf,
@@ -3656,9 +3663,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                 // terminal collapses the walk) — logged
                                 // loudly if a future ChangeKind ever routes
                                 // here with a reload verdict.
-                                if let oxide_fw_dev::Plan::FullReload(reason) =
-                                    &classified.plan
-                                {
+                                if let oxide_fw_dev::Plan::FullReload(reason) = &classified.plan {
                                     tracing::warn!(
                                         reason = %reason,
                                         "DEV-HMR: a style swap planned a full reload"
@@ -3674,9 +3679,8 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                 // `<link>` may carry it), but nothing on the
                                 // module side references it, so the boundary
                                 // fan-out will never include it.
-                                let diag = oxide_fw_dev::boundary::css_orphan_diagnostic(
-                                    &changed_pb,
-                                );
+                                let diag =
+                                    oxide_fw_dev::boundary::css_orphan_diagnostic(&changed_pb);
                                 tracing::warn!(
                                     code = diag.code,
                                     message = %diag.message,
@@ -3876,7 +3880,9 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                         > = graph
                                             .importers
                                             .into_iter()
-                                            .map(|(module, imps)| (module, imps.into_iter().collect()))
+                                            .map(|(module, imps)| {
+                                                (module, imps.into_iter().collect())
+                                            })
                                             .collect();
                                         match oxide_fw_dev::plan(
                                             &changed_pb,
@@ -3903,12 +3909,10 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                                     if !in_batch.insert(b_str.clone()) {
                                                         continue;
                                                     }
-                                                    let rel = b_str.strip_prefix(
-                                                        root_str.as_ref(),
-                                                    )
-                                                    .unwrap_or(&b_str);
-                                                    let rel_slash =
-                                                        rel.replace('\\', "/");
+                                                    let rel = b_str
+                                                        .strip_prefix(root_str.as_ref())
+                                                        .unwrap_or(&b_str);
+                                                    let rel_slash = rel.replace('\\', "/");
                                                     let trimmed_imp =
                                                         rel_slash.trim_start_matches('/');
                                                     if trimmed_imp.starts_with("src/") {
@@ -3930,10 +3934,9 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                                     %reason,
                                                     "V2-E01: boundary walk fell back to a reload"
                                                 );
-                                                let diag = oxide_fw_dev::full_reload_diagnostic(&reason);
-                                                hub.publish(HmrMessage::Error {
-                                                    diagnostic: diag,
-                                                });
+                                                let diag =
+                                                    oxide_fw_dev::full_reload_diagnostic(&reason);
+                                                hub.publish(HmrMessage::Error { diagnostic: diag });
                                                 hub.publish(HmrMessage::FullReload { reason });
                                             }
                                         }
@@ -4141,24 +4144,24 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         // §3.2: publish the accumulated batch — one v1 Update frame whether
         // the tick saw one AdapterHmr event (the common 1-file save) or a
         // burst of several.
-        if let Some(hub) = started.hmr.as_ref() {
-            if !adapter_hmr_batch.is_empty() {
-                // §3.2: the v1 `updates` array is natively a batch — the
-                // singular/batch wire distinction dissolves into N entries:
-                // one frame, one serialization, one dispatch tick.
-                let updates = adapter_hmr_batch
-                    .into_iter()
-                    .map(|(path, url)| {
-                        oxide_fw_dev::UpdateEntry::stamped(
-                            oxide_fw_dev::UpdateKind::Js,
-                            path.clone(),
-                            url,
-                            Some(std::path::Path::new(&path)),
-                        )
-                    })
-                    .collect();
-                hub.publish(oxide_fw_dev::HmrMessage::Update { updates });
-            }
+        if let Some(hub) = started.hmr.as_ref()
+            && !adapter_hmr_batch.is_empty()
+        {
+            // §3.2: the v1 `updates` array is natively a batch — the
+            // singular/batch wire distinction dissolves into N entries:
+            // one frame, one serialization, one dispatch tick.
+            let updates = adapter_hmr_batch
+                .into_iter()
+                .map(|(path, url)| {
+                    oxide_fw_dev::UpdateEntry::stamped(
+                        oxide_fw_dev::UpdateKind::Js,
+                        path.clone(),
+                        url,
+                        Some(std::path::Path::new(&path)),
+                    )
+                })
+                .collect();
+            hub.publish(oxide_fw_dev::HmrMessage::Update { updates });
         }
 
         if !warmed && idle_since.elapsed() >= IDLE_WARM {
@@ -5244,6 +5247,19 @@ async fn prerender_targets(
                 let fresh = saved.replace(&old_nonce, nonce);
                 if std::fs::write(dist.join(&t.rel), &fresh).is_ok() {
                     reused += 1;
+                    // V2-A07: the reused page keeps its sidecar current —
+                    // write-or-clear by the record's status, so a previous
+                    // build's error status neither vanishes nor outlives a
+                    // return to 200.
+                    if let Err(e) =
+                        oxide_fw_server::write_status_sidecar(&dist.join(&t.rel), status)
+                    {
+                        tracing::warn!(
+                            rel = %t.rel,
+                            error = %e,
+                            "prerender reuse: status sidecar persist failed"
+                        );
+                    }
                     results[i] = Some((fresh, status));
                 } else {
                     to_render.push(i);
@@ -5387,6 +5403,9 @@ async fn write_prerender(args: PrerenderArgs<'_>) -> anyhow::Result<(String, u16
                         std::fs::create_dir_all(parent)?;
                     }
                     std::fs::write(&dest, &body)?;
+                    // V2-A07: the status sidecar — the serve-time scan turns
+                    // this file into a real `out.status` instead of a 200.
+                    oxide_fw_server::write_status_sidecar(&dest, out.status)?;
                     return Ok((body, out.status));
                 }
                 Err(e) => {
@@ -5402,6 +5421,8 @@ async fn write_prerender(args: PrerenderArgs<'_>) -> anyhow::Result<(String, u16
                         std::fs::create_dir_all(parent)?;
                     }
                     std::fs::write(&dest, &body)?;
+                    // V2-A07: the layout-error page is a 500 on disk too.
+                    oxide_fw_server::write_status_sidecar(&dest, 500)?;
                     return Ok((body, 500u16));
                 }
             }
@@ -5448,6 +5469,9 @@ async fn write_prerender(args: PrerenderArgs<'_>) -> anyhow::Result<(String, u16
                     std::fs::create_dir_all(parent)?;
                 }
                 std::fs::write(&dest, &body)?;
+                // V2-A07: the status sidecar — the serve-time scan turns
+                // this file into a real `out.status` instead of a 200.
+                oxide_fw_server::write_status_sidecar(&dest, out.status)?;
                 return Ok((body, out.status));
             }
             Err(e) => {
@@ -5464,6 +5488,8 @@ async fn write_prerender(args: PrerenderArgs<'_>) -> anyhow::Result<(String, u16
                     std::fs::create_dir_all(parent)?;
                 }
                 std::fs::write(&dest, &body)?;
+                // V2-A07: the worker-error page is a 500 on disk too.
+                oxide_fw_server::write_status_sidecar(&dest, 500)?;
                 return Ok((body, 500u16));
             }
         }
@@ -5616,6 +5642,11 @@ async fn write_prerender(args: PrerenderArgs<'_>) -> anyhow::Result<(String, u16
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(&dest, &html)?;
+    // V2-A07: the status sidecar rides the final page — a non-200 prerender
+    // (the adapter's error-status markers or a loader short-circuit) writes
+    // `<dest>.status`; a 200 write clears a stale sidecar from a previous
+    // build so the status survives incremental rebuilds in BOTH directions.
+    oxide_fw_server::write_status_sidecar(&dest, prerender_status)?;
     // PERF-04 / §10.2 step 5: return (html, status) so the caller can seed
     // the L0 entry with the status the adapter's marker indicated.
     Ok((html, prerender_status))
@@ -7543,6 +7574,18 @@ async fn cmd_build(
                             let fresh = saved.replace(&old_nonce, &nonce);
                             if std::fs::write(dist.join(&rel), &fresh).is_ok() {
                                 reused_prerender_count += 1;
+                                // V2-A07: the reused page keeps its sidecar
+                                // current (write-or-clear by the record's
+                                // status) — same contract as the batch path.
+                                if let Err(e) =
+                                    oxide_fw_server::write_status_sidecar(&dist.join(&rel), status)
+                                {
+                                    tracing::warn!(
+                                        rel = %rel,
+                                        error = %e,
+                                        "prerender reuse: status sidecar persist failed"
+                                    );
+                                }
                                 (fresh, status)
                             } else {
                                 write_prerender(PrerenderArgs {
@@ -7718,7 +7761,22 @@ async fn cmd_build(
             std::fs::create_dir_all(parent)?;
         }
         if let Ok(bytes) = serde_json::to_vec_pretty(&seed) {
-            let _ = std::fs::write(&path, bytes);
+            // Micro-debt retirement (the precompile/Watcher class): a seed
+            // write failure used to vanish (`let _ =`), so `oxide start`
+            // booted without L0 seeding and nobody could tell why the first
+            // request was a miss. Warn with the path and the error.
+            if let Err(e) = std::fs::write(&path, bytes) {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "l0 seed manifest write failed; first requests will be L0 misses"
+                );
+            }
+        } else {
+            tracing::warn!(
+                path = %path.display(),
+                "l0 seed manifest serialize failed; first requests will be L0 misses"
+            );
         }
     }
 
@@ -13383,10 +13441,18 @@ async fn cmd_perf_bisect(
         metric.label()
     );
     let mut probe = perf_bisect::BuildProbe::new(&rootp, metric);
+    // `measure` is a trait method (`Probe`) — the trait must be in scope at
+    // this call site, not only at the impl.
+    use perf_bisect::Probe as _;
     let good_owned = good.to_string();
+    // `revs` rides the blocking closure by move (find_culprit walks it) AND
+    // is printed after the join (`revs.len()` in the verdict) — the closure
+    // gets its own clone, the report keeps the original.
+    let revs_for_probe = revs.clone();
     let job = move || -> Result<perf_bisect::BisectOutcome, perf_bisect::BisectError> {
         let baseline = probe.measure(&good_owned, runs)?;
-        let inner = perf_bisect::find_culprit(&revs, &mut probe, baseline, threshold_pct, runs);
+        let inner =
+            perf_bisect::find_culprit(&revs_for_probe, &mut probe, baseline, threshold_pct, runs);
         Ok((baseline, inner))
     };
     let outcome = tokio::task::spawn_blocking(job)
@@ -13494,15 +13560,16 @@ async fn cmd_verify(
 ) -> anyhow::Result<i32> {
     let _span = tracing::info_span!("cli_attest_verify", root = %root).entered();
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
-    let dist = dist_path.map(PathBuf::from).unwrap_or_else(|| rootp.join("dist"));
+    let dist = dist_path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| rootp.join("dist"));
     let attest_dir = dist.join(attest::ATTEST_DIRNAME);
     let provenance_path = attest_dir.join(attest::PROVENANCE_FILENAME);
 
     // Canonical gate first: a whitespace-only tamper dies here, before
     // the signature check could be fooled by a re-serialization.
-    let bytes = std::fs::read(&provenance_path).map_err(|_| {
-        anyhow::Error::new(attest::AttestError::BuildIdMissing.diagnostic())
-    })?;
+    let bytes = std::fs::read(&provenance_path)
+        .map_err(|_| anyhow::Error::new(attest::AttestError::BuildIdMissing.diagnostic()))?;
     if !attest::is_canonical(&bytes) {
         return Err(anyhow::Error::new(
             attest::AttestError::NotCanonical {
@@ -13512,8 +13579,14 @@ async fn cmd_verify(
         ));
     }
     outln!(w, "canonical: ok");
-    let statement: serde_json::Value = serde_json::from_slice(&bytes)
-        .map_err(|e| anyhow::Error::new(attest::AttestError::NotCanonical { detail: e.to_string() }.diagnostic()))?;
+    let statement: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
+        anyhow::Error::new(
+            attest::AttestError::NotCanonical {
+                detail: e.to_string(),
+            }
+            .diagnostic(),
+        )
+    })?;
 
     // The signature: verified only when a verifier key is supplied.
     match pubkey_path {
@@ -13525,8 +13598,16 @@ async fn cmd_verify(
         Some(spec) => {
             let pubkey = resolve_pubkey(spec)?;
             let envelope: attest::SignatureEnvelope = serde_json::from_str(
-                &std::fs::read_to_string(attest_dir.join(attest::SIGNATURE_FILENAME))
-                    .map_err(|e| anyhow::Error::new(attest::AttestError::Io { detail: e.to_string() }.diagnostic()))?,
+                &std::fs::read_to_string(attest_dir.join(attest::SIGNATURE_FILENAME)).map_err(
+                    |e| {
+                        anyhow::Error::new(
+                            attest::AttestError::Io {
+                                detail: e.to_string(),
+                            }
+                            .diagnostic(),
+                        )
+                    },
+                )?,
             )
             .map_err(|_| anyhow::Error::new(attest::AttestError::SignatureMismatch.diagnostic()))?;
             attest::verify_signature(&bytes, &envelope, &pubkey)
@@ -13543,7 +13624,15 @@ async fn cmd_verify(
     // The reproducibility check: rebuild in a scratch copy and compare.
     if rebuild {
         let (match_, detail) = rebuild_and_compare(&rootp).await?;
-        outln!(w, "rebuild: {}", if match_ { "dist digests match" } else { "MISMATCH" });
+        outln!(
+            w,
+            "rebuild: {}",
+            if match_ {
+                "dist digests match"
+            } else {
+                "MISMATCH"
+            }
+        );
         if !match_ {
             outln!(w, "rebuild detail: {detail}");
             return Ok(1);
@@ -13555,10 +13644,17 @@ async fn cmd_verify(
 /// The key id recorded in the signature envelope (printed when the
 /// signature check is skipped, so the operator knows whose key to supply).
 fn signature_keyid(attest_dir: &Path) -> anyhow::Result<String> {
-    let raw = std::fs::read_to_string(attest_dir.join(attest::SIGNATURE_FILENAME))
-        .map_err(|e| anyhow::Error::new(attest::AttestError::Io { detail: e.to_string() }.diagnostic()))?;
-    let envelope: attest::SignatureEnvelope =
-        serde_json::from_str(&raw).map_err(|_| anyhow::Error::new(attest::AttestError::SignatureMismatch.diagnostic()))?;
+    let raw =
+        std::fs::read_to_string(attest_dir.join(attest::SIGNATURE_FILENAME)).map_err(|e| {
+            anyhow::Error::new(
+                attest::AttestError::Io {
+                    detail: e.to_string(),
+                }
+                .diagnostic(),
+            )
+        })?;
+    let envelope: attest::SignatureEnvelope = serde_json::from_str(&raw)
+        .map_err(|_| anyhow::Error::new(attest::AttestError::SignatureMismatch.diagnostic()))?;
     Ok(envelope.keyid)
 }
 
@@ -13678,12 +13774,12 @@ fn copy_project(rootp: &Path, dst: &Path) -> anyhow::Result<()> {
 fn config_fingerprint(rootp: &Path) -> String {
     for name in ["oxide.config.ts", "oxide.config.json"] {
         let path = rootp.join(name);
-        if path.is_file() {
-            if let Ok(bytes) = std::fs::read(&path) {
-                let mut h = blake3::Hasher::new();
-                h.update(&bytes);
-                return h.finalize().to_hex().to_string();
-            }
+        if path.is_file()
+            && let Ok(bytes) = std::fs::read(&path)
+        {
+            let mut h = blake3::Hasher::new();
+            h.update(&bytes);
+            return h.finalize().to_hex().to_string();
         }
     }
     "none".to_string()

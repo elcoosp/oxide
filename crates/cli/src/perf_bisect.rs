@@ -247,11 +247,9 @@ pub fn probe_budget(n: usize) -> usize {
 pub fn parse_threshold_pct(spec: &str) -> Result<f64, BisectError> {
     let trimmed = spec.trim();
     let bare = trimmed.strip_suffix('%').unwrap_or(trimmed);
-    let value: f64 = bare
-        .parse()
-        .map_err(|_| BisectError::BadThreshold {
-            spec: spec.to_string(),
-        })?;
+    let value: f64 = bare.parse().map_err(|_| BisectError::BadThreshold {
+        spec: spec.to_string(),
+    })?;
     if !value.is_finite() || value < 0.0 {
         return Err(BisectError::BadThreshold {
             spec: spec.to_string(),
@@ -452,11 +450,11 @@ impl BuildProbe {
     fn worktree_add(&mut self, rev: &str) -> Result<PathBuf, BisectError> {
         let path = worktree_path(&self.root, self.probe_counter, rev);
         self.probe_counter += 1;
-        let out = git(&self.root, ["worktree", "add", "--detach"])
+        let out = git(&self.root, &["worktree", "add", "--detach"])
             .arg(&path)
             .arg(rev)
             .output()
-            .map_err(|e| Self::git_spawn_error("worktree add", &e))?;
+            .map_err(|e| BisectError::git_spawn_error("worktree add", &e))?;
         if !out.status.success() {
             return Err(BisectError::GitFailure {
                 context: "worktree add".to_string(),
@@ -470,7 +468,7 @@ impl BuildProbe {
     /// worktree under `.oxide/bisect/` is cleaned by the command's final
     /// sweep and never affects correctness.
     fn worktree_remove(&self, path: &Path) {
-        let _ = git(&self.root, ["worktree", "remove", "--force"])
+        let _ = git(&self.root, &["worktree", "remove", "--force"])
             .arg(path)
             .output();
     }
@@ -640,10 +638,10 @@ fn sum_js_bytes(dir: &Path, total: &mut u64) {
         let path = entry.path();
         if path.is_dir() {
             sum_js_bytes(&path, total);
-        } else if path.extension().is_some_and(|ext| ext == "js") {
-            if let Ok(meta) = entry.metadata() {
-                *total += meta.len();
-            }
+        } else if path.extension().is_some_and(|ext| ext == "js")
+            && let Ok(meta) = entry.metadata()
+        {
+            *total += meta.len();
         }
     }
 }
@@ -698,11 +696,11 @@ fn first_byte_ms(port: u16) -> Result<f64, BisectError> {
         detail: format!("request write failed: {e}"),
     })?;
     let mut first = [0_u8; 1];
-    stream.read_exact(&mut first).map_err(|e| {
-        BisectError::BuildFailed {
+    stream
+        .read_exact(&mut first)
+        .map_err(|e| BisectError::BuildFailed {
             rev: "<serve>".to_string(),
             detail: format!("no response byte: {e}"),
-        }
-    })?;
+        })?;
     Ok(started.elapsed().as_millis() as f64)
 }

@@ -14,9 +14,9 @@
 //! is enforced on the counting probe below).
 
 use oxide_fw_cli::perf_bisect::{
-    BISECT_DIRNAME, CACHE_DIR_VAR, BisectError, Metric, Probe, Verdict, bisect, cache_dir_from,
-    find_culprit, median_of_runs, parse_rev_list_oldest_first, parse_threshold_pct,
-    probe_budget, rev_list_args, shared_cache_dir, worktree_path,
+    BISECT_DIRNAME, BisectError, CACHE_DIR_VAR, Metric, Probe, Verdict, bisect, cache_dir_from,
+    find_culprit, median_of_runs, parse_rev_list_oldest_first, parse_threshold_pct, probe_budget,
+    rev_list_args, shared_cache_dir, worktree_path,
 };
 
 /// `n` synthetic commits, oldest first: `0000`, `0001`, …
@@ -25,14 +25,13 @@ fn history(n: usize) -> Vec<String> {
 }
 
 /// A measure that steps from `base` to `spike` at (and after) index `at`.
-fn step_measure(at: usize, base: f64, spike: f64) -> impl FnMut(&str) -> f64 + '_ {
+/// HRTB spelling: the closure captures only `Copy` values, so the `&str`
+/// argument is quantified over every lifetime instead of borrowing the
+/// return-position environment.
+fn step_measure(at: usize, base: f64, spike: f64) -> impl for<'a> FnMut(&'a str) -> f64 {
     move |rev: &str| {
         let idx: usize = rev.parse().unwrap_or(0);
-        if idx >= at {
-            spike
-        } else {
-            base
-        }
+        if idx >= at { spike } else { base }
     }
 }
 
@@ -62,7 +61,11 @@ impl Probe for CountingProbe {
         self.calls += 1;
         assert_eq!(runs, 3, "the driver forwards the --runs value");
         let idx: usize = rev.parse().unwrap_or(0);
-        Ok(if idx >= self.at { self.spike } else { self.base })
+        Ok(if idx >= self.at {
+            self.spike
+        } else {
+            self.base
+        })
     }
 }
 
@@ -82,7 +85,7 @@ impl Probe for NoisyProbe {
         let mut raw: Vec<f64> = Vec::with_capacity(runs);
         for _ in 0..runs {
             self.samples += 1;
-            let noisy = if self.samples % 3 == 0 {
+            let noisy = if self.samples.is_multiple_of(3) {
                 truth * 10.0
             } else {
                 truth
@@ -201,8 +204,12 @@ fn median_of_three_beats_the_noisy_measure() {
     // precision (`100.0 * 1.1` is not exactly `110.0`).
     assert!((verdict.limit - 110.0).abs() < 1e-9);
     // Every series entry is the recovered truth, spike filtered.
-    assert!(verdict.series.iter().all(|(_, m)| (*m - 100.0).abs() < 1.0
-        || (*m - 300.0).abs() < 1.0));
+    assert!(
+        verdict
+            .series
+            .iter()
+            .all(|(_, m)| (*m - 100.0).abs() < 1.0 || (*m - 300.0).abs() < 1.0)
+    );
 }
 
 // ---------------------------------------------------------------------------

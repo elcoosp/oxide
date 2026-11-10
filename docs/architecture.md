@@ -29,7 +29,7 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `plugin` | Hook model, pre/post ordering, JS bridge messages, WASM plugin manifest validation, module manifests | §15 |
 | `dispatch` | V8-free request orchestration: URL/query helpers, stage `Flow` protocol, §8.5 middleware chain + unified locals (A05), §9.2 parallel load graph (A06), §15.4 experiments assignment engine (F04), build id + generations substrate (A04) with the live route on the data plane (`/__oxide/live` build query contract, §V2-F05) and the F07 reattach route (`/__oxide/stream/<id>` + `stream_resume_id`) | §4.1, §8.4, §8.5, §9.2, §9.3, §15.4, V2-A02, V2-A04, V2-F05, V2-F07 |
 | `render` | Streaming pipeline, head merge, HTML injection (lol_html), deferred-boundary protocol (§7.1), islands markup (§10.3), hydration bootstrap (+ the §V2-A04 `build` field), error recovery | §7.1, §10, V2-A04 |
-| `server` | Hyper 1.x pipeline, static assets (range/304/precompressed), dynamic compression, security defaults (§17.1), CSRF/SSRF/host checks, rate limiting, cookies, RFC6455 codec, graceful shutdown; §V2-F05 live substrate: SSE framing, tag hub (`LiveHub`/`Sub`/`Guard`), snapshot stream, rerun runner, same-origin gate; §V2-F06 delta policy (`delta_payload`, per-connection patch base); §V2-F07 resumable-stream substrate (`stream_store`: `StreamBuf`/`StreamStore`, `read_from` replay, `stream_id`, Range parse, 206/200/410 reattach responses, `tee_stream`); §V2-F12 brownout substrate (`governor`: `Level`/`Signals`/`Thresholds`, `raw_level`/`next_level` hysteresis, `Governor` atomic, `serve_decision` × route `Priority`, `shed_response`, `ready_status`) | §12, §17, D7, V2-F05, V2-F07, V2-F12 |
+| `server` | Hyper 1.x pipeline, static assets (range/304/precompressed), dynamic compression, security defaults (§17.1), CSRF/SSRF/host checks, rate limiting, cookies, RFC6455 codec, graceful shutdown; §V2-F05 live substrate: SSE framing, tag hub (`LiveHub`/`Sub`/`Guard`), snapshot stream, rerun runner, same-origin gate; §V2-F06 delta policy (`delta_payload`, per-connection patch base); §V2-F07 resumable-stream substrate (`stream_store`: `StreamBuf`/`StreamStore`, `read_from` replay, `stream_id`, Range parse, 206/200/410 reattach responses, `tee_stream`); §V2-F12 brownout substrate (`governor`: `Level`/`Signals`/`Thresholds`, `raw_level`/`next_level` hysteresis, `Governor` atomic, `serve_decision` × route `Priority`, `shed_response`, `ready_status`); §V2-A07 prerender error-status sidecars (`static_status`: `StatusSidecars::scan` serve-start walk, `status_for`, `write_status_sidecar`, the `serve` 200-override) | §12, §17, D7, V2-F05, V2-F07, V2-F12, V2-A07 |
 | `assets` | CSS pipeline (nesting/modules/minify/prefix), image backend (resize/encode/LQIP), font bundles, metadata/SEO, sitemap/robots, markdown/content, OG model | §6.6–6.7, §16, D19 |
 | `dev` | Hash-confirmed watcher (§5.5), HMR message protocol + per-kind behavior table (§13.3), the V2-E01 boundary planner (`plan`, the breadth-first walk-up over the module graph's importers, plus `source_self_accepts` and the `DEV-HMR-001` reload diagnostic) and its phase-2 CSS boundary substrate (`plan_classified` — the `kind: 'js'|'css'|'data'` classification with the §13.3 CSS terminal, `css_self_accepts`, the `DEV-HMR-002` orphan-stylesheet warning), inspector model (§13.4), prebundle keys | §13, V2-E01 |
 | `adapters` | Deploy targets + capability matrix + refusal rule, `_headers`/`_redirects`, Dockerfile, Worker/node/serverless entries | §18 |
@@ -37,6 +37,22 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `schema` | JSON Schema generation for `oxide.config.ts` — editor autocomplete (`$schema`), the `oxide schema` stdout surface, CI config-surface diffing | §14, §19.3 |
 | `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/secrets/add/generate/cache/audit/migrate/test/mcp/schema/config/render; `why --route` prints the V2-F16 OX-DYN reasons and `routes`/`build` write `.oxide/routes.reasons.json`; `perf bisect` is the V2-F18 performance-bisect engine (spec-verbatim search over git worktree candidates, shared `OXIDE_CACHE_DIR`); `build --attest` + `verify` are the V2-F20 attestation engine (CycloneDX SBOM, in-toto/SLSA provenance, ed25519 signatures, subject digests, `--rebuild`) | §19, §V2-F16, §V2-F18, §V2-F20 |
 ## What changed since 2026-10-12
+
+- **`server` + `cli`**: the prerender error-status sidecar substrate
+  (V2-A07) — `server::static_status` (`StatusSidecars::scan`, the spec's
+  serve-start walk over `dist` with malformed content ignored;
+  `status_for`; `write_status_sidecar`, the write half of the contract —
+  non-200 writes the decimal sidecar, a 200 write clears a stale one),
+  the `StaticAssets` integration (the scan rides `scan_filtered`; `serve`
+  applies the sidecar status to 200 responses and hard-denies `*.status`
+  paths alongside the walk skip) and the CLI write sites (`write_prerender`'s
+  four emit paths + both incremental-reuse branches). A prerendered error
+  page — a loader short-circuit or an adapter error-status marker — is now
+  served as its real status by `oxide start` from disk, closing the gap
+  the L0 seed could not cover (cold starts, non-default-locale pages).
+  The criterion bench (`status_sidecars_scan`, `status_for`) behind
+  `bench-util` and the `status_sidecars` walkthrough example ride along.
+  Deltas and deferrals — see `docs/deviations.md`.
 
 - **`dev` + `cli` + `packages/core`**: the message-schema v1 wire flip
   (V2-E01 phase 3) — `HmrMessage` speaks the spec's v1 shapes behind a

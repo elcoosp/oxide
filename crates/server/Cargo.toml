@@ -85,3 +85,10 @@ required-features = ["bench-util"]
 name = "governor"
 harness = false
 required-features = ["bench-util"]
+
+# V2-A07: criterion bench for the prerender error-status sidecars — the
+# serve-start scan (one-time, O(dist)) and the per-request `status_for` probe.
+[[bench]]
+name = "status_sidecars"
+harness = false
+required-features = ["bench-util"]

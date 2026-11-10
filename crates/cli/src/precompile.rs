@@ -285,7 +285,7 @@ where
     let js = compile().await?;
     if let Some(c) = cache {
         if let Err(e) = c.put(&key, &js) {
-            eprintln!("warn: precompile cache store failed: {}", e.0.message);
+            tracing::warn!(error = %e.0.message, "precompile cache store failed");
         }
         // §5.4: write back through the remote so another job gets a hit.
         c.put_remote(&key, &js).await;
@@ -338,7 +338,7 @@ pub async fn precompile_entries(
                     out.insert(path, js);
                 }
                 Err(e) => {
-                    eprintln!("warn: solid precompile failed for {}: {e}", path.display());
+                    tracing::warn!(path = %path.display(), error = %e, "solid precompile failed");
                 }
             }
             continue;
@@ -354,7 +354,7 @@ pub async fn precompile_entries(
                         out.insert(path, js);
                     }
                     Err(e) => {
-                        eprintln!("warn: vue precompile failed for {}: {e}", path.display());
+                        tracing::warn!(path = %path.display(), error = %e, "vue precompile failed");
                     }
                 }
             }
@@ -369,7 +369,7 @@ pub async fn precompile_entries(
                         out.insert(path, js);
                     }
                     Err(e) => {
-                        eprintln!("warn: svelte precompile failed for {}: {e}", path.display());
+                        tracing::warn!(path = %path.display(), error = %e, "svelte precompile failed");
                     }
                 }
             }
@@ -388,7 +388,9 @@ pub async fn precompile_entries(
                         out.insert(path, js);
                     }
                     Ok(None) => { /* empty */ }
-                    Err(e) => eprintln!("warn: mdx compile {}: {e}", path.display()),
+                    Err(e) => {
+                        tracing::warn!(path = %path.display(), error = %e, "mdx compile failed")
+                    }
                 }
             }
             _ => { /* JS/TS/TSX handled by the bundler's Oxc lowering */ }

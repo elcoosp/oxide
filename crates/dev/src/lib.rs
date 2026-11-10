@@ -416,7 +416,7 @@ impl UpdateEntry {
 pub fn unix_millis() -> u64 {
     let ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, std::time::Duration::as_millis);
+        .map_or(0, |d| d.as_millis());
     u64::try_from(ms).unwrap_or(u64::MAX)
 }
 
@@ -533,10 +533,13 @@ impl HmrMessage {
     /// a serialize failure from an empty frame. Emits the schema-v1
     /// envelope: `{"v":1,"type":...,}` (key order is serde_json's; the
     /// client reads fields by name).
-    pub fn try_to_json(&self) -> Result<String, serde_json::Error> {
+    pub fn try_to_json(&self) -> std::result::Result<String, serde_json::Error> {
         let mut value = serde_json::to_value(self)?;
         if let serde_json::Value::Object(ref mut map) = value {
-            map.insert(String::from("v"), serde_json::Value::from(Self::SCHEMA_VERSION));
+            map.insert(
+                String::from("v"),
+                serde_json::Value::from(Self::SCHEMA_VERSION),
+            );
         }
         serde_json::to_string(&value)
     }
@@ -544,7 +547,7 @@ impl HmrMessage {
     /// failure from a schema-version mismatch. Enforces the v1 envelope: a
     /// frame without (or with a foreign) `v` is [`HmrWireError::Schema`],
     /// not a parse error.
-    pub fn try_from_json(s: &str) -> Result<Self, HmrWireError> {
+    pub fn try_from_json(s: &str) -> std::result::Result<Self, HmrWireError> {
         let value: serde_json::Value = serde_json::from_str(s)?;
         let found = value
             .get("v")
