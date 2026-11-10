@@ -613,7 +613,7 @@ pub async fn build_framework_stack(
             .then(|| {
                 config_path
                     .and_then(|p| p.parent())
-                    .map(|root| root.join(".oxide/cache/l1"))
+                    .map(|root| crate::perf_bisect::cache_dir_for(root).join("l1"))
                     .filter(|d| std::fs::create_dir_all(d).is_ok())
             })
             .flatten();

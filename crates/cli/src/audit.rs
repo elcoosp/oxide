@@ -129,7 +129,7 @@ fn queries_hash(pkgs: &[InstalledPackage]) -> String {
 }
 
 fn cache_path(root: &Path) -> PathBuf {
-    root.join(".oxide/cache/osv-advisories.json")
+    crate::perf_bisect::cache_dir_for(root).join("osv-advisories.json")
 }
 
 /// Try the cache: returns `Some(advisories)` on a fresh hit, `None` on

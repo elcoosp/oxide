@@ -66,9 +66,11 @@ pub struct PrecompileCache {
 }
 
 impl PrecompileCache {
-    /// Open (creating dirs as needed) under `<root>/.oxide/cache`.
+    /// Open (creating dirs as needed) under the effective cache root — the
+    /// `OXIDE_CACHE_DIR` override or the historical `<root>/.oxide/cache`
+    /// (§V2-F18).
     pub fn open(root: &Path) -> oxide_fw_graph::Result<Self> {
-        let cache_root = root.join(".oxide/cache");
+        let cache_root = crate::perf_bisect::cache_dir_for(root);
         let store = ContentStore::open(cache_root.join("cas"))?;
         let ptr_dir = cache_root.join("precompile");
         std::fs::create_dir_all(&ptr_dir).map_err(|e| {

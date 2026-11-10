@@ -213,7 +213,7 @@ impl OxideMcp {
         &self,
         Parameters(NoArgs {}): Parameters<NoArgs>,
     ) -> Result<CallToolResult, ErrorData> {
-        let cache_dir = self.root.join(".oxide/cache");
+        let cache_dir = crate::perf_bisect::cache_dir_for(&self.root);
         let mut report = CacheReport {
             root: self.root.to_string_lossy().into_owned(),
             cache_dir: None,
