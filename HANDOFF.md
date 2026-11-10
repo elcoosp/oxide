@@ -1,3 +1,103 @@
+# Handoff — V2-E01 HMR boundary substrate landed (planner + planner-driven fan-out + reload diagnostics); substrate authored, Rust gates pending a toolchain
+
+## Where things stand
+
+**Branch:** `main` (the milestone ships as uncommitted changes plus
+`ship.toml` / `.github/pr-body.md` at the repo root, both gitignored;
+`ship.toml` groups the diff into conventional commits — one per
+reviewer-visible intent — for the ship tooling to materialize).
+**Verified this session (no Rust toolchain in the sandbox, per the
+handoff's no-execution constraint):**
+- `cargo fmt/clippy/test/bench` NOT run — same constraint as the F03
+  session. The diff is Rust-side (`crates/dev`, `crates/cli`, docs), so
+  the standing green baseline is the F18 session's gates plus this diff's
+  review. The pins were authored TDD-first (`tests/boundary_tdd.rs`
+  before `src/boundary.rs`), are public-API-only, and the planner is
+  pure — the riskiest surface is the `cmd_dev` fan-out swap, which keeps
+  the react-refresh skip, the node_modules pre-filter, the singular/batch
+  coalescing and the `src/` URL shaping byte-identical.
+- `grep -rnE '#!?\[(allow|expect)\(|cfg_attr\([^)]*allow\('` over
+  `crates/` — empty (unchanged; zero allow-escape policy holds).
+- Doc-drift audit + fixes are IN this diff (see below): the README tag
+  drift (v0.6.1 vs the released v0.7.0), the stale F03-era handoff header,
+  and the `dev` crate README's phantom `FileWatcher` /
+  mis-attributed `wrap_dispatch_with_stale_guard` rustdocs.
+
+## What landed
+
+V2-E01's boundary-planner substrate from `docs/spec-v0.2-draft.md` (the
+next no-new-dependency item whose full surface is V8-free), in the
+F16/F18 substrate pattern:
+
+1. **`boundary.rs` (`crates/dev/src/boundary.rs`):** the spec-verbatim
+   BFS — `plan(changed, importers, accepting, entries) -> Plan`
+   (`Plan::Update(boundaries)` sorted + deduplicated / `Plan::FullReload`
+   with the spec's reason spellings), cycle-safe via the visited set, the
+   boundary check before the entry check (a route `page.tsx` that is both
+   updates in place). Plus the two seams the spec names:
+   `source_self_accepts` (the `import.meta.hot.accept` probe) and
+   `full_reload_diagnostic` (the `DEV-HMR-001` warning with the fix help
+   text the §13.4 overlay renders). `hmr_boundary` tracing spans on the
+   planner; `oxide-fw-dev` gains the workspace-pinned `tracing` dep.
+2. **CLI wiring (`crates/cli/src/lib.rs`):** `build_hmr_graph` replaces
+   `build_importers_map` (same walk; harvests `accepting` — components,
+   `.server.*`, hot-accept sources — and `entries` — route-structural
+   files — in the same pass). The adapter-HMR fan-out is planner-driven:
+   a non-boundary chain (`util.ts ← util2.ts ← page.tsx`) now updates the
+   page boundary instead of leaving its import binding stale — the gap
+   the old one-hop block documented against itself. React-refresh skip,
+   orphan pre-filter, `src/` URL shaping and the §3.2 batch coalescing
+   unchanged.
+3. **Micro-debt retired:** the dead `update_boundary` one-hop
+   simplification (no production callers; its doc claimed the real
+   walk-up "lives in the graph engine" — it never did) and the
+   `Watcher::with_notify` fallback's bare `eprintln!` (now
+   `tracing::warn!`).
+4. **Bench + example + pins:** `crates/dev/benches/boundary.rs` (deep
+   chains 10/50/200, wide fan-outs, diamond dedup, the reload fallback;
+   behind `bench-util`, the B09 pattern), `crates/dev/examples/
+   hmr_boundary.rs` (the walkthrough consumer), and
+   `tests/boundary_tdd.rs` (10 spec pins incl. the cycle, the diamond
+   dedup and the orphan arm) + 3 unit tests in-module.
+
+**Spec deltas recorded in `docs/deviations.md` (4):** the changed file
+always re-imports (head of the batch); orphans pre-filter to a quiet
+self-update (a file nothing imports cannot reach a client — reload noise,
+the §1.3 boot-storm lesson); component modules are boundaries by
+framework-plugin convention (CSS never enters the JS walk);
+`update_boundary` is retired, not wrapped. **Deferred (the rest of E01):**
+state preservation, the CSS boundary algorithm, Vue/Solid refresh wiring.
+
+## Docs drift noted this session
+
+- Fixed in-scope: root `README.md` (the "`v0.6.1` is tagged" note and the
+  "v0.2.0 through v0.6.1" line — v0.7.0 is tagged and CHANGELOG'd),
+  `HANDOFF.md` itself (this header — the previous top section described
+  F03 as the latest milestone while F16/F18/v0.7.0 landed after it),
+  `crates/dev/README.md` (phantom `FileWatcher` → `Watcher`; the
+  stale-guard fn lives in `oxide-fw-cli`, not here; the provides list
+  now includes the planner surface), `docs/architecture.md` (`dev` row +
+  the E01 what-changed bullet), `docs/deviations.md` (the E01 record —
+  F18 never got one), and the spec's V2.O table (E01 split out of the
+  all-`todo` E-row to `doing`).
+- Noted for the doc owners (carried, unchanged): `docs/archive/WORKLOG.md`
+  dedup (the A03 hygiene remainder); README's "1,701 test functions" vs
+  the actual count after this diff (+13 Rust pins — the next count audit
+  should re-run `scripts/count-tests.sh`); the crates.io/npm publication
+  step is still pending for every tagged release.
+
+## Where to pick up, in one sentence
+
+Run the Rust gates on a toolchain host (`cargo fmt --all --check`,
+`cargo clippy --workspace --all-targets --all-features -- -D warnings`,
+`cargo nextest run --workspace`, `cargo test -p oxide-fw-dev --features
+bench-util --benches --no-run`), then F20 (attested reproducible builds,
+S-sized, A04-merged dependency) is the next spec-verbatim substrate
+candidate — and E01's remainder (state preservation, CSS boundaries,
+Vue/Solid refresh) consumes `Plan` unchanged.
+
+---
+
 # Handoff — V2-F03 interaction replay landed (capture engine + islands/boot wiring + opt-out seam); core package gates green
 
 ## Where things stand

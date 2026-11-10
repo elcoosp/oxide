@@ -837,3 +837,72 @@ bare directory form), and the side-car written by `oxide routes` and
   contract, so the registry row and the deferred flag agree.
 - The inspector route-table `why` column (E08) and the MCP `routes.list`
   reasons field read the side-car; both are deferred with their surfaces.
+
+## V2-E01 HMR boundary planner — deltas and deferrals (substrate step)
+
+**What the spec asks.** `crates/dev/src/boundary.rs`: given the module
+graph (`importers`, the self-accepting set, the entry set), find the update
+boundaries for a changed file by walking importers breadth-first until a
+self-accepting module is reached on every path; if any path reaches an
+entry module without a boundary, return `FullReload`; cycle-safe
+(visited set). Message schema, state preservation, CSS boundary algorithm
+and the Vue/Solid refresh wiring are the rest of the WP.
+
+**What lands.** The full Rust substrate: `boundary::Plan`
+(`Update(Vec<PathBuf>)` / `FullReload(String)`, spec-verbatim shapes) and
+`boundary::plan` (the spec's BFS, boundaries sorted + deduplicated), the
+`source_self_accepts` probe (the `import.meta.hot.accept` registration
+test), the `DEV-HMR-001` full-reload diagnostic with the per-cause fix
+help text, `hmr_boundary` tracing spans on the planner, the criterion
+bench behind `bench-util` (deep chains, wide fan-outs, diamond dedup, the
+reload fallback), the walkthrough example, and the CLI wiring: the
+adapter-HMR fan-out in `cmd_dev` is planner-driven — `build_hmr_graph`
+harvests `importers`, `accepting` and `entries` in the same walk the old
+`build_importers_map` already paid for.
+
+**Spec deltas:**
+
+1. **The changed file always re-imports.** The pure planner returns only
+   the boundary set (when the changed module itself is not a boundary, it
+   is not in `Plan::Update`); the dev loop keeps the changed file at the
+   head of the batch, because the boundary's re-import must observe the
+   new bytes of the module that triggered it and the `?v=<hash>` bust only
+   flows through a re-request the client issues for the changed URL.
+2. **Orphans pre-filter to a quiet self-update.** The spec's `_ =>` arm
+   returns `FullReload("<module> is not imported")` for a module nothing
+   imports. That is right for the pure function (and the pins exercise
+   it), but the dev loop cannot reach any client with such an edit — a
+   reload would be user-visible noise for a no-op (the §1.3 boot-storm
+   lesson). `cmd_dev` checks the changed file's importer row first and
+   only consults the planner when something imports it. A dead-end chain
+   *below* the changed file still reloads (spec-verbatim: one boundary-less
+   path poisons the plan) — over-notify is the safe direction, and the
+   `DEV-HMR-001` reason names the dead-end module.
+3. **Component modules are boundaries by framework-plugin convention, not
+   by `import.meta.hot.accept` scan alone.** The spec names both sources
+   of the accepting set; the harvest marks component extensions
+   (`.tsx`/`.jsx`/`.vue`/`.svelte`), `.server.ts(x)` swap files and
+   hot-accept registrations. CSS never enters the graph (the walk covers
+   JS/TS/Vue/Svelte extensions only), so the CSS boundary algorithm
+   remains the deferred half of the WP.
+4. **`update_boundary` is retired, not wrapped.** The one-hop
+   simplification (single-importer walk, multi-importer bail-out) was dead
+   code outside its own tests and its doc claimed the real walk-up "lives
+   in the graph engine" — it never did. The planner is the walk-up; the
+   §13.3 pins moved to `tests/boundary_tdd.rs`. Also retired this pass:
+   the `Watcher::with_notify` fallback reported through a bare
+   `eprintln!`, bypassing every tracing subscriber — it is a
+   `tracing::warn!` now (`oxide-fw-dev` gains the workspace-pinned
+   `tracing` dependency for it).
+
+**What is deliberately deferred (the rest of E01):**
+
+- State preservation across boundary swaps and the CSS boundary algorithm
+  (`plan` over style-graph edges) — both consume `Plan` unchanged.
+- Vue and Solid refresh wiring: the planner's fan-out is
+  framework-agnostic; the per-framework in-place patch is the adapter
+  packages' track (React Refresh already owns its updates through the
+  `react_refresh_owns_update` skip).
+- The Playwright transitive-HMR pins against a real browser: the existing
+  `hmr-transitive` spec pins today's contract, which the planner is a
+  strict superset of (deeper chains now update instead of stalling).
