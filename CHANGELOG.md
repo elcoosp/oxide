@@ -8,6 +8,52 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Oxide is pre-1.0: the API is not yet frozen, and releases before v1.0 may
 include breaking changes announced in the relevant section below.
 
+## [0.12.0] — 2026-11-10
+
+### Added
+
+- **dev**: The state-preservation policy seam
+- **dev**: The preserve verdict on the v1 update frame
+- **cli**: Stamp the preservation verdict on update frames
+- **core**: The client snapshot-restore cycle for keep
+- **core**: Restore the fallback-reload stash on dev boot
+- **adapters**: The capability-matrix v2 support seam
+
+### Chores
+
+- **release**: V0.12.0
+
+### Documentation
+
+- **changelog**: Regenerate for v0.11.0
+- **dev**: The wire walkthrough stamps the preserve field
+- **dev**: The hmr_state walkthrough example
+- **dev**: The README gains the phase-4 state seam
+- **adapters**: The README describes the real crate surface
+- **adapters**: The capability_matrix walkthrough example
+- Record the E01 phase-4 substrate and fix the drift
+- **deviations**: The E01 phase-4 and R02 records
+- **spec**: Refresh the V2.O table for E01 phase 4 and R02
+- Re-measure the README test badge for the new pins
+- **handoff**: Record the E01 phase-4 and R02 session
+
+### Testing
+
+- **dev**: Construct the v1 update frames with preserve
+- **dev**: The wire bench carries the preserve field
+- **dev**: Pin the state-preservation wire contract
+- **dev**: The state_preservation criterion bench
+- **core**: Pin the hmr state-preservation client contract
+- **core**: Pin the boot-time stash restore on the dev path
+- **adapters**: The matrix pins cover the v0.2 rows
+- **adapters**: Pin the v2 matrix and the v01 golden rows
+- **adapters**: Pedantic hygiene in the deploy matrix pins
+- **adapters**: Pedantic hygiene in the integration pins
+
+### Build
+
+- **dev**: The state_preservation criterion bench target
+
 ## [0.11.0] — 2026-11-10
 
 ### Chores
