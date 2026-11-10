@@ -22,8 +22,10 @@ A deploy adapter transforms build output into a deployable artifact. The portabl
 - **`support(target, capability)`** — the matrix as a total function (V2-R02): exhaustive over `(Class, Capability)` via the private `Target → Class` mapping, so the compiler proves every capability has a cell for every target class — adding a capability appends a row, never edits one (D39)
 - **`capability_matrix(target)`** — the `BTreeMap` fold of `support` over `Capability::ALL` (the machine-readable source of truth)
 - **`degradation(target, capability)`** — why a `Degraded` cell degrades; every `D` in the matrix documents its reason
+- **`Capability::as_str()`** — the kebab-case id the doctor column, `build --explain` and the generated docs table print
 - **`emit(target, artifact, out_dir)`** — the deployable artifact: manifests, `_headers`/`_redirects` for static (§10.5), `Dockerfile` for docker, Worker entry + `_routes.json` + `wrangler.toml` for Cloudflare, handler wrappers + platform configs for serverless, `deploy.json` everywhere
-- **`check_requirements` (the §18 refusal rule)** — a server manifest's `"requires": {"sockets": true}`-style declarations refuse the build on targets where the matching capability is `Unsupported`; `Degraded` capabilities proceed with the documented degradation string
+- **`check_requirements` (the §18 refusal rule, manifest half)** — a server manifest's `"requires": {"sockets": true}`-style declarations refuse the build on targets where the matching capability is `Unsupported`; `Degraded` capabilities proceed with the documented degradation string
+- **`check_config` + `ConfigFeatureReport` (the §18 refusal rule, config half — V2-R02's config-key remainder, spec §V2-R02)** — the config layer's feature report (`ConfigFeatureReport`: live routes, `*.server.rs` presence, `fonts.subset: 'used'`, non-static routes) turned into registry-code refusals (`AST-LIV-001`, `RFN-002`, `AST-FNT-001`) and degradation warnings against the same matrix; the config crate maps its keys, the CLI build refuses before any deploy-artifact work
 
 ## Usage
 
