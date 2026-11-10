@@ -1378,3 +1378,75 @@ kebab-case ids.
 the spec's `warns_degraded_search_on_node` pin); F08's loader flips
 `rust_fns_present` from a walk to the real tooling-pool compile step
 without touching the refusal layer.
+
+## V2-F09 search config key + the AST-SRC-001 arm — the config-key refusal rule is complete; E11's docs-table seam realized (2026-11-11)
+
+**What the spec asks.** §2776's refusal rule names `search` on edge →
+`AST-SRC-001` as the fourth config-key code, and Appendix V2.L types the
+key (`search: { collections: string[]; fields?: { title?: number;
+body?: number }; snippet?: number; languages?: string[] }`). E11 names
+`doc_table_matches_matrix` — "generated table equals the function output" —
+as the red-first pin over the capability table.
+
+**What lands.**
+
+- **The `search` key, typed and schema'd from day one**
+  (`SearchConfig`/`SearchFieldsConfig` in `crates/config/src/lib.rs`, the
+  `search_schema()` fragment + the regenerated
+  `schemas/oxide-fw-config.schema.json`, the key added to the
+  typo-suggestion validator's `KNOWN_KEYS`). The full V2.L shape lands
+  (collections, field boosts, snippet, languages) so F09's engine
+  consumes the query knobs without a second schema churn; today the key
+  is inert — with no `collections` configured nothing indexes and the
+  refusal reports the surface as unconfigured.
+- **The refusal arm**: `ConfigFeatureReport::search_configured()` (a
+  required method — the compiler walks every impl and fixture) and the
+  `check_config` search arm, consulted in capability declaration order
+  (live → rust fns → search → the target-independent fonts rule). Edge
+  refuses with the registry code + fix text ("Use static JSON search or a
+  Binary or Docker target"); Node/serverless/static warn with the
+  documented degradation string. `search_configured` maps ONLY
+  `search.collections` — the §16.5 collection indexes are static JSON,
+  the registry's own remedy for unsupported targets, so their presence
+  never refuses (the R02 record's reading, unchanged).
+- **The E11 docs-table seam** (`feat/matrix-doc-table`):
+  `capability_markdown_table()` in `crates/adapters/src/lib.rs` — the §18
+  matrix as a deterministic markdown table (rows = `Target::ALL`, columns
+  = `Capability::ALL`, cells `F`/`D`/`U`), a fold of `support` like
+  `capability_matrix`. The crate README embeds the exact output and
+  `tests/doc_table_tdd.rs::doc_table_matches_the_function` fails when
+  they drift — the E11 pin realized at the crate-docs level. A
+  `doc_table` criterion bench and the extended `capability_matrix`
+  walkthrough ride along.
+
+**Spec deltas:**
+
+1. **The key lands before the engine.** F09's tantivy WP (`crates/search`,
+   the index/serve/client halves) is untouched; the config surface and the
+   enforcement arm land first — the same shape RFN-002 shipped under (the
+   enforcement the registry already names, live from day one; the loader
+   is a later half). The V2.L key shape is complete so the engine needs
+   no schema or typed-config change.
+2. **No load-time validation for the query knobs.** The spec attaches no
+   DSP code to `search` (unlike `live`'s DSP-111, `stream`'s DSP-112,
+   `brownout`'s DSP-113); inventing one would add a registry row the
+   spec does not define. The typed parse rejects wrong shapes
+   (`deny_unknown_fields`, `Option` boosts), which is all the spec asks
+   today.
+3. **`search_configured` is a required trait method, not a defaulted
+   one.** A default would let a future report silently miss the surface;
+   the required method turns every impl (the config crate's
+   `FeatureReport`, the test fixtures, the walkthrough examples) into a
+   compile-forced decision — the same compiler-proved shape the matrix
+   rows use.
+4. **The E11 table embeds in the crate README, not a docs-site
+   generator.** The `capabilities.md` generator (E11's full WP) does not
+   exist yet; the README is the docs surface the repo actually ships and
+   gates, so the generated table lands where the drift gate can hold it.
+   The docs-site generator consumes the same function when it lands.
+
+**What would change it.** F09's engine lands against the unchanged typed
+key (the `collections` names must match `content.collections` entries at
+build time — the engine's validation, not the refusal's); E11's
+docs-site generator replaces the README embed with `capabilities.md`
+rendered from the same function.
